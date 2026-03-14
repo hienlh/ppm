@@ -217,14 +217,18 @@ export function GitGraph({ metadata }: GitGraphProps) {
         const y2 = parentIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
 
         let d: string;
+        const isMerge = commit.parents.indexOf(parentHash) > 0;
         if (x1 === x2) {
           // Same lane: straight line
           d = `M ${x1} ${y1} L ${x2} ${y2}`;
-        } else {
-          // Different lane: curve at commit, then straight down to parent
-          // Short curve from child node to parent's lane, then vertical to parent
+        } else if (isMerge) {
+          // Merge: curve at child (top), straight down to parent
           const curveEnd = y1 + ROW_HEIGHT;
           d = `M ${x1} ${y1} C ${x1} ${curveEnd} ${x2} ${y1} ${x2} ${curveEnd} L ${x2} ${y2}`;
+        } else {
+          // Branch/fork: straight down from child, curve at parent (bottom)
+          const curveStart = y2 - ROW_HEIGHT;
+          d = `M ${x1} ${y1} L ${x1} ${curveStart} C ${x1} ${y2} ${x2} ${curveStart} ${x2} ${y2}`;
         }
         // Use parent color for merge lines, commit color for first parent
         const lineColor = commit.parents.indexOf(parentHash) === 0 ? color : parentColor;
