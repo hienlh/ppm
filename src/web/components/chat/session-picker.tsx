@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { Plus, Trash2, MessageSquare, ChevronDown } from "lucide-react";
 import type { SessionInfo } from "../../../types/chat";
 
@@ -7,27 +7,27 @@ interface SessionPickerProps {
   currentSessionId: string | null;
   onSelectSession: (session: SessionInfo) => void;
   onNewSession: () => void;
-  projectDir?: string;
+  projectName?: string;
 }
 
 export function SessionPicker({
   currentSessionId,
   onSelectSession,
   onNewSession,
-  projectDir,
+  projectName,
 }: SessionPickerProps) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [open, setOpen] = useState(false);
 
   const loadSessions = useCallback(async () => {
+    if (!projectName) return;
     try {
-      const params = projectDir ? `?dir=${encodeURIComponent(projectDir)}` : "";
-      const data = await api.get<SessionInfo[]>(`/api/chat/sessions${params}`);
+      const data = await api.get<SessionInfo[]>(`${projectUrl(projectName)}/chat/sessions`);
       setSessions(data);
     } catch {
       // Silently fail — sessions list is non-critical
     }
-  }, [projectDir]);
+  }, [projectName]);
 
   useEffect(() => {
     loadSessions();
@@ -43,8 +43,9 @@ export function SessionPicker({
   const handleDelete = async (e: React.MouseEvent, session: SessionInfo) => {
     e.stopPropagation();
     try {
+      if (!projectName) return;
       await api.del(
-        `/api/chat/sessions/${session.id}?providerId=${session.providerId}`,
+        `${projectUrl(projectName)}/chat/sessions/${session.id}?providerId=${session.providerId}`,
       );
       setSessions((prev) => prev.filter((s) => s.id !== session.id));
     } catch {

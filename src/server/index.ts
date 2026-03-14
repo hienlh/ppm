@@ -3,12 +3,10 @@ import { cors } from "hono/cors";
 import { configService } from "../services/config.service.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { projectRoutes } from "./routes/projects.ts";
-import { fileRoutes } from "./routes/files.ts";
 import { staticRoutes } from "./routes/static.ts";
-import { gitRoutes } from "./routes/git.ts";
+import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
-import { chatRoutes } from "./routes/chat.ts";
 import { ok } from "../types/api.ts";
 
 export const app = new Hono();
@@ -25,9 +23,7 @@ app.get("/api/auth/check", (c) => c.json(ok(true)));
 
 // API routes
 app.route("/api/projects", projectRoutes);
-app.route("/api/files", fileRoutes);
-app.route("/api/chat", chatRoutes);
-app.route("/api/git", gitRoutes);
+app.route("/api/project/:projectName", projectScopedRouter);
 
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);
@@ -73,26 +69,30 @@ export async function startServer(options: {
     fetch(req, server) {
       const url = new URL(req.url);
 
-      // WebSocket upgrade for terminal
-      if (url.pathname.startsWith("/ws/terminal/")) {
+      // WebSocket upgrade: /ws/project/:projectName/terminal/:id
+      if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
-        const id = parts[3] ?? "";
-        const project = url.searchParams.get("project") ?? undefined;
-        const upgraded = server.upgrade(req, {
-          data: { type: "terminal", id, project },
-        });
-        if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
-      }
+        // parts: ["", "ws", "project", projectName, type, id]
+        const projectName = parts[3] ?? "";
+        const wsType = parts[4] ?? "";
+        const id = parts[5] ?? "";
 
-      // WebSocket upgrade for chat
-      if (url.pathname.startsWith("/ws/chat/")) {
-        const sessionId = url.pathname.split("/").pop() ?? "";
-        const upgraded = server.upgrade(req, {
-          data: { type: "chat", sessionId },
-        });
-        if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        if (wsType === "terminal") {
+          const upgraded = server.upgrade(req, {
+            data: { type: "terminal", id, projectName },
+          });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
+
+        if (wsType === "chat") {
+          const sessionId = id;
+          const upgraded = server.upgrade(req, {
+            data: { type: "chat", sessionId, projectName },
+          });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
       }
 
       // Fall through to Hono for all other requests
@@ -135,24 +135,32 @@ if (process.argv.includes("__serve__")) {
     hostname: host,
     fetch(req, server) {
       const url = new URL(req.url);
-      if (url.pathname.startsWith("/ws/terminal/")) {
+
+      // WebSocket upgrade: /ws/project/:projectName/terminal/:id
+      if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
-        const id = parts[3] ?? "";
-        const project = url.searchParams.get("project") ?? undefined;
-        const upgraded = server.upgrade(req, {
-          data: { type: "terminal", id, project },
-        });
-        if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
+        const projectName = parts[3] ?? "";
+        const wsType = parts[4] ?? "";
+        const id = parts[5] ?? "";
+
+        if (wsType === "terminal") {
+          const upgraded = server.upgrade(req, {
+            data: { type: "terminal", id, projectName },
+          });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
+
+        if (wsType === "chat") {
+          const sessionId = id;
+          const upgraded = server.upgrade(req, {
+            data: { type: "chat", sessionId, projectName },
+          });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
       }
-      if (url.pathname.startsWith("/ws/chat/")) {
-        const sessionId = url.pathname.split("/").pop() ?? "";
-        const upgraded = server.upgrade(req, {
-          data: { type: "chat", sessionId },
-        });
-        if (upgraded) return undefined;
-        return new Response("WebSocket upgrade failed", { status: 400 });
-      }
+
       return app.fetch(req, server);
     },
     websocket: {

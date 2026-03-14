@@ -13,18 +13,26 @@ import type {
 } from "./provider.interface.ts";
 
 /**
+ * Pending approval: canUseTool callback creates a promise,
+ * yields an approval_request event, then awaits resolution from FE.
+ */
+interface PendingApproval {
+  resolve: (result: { approved: boolean; data?: unknown }) => void;
+}
+
+/**
  * AI provider using @anthropic-ai/claude-agent-sdk.
  * Sessions are persisted by Claude Code itself (~/.claude/projects/).
- * We only keep a lightweight in-memory map for active session metadata.
+ * Uses canUseTool callback for tool approvals and AskUserQuestion.
  */
 export class ClaudeAgentSdkProvider implements AIProvider {
   id = "claude-sdk";
   name = "Claude Agent SDK";
 
-  /** Active session metadata (not messages — those live in Claude's JSONL) */
   private activeSessions = new Map<string, Session>();
-  /** Track message count per session to know first vs continuation */
   private messageCount = new Map<string, number>();
+  /** Pending approval promises keyed by requestId */
+  private pendingApprovals = new Map<string, PendingApproval>();
 
   async createSession(config: SessionConfig): Promise<Session> {
     const id = crypto.randomUUID();
@@ -44,7 +52,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const existing = this.activeSessions.get(sessionId);
     if (existing) return existing;
 
-    // Try to find in SDK's persisted sessions
     try {
       const sdkSessions = await sdkListSessions({ limit: 100 });
       const found = sdkSessions.find((s) => s.sessionId === sessionId);
@@ -56,11 +63,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           createdAt: new Date(found.lastModified).toISOString(),
         };
         this.activeSessions.set(sessionId, meta);
-        this.messageCount.set(sessionId, 1); // Mark as continuation
+        this.messageCount.set(sessionId, 1);
         return meta;
       }
     } catch {
-      // SDK not available — create minimal session
+      // SDK not available
     }
 
     const meta: Session = {
@@ -78,7 +85,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return this.listSessionsByDir();
   }
 
-  /** List sessions filtered by project directory */
   async listSessionsByDir(dir?: string): Promise<SessionInfo[]> {
     try {
       const sdkSessions = await sdkListSessions({ dir, limit: 50 });
@@ -105,11 +111,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.messageCount.delete(sessionId);
   }
 
+  /**
+   * Resolve a pending approval from FE (tool approval or AskUserQuestion answer).
+   * Called by WS handler when client sends approval_response.
+   */
+  resolveApproval(requestId: string, approved: boolean, data?: unknown): void {
+    const pending = this.pendingApprovals.get(requestId);
+    if (pending) {
+      pending.resolve({ approved, data });
+      this.pendingApprovals.delete(requestId);
+    }
+  }
+
   async *sendMessage(
     sessionId: string,
     message: string,
   ): AsyncIterable<ChatEvent> {
-    // Ensure session exists
     if (!this.activeSessions.has(sessionId)) {
       await this.resumeSession(sessionId);
     }
@@ -123,6 +140,52 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const isFirstMessage = count === 0;
     this.messageCount.set(sessionId, count + 1);
 
+    /**
+     * Approval events to yield from the generator.
+     * canUseTool pushes events here; the main loop yields them.
+     */
+    const approvalEvents: ChatEvent[] = [];
+    let approvalNotify: (() => void) | undefined;
+
+    /**
+     * canUseTool: only fires for AskUserQuestion (bypassPermissions auto-approves other tools).
+     * Pauses SDK execution, yields approval_request to FE, waits for user response.
+     */
+    const canUseTool = async (toolName: string, input: unknown) => {
+      // Non-AskUserQuestion tools: auto-approve (shouldn't reach here with bypassPermissions)
+      if (toolName !== "AskUserQuestion") {
+        return { behavior: "allow" as const, updatedInput: input };
+      }
+
+      const requestId = crypto.randomUUID();
+
+      const approvalPromise = new Promise<{ approved: boolean; data?: unknown }>(
+        (resolve) => {
+          this.pendingApprovals.set(requestId, { resolve });
+        },
+      );
+
+      // Queue event for the generator to yield to FE
+      approvalEvents.push({
+        type: "approval_request",
+        requestId,
+        tool: toolName,
+        input,
+      });
+      approvalNotify?.();
+
+      // Wait for FE to send back answers
+      const result = await approvalPromise;
+
+      if (result.approved && result.data) {
+        return {
+          behavior: "allow" as const,
+          updatedInput: { ...(input as Record<string, unknown>), answers: result.data },
+        };
+      }
+      return { behavior: "deny" as const, message: "User skipped the question" };
+    };
+
     let assistantContent = "";
 
     try {
@@ -131,9 +194,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         options: {
           sessionId: isFirstMessage ? sessionId : undefined,
           resume: isFirstMessage ? undefined : sessionId,
-          allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+          allowedTools: [
+            "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+            "WebSearch", "WebFetch", "AskUserQuestion",
+          ],
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
+          canUseTool,
           includePartialMessages: true,
         } as any,
       });
@@ -141,7 +208,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let lastPartialText = "";
 
       for await (const msg of q) {
-        // Partial assistant message — real streaming text deltas
+        // Yield any queued approval events
+        while (approvalEvents.length > 0) {
+          yield approvalEvents.shift()!;
+        }
+
+        // Partial assistant message — streaming text deltas
         if ((msg as any).type === "partial") {
           const partial = msg as any;
           const content = partial.message?.content;
@@ -188,6 +260,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           break;
         }
       }
+
+      // Yield remaining approval events
+      while (approvalEvents.length > 0) {
+        yield approvalEvents.shift()!;
+      }
     } catch (e) {
       yield { type: "error", message: `SDK error: ${(e as Error).message}` };
     }
@@ -195,44 +272,87 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     yield { type: "done", sessionId };
   }
 
-  /**
-   * Get messages from SDK's persisted session transcript.
-   * Falls back to empty array if session not found.
-   */
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
       const messages = await getSessionMessages(sessionId);
-      return messages.map((msg) => {
-        const content = extractTextFromMessage(msg.message);
-        return {
-          id: msg.uuid,
-          role: msg.type as "user" | "assistant",
-          content,
-          timestamp: new Date().toISOString(),
-        };
-      });
+      const parsed = messages.map((msg) => parseSessionMessage(msg));
+
+      // Merge tool_result user messages into the preceding assistant message
+      const merged: ChatMessage[] = [];
+      for (const msg of parsed) {
+        if (msg.events?.length && msg.events.every((e) => e.type === "tool_result")) {
+          // This is a tool_result-only message — append events to last assistant
+          const lastAssistant = [...merged].reverse().find((m) => m.role === "assistant");
+          if (lastAssistant?.events) {
+            lastAssistant.events.push(...msg.events);
+            continue;
+          }
+        }
+        merged.push(msg);
+      }
+
+      return merged.filter(
+        (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),
+      );
     } catch {
       return [];
     }
   }
 }
 
-/** Extract text content from SDK's raw message payload */
-function extractTextFromMessage(message: unknown): string {
-  if (typeof message === "string") return message;
+/** Parse SDK SessionMessage into ChatMessage with events for tool_use blocks */
+function parseSessionMessage(msg: { uuid: string; type: string; message: unknown }): ChatMessage {
+  const message = msg.message as Record<string, unknown> | undefined;
+  const role = msg.type as "user" | "assistant";
+
+  // Parse content blocks for both user and assistant messages
+  const events: ChatEvent[] = [];
+  let textContent = "";
+
+  if (message && Array.isArray(message.content)) {
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block.type === "text" && typeof block.text === "string") {
+        textContent += block.text;
+        if (role === "assistant") {
+          events.push({ type: "text", content: block.text });
+        }
+      } else if (block.type === "tool_use") {
+        events.push({
+          type: "tool_use",
+          tool: (block.name as string) ?? "unknown",
+          input: block.input ?? {},
+        });
+      } else if (block.type === "tool_result") {
+        const output = block.content ?? block.output ?? "";
+        events.push({
+          type: "tool_result",
+          output: typeof output === "string" ? output : JSON.stringify(output),
+        });
+      }
+    }
+  } else {
+    textContent = extractText(message);
+  }
+
+  return {
+    id: msg.uuid,
+    role,
+    content: textContent,
+    events: events.length > 0 ? events : undefined,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/** Extract plain text from message payload */
+function extractText(message: unknown): string {
   if (!message || typeof message !== "object") return "";
-
   const msg = message as Record<string, unknown>;
-
-  // SDK message format: { content: string | Array<{type, text}> }
   if (typeof msg.content === "string") return msg.content;
-
   if (Array.isArray(msg.content)) {
     return (msg.content as Array<Record<string, unknown>>)
       .filter((b) => b.type === "text" && typeof b.text === "string")
       .map((b) => b.text as string)
       .join("");
   }
-
-  return JSON.stringify(message);
+  return "";
 }

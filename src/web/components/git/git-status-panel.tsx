@@ -7,7 +7,7 @@ import {
   ArrowDownToLine,
   Loader2,
 } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -40,7 +40,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     try {
       setLoading(true);
       const data = await api.get<GitStatus>(
-        `/api/git/status/${encodeURIComponent(projectName)}`,
+        `${projectUrl(projectName)}/git/status`,
       );
       setStatus(data);
       setError(null);
@@ -59,7 +59,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post("/api/git/stage", { project: projectName, files });
+      await api.post(`${projectUrl(projectName)}/git/stage`, { files });
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Stage failed");
@@ -72,7 +72,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post("/api/git/unstage", { project: projectName, files });
+      await api.post(`${projectUrl(projectName)}/git/unstage`, { files });
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unstage failed");
@@ -85,8 +85,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     if (!projectName || !commitMsg.trim() || !status?.staged.length) return;
     setActing(true);
     try {
-      await api.post("/api/git/commit", {
-        project: projectName,
+      await api.post(`${projectUrl(projectName)}/git/commit`, {
         message: commitMsg.trim(),
       });
       setCommitMsg("");
@@ -102,7 +101,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post("/api/git/push", { project: projectName });
+      await api.post(`${projectUrl(projectName)}/git/push`, {});
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Push failed");
@@ -115,7 +114,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     if (!projectName) return;
     setActing(true);
     try {
-      await api.post("/api/git/pull", { project: projectName });
+      await api.post(`${projectUrl(projectName)}/git/pull`, {});
       await fetchStatus();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Pull failed");
@@ -133,6 +132,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
         projectName,
         filePath: file.path,
       },
+      projectId: projectName ?? null,
     });
   };
 

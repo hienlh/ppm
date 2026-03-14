@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useWebSocket } from "./use-websocket";
-import { getAuthToken } from "@/lib/api-client";
+import { getAuthToken, projectUrl } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { ChatWsServerMessage } from "../../types/api";
 
@@ -15,11 +15,11 @@ interface UseChatReturn {
   isStreaming: boolean;
   pendingApproval: ApprovalRequest | null;
   sendMessage: (content: string) => void;
-  respondToApproval: (requestId: string, approved: boolean, reason?: string) => void;
+  respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   isConnected: boolean;
 }
 
-export function useChat(sessionId: string | null, providerId = "claude-sdk"): UseChatReturn {
+export function useChat(sessionId: string | null, providerId = "claude-sdk", projectName = ""): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
@@ -162,10 +162,14 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk"): Us
     }
   }, []);
 
+  const wsUrl = sessionId && projectName
+    ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}`
+    : "";
+
   const { send } = useWebSocket({
-    url: sessionId ? `/ws/chat/${sessionId}` : "",
+    url: wsUrl,
     onMessage: handleMessage,
-    autoConnect: !!sessionId,
+    autoConnect: !!sessionId && !!projectName,
   });
 
   // Load history and reset state when session changes
@@ -176,9 +180,9 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk"): Us
     streamingEventsRef.current = [];
     setIsConnected(false);
 
-    if (sessionId) {
+    if (sessionId && projectName) {
       // Load message history
-      fetch(`/api/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
+      fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
         headers: { Authorization: `Bearer ${getAuthToken()}` },
       })
         .then((r) => r.json())
@@ -193,7 +197,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk"): Us
     } else {
       setMessages([]);
     }
-  }, [sessionId, providerId]);
+  }, [sessionId, providerId, projectName]);
 
   const sendMessage = useCallback(
     (content: string) => {
@@ -221,15 +225,36 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk"): Us
   );
 
   const respondToApproval = useCallback(
-    (requestId: string, approved: boolean, reason?: string) => {
+    (requestId: string, approved: boolean, data?: unknown) => {
       send(
         JSON.stringify({
           type: "approval_response",
           requestId,
           approved,
-          reason,
+          data,
         }),
       );
+
+      // Merge answers into the AskUserQuestion tool_use event so FE shows selected answers
+      if (approved && data) {
+        const evts = streamingEventsRef.current;
+        const askEvt = evts.find(
+          (e: ChatEvent) =>
+            e.type === "approval_request" &&
+            (e as any).requestId === requestId &&
+            (e as any).tool === "AskUserQuestion",
+        );
+        if (askEvt) {
+          // Mutate input to include answers — this updates the rendered ToolCard
+          const inp = (askEvt as any).input;
+          if (inp && typeof inp === "object") {
+            (inp as Record<string, unknown>).answers = data;
+          }
+        }
+        // Force re-render messages
+        setMessages((prev) => [...prev]);
+      }
+
       setPendingApproval(null);
     },
     [send],

@@ -1,4 +1,5 @@
 import { chatService } from "../../services/chat.service.ts";
+import { providerRegistry } from "../../providers/registry.ts";
 import type { ChatWsClientMessage } from "../../types/api.ts";
 
 /** Tracks active chat WS connections: sessionId -> ws */
@@ -60,17 +61,15 @@ export const chatWebSocket = {
         );
       }
     } else if (parsed.type === "approval_response") {
-      // For now, mock provider doesn't wait for approvals.
-      // A real provider would resolve a pending promise here.
-      ws.send(
-        JSON.stringify({
-          type: "text",
-          content: parsed.approved
-            ? "Tool execution approved."
-            : `Tool execution denied${parsed.reason ? ": " + parsed.reason : ""}.`,
-        }),
-      );
-      ws.send(JSON.stringify({ type: "done", sessionId }));
+      // Route approval response to the provider
+      const provider = providerRegistry.get(providerId);
+      if (provider && typeof provider.resolveApproval === "function") {
+        provider.resolveApproval(
+          parsed.requestId,
+          parsed.approved,
+          (parsed as any).data,
+        );
+      }
     }
   },
 

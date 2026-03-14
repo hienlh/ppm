@@ -10,7 +10,7 @@ import { css } from "@codemirror/lang-css";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import type { Extension } from "@codemirror/state";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { Loader2, FileCode } from "lucide-react";
 
 function getLanguageExtension(filename: string): Extension | null {
@@ -70,7 +70,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       params.set("file2", file2);
       api
         .get<{ original: string; modified: string }>(
-          `/api/files/compare/${encodeURIComponent(projectName)}?${params.toString()}`,
+          `${projectUrl(projectName)}/files/compare?${params.toString()}`,
         )
         .then((data) => { setFileContents(data); setLoading(false); })
         .catch((err) => { setError(err instanceof Error ? err.message : "Failed to compare files"); setLoading(false); });
@@ -82,14 +82,14 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       const params = new URLSearchParams();
       params.set("file", filePath);
       if (ref1) params.set("ref", ref1);
-      url = `/api/git/file-diff/${encodeURIComponent(projectName)}?${params.toString()}`;
+      url = `${projectUrl(projectName)}/git/file-diff?${params.toString()}`;
     } else if (ref1 || ref2) {
       const params = new URLSearchParams();
       if (ref1) params.set("ref1", ref1);
       if (ref2) params.set("ref2", ref2);
-      url = `/api/git/diff/${encodeURIComponent(projectName)}?${params.toString()}`;
+      url = `${projectUrl(projectName)}/git/diff?${params.toString()}`;
     } else {
-      url = `/api/git/diff/${encodeURIComponent(projectName)}`;
+      url = `${projectUrl(projectName)}/git/diff`;
     }
 
     api

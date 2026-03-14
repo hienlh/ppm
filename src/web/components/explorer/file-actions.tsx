@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import type { FileNode } from "@/stores/file-store";
 import {
   Dialog,
@@ -53,7 +53,7 @@ export function FileActions({
     try {
       const parentPath = node.type === "directory" ? node.path : node.path.split("/").slice(0, -1).join("/");
       const fullPath = parentPath ? `${parentPath}/${name.trim()}` : name.trim();
-      await api.post(`/api/files/create/${encodeURIComponent(projectName)}`, {
+      await api.post(`${projectUrl(projectName)}/files/create`, {
         path: fullPath,
         type,
       });
@@ -76,7 +76,7 @@ export function FileActions({
     try {
       const parentPath = node.path.split("/").slice(0, -1).join("/");
       const newPath = parentPath ? `${parentPath}/${name.trim()}` : name.trim();
-      await api.post(`/api/files/rename/${encodeURIComponent(projectName)}`, {
+      await api.post(`${projectUrl(projectName)}/files/rename`, {
         oldPath: node.path,
         newPath,
       });
@@ -93,7 +93,7 @@ export function FileActions({
     setLoading(true);
     setError(null);
     try {
-      await api.del(`/api/files/delete/${encodeURIComponent(projectName)}`, {
+      await api.del(`${projectUrl(projectName)}/files/delete`, {
         path: node.path,
       });
       onRefresh();

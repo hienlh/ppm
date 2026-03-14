@@ -9,6 +9,8 @@ export interface AIProvider {
     sessionId: string,
     message: string,
   ): AsyncIterable<ChatEvent>;
+  /** Resolve a pending tool/question approval by requestId */
+  resolveApproval?(requestId: string, approved: boolean, data?: unknown): void;
   onToolApproval?: (callback: ToolApprovalHandler) => void;
 }
 
