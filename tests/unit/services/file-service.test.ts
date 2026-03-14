@@ -30,14 +30,14 @@ afterEach(() => {
 
 describe("FileService.getTree()", () => {
   test("returns file entries for project root", () => {
-    const tree = svc.getTree(tmpDir);
+    const tree = svc.getTree("test-project");
     const names = tree.map((e) => e.name);
     expect(names).toContain("hello.txt");
     expect(names).toContain("sub");
   });
 
   test("directories come before files (sorted)", () => {
-    const tree = svc.getTree(tmpDir);
+    const tree = svc.getTree("test-project");
     const types = tree.map((e) => e.type);
     const firstFileIdx = types.indexOf("file");
     const lastDirIdx = types.lastIndexOf("directory");
@@ -47,20 +47,20 @@ describe("FileService.getTree()", () => {
   });
 
   test("includes children for directories", () => {
-    const tree = svc.getTree(tmpDir);
+    const tree = svc.getTree("test-project");
     const subDir = tree.find((e) => e.name === "sub");
     expect(subDir).toBeDefined();
     expect(subDir?.children?.some((c) => c.name === "nested.ts")).toBe(true);
   });
 
-  test("throws when path is outside registered projects", () => {
-    expect(() => svc.getTree("/tmp")).toThrow(/not within a registered project/);
+  test("throws when project name not found", () => {
+    expect(() => svc.getTree("nonexistent")).toThrow(/Project not found/);
   });
 
   test("skips node_modules and .git dirs", () => {
     mkdirSync(join(tmpDir, "node_modules", "pkg"), { recursive: true });
     mkdirSync(join(tmpDir, ".git"), { recursive: true });
-    const tree = svc.getTree(tmpDir);
+    const tree = svc.getTree("test-project");
     const names = tree.map((e) => e.name);
     expect(names).not.toContain("node_modules");
     expect(names).not.toContain(".git");
@@ -175,8 +175,8 @@ describe("FileService.renameFile()", () => {
 });
 
 describe("Security: path traversal", () => {
-  test("getTree rejects ../ traversal", () => {
-    expect(() => svc.getTree(join(tmpDir, "../outside"))).toThrow(/not within a registered project/);
+  test("getTree rejects unknown project name", () => {
+    expect(() => svc.getTree("../outside")).toThrow(/Project not found/);
   });
 
   test("readFile rejects ../ traversal", async () => {

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { FolderTree, ChevronRight } from "lucide-react";
 import { useProjectStore } from "../../stores/project.store";
 import { useSettingsStore } from "../../stores/settings.store";
@@ -6,8 +7,12 @@ import { ScrollArea } from "../ui/scroll-area";
 import { FileTreeLoader } from "../explorer/file-tree-loader";
 
 function ProjectsSidebarContent() {
-  const { projects, activeProject, loading, setActiveProject } =
+  const { projects, activeProject, loading, fetchProjects, setActiveProject } =
     useProjectStore();
+
+  useEffect(() => {
+    fetchProjects();
+  }, [fetchProjects]);
 
   if (loading) {
     return (

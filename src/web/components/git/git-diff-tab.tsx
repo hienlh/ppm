@@ -31,8 +31,8 @@ export function GitDiffTab({ projectPath, filePath, ref: gitRef }: Props) {
     }
 
     api
-      .get<{ ok: boolean; data: { diff: string } }>(url)
-      .then((res) => setDiff(res.data.diff))
+      .get<{ diff: string }>(url)
+      .then((res) => setDiff(res.diff))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, [projectPath, filePath, gitRef]);

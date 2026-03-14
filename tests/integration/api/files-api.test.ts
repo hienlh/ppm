@@ -21,8 +21,7 @@ afterEach(() => {
 
 describe("GET /api/files/tree/:project", () => {
   test("returns file tree for registered project", async () => {
-    const encoded = encodeURIComponent(tmpDir);
-    const res = await app.request(`/api/files/tree/${encoded}`);
+    const res = await app.request(`/api/files/tree/test-proj`);
     expect(res.status).toBe(200);
     const body = await res.json() as { ok: boolean; data: { name: string }[] };
     expect(body.ok).toBe(true);
