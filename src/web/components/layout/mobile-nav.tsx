@@ -49,7 +49,7 @@ export function MobileNav() {
       ? { projectName: activeProject?.name }
       : undefined;
     const label = NEW_TAB_OPTIONS.find((o) => o.type === type)?.label ?? type;
-    openTab({ type, title: label, metadata, closable: true });
+    openTab({ type, title: label, metadata, projectId: activeProject?.name ?? null, closable: true });
     setShowMenu(false);
   }
 

@@ -3,9 +3,11 @@ import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { ok, err } from "../../types/api.ts";
 
-export const chatRoutes = new Hono();
+type Env = { Variables: { projectPath: string; projectName: string } };
 
-/** GET /api/chat/providers — list available AI providers */
+export const chatRoutes = new Hono<Env>();
+
+/** GET /chat/providers — list available AI providers */
 chatRoutes.get("/providers", (c) => {
   try {
     return c.json(ok(providerRegistry.list()));
@@ -14,19 +16,19 @@ chatRoutes.get("/providers", (c) => {
   }
 });
 
-/** GET /api/chat/sessions — list chat sessions (optionally filtered by project dir) */
+/** GET /chat/sessions — list chat sessions filtered by project from context */
 chatRoutes.get("/sessions", async (c) => {
   try {
+    const projectPath = c.get("projectPath");
     const providerId = c.req.query("providerId");
-    const dir = c.req.query("dir");
-    const sessions = await chatService.listSessions(providerId, dir);
+    const sessions = await chatService.listSessions(providerId, projectPath);
     return c.json(ok(sessions));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
 });
 
-/** GET /api/chat/sessions/:id/messages — get message history */
+/** GET /chat/sessions/:id/messages — get message history */
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
     const id = c.req.param("id");
@@ -38,16 +40,13 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
   }
 });
 
-/** POST /api/chat/sessions — create a new session */
+/** POST /chat/sessions — create a new session for the project in context */
 chatRoutes.post("/sessions", async (c) => {
   try {
-    const body = await c.req.json<{
-      providerId?: string;
-      projectName?: string;
-      title?: string;
-    }>();
+    const projectName = c.get("projectName");
+    const body = await c.req.json<{ providerId?: string; title?: string }>();
     const session = await chatService.createSession(body.providerId, {
-      projectName: body.projectName,
+      projectName,
       title: body.title,
     });
     return c.json(ok(session), 201);
@@ -56,7 +55,7 @@ chatRoutes.post("/sessions", async (c) => {
   }
 });
 
-/** DELETE /api/chat/sessions/:id — delete a session */
+/** DELETE /chat/sessions/:id — delete a session */
 chatRoutes.delete("/sessions/:id", async (c) => {
   try {
     const id = c.req.param("id");

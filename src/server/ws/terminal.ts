@@ -9,15 +9,15 @@ const RESIZE_PREFIX = "\x01RESIZE:";
  * Handles terminal session attach, input, resize, and disconnect.
  */
 export const terminalWebSocket = {
-  open(ws: { data: { type: string; id: string; project?: string }; send: (data: string) => void }) {
-    const { id, project } = ws.data;
+  open(ws: { data: { type: string; id: string; projectName?: string }; send: (data: string) => void }) {
+    const { id, projectName } = ws.data;
 
     let session = id !== "new" ? terminalService.get(id) : undefined;
 
-    // If session doesn't exist and project is provided, create one
-    if (!session && project) {
+    // If session doesn't exist and projectName is provided, create one
+    if (!session && projectName) {
       try {
-        const projectPath = resolveProjectPath(project);
+        const projectPath = resolveProjectPath(projectName);
         // Create session with the requested ID — but TerminalService generates its own ID.
         // Instead, create and return the new session ID to client.
         const newId = terminalService.create(projectPath);

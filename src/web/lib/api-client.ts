@@ -72,6 +72,11 @@ class ApiClient {
 
 export const api = new ApiClient();
 
+/** Build project-scoped API path prefix */
+export function projectUrl(projectName: string): string {
+  return `/api/project/${encodeURIComponent(projectName)}`;
+}
+
 export function setAuthToken(token: string) {
   localStorage.setItem(TOKEN_KEY, token);
 }

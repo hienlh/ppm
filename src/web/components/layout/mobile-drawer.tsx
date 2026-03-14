@@ -36,6 +36,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
       type: "git-status",
       title: "Git Status",
       metadata: { projectName: activeProject?.name },
+      projectId: activeProject?.name ?? null,
       closable: true,
     });
     onClose();
@@ -46,6 +47,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
       type: "git-graph",
       title: "Git Graph",
       metadata: { projectName: activeProject?.name },
+      projectId: activeProject?.name ?? null,
       closable: true,
     });
     onClose();

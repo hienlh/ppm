@@ -13,7 +13,7 @@ import {
   CherryIcon,
   GripVertical,
 } from "lucide-react";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -69,7 +69,7 @@ export function GitGraph({ metadata }: GitGraphProps) {
     try {
       setLoading(true);
       const result = await api.get<GitGraphData>(
-        `/api/git/graph/${encodeURIComponent(projectName)}?max=200`,
+        `${projectUrl(projectName)}/git/graph?max=200`,
       );
       setData(result);
       setError(null);
@@ -88,9 +88,10 @@ export function GitGraph({ metadata }: GitGraphProps) {
     path: string,
     body: Record<string, unknown>,
   ) => {
+    if (!projectName) return;
     setActing(true);
     try {
-      await api.post(path, { project: projectName, ...body });
+      await api.post(`${projectUrl(projectName)}${path}`, body);
       await fetchGraph();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
@@ -100,27 +101,27 @@ export function GitGraph({ metadata }: GitGraphProps) {
   };
 
   const handleCheckout = (ref: string) =>
-    gitAction("/api/git/checkout", { ref });
+    gitAction("/git/checkout", { ref });
   const handleCherryPick = (hash: string) =>
-    gitAction("/api/git/cherry-pick", { hash });
+    gitAction("/git/cherry-pick", { hash });
   const handleRevert = (hash: string) =>
-    gitAction("/api/git/revert", { hash });
+    gitAction("/git/revert", { hash });
   const handleMerge = (source: string) =>
-    gitAction("/api/git/merge", { source });
+    gitAction("/git/merge", { source });
   const handleDeleteBranch = (name: string) =>
-    gitAction("/api/git/branch/delete", { name });
+    gitAction("/git/branch/delete", { name });
   const handlePushBranch = (branch: string) =>
-    gitAction("/api/git/push", { branch });
+    gitAction("/git/push", { branch });
   const handleCreateBranch = (name: string, from: string) =>
-    gitAction("/api/git/branch/create", { name, from });
+    gitAction("/git/branch/create", { name, from });
   const handleCreateTag = (name: string, hash?: string) =>
-    gitAction("/api/git/tag", { name, hash });
+    gitAction("/git/tag", { name, hash });
 
   const handleCreatePr = async (branch: string) => {
     if (!projectName) return;
     try {
       const result = await api.get<{ url: string | null }>(
-        `/api/git/pr-url/${encodeURIComponent(projectName)}?branch=${encodeURIComponent(branch)}`,
+        `${projectUrl(projectName)}/git/pr-url?branch=${encodeURIComponent(branch)}`,
       );
       if (result.url) {
         window.open(result.url, "_blank");
@@ -146,7 +147,7 @@ export function GitGraph({ metadata }: GitGraphProps) {
       // For root commits (no parent), diff against empty tree
       const ref1Param = parent ? `ref1=${encodeURIComponent(parent)}&` : "";
       const files = await api.get<Array<{ path: string; additions: number; deletions: number }>>(
-        `/api/git/diff-stat/${encodeURIComponent(projectName!)}?${ref1Param}ref2=${encodeURIComponent(commit.hash)}`,
+        `${projectUrl(projectName!)}/git/diff-stat?${ref1Param}ref2=${encodeURIComponent(commit.hash)}`,
       );
       setCommitFiles(Array.isArray(files) ? files : []);
     } catch (e) {
@@ -168,6 +169,7 @@ export function GitGraph({ metadata }: GitGraphProps) {
         ref1: ref1 ?? undefined,
         ref2: commit.hash,
       },
+      projectId: projectName ?? null,
     });
   };
 
@@ -574,6 +576,7 @@ export function GitGraph({ metadata }: GitGraphProps) {
                     ref2: selectedCommit.hash,
                     filePath: file.path,
                   },
+                  projectId: projectName ?? null,
                 })}
               >
                 <span className="flex-1 truncate font-mono">{file.path}</span>

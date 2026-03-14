@@ -24,7 +24,6 @@ export function App() {
   const theme = useSettingsStore((s) => s.theme);
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const activeProject = useProjectStore((s) => s.activeProject);
-  const tabs = useTabStore((s) => s.tabs);
 
   // Apply theme on mount and when it changes
   useEffect(() => {
@@ -73,16 +72,18 @@ export function App() {
     }
   }, [authState, fetchProjects]);
 
-  // Open default tab if none open after auth
+  // Switch project tabs when active project changes
   useEffect(() => {
-    if (authState === "authenticated" && tabs.length === 0) {
-      useTabStore.getState().openTab({
-        type: "projects",
-        title: "Projects",
-        closable: false,
-      });
+    const projectName = activeProject?.name ?? "__global__";
+    useTabStore.getState().switchProject(projectName);
+  }, [activeProject?.name]);
+
+  // On initial auth with no project selected, ensure a tab set exists
+  useEffect(() => {
+    if (authState === "authenticated" && !activeProject) {
+      useTabStore.getState().switchProject("__global__");
     }
-  }, [authState, tabs.length]);
+  }, [authState, activeProject]);
 
   const handleLoginSuccess = useCallback(() => {
     setAuthState("authenticated");

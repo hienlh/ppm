@@ -54,9 +54,9 @@ export function TabBar() {
 
     openTab({
       type,
-      title:
-        NEW_TAB_OPTIONS.find((o) => o.type === type)?.label ?? type,
+      title: NEW_TAB_OPTIONS.find((o) => o.type === type)?.label ?? type,
       metadata,
+      projectId: activeProject?.name ?? null,
       closable: true,
     });
   }

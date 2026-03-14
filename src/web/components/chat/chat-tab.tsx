@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -29,17 +29,19 @@ export function ChatTab({ metadata }: ChatTabProps) {
     sendMessage,
     respondToApproval,
     isConnected,
-  } = useChat(sessionId, providerId);
+  } = useChat(sessionId, providerId, activeProject?.name ?? "");
 
   const handleNewSession = useCallback(() => {
     // Open a new chat tab (separate tab, not replace current)
+    const projectName = activeProject?.name ?? null;
     useTabStore.getState().openTab({
       type: "chat",
       title: "AI Chat",
-      metadata: { projectName: metadata?.project },
+      metadata: { projectName },
+      projectId: projectName,
       closable: true,
     });
-  }, [metadata?.project]);
+  }, [activeProject?.name]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
     setSessionId(session.id);
@@ -51,9 +53,9 @@ export function ChatTab({ metadata }: ChatTabProps) {
       // Auto-create session on first message
       if (!sessionId) {
         try {
-          const session = await api.post<Session>("/api/chat/sessions", {
+          const pName = activeProject?.name ?? (metadata?.project as string) ?? "";
+          const session = await api.post<Session>(`${projectUrl(pName)}/chat/sessions`, {
             providerId,
-            projectName: metadata?.project as string,
             title: content.slice(0, 50),
           });
           setSessionId(session.id);
@@ -92,7 +94,7 @@ export function ChatTab({ metadata }: ChatTabProps) {
             currentSessionId={sessionId}
             onSelectSession={handleSelectSession}
             onNewSession={handleNewSession}
-            projectDir={activeProject?.path}
+            projectName={activeProject?.name}
           />
           <div className="flex items-center gap-2">
             {isConnected && (

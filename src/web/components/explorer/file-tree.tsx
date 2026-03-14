@@ -77,6 +77,7 @@ function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodePr
       type: "editor",
       title: node.name,
       metadata: { filePath: node.path, projectName },
+      projectId: projectName,
       closable: true,
     });
     onFileOpen?.();
@@ -222,6 +223,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
           file1,
           file2,
         },
+        projectId: activeProject!.name,
       });
       clearSelection();
       return;

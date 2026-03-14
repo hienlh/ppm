@@ -37,6 +37,7 @@ export function ProjectList() {
       type: "terminal",
       title: `Terminal - ${project.name}`,
       metadata: { projectName: project.name },
+      projectId: project.name,
       closable: true,
     });
   }

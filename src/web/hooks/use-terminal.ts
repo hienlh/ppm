@@ -42,10 +42,10 @@ export function useTerminal(
     if (!term) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const projectParam = options.projectName ?? "";
+    const projectName = options.projectName ?? "";
     // Use actual session ID from server on reconnect (not "new")
     const sid = actualSessionId.current;
-    const url = `${protocol}//${window.location.host}/ws/terminal/${sid}${projectParam ? `?project=${encodeURIComponent(projectParam)}` : ""}`;
+    const url = `${protocol}//${window.location.host}/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

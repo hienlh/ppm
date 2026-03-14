@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 
 export interface FileNode {
   name: string;
@@ -35,7 +35,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const tree = await api.get<FileNode[]>(
-        `/api/files/tree/${encodeURIComponent(projectName)}?depth=3`,
+        `${projectUrl(projectName)}/files/tree?depth=3`,
       );
       set({ tree, loading: false });
     } catch (err) {

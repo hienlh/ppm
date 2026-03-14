@@ -8,7 +8,7 @@ import { css } from "@codemirror/lang-css";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import type { Extension } from "@codemirror/state";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { Loader2 } from "lucide-react";
 
@@ -63,7 +63,7 @@ export function CodeEditor({ metadata }: CodeEditorProps) {
 
     api
       .get<{ content: string; encoding: string }>(
-        `/api/files/read/${encodeURIComponent(projectName)}?path=${encodeURIComponent(filePath)}`,
+        `${projectUrl(projectName)}/files/read?path=${encodeURIComponent(filePath)}`,
       )
       .then((data) => {
         setContent(data.content);
@@ -94,7 +94,7 @@ export function CodeEditor({ metadata }: CodeEditorProps) {
     async (text: string) => {
       if (!filePath || !projectName) return;
       try {
-        await api.put(`/api/files/write/${encodeURIComponent(projectName)}`, {
+        await api.put(`${projectUrl(projectName)}/files/write`, {
           path: filePath,
           content: text,
         });
