@@ -241,34 +241,41 @@ export function GitGraph({ metadata }: GitGraphProps) {
   const svgWidth = (maxLane + 1) * LANE_WIDTH + LANE_WIDTH;
   const svgHeight = (data?.commits.length ?? 0) * ROW_HEIGHT;
 
-  // Resizable graph column
-  const [graphColWidth, setGraphColWidth] = useState(
-    () => Math.max(svgWidth, 60),
-  );
+  // Resizable graph column — default: 6 lanes mobile, 10 lanes desktop
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+  const defaultWidth = (isMobile ? 6 : 10) * LANE_WIDTH + LANE_WIDTH;
+  const [graphColWidth, setGraphColWidth] = useState(defaultWidth);
   const isDragging = useRef(false);
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
+
+  const handleDragStart = useCallback((startX: number) => {
     isDragging.current = true;
-    const startX = e.clientX;
     const startW = graphColWidth;
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: MouseEvent | TouchEvent) => {
       if (!isDragging.current) return;
-      setGraphColWidth(Math.max(40, startW + ev.clientX - startX));
+      const clientX = "touches" in ev ? ev.touches[0]!.clientX : ev.clientX;
+      setGraphColWidth(Math.max(40, startW + clientX - startX));
     };
     const onUp = () => {
       isDragging.current = false;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
   }, [graphColWidth]);
 
-  // Update default width when lanes change
-  useEffect(() => {
-    const needed = (maxLane + 1) * LANE_WIDTH + LANE_WIDTH;
-    if (needed > graphColWidth) setGraphColWidth(needed);
-  }, [maxLane]);
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    handleDragStart(e.clientX);
+  }, [handleDragStart]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    handleDragStart(e.touches[0]!.clientX);
+  }, [handleDragStart]);
 
   if (!projectName) {
     return (
@@ -337,9 +344,9 @@ export function GitGraph({ metadata }: GitGraphProps) {
         </div>
       )}
 
-      {/* Scrollable graph + commit list */}
-      <div className="flex-1 overflow-auto">
-        <div className="flex min-w-max" style={{ height: `${svgHeight}px` }}>
+      {/* Scrollable graph + commit list: mobile scrolls both, desktop only vertical */}
+      <div className="flex-1 overflow-y-auto overflow-x-auto md:overflow-x-hidden">
+        <div className="flex min-w-max md:min-w-0" style={{ height: `${svgHeight}px` }}>
           {/* Graph SVG column — sticky left with resize handle */}
           <div
             className="sticky left-0 z-10 shrink-0 bg-background"
@@ -373,12 +380,13 @@ export function GitGraph({ metadata }: GitGraphProps) {
                 );
               })}
             </svg>
-            {/* Drag handle */}
+            {/* Drag handle — always visible on mobile, hover on desktop */}
             <div
-              className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-primary/20 flex items-center justify-center"
+              className="absolute top-0 right-0 w-3 md:w-2 h-full cursor-col-resize hover:bg-primary/20 flex items-center justify-center bg-primary/10 md:bg-transparent"
               onMouseDown={handleMouseDown}
+              onTouchStart={handleTouchStart}
             >
-              <GripVertical className="size-3 text-muted-foreground opacity-0 hover:opacity-100" />
+              <GripVertical className="size-3 text-muted-foreground md:opacity-0 md:hover:opacity-100" />
             </div>
           </div>
 
