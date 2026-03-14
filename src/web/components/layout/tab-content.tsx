@@ -54,10 +54,19 @@ function TabView({ tab }: { tab: Tab }) {
         />
       );
     case "git-graph":
-      return <ComingSoon label="Git Graph" />;
+      return <GitGraph projectPath={meta.projectPath as string} />;
     case "git-status":
-      return <ComingSoon label="Git Status" />;
+      return <GitStatusPanel projectPath={meta.projectPath as string} />;
     case "git-diff":
+      if (meta.projectPath) {
+        return (
+          <GitDiffTab
+            projectPath={meta.projectPath as string}
+            filePath={meta.filePath as string | undefined}
+            ref={meta.ref as string | undefined}
+          />
+        );
+      }
       return (
         <DiffViewer
           leftPath={meta.leftPath as string}
