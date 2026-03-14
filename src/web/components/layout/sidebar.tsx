@@ -3,6 +3,7 @@ import { useProjectStore } from "../../stores/project.store";
 import { useSettingsStore } from "../../stores/settings.store";
 import { cn } from "../../lib/utils";
 import { ScrollArea } from "../ui/scroll-area";
+import { FileTreeLoader } from "../explorer/file-tree-loader";
 
 function ProjectsSidebarContent() {
   const { projects, activeProject, loading, setActiveProject } =
@@ -59,18 +60,6 @@ function ProjectsSidebarContent() {
   );
 }
 
-function FilePlaceholder({ name }: { name: string }) {
-  return (
-    <div className="flex flex-col gap-0.5 p-2">
-      <div className="px-2 py-1 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-        {name}
-      </div>
-      <div className="flex flex-col items-center justify-center h-20 text-muted-foreground text-xs">
-        File tree coming soon
-      </div>
-    </div>
-  );
-}
 
 export function Sidebar() {
   const { sidebarOpen } = useSettingsStore();
@@ -87,7 +76,7 @@ export function Sidebar() {
       </div>
       <ScrollArea className="flex-1">
         {activeProject ? (
-          <FilePlaceholder name={activeProject.name} />
+          <FileTreeLoader projectName={activeProject.name} projectPath={activeProject.path} />
         ) : (
           <ProjectsSidebarContent />
         )}

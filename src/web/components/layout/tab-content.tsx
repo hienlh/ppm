@@ -1,10 +1,22 @@
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import { useTabStore } from "../../stores/tab.store";
-import type { TabType } from "../../stores/tab.store";
+import type { Tab, TabType } from "../../stores/tab.store";
 
 const ProjectList = lazy(() =>
   import("../projects/project-list").then((m) => ({ default: m.ProjectList })),
+);
+const CodeEditor = lazy(() =>
+  import("../editor/code-editor").then((m) => ({ default: m.CodeEditor })),
+);
+const DiffViewer = lazy(() =>
+  import("../editor/diff-viewer").then((m) => ({ default: m.DiffViewer })),
+);
+const TerminalTab = lazy(() =>
+  import("../terminal/terminal-tab").then((m) => ({ default: m.TerminalTab })),
+);
+const ChatTab = lazy(() =>
+  import("../chat/chat-tab").then((m) => ({ default: m.ChatTab })),
 );
 
 function ComingSoon({ label }: { label: string }) {
@@ -15,22 +27,33 @@ function ComingSoon({ label }: { label: string }) {
   );
 }
 
-function TabView({ type }: { type: TabType }) {
-  switch (type) {
+function TabView({ tab }: { tab: Tab }) {
+  const meta = tab.metadata ?? {};
+  switch (tab.type) {
     case "projects":
       return <ProjectList />;
     case "terminal":
-      return <ComingSoon label="Terminal" />;
+      return <TerminalTab terminalId={tab.id} />;
     case "chat":
-      return <ComingSoon label="Chat" />;
+      return <ChatTab sessionId={meta.sessionId as string | undefined} />;
     case "editor":
-      return <ComingSoon label="Editor" />;
+      return (
+        <CodeEditor
+          filePath={meta.filePath as string}
+          tabId={tab.id}
+        />
+      );
     case "git-graph":
       return <ComingSoon label="Git Graph" />;
     case "git-status":
       return <ComingSoon label="Git Status" />;
     case "git-diff":
-      return <ComingSoon label="Git Diff" />;
+      return (
+        <DiffViewer
+          leftPath={meta.leftPath as string}
+          rightPath={meta.rightPath as string}
+        />
+      );
     case "settings":
       return <ComingSoon label="Settings" />;
     default:
@@ -61,7 +84,7 @@ export function TabContent() {
   return (
     <div className="flex-1 overflow-hidden h-full">
       <Suspense fallback={<LoadingSpinner />}>
-        <TabView type={activeTab.type} />
+        <TabView tab={activeTab} />
       </Suspense>
     </div>
   );

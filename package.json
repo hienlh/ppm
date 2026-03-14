@@ -54,6 +54,7 @@
     "hono": "^4.12.8",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.577.0",
+    "node-pty": "^1.1.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
