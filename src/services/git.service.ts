@@ -98,6 +98,28 @@ class GitService {
     return git.diff(args);
   }
 
+  async diffStat(
+    projectPath: string,
+    ref1?: string,
+    ref2?: string,
+  ): Promise<Array<{ path: string; additions: number; deletions: number }>> {
+    const git = this.git(projectPath);
+    const args: string[] = ["--numstat"];
+    if (ref1) args.push(ref1);
+    if (ref2) args.push(ref2);
+    const raw = await git.diff(args);
+    const files: Array<{ path: string; additions: number; deletions: number }> = [];
+    for (const line of raw.trim().split("\n")) {
+      if (!line) continue;
+      const parts = line.split("\t");
+      const additions = parseInt(parts[0] ?? "0", 10) || 0;
+      const deletions = parseInt(parts[1] ?? "0", 10) || 0;
+      const path = parts[2] ?? "";
+      if (path) files.push({ path, additions, deletions });
+    }
+    return files;
+  }
+
   async fileDiff(
     projectPath: string,
     filePath: string,
