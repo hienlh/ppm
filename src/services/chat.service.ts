@@ -29,10 +29,14 @@ class ChatService {
     return provider.resumeSession(sessionId);
   }
 
-  async listSessions(providerId?: string): Promise<SessionInfo[]> {
+  async listSessions(providerId?: string, dir?: string): Promise<SessionInfo[]> {
     if (providerId) {
       const provider = providerRegistry.get(providerId);
       if (!provider) throw new Error(`Provider "${providerId}" not found`);
+      // Pass dir to providers that support it (SDK provider)
+      if (dir && "listSessionsByDir" in provider) {
+        return (provider as any).listSessionsByDir(dir);
+      }
       return provider.listSessions();
     }
     // Aggregate from all providers
@@ -40,8 +44,11 @@ class ChatService {
     for (const info of providerRegistry.list()) {
       const provider = providerRegistry.get(info.id);
       if (provider) {
-        const sessions = await provider.listSessions();
-        all.push(...sessions);
+        if (dir && "listSessionsByDir" in provider) {
+          all.push(...await (provider as any).listSessionsByDir(dir));
+        } else {
+          all.push(...await provider.listSessions());
+        }
       }
     }
     return all.sort(
@@ -77,21 +84,24 @@ class ChatService {
     for (const info of providerRegistry.list()) {
       const provider = providerRegistry.get(info.id);
       if (!provider) continue;
-      // Check in-memory sessions — providers store them
-      const sessions = (provider as any).sessions as Map<string, Session> | undefined;
+      const sessions = (provider as any).sessions as Map<string, unknown> | undefined;
       if (sessions?.has(sessionId)) {
-        return sessions.get(sessionId) ?? null;
+        const entry = sessions.get(sessionId);
+        // SDK provider stores {meta, sdk}, others store Session directly
+        if (entry && typeof entry === "object" && "meta" in entry) {
+          return (entry as { meta: Session }).meta;
+        }
+        return entry as Session ?? null;
       }
     }
     return null;
   }
 
-  getMessages(providerId: string, sessionId: string): ChatMessage[] {
+  async getMessages(providerId: string, sessionId: string): Promise<ChatMessage[]> {
     const provider = providerRegistry.get(providerId);
     if (!provider) return [];
-    // Only MockProvider has getMessages for now
-    if (provider instanceof MockProvider) {
-      return provider.getMessages(sessionId);
+    if ("getMessages" in provider && typeof (provider as any).getMessages === "function") {
+      return await (provider as any).getMessages(sessionId);
     }
     return [];
   }

@@ -55,8 +55,16 @@ export function MobileNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-background border-t border-border z-40">
-      {/* Scrollable tab bar */}
+      {/* Scrollable tab bar — + button on the left for one-handed use */}
       <div className="flex items-center h-12 overflow-x-auto">
+        {/* + button (left side — easy thumb reach) */}
+        <button
+          onClick={() => setShowMenu(!showMenu)}
+          className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
+        >
+          <Plus className="size-5" />
+        </button>
+
         {tabs.map((tab) => {
           const Icon = TAB_ICONS[tab.type];
           const isActive = tab.id === activeTabId;
@@ -89,19 +97,11 @@ export function MobileNav() {
             </button>
           );
         })}
-
-        {/* + button */}
-        <button
-          onClick={() => setShowMenu(!showMenu)}
-          className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
-        >
-          <Plus className="size-5" />
-        </button>
       </div>
 
-      {/* New tab popup menu */}
+      {/* New tab popup menu — opens upward from left */}
       {showMenu && (
-        <div className="absolute bottom-12 right-2 bg-surface border border-border rounded-lg shadow-lg py-1 z-50">
+        <div className="absolute bottom-12 left-2 bg-surface border border-border rounded-lg shadow-lg py-1 z-50">
           {NEW_TAB_OPTIONS.map((opt) => {
             const Icon = TAB_ICONS[opt.type];
             return (

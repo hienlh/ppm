@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react";
-import { Bot } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
+import { useTabStore } from "@/stores/tab-store";
+import { useProjectStore } from "@/stores/project-store";
 import { MessageList } from "./message-list";
 import { MessageInput } from "./message-input";
 import { SessionPicker } from "./session-picker";
@@ -16,8 +17,10 @@ export function ChatTab({ metadata }: ChatTabProps) {
     (metadata?.sessionId as string) ?? null,
   );
   const [providerId, setProviderId] = useState<string>(
-    (metadata?.providerId as string) ?? "claude",
+    (metadata?.providerId as string) ?? "claude-sdk",
   );
+
+  const activeProject = useProjectStore((s) => s.activeProject);
 
   const {
     messages,
@@ -26,20 +29,17 @@ export function ChatTab({ metadata }: ChatTabProps) {
     sendMessage,
     respondToApproval,
     isConnected,
-  } = useChat(sessionId);
+  } = useChat(sessionId, providerId);
 
-  const handleNewSession = useCallback(async () => {
-    try {
-      const session = await api.post<Session>("/api/chat/sessions", {
-        providerId,
-        projectName: metadata?.project as string,
-      });
-      setSessionId(session.id);
-      setProviderId(session.providerId);
-    } catch (e) {
-      console.error("Failed to create session:", e);
-    }
-  }, [providerId, metadata?.project]);
+  const handleNewSession = useCallback(() => {
+    // Open a new chat tab (separate tab, not replace current)
+    useTabStore.getState().openTab({
+      type: "chat",
+      title: "AI Chat",
+      metadata: { projectName: metadata?.project },
+      closable: true,
+    });
+  }, [metadata?.project]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
     setSessionId(session.id);
@@ -76,22 +76,6 @@ export function ChatTab({ metadata }: ChatTabProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background shrink-0">
-        <div className="flex items-center gap-2">
-          <Bot className="size-4 text-primary" />
-          <span className="text-sm font-medium text-text-primary">AI Chat</span>
-          {isConnected && (
-            <span className="size-2 rounded-full bg-green-500" title="Connected" />
-          )}
-        </div>
-        <SessionPicker
-          currentSessionId={sessionId}
-          onSelectSession={handleSelectSession}
-          onNewSession={handleNewSession}
-        />
-      </div>
-
       {/* Messages */}
       <MessageList
         messages={messages}
@@ -100,8 +84,26 @@ export function ChatTab({ metadata }: ChatTabProps) {
         isStreaming={isStreaming}
       />
 
-      {/* Input */}
-      <MessageInput onSend={handleSend} disabled={isStreaming} />
+      {/* Bottom toolbar: session picker (left) + connection status + input */}
+      <div className="border-t border-border bg-background shrink-0">
+        {/* Session bar */}
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/50">
+          <SessionPicker
+            currentSessionId={sessionId}
+            onSelectSession={handleSelectSession}
+            onNewSession={handleNewSession}
+            projectDir={activeProject?.path}
+          />
+          <div className="flex items-center gap-2">
+            {isConnected && (
+              <span className="size-2 rounded-full bg-green-500" title="Connected" />
+            )}
+            <span className="text-xs text-text-subtle">AI Chat</span>
+          </div>
+        </div>
+        {/* Input */}
+        <MessageInput onSend={handleSend} disabled={isStreaming} />
+      </div>
     </div>
   );
 }

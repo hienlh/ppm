@@ -136,3 +136,92 @@ body {
   outline: none !important;
   background-image: none !important;
 }
+
+/* Markdown content styling */
+.markdown-content p {
+  margin: 0.25rem 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.markdown-content p:first-child { margin-top: 0; }
+.markdown-content p:last-child { margin-bottom: 0; }
+
+.markdown-content h1 { font-size: 1rem; font-weight: 700; margin: 0.75rem 0 0.25rem; }
+.markdown-content h2 { font-size: 0.875rem; font-weight: 700; margin: 0.5rem 0 0.25rem; }
+.markdown-content h3 { font-size: 0.875rem; font-weight: 600; margin: 0.5rem 0 0.125rem; }
+
+.markdown-content pre {
+  overflow-x: auto;
+  border-radius: 6px;
+  background: var(--color-background);
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-border);
+  margin: 0.5rem 0;
+}
+
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.markdown-content :not(pre) > code {
+  background: var(--color-background);
+  padding: 0.125rem 0.25rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+}
+
+.markdown-content a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.markdown-content a:hover { text-decoration: underline; }
+
+.markdown-content ul { list-style-type: disc; padding-left: 1rem; margin: 0.25rem 0; }
+.markdown-content ol { list-style-type: decimal; padding-left: 1rem; margin: 0.25rem 0; }
+.markdown-content li { margin: 0.125rem 0; }
+
+.markdown-content blockquote {
+  border-left: 2px solid var(--color-border);
+  padding-left: 0.75rem;
+  margin: 0.25rem 0;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.markdown-content table {
+  width: 100%;
+  font-size: 0.75rem;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+.markdown-content th, .markdown-content td {
+  border: 1px solid var(--color-border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+.markdown-content th {
+  background: var(--color-background);
+  font-weight: 500;
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 0.5rem 0;
+}
+
+.markdown-content strong { font-weight: 600; }
+.markdown-content em { font-style: italic; }
+
+/* Streaming cursor blink animation */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 0.8s ease-in-out infinite;
+}
