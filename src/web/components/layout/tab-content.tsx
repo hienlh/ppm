@@ -55,9 +55,8 @@ function LoadingFallback() {
 
 export function TabContent() {
   const { tabs, activeTabId } = useTabStore();
-  const activeTab = tabs.find((t) => t.id === activeTabId);
 
-  if (!activeTab) {
+  if (tabs.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-text-secondary">
         <p>No tab open. Use the + button or bottom nav to open one.</p>
@@ -65,11 +64,22 @@ export function TabContent() {
     );
   }
 
-  const Component = TAB_COMPONENTS[activeTab.type];
-
   return (
-    <Suspense fallback={<LoadingFallback />}>
-      <Component metadata={activeTab.metadata} />
-    </Suspense>
+    <>
+      {tabs.map((tab) => {
+        const Component = TAB_COMPONENTS[tab.type];
+        const isActive = tab.id === activeTabId;
+        return (
+          <div
+            key={tab.id}
+            className={isActive ? "h-full w-full" : "hidden"}
+          >
+            <Suspense fallback={<LoadingFallback />}>
+              <Component metadata={tab.metadata} />
+            </Suspense>
+          </div>
+        );
+      })}
+    </>
   );
 }
