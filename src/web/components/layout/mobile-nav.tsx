@@ -6,6 +6,7 @@ import {
   Plus,
 } from "lucide-react";
 import { useTabStore, type TabType } from "../../stores/tab.store";
+import { useProjectStore } from "../../stores/project.store";
 import { cn } from "../../lib/utils";
 import {
   DropdownMenu,
@@ -35,14 +36,20 @@ const MORE_ITEMS: { type: TabType; label: string }[] = [
 
 export function MobileNav() {
   const { tabs, activeTabId, openTab } = useTabStore();
+  const { activeProject } = useProjectStore();
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
   const isActive = (type: TabType) => activeTab?.type === type;
 
+  const gitTypes = new Set<TabType>(["git-graph", "git-status", "git-diff"]);
+
   const handleNav = (type: TabType, label: string) => {
     const closable = type !== "projects";
-    openTab({ type, title: label, closable });
+    const metadata = gitTypes.has(type) && activeProject
+      ? { projectPath: activeProject.name }
+      : undefined;
+    openTab({ type, title: label, closable, metadata });
   };
 
   return (

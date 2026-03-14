@@ -118,7 +118,7 @@ export function TabBar() {
                 onClick={() => {
                   const gitTypes: TabType[] = ["git-graph", "git-status", "git-diff"];
                   const metadata = gitTypes.includes(opt.type) && activeProject
-                    ? { projectPath: activeProject.path }
+                    ? { projectPath: activeProject.name }
                     : undefined;
                   openTab({ type: opt.type, title: opt.label, closable: true, metadata });
                 }}
