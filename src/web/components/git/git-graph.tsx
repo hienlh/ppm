@@ -21,10 +21,10 @@ export function GitGraph({ projectPath }: Props) {
   useEffect(() => {
     setLoading(true);
     api
-      .get<{ ok: boolean; data: GitGraphData }>(
+      .get<GitGraphData>(
         `/api/git/graph/${encodeURIComponent(projectPath)}`,
       )
-      .then((res) => setData(res.data))
+      .then((res) => setData(res))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, [projectPath]);

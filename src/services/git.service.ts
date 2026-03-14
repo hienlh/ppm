@@ -159,7 +159,7 @@ export class GitService {
         body: "",
         authorName,
         authorEmail,
-        authorDate: authorTimestamp
+        authorDate: authorTimestamp && !isNaN(parseInt(authorTimestamp))
           ? new Date(parseInt(authorTimestamp) * 1000).toISOString()
           : "",
         parents,

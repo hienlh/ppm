@@ -18,8 +18,13 @@ export class FileService {
     return abs;
   }
 
-  getTree(projectPath: string, depth = 3): FileEntry[] {
-    const abs = this.assertAllowed(projectPath);
+  getTree(projectName: string, depth = 3): FileEntry[] {
+    const projects = this.config.get("projects");
+    const project = projects.find((p) => p.name === projectName);
+    if (!project) {
+      throw new Error(`Project not found: ${projectName}`);
+    }
+    const abs = resolve(project.path);
     return this._buildTree(abs, depth);
   }
 

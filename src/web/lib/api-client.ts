@@ -16,7 +16,14 @@ class ApiClient {
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
     const ct = res.headers.get("content-type") ?? "";
-    if (ct.includes("application/json")) return res.json() as Promise<T>;
+    if (ct.includes("application/json")) {
+      const json = await res.json();
+      // Unwrap { ok, data } envelope if present
+      if (json && typeof json === "object" && "ok" in json && "data" in json) {
+        return json.data as T;
+      }
+      return json as T;
+    }
     return undefined as unknown as T;
   }
 

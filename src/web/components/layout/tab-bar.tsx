@@ -11,6 +11,7 @@ import {
   Plus,
 } from "lucide-react";
 import { useTabStore, type TabType } from "../../stores/tab.store";
+import { useProjectStore } from "../../stores/project.store";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -44,6 +45,7 @@ const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
 
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab, openTab } = useTabStore();
+  const { activeProject } = useProjectStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -113,9 +115,13 @@ export function TabBar() {
             return (
               <DropdownMenuItem
                 key={opt.type}
-                onClick={() =>
-                  openTab({ type: opt.type, title: opt.label, closable: true })
-                }
+                onClick={() => {
+                  const gitTypes: TabType[] = ["git-graph", "git-status", "git-diff"];
+                  const metadata = gitTypes.includes(opt.type) && activeProject
+                    ? { projectPath: activeProject.path }
+                    : undefined;
+                  openTab({ type: opt.type, title: opt.label, closable: true, metadata });
+                }}
               >
                 <Icon className="size-4 mr-2" />
                 {opt.label}

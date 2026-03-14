@@ -42,7 +42,7 @@ export function ChatTab({ sessionId: initialSessionId }: ChatTabProps) {
     setLoadingSessions(true);
     api
       .get<SessionInfo[]>("/api/chat/sessions")
-      .then(setSessions)
+      .then((data) => setSessions(Array.isArray(data) ? data : []))
       .catch(console.error)
       .finally(() => setLoadingSessions(false));
   };

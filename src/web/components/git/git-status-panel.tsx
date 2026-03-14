@@ -22,10 +22,10 @@ export function GitStatusPanel({ projectPath }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get<{ ok: boolean; data: GitStatus }>(
+      const res = await api.get<GitStatus>(
         `/api/git/status/${encodeURIComponent(projectPath)}`,
       );
-      setStatus(res.data);
+      setStatus(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
