@@ -15,18 +15,23 @@ export const terminalWsHandlers = {
   open(ws: ServerWebSocket<TerminalWsData>) {
     const { projectPath, terminalService } = ws.data;
 
-    let session = terminalService.get(ws.data.sessionId);
-    if (!session) {
-      session = terminalService.create({ projectPath });
+    try {
+      let session = terminalService.get(ws.data.sessionId);
+      if (!session) {
+        session = terminalService.create({ projectPath });
+      }
+
+      terminalService.cancelIdleCleanup(session.id);
+      ws.data.sessionId = session.id;
+
+      const remove = terminalService.onData(session.id, (data) => {
+        ws.send(data);
+      });
+      ws.data.removeDataHandler = remove;
+    } catch (err) {
+      console.error("Failed to create terminal session:", err);
+      ws.close(1011, "Terminal spawn failed");
     }
-
-    terminalService.cancelIdleCleanup(session.id);
-    ws.data.sessionId = session.id;
-
-    const remove = terminalService.onData(session.id, (data) => {
-      ws.send(data);
-    });
-    ws.data.removeDataHandler = remove;
   },
 
   message(ws: ServerWebSocket<TerminalWsData>, msg: string | Buffer) {
