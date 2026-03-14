@@ -58,24 +58,57 @@ class GitService {
 ```
 
 ### Graph Data Extraction
+
+**[V2 FIX]** Do NOT parse `git log --format` manually with newline separators. Use simple-git's built-in `.log()` which returns correctly typed `LogResult`:
+
 ```typescript
-async graphData(projectPath: string, maxCount = 500): Promise<GitGraphData> {
+async graphData(projectPath: string, maxCount = 200): Promise<GitGraphData> {
   const git = simpleGit(projectPath);
 
-  // Custom format similar to vscode-git-graph's dataSource.ts
+  // Use simple-git's built-in log() — handles parsing correctly
   const log = await git.log({
     '--all': null,
-    '--max-count': maxCount,
-    '--format': '%H%n%P%n%an%n%ae%n%at%n%s', // hash, parents, author, email, timestamp, subject
+    maxCount,
   });
 
-  const branches = await git.branch(['-a', '--no-color']);
-  const tags = await git.tags();
+  // log.all is already typed: { hash, date, message, author_name, author_email, refs, body, diff? }[]
+  const commits: GitCommit[] = log.all.map(c => ({
+    hash: c.hash,
+    abbreviatedHash: c.hash.slice(0, 7),
+    subject: c.message,
+    body: c.body,
+    authorName: c.author_name,
+    authorEmail: c.author_email,
+    authorDate: c.date,
+    parents: [], // Need separate call or parse refs
+    refs: c.refs ? c.refs.split(', ').filter(Boolean) : [],
+  }));
 
-  // Lane allocation algorithm (server-side for performance)
-  const lanes = allocateLanes(log.all);
+  // Get parent hashes via raw format (safe: one field per line)
+  const parentLog = await git.raw([
+    'log', '--all', `--max-count=${maxCount}`,
+    '--format=%H %P'  // hash + space-separated parents on ONE line
+  ]);
+  const parentMap = new Map<string, string[]>();
+  for (const line of parentLog.trim().split('\n')) {
+    const [hash, ...parents] = line.split(' ');
+    if (hash) parentMap.set(hash, parents.filter(Boolean));
+  }
+  for (const c of commits) {
+    c.parents = parentMap.get(c.hash) ?? [];
+  }
 
-  return { commits: log.all, branches, tags, lanes, HEAD: await git.revparse(['HEAD']) };
+  const branchSummary = await git.branch(['-a', '--no-color']);
+  const branches: GitBranch[] = Object.entries(branchSummary.branches).map(([name, info]) => ({
+    name,
+    current: info.current,
+    remote: name.startsWith('remotes/'),
+    commitHash: info.commit,
+    ahead: 0,
+    behind: 0,
+  }));
+
+  return { commits, branches };
 }
 ```
 

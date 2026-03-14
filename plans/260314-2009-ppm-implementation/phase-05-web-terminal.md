@@ -18,6 +18,9 @@ src/server/ws/terminal.ts
 ```
 
 ### Terminal Service
+
+**[V2 FIX]** Use `Bun.spawn()` instead of node-pty. node-pty's `posix_spawnp` crashes the entire Bun process.
+
 ```typescript
 class TerminalService {
   private sessions: Map<string, TerminalSession>;
@@ -26,21 +29,27 @@ class TerminalService {
   get(id: string): TerminalSession | undefined
   kill(id: string): void
   list(): TerminalSessionInfo[]
-  resize(id: string, cols: number, rows: number): void
   write(id: string, data: string): void
   onData(id: string, handler: (data: string) => void): void
 }
 
-// Uses node-pty
-import * as pty from 'node-pty';
+// Uses Bun.spawn with stdin/stdout pipes
+// NOTE: Bun.spawn doesn't support PTY resize natively.
+// Alternative: use `script -q /dev/null <shell>` wrapper for PTY allocation
+// or try node-pty with mandatory try-catch around spawn
 
 interface TerminalSession {
   id: string;
-  pty: pty.IPty;
+  proc: Subprocess;
   projectPath: string;
   createdAt: Date;
 }
 ```
+
+**Approach options (pick one):**
+1. **Bun.spawn + `script` wrapper:** `Bun.spawn(["script", "-q", "/dev/null", shell])` — allocates a real PTY on macOS/Linux without node-pty
+2. **node-pty with try-catch:** Keep node-pty but ALWAYS wrap `pty.spawn()` in try-catch so server doesn't crash. Accept that it may fail under `bun build --compile`
+3. **Bun.spawn raw:** No PTY, just raw pipes. Shell works but no terminal features (colors, cursor). Simpler but less capable
 
 ### WebSocket Handler
 ```

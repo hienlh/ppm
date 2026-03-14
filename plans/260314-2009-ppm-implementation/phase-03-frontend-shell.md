@@ -135,15 +135,40 @@ class WsClient {
 
 ### 7. Mobile Responsiveness
 - Tailwind breakpoints: `sm:`, `md:`, `lg:`
-- Sidebar: hidden on mobile, toggle via hamburger menu
 - Tab bar: bottom on mobile (`fixed bottom-0`), top on desktop
 - Touch: swipe left/right to switch tabs (nice-to-have)
+
+### 8. Mobile Drawer Sidebar (`src/web/components/layout/mobile-drawer.tsx`)
+
+**[V2 FIX]** Do NOT use `hidden md:flex` toggle for mobile sidebar. Instead:
+- Absolute positioned overlay with backdrop (`fixed inset-0 z-50`)
+- Slide-in from left (`translate-x`) with animation
+- Click backdrop to close
+- Separate from desktop sidebar — desktop uses `hidden md:flex`, mobile uses drawer
+- Hamburger button opens drawer, not toggles sidebar visibility
+
+### 9. API Client Auto-Unwrap (`src/web/lib/api-client.ts`)
+
+**[V2 FIX]** Api-client must auto-unwrap `{ok, data}` envelope:
+```typescript
+async get<T>(path: string): Promise<T> {
+  const res = await fetch(`${this.baseUrl}${path}`, { headers });
+  const json = await res.json();
+  if (json.ok === false) throw new Error(json.error || `HTTP ${res.status}`);
+  return json.data as T;  // Return unwrapped data directly
+}
+```
+
+### 10. Tab Metadata for Git Tabs
+
+**[V2 FIX]** Both tab-bar "+" dropdown AND mobile-nav MUST pass `{ projectName: activeProject.name }` when opening git-graph, git-status, git-diff tabs. Without this metadata, git components get `undefined` project.
 
 ## Success Criteria
 
 - [ ] App loads in browser with tab bar + sidebar
 - [ ] Can open/close/switch tabs
 - [ ] Project list fetches from API and displays
-- [ ] Mobile layout works (bottom nav, collapsible sidebar)
-- [ ] API client works with auth token
+- [ ] Mobile layout works (bottom nav, drawer sidebar slides in on hamburger)
+- [ ] API client auto-unwraps envelope — components get raw data
 - [ ] WebSocket client connects and auto-reconnects
+- [ ] Git tabs opened from BOTH tab-bar AND mobile-nav include projectName metadata

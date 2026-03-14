@@ -98,6 +98,22 @@ function resolveProject(options: { project?: string }): Project {
 }
 ```
 
+### 7. Shared Project Resolver (`src/server/helpers/resolve-project.ts`)
+
+**[V2 FIX]** All API routes must resolve project by NAME first, fallback to path:
+```typescript
+export function resolveProjectPath(nameOrPath: string): string {
+  const projects = configService.get("projects");
+  const byName = projects.find(p => p.name === nameOrPath);
+  if (byName) return resolve(byName.path);
+  const abs = resolve(nameOrPath);
+  const allowed = projects.some(p => abs === p.path || abs.startsWith(p.path + "/"));
+  if (!allowed) throw new Error(`Project not found: ${nameOrPath}`);
+  return abs;
+}
+```
+Import this in every route file (files.ts, git.ts, projects.ts).
+
 ## Success Criteria
 
 - [ ] `ppm init` scans current dir, creates config file
@@ -106,3 +122,4 @@ function resolveProject(options: { project?: string }): Project {
 - [ ] `GET /api/projects` returns project list (with auth token)
 - [ ] 401 returned without valid token
 - [ ] `ppm open` opens browser
+- [ ] `resolveProjectPath("ppm")` returns the correct filesystem path

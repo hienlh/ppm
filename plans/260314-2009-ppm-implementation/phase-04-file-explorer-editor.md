@@ -40,6 +40,9 @@ interface FileNode {
 ```
 
 ### API Routes
+
+**[V2 FIX]** `:project` param is project NAME (e.g. "ppm"), not path. Use `resolveProjectPath()` from `src/server/helpers/resolve-project.ts`.
+
 ```
 GET    /api/files/tree/:project?depth=3     → FileNode[]
 GET    /api/files/read?path=...              → { content, encoding }
@@ -49,6 +52,8 @@ DELETE /api/files/delete                     → { path }
 POST   /api/files/rename                     → { oldPath, newPath }
 POST   /api/files/move                       → { source, destination }
 ```
+
+`getTree(projectName)` accepts project name, looks it up via resolveProjectPath internally.
 
 ### Security
 - Validate all paths are within registered project directories
