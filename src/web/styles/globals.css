@@ -127,3 +127,12 @@ body {
 body {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* Diff viewer: background highlight instead of underline for changed chars */
+[class*="cm-changedText"] {
+  text-decoration: none !important;
+  text-decoration-line: none !important;
+  border-bottom: none !important;
+  outline: none !important;
+  background-image: none !important;
+}
