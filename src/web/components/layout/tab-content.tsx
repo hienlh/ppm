@@ -3,6 +3,16 @@ import { Loader2 } from "lucide-react";
 import { useTabStore } from "../../stores/tab.store";
 import type { Tab, TabType } from "../../stores/tab.store";
 
+const GitGraph = lazy(() =>
+  import("../git/git-graph").then((m) => ({ default: m.GitGraph })),
+);
+const GitStatusPanel = lazy(() =>
+  import("../git/git-status-panel").then((m) => ({ default: m.GitStatusPanel })),
+);
+const GitDiffTab = lazy(() =>
+  import("../git/git-diff-tab").then((m) => ({ default: m.GitDiffTab })),
+);
+
 const ProjectList = lazy(() =>
   import("../projects/project-list").then((m) => ({ default: m.ProjectList })),
 );

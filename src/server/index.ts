@@ -9,6 +9,7 @@ import { configService } from "../services/config.service.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { createProjectRoutes } from "./routes/projects.ts";
 import { createFileRoutes } from "./routes/files.ts";
+import { createGitRoutes } from "./routes/git.ts";
 import { createStaticRoutes } from "./routes/static.ts";
 import { terminalWsHandlers } from "./ws/terminal.ts";
 import type { TerminalWsData } from "./ws/terminal.ts";
@@ -25,6 +26,7 @@ export function startServer(config: PpmConfig): { port: number; stop: () => void
   app.use("/api/*", createAuthMiddleware(config));
   app.route("/api/projects", createProjectRoutes(projectService));
   app.route("/api/files", createFileRoutes(fileService));
+  app.route("/api/git", createGitRoutes());
   app.route("/", createStaticRoutes());
 
   const server = Bun.serve<WsData>({
