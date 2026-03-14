@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   RefreshCw,
   Loader2,
@@ -11,6 +11,7 @@ import {
   ExternalLink,
   RotateCcw,
   CherryIcon,
+  GripVertical,
 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -220,9 +221,10 @@ export function GitGraph({ metadata }: GitGraphProps) {
           // Same lane: straight line
           d = `M ${x1} ${y1} L ${x2} ${y2}`;
         } else {
-          // Different lane: quadratic bezier
-          const midY = (y1 + y2) / 2;
-          d = `M ${x1} ${y1} Q ${x1} ${midY} ${x2} ${midY} Q ${x2} ${midY} ${x2} ${y2}`;
+          // Different lane: curve at commit, then straight down to parent
+          // Short curve from child node to parent's lane, then vertical to parent
+          const curveEnd = y1 + ROW_HEIGHT;
+          d = `M ${x1} ${y1} C ${x1} ${curveEnd} ${x2} ${y1} ${x2} ${curveEnd} L ${x2} ${y2}`;
         }
         // Use parent color for merge lines, commit color for first parent
         const lineColor = commit.parents.indexOf(parentHash) === 0 ? color : parentColor;
@@ -234,6 +236,35 @@ export function GitGraph({ metadata }: GitGraphProps) {
 
   const svgWidth = (maxLane + 1) * LANE_WIDTH + LANE_WIDTH;
   const svgHeight = (data?.commits.length ?? 0) * ROW_HEIGHT;
+
+  // Resizable graph column
+  const [graphColWidth, setGraphColWidth] = useState(
+    () => Math.max(svgWidth, 60),
+  );
+  const isDragging = useRef(false);
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    const startX = e.clientX;
+    const startW = graphColWidth;
+    const onMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return;
+      setGraphColWidth(Math.max(40, startW + ev.clientX - startX));
+    };
+    const onUp = () => {
+      isDragging.current = false;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [graphColWidth]);
+
+  // Update default width when lanes change
+  useEffect(() => {
+    const needed = (maxLane + 1) * LANE_WIDTH + LANE_WIDTH;
+    if (needed > graphColWidth) setGraphColWidth(needed);
+  }, [maxLane]);
 
   if (!projectName) {
     return (
@@ -302,157 +333,150 @@ export function GitGraph({ metadata }: GitGraphProps) {
         </div>
       )}
 
-      <ScrollArea className="flex-1">
-        <div className="min-w-[500px]">
-          {data?.commits.map((commit, idx) => {
-            const lane = laneMap.get(commit.hash) ?? 0;
-            const color = LANE_COLORS[lane % LANE_COLORS.length]!;
-            const labels = commitLabels.get(commit.hash) ?? [];
-            const branchLabels = labels.filter((l) => l.type === "branch");
-            const tagLabels = labels.filter((l) => l.type === "tag");
+      {/* Scrollable graph + commit list */}
+      <div className="flex-1 overflow-auto">
+        <div className="flex min-w-max" style={{ height: `${svgHeight}px` }}>
+          {/* Graph SVG column — sticky left with resize handle */}
+          <div
+            className="sticky left-0 z-10 shrink-0 bg-background"
+            style={{ width: `${graphColWidth}px` }}
+          >
+            <svg width={graphColWidth} height={svgHeight}>
+              {svgPaths.map((p, i) => (
+                <path
+                  key={i}
+                  d={p.d}
+                  stroke={p.color}
+                  strokeWidth={2}
+                  fill="none"
+                />
+              ))}
+              {data?.commits.map((c, ci) => {
+                const cLane = laneMap.get(c.hash) ?? 0;
+                const cx = cLane * LANE_WIDTH + LANE_WIDTH / 2;
+                const cy = ci * ROW_HEIGHT + ROW_HEIGHT / 2;
+                const cColor = LANE_COLORS[cLane % LANE_COLORS.length]!;
+                return (
+                  <circle
+                    key={c.hash}
+                    cx={cx}
+                    cy={cy}
+                    r={NODE_RADIUS}
+                    fill={cColor}
+                    stroke="#0f1419"
+                    strokeWidth={2}
+                  />
+                );
+              })}
+            </svg>
+            {/* Drag handle */}
+            <div
+              className="absolute top-0 right-0 w-2 h-full cursor-col-resize hover:bg-primary/20 flex items-center justify-center"
+              onMouseDown={handleMouseDown}
+            >
+              <GripVertical className="size-3 text-muted-foreground opacity-0 hover:opacity-100" />
+            </div>
+          </div>
 
-            return (
-              <ContextMenu key={commit.hash}>
-                <ContextMenuTrigger asChild>
-                  <div
-                    className="flex items-center hover:bg-muted/50 cursor-default text-sm border-b border-border/30"
-                    style={{ height: `${ROW_HEIGHT}px` }}
-                  >
-                    {/* SVG graph column */}
+          {/* Commit rows */}
+          <div className="flex-1 min-w-[400px]">
+            {data?.commits.map((commit, idx) => {
+              const lane = laneMap.get(commit.hash) ?? 0;
+              const color = LANE_COLORS[lane % LANE_COLORS.length]!;
+              const labels = commitLabels.get(commit.hash) ?? [];
+              const branchLabels = labels.filter((l) => l.type === "branch");
+              const tagLabels = labels.filter((l) => l.type === "tag");
+
+              return (
+                <ContextMenu key={commit.hash}>
+                  <ContextMenuTrigger asChild>
                     <div
-                      className="shrink-0 relative"
-                      style={{ width: `${Math.max(svgWidth, 60)}px`, height: `${ROW_HEIGHT}px` }}
+                      className="flex items-center hover:bg-muted/50 cursor-default text-sm border-b border-border/30"
+                      style={{ height: `${ROW_HEIGHT}px` }}
                     >
-                      <svg
-                        width={Math.max(svgWidth, 60)}
-                        height={svgHeight}
-                        className="absolute top-0 left-0 pointer-events-none"
-                        style={{ marginTop: `-${idx * ROW_HEIGHT}px` }}
-                      >
-                        {/* Render all paths (only visible portion matters via overflow hidden) */}
-                        {svgPaths.map((p, i) => (
-                          <path
-                            key={i}
-                            d={p.d}
-                            stroke={p.color}
-                            strokeWidth={2}
-                            fill="none"
+                      <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
+                        <span className="font-mono text-xs text-muted-foreground w-14 shrink-0">
+                          {commit.abbreviatedHash}
+                        </span>
+                        {branchLabels.map((label) => (
+                          <BranchLabel
+                            key={`branch-${label.name}`}
+                            label={label}
+                            color={color}
+                            currentBranch={currentBranch}
+                            onCheckout={handleCheckout}
+                            onMerge={handleMerge}
+                            onPush={handlePushBranch}
+                            onCreatePr={handleCreatePr}
+                            onDelete={handleDeleteBranch}
                           />
                         ))}
-                        {/* Render all commit nodes */}
-                        {data?.commits.map((c, ci) => {
-                          const cLane = laneMap.get(c.hash) ?? 0;
-                          const cx = cLane * LANE_WIDTH + LANE_WIDTH / 2;
-                          const cy = ci * ROW_HEIGHT + ROW_HEIGHT / 2;
-                          const cColor = LANE_COLORS[cLane % LANE_COLORS.length]!;
-                          return (
-                            <circle
-                              key={c.hash}
-                              cx={cx}
-                              cy={cy}
-                              r={NODE_RADIUS}
-                              fill={cColor}
-                              stroke="#1a1a2e"
-                              strokeWidth={2}
-                            />
-                          );
-                        })}
-                      </svg>
-                    </div>
-
-                    {/* Text info */}
-                    <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
-                      {/* Hash */}
-                      <span className="font-mono text-xs text-muted-foreground w-14 shrink-0">
-                        {commit.abbreviatedHash}
-                      </span>
-
-                      {/* Branch labels */}
-                      {branchLabels.map((label) => (
-                        <BranchLabel
-                          key={`branch-${label.name}`}
-                          label={label}
-                          color={color}
-                          currentBranch={currentBranch}
-                          onCheckout={handleCheckout}
-                          onMerge={handleMerge}
-                          onPush={handlePushBranch}
-                          onCreatePr={handleCreatePr}
-                          onDelete={handleDeleteBranch}
-                        />
-                      ))}
-
-                      {/* Tag labels */}
-                      {tagLabels.map((label) => (
-                        <span
-                          key={`tag-${label.name}`}
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 bg-amber-500/20 text-amber-500 border border-amber-500/30"
-                        >
-                          <Tag className="size-2.5" />
-                          {label.name}
+                        {tagLabels.map((label) => (
+                          <span
+                            key={`tag-${label.name}`}
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 bg-amber-500/20 text-amber-500 border border-amber-500/30"
+                          >
+                            <Tag className="size-2.5" />
+                            {label.name}
+                          </span>
+                        ))}
+                        <span className="flex-1 truncate">{commit.subject}</span>
+                        <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
+                          {commit.authorName}
                         </span>
-                      ))}
-
-                      {/* Subject */}
-                      <span className="flex-1 truncate">{commit.subject}</span>
-
-                      {/* Author + date */}
-                      <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
-                        {commit.authorName}
-                      </span>
-                      <span className="text-xs text-muted-foreground shrink-0 w-14 text-right">
-                        {relativeDate(commit.authorDate)}
-                      </span>
+                        <span className="text-xs text-muted-foreground shrink-0 w-14 text-right">
+                          {relativeDate(commit.authorDate)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                </ContextMenuTrigger>
+                  </ContextMenuTrigger>
 
-                {/* Commit context menu */}
-                <ContextMenuContent>
-                  <ContextMenuItem onClick={() => handleCheckout(commit.hash)}>
-                    Checkout
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => {
-                      setDialogState({ type: "branch", hash: commit.hash });
-                      setInputValue("");
-                    }}
-                  >
-                    <GitBranch className="size-3" />
-                    Create Branch...
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem onClick={() => handleCherryPick(commit.hash)}>
-                    <CherryIcon className="size-3" />
-                    Cherry Pick
-                  </ContextMenuItem>
-                  <ContextMenuItem onClick={() => handleRevert(commit.hash)}>
-                    <RotateCcw className="size-3" />
-                    Revert
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => {
-                      setDialogState({ type: "tag", hash: commit.hash });
-                      setInputValue("");
-                    }}
-                  >
-                    <Tag className="size-3" />
-                    Create Tag...
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem onClick={() => openDiffForCommit(commit)}>
-                    View Diff
-                  </ContextMenuItem>
-                  <ContextMenuItem onClick={() => copyHash(commit.hash)}>
-                    <Copy className="size-3" />
-                    Copy Hash
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
-            );
-          })}
+                  <ContextMenuContent>
+                    <ContextMenuItem onClick={() => handleCheckout(commit.hash)}>
+                      Checkout
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => {
+                        setDialogState({ type: "branch", hash: commit.hash });
+                        setInputValue("");
+                      }}
+                    >
+                      <GitBranch className="size-3" />
+                      Create Branch...
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => handleCherryPick(commit.hash)}>
+                      <CherryIcon className="size-3" />
+                      Cherry Pick
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => handleRevert(commit.hash)}>
+                      <RotateCcw className="size-3" />
+                      Revert
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => {
+                        setDialogState({ type: "tag", hash: commit.hash });
+                        setInputValue("");
+                      }}
+                    >
+                      <Tag className="size-3" />
+                      Create Tag...
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => openDiffForCommit(commit)}>
+                      View Diff
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => copyHash(commit.hash)}>
+                      <Copy className="size-3" />
+                      Copy Hash
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                </ContextMenu>
+              );
+            })}
+          </div>
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Create Branch/Tag Dialog */}
       <Dialog
