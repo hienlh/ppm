@@ -143,11 +143,14 @@ export function GitGraph({ metadata }: GitGraphProps) {
     setLoadingDetail(true);
     try {
       const parent = commit.parents[0] ?? "";
+      // For root commits (no parent), diff against empty tree
+      const ref1Param = parent ? `ref1=${encodeURIComponent(parent)}&` : "";
       const files = await api.get<Array<{ path: string; additions: number; deletions: number }>>(
-        `/api/git/diff-stat/${encodeURIComponent(projectName!)}?ref1=${parent}&ref2=${commit.hash}`,
+        `/api/git/diff-stat/${encodeURIComponent(projectName!)}?${ref1Param}ref2=${encodeURIComponent(commit.hash)}`,
       );
       setCommitFiles(Array.isArray(files) ? files : []);
-    } catch {
+    } catch (e) {
+      console.error("diff-stat error:", e);
       setCommitFiles([]);
     } finally {
       setLoadingDetail(false);
