@@ -28,6 +28,7 @@ export function useTerminal(
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const actualSessionId = useRef(sessionId); // Track server-assigned session ID
+  const initialized = useRef(false); // Guard against StrictMode double-mount
 
   const sendResize = useCallback(() => {
     const term = termRef.current;
@@ -105,6 +106,10 @@ export function useTerminal(
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    // StrictMode guard: skip second mount if already initialized
+    if (initialized.current) return;
+    initialized.current = true;
 
     const term = new Terminal({
       cursorBlink: true,
