@@ -1,5 +1,5 @@
 ---
-status: pending
+status: in-progress
 created: 2026-03-14
 slug: ppm-implementation
 ---
@@ -30,16 +30,16 @@ Tech: Bun + Hono (backend), React 19 + Vite + Tailwind + shadcn/ui (frontend).
 
 | # | Phase | Owner | Depends | Status |
 |---|---|---|---|---|
-| 1 | [Project Skeleton + Shared Types](phase-01-project-skeleton.md) | Lead | — | pending |
-| 2 | [Backend Core (Server + CLI + Config)](phase-02-backend-core.md) | backend-dev | 1 | pending |
-| 3 | [Frontend Shell (Tab System + Layout)](phase-03-frontend-shell.md) | frontend-dev | 1 | pending |
-| 4 | [File Explorer + Editor](phase-04-file-explorer-editor.md) | backend-dev + frontend-dev | 2, 3 | pending |
-| 5 | [Web Terminal](phase-05-web-terminal.md) | backend-dev + frontend-dev | 2, 3 | pending |
-| 6 | [Git Integration](phase-06-git-integration.md) | backend-dev + frontend-dev | 4 | pending |
-| 7 | [AI Chat](phase-07-ai-chat.md) | backend-dev + frontend-dev | 2, 3 | pending |
-| 8 | [CLI Commands](phase-08-cli-commands.md) | backend-dev | 2, 6, 7 | pending |
-| 9 | [PWA + Build + Deploy](phase-09-pwa-build-deploy.md) | Lead | all | pending |
-| 10 | [Testing](phase-10-testing.md) | tester | per phase | pending |
+| 1 | [Project Skeleton + Shared Types](phase-01-project-skeleton.md) | Lead | — | complete |
+| 2 | [Backend Core (Server + CLI + Config)](phase-02-backend-core.md) | backend-dev | 1 | complete |
+| 3 | [Frontend Shell (Tab System + Layout)](phase-03-frontend-shell.md) | frontend-dev | 1 | complete |
+| 4 | [File Explorer + Editor](phase-04-file-explorer-editor.md) | backend-dev + frontend-dev | 2, 3 | complete |
+| 5 | [Web Terminal](phase-05-web-terminal.md) | backend-dev + frontend-dev | 2, 3 | complete |
+| 6 | [Git Integration](phase-06-git-integration.md) | backend-dev + frontend-dev | 4 | complete |
+| 7 | [AI Chat](phase-07-ai-chat.md) | backend-dev + frontend-dev | 2, 3 | complete |
+| 8 | [CLI Commands](phase-08-cli-commands.md) | backend-dev | 2, 6, 7 | complete |
+| 9 | [PWA + Build + Deploy](phase-09-pwa-build-deploy.md) | Lead | all | complete |
+| 10 | [Testing](phase-10-testing.md) | tester | per phase | in-progress |
 
 ## Parallel Execution Map
 
