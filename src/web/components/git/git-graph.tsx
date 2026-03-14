@@ -59,6 +59,9 @@ export function GitGraph({ metadata }: GitGraphProps) {
     hash?: string;
   }>({ type: null });
   const [inputValue, setInputValue] = useState("");
+  const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
+  const [commitFiles, setCommitFiles] = useState<Array<{ path: string; additions: number; deletions: number }>>([]);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const { openTab } = useTabStore();
 
   const fetchGraph = useCallback(async () => {
@@ -129,6 +132,26 @@ export function GitGraph({ metadata }: GitGraphProps) {
 
   const copyHash = (hash: string) => {
     navigator.clipboard.writeText(hash);
+  };
+
+  const selectCommit = async (commit: GitCommit) => {
+    if (selectedCommit?.hash === commit.hash) {
+      setSelectedCommit(null);
+      return;
+    }
+    setSelectedCommit(commit);
+    setLoadingDetail(true);
+    try {
+      const parent = commit.parents[0] ?? "";
+      const result = await api.get<{ files: Array<{ path: string; additions: number; deletions: number }> }>(
+        `/api/git/diff/${encodeURIComponent(projectName!)}?ref1=${parent}&ref2=${commit.hash}`,
+      );
+      setCommitFiles(result.files ?? []);
+    } catch {
+      setCommitFiles([]);
+    } finally {
+      setLoadingDetail(false);
+    }
   };
 
   const openDiffForCommit = (commit: GitCommit) => {
@@ -403,8 +426,9 @@ export function GitGraph({ metadata }: GitGraphProps) {
                 <ContextMenu key={commit.hash}>
                   <ContextMenuTrigger asChild>
                     <div
-                      className="flex items-center hover:bg-muted/50 cursor-default text-sm border-b border-border/30"
+                      className={`flex items-center hover:bg-muted/50 cursor-pointer text-sm border-b border-border/30 ${selectedCommit?.hash === commit.hash ? "bg-primary/10" : ""}`}
                       style={{ height: `${ROW_HEIGHT}px` }}
+                      onClick={() => selectCommit(commit)}
                     >
                       <div className="flex items-center gap-2 flex-1 min-w-0 px-2">
                         <span className="font-mono text-xs text-muted-foreground w-14 shrink-0">
@@ -489,6 +513,74 @@ export function GitGraph({ metadata }: GitGraphProps) {
           </div>
         </div>
       </div>
+
+      {/* Commit detail panel — like vscode-git-graph */}
+      {selectedCommit && (
+        <div className="border-t bg-muted/30 max-h-[40%] overflow-auto">
+          <div className="px-3 py-2 border-b flex items-center justify-between">
+            <span className="text-sm font-medium truncate">
+              {selectedCommit.abbreviatedHash} — {selectedCommit.subject}
+            </span>
+            <Button variant="ghost" size="icon-xs" onClick={() => setSelectedCommit(null)}>
+              ✕
+            </Button>
+          </div>
+          <div className="px-3 py-2 text-xs space-y-1">
+            <div className="flex gap-4">
+              <span className="text-muted-foreground">Author</span>
+              <span>{selectedCommit.authorName} &lt;{selectedCommit.authorEmail}&gt;</span>
+            </div>
+            <div className="flex gap-4">
+              <span className="text-muted-foreground">Date</span>
+              <span>{new Date(selectedCommit.authorDate).toLocaleString()}</span>
+            </div>
+            <div className="flex gap-4">
+              <span className="text-muted-foreground">Hash</span>
+              <span className="font-mono cursor-pointer hover:text-primary" onClick={() => copyHash(selectedCommit.hash)}>
+                {selectedCommit.hash}
+              </span>
+            </div>
+            {selectedCommit.parents.length > 0 && (
+              <div className="flex gap-4">
+                <span className="text-muted-foreground">Parents</span>
+                <span className="font-mono">{selectedCommit.parents.map(p => p.slice(0, 7)).join(", ")}</span>
+              </div>
+            )}
+            {selectedCommit.body && (
+              <div className="mt-2 p-2 bg-background rounded text-xs whitespace-pre-wrap">
+                {selectedCommit.body}
+              </div>
+            )}
+          </div>
+          {/* Changed files */}
+          <div className="px-3 py-1 border-t">
+            <div className="text-xs text-muted-foreground py-1">
+              {loadingDetail ? "Loading files..." : `${commitFiles.length} file${commitFiles.length !== 1 ? "s" : ""} changed`}
+            </div>
+            {commitFiles.map((file) => (
+              <div
+                key={file.path}
+                className="flex items-center gap-2 py-0.5 text-xs hover:bg-muted/50 rounded px-1 cursor-pointer"
+                onClick={() => openTab({
+                  type: "git-diff",
+                  title: `Diff ${file.path.split("/").pop()}`,
+                  closable: true,
+                  metadata: {
+                    projectName,
+                    ref1: selectedCommit.parents[0] ?? undefined,
+                    ref2: selectedCommit.hash,
+                    filePath: file.path,
+                  },
+                })}
+              >
+                <span className="flex-1 truncate font-mono">{file.path}</span>
+                {file.additions > 0 && <span className="text-green-500">+{file.additions}</span>}
+                {file.deletions > 0 && <span className="text-red-500">-{file.deletions}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Create Branch/Tag Dialog */}
       <Dialog
