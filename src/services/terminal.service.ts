@@ -1,4 +1,4 @@
-import type { Subprocess } from "bun";
+import type { Subprocess, Terminal } from "bun";
 
 /** Max output buffer size per session (10KB) */
 const MAX_BUFFER_SIZE = 10 * 1024;
@@ -12,6 +12,7 @@ const RECONNECT_GRACE_MS = 30 * 1000;
 export interface TerminalSession {
   id: string;
   proc: Subprocess;
+  terminal: Terminal;
   projectPath: string;
   createdAt: Date;
   /** Connected WebSocket (if any) */
@@ -20,8 +21,6 @@ export interface TerminalSession {
   disconnectTimer: ReturnType<typeof setTimeout> | null;
   /** Idle timeout timer */
   idleTimer: ReturnType<typeof setTimeout>;
-  /** Readable stream reader for stdout */
-  stdoutReader: ReadableStreamDefaultReader<Uint8Array> | null;
 }
 
 export interface TerminalSessionInfo {
@@ -38,74 +37,69 @@ class TerminalService {
   private outputBuffers = new Map<string, string>();
   private outputListeners = new Map<string, OutputCallback>();
 
-  /** Create a new terminal session */
-  create(projectPath: string, shell?: string): string {
+  /** Create a new terminal session using Bun's native PTY */
+  create(projectPath: string, cols = 80, rows = 24): string {
     const id = crypto.randomUUID();
-    const shellCmd = shell || process.env.SHELL || "bash";
+    const shellCmd = process.env.SHELL || "/bin/zsh";
+    const decoder = new TextDecoder();
 
-    // Use bash with minimal init to avoid zsh/powerlevel10k issues in pipe mode.
-    // Pipe mode doesn't create a real TTY, but bash works fine for interactive use.
-    // Use bash -i for interactive mode (handles echo/prompt natively)
-    // Suppress macOS zsh migration warning and job control message
-    const proc = Bun.spawn(["bash", "--norc", "-i"], {
+    const proc = Bun.spawn([shellCmd, "-l"], {
       cwd: projectPath,
       env: {
         ...process.env,
         TERM: "xterm-256color",
-        COLUMNS: "120",
-        LINES: "24",
-        PS1: "\\[\\033[1;34m\\]\\u@ppm\\[\\033[0m\\]:\\[\\033[1;36m\\]\\w\\[\\033[0m\\]\\$ ",
       },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
+      terminal: {
+        cols,
+        rows,
+        data: (_terminal: Terminal, data: Uint8Array) => {
+          const text = decoder.decode(data);
+          this.appendBuffer(id, text);
+          const listener = this.outputListeners.get(id);
+          if (listener) listener(id, text);
+        },
+      },
     });
+
+    const terminal = proc.terminal!;
 
     const session: TerminalSession = {
       id,
       proc,
+      terminal,
       projectPath,
       createdAt: new Date(),
       ws: null,
       disconnectTimer: null,
       idleTimer: this.createIdleTimer(id),
-      stdoutReader: null,
     };
 
     this.sessions.set(id, session);
     this.outputBuffers.set(id, "");
 
-    // Start reading stdout
-    this.pipeOutput(id, proc);
+    // When process exits, notify
+    proc.exited.then(() => {
+      const listener = this.outputListeners.get(id);
+      if (listener) listener(id, "\r\n[Process exited]\r\n");
+    });
 
     return id;
   }
 
-  /** Write data to terminal stdin — bash -i handles echo natively */
+  /** Write data to terminal via PTY */
   write(id: string, data: string): void {
     const session = this.sessions.get(id);
-    if (!session) return;
+    if (!session || session.terminal.closed) return;
 
     this.resetIdleTimer(id);
-    const stdin = session.proc.stdin;
-    if (!stdin) return;
-
-    try {
-      const sink = stdin as unknown as { write(data: Uint8Array): number; flush(): void };
-      // Convert \r to \n for bash (xterm sends \r on Enter)
-      const normalized = data.replace(/\r/g, "\n");
-      sink.write(new TextEncoder().encode(normalized));
-      sink.flush();
-    } catch {
-      // stdin closed
-    }
+    session.terminal.write(data);
   }
 
-  /** Resize terminal (no-op for pipe mode, but kept for API compatibility) */
-  resize(_id: string, _cols: number, _rows: number): void {
-    // Bun.spawn with stdin:"pipe"/stdout:"pipe" doesn't support resize.
-    // Resize is only possible with the `terminal` option (Bun nightly).
-    // This is a no-op for now; the frontend xterm.js still renders correctly.
+  /** Resize terminal PTY */
+  resize(id: string, cols: number, rows: number): void {
+    const session = this.sessions.get(id);
+    if (!session || session.terminal.closed) return;
+    session.terminal.resize(cols, rows);
   }
 
   /** Kill a terminal session */
@@ -116,6 +110,11 @@ class TerminalService {
     if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
     clearTimeout(session.idleTimer);
 
+    try {
+      if (!session.terminal.closed) session.terminal.close();
+    } catch {
+      // Already closed
+    }
     try {
       session.proc.kill();
     } catch {
@@ -167,7 +166,6 @@ class TerminalService {
     if (!session) return;
     session.ws = ws;
 
-    // Cancel disconnect timer
     if (session.disconnectTimer) {
       clearTimeout(session.disconnectTimer);
       session.disconnectTimer = null;
@@ -180,7 +178,6 @@ class TerminalService {
     if (!session) return;
     session.ws = null;
 
-    // Start grace timer — kill if not reconnected
     session.disconnectTimer = setTimeout(() => {
       this.kill(id);
     }, RECONNECT_GRACE_MS);
@@ -194,43 +191,6 @@ class TerminalService {
       buf = buf.slice(buf.length - MAX_BUFFER_SIZE);
     }
     this.outputBuffers.set(id, buf);
-  }
-
-  /** Pipe stdout + stderr to buffer and listeners */
-  private async pipeOutput(id: string, proc: Subprocess): Promise<void> {
-    const decoder = new TextDecoder();
-
-    const readStream = async (
-      stream: ReadableStream<Uint8Array> | null,
-    ) => {
-      if (!stream) return;
-      const reader = stream.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const text = decoder.decode(value);
-          this.appendBuffer(id, text);
-          const listener = this.outputListeners.get(id);
-          if (listener) listener(id, text);
-        }
-      } catch {
-        // Stream closed
-      } finally {
-        reader.releaseLock();
-      }
-    };
-
-    // Read both stdout and stderr concurrently
-    readStream(proc.stdout as ReadableStream<Uint8Array> | null);
-    readStream(proc.stderr as ReadableStream<Uint8Array> | null);
-
-    // When process exits, clean up after a delay
-    proc.exited.then(() => {
-      // Notify listener that process exited
-      const listener = this.outputListeners.get(id);
-      if (listener) listener(id, "\r\n[Process exited]\r\n");
-    });
   }
 
   /** Create idle timeout — kills session after IDLE_TIMEOUT_MS */
