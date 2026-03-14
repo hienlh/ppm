@@ -3,6 +3,10 @@ import { registerInitCommand } from "./commands/init.ts";
 import { registerStartCommand } from "./commands/start.ts";
 import { registerStopCommand } from "./commands/stop.ts";
 import { registerOpenCommand } from "./commands/open.ts";
+import { registerProjectCommands } from "./commands/projects.ts";
+import { registerConfigCommands } from "./commands/config.ts";
+import { registerGitCommands } from "./commands/git.ts";
+import { registerChatCommands } from "./commands/chat.ts";
 
 export function createCli(): Command {
   const program = new Command();
@@ -16,6 +20,10 @@ export function createCli(): Command {
   registerStartCommand(program);
   registerStopCommand(program);
   registerOpenCommand(program);
+  registerProjectCommands(program);
+  registerConfigCommands(program);
+  registerGitCommands(program);
+  registerChatCommands(program);
 
   return program;
 }
