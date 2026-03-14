@@ -1,0 +1,14 @@
+port: 8080
+host: 0.0.0.0
+auth:
+  enabled: true
+  token: "change-me-to-a-secure-token"
+projects:
+  - path: /home/user/project-a
+    name: project-a
+ai:
+  default_provider: claude
+  providers:
+    claude:
+      type: agent-sdk
+      api_key_env: ANTHROPIC_API_KEY

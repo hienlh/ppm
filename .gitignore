@@ -1,10 +1,11 @@
-node_modules
-dist
-*.png
+node_modules/
+dist/
+.vite/
 *.log
 .env
 ppm.yaml
+.ppm/
 *.pid
 .DS_Store
 .playwright-mcp
-.vite
+.cursor/
