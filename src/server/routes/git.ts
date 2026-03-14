@@ -29,6 +29,19 @@ gitRoutes.get("/diff/:project", async (c) => {
   }
 });
 
+/** GET /api/git/diff-stat/:project?ref1=&ref2= — file list with +/- counts */
+gitRoutes.get("/diff-stat/:project", async (c) => {
+  try {
+    const projectPath = resolveProjectPath(c.req.param("project"));
+    const ref1 = c.req.query("ref1") || undefined;
+    const ref2 = c.req.query("ref2") || undefined;
+    const files = await gitService.diffStat(projectPath, ref1, ref2);
+    return c.json(ok(files));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /api/git/file-diff/:project?file=&ref= */
 gitRoutes.get("/file-diff/:project", async (c) => {
   try {

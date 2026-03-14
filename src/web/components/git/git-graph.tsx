@@ -143,10 +143,10 @@ export function GitGraph({ metadata }: GitGraphProps) {
     setLoadingDetail(true);
     try {
       const parent = commit.parents[0] ?? "";
-      const result = await api.get<{ diff: { files: Array<{ path: string; additions: number; deletions: number }> } }>(
-        `/api/git/diff/${encodeURIComponent(projectName!)}?ref1=${parent}&ref2=${commit.hash}`,
+      const files = await api.get<Array<{ path: string; additions: number; deletions: number }>>(
+        `/api/git/diff-stat/${encodeURIComponent(projectName!)}?ref1=${parent}&ref2=${commit.hash}`,
       );
-      setCommitFiles(result.diff?.files ?? []);
+      setCommitFiles(Array.isArray(files) ? files : []);
     } catch {
       setCommitFiles([]);
     } finally {
