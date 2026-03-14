@@ -107,10 +107,37 @@ export function registerGitCommands(program: Command) {
 
 ## Success Criteria
 
-- [ ] All CLI commands work with `-p` flag and CWD auto-detect
-- [ ] `ppm projects list` shows formatted table
-- [ ] `ppm git status` shows colored output
-- [ ] `ppm git commit -m "msg"` commits
-- [ ] `ppm chat send` streams response to stdout
-- [ ] `ppm chat resume` enters interactive mode
-- [ ] Error messages are clear when project not found
+**Project Resolution:**
+- [ ] `-p myproject` flag resolves project by name
+- [ ] No `-p` flag + CWD inside registered project → auto-detects
+- [ ] No `-p` flag + CWD not in any project → clear error: "Not in a registered project. Use -p <name>"
+
+**ppm projects:**
+- [ ] `ppm projects list` → formatted table with columns: Name, Path, Branch, Status
+- [ ] `ppm projects add /path/to/repo --name myrepo` → adds project, confirms with message
+- [ ] `ppm projects add` with duplicate name → error message
+- [ ] `ppm projects remove myrepo` → removes, confirms with message
+
+**ppm config:**
+- [ ] `ppm config get port` → prints current port value
+- [ ] `ppm config set port 9090` → updates config file, confirms
+- [ ] `ppm config get nonexistent` → error message
+
+**ppm git:**
+- [ ] `ppm git status` → colored output matching git status --short format (M=yellow, A=green, D=red)
+- [ ] `ppm git log -n 5` → shows last 5 commits with hash, message, author, date
+- [ ] `ppm git stage .` → stages all files, prints count
+- [ ] `ppm git commit -m "test"` → creates commit, prints hash
+- [ ] `ppm git commit` with nothing staged → "Nothing to commit" error
+- [ ] `ppm git push` → pushes to remote, prints result
+- [ ] `ppm git branch create feature-x` → creates branch, confirms
+- [ ] `ppm git branch checkout feature-x` → switches branch, confirms
+- [ ] `ppm git branch delete feature-x` → deletes branch, confirms
+
+**ppm chat:**
+- [ ] `ppm chat list` → table with columns: ID, Provider, Title, Date
+- [ ] `ppm chat create` → creates session, prints session ID
+- [ ] `ppm chat send <id> "fix the bug"` → streams response to stdout in real-time
+- [ ] `ppm chat resume <id>` → interactive mode with `You:` / `Claude:` prompts
+- [ ] Tool approval in interactive mode: `[Tool: Bash] Allow? (y/n):` prompt
+- [ ] `ppm chat delete <id>` → deletes session, confirms

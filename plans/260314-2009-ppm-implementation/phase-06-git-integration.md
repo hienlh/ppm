@@ -208,11 +208,37 @@ const GitGraphRenderer = ({ data }: { data: GitGraphData }) => {
 
 ## Success Criteria
 
-- [ ] Git status panel shows changed/staged files
-- [ ] Can stage, unstage, commit, push, pull from UI
-- [ ] Git graph renders commit history with colored lanes
-- [ ] Context menu works on commits and branches
-- [ ] Branch operations (create, checkout, delete, merge) work
-- [ ] "Create PR" opens correct GitHub/GitLab URL in browser
-- [ ] Diff view shows file changes
-- [ ] Works on mobile (scrollable graph, touch context menu)
+**Git Status Panel:**
+- [ ] Shows two sections: "Changes" (unstaged) and "Staged Changes" with file counts
+- [ ] Each file shows status icon (M=modified, A=added, D=deleted, R=renamed) + filename
+- [ ] Click file in either section → opens diff view in new tab
+- [ ] Click "+" on unstaged file → stages it (moves to Staged section)
+- [ ] Click "−" on staged file → unstages it (moves to Changes section)
+- [ ] "Stage All" button stages all changed files
+- [ ] "Unstage All" button unstages all staged files
+- [ ] Commit section: textarea for message + "Commit" button
+- [ ] Commit with empty message → button disabled / shows warning
+- [ ] Commit with nothing staged → shows "Nothing to commit" message
+- [ ] After successful commit → status panel refreshes, staged files clear
+- [ ] Push/Pull buttons show current branch name, disabled when no remote
+
+**Git Graph:**
+- [ ] Renders commit history as SVG with colored branch lanes
+- [ ] Each commit: circle node + abbreviated hash + subject + author + relative date
+- [ ] Branch labels rendered as colored badges on corresponding commits
+- [ ] Merge commits show lines connecting from parent lanes
+- [ ] Scroll through 200+ commits without performance issues (virtualized rendering)
+- [ ] Right-click commit → context menu: Checkout, Create branch, Cherry pick, Revert, Create tag, Copy hash, View diff
+- [ ] Right-click branch label → context menu: Checkout, Merge into current, Delete, Push, Create PR
+- [ ] "Create PR" → opens correct GitHub/GitLab URL (parsed from remote) in new browser tab
+
+**Git Diff:**
+- [ ] Diff tab shows file path + refs in header
+- [ ] Side-by-side diff using `@codemirror/merge` with syntax highlighting
+- [ ] Added lines highlighted green, removed lines highlighted red
+- [ ] Opened from: git status (click file), git graph (view diff), file explorer (compare)
+
+**Mobile:**
+- [ ] Git graph scrollable horizontally and vertically with touch
+- [ ] Context menu appears on long-press (commit node or branch label)
+- [ ] Status panel: swipe file row to stage/unstage (nice-to-have, buttons work as fallback)

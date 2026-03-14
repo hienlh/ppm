@@ -103,10 +103,18 @@ const getLanguageExtension = (filename: string) => {
 
 ## Success Criteria
 
-- [ ] File tree loads and displays project structure
-- [ ] Can create, rename, delete files/folders via context menu
-- [ ] Click file opens CodeMirror editor in new tab
-- [ ] Editor has syntax highlighting for common languages
-- [ ] Auto-save works (debounced)
-- [ ] Compare 2 files opens diff view
-- [ ] Path traversal blocked (security)
+- [ ] File tree loads project structure as expandable/collapsible tree with correct nesting
+- [ ] File tree excludes `.git/`, `node_modules/`, `.env` by default
+- [ ] Right-click (desktop) / long-press (mobile) opens context menu: New File, New Folder, Rename, Delete, Copy Path
+- [ ] "New File" creates file and opens it in editor tab
+- [ ] "Rename" shows inline input, saves on Enter, cancels on Esc
+- [ ] "Delete" shows confirmation dialog before deleting
+- [ ] Click file → opens CodeMirror editor in new tab with correct syntax highlighting
+- [ ] Click already-open file → focuses existing tab (no duplicate)
+- [ ] Editor: syntax highlighting works for .ts, .js, .py, .html, .css, .json, .md, .yaml
+- [ ] Editor: auto-save on change (debounced 1s) — tab title shows unsaved indicator (dot) until saved
+- [ ] Editor: save confirmed via `PUT /api/files/write` response — dot disappears
+- [ ] Select 2 files in explorer → "Compare Selected" in context menu → opens diff view
+- [ ] Diff viewer shows side-by-side or unified diff using `@codemirror/merge`
+- [ ] Path traversal blocked: accessing `../../etc/passwd` returns 403
+- [ ] Mobile: file tree scrollable with touch, context menu appears on long-press

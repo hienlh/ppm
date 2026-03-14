@@ -16,6 +16,68 @@ React app shell: tab bar, tab content area, sidebar, mobile navigation. This is 
 - zustand store manages tab CRUD + active tab
 - Sidebar: project list + file explorer (collapsible on mobile)
 
+## UI Design System — "Slate Dark"
+
+See full spec: [UI Style Guide](../reports/researcher-260314-2232-ui-style.md)
+
+### Color Palette
+| Token | Hex | Usage |
+|-------|-----|-------|
+| Background | `#0f1419` | Main app bg (OLED-friendly) |
+| Surface | `#1a1f2e` | Cards, panels, modals |
+| Surface Elevated | `#252d3d` | Hover states |
+| Border | `#404854` | Dividers, input borders |
+| Text Primary | `#e5e7eb` | Body text (13.5:1 contrast) |
+| Text Secondary | `#9ca3af` | Hints, timestamps |
+| Primary Blue | `#3b82f6` | Buttons, active tabs, focus rings |
+| Success Green | `#10b981` | Commit, save |
+| Error Red | `#ef4444` | Errors, deletions |
+| Warning Orange | `#f59e0b` | Conflicts, unsaved |
+
+### Typography
+- UI font: **Geist Sans** (Vercel's dev tool font)
+- Code font: **Geist Mono** (clear `1lI` distinction, ligatures)
+- Default UI text: 14px / weight 400
+- Editor: 13px mono
+- Terminal: 12px mono
+
+### Component Rules
+- Touch targets: **44px minimum** height
+- Border radius: 8px default, 12px for cards/modals, 6px for inputs
+- **Dual theme:** Dark (default) + Light mode, togglable via settings
+- shadcn/ui with custom CSS variables for both themes
+- Icon library: **Lucide** (lightweight, works on both themes)
+- CodeMirror theme: custom from Slate Dark palette (dark) + custom light variant
+- Fonts: Google Fonts CDN (Geist Sans + Geist Mono)
+- Notifications: bottom-left toast (desktop), bottom full-width toast (mobile) — one-hand friendly
+
+### Light Theme Palette ("Slate Light")
+| Token | Hex | Usage |
+|-------|-----|-------|
+| Background | `#ffffff` | Main app bg |
+| Surface | `#f8fafc` | Cards, panels |
+| Surface Elevated | `#f1f5f9` | Hover states |
+| Border | `#e2e8f0` | Dividers |
+| Text Primary | `#1a1f2e` | Body text |
+| Text Secondary | `#64748b` | Hints |
+| Primary Blue | `#2563eb` | Buttons, active tabs |
+| Success Green | `#059669` | Commit, save |
+| Error Red | `#dc2626` | Errors |
+| Warning Orange | `#d97706` | Conflicts |
+
+### Theme Toggle
+- Store preference in `settings.store.ts` → persisted to localStorage
+- Options: "light" | "dark" | "system" (follows OS `prefers-color-scheme`)
+- Default: "system"
+- Toggle in settings tab + quick toggle icon in top bar / mobile header
+- Tailwind `darkMode: 'class'` → toggle `<html class="dark">`
+- CodeMirror: switch between custom dark/light theme extensions
+
+### Mobile-Specific
+- Bottom nav: 64px height, max 5 tabs, icon + label
+- Active tab indicator: top border (blue)
+- Drawer sidebar: slide-in overlay with backdrop (not toggle)
+
 ## Files to Create
 
 ```
@@ -159,16 +221,36 @@ async get<T>(path: string): Promise<T> {
 }
 ```
 
-### 10. Tab Metadata for Git Tabs
+### 10. Auth Login Screen (`src/web/components/auth/login-screen.tsx`)
+
+- Full-screen centered card with token input field + "Unlock" button
+- On submit → store token in `localStorage('ppm-auth-token')`
+- `api-client` reads token from localStorage for all requests
+- On 401 response from any API call → clear token → redirect to login screen
+- If server has `auth.enabled: false` → skip login, app loads directly
+- Check auth status on app mount: `GET /api/auth/check` → returns `{ ok: true }` or 401
+
+### 11. Tab Metadata for Git Tabs
 
 **[V2 FIX]** Both tab-bar "+" dropdown AND mobile-nav MUST pass `{ projectName: activeProject.name }` when opening git-graph, git-status, git-diff tabs. Without this metadata, git components get `undefined` project.
 
 ## Success Criteria
 
-- [ ] App loads in browser with tab bar + sidebar
-- [ ] Can open/close/switch tabs
-- [ ] Project list fetches from API and displays
-- [ ] Mobile layout works (bottom nav, drawer sidebar slides in on hamburger)
-- [ ] API client auto-unwraps envelope — components get raw data
-- [ ] WebSocket client connects and auto-reconnects
-- [ ] Git tabs opened from BOTH tab-bar AND mobile-nav include projectName metadata
+- [ ] App loads in browser with tab bar + sidebar visible
+- [ ] Login screen shown when `auth.enabled: true` — entering correct token stores in localStorage and loads app
+- [ ] Invalid token shows error message on login screen
+- [ ] Can open new tab, close tab, switch between tabs — active tab content renders
+- [ ] Opening duplicate tab (same type + metadata) focuses existing tab instead of creating new
+- [ ] Project list fetches from API and displays project cards with name and path
+- [ ] Clicking project card sets it as active project (zustand store updates)
+- [ ] Mobile layout: bottom nav visible on small screens, top tab bar on desktop
+- [ ] Mobile drawer: hamburger opens overlay sidebar with backdrop, clicking backdrop closes it
+- [ ] Desktop sidebar: always visible at 280px width, collapsible
+- [ ] API client auto-unwraps `{ok, data}` envelope — `apiClient.get<Project[]>('/api/projects')` returns `Project[]` directly
+- [ ] API client throws error with message when `ok: false` (e.g., 401, 404)
+- [ ] WebSocket client connects, auto-reconnects with exponential backoff (1s, 2s, 4s, max 30s)
+- [ ] Git tabs opened from BOTH tab-bar AND mobile-nav include `{ projectName }` metadata
+- [ ] Theme: dark + light mode both work with proper contrast ratios
+- [ ] Theme toggle: "system" default follows OS preference, manual override persists in localStorage
+- [ ] CodeMirror editor switches theme when app theme changes
+- [ ] Notifications: toast appears bottom-left (desktop), bottom full-width (mobile)

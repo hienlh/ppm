@@ -182,12 +182,28 @@ scp ppm.yaml user@vps:/etc/ppm/config.yaml
 ssh user@vps "ppm start -c /etc/ppm/config.yaml -d"
 ```
 
+## Static File Embedding (NEEDS INVESTIGATION)
+
+**Known issue:** `bun build --compile` bundles JS but does NOT auto-embed static files (HTML, CSS, images).
+
+**Options to investigate:**
+1. Use `Bun.file()` with `import.meta.dir` to reference files relative to binary
+2. Use `import with { type: "file" }` syntax to embed at build time
+3. Inline frontend assets into a JS module at build time (custom build step)
+4. Ship `dist/web/` alongside binary (not single-file, but simpler)
+
+**TODO:** Test each approach before Phase 9 implementation. Research `bun build --compile` static file embedding in Bun docs.
+
 ## Success Criteria
 
-- [ ] PWA installable on mobile (add to homescreen)
-- [ ] `bun run build` produces working binary
-- [ ] Binary serves embedded frontend
-- [ ] Cross-platform binaries compile in CI
-- [ ] GitHub Release created with binaries on tag push
-- [ ] Docker image works as fallback
-- [ ] `ppm init && ppm start` works end-to-end on fresh install
+- [ ] PWA installable on mobile: "Add to Home Screen" prompt appears
+- [ ] PWA offline: UI shell loads without network, shows "No connection" for API features
+- [ ] `bun run build` completes without errors, produces binary + web assets
+- [ ] Built binary starts server and serves frontend at `http://localhost:<port>/`
+- [ ] Frontend served by binary is fully functional (not blank page)
+- [ ] API routes work through built binary (not just dev mode)
+- [ ] Cross-platform binaries compile in CI (linux-x64, darwin-arm64, darwin-x64)
+- [ ] GitHub Release created with binaries on tag push (v* tags)
+- [ ] Docker image builds and runs: `docker run -p 8080:8080 ppm` serves app
+- [ ] Fresh install flow works: download binary → `ppm init` → `ppm start` → browser opens → app works
+- [ ] App icon shows correctly on mobile homescreen

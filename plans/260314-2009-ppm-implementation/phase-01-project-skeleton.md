@@ -18,7 +18,7 @@ Initialize monorepo, install dependencies, create shared types, config files. Th
 
 2. **Install backend dependencies**
    ```bash
-   bun add hono commander js-yaml simple-git node-pty @anthropic-ai/claude-agent-sdk
+   bun add hono commander js-yaml simple-git @anthropic-ai/claude-agent-sdk
    bun add -d @types/node typescript
    ```
 
@@ -28,13 +28,13 @@ Initialize monorepo, install dependencies, create shared types, config files. Th
    bun add -d vite @vitejs/plugin-react tailwindcss @tailwindcss/vite vite-plugin-pwa
    bun add codemirror @codemirror/lang-javascript @codemirror/lang-typescript @codemirror/lang-python @codemirror/lang-html @codemirror/lang-css @codemirror/lang-json @codemirror/lang-markdown @codemirror/autocomplete @codemirror/merge @codemirror/theme-one-dark @uiw/react-codemirror
    bun add @xterm/xterm @xterm/addon-fit @xterm/addon-web-links
-   bun add diff2html react-resizable-panels
+   bun add diff2html react-resizable-panels lucide-react
    ```
 
 4. **Init shadcn/ui**
    ```bash
    bunx --bun shadcn@latest init
-   bunx --bun shadcn@latest add button dialog dropdown-menu context-menu input tabs scroll-area tooltip separator
+   bunx --bun shadcn@latest add button dialog dropdown-menu context-menu input tabs scroll-area tooltip separator sonner
    ```
 
 5. **Create config files**

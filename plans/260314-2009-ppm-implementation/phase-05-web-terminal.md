@@ -7,7 +7,7 @@
 
 ## Overview
 
-Web-based terminal: xterm.js in browser ↔ WebSocket ↔ node-pty on server. Multiple terminal sessions.
+Web-based terminal: xterm.js in browser ↔ WebSocket ↔ Bun.spawn() native Terminal API on server. Multiple terminal sessions.
 
 ## Backend (backend-dev)
 
@@ -19,37 +19,63 @@ src/server/ws/terminal.ts
 
 ### Terminal Service
 
-**[V2 FIX]** Use `Bun.spawn()` instead of node-pty. node-pty's `posix_spawnp` crashes the entire Bun process.
+**[V2 FIX]** Use `Bun.spawn()` with **native Terminal API** (NOT node-pty).
+
+**Why:** node-pty uses NAN (pre-2015 C++ bindings), Bun only supports NAPI. This is a hard incompatibility — segfault crashes entire process, no try-catch possible. See [research report](../reports/researcher-260314-2232-node-pty-bun-crash-analysis.md).
+
+**Chosen approach:** `Bun.spawn()` with `terminal` option — built-in, zero dependencies, full PTY support (colors, cursor, resize).
 
 ```typescript
 class TerminalService {
-  private sessions: Map<string, TerminalSession>;
+  private sessions: Map<string, TerminalSession> = new Map();
+  private outputBuffers: Map<string, string> = new Map(); // Last 10KB per session
 
-  create(options: { projectPath: string; shell?: string }): TerminalSession
-  get(id: string): TerminalSession | undefined
-  kill(id: string): void
-  list(): TerminalSessionInfo[]
-  write(id: string, data: string): void
-  onData(id: string, handler: (data: string) => void): void
-}
+  create(projectPath: string, shell?: string): string {
+    const id = crypto.randomUUID();
+    const proc = Bun.spawn([shell || process.env.SHELL || 'bash'], {
+      cwd: projectPath,
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data: (terminal, chunk) => {
+          // Buffer last 10KB for reconnect
+          this.appendBuffer(id, chunk.toString());
+          // Emit to connected WS clients via event bus
+        },
+      },
+    });
+    this.sessions.set(id, { id, proc, projectPath, createdAt: new Date() });
+    return id;
+  }
 
-// Uses Bun.spawn with stdin/stdout pipes
-// NOTE: Bun.spawn doesn't support PTY resize natively.
-// Alternative: use `script -q /dev/null <shell>` wrapper for PTY allocation
-// or try node-pty with mandatory try-catch around spawn
+  write(id: string, data: string): void {
+    this.sessions.get(id)?.proc.terminal?.write(data);
+  }
 
-interface TerminalSession {
-  id: string;
-  proc: Subprocess;
-  projectPath: string;
-  createdAt: Date;
+  resize(id: string, cols: number, rows: number): void {
+    this.sessions.get(id)?.proc.terminal?.resize(cols, rows);
+  }
+
+  kill(id: string): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      session.proc.terminal?.close();
+      session.proc.kill();
+      this.sessions.delete(id);
+      this.outputBuffers.delete(id);
+    }
+  }
+
+  getBuffer(id: string): string {
+    return this.outputBuffers.get(id) ?? '';
+  }
+
+  list(): TerminalSessionInfo[] { /* ... */ }
+  get(id: string): TerminalSession | undefined { /* ... */ }
 }
 ```
 
-**Approach options (pick one):**
-1. **Bun.spawn + `script` wrapper:** `Bun.spawn(["script", "-q", "/dev/null", shell])` — allocates a real PTY on macOS/Linux without node-pty
-2. **node-pty with try-catch:** Keep node-pty but ALWAYS wrap `pty.spawn()` in try-catch so server doesn't crash. Accept that it may fail under `bun build --compile`
-3. **Bun.spawn raw:** No PTY, just raw pipes. Shell works but no terminal features (colors, cursor). Simpler but less capable
+**Limitation:** POSIX only (macOS/Linux). Acceptable for dev environment — Windows users use WSL.
 
 ### WebSocket Handler
 ```
@@ -111,11 +137,38 @@ const useTerminal = (sessionId: string) => {
 - Use `visualViewport` API to adjust terminal height when keyboard opens
 - Bottom toolbar with common keys: Tab, Ctrl, Esc, arrows
 
+## State Persistence & Reconnect
+
+### Output Buffer
+- Server keeps a circular buffer (last 10KB) of terminal output per session
+- On WS reconnect → server sends buffered output before live stream
+- Client clears xterm and replays buffer for seamless experience
+
+### Session Persistence
+- Terminal sessions survive server restart: save session metadata (id, projectPath, shell, cwd) to `~/.ppm/sessions.json`
+- On server start → attempt to restore sessions from file (re-spawn shell in last known cwd)
+- Sessions that fail to restore → mark as "dead", remove from list
+- Idle session timeout: configurable, default 1 hour — kill PTY + remove from sessions
+
+### WS Reconnect Flow
+```
+Client disconnects (network drop, tab switch on mobile)
+  → WS closes
+  → Client: exponential backoff reconnect (1s, 2s, 4s... max 30s)
+  → Server: PTY stays alive, output buffers
+  → Client reconnects: sends { type: 'attach', sessionId: 'xxx' }
+  → Server: sends buffered output, then pipes live
+```
+
 ## Success Criteria
 
-- [ ] Opening terminal tab spawns real shell (bash/zsh)
-- [ ] Keystrokes work bidirectionally
-- [ ] Terminal auto-resizes with container
-- [ ] Multiple terminal tabs work simultaneously
-- [ ] WS reconnect re-attaches to existing PTY
-- [ ] Works on mobile (keyboard + viewport adjustment)
+- [ ] Opening terminal tab spawns real shell (bash/zsh) with correct CWD
+- [ ] Keystrokes sent from browser appear in shell; shell output renders in xterm.js
+- [ ] Terminal auto-resizes when browser window/container resizes — sends RESIZE control message
+- [ ] Multiple terminal tabs work simultaneously (each with own PTY session)
+- [ ] WS disconnect → reconnect → terminal shows buffered output + continues working
+- [ ] Works on mobile: keyboard opens without covering terminal, bottom toolbar has Tab/Ctrl/Esc/arrows
+- [ ] `visualViewport` API adjusts terminal height when mobile keyboard opens
+- [ ] Terminal session persists if server stays running (navigate away + come back = same session)
+- [ ] Idle sessions killed after configured timeout (default 1h)
+- [ ] Clickable URLs in terminal output (WebLinksAddon)

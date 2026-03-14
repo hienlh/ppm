@@ -201,13 +201,42 @@ const useChat = (sessionId?: string) => {
 - Tool approval: full-width card, large touch targets for Allow/Deny
 - Keyboard: input should push content up, not cover it
 
+## Chat History & Reconnect
+
+### REST API for Message History
+- `GET /api/chat/sessions` → list all sessions (id, provider, title, createdAt)
+- `GET /api/chat/sessions/:id/messages` → full message history for a session
+- On WS reconnect: client loads history via REST, then subscribes to live stream
+- This avoids WS replay complexity — REST is simpler and more reliable
+
+### Reconnect Flow
+```
+Client disconnects
+  → WS closes
+  → Client: exponential backoff reconnect
+  → Client reconnects to same sessionId
+  → Client: GET /api/chat/sessions/:id/messages → render history
+  → Server: resume streaming from where it left off (if AI still generating)
+```
+
+### Session Persistence
+- Claude Agent SDK sessions persist automatically (stored in ~/.claude/)
+- PPM stores session metadata in `~/.ppm/chat-sessions.json`: id, provider, title, projectName, createdAt
+- Session list fetched from PPM metadata file (fast), not from SDK (slow)
+
 ## Success Criteria
 
-- [ ] Can create new chat session with Claude
-- [ ] Messages stream in real-time
-- [ ] Tool use/results displayed correctly
-- [ ] Tool approval dialog works (Allow/Deny)
-- [ ] Can resume existing sessions
-- [ ] Session list shows all sessions
-- [ ] Multiple chat tabs work simultaneously
-- [ ] Works on mobile (keyboard handling, scrolling)
+- [ ] Can create new chat session → WS connects, session appears in session list
+- [ ] Sending message streams AI response text in real-time (character by character)
+- [ ] Tool use blocks render with tool name + collapsible input JSON
+- [ ] Tool result blocks render with collapsible output
+- [ ] Tool approval dialog: shows tool name + input, Allow/Deny buttons work, response sent via WS
+- [ ] After Allow → tool executes and result streams back; after Deny → AI acknowledges denial
+- [ ] Can resume existing session: select from picker → loads history via REST → WS reconnects
+- [ ] Session list shows all sessions with provider icon, truncated title, timestamp
+- [ ] "New Chat" button creates fresh session with current project context
+- [ ] Multiple chat tabs work simultaneously (each with own WS connection)
+- [ ] WS disconnect → reconnect → message history loaded from REST API
+- [ ] Works on mobile: sticky bottom input, keyboard pushes content up, large Allow/Deny buttons
+- [ ] Markdown rendering in AI messages: code blocks with syntax highlighting, lists, headers
+- [ ] Error messages from AI/server shown as red alert banner (not silent failure)

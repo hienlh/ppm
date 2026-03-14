@@ -81,6 +81,24 @@ app.route('/api/projects', projectRoutes)
 - Skip auth if `config.auth.enabled === false`
 - Return 401 on failure
 
+**Auth flow (minimal):**
+- Token stored in `ppm.yaml` → `auth.token` field
+- Generated on `ppm init` (random 32-char hex)
+- Browser: on first visit, if `auth.enabled === true`, show password input screen
+- User enters token → stored in localStorage → sent as Bearer header on all API calls
+- No user/password DB — single shared token from config
+- Config example:
+  ```yaml
+  auth:
+    enabled: true
+    token: "a1b2c3..."  # auto-generated, user can change
+  ```
+
+**Frontend auth screen** (`src/web/components/auth/login-screen.tsx`):
+- Full-screen centered card: "Enter Access Token" + input + submit
+- On submit: store token in localStorage, redirect to app
+- On 401 from any API call: clear localStorage, show login screen
+
 ### 5. CLI Commands
 - `ppm init` — interactive: scan parent dir for .git, prompt to add, create config
 - `ppm start` — start Hono server, optionally daemonize (`-d` flag → detach process, write PID to `~/.ppm/ppm.pid`)
@@ -116,10 +134,15 @@ Import this in every route file (files.ts, git.ts, projects.ts).
 
 ## Success Criteria
 
-- [ ] `ppm init` scans current dir, creates config file
-- [ ] `ppm start` starts HTTP server, serves placeholder page
-- [ ] `ppm start -d` runs as daemon, `ppm stop` kills it
-- [ ] `GET /api/projects` returns project list (with auth token)
-- [ ] 401 returned without valid token
-- [ ] `ppm open` opens browser
-- [ ] `resolveProjectPath("ppm")` returns the correct filesystem path
+- [ ] `ppm init` scans current dir, creates config file with auto-generated auth token
+- [ ] `ppm start` starts HTTP server on configured port
+- [ ] `ppm start -d` runs as daemon, writes PID file; `ppm stop` reads PID and kills process
+- [ ] `GET /api/projects` with valid Bearer token returns project list as `{ ok: true, data: [...] }`
+- [ ] `GET /api/projects` without token returns 401 `{ ok: false, error: "Unauthorized" }`
+- [ ] `GET /api/projects` with `auth.enabled: false` in config returns data without token
+- [ ] `ppm open` opens `http://localhost:<port>` in default browser
+- [ ] `resolveProjectPath("ppm")` returns correct filesystem path from config
+- [ ] `resolveProjectPath("nonexistent")` throws descriptive error
+- [ ] Config service loads from `./ppm.yaml` → `~/.ppm/config.yaml` fallback chain
+- [ ] Config service creates default config if none exists
+- [ ] Static route serves `dist/web/index.html` for all non-API paths (SPA fallback)
