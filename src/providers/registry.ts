@@ -1,6 +1,7 @@
 import type { AIProvider } from "./provider.interface.ts";
 import { MockProvider } from "./mock-provider.ts";
 import { ClaudeCodeCliProvider } from "./claude-code-cli.ts";
+import { ClaudeAgentSdkProvider } from "./claude-agent-sdk.ts";
 
 export interface ProviderInfo {
   id: string;
@@ -37,7 +38,8 @@ class ProviderRegistry {
   }
 }
 
-/** Singleton registry — Claude Code CLI as default, mock for testing */
+/** Singleton registry — first registered = default */
 export const providerRegistry = new ProviderRegistry();
-providerRegistry.register(new ClaudeCodeCliProvider());
-providerRegistry.register(new MockProvider());
+providerRegistry.register(new ClaudeAgentSdkProvider()); // default — real streaming, multi-turn
+providerRegistry.register(new ClaudeCodeCliProvider());   // fallback — spawns claude CLI
+providerRegistry.register(new MockProvider());            // testing only

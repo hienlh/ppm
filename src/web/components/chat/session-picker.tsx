@@ -7,24 +7,27 @@ interface SessionPickerProps {
   currentSessionId: string | null;
   onSelectSession: (session: SessionInfo) => void;
   onNewSession: () => void;
+  projectDir?: string;
 }
 
 export function SessionPicker({
   currentSessionId,
   onSelectSession,
   onNewSession,
+  projectDir,
 }: SessionPickerProps) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [open, setOpen] = useState(false);
 
   const loadSessions = useCallback(async () => {
     try {
-      const data = await api.get<SessionInfo[]>("/api/chat/sessions");
+      const params = projectDir ? `?dir=${encodeURIComponent(projectDir)}` : "";
+      const data = await api.get<SessionInfo[]>(`/api/chat/sessions${params}`);
       setSessions(data);
     } catch {
       // Silently fail — sessions list is non-critical
     }
-  }, []);
+  }, [projectDir]);
 
   useEffect(() => {
     loadSessions();
@@ -53,7 +56,7 @@ export function SessionPicker({
     <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-bg-secondary"
+        className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors px-2 py-1 rounded hover:bg-surface-elevated"
       >
         <MessageSquare className="size-3.5" />
         <span className="truncate max-w-[150px]">
@@ -67,14 +70,14 @@ export function SessionPicker({
           {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
 
-          <div className="absolute top-full left-0 mt-1 z-50 w-64 rounded-lg border border-border bg-bg-primary shadow-lg overflow-hidden">
+          <div className="absolute bottom-full left-0 mb-1 z-50 w-64 rounded-lg border border-border bg-surface shadow-lg overflow-hidden">
             {/* New chat button */}
             <button
               onClick={() => {
                 onNewSession();
                 setOpen(false);
               }}
-              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-primary hover:bg-bg-secondary transition-colors border-b border-border"
+              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-primary hover:bg-surface-elevated transition-colors border-b border-border"
             >
               <Plus className="size-4" />
               <span>New Chat</span>
@@ -94,9 +97,9 @@ export function SessionPicker({
                     onSelectSession(session);
                     setOpen(false);
                   }}
-                  className={`flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-bg-secondary transition-colors ${
+                  className={`flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-surface-elevated transition-colors ${
                     session.id === currentSessionId
-                      ? "bg-bg-secondary text-text-primary"
+                      ? "bg-surface-elevated text-text-primary"
                       : "text-text-secondary"
                   }`}
                 >

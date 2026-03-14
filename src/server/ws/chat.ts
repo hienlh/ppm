@@ -19,9 +19,9 @@ type ChatWsSocket = {
 export const chatWebSocket = {
   open(ws: ChatWsSocket) {
     const { sessionId } = ws.data;
-    // Look up session's actual provider, default to "claude"
+    // Look up session's actual provider, default to "claude-sdk"
     const session = chatService.getSession(sessionId);
-    const providerId = session?.providerId ?? "claude";
+    const providerId = session?.providerId ?? "claude-sdk";
     activeSessions.set(sessionId, { providerId, ws });
     ws.send(JSON.stringify({ type: "connected", sessionId }));
   },

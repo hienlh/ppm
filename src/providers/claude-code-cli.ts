@@ -6,11 +6,66 @@ import type {
   ChatEvent,
   ChatMessage,
 } from "./provider.interface.ts";
+import { findClaudeBinary } from "./claude-binary-finder.ts";
+import { processRegistry } from "./claude-process-registry.ts";
+
+/**
+ * Stream-JSON event types from Claude CLI.
+ * Each line of stdout is one complete JSON object.
+ * Mirrors opcode's line-by-line parsing approach.
+ */
+interface CliSystemEvent {
+  type: "system";
+  subtype: "init" | string;
+  session_id?: string;
+  [key: string]: unknown;
+}
+
+interface CliAssistantEvent {
+  type: "assistant";
+  message: {
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "tool_use"; name: string; input: unknown; id?: string }
+    >;
+  };
+}
+
+interface CliResultEvent {
+  type: "result";
+  result?: string;
+  session_id?: string;
+  is_error?: boolean;
+}
+
+interface CliToolResultEvent {
+  type: "tool_result";
+  output?: unknown;
+  content?: unknown;
+}
+
+interface CliErrorEvent {
+  type: "error";
+  error?: string;
+  message?: string;
+}
+
+type CliEvent =
+  | CliSystemEvent
+  | CliAssistantEvent
+  | CliResultEvent
+  | CliToolResultEvent
+  | CliErrorEvent
+  | { type: string; [key: string]: unknown };
 
 /**
  * AI provider that spawns the `claude` CLI as a subprocess.
- * Uses `claude --session-id <id> --output-format stream-json -p <message>`
- * to stream responses back as ChatEvent items.
+ * Architecture mirrors opcode's Rust implementation:
+ *   - Binary discovery chain (claude-binary-finder.ts)
+ *   - Process registry for cancel/kill (claude-process-registry.ts)
+ *   - Line-by-line stream-json parsing (no chunk accumulation)
+ *   - Session ID extraction from init message
+ *   - Continue/resume support via -c and --resume flags
  */
 export class ClaudeCodeCliProvider implements AIProvider {
   id = "claude";
@@ -18,6 +73,8 @@ export class ClaudeCodeCliProvider implements AIProvider {
 
   private sessions = new Map<string, Session>();
   private messageHistory = new Map<string, ChatMessage[]>();
+  /** Maps our session ID → Claude CLI's real session ID (from init message) */
+  private cliSessionIds = new Map<string, string>();
 
   async createSession(config: SessionConfig): Promise<Session> {
     const id = crypto.randomUUID();
@@ -50,8 +107,13 @@ export class ClaudeCodeCliProvider implements AIProvider {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    // Kill running process if any
+    if (processRegistry.isRunning(sessionId)) {
+      await processRegistry.kill(sessionId);
+    }
     this.sessions.delete(sessionId);
     this.messageHistory.delete(sessionId);
+    this.cliSessionIds.delete(sessionId);
   }
 
   async *sendMessage(
@@ -78,19 +140,26 @@ export class ClaudeCodeCliProvider implements AIProvider {
       timestamp: new Date().toISOString(),
     });
 
-    const args = [
-      "--output-format", "stream-json",
-      "--verbose",
-      "-p", message,
-    ];
+    // Build CLI arguments (mirrors opcode's execute/continue/resume pattern)
+    const args = this.buildCliArgs(sessionId, message);
 
-    // Remove CLAUDECODE env to avoid "nested session" error
+    // Clean env — remove CLAUDECODE to avoid "nested session" error
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
+    // Find binary via discovery chain
+    let binaryPath: string;
+    try {
+      binaryPath = findClaudeBinary();
+    } catch (e) {
+      yield { type: "error", message: (e as Error).message };
+      return;
+    }
+
+    // Spawn process
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn(["claude", ...args], {
+      proc = Bun.spawn([binaryPath, ...args], {
         stdout: "pipe",
         stderr: "pipe",
         env,
@@ -100,65 +169,24 @@ export class ClaudeCodeCliProvider implements AIProvider {
       return;
     }
 
+    // Register in process registry (for cancel support)
+    processRegistry.register(sessionId, proc, { prompt: message });
+
     let assistantContent = "";
 
     try {
-      const stdout = proc.stdout as ReadableStream<Uint8Array> | undefined;
-      if (!stdout) {
-        yield { type: "error", message: "Failed to get stdout from claude CLI" };
-        return;
-      }
-      const reader = stdout.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      // Read stdout line-by-line (mirrors opcode's BufReader::lines())
+      yield* this.readStreamJsonLines(proc, sessionId, (text) => {
+        assistantContent += text;
+      });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        // Keep the last partial line in buffer
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          let parsed: Record<string, unknown>;
-          try {
-            parsed = JSON.parse(trimmed) as Record<string, unknown>;
-          } catch {
-            continue; // Skip non-JSON lines
-          }
-
-          const event = mapCliEventToChatEvent(parsed);
-          if (event) {
-            if (event.type === "text") {
-              assistantContent += event.content;
-            }
-            yield event;
-          }
-        }
-      }
-
-      // Process remaining buffer
-      if (buffer.trim()) {
-        try {
-          const parsed = JSON.parse(buffer.trim()) as Record<string, unknown>;
-          const event = mapCliEventToChatEvent(parsed);
-          if (event) {
-            if (event.type === "text") {
-              assistantContent += event.content;
-            }
-            yield event;
-          }
-        } catch {
-          // ignore partial JSON
-        }
-      }
+      // Check stderr for errors after stdout is done
+      yield* this.readStderrErrors(proc);
     } catch (e) {
       yield { type: "error", message: `Stream error: ${(e as Error).message}` };
+    } finally {
+      // Unregister from process registry
+      processRegistry.unregister(sessionId);
     }
 
     // Store assistant message
@@ -173,76 +201,210 @@ export class ClaudeCodeCliProvider implements AIProvider {
     yield { type: "done", sessionId };
   }
 
+  /** Cancel a running session */
+  async cancelSession(sessionId: string): Promise<boolean> {
+    return processRegistry.kill(sessionId);
+  }
+
   getMessages(sessionId: string): ChatMessage[] {
     return this.messageHistory.get(sessionId) ?? [];
   }
-}
 
-/**
- * Map Claude CLI stream-json events to our ChatEvent type.
- * The CLI outputs JSON objects with a `type` field.
- */
-/**
- * Map Claude CLI stream-json events to ChatEvent.
- * Actual CLI output format (from testing):
- * - {type:"system", subtype:"init", ...} — ignore
- * - {type:"assistant", message:{content:[{type:"text",text:"..."}]}} — extract text
- * - {type:"result", result:"full text", session_id:"..."} — final result
- * - {type:"rate_limit_event"} — ignore
- */
-function mapCliEventToChatEvent(
-  event: Record<string, unknown>,
-): ChatEvent | null {
-  const type = event.type as string | undefined;
+  /**
+   * Build CLI arguments based on session state.
+   * Mirrors opcode's execute_claude_code / continue_claude_code / resume_claude_code.
+   */
+  private buildCliArgs(sessionId: string, message: string): string[] {
+    const cliSessionId = this.cliSessionIds.get(sessionId);
+    const history = this.messageHistory.get(sessionId) ?? [];
+    const userMessageCount = history.filter((m) => m.role === "user").length;
+    const isFirstMessage = userMessageCount <= 1; // Current message already pushed
 
-  switch (type) {
-    case "assistant": {
-      // Claude CLI wraps in {type:"assistant", message:{content:[{type:"text",text:"..."}]}}
-      const msg = event.message as Record<string, unknown> | undefined;
-      if (msg?.content && Array.isArray(msg.content)) {
-        const blocks = msg.content as Array<Record<string, unknown>>;
-        const textBlocks = blocks
-          .filter((b) => b.type === "text" && typeof b.text === "string")
-          .map((b) => b.text as string);
-        if (textBlocks.length > 0) {
-          return { type: "text", content: textBlocks.join("") };
-        }
-        // Check for tool_use blocks
-        for (const block of blocks) {
-          if (block.type === "tool_use") {
-            return {
-              type: "tool_use",
-              tool: (block.name as string) ?? "unknown",
-              input: block.input ?? {},
-            };
-          }
-        }
-      }
-      return null;
+    const args: string[] = [];
+
+    if (!isFirstMessage && cliSessionId) {
+      // Resume existing CLI session (like opcode's resume_claude_code)
+      args.push("--resume", cliSessionId);
+    } else if (!isFirstMessage) {
+      // Continue most recent session (like opcode's continue_claude_code)
+      args.push("-c");
     }
 
-    case "result":
-      // Final result — don't duplicate if we already got assistant text
-      return null;
+    args.push(
+      "-p", message,
+      "--output-format", "stream-json",
+      "--verbose",
+    );
 
-    case "tool_result":
-      return {
-        type: "tool_result",
-        output: typeof event.output === "string"
-          ? event.output
-          : JSON.stringify(event.output ?? ""),
-      };
+    return args;
+  }
 
-    case "error":
-      return {
-        type: "error",
-        message: typeof event.error === "string"
-          ? event.error
-          : (event.message as string) ?? "Unknown error",
-      };
+  /**
+   * Read stdout line-by-line and yield ChatEvents.
+   * Each line is a complete JSON object — no chunk accumulation needed.
+   * Mirrors opcode's spawn_claude_process stdout_task.
+   */
+  private async *readStreamJsonLines(
+    proc: ReturnType<typeof Bun.spawn>,
+    sessionId: string,
+    onText: (text: string) => void,
+  ): AsyncGenerator<ChatEvent> {
+    const stdout = proc.stdout as ReadableStream<Uint8Array> | undefined;
+    if (!stdout) {
+      yield { type: "error", message: "Failed to get stdout from claude CLI" };
+      return;
+    }
 
-    // Ignore system, rate_limit_event, etc.
-    default:
-      return null;
+    const reader = stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Split into complete lines
+      const lines = buffer.split("\n");
+      // Keep last partial line in buffer
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        // Parse JSON — each line is one complete event
+        let event: CliEvent;
+        try {
+          event = JSON.parse(trimmed) as CliEvent;
+        } catch {
+          continue; // Skip non-JSON lines (e.g. progress indicators)
+        }
+
+        // Process the event — may yield multiple ChatEvents per CLI event
+        for (const chatEvent of this.mapCliEvent(event, sessionId, onText)) {
+          yield chatEvent;
+        }
+      }
+    }
+
+    // Process remaining buffer (last line without trailing newline)
+    if (buffer.trim()) {
+      try {
+        const event = JSON.parse(buffer.trim()) as CliEvent;
+        for (const chatEvent of this.mapCliEvent(event, sessionId, onText)) {
+          yield chatEvent;
+        }
+      } catch {
+        // Ignore incomplete trailing data
+      }
+    }
+  }
+
+  /** Read stderr and yield error events */
+  private async *readStderrErrors(
+    proc: ReturnType<typeof Bun.spawn>,
+  ): AsyncGenerator<ChatEvent> {
+    const stderr = proc.stderr as ReadableStream<Uint8Array> | undefined;
+    if (!stderr) return;
+
+    try {
+      const reader = stderr.getReader();
+      const decoder = new TextDecoder();
+      let stderrContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        stderrContent += decoder.decode(value, { stream: true });
+      }
+
+      // Only yield if there's meaningful stderr content
+      const trimmed = stderrContent.trim();
+      if (trimmed && !trimmed.includes("ExperimentalWarning")) {
+        yield { type: "error", message: trimmed };
+      }
+    } catch {
+      // Stderr read failure is non-fatal
+    }
+  }
+
+  /**
+   * Map a single CLI stream-json event to a ChatEvent.
+   * Mirrors opcode's event handling in stdout_task.
+   *
+   * CLI output format (one JSON per line):
+   *   {type:"system", subtype:"init", session_id:"..."} — extract session ID
+   *   {type:"assistant", message:{content:[...]}} — text and tool_use blocks
+   *   {type:"result", result:"...", session_id:"..."} — final result (ignored to avoid duplication)
+   *   {type:"tool_result", output:"..."} — tool execution result
+   *   {type:"error", error:"..."} — error event
+   *   {type:"rate_limit_event"} — ignored
+   */
+  /**
+   * Map a single CLI stream-json event to ChatEvent(s).
+   * Returns an array because one `assistant` event can contain
+   * multiple content blocks (text + tool_use interleaved).
+   */
+  private mapCliEvent(
+    event: CliEvent,
+    sessionId: string,
+    onText: (text: string) => void,
+  ): ChatEvent[] {
+    switch (event.type) {
+      case "system": {
+        const sysEvent = event as CliSystemEvent;
+        if (sysEvent.subtype === "init" && sysEvent.session_id) {
+          this.cliSessionIds.set(sessionId, sysEvent.session_id);
+        }
+        return [];
+      }
+
+      case "assistant": {
+        const assistantEvent = event as CliAssistantEvent;
+        const content = assistantEvent.message?.content;
+        if (!Array.isArray(content)) return [];
+
+        // Yield ALL blocks in order — text and tool_use interleaved
+        const events: ChatEvent[] = [];
+        for (const block of content) {
+          if (block.type === "text" && typeof block.text === "string") {
+            onText(block.text);
+            events.push({ type: "text", content: block.text });
+          } else if (block.type === "tool_use") {
+            events.push({
+              type: "tool_use",
+              tool: block.name ?? "unknown",
+              input: block.input ?? {},
+            });
+          }
+        }
+        return events;
+      }
+
+      case "result":
+        return [];
+
+      case "tool_result": {
+        const trEvent = event as CliToolResultEvent;
+        const output = trEvent.output ?? trEvent.content ?? "";
+        return [{
+          type: "tool_result",
+          output: typeof output === "string" ? output : JSON.stringify(output),
+        }];
+      }
+
+      case "error": {
+        const errEvent = event as CliErrorEvent;
+        return [{
+          type: "error",
+          message: errEvent.error ?? errEvent.message ?? "Unknown CLI error",
+        }];
+      }
+
+      default:
+        return [];
+    }
   }
 }

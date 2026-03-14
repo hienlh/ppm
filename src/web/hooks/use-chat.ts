@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useWebSocket } from "./use-websocket";
+import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { ChatWsServerMessage } from "../../types/api";
 
@@ -18,7 +19,7 @@ interface UseChatReturn {
   isConnected: boolean;
 }
 
-export function useChat(sessionId: string | null): UseChatReturn {
+export function useChat(sessionId: string | null, providerId = "claude-sdk"): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
@@ -167,15 +168,32 @@ export function useChat(sessionId: string | null): UseChatReturn {
     autoConnect: !!sessionId,
   });
 
-  // Reset state when session changes
+  // Load history and reset state when session changes
   useEffect(() => {
-    setMessages([]);
     setIsStreaming(false);
     setPendingApproval(null);
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     setIsConnected(false);
-  }, [sessionId]);
+
+    if (sessionId) {
+      // Load message history
+      fetch(`/api/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
+        headers: { Authorization: `Bearer ${getAuthToken()}` },
+      })
+        .then((r) => r.json())
+        .then((json: any) => {
+          if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
+            setMessages(json.data);
+          } else {
+            setMessages([]);
+          }
+        })
+        .catch(() => setMessages([]));
+    } else {
+      setMessages([]);
+    }
+  }, [sessionId, providerId]);
 
   const sendMessage = useCallback(
     (content: string) => {
