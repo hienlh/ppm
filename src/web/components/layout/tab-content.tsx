@@ -1,0 +1,75 @@
+import { Suspense, lazy } from "react";
+import { useTabStore, type TabType } from "@/stores/tab-store";
+import { Loader2 } from "lucide-react";
+
+const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown> }>>> = {
+  projects: lazy(() =>
+    import("@/components/projects/project-list").then((m) => ({
+      default: m.ProjectList,
+    })),
+  ),
+  terminal: lazy(() =>
+    import("@/components/terminal/terminal-tab").then((m) => ({
+      default: m.TerminalTab,
+    })),
+  ),
+  chat: lazy(() =>
+    import("@/components/chat/chat-tab").then((m) => ({
+      default: m.ChatTab,
+    })),
+  ),
+  editor: lazy(() =>
+    import("@/components/editor/code-editor").then((m) => ({
+      default: m.CodeEditor,
+    })),
+  ),
+  "git-graph": lazy(() =>
+    import("@/components/git/git-graph").then((m) => ({
+      default: m.GitGraph,
+    })),
+  ),
+  "git-status": lazy(() =>
+    import("@/components/git/git-status-panel").then((m) => ({
+      default: m.GitStatusPanel,
+    })),
+  ),
+  "git-diff": lazy(() =>
+    import("@/components/editor/diff-viewer").then((m) => ({
+      default: m.DiffViewer,
+    })),
+  ),
+  settings: lazy(() =>
+    import("@/components/settings/settings-tab").then((m) => ({
+      default: m.SettingsTab,
+    })),
+  ),
+};
+
+function LoadingFallback() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 className="size-6 animate-spin text-primary" />
+    </div>
+  );
+}
+
+export function TabContent() {
+  const { tabs, activeTabId } = useTabStore();
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+
+  if (!activeTab) {
+    return (
+      <div className="flex items-center justify-center h-full text-text-secondary">
+        <p>No tab open. Use the + button or bottom nav to open one.</p>
+      </div>
+    );
+  }
+
+  const Component = TAB_COMPONENTS[activeTab.type];
+
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <Component metadata={activeTab.metadata} />
+    </Suspense>
+  );
+}
