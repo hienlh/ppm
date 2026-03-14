@@ -12,7 +12,10 @@
     "dev": "bun run --hot src/index.ts start",
     "dev:web": "vite dev",
     "build:web": "vite build",
-    "build": "bun run build:web && bun build --compile src/index.ts --outfile=dist/ppm",
+    "build": "bun run scripts/build.ts",
+    "build:linux": "bun run scripts/build.ts --target bun-linux-x64",
+    "build:mac-arm": "bun run scripts/build.ts --target bun-darwin-arm64",
+    "build:mac-x64": "bun run scripts/build.ts --target bun-darwin-x64",
     "typecheck": "tsc --noEmit",
     "start": "bun run src/index.ts start",
     "test": "bun test"
