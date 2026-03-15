@@ -61,7 +61,7 @@ app.use("*", cors());
 // Public endpoints (before auth)
 app.get("/api/health", (c) => c.json(ok({ status: "running" })));
 app.get("/api/info", (c) => c.json(ok({
-  version: "0.2.0",
+  version: "0.2.1",
   device_name: configService.get("device_name") || null,
 })));
 
@@ -235,7 +235,7 @@ export async function startServer(options: {
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
 
-  console.log(`\n  PPM v0.2.0 ready\n`);
+  console.log(`\n  PPM v0.2.1 ready\n`);
   console.log(`  ➜  Local:   http://localhost:${server.port}/`);
 
   const { networkInterfaces } = await import("node:os");
