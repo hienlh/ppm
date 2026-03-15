@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { MockProvider } from "../../src/providers/mock-provider.ts";
+import { MockProvider } from "../../../src/providers/mock-provider.ts";
 
 describe("MockProvider", () => {
   it("creates a session with UUID and metadata", async () => {
