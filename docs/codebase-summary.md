@@ -10,8 +10,8 @@ ppm/
 │   ├── index.ts                     # CLI entry point (Commander.js program)
 │   ├── cli/
 │   │   ├── commands/                # CLI command implementations (8 files, 907 LOC)
-│   │   │   ├── start.ts             # Start server (Hono + Bun.serve)
-│   │   │   ├── stop.ts              # Stop daemon (graceful shutdown)
+│   │   │   ├── start.ts             # Start server (background by default, --foreground/-f, --share/-s for tunnel)
+│   │   │   ├── stop.ts              # Stop daemon (reads status.json or ppm.pid, graceful shutdown)
 │   │   │   ├── open.ts              # Open browser to http://localhost:PORT
 │   │   │   ├── init.ts              # Initialize ppm.yaml config (scan git repos)
 │   │   │   ├── projects.ts          # Add/remove/list projects
@@ -42,7 +42,7 @@ ppm/
 │   │   ├── claude-agent-sdk.ts      # Primary: @anthropic-ai/claude-agent-sdk. Reads config from configService.
 │   │   ├── mock-provider.ts         # Test provider (ignores config)
 │   │   └── registry.ts              # ProviderRegistry (singleton, router to active provider)
-│   ├── services/                    # Business logic (9 files, 1561 LOC)
+│   ├── services/                    # Business logic (11 files, 1761 LOC)
 │   │   ├── chat.service.ts          # Session lifecycle, message streaming, streaming to clients
 │   │   ├── git.service.ts           # Git operations (372 LOC): status, diff, log, graph, branches
 │   │   ├── file.service.ts          # File ops (261 LOC): tree, read, write, delete, mkdir, path validation
@@ -51,7 +51,9 @@ ppm/
 │   │   ├── config.service.ts        # YAML config loading (91 LOC)
 │   │   ├── slash-items.service.ts   # /slash command detection & completion
 │   │   ├── claude-usage.service.ts  # Token usage via ccburn library
-│   │   └── git-dirs.service.ts      # Cached git directory discovery
+│   │   ├── git-dirs.service.ts      # Cached git directory discovery
+│   │   ├── cloudflared.service.ts   # Download cloudflared binary from GitHub (platform-specific)
+│   │   └── tunnel.service.ts        # Cloudflare Quick Tunnel lifecycle (spawn, capture URL, cleanup)
 │   ├── types/                       # TypeScript interfaces (6 files, 258 LOC)
 │   │   ├── api.ts                   # ApiResponse envelope, WebSocket message types
 │   │   ├── chat.ts                  # Session, Message, ChatEvent types
@@ -142,8 +144,8 @@ ppm/
 ### CLI Layer (src/cli/)
 - **Responsibility:** Command-line interface for managing PPM
 - **Key Functions:**
-  - `start` — Start Hono server on configurable port
-  - `stop` — Graceful shutdown of daemon process
+  - `start` — Start Hono server (background by default, --foreground/-f for foreground, --share/-s for tunnel)
+  - `stop` — Stop daemon (reads status.json first, falls back to ppm.pid)
   - `open` — Launch browser to active server
   - `init` — Scan filesystem for git repos, create ppm.yaml
   - `projects` — Add/remove/list projects in config
@@ -164,7 +166,7 @@ ppm/
 - **Pattern:** Project-scoped routing via ProviderRegistry
 
 ### Service Layer (src/services/)
-- **Responsibility:** Business logic, data operations
+- **Responsibility:** Business logic, data operations, infrastructure (tunneling)
 - **Services:**
   - **ChatService** — Session lifecycle, message queueing, streaming
   - **GitService** — Git commands via simple-git
@@ -172,6 +174,8 @@ ppm/
   - **ProjectService** — YAML registry management
   - **TerminalService** — PTY lifecycle, shell spawning
   - **ConfigService** — Config file loading
+  - **CloudflaredService** — Download/cache cloudflared binary (platform-aware, shows progress)
+  - **TunnelService** — Spawn tunnel, extract URL from stderr, cleanup on exit
 - **Pattern:** Singleton services, dependency injection via imports
 
 ### Provider Layer (src/providers/)

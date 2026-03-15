@@ -100,13 +100,66 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 | **Mobile** | iOS Safari, Android Chrome | Responsive design, touch-friendly UI |
 | **Offline** | Basic file browsing, editor | Service worker caching (PWA) |
 
+## CLI Commands (v2+)
+
+### ppm start
+Start the server in **background daemon mode** (default) or foreground. Supports optional public URL sharing via Cloudflare Quick Tunnel.
+
+**Syntax:**
+```bash
+ppm start [options]
+```
+
+**Options:**
+- `-p, --port <port>` — Port to listen on (default: from config.yaml)
+- `-f, --foreground` — Run in foreground (blocking, shows logs). Default: background daemon.
+- `-d, --daemon` — Explicit daemon flag (kept for compatibility, no-op since daemon is default)
+- `-s, --share` — Enable public URL sharing via Cloudflare tunnel
+- `-c, --config <path>` — Path to config file (default: ~/.ppm/config.yaml)
+
+**Behavior:**
+- **Background (default):** Process exits immediately. Daemon runs with output to null. Status saved to `~/.ppm/status.json`. Parent polls for status (up to 30s).
+- **Foreground:** Blocks with logs displayed. All WebSocket and tunnel features work normally.
+- **--share flag:** Downloads cloudflared binary to `~/.ppm/bin/` if missing (shows progress). Spawns tunnel in separate child. URL extracted from stderr and saved to status.json.
+- **Auth warning:** If `--share` is used without auth enabled, warns user that IDE is publicly accessible.
+
+**Example:**
+```bash
+ppm start --share              # Daemon + tunnel
+ppm start --foreground         # Foreground for debugging
+ppm start -p 3000 -f           # Custom port + foreground
+```
+
+### ppm stop
+Stop the background daemon gracefully.
+
+**Syntax:**
+```bash
+ppm stop
+```
+
+**Behavior:**
+- Reads `~/.ppm/status.json` (new format) or falls back to `~/.ppm/ppm.pid` (legacy)
+- Sends SIGTERM to process
+- Cleans up status.json and ppm.pid files
+- Tunnel process (if running) killed via signal handler
+
+**Example:**
+```bash
+ppm stop                       # Stop daemon
+```
+
 ## Architecture Highlights
 
 ```
 ┌─────────────────────────────────────┐
-│         CLI (Commander.js)          │  Manage projects, start server
+│         CLI (Commander.js)          │  Start/stop daemon, manage projects
+│  ├─ ppm start [--foreground --share]│
+│  └─ ppm stop                        │
 ├─────────────────────────────────────┤
 │  Hono Server (Bun.serve + WebSocket)│  REST API, WS for terminal/chat
+│  ├─ Tunnel Service (Cloudflare)     │  Optional public URL
+│  └─ Daemon Mode (background process)│
 ├────────────────────┬────────────────┤
 │  Services Layer    │  Providers      │  Business logic, AI adapters
 ├────────────────────┴────────────────┤
@@ -137,6 +190,13 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 | Version | Status | Focus | Date |
 |---------|--------|-------|------|
 | **v1** | Complete | Initial prototype (single project, basic chat, terminal) | Feb 2025 |
-| **v2** | In Progress | Multi-project, project-scoped APIs, improved UI/UX | Mar 2025 |
+| **v2** | In Progress | Multi-project, project-scoped APIs, improved UI/UX, daemon mode, --share flag | Mar 2025 |
 | **v3** | Planned | Collaborative editing, plugin architecture | Q2 2025 |
+
+### v2 Changes (Mar 2025)
+- **Daemon Mode as Default:** `ppm start` now runs background daemon by default. `--foreground/-f` flag for debugging.
+- **Public URL Sharing:** `ppm start --share` creates Cloudflare Quick Tunnel public URL. Auto-downloads cloudflared binary.
+- **Status File:** `~/.ppm/status.json` (new format) replaces `ppm.pid` with backward compatibility.
+- **Auth Warning:** Warns if `--share` used without auth enabled.
+- **New Services:** `cloudflared.service.ts` (binary download), `tunnel.service.ts` (tunnel lifecycle).
 

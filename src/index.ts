@@ -10,9 +10,11 @@ program
 
 program
   .command("start")
-  .description("Start the PPM server")
+  .description("Start the PPM server (background by default)")
   .option("-p, --port <port>", "Port to listen on")
-  .option("-d, --daemon", "Run as background daemon")
+  .option("-f, --foreground", "Run in foreground (default: background daemon)")
+  .option("-d, --daemon", "Run as background daemon (default, kept for compat)")
+  .option("-s, --share", "Share via public URL (Cloudflare tunnel)")
   .option("-c, --config <path>", "Path to config file")
   .action(async (options) => {
     const { startServer } = await import("./server/index.ts");

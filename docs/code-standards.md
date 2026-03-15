@@ -572,3 +572,77 @@ refactor/service-layer-cleanup
 docs/deployment-guide
 ```
 
+## CLI Design Patterns
+
+### Command Option Handling
+When adding new options to CLI commands (e.g., `ppm start`):
+
+**Option Naming:**
+- Use long form: `--foreground`, `--share` (not short-only)
+- Add short form if common: `-f`, `-s` (optional)
+- Keep defaults sensible (e.g., daemon mode is default)
+
+**Implementation Pattern:**
+```typescript
+program
+  .command("start")
+  .option("-p, --port <port>", "Port to listen on")
+  .option("-f, --foreground", "Run in foreground")
+  .option("-s, --share", "Enable public URL via tunnel")
+  .action(async (options) => {
+    // options.port, options.foreground, options.share as booleans
+  });
+```
+
+**Server Handling:**
+```typescript
+export async function startServer(options: {
+  port?: string;
+  foreground?: boolean;
+  share?: boolean;
+  config?: string;
+}) {
+  const isDaemon = !options.foreground; // Explicit: daemon is default
+
+  if (isDaemon) {
+    // Spawn child process
+    const child = Bun.spawn(/* ... */);
+    // Poll for status.json, show URLs
+  } else {
+    // Foreground: serve with logs
+    const server = Bun.serve(/* ... */);
+  }
+
+  if (options.share) {
+    // Start tunnel (works in both daemon + foreground)
+  }
+}
+```
+
+### Status File Format
+Daemon process communicates back via JSON file at `~/.ppm/status.json`:
+
+```json
+{
+  "pid": 12345,
+  "port": 8080,
+  "host": "0.0.0.0",
+  "shareUrl": "https://abc-123.trycloudflare.com"
+}
+```
+
+**Backward Compatibility:** Fallback to `~/.ppm/ppm.pid` for legacy support.
+
+### Feature Service Loading (Lazy)
+Services that require external dependencies (e.g., cloudflared) should be lazy-imported:
+
+```typescript
+if (options.share) {
+  // Only download cloudflared if --share was used
+  const { ensureCloudflared } = await import("../services/cloudflared.service.ts");
+  await ensureCloudflared();
+}
+```
+
+This keeps startup fast when features aren't used.
+
