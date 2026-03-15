@@ -73,6 +73,8 @@ function generateTabId(): string {
 interface TabStore {
   tabs: Tab[];
   activeTabId: string | null;
+  /** Stack of recently active tab IDs (most recent last) */
+  tabHistory: string[];
   currentProject: string | null;
   switchProject: (projectName: string) => void;
   openTab: (tab: Omit<Tab, "id">) => string;
@@ -81,12 +83,22 @@ interface TabStore {
   updateTab: (id: string, updates: Partial<Omit<Tab, "id">>) => void;
 }
 
+/** Push a tab ID to the history stack, deduplicating (move to top if exists) */
+function pushHistory(history: string[], id: string): string[] {
+  const filtered = history.filter((h) => h !== id);
+  filtered.push(id);
+  // Cap at 50 entries to prevent unbounded growth
+  if (filtered.length > 50) filtered.shift();
+  return filtered;
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 export const useTabStore = create<TabStore>()((set, get) => ({
   tabs: [],
   activeTabId: null,
+  tabHistory: [],
   currentProject: null,
 
   switchProject: (projectName: string) => {
@@ -112,12 +124,13 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       };
       const newState = { tabs: [defaultTab], activeTabId: defaultId };
       saveTabs(projectName, newState);
-      set({ currentProject: projectName, ...newState });
+      set({ currentProject: projectName, ...newState, tabHistory: [defaultId] });
     } else {
       set({
         currentProject: projectName,
         tabs: loaded.tabs,
         activeTabId: loaded.activeTabId,
+        tabHistory: loaded.activeTabId ? [loaded.activeTabId] : [],
       });
     }
   },
@@ -131,7 +144,8 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         (t) => t.type === tabDef.type && t.projectId === tabDef.projectId,
       );
       if (existing) {
-        set({ activeTabId: existing.id });
+        const history = pushHistory(get().tabHistory, existing.id);
+        set({ activeTabId: existing.id, tabHistory: history });
         if (currentProject) {
           saveTabs(currentProject, { tabs: get().tabs, activeTabId: existing.id });
         }
@@ -143,36 +157,42 @@ export const useTabStore = create<TabStore>()((set, get) => ({
     const tab: Tab = { ...tabDef, id };
     set((s) => {
       const newTabs = [...s.tabs, tab];
+      const history = pushHistory(s.tabHistory, id);
       if (s.currentProject) {
         saveTabs(s.currentProject, { tabs: newTabs, activeTabId: id });
       }
-      return { tabs: newTabs, activeTabId: id };
+      return { tabs: newTabs, activeTabId: id, tabHistory: history };
     });
     return id;
   },
 
   closeTab: (id) => {
     set((s) => {
-      const idx = s.tabs.findIndex((t) => t.id === id);
       const newTabs = s.tabs.filter((t) => t.id !== id);
+      // Remove closed tab from history
+      const newHistory = s.tabHistory.filter((h) => h !== id);
       let newActive = s.activeTabId;
       if (s.activeTabId === id) {
-        const nextIdx = Math.min(idx, newTabs.length - 1);
-        newActive = newTabs[nextIdx]?.id ?? null;
+        // Go back to the most recently active tab that still exists
+        const prevId = newHistory.length > 0 ? newHistory[newHistory.length - 1] : null;
+        newActive = prevId && newTabs.some((t) => t.id === prevId)
+          ? prevId
+          : newTabs[newTabs.length - 1]?.id ?? null;
       }
       if (s.currentProject) {
         saveTabs(s.currentProject, { tabs: newTabs, activeTabId: newActive });
       }
-      return { tabs: newTabs, activeTabId: newActive };
+      return { tabs: newTabs, activeTabId: newActive, tabHistory: newHistory };
     });
   },
 
   setActiveTab: (id) => {
     set((s) => {
+      const history = pushHistory(s.tabHistory, id);
       if (s.currentProject) {
         saveTabs(s.currentProject, { tabs: s.tabs, activeTabId: id });
       }
-      return { activeTabId: id };
+      return { activeTabId: id, tabHistory: history };
     });
   },
 
