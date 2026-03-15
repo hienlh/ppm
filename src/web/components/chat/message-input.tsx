@@ -395,7 +395,7 @@ export function MessageInput({
           placeholder={isStreaming ? "Send follow-up or press Stop..." : "Type / for commands, @ for files, or drop files..."}
           disabled={disabled}
           rows={1}
-          className="flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-base md:text-sm text-text-primary placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 max-h-40"
+          className="flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring disabled:opacity-50 max-h-40"
         />
         {showCancel ? (
           <button
