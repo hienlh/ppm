@@ -1,8 +1,12 @@
 {
-  "name": "ppm",
+  "name": "@hienlh/ppm",
+  "version": "0.1.5",
+  "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "module": "src/index.ts",
   "type": "module",
-  "private": true,
+  "bin": {
+    "ppm": "src/index.ts"
+  },
   "scripts": {
     "dev": "bun run --hot src/index.ts start",
     "dev:web": "bun run vite --config vite.config.ts",
@@ -10,6 +14,7 @@
     "build": "bun run build:web && bun build src/index.ts --compile --outfile dist/ppm",
     "start": "bun run src/index.ts start",
     "typecheck": "bunx tsc --noEmit",
+    "prepublishOnly": "bun run build:web",
     "postinstall": "node node_modules/ccburn/scripts/postinstall.js"
   },
   "devDependencies": {

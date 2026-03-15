@@ -6,12 +6,15 @@ import type { ChatWsClientMessage } from "../../types/api.ts";
 /** Tracks active chat WS connections: sessionId -> ws + abort controller + project context */
 const activeSessions = new Map<
   string,
-  { providerId: string; ws: ChatWsSocket; abort?: AbortController; projectPath?: string }
+  { providerId: string; ws: ChatWsSocket; abort?: AbortController; projectPath?: string; pingInterval?: ReturnType<typeof setInterval> }
 >();
+
+const PING_INTERVAL_MS = 15_000; // 15s keepalive
 
 type ChatWsSocket = {
   data: { type: string; sessionId: string; projectName?: string };
   send: (data: string) => void;
+  ping?: (data?: string | ArrayBuffer) => void;
 };
 
 /**
@@ -36,7 +39,15 @@ export const chatWebSocket = {
       session.projectPath = projectPath;
     }
 
-    activeSessions.set(sessionId, { providerId, ws, projectPath });
+    // Start keepalive ping to prevent proxy/firewall from dropping idle connections
+    const pingInterval = setInterval(() => {
+      try {
+        if (ws.ping) ws.ping();
+        else ws.send(JSON.stringify({ type: "ping" }));
+      } catch { /* ws may be closed */ }
+    }, PING_INTERVAL_MS);
+
+    activeSessions.set(sessionId, { providerId, ws, projectPath, pingInterval });
     ws.send(JSON.stringify({ type: "connected", sessionId }));
   },
 
@@ -114,6 +125,8 @@ export const chatWebSocket = {
     const { sessionId } = ws.data;
     const entry = activeSessions.get(sessionId);
     if (entry) {
+      // Stop keepalive ping
+      if (entry.pingInterval) clearInterval(entry.pingInterval);
       // Force-break the for-await loop — no client to receive events anymore
       if (entry.abort) {
         entry.abort.abort();

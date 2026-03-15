@@ -12,6 +12,8 @@ interface UseTerminalOptions {
 interface UseTerminalReturn {
   connected: boolean;
   reconnecting: boolean;
+  sendData: (data: string) => void;
+  getSelection: () => string;
 }
 
 const RESIZE_PREFIX = "\x01RESIZE:";
@@ -28,6 +30,17 @@ export function useTerminal(
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const actualSessionId = useRef(sessionId); // Track server-assigned session ID
+
+  const sendData = useCallback((data: string) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(data);
+    }
+  }, []);
+
+  const getSelection = useCallback(() => {
+    return termRef.current?.getSelection() ?? "";
+  }, []);
 
   const sendResize = useCallback(() => {
     const term = termRef.current;
@@ -178,5 +191,5 @@ export function useTerminal(
     };
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting };
+  return { connected, reconnecting, sendData, getSelection };
 }

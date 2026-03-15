@@ -46,6 +46,9 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       return;
     }
 
+    // Ignore keepalive pings
+    if ((data as any).type === "ping") return;
+
     // Handle connected event (custom, not in type)
     if ((data as any).type === "connected") {
       setIsConnected(true);

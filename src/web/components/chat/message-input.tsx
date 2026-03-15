@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
 import { Send, Square, Paperclip } from "lucide-react";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
+import { randomId } from "@/lib/utils";
 import { isSupportedFile, isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import type { SlashItem } from "./slash-command-picker";
@@ -188,7 +189,7 @@ export function MessageInput({
           continue;
         }
 
-        const id = crypto.randomUUID().slice(0, 8);
+        const id = randomId();
         const isImg = isImageFile(file);
         const previewUrl = isImg ? URL.createObjectURL(file) : undefined;
 
