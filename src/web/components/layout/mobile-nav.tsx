@@ -55,16 +55,17 @@ export function MobileNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-background border-t border-border z-40">
-      {/* Scrollable tab bar — + button on the left for one-handed use */}
-      <div className="flex items-center h-12 overflow-x-auto">
-        {/* + button (left side — easy thumb reach) */}
+      {/* Scrollable tab bar — + button pinned on the left for one-handed use */}
+      <div className="flex items-center h-12">
+        {/* + button — sticky, never scrolls */}
         <button
           onClick={() => setShowMenu(!showMenu)}
-          className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
+          className="flex items-center justify-center size-12 shrink-0 text-text-secondary border-r border-border"
         >
           <Plus className="size-5" />
         </button>
 
+        <div className="flex-1 flex items-center h-12 overflow-x-auto">
         {tabs.map((tab) => {
           const Icon = TAB_ICONS[tab.type];
           const isActive = tab.id === activeTabId;
@@ -97,6 +98,7 @@ export function MobileNav() {
             </button>
           );
         })}
+        </div>
       </div>
 
       {/* New tab popup menu — opens upward from left */}

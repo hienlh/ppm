@@ -112,8 +112,19 @@ export function GitGraph({ metadata }: GitGraphProps) {
     gitAction("/git/branch/delete", { name });
   const handlePushBranch = (branch: string) =>
     gitAction("/git/push", { branch });
-  const handleCreateBranch = (name: string, from: string) =>
-    gitAction("/git/branch/create", { name, from });
+  const handleCreateBranch = async (name: string, from: string) => {
+    // Check if branch already exists
+    const exists = data?.branches.some((b) => b.name === name || b.name.endsWith(`/${name}`));
+    if (exists) {
+      const confirmed = window.confirm(
+        `Branch "${name}" already exists.\nDelete it and recreate from this commit?`,
+      );
+      if (!confirmed) return;
+      // Delete first, then recreate
+      await gitAction("/git/branch/delete", { name });
+    }
+    await gitAction("/git/branch/create", { name, from });
+  };
   const handleCreateTag = (name: string, hash?: string) =>
     gitAction("/git/tag", { name, hash });
 

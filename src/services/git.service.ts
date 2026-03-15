@@ -274,6 +274,22 @@ class GitService {
     return { commits, branches };
   }
 
+  async discardChanges(projectPath: string, files: string[]): Promise<void> {
+    const git = this.git(projectPath);
+    // Separate tracked vs untracked files
+    const s = await git.status();
+    const untrackedSet = new Set(s.not_added);
+    const tracked = files.filter((f) => !untrackedSet.has(f));
+    const untracked = files.filter((f) => untrackedSet.has(f));
+
+    if (tracked.length > 0) {
+      await git.checkout(["--", ...tracked]);
+    }
+    if (untracked.length > 0) {
+      await git.clean("f", ["-e", "!.*", "--", ...untracked]);
+    }
+  }
+
   async cherryPick(projectPath: string, hash: string): Promise<void> {
     await this.git(projectPath).raw(["cherry-pick", hash]);
   }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Plus,
   Minus,
@@ -6,16 +6,32 @@ import {
   ArrowUpFromLine,
   ArrowDownToLine,
   Loader2,
+  Undo2,
+  List,
+  FolderTree,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { GitStatus, GitFileChange } from "../../../types/git";
 
 interface GitStatusPanelProps {
   metadata?: Record<string, unknown>;
+  tabId?: string;
 }
+
+type ViewMode = "flat" | "tree";
 
 const STATUS_COLORS: Record<string, string> = {
   M: "text-yellow-500",
@@ -26,14 +42,78 @@ const STATUS_COLORS: Record<string, string> = {
   "?": "text-gray-400",
 };
 
-export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
+/** Build a tree structure from flat file paths */
+interface TreeNode {
+  name: string;
+  fullPath: string;
+  file?: GitFileChange;
+  children: TreeNode[];
+}
+
+function buildTree(files: GitFileChange[]): TreeNode[] {
+  const root: TreeNode[] = [];
+
+  for (const f of files) {
+    const parts = f.path.split("/");
+    let current = root;
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      const fullPath = parts.slice(0, i + 1).join("/");
+      const isFile = i === parts.length - 1;
+
+      let existing = current.find((n) => n.name === part);
+      if (!existing) {
+        existing = {
+          name: part,
+          fullPath,
+          file: isFile ? f : undefined,
+          children: [],
+        };
+        current.push(existing);
+      }
+      if (isFile) {
+        existing.file = f;
+      }
+      current = existing.children;
+    }
+  }
+
+  return root;
+}
+
+/** Collect all file paths under a tree node (recursively) */
+function collectFiles(node: TreeNode): GitFileChange[] {
+  const result: GitFileChange[] = [];
+  if (node.file) result.push(node.file);
+  for (const child of node.children) {
+    result.push(...collectFiles(child));
+  }
+  return result;
+}
+
+export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
   const projectName = metadata?.projectName as string | undefined;
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [commitMsg, setCommitMsg] = useState("");
   const [acting, setActing] = useState(false);
-  const { openTab } = useTabStore();
+  const [revertTarget, setRevertTarget] = useState<{
+    label: string;
+    files: string[];
+  } | null>(null);
+  const { openTab, updateTab } = useTabStore();
+
+  // Restore viewMode from tab metadata
+  const viewMode: ViewMode =
+    (metadata?.viewMode as ViewMode) === "tree" ? "tree" : "flat";
+
+  const setViewMode = (mode: ViewMode) => {
+    if (tabId) {
+      updateTab(tabId, { metadata: { ...metadata, viewMode: mode } });
+    }
+  };
 
   const fetchStatus = useCallback(async () => {
     if (!projectName) return;
@@ -79,6 +159,25 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     } finally {
       setActing(false);
     }
+  };
+
+  const discardChanges = async (files: string[]) => {
+    if (!projectName) return;
+    setActing(true);
+    try {
+      await api.post(`${projectUrl(projectName)}/git/discard`, { files });
+      await fetchStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Discard failed");
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const handleConfirmRevert = async () => {
+    if (!revertTarget) return;
+    await discardChanges(revertTarget.files);
+    setRevertTarget(null);
   };
 
   const handleCommit = async () => {
@@ -136,6 +235,16 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     });
   };
 
+  const allUnstaged = useMemo(
+    () => [
+      ...(status?.unstaged ?? []),
+      ...(status?.untracked.map(
+        (p): GitFileChange => ({ path: p, status: "?" }),
+      ) ?? []),
+    ],
+    [status],
+  );
+
   if (!projectName) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -164,44 +273,56 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
     );
   }
 
-  const allUnstaged = [
-    ...(status?.unstaged ?? []),
-    ...(status?.untracked.map(
-      (p): GitFileChange => ({ path: p, status: "?" }),
-    ) ?? []),
-  ];
-
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b">
+      <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
         <span className="text-sm font-medium">
           {status?.current ? `On: ${status.current}` : "Git Status"}
         </span>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={fetchStatus}
-          disabled={acting}
-        >
-          <RefreshCw className={loading ? "animate-spin" : ""} />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant={viewMode === "flat" ? "secondary" : "ghost"}
+            size="icon-xs"
+            onClick={() => setViewMode("flat")}
+            title="Flat view"
+          >
+            <List className="size-3.5" />
+          </Button>
+          <Button
+            variant={viewMode === "tree" ? "secondary" : "ghost"}
+            size="icon-xs"
+            onClick={() => setViewMode("tree")}
+            title="Tree view"
+          >
+            <FolderTree className="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={fetchStatus}
+            disabled={acting}
+          >
+            <RefreshCw className={loading ? "animate-spin" : ""} />
+          </Button>
+        </div>
       </div>
 
       {error && (
-        <div className="px-3 py-1.5 text-xs text-destructive bg-destructive/10">
+        <div className="px-3 py-1.5 text-xs text-destructive bg-destructive/10 shrink-0">
           {error}
         </div>
       )}
 
-      <ScrollArea className="flex-1">
-        <div className="p-2 space-y-3">
+      <ScrollArea className="flex-1 overflow-hidden">
+        <div className="p-2 space-y-3 overflow-hidden">
           {/* Staged Changes */}
           <FileSection
             title="Staged Changes"
             count={status?.staged.length ?? 0}
             files={status?.staged ?? []}
-            actionIcon={<Minus className="size-3" />}
+            viewMode={viewMode}
+            actionIcon={<Minus className="size-3.5" />}
             actionTitle="Unstage"
             onAction={(f) => unstageFiles([f.path])}
             onActionAll={
@@ -210,6 +331,7 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
                 : undefined
             }
             actionAllLabel="Unstage All"
+            onFolderAction={(files) => unstageFiles(files.map((f) => f.path))}
             onClickFile={openDiff}
             disabled={acting}
           />
@@ -219,7 +341,8 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
             title="Changes"
             count={allUnstaged.length}
             files={allUnstaged}
-            actionIcon={<Plus className="size-3" />}
+            viewMode={viewMode}
+            actionIcon={<Plus className="size-3.5" />}
             actionTitle="Stage"
             onAction={(f) => stageFiles([f.path])}
             onActionAll={
@@ -228,14 +351,25 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
                 : undefined
             }
             actionAllLabel="Stage All"
+            onFolderAction={(files) => stageFiles(files.map((f) => f.path))}
             onClickFile={openDiff}
             disabled={acting}
+            showRevert
+            onRevert={(f) =>
+              setRevertTarget({ label: f.path, files: [f.path] })
+            }
+            onFolderRevert={(files, folderName) =>
+              setRevertTarget({
+                label: `${folderName}/ (${files.length} files)`,
+                files: files.map((f) => f.path),
+              })
+            }
           />
         </div>
       </ScrollArea>
 
       {/* Commit section */}
-      <div className="border-t p-2 space-y-2">
+      <div className="border-t p-2 space-y-2 shrink-0">
         <textarea
           className="w-full h-16 px-2 py-1.5 text-sm bg-muted/50 border rounded resize-none focus:outline-none focus:ring-1 focus:ring-ring"
           placeholder="Commit message..."
@@ -285,33 +419,136 @@ export function GitStatusPanel({ metadata }: GitStatusPanelProps) {
           </Button>
         </div>
       </div>
+
+      {/* Revert confirmation dialog */}
+      <Dialog
+        open={!!revertTarget}
+        onOpenChange={(open) => !open && setRevertTarget(null)}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Discard Changes</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to discard all changes to{" "}
+              <code className="px-1 py-0.5 rounded bg-muted text-sm font-mono">
+                {revertTarget?.label}
+              </code>
+              ? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRevertTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmRevert}
+              disabled={acting}
+            >
+              {acting ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                "Discard"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-/** Reusable file list section */
+/* ------------------------------------------------------------------ */
+/*  Action buttons                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Inline action buttons for a file / folder row */
+function ActionButtons({
+  showRevert,
+  onRevert,
+  onAction,
+  actionIcon,
+  actionTitle,
+  disabled,
+}: {
+  showRevert?: boolean;
+  onRevert?: () => void;
+  onAction: () => void;
+  actionIcon: React.ReactNode;
+  actionTitle: string;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-0.5 shrink-0 ml-1">
+      {showRevert && onRevert && (
+        <button
+          type="button"
+          className="flex items-center justify-center size-7 rounded border border-border/60 bg-muted/60 text-muted-foreground hover:bg-destructive/15 hover:text-destructive hover:border-destructive/40 active:scale-95 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRevert();
+          }}
+          disabled={disabled}
+          title="Discard changes"
+        >
+          <Undo2 className="size-3.5" />
+        </button>
+      )}
+      <button
+        type="button"
+        className="flex items-center justify-center size-7 rounded border border-border/60 bg-muted/60 text-muted-foreground hover:bg-accent hover:text-accent-foreground active:scale-95 transition-colors"
+        onClick={(e) => {
+          e.stopPropagation();
+          onAction();
+        }}
+        disabled={disabled}
+        title={actionTitle}
+      >
+        {actionIcon}
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  FileSection                                                        */
+/* ------------------------------------------------------------------ */
+
 function FileSection({
   title,
   count,
   files,
+  viewMode,
   actionIcon,
   actionTitle,
   onAction,
   onActionAll,
   actionAllLabel,
+  onFolderAction,
   onClickFile,
   disabled,
+  showRevert,
+  onRevert,
+  onFolderRevert,
 }: {
   title: string;
   count: number;
   files: GitFileChange[];
+  viewMode: ViewMode;
   actionIcon: React.ReactNode;
   actionTitle: string;
   onAction: (f: GitFileChange) => void;
   onActionAll?: () => void;
   actionAllLabel: string;
+  onFolderAction?: (files: GitFileChange[]) => void;
   onClickFile: (f: GitFileChange) => void;
   disabled: boolean;
+  showRevert?: boolean;
+  onRevert?: (f: GitFileChange) => void;
+  onFolderRevert?: (files: GitFileChange[], folderName: string) => void;
 }) {
   return (
     <div>
@@ -333,43 +570,281 @@ function FileSection({
       </div>
       {files.length === 0 ? (
         <p className="text-xs text-muted-foreground px-1">No changes</p>
-      ) : (
-        <div className="space-y-0.5">
+      ) : viewMode === "flat" ? (
+        <div className="divide-y divide-border/40 w-full overflow-hidden">
           {files.map((f) => (
-            <div
+            <FileRow
               key={f.path}
-              className="flex items-center gap-1 group hover:bg-muted/50 rounded px-1 py-0.5"
-            >
-              <span
-                className={`text-xs font-mono w-4 text-center shrink-0 ${STATUS_COLORS[f.status] ?? ""}`}
-              >
-                {f.status}
-              </span>
-              <button
-                type="button"
-                className="flex-1 text-left text-xs font-mono truncate hover:underline"
-                onClick={() => onClickFile(f)}
-                title={f.path}
-              >
-                {f.path}
-              </button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="opacity-0 group-hover:opacity-100 shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAction(f);
-                }}
-                disabled={disabled}
-                title={actionTitle}
-              >
-                {actionIcon}
-              </Button>
-            </div>
+              file={f}
+              actionIcon={actionIcon}
+              actionTitle={actionTitle}
+              onAction={onAction}
+              onClickFile={onClickFile}
+              disabled={disabled}
+              showRevert={showRevert}
+              onRevert={onRevert}
+            />
           ))}
         </div>
+      ) : (
+        <TreeView
+          files={files}
+          actionIcon={actionIcon}
+          actionTitle={actionTitle}
+          onAction={onAction}
+          onFolderAction={onFolderAction}
+          onClickFile={onClickFile}
+          disabled={disabled}
+          showRevert={showRevert}
+          onRevert={onRevert}
+          onFolderRevert={onFolderRevert}
+        />
       )}
     </div>
   );
+}
+
+/* ------------------------------------------------------------------ */
+/*  FileRow                                                            */
+/* ------------------------------------------------------------------ */
+
+function FileRow({
+  file,
+  actionIcon,
+  actionTitle,
+  onAction,
+  onClickFile,
+  disabled,
+  showRevert,
+  onRevert,
+  displayName,
+}: {
+  file: GitFileChange;
+  actionIcon: React.ReactNode;
+  actionTitle: string;
+  onAction: (f: GitFileChange) => void;
+  onClickFile: (f: GitFileChange) => void;
+  disabled: boolean;
+  showRevert?: boolean;
+  onRevert?: (f: GitFileChange) => void;
+  displayName?: string;
+}) {
+  return (
+    <div className="flex items-center gap-1 hover:bg-muted/50 rounded px-1 py-1 w-full min-w-0">
+      <span
+        className={`text-xs font-mono w-4 text-center shrink-0 ${STATUS_COLORS[file.status] ?? ""}`}
+      >
+        {file.status}
+      </span>
+      <button
+        type="button"
+        className="flex-1 text-left text-xs font-mono truncate hover:underline min-w-0"
+        onClick={() => onClickFile(file)}
+        title={file.path}
+      >
+        {displayName ?? file.path}
+      </button>
+      <ActionButtons
+        showRevert={showRevert}
+        onRevert={onRevert ? () => onRevert(file) : undefined}
+        onAction={() => onAction(file)}
+        actionIcon={actionIcon}
+        actionTitle={actionTitle}
+        disabled={disabled}
+      />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  TreeView                                                           */
+/* ------------------------------------------------------------------ */
+
+function TreeView({
+  files,
+  actionIcon,
+  actionTitle,
+  onAction,
+  onFolderAction,
+  onClickFile,
+  disabled,
+  showRevert,
+  onRevert,
+  onFolderRevert,
+}: {
+  files: GitFileChange[];
+  actionIcon: React.ReactNode;
+  actionTitle: string;
+  onAction: (f: GitFileChange) => void;
+  onFolderAction?: (files: GitFileChange[]) => void;
+  onClickFile: (f: GitFileChange) => void;
+  disabled: boolean;
+  showRevert?: boolean;
+  onRevert?: (f: GitFileChange) => void;
+  onFolderRevert?: (files: GitFileChange[], folderName: string) => void;
+}) {
+  const tree = useMemo(() => buildTree(files), [files]);
+
+  return (
+    <div>
+      {tree.map((node, i) => (
+        <TreeNodeView
+          key={node.fullPath}
+          node={node}
+          depth={0}
+          isLast={i === tree.length - 1}
+          actionIcon={actionIcon}
+          actionTitle={actionTitle}
+          onAction={onAction}
+          onFolderAction={onFolderAction}
+          onClickFile={onClickFile}
+          disabled={disabled}
+          showRevert={showRevert}
+          onRevert={onRevert}
+          onFolderRevert={onFolderRevert}
+        />
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  TreeNodeView                                                       */
+/* ------------------------------------------------------------------ */
+
+function TreeNodeView({
+  node,
+  depth,
+  isLast,
+  actionIcon,
+  actionTitle,
+  onAction,
+  onFolderAction,
+  onClickFile,
+  disabled,
+  showRevert,
+  onRevert,
+  onFolderRevert,
+}: {
+  node: TreeNode;
+  depth: number;
+  isLast: boolean;
+  actionIcon: React.ReactNode;
+  actionTitle: string;
+  onAction: (f: GitFileChange) => void;
+  onFolderAction?: (files: GitFileChange[]) => void;
+  onClickFile: (f: GitFileChange) => void;
+  disabled: boolean;
+  showRevert?: boolean;
+  onRevert?: (f: GitFileChange) => void;
+  onFolderRevert?: (files: GitFileChange[], folderName: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const isDir = node.children.length > 0 && !node.file;
+
+  if (node.file) {
+    return (
+      <div
+        className="relative overflow-hidden border-b border-border/30"
+        style={{ paddingLeft: depth * 16 }}
+      >
+        {/* Vertical indent line */}
+        {depth > 0 && (
+          <div
+            className="absolute top-0 bottom-0 border-l border-border/30"
+            style={{ left: depth * 16 - 8 }}
+          />
+        )}
+        <FileRow
+          file={node.file}
+          displayName={node.name}
+          actionIcon={actionIcon}
+          actionTitle={actionTitle}
+          onAction={onAction}
+          onClickFile={onClickFile}
+          disabled={disabled}
+          showRevert={showRevert}
+          onRevert={onRevert}
+        />
+      </div>
+    );
+  }
+
+  if (isDir) {
+    const folderFiles = collectFiles(node);
+
+    return (
+      <div className="relative overflow-hidden">
+        {/* Vertical indent line for this level */}
+        {depth > 0 && (
+          <div
+            className="absolute top-0 border-l border-border/30"
+            style={{ left: depth * 16 - 8, bottom: isLast ? "50%" : 0 }}
+          />
+        )}
+        {/* Folder row */}
+        <div
+          className="flex items-center hover:bg-muted/50 rounded py-1 pr-1 border-b border-border/30"
+          style={{ paddingLeft: depth * 16 + 4 }}
+        >
+          <button
+            type="button"
+            className="flex items-center gap-1 flex-1 min-w-0 text-xs font-mono text-muted-foreground"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? (
+              <ChevronDown className="size-3.5 shrink-0" />
+            ) : (
+              <ChevronRight className="size-3.5 shrink-0" />
+            )}
+            <span className="truncate font-semibold">{node.name}</span>
+            <span className="text-[10px] opacity-60 shrink-0">
+              ({folderFiles.length})
+            </span>
+          </button>
+          <ActionButtons
+            showRevert={showRevert}
+            onRevert={
+              onFolderRevert
+                ? () => onFolderRevert(folderFiles, node.fullPath)
+                : undefined
+            }
+            onAction={() => onFolderAction?.(folderFiles)}
+            actionIcon={actionIcon}
+            actionTitle={`${actionTitle} ${node.name}/`}
+            disabled={disabled}
+          />
+        </div>
+        {/* Children with vertical guide line */}
+        {expanded && (
+          <div className="relative">
+            {/* Continuous vertical line for children */}
+            <div
+              className="absolute top-0 bottom-0 border-l border-border/30"
+              style={{ left: depth * 16 + 8 }}
+            />
+            {node.children.map((child, i) => (
+              <TreeNodeView
+                key={child.fullPath}
+                node={child}
+                depth={depth + 1}
+                isLast={i === node.children.length - 1}
+                actionIcon={actionIcon}
+                actionTitle={actionTitle}
+                onAction={onAction}
+                onFolderAction={onFolderAction}
+                onClickFile={onClickFile}
+                disabled={disabled}
+                showRevert={showRevert}
+                onRevert={onRevert}
+                onFolderRevert={onFolderRevert}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
 }
