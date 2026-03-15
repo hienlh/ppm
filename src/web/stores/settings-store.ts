@@ -6,7 +6,10 @@ const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
   theme: Theme;
+  deviceName: string | null;
+  version: string | null;
   setTheme: (theme: Theme) => void;
+  fetchServerInfo: () => Promise<void>;
 }
 
 function loadPersistedTheme(): Theme {
@@ -56,10 +59,26 @@ export function applyThemeClass(theme: Theme) {
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   theme: loadPersistedTheme(),
+  deviceName: null,
+  version: null,
 
   setTheme: (theme) => {
     persistTheme(theme);
     applyThemeClass(theme);
     set({ theme });
+  },
+
+  fetchServerInfo: async () => {
+    try {
+      const res = await fetch("/api/info");
+      const json = await res.json();
+      if (json.ok) {
+        const { device_name, version } = json.data;
+        set({ deviceName: device_name || null, version: version || null });
+        if (device_name) {
+          document.title = `PPM — ${device_name}`;
+        }
+      }
+    } catch {}
   },
 }));

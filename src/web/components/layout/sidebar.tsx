@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useSettingsStore } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 
 /** Max projects shown before needing to search (desktop) */
@@ -18,6 +19,8 @@ export function Sidebar() {
   const { projects, activeProject, setActiveProject, loading } =
     useProjectStore();
   const openTab = useTabStore((s) => s.openTab);
+  const deviceName = useSettingsStore((s) => s.deviceName);
+  const version = useSettingsStore((s) => s.version);
   const [query, setQuery] = useState("");
 
   const sorted = useMemo(() => sortByRecent(projects), [projects]);
@@ -41,6 +44,11 @@ export function Sidebar() {
       {/* Logo + project dropdown — same height as tab bar */}
       <div className="flex items-center gap-2 px-3 h-[41px] border-b border-border shrink-0">
         <span className="text-sm font-bold text-primary tracking-tight shrink-0">PPM</span>
+        {deviceName && (
+          <span className="text-[10px] text-text-subtle bg-surface-elevated px-1.5 py-0.5 rounded-full truncate max-w-[100px]" title={deviceName}>
+            {deviceName}
+          </span>
+        )}
 
         <DropdownMenu onOpenChange={() => setQuery("")}>
           <DropdownMenuTrigger asChild>
@@ -119,6 +127,13 @@ export function Sidebar() {
           <p className="text-xs text-text-subtle text-center">
             Select a project to browse files
           </p>
+        </div>
+      )}
+
+      {/* Version footer */}
+      {version && (
+        <div className="px-3 py-1.5 border-t border-border shrink-0">
+          <span className="text-[10px] text-text-subtle">v{version}</span>
         </div>
       )}
     </aside>

@@ -41,7 +41,16 @@ export async function initProject(options: InitOptions = {}) {
 
   console.log("\n  🔧 PPM Setup\n");
 
-  // 1. Port
+  // 1. Device name
+  const defaultHostname = (await import("node:os")).hostname();
+  const deviceName = nonInteractive
+    ? (options as any).deviceName ?? defaultHostname
+    : await input({
+        message: "Device name (shown in UI to identify this machine):",
+        default: defaultHostname,
+      });
+
+  // 2. Port
   const portValue = options.port
     ? parseInt(options.port, 10)
     : nonInteractive
@@ -140,6 +149,7 @@ export async function initProject(options: InitOptions = {}) {
 
   // Apply config
   configService.load();
+  configService.set("device_name", deviceName);
   configService.set("port", portValue);
   configService.set("auth", { enabled: authEnabled, token: authToken });
   configService.set("ai", {

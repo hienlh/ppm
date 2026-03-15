@@ -1,4 +1,5 @@
 export interface PpmConfig {
+  device_name: string;
   port: number;
   host: string;
   auth: AuthConfig;
@@ -33,6 +34,7 @@ export interface AIProviderConfig {
 }
 
 export const DEFAULT_CONFIG: PpmConfig = {
+  device_name: "",
   port: 8080,
   host: "0.0.0.0",
   auth: { enabled: true, token: "" },
