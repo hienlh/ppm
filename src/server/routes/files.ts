@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   fileService,
@@ -27,6 +29,32 @@ fileRoutes.get("/tree", (c) => {
     const depth = parseInt(c.req.query("depth") ?? "3", 10);
     const tree = fileService.getTree(projectPath, depth);
     return c.json(ok(tree));
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** GET /files/raw?path=... — serve file directly as binary (for PDF viewer, images, etc.) */
+fileRoutes.get("/raw", (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("Missing query parameter: path"), 400);
+
+    // Resolve safely (reuse service's security check)
+    const absPath = resolve(projectPath, filePath);
+    if (!absPath.startsWith(projectPath)) {
+      return c.json(err("Access denied"), 403);
+    }
+    if (!existsSync(absPath)) return c.json(err("File not found"), 404);
+
+    const file = Bun.file(absPath);
+    return new Response(file.stream(), {
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "Content-Disposition": "inline",
+      },
+    });
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }

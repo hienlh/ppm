@@ -1,10 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, type DragEvent } from "react";
+import { Upload } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { MessageList } from "./message-list";
-import { MessageInput } from "./message-input";
+import { MessageInput, type ChatAttachment } from "./message-input";
 import { SessionPicker } from "./session-picker";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
@@ -39,6 +40,11 @@ export function ChatTab({ metadata }: ChatTabProps) {
   // Usage detail panel
   const [showUsageDetail, setShowUsageDetail] = useState(false);
 
+  // Drag-and-drop state
+  const [isDragging, setIsDragging] = useState(false);
+  const [externalFiles, setExternalFiles] = useState<File[] | null>(null);
+  const dragCounterRef = useRef(0);
+
   const activeProject = useProjectStore((s) => s.activeProject);
 
   const {
@@ -70,8 +76,33 @@ export function ChatTab({ metadata }: ChatTabProps) {
     setProviderId(session.providerId);
   }, []);
 
+  /** Build message content with file references prepended */
+  const buildMessageWithAttachments = useCallback(
+    (content: string, attachments: ChatAttachment[]): string => {
+      if (attachments.length === 0) return content;
+
+      const fileRefs = attachments
+        .filter((a) => a.serverPath)
+        .map((a) => a.serverPath!)
+        .join("\n");
+
+      if (!fileRefs) return content;
+
+      // Prepend file paths so Claude Code can read them
+      const prefix = attachments.length === 1
+        ? `[Attached file: ${fileRefs}]\n\n`
+        : `[Attached files:\n${fileRefs}\n]\n\n`;
+
+      return prefix + content;
+    },
+    [],
+  );
+
   const handleSend = useCallback(
-    async (content: string) => {
+    async (content: string, attachments: ChatAttachment[] = []) => {
+      const fullContent = buildMessageWithAttachments(content, attachments);
+      if (!fullContent.trim()) return;
+
       if (!sessionId) {
         try {
           const pName = activeProject?.name ?? (metadata?.project as string) ?? "";
@@ -82,7 +113,7 @@ export function ChatTab({ metadata }: ChatTabProps) {
           setSessionId(session.id);
           setProviderId(session.providerId);
           setTimeout(() => {
-            sendMessage(content);
+            sendMessage(fullContent);
           }, 500);
           return;
         } catch (e) {
@@ -90,9 +121,9 @@ export function ChatTab({ metadata }: ChatTabProps) {
           return;
         }
       }
-      sendMessage(content);
+      sendMessage(fullContent);
     },
-    [sessionId, providerId, metadata?.project, sendMessage],
+    [sessionId, providerId, metadata?.project, sendMessage, buildMessageWithAttachments, activeProject?.name],
   );
 
   // --- Slash picker handlers ---
@@ -131,14 +162,65 @@ export function ChatTab({ metadata }: ChatTabProps) {
     setFileFilter("");
   }, []);
 
+  // --- Drag-and-drop on entire chat area ---
+  const handleDragEnter = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: DragEvent) => {
+    e.preventDefault();
+  }, []);
+
+  const handleDrop = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      setExternalFiles(files);
+      // Reset after a tick so the effect fires even with same files
+      setTimeout(() => setExternalFiles(null), 100);
+    }
+  }, []);
+
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col h-full relative"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm border-2 border-dashed border-primary rounded-lg pointer-events-none">
+          <div className="flex flex-col items-center gap-2 text-primary">
+            <Upload className="size-8" />
+            <span className="text-sm font-medium">Drop files to attach</span>
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <MessageList
         messages={messages}
         pendingApproval={pendingApproval}
         onApprovalResponse={respondToApproval}
         isStreaming={isStreaming}
+        projectName={activeProject?.name}
       />
 
       {/* Bottom toolbar */}
@@ -199,6 +281,7 @@ export function ChatTab({ metadata }: ChatTabProps) {
           onFileStateChange={handleFileStateChange}
           onFileItemsLoaded={setFileItems}
           fileSelected={fileSelected}
+          externalFiles={externalFiles}
         />
       </div>
     </div>

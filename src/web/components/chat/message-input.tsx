@@ -1,12 +1,25 @@
-import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
-import { Send, Square } from "lucide-react";
-import { api, projectUrl } from "@/lib/api-client";
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
+import { Send, Square, Paperclip } from "lucide-react";
+import { api, projectUrl, getAuthToken } from "@/lib/api-client";
+import { isSupportedFile, isImageFile } from "@/lib/file-support";
+import { AttachmentChips } from "./attachment-chips";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
 import { flattenFileTree } from "./file-picker";
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  file: File;
+  isImage: boolean;
+  previewUrl?: string;
+  /** Server-side path after upload */
+  serverPath?: string;
+  status: "uploading" | "ready" | "error";
+}
+
 interface MessageInputProps {
-  onSend: (content: string) => void;
+  onSend: (content: string, attachments: ChatAttachment[]) => void;
   isStreaming?: boolean;
   onCancel?: () => void;
   disabled?: boolean;
@@ -19,6 +32,8 @@ interface MessageInputProps {
   onFileStateChange?: (visible: boolean, filter: string) => void;
   onFileItemsLoaded?: (items: FileNode[]) => void;
   fileSelected?: FileNode | null;
+  /** External files added via drag-drop on parent */
+  externalFiles?: File[] | null;
 }
 
 export function MessageInput({
@@ -33,9 +48,12 @@ export function MessageInput({
   onFileStateChange,
   onFileItemsLoaded,
   fileSelected,
+  externalFiles,
 }: MessageInputProps) {
   const [value, setValue] = useState("");
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
   const fileItemsRef = useRef<FileNode[]>([]);
 
@@ -127,17 +145,107 @@ export function MessageInput({
     onFileStateChange?.(false, "");
   }, [fileSelected]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Handle external files dropped on parent (ChatTab)
+  useEffect(() => {
+    if (!externalFiles || externalFiles.length === 0) return;
+    processFiles(externalFiles);
+  }, [externalFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Upload a single file to the server, return server path */
+  const uploadFile = useCallback(
+    async (file: File): Promise<string | null> => {
+      if (!projectName) return null;
+      try {
+        const form = new FormData();
+        form.append("files", file);
+        const headers: HeadersInit = {};
+        const token = getAuthToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`${projectUrl(projectName)}/chat/upload`, {
+          method: "POST",
+          headers,
+          body: form,
+        });
+        const json = await res.json();
+        if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
+          return json.data[0].path as string;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
+    [projectName],
+  );
+
+  /** Process dropped/pasted/selected files */
+  const processFiles = useCallback(
+    (files: File[]) => {
+      for (const file of files) {
+        if (!isSupportedFile(file)) {
+          // Unsupported → insert file name as text
+          setValue((prev) => prev + (prev.length > 0 && !prev.endsWith(" ") ? " " : "") + file.name);
+          continue;
+        }
+
+        const id = crypto.randomUUID().slice(0, 8);
+        const isImg = isImageFile(file);
+        const previewUrl = isImg ? URL.createObjectURL(file) : undefined;
+
+        const att: ChatAttachment = {
+          id,
+          name: file.name,
+          file,
+          isImage: isImg,
+          previewUrl,
+          status: "uploading",
+        };
+
+        setAttachments((prev) => [...prev, att]);
+
+        // Upload in background
+        uploadFile(file).then((serverPath) => {
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.id === id
+                ? { ...a, serverPath: serverPath ?? undefined, status: serverPath ? "ready" : "error" }
+                : a,
+            ),
+          );
+        });
+      }
+      textareaRef.current?.focus();
+    },
+    [uploadFile],
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const att = prev.find((a) => a.id === id);
+      if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
+
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
+    const readyAttachments = attachments.filter((a) => a.status === "ready");
+    if (!trimmed && readyAttachments.length === 0) return;
+    if (disabled) return;
+
     onSlashStateChange?.(false, "");
     onFileStateChange?.(false, "");
-    onSend(trimmed);
+    onSend(trimmed, readyAttachments);
     setValue("");
+    // Revoke preview URLs
+    for (const att of attachments) {
+      if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+    }
+    setAttachments([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [value, disabled, onSend, onSlashStateChange, onFileStateChange]);
+  }, [value, attachments, disabled, onSend, onSlashStateChange, onFileStateChange]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -194,42 +302,119 @@ export function MessageInput({
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
   }, []);
 
-  const hasText = value.trim().length > 0;
-  const showCancel = isStreaming && !hasText;
+  /** Handle paste — intercept images from clipboard */
+  const handlePaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      const files: File[] = [];
+      for (const item of items) {
+        if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        processFiles(files);
+      }
+    },
+    [processFiles],
+  );
+
+  /** Handle drop directly on textarea */
+  const handleDrop = useCallback(
+    (e: DragEvent<HTMLTextAreaElement>) => {
+      e.preventDefault();
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) processFiles(files);
+    },
+    [processFiles],
+  );
+
+  const handleDragOver = useCallback((e: DragEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+  }, []);
+
+  /** Open native file picker */
+  const handleAttachClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? []);
+      if (files.length > 0) processFiles(files);
+      // Reset so same file can be selected again
+      e.target.value = "";
+    },
+    [processFiles],
+  );
+
+  const hasContent = value.trim().length > 0 || attachments.some((a) => a.status === "ready");
+  const showCancel = isStreaming && !hasContent;
 
   return (
-    <div className="flex items-end gap-2 p-3 border-t border-border bg-background">
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => {
-          handleChange(e.target.value);
-          handleInput();
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder={isStreaming ? "Send follow-up or press Stop..." : "Type / for commands, @ for files..."}
-        disabled={disabled}
-        rows={1}
-        className="flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-base md:text-sm text-text-primary placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 max-h-40"
-      />
-      {showCancel ? (
+    <div className="border-t border-border bg-background">
+      {/* Attachment chips */}
+      <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+
+      {/* Input row */}
+      <div className="flex items-end gap-2 p-3">
+        {/* Attach button */}
         <button
-          onClick={onCancel}
-          className="flex items-center justify-center rounded-lg bg-red-600 p-2 text-white hover:bg-red-500 transition-colors shrink-0"
-          aria-label="Stop response"
+          type="button"
+          onClick={handleAttachClick}
+          disabled={disabled}
+          className="flex items-center justify-center rounded-lg p-2 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors shrink-0 disabled:opacity-50"
+          aria-label="Attach file"
         >
-          <Square className="size-4" />
+          <Paperclip className="size-4" />
         </button>
-      ) : (
-        <button
-          onClick={handleSend}
-          disabled={disabled || !hasText}
-          className="flex items-center justify-center rounded-lg bg-primary p-2 text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-          aria-label="Send message"
-        >
-          <Send className="size-4" />
-        </button>
-      )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={handleFileInputChange}
+        />
+
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => {
+            handleChange(e.target.value);
+            handleInput();
+          }}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          placeholder={isStreaming ? "Send follow-up or press Stop..." : "Type / for commands, @ for files, or drop files..."}
+          disabled={disabled}
+          rows={1}
+          className="flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-base md:text-sm text-text-primary placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 max-h-40"
+        />
+        {showCancel ? (
+          <button
+            onClick={onCancel}
+            className="flex items-center justify-center rounded-lg bg-red-600 p-2 text-white hover:bg-red-500 transition-colors shrink-0"
+            aria-label="Stop response"
+          >
+            <Square className="size-4" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={disabled || !hasContent}
+            className="flex items-center justify-center rounded-lg bg-primary p-2 text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            aria-label="Send message"
+          >
+            <Send className="size-4" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
