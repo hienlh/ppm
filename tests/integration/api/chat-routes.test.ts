@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import "./test-setup.ts"; // disable auth
-import { app } from "../../src/server/index.ts";
+import "../../test-setup.ts"; // disable auth
+import { app } from "../../../src/server/index.ts";
 
 async function req(path: string, init?: RequestInit) {
   const url = `http://localhost${path}`;

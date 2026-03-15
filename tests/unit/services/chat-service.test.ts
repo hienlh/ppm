@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { chatService } from "../../src/services/chat.service.ts";
+import { chatService } from "../../../src/services/chat.service.ts";
 
 describe("ChatService", () => {
   it("creates session with default provider", async () => {
@@ -92,7 +92,7 @@ describe("ChatService", () => {
       // consume
     }
 
-    const messages = chatService.getMessages("mock", session.id);
+    const messages = await chatService.getMessages("mock", session.id);
     expect(messages.length).toBeGreaterThanOrEqual(2); // user + assistant
     expect(messages[0].role).toBe("user");
     expect(messages[0].content).toBe("test msg");

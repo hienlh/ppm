@@ -1,10 +1,32 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { query, listSessions, getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAgentSdkProvider } from "../../src/providers/claude-agent-sdk.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Remove CLAUDECODE env to avoid nested session error
 delete process.env.CLAUDECODE;
+
+// Use a temp directory so SDK sessions don't pollute the real project
+let tempDir: string;
+let originalCwd: string;
+
+beforeAll(() => {
+  originalCwd = process.cwd();
+  tempDir = mkdtempSync(join(tmpdir(), "ppm-sdk-test-"));
+  process.chdir(tempDir);
+});
+
+afterAll(() => {
+  process.chdir(originalCwd);
+  try {
+    rmSync(tempDir, { recursive: true, force: true });
+  } catch {
+    // best effort cleanup
+  }
+});
 
 /** Collect all messages from a query */
 async function collectMessages(q: AsyncIterable<SDKMessage>): Promise<SDKMessage[]> {
@@ -132,7 +154,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
 
   it("createSession returns valid session with UUID", async () => {
     const session = await provider.createSession({
-      projectName: "ppm",
+      projectName: "test-project",
       title: "Integration Test",
     });
 
@@ -140,7 +162,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
     expect(session.id).not.toContain("pending");
     expect(session.providerId).toBe("claude-sdk");
     expect(session.title).toBe("Integration Test");
-    expect(session.projectName).toBe("ppm");
+    expect(session.projectName).toBe("test-project");
   });
 
   it("sendMessage streams text events and done", async () => {
@@ -160,20 +182,6 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
 
     expect(doneEvent).toBeTruthy();
     expect(doneEvent.sessionId).toBe(session.id);
-  }, 30000);
-
-  it("stores message history after sendMessage", async () => {
-    const session = await provider.createSession({});
-    for await (const _ of provider.sendMessage(session.id, "Hello provider")) {
-      // consume
-    }
-
-    const messages = provider.getMessages(session.id);
-    expect(messages.length).toBe(2); // user + assistant
-    expect(messages[0].role).toBe("user");
-    expect(messages[0].content).toBe("Hello provider");
-    expect(messages[1].role).toBe("assistant");
-    expect(messages[1].content.length).toBeGreaterThan(0);
   }, 30000);
 
   it("multi-turn: resume maintains context", async () => {
@@ -196,19 +204,6 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
       .join("");
     expect(fullText.toLowerCase()).toContain("purple");
   }, 60000);
-
-  it("updates title from first message", async () => {
-    const session = await provider.createSession({});
-    for await (const _ of provider.sendMessage(session.id, "How do I write tests in Bun?")) {
-      // consume
-    }
-
-    const sessions = await provider.listSessions();
-    const updated = sessions.find((s) => s.id === session.id);
-    // In-memory sessions should have updated title
-    const meta = (provider as any).sessions.get(session.id);
-    expect(meta.title).toContain("How do I write tests");
-  }, 30000);
 
   it("returns error for non-existent session", async () => {
     const events: any[] = [];

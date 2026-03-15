@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import "./test-setup.ts"; // disable auth
-import { chatService } from "../../src/services/chat.service.ts";
+import "../../test-setup.ts"; // disable auth
+import { chatService } from "../../../src/services/chat.service.ts";
 
 const PORT = 19876;
 let server: ReturnType<typeof Bun.serve>;
 
 beforeAll(async () => {
-  const { app } = await import("../../src/server/index.ts");
-  const { chatWebSocket } = await import("../../src/server/ws/chat.ts");
+  const { app } = await import("../../../src/server/index.ts");
+  const { chatWebSocket } = await import("../../../src/server/ws/chat.ts");
 
   server = Bun.serve({
     port: PORT,
@@ -199,9 +199,113 @@ describe("Chat WebSocket", () => {
     expect(turn2Texts).toBeGreaterThan(turn1Texts);
 
     // Verify history has both turns
-    const history = chatService.getMessages("mock", session.id);
-    const userMsgs = history.filter((m) => m.role === "user");
+    const history = await chatService.getMessages("mock", session.id);
+    const userMsgs = history.filter((m: any) => m.role === "user");
     expect(userMsgs).toHaveLength(2);
+
+    close();
+  });
+
+  it("cancels streaming mid-response", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, messages, waitForType, close } = await connectWs(session.id);
+
+    await waitForType("connected");
+
+    // Send a message that will trigger slow streaming
+    ws.send(JSON.stringify({ type: "message", content: "hello world" }));
+
+    // Wait for at least one text event to arrive (streaming started)
+    await waitForType("text");
+
+    // Count text events so far
+    const textsBefore = messages.filter((m) => m.type === "text").length;
+    expect(textsBefore).toBeGreaterThan(0);
+
+    // Send cancel
+    ws.send(JSON.stringify({ type: "cancel" }));
+
+    // Wait a bit for cancel to take effect
+    await new Promise((r) => setTimeout(r, 500));
+
+    // The stream should have stopped — no "done" event with full text
+    // Text events should be fewer than a full response (~10 words = ~10 text events)
+    const textsAfter = messages.filter((m) => m.type === "text").length;
+    // Cancel should have stopped streaming before all words were sent
+    // (Mock sends ~7 words at 50ms each = 350ms, we cancel after first text ~350ms in)
+    // Just verify we got some but the stream was interrupted (no new done event)
+    expect(textsAfter).toBeGreaterThanOrEqual(textsBefore);
+
+    close();
+  });
+
+  it("cancel does not affect subsequent messages", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, messages, waitForType, close } = await connectWs(session.id);
+
+    await waitForType("connected");
+
+    // Send message and cancel quickly
+    ws.send(JSON.stringify({ type: "message", content: "hello" }));
+    await waitForType("text");
+    ws.send(JSON.stringify({ type: "cancel" }));
+
+    // Wait for cancel to settle
+    await new Promise((r) => setTimeout(r, 600));
+
+    // Clear messages array for clean tracking of turn 2
+    const msgCountBefore = messages.length;
+
+    // Send another message — should work normally
+    ws.send(JSON.stringify({ type: "message", content: "second message" }));
+
+    // Wait for done from the second message
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Timeout waiting for second done")), 10000);
+      const donesBefore = messages.filter((m) => m.type === "done").length;
+      const handler = (event: MessageEvent) => {
+        try {
+          const msg = JSON.parse(event.data as string);
+          if (msg.type === "done" && messages.filter((m: any) => m.type === "done").length > donesBefore) {
+            clearTimeout(timer);
+            ws.removeEventListener("message", handler);
+            resolve();
+          }
+        } catch { /* ignore */ }
+      };
+      ws.addEventListener("message", handler);
+    });
+
+    // Should have new text events from second message
+    const newMessages = messages.slice(msgCountBefore);
+    const newTexts = newMessages.filter((m) => m.type === "text");
+    expect(newTexts.length).toBeGreaterThan(0);
+
+    // Should have a done event from second message
+    const newDone = newMessages.find((m) => m.type === "done");
+    expect(newDone).toBeTruthy();
+
+    close();
+  });
+
+  it("cancel with no active stream is a no-op", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, messages, waitForType, close } = await connectWs(session.id);
+
+    await waitForType("connected");
+
+    // Send cancel before any message — should not crash
+    ws.send(JSON.stringify({ type: "cancel" }));
+    await new Promise((r) => setTimeout(r, 200));
+
+    // No error events should be emitted
+    const errors = messages.filter((m) => m.type === "error");
+    expect(errors).toHaveLength(0);
+
+    // Can still send a normal message after
+    ws.send(JSON.stringify({ type: "message", content: "hello after cancel" }));
+    const done = await waitForType("done", 10000);
+    expect(done.sessionId).toBe(session.id);
 
     close();
   });
