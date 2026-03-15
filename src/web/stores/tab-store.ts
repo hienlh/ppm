@@ -108,7 +108,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
         type: "projects",
         title: "Projects",
         projectId: null,
-        closable: false,
+        closable: true,
       };
       const newState = { tabs: [defaultTab], activeTabId: defaultId };
       saveTabs(projectName, newState);
