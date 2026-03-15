@@ -6,7 +6,7 @@ const program = new Command();
 program
   .name("ppm")
   .description("Personal Project Manager — mobile-first web IDE")
-  .version("0.2.1");
+  .version("0.2.2");
 
 program
   .command("start")
