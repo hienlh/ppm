@@ -16,6 +16,7 @@ import {
 
 interface MessageListProps {
   messages: ChatMessage[];
+  messagesLoading?: boolean;
   pendingApproval: { requestId: string; tool: string; input: unknown } | null;
   onApprovalResponse: (requestId: string, approved: boolean, data?: unknown) => void;
   isStreaming: boolean;
@@ -24,6 +25,7 @@ interface MessageListProps {
 
 export function MessageList({
   messages,
+  messagesLoading,
   pendingApproval,
   onApprovalResponse,
   isStreaming,
@@ -41,6 +43,15 @@ export function MessageList({
       initialLoadRef.current = false;
     }
   }, [messages, pendingApproval]);
+
+  if (messagesLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
+        <Bot className="size-10 text-text-subtle animate-pulse" />
+        <p className="text-sm">Loading messages...</p>
+      </div>
+    );
+  }
 
   if (messages.length === 0 && !isStreaming) {
     return (

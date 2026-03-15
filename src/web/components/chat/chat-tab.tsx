@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, type DragEvent } from "react";
+import { useState, useCallback, useRef, useEffect, type DragEvent } from "react";
 import { Upload } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
@@ -15,9 +15,10 @@ import type { Session, SessionInfo } from "../../../types/chat";
 
 interface ChatTabProps {
   metadata?: Record<string, unknown>;
+  tabId?: string;
 }
 
-export function ChatTab({ metadata }: ChatTabProps) {
+export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [sessionId, setSessionId] = useState<string | null>(
     (metadata?.sessionId as string) ?? null,
   );
@@ -46,9 +47,19 @@ export function ChatTab({ metadata }: ChatTabProps) {
   const dragCounterRef = useRef(0);
 
   const activeProject = useProjectStore((s) => s.activeProject);
+  const updateTab = useTabStore((s) => s.updateTab);
+
+  // Persist sessionId and providerId to tab metadata so reload restores the session
+  useEffect(() => {
+    if (!tabId || !sessionId) return;
+    updateTab(tabId, {
+      metadata: { ...metadata, sessionId, providerId },
+    });
+  }, [sessionId, providerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
     messages,
+    messagesLoading,
     isStreaming,
     pendingApproval,
     usageInfo,
@@ -217,6 +228,7 @@ export function ChatTab({ metadata }: ChatTabProps) {
       {/* Messages */}
       <MessageList
         messages={messages}
+        messagesLoading={messagesLoading}
         pendingApproval={pendingApproval}
         onApprovalResponse={respondToApproval}
         isStreaming={isStreaming}
