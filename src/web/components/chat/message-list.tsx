@@ -8,6 +8,7 @@ import {
   AlertCircle,
   Wrench,
   CheckCircle2,
+  XCircle,
   ShieldAlert,
   Bot,
   FileText,
@@ -294,7 +295,7 @@ function AuthFileLink({ src, filename, mimeType }: { src: string; filename: stri
  */
 type EventGroup =
   | { kind: "text"; content: string }
-  | { kind: "tool"; tool: ChatEvent; result?: ChatEvent };
+  | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean };
 
 function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStreaming: boolean }) {
   // Group: consecutive text → merged text block; tool_use + following tool_result → single tool block
@@ -341,6 +342,17 @@ function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStr
     groups.push({ kind: "text", content: textBuffer });
   }
 
+  // Mark tool groups as completed: if there are events after the tool group,
+  // or streaming is finished, the tool has completed (even without explicit tool_result).
+  // The SDK doesn't emit tool_result during streaming — only in REST history.
+  for (let gi = 0; gi < groups.length; gi++) {
+    const g = groups[gi]!;
+    if (g.kind === "tool" && !g.result) {
+      const hasEventsAfter = gi < groups.length - 1;
+      g.completed = hasEventsAfter || !isStreaming;
+    }
+  }
+
   return (
     <>
       {groups.map((group, i) => {
@@ -352,7 +364,7 @@ function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStr
             </div>
           );
         }
-        return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} />;
+        return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} completed={group.completed} />;
       })}
     </>
   );
@@ -481,7 +493,7 @@ function MarkdownContent({ content }: { content: string }) {
 }
 
 /** Unified tool card: shows tool-specific summary + expandable details */
-function ToolCard({ tool, result }: { tool: ChatEvent; result?: ChatEvent }) {
+function ToolCard({ tool, result, completed }: { tool: ChatEvent; result?: ChatEvent; completed?: boolean }) {
   const [expanded, setExpanded] = useState(false);
 
   if (tool.type === "error") {
@@ -505,8 +517,11 @@ function ToolCard({ tool, result }: { tool: ChatEvent; result?: ChatEvent }) {
       ? ((tool as any).input as Record<string, unknown>) ?? {}
       : {};
   const hasResult = result?.type === "tool_result";
+  const isError = hasResult && !!(result as any).isError;
   // AskUserQuestion with answers already submitted → show as completed
   const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
+  // Determine icon: error (red X) > success (green check) > pending (yellow wrench)
+  const isDone = hasResult || hasAnswers || completed;
 
   return (
     <div className="rounded border border-border bg-background text-xs">
@@ -515,9 +530,11 @@ function ToolCard({ tool, result }: { tool: ChatEvent; result?: ChatEvent }) {
         className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-surface transition-colors min-w-0"
       >
         {expanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-        {(hasResult || hasAnswers)
-          ? <CheckCircle2 className="size-3 text-green-400 shrink-0" />
-          : <Wrench className="size-3 text-yellow-400 shrink-0" />
+        {isError
+          ? <XCircle className="size-3 text-red-400 shrink-0" />
+          : isDone
+            ? <CheckCircle2 className="size-3 text-green-400 shrink-0" />
+            : <Wrench className="size-3 text-yellow-400 shrink-0" />
         }
         <span className="truncate text-text-primary">
           <ToolSummary name={toolName} input={input} />

@@ -72,7 +72,7 @@ export interface UsageInfo {
 export type ChatEvent =
   | { type: "text"; content: string }
   | { type: "tool_use"; tool: string; input: unknown }
-  | { type: "tool_result"; output: string }
+  | { type: "tool_result"; output: string; isError?: boolean }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "usage"; usage: UsageInfo }
   | { type: "error"; message: string }
