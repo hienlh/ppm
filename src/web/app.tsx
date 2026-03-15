@@ -14,7 +14,7 @@ import {
   applyThemeClass,
 } from "@/stores/settings-store";
 import { getAuthToken } from "@/lib/api-client";
-import { Menu } from "lucide-react";
+import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
@@ -65,11 +65,34 @@ export function App() {
     checkAuth();
   }, []);
 
-  // Fetch projects after auth
+  // URL sync — keeps browser URL in sync with active project/tab
+  useUrlSync();
+
+  // Fetch projects after auth, then restore from URL if applicable
   useEffect(() => {
-    if (authState === "authenticated") {
-      fetchProjects();
-    }
+    if (authState !== "authenticated") return;
+
+    fetchProjects().then(() => {
+      const { projectName: urlProject, tabId: urlTab } = parseUrlState();
+      const projects = useProjectStore.getState().projects;
+
+      if (urlProject) {
+        const matched = projects.find((p) => p.name === urlProject);
+        if (matched) {
+          useProjectStore.getState().setActiveProject(matched);
+          // After switchProject runs, restore active tab from URL
+          if (urlTab) {
+            queueMicrotask(() => {
+              const { tabs } = useTabStore.getState();
+              if (tabs.some((t) => t.id === urlTab)) {
+                useTabStore.getState().setActiveTab(urlTab);
+              }
+            });
+          }
+          return;
+        }
+      }
+    });
   }, [authState, fetchProjects]);
 
   // Switch project tabs when active project changes
@@ -106,20 +129,6 @@ export function App() {
   return (
     <TooltipProvider>
       <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
-        {/* Mobile header */}
-        <header className="flex md:hidden items-center h-12 px-3 border-b border-border bg-background">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="flex items-center justify-center size-9 rounded-md hover:bg-surface-elevated transition-colors"
-          >
-            <Menu className="size-5" />
-          </button>
-          <span className="ml-2 text-sm font-semibold truncate">
-            PPM
-            {activeProject ? ` — ${activeProject.name}` : ""}
-          </span>
-        </header>
-
         {/* Main layout */}
         <div className="flex flex-1 overflow-hidden">
           {/* Desktop sidebar */}
@@ -138,7 +147,7 @@ export function App() {
         </div>
 
         {/* Mobile bottom nav */}
-        <MobileNav />
+        <MobileNav onMenuPress={() => setDrawerOpen(true)} />
 
         {/* Mobile drawer overlay */}
         <MobileDrawer

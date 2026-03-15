@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   X,
   Plus,
@@ -44,6 +45,19 @@ const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
 export function TabBar() {
   const { tabs, activeTabId, setActiveTab, closeTab, openTab } = useTabStore();
   const activeProject = useProjectStore((s) => s.activeProject);
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const prevTabCount = useRef(tabs.length);
+
+  // Auto-scroll to active tab when a new tab is added
+  useEffect(() => {
+    if (tabs.length > prevTabCount.current && activeTabId) {
+      const el = tabRefs.current.get(activeTabId);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+      }
+    }
+    prevTabCount.current = tabs.length;
+  }, [tabs.length, activeTabId]);
 
   function handleNewTab(type: TabType) {
     const needsProject =
@@ -71,6 +85,10 @@ export function TabBar() {
             return (
               <button
                 key={tab.id}
+                ref={(el) => {
+                  if (el) tabRefs.current.set(tab.id, el);
+                  else tabRefs.current.delete(tab.id);
+                }}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
                   "group flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md whitespace-nowrap transition-colors",
