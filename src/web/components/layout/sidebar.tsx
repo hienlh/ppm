@@ -52,7 +52,7 @@ export function Sidebar() {
               <ChevronDown className="size-3 text-text-subtle shrink-0" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-[260px] p-0">
+          <DropdownMenuContent align="start" className="w-[360px] p-0">
             {/* Search — only when many projects */}
             {showSearch && (
               <div className="flex items-center gap-2 px-2.5 py-2 border-b border-border">
@@ -88,7 +88,7 @@ export function Sidebar() {
                   )}
                 >
                   <FolderOpen className="size-3.5 shrink-0 text-text-subtle" />
-                  <span className="truncate font-medium">{project.name}</span>
+                  <span className="truncate font-semibold text-text-primary">{project.name}</span>
                   <span className="truncate text-xs text-text-subtle ml-auto">{project.path}</span>
                   {activeProject?.name === project.name && (
                     <Check className="size-3.5 text-primary shrink-0" />
