@@ -16,6 +16,7 @@ import {
 import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
+import { CommandPalette } from "@/components/layout/command-palette";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
@@ -69,8 +70,8 @@ export function App() {
   // URL sync — keeps browser URL in sync with active project/tab
   useUrlSync();
 
-  // Global keyboard shortcuts (Cmd/Ctrl+T, Cmd/Ctrl+W, Ctrl+Tab)
-  useGlobalKeybindings();
+  // Global keyboard shortcuts (Shift+Shift → command palette, Alt+[/] → cycle tabs)
+  const { paletteOpen, closePalette } = useGlobalKeybindings();
 
   // Fetch projects after auth, then restore from URL if applicable
   useEffect(() => {
@@ -158,6 +159,9 @@ export function App() {
           isOpen={drawerOpen}
           onClose={() => setDrawerOpen(false)}
         />
+
+        {/* Command palette (Shift+Shift) */}
+        <CommandPalette open={paletteOpen} onClose={closePalette} />
 
         {/* Toast notifications */}
         <Toaster
