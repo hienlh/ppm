@@ -5,43 +5,51 @@ import { readFileSync, unlinkSync, existsSync } from "node:fs";
 const PID_FILE = resolve(homedir(), ".ppm", "ppm.pid");
 const STATUS_FILE = resolve(homedir(), ".ppm", "status.json");
 
+function killPid(pid: number, label: string): boolean {
+  try {
+    process.kill(pid);
+    console.log(`  Stopped ${label} (PID: ${pid})`);
+    return true;
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code !== "ESRCH") console.error(`  Failed to stop ${label}: ${err.message}`);
+    return false;
+  }
+}
+
 export async function stopServer() {
-  let pid: number | null = null;
+  let status: { pid?: number; tunnelPid?: number } | null = null;
 
-  // Try status.json first (new format)
+  // Read status.json
   if (existsSync(STATUS_FILE)) {
-    try {
-      const status = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
-      pid = status.pid;
-    } catch {}
+    try { status = JSON.parse(readFileSync(STATUS_FILE, "utf-8")); } catch {}
   }
 
-  // Fallback to ppm.pid (compat)
-  if (!pid && existsSync(PID_FILE)) {
-    pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
-  }
+  // Fallback to ppm.pid
+  const pidFromFile = existsSync(PID_FILE)
+    ? parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10)
+    : NaN;
 
-  if (!pid || isNaN(pid)) {
+  const serverPid = status?.pid ?? (isNaN(pidFromFile) ? null : pidFromFile);
+  const tunnelPid = status?.tunnelPid ?? null;
+
+  if (!serverPid && !tunnelPid) {
     console.log("No PPM daemon running.");
-    // Cleanup stale files
-    if (existsSync(STATUS_FILE)) unlinkSync(STATUS_FILE);
-    if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
+    cleanup();
     return;
   }
 
-  try {
-    process.kill(pid);
-    if (existsSync(STATUS_FILE)) unlinkSync(STATUS_FILE);
-    if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
-    console.log(`PPM daemon stopped (PID: ${pid}).`);
-  } catch (e) {
-    const error = e as NodeJS.ErrnoException;
-    if (error.code === "ESRCH") {
-      console.log(`Process ${pid} not found. Cleaning up stale files.`);
-      if (existsSync(STATUS_FILE)) unlinkSync(STATUS_FILE);
-      if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
-    } else {
-      console.error(`Failed to stop process ${pid}: ${error.message}`);
-    }
-  }
+  // Kill server process
+  if (serverPid) killPid(serverPid, "server");
+
+  // Kill tunnel process (independent from server)
+  if (tunnelPid) killPid(tunnelPid, "tunnel");
+
+  cleanup();
+  console.log("PPM stopped.");
+}
+
+function cleanup() {
+  if (existsSync(STATUS_FILE)) unlinkSync(STATUS_FILE);
+  if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
 }

@@ -11,40 +11,46 @@ interface DaemonStatus {
   port: number | null;
   host: string | null;
   shareUrl: string | null;
+  tunnelPid: number | null;
+  tunnelAlive: boolean;
+}
+
+function isAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 function getDaemonStatus(): DaemonStatus {
-  const notRunning: DaemonStatus = { running: false, pid: null, port: null, host: null, shareUrl: null };
+  const dead: DaemonStatus = {
+    running: false, pid: null, port: null, host: null,
+    shareUrl: null, tunnelPid: null, tunnelAlive: false,
+  };
 
-  // Try status.json first
   if (existsSync(STATUS_FILE)) {
     try {
       const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
       const pid = data.pid as number;
-      // Check if process is actually alive
-      try {
-        process.kill(pid, 0); // signal 0 = check existence
-        return { running: true, pid, port: data.port, host: data.host, shareUrl: data.shareUrl ?? null };
-      } catch {
-        return notRunning; // stale status file
-      }
-    } catch {
-      return notRunning;
-    }
+      const tunnelPid = (data.tunnelPid as number) ?? null;
+      const tunnelAlive = tunnelPid ? isAlive(tunnelPid) : false;
+      return {
+        running: isAlive(pid),
+        pid,
+        port: data.port,
+        host: data.host,
+        shareUrl: data.shareUrl ?? null,
+        tunnelPid,
+        tunnelAlive,
+      };
+    } catch { return dead; }
   }
 
-  // Fallback to ppm.pid
   if (existsSync(PID_FILE)) {
     try {
       const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
-      process.kill(pid, 0);
-      return { running: true, pid, port: null, host: null, shareUrl: null };
-    } catch {
-      return notRunning;
-    }
+      return { ...dead, running: isAlive(pid), pid };
+    } catch { return dead; }
   }
 
-  return notRunning;
+  return dead;
 }
 
 export async function showStatus(options: { json?: boolean }) {
@@ -55,14 +61,17 @@ export async function showStatus(options: { json?: boolean }) {
     return;
   }
 
-  if (!status.running) {
+  if (!status.running && !status.tunnelAlive) {
     console.log("  PPM is not running.");
     return;
   }
 
-  console.log(`\n  PPM daemon is running\n`);
-  console.log(`  PID:     ${status.pid}`);
+  console.log(`\n  PPM daemon status\n`);
+  console.log(`  Server:  ${status.running ? "running" : "stopped"} (PID: ${status.pid})`);
   if (status.port) console.log(`  Local:   http://localhost:${status.port}/`);
+  if (status.tunnelPid) {
+    console.log(`  Tunnel:  ${status.tunnelAlive ? "running" : "stopped"} (PID: ${status.tunnelPid})`);
+  }
   if (status.shareUrl) {
     console.log(`  Share:   ${status.shareUrl}`);
     const qr = await import("qrcode-terminal");
