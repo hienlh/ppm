@@ -12,6 +12,7 @@ import type {
   ChatMessage,
   UsageInfo,
 } from "./provider.interface.ts";
+import { configService } from "../services/config.service.ts";
 
 /**
  * Pending approval: canUseTool callback creates a promise,
@@ -38,6 +39,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private activeQueries = new Map<string, { close: () => void }>();
   /** Latest known usage/rate-limit info (shared across all sessions) */
   private latestUsage: UsageInfo = {};
+
+  /** Read current provider config from yaml (fresh each call) */
+  private getProviderConfig(): Partial<import("../types/config.ts").AIProviderConfig> {
+    const ai = configService.get("ai");
+    const providerId = ai.default_provider ?? "claude";
+    return ai.providers[providerId] ?? {};
+  }
 
   async createSession(config: SessionConfig): Promise<Session> {
     const id = crypto.randomUUID();
@@ -216,6 +224,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultNumTurns: number | undefined;
 
     try {
+      const providerConfig = this.getProviderConfig();
+
       const q = query({
         prompt: message,
         options: {
@@ -242,7 +252,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ],
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
-          maxTurns: 100,
+          // Config-driven values from ppm.yaml
+          ...(providerConfig.model && { model: providerConfig.model }),
+          ...(providerConfig.effort && { effort: providerConfig.effort }),
+          maxTurns: providerConfig.max_turns ?? 100,
+          ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
+          ...(providerConfig.thinking_budget_tokens != null && {
+            thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
+          }),
           canUseTool,
           includePartialMessages: true,
         } as any,

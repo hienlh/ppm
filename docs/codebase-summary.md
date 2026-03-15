@@ -25,6 +25,7 @@ ppm/
 │   │   ├── middleware/
 │   │   │   └── auth.ts              # Token validation middleware
 │   │   ├── routes/
+│   │   │   ├── settings.ts          # GET/PUT /api/settings/ai (AI provider config)
 │   │   │   ├── projects.ts          # GET/POST /api/projects, DELETE /:name
 │   │   │   ├── project-scoped.ts    # Mount chat, git, files under /api/project/:name/*
 │   │   │   ├── chat.ts              # GET/POST/DELETE sessions, GET messages, usage, slash-items
@@ -36,13 +37,10 @@ ppm/
 │   │   └── ws/
 │   │       ├── chat.ts              # WebSocket chat streaming (220 LOC)
 │   │       └── terminal.ts          # WebSocket terminal I/O (terminal.service.ts integration)
-│   ├── providers/                   # AI Provider adapters (7 files, 1444 LOC)
+│   ├── providers/                   # AI Provider adapters (3 files, 574 LOC)
 │   │   ├── provider.interface.ts    # AIProvider interface (createSession, sendMessage, onToolApproval)
-│   │   ├── claude-agent-sdk.ts      # Primary: @anthropic-ai/claude-agent-sdk (444 LOC)
-│   │   ├── claude-code-cli.ts       # Fallback: claude CLI binary (412 LOC)
-│   │   ├── mock-provider.ts         # Test provider
-│   │   ├── claude-binary-finder.ts  # Find claude CLI in PATH
-│   │   ├── claude-process-registry.ts # Track running claude processes
+│   │   ├── claude-agent-sdk.ts      # Primary: @anthropic-ai/claude-agent-sdk. Reads config from configService.
+│   │   ├── mock-provider.ts         # Test provider (ignores config)
 │   │   └── registry.ts              # ProviderRegistry (singleton, router to active provider)
 │   ├── services/                    # Business logic (9 files, 1561 LOC)
 │   │   ├── chat.service.ts          # Session lifecycle, message streaming, streaming to clients
@@ -74,8 +72,9 @@ ppm/
 │       │   ├── use-websocket.ts     # Generic WebSocket adapter
 │       │   ├── use-terminal.ts      # Terminal I/O over WebSocket
 │       │   └── use-url-sync.ts      # Sync state to URL (project, tab, file selections)
-│       ├── lib/                     # Utilities (4 files, 264 LOC)
+│       ├── lib/                     # Utilities (5 files, 290 LOC)
 │       │   ├── api-client.ts        # Fetch wrapper with auth token
+│       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
 │       │   ├── ws-client.ts         # WebSocket wrapper
 │       │   ├── file-support.ts      # File type detection (language -> icon)
 │       │   └── utils.ts             # Utility functions (clsx, classname merging)
@@ -108,7 +107,7 @@ ppm/
 │           │   ├── mobile-nav.tsx   # Mobile hamburger navigation
 │           │   └── mobile-drawer.tsx # Offcanvas drawer
 │           ├── projects/            # Project management (339 LOC, 2 files)
-│           ├── settings/            # Settings panel (57 LOC)
+│           ├── settings/            # Settings panel (theme + AI provider config UI)
 │           ├── terminal/            # xterm.js wrapper (143 LOC, 2 files)
 │           └── ui/                  # Radix + shadcn primitives (1018 LOC, 10 files)
 │               └── button.tsx, dialog.tsx, dropdown-menu.tsx, ... (base components)
@@ -176,13 +175,12 @@ ppm/
 - **Pattern:** Singleton services, dependency injection via imports
 
 ### Provider Layer (src/providers/)
-- **Responsibility:** AI model abstraction
+- **Responsibility:** AI model abstraction, config-driven initialization
 - **Providers:**
-  - **claude-agent-sdk** — Primary (official SDK, streaming, tool use)
-  - **claude-code-cli** — Fallback (subprocess-based)
-  - **mock** — Test provider
+  - **claude-agent-sdk** — Primary (official SDK, streaming, tool use). Reads model/effort/maxTurns/budget/thinking from config.
+  - **mock** — Test provider (ignores config)
 - **Interface:** Async generator streaming, tool approval callback
-- **Pattern:** Registry pattern for pluggable AI providers
+- **Pattern:** Registry pattern for pluggable AI providers. Config read fresh per query (configService integration).
 
 ### Frontend Layer (src/web/)
 - **Responsibility:** React UI for project management, chat, terminal, editor

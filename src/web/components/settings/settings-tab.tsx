@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useSettingsStore, type Theme } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
+import { AISettingsSection } from "./ai-settings-section";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
   { value: "light", label: "Light", icon: Sun },
@@ -40,6 +41,10 @@ export function SettingsTab() {
           })}
         </div>
       </div>
+
+      <Separator />
+
+      <AISettingsSection />
 
       <Separator />
 

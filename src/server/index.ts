@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { configService } from "../services/config.service.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { projectRoutes } from "./routes/projects.ts";
+import { settingsRoutes } from "./routes/settings.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
@@ -22,6 +23,7 @@ app.use("/api/*", authMiddleware);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
 
 // API routes
+app.route("/api/settings", settingsRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
 
