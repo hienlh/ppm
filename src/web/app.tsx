@@ -16,6 +16,7 @@ import {
 import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
+import { useHealthCheck } from "@/hooks/use-health-check";
 import { CommandPalette } from "@/components/layout/command-palette";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
@@ -76,6 +77,9 @@ export function App() {
 
   // Global keyboard shortcuts (Shift+Shift → command palette, Alt+[/] → cycle tabs)
   const { paletteOpen, closePalette } = useGlobalKeybindings();
+
+  // Health check — detects server crash/restart
+  useHealthCheck();
 
   // Fetch projects after auth, then restore from URL if applicable
   useEffect(() => {
