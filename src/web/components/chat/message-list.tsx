@@ -379,69 +379,18 @@ function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStr
 }
 
 /**
- * Text component with typewriter effect.
- * When `animate=true`, reveals content progressively.
- * When `animate=false` (finalized), shows full content instantly.
+ * Text component that renders streamed content directly.
+ * WebSocket already delivers tokens incrementally — no fake animation needed.
+ * When `isStreaming=true`, shows a blinking cursor at the end.
  */
-function StreamingText({ content, animate }: { content: string; animate: boolean }) {
-  const [displayed, setDisplayed] = useState(content);
-  const prevLenRef = useRef(0);
-  const rafRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (!animate) {
-      // Not streaming — show everything immediately
-      setDisplayed(content);
-      prevLenRef.current = content.length;
-      return;
-    }
-
-    // If content grew, animate from where we left off
-    const prevLen = prevLenRef.current;
-    if (content.length <= prevLen) {
-      setDisplayed(content);
-      return;
-    }
-
-    let cursor = prevLen;
-    const target = content.length;
-    // Reveal ~20 chars per frame (~60fps = ~1200 chars/sec)
-    const charsPerFrame = Math.max(3, Math.ceil((target - cursor) / 30));
-
-    const step = () => {
-      cursor = Math.min(cursor + charsPerFrame, target);
-      setDisplayed(content.slice(0, cursor));
-      if (cursor < target) {
-        rafRef.current = requestAnimationFrame(step);
-      } else {
-        prevLenRef.current = target;
-      }
-    };
-
-    rafRef.current = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [content, animate]);
-
-  // When streaming finishes, sync to full content
-  useEffect(() => {
-    if (!animate) {
-      setDisplayed(content);
-      prevLenRef.current = content.length;
-    }
-  }, [animate, content]);
-
+function StreamingText({ content, animate: isStreaming }: { content: string; animate: boolean }) {
   return (
     <>
-      <MarkdownContent content={displayed} />
-      {animate && <StreamingCursor />}
+      <MarkdownContent content={content} />
+      {isStreaming && (
+        <span className="text-text-subtle text-sm animate-pulse">Thinking...</span>
+      )}
     </>
-  );
-}
-
-/** Blinking cursor shown at the end of streaming text */
-function StreamingCursor() {
-  return (
-    <span className="inline-block w-[2px] h-[1em] bg-accent ml-0.5 align-text-bottom animate-blink" />
   );
 }
 
