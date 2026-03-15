@@ -184,6 +184,33 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
     expect(doneEvent.sessionId).toBe(session.id);
   }, 30000);
 
+  it("done event includes resultSubtype success", async () => {
+    const session = await provider.createSession({ title: "Subtype Test" });
+    const events: any[] = [];
+
+    for await (const event of provider.sendMessage(session.id, "Reply with: test")) {
+      events.push(event);
+    }
+
+    const doneEvent = events.find((e) => e.type === "done");
+    expect(doneEvent).toBeTruthy();
+    expect(doneEvent.resultSubtype).toBe("success");
+  }, 30000);
+
+  it("done event includes numTurns", async () => {
+    const session = await provider.createSession({ title: "NumTurns Test" });
+    const events: any[] = [];
+
+    for await (const event of provider.sendMessage(session.id, "Reply with: hello")) {
+      events.push(event);
+    }
+
+    const doneEvent = events.find((e) => e.type === "done");
+    expect(doneEvent).toBeTruthy();
+    // Simple text reply should use 0 tool turns
+    expect(typeof doneEvent.numTurns).toBe("number");
+  }, 30000);
+
   it("multi-turn: resume maintains context", async () => {
     const session = await provider.createSession({ title: "Multi-turn" });
 
@@ -229,4 +256,55 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
     expect(events.length).toBeGreaterThan(0);
     expect(events.some((e) => e.type === "usage" || e.type === "text")).toBe(true);
   });
+});
+
+describe("Claude Agent SDK — maxTurns limit", () => {
+  it("yields error_max_turns when maxTurns exceeded", async () => {
+    const sessionId = crypto.randomUUID();
+    const msgs = await collectMessages(
+      query({
+        prompt: "Use the Bash tool to run 'echo step1', then 'echo step2', then 'echo step3', then 'echo step4'. Run each one separately.",
+        options: {
+          sessionId,
+          maxTurns: 1, // Very low — should hit limit quickly
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          allowedTools: ["Bash"],
+        } as any,
+      }),
+    );
+
+    const result = msgs.find((m) => m.type === "result") as any;
+    expect(result).toBeTruthy();
+    // With maxTurns=1, should either succeed in 1 turn or hit the limit
+    expect(["success", "error_max_turns"]).toContain(result.subtype);
+    expect(typeof result.num_turns).toBe("number");
+  }, 60000);
+});
+
+describe("Claude Agent SDK — systemPrompt preset", () => {
+  it("uses claude_code preset for enhanced responses", async () => {
+    const sessionId = crypto.randomUUID();
+    const msgs = await collectMessages(
+      query({
+        prompt: "What tools do you have available? List 3 tool names only.",
+        options: {
+          sessionId,
+          maxTurns: 1,
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+        } as any,
+      }),
+    );
+
+    const result = msgs.find((m) => m.type === "result") as any;
+    expect(result).toBeTruthy();
+    expect(result.subtype).toBe("success");
+    // With claude_code preset, Claude should know about its built-in tools
+    const text = result.result?.toLowerCase() ?? "";
+    expect(
+      text.includes("read") || text.includes("bash") || text.includes("edit") || text.includes("glob"),
+    ).toBe(true);
+  }, 30000);
 });

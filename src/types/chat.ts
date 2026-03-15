@@ -69,6 +69,13 @@ export interface UsageInfo {
   weeklySonnet?: LimitBucket;
 }
 
+/** Result subtype from SDK ResultMessage */
+export type ResultSubtype =
+  | "success"
+  | "error_max_turns"
+  | "error_max_budget_usd"
+  | "error_during_execution";
+
 export type ChatEvent =
   | { type: "text"; content: string }
   | { type: "tool_use"; tool: string; input: unknown; toolUseId?: string }
@@ -76,7 +83,7 @@ export type ChatEvent =
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "usage"; usage: UsageInfo }
   | { type: "error"; message: string }
-  | { type: "done"; sessionId: string };
+  | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number };
 
 export type ToolApprovalHandler = (
   tool: string,
