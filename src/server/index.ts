@@ -157,7 +157,7 @@ export async function startServer(options: {
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
 
-  console.log(`\n  PPM v0.1.6 ready\n`);
+  console.log(`\n  PPM v0.2.0 ready\n`);
   console.log(`  ➜  Local:   http://localhost:${server.port}/`);
 
   const { networkInterfaces } = await import("node:os");
