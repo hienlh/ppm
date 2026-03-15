@@ -18,14 +18,18 @@ export function SessionPicker({
 }: SessionPickerProps) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const loadSessions = useCallback(async () => {
     if (!projectName) return;
+    setLoading(true);
     try {
       const data = await api.get<SessionInfo[]>(`${projectUrl(projectName)}/chat/sessions`);
       setSessions(data);
     } catch {
       // Silently fail — sessions list is non-critical
+    } finally {
+      setLoading(false);
     }
   }, [projectName]);
 
@@ -86,7 +90,12 @@ export function SessionPicker({
 
             {/* Sessions list */}
             <div className="max-h-60 overflow-y-auto">
-              {sessions.length === 0 && (
+              {loading && (
+                <p className="px-3 py-2 text-xs text-text-subtle animate-pulse">
+                  Loading sessions...
+                </p>
+              )}
+              {!loading && sessions.length === 0 && (
                 <p className="px-3 py-2 text-xs text-text-subtle">
                   No sessions yet
                 </p>

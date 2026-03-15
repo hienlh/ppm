@@ -12,6 +12,7 @@ interface ApprovalRequest {
 
 interface UseChatReturn {
   messages: ChatMessage[];
+  messagesLoading: boolean;
   isStreaming: boolean;
   pendingApproval: ApprovalRequest | null;
   usageInfo: UsageInfo;
@@ -25,6 +26,7 @@ interface UseChatReturn {
 
 export function useChat(sessionId: string | null, providerId = "claude-sdk", projectName = ""): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -260,13 +262,12 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
 
     if (sessionId && projectName) {
       // Load message history
+      setMessagesLoading(true);
       fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
         headers: { Authorization: `Bearer ${getAuthToken()}` },
       })
         .then((r) => r.json())
         .then((json: any) => {
-          // Guard: don't overwrite if effect was cleaned up (session changed again)
-          // or if streaming started while fetch was in flight
           if (cancelled || isStreamingRef.current) return;
           if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
             setMessages(json.data);
@@ -276,6 +277,9 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
         })
         .catch(() => {
           if (!cancelled && !isStreamingRef.current) setMessages([]);
+        })
+        .finally(() => {
+          if (!cancelled) setMessagesLoading(false);
         });
     } else {
       setMessages([]);
@@ -402,6 +406,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
 
   return {
     messages,
+    messagesLoading,
     isStreaming,
     pendingApproval,
     usageInfo,
