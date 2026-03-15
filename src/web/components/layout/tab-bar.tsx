@@ -34,7 +34,6 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
 };
 
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
-  { type: "projects", label: "Projects" },
   { type: "terminal", label: "Terminal" },
   { type: "chat", label: "AI Chat" },
   { type: "git-graph", label: "Git Graph" },
@@ -76,7 +75,7 @@ export function TabBar() {
   }
 
   return (
-    <div className="hidden md:flex items-center border-b border-border bg-background">
+    <div className="hidden md:flex items-center h-[41px] border-b border-border bg-background">
       <ScrollArea className="flex-1">
         <div className="flex items-center gap-0.5 px-2 py-1">
           {tabs.map((tab) => {

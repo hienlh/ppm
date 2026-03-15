@@ -10,6 +10,7 @@ import {
   FileCode,
   ChevronDown,
   Check,
+  Plus,
 } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";
@@ -85,9 +86,9 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        {/* Header with close */}
+        {/* Header — logo + close */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-          <span className="text-sm font-semibold text-text-primary">Menu</span>
+          <span className="text-sm font-bold text-primary tracking-tight">PPM</span>
           <button
             onClick={onClose}
             className="flex items-center justify-center size-8 rounded-md hover:bg-surface-elevated transition-colors"
@@ -168,6 +169,18 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
                 {projects.length === 0 && (
                   <p className="px-4 py-3 text-xs text-text-subtle text-center">No projects</p>
                 )}
+                {/* Add project */}
+                <button
+                  onClick={() => {
+                    setProjectPickerOpen(false);
+                    openTab({ type: "projects", title: "Projects", projectId: null, closable: true });
+                    onClose();
+                  }}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-text-secondary hover:bg-surface-elevated border-t border-border"
+                >
+                  <Plus className="size-4 shrink-0" />
+                  <span>Add Project...</span>
+                </button>
               </div>
             )}
           </div>
