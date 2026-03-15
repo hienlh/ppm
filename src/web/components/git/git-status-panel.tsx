@@ -11,6 +11,7 @@ import {
   FolderTree,
   ChevronRight,
   ChevronDown,
+  FileText,
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -133,6 +134,9 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
 
   useEffect(() => {
     fetchStatus();
+    // Auto-reload every 5 seconds
+    const interval = setInterval(fetchStatus, 5000);
+    return () => clearInterval(interval);
   }, [fetchStatus]);
 
   const stageFiles = async (files: string[]) => {
@@ -225,6 +229,19 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
   const openDiff = (file: GitFileChange) => {
     openTab({
       type: "git-diff",
+      title: file.path.split("/").pop() ?? file.path,
+      closable: true,
+      metadata: {
+        projectName,
+        filePath: file.path,
+      },
+      projectId: projectName ?? null,
+    });
+  };
+
+  const openFile = (file: GitFileChange) => {
+    openTab({
+      type: "editor",
       title: file.path.split("/").pop() ?? file.path,
       closable: true,
       metadata: {
@@ -333,6 +350,7 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
             actionAllLabel="Unstage All"
             onFolderAction={(files) => unstageFiles(files.map((f) => f.path))}
             onClickFile={openDiff}
+            onOpenFile={openFile}
             disabled={acting}
           />
 
@@ -353,6 +371,7 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
             actionAllLabel="Stage All"
             onFolderAction={(files) => stageFiles(files.map((f) => f.path))}
             onClickFile={openDiff}
+            onOpenFile={openFile}
             disabled={acting}
             showRevert
             onRevert={(f) =>
@@ -470,6 +489,7 @@ function ActionButtons({
   showRevert,
   onRevert,
   onAction,
+  onOpenFile,
   actionIcon,
   actionTitle,
   disabled,
@@ -477,12 +497,27 @@ function ActionButtons({
   showRevert?: boolean;
   onRevert?: () => void;
   onAction: () => void;
+  onOpenFile?: () => void;
   actionIcon: React.ReactNode;
   actionTitle: string;
   disabled: boolean;
 }) {
   return (
     <div className="flex items-center gap-0.5 shrink-0 ml-1">
+      {onOpenFile && (
+        <button
+          type="button"
+          className="flex items-center justify-center size-7 rounded border border-border/60 bg-muted/60 text-muted-foreground hover:bg-primary/15 hover:text-primary hover:border-primary/40 active:scale-95 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenFile();
+          }}
+          disabled={disabled}
+          title="Open file"
+        >
+          <FileText className="size-3.5" />
+        </button>
+      )}
       {showRevert && onRevert && (
         <button
           type="button"
@@ -529,6 +564,7 @@ function FileSection({
   actionAllLabel,
   onFolderAction,
   onClickFile,
+  onOpenFile,
   disabled,
   showRevert,
   onRevert,
@@ -545,6 +581,7 @@ function FileSection({
   actionAllLabel: string;
   onFolderAction?: (files: GitFileChange[]) => void;
   onClickFile: (f: GitFileChange) => void;
+  onOpenFile?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -580,6 +617,7 @@ function FileSection({
               actionTitle={actionTitle}
               onAction={onAction}
               onClickFile={onClickFile}
+              onOpenFile={onOpenFile}
               disabled={disabled}
               showRevert={showRevert}
               onRevert={onRevert}
@@ -594,6 +632,7 @@ function FileSection({
           onAction={onAction}
           onFolderAction={onFolderAction}
           onClickFile={onClickFile}
+          onOpenFile={onOpenFile}
           disabled={disabled}
           showRevert={showRevert}
           onRevert={onRevert}
@@ -614,6 +653,7 @@ function FileRow({
   actionTitle,
   onAction,
   onClickFile,
+  onOpenFile,
   disabled,
   showRevert,
   onRevert,
@@ -624,6 +664,7 @@ function FileRow({
   actionTitle: string;
   onAction: (f: GitFileChange) => void;
   onClickFile: (f: GitFileChange) => void;
+  onOpenFile?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -647,6 +688,7 @@ function FileRow({
       <ActionButtons
         showRevert={showRevert}
         onRevert={onRevert ? () => onRevert(file) : undefined}
+        onOpenFile={onOpenFile ? () => onOpenFile(file) : undefined}
         onAction={() => onAction(file)}
         actionIcon={actionIcon}
         actionTitle={actionTitle}
@@ -667,6 +709,7 @@ function TreeView({
   onAction,
   onFolderAction,
   onClickFile,
+  onOpenFile,
   disabled,
   showRevert,
   onRevert,
@@ -678,6 +721,7 @@ function TreeView({
   onAction: (f: GitFileChange) => void;
   onFolderAction?: (files: GitFileChange[]) => void;
   onClickFile: (f: GitFileChange) => void;
+  onOpenFile?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -698,6 +742,7 @@ function TreeView({
           onAction={onAction}
           onFolderAction={onFolderAction}
           onClickFile={onClickFile}
+          onOpenFile={onOpenFile}
           disabled={disabled}
           showRevert={showRevert}
           onRevert={onRevert}
@@ -721,6 +766,7 @@ function TreeNodeView({
   onAction,
   onFolderAction,
   onClickFile,
+  onOpenFile,
   disabled,
   showRevert,
   onRevert,
@@ -734,6 +780,7 @@ function TreeNodeView({
   onAction: (f: GitFileChange) => void;
   onFolderAction?: (files: GitFileChange[]) => void;
   onClickFile: (f: GitFileChange) => void;
+  onOpenFile?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -762,6 +809,7 @@ function TreeNodeView({
           actionTitle={actionTitle}
           onAction={onAction}
           onClickFile={onClickFile}
+          onOpenFile={onOpenFile}
           disabled={disabled}
           showRevert={showRevert}
           onRevert={onRevert}
@@ -834,6 +882,7 @@ function TreeNodeView({
                 onAction={onAction}
                 onFolderAction={onFolderAction}
                 onClickFile={onClickFile}
+                onOpenFile={onOpenFile}
                 disabled={disabled}
                 showRevert={showRevert}
                 onRevert={onRevert}

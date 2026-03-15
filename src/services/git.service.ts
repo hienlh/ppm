@@ -129,7 +129,29 @@ class GitService {
     const args: string[] = [];
     if (ref) args.push(ref);
     args.push("--", filePath);
-    return git.diff(args);
+    const diff = await git.diff(args);
+
+    // If diff is empty, file might be untracked or newly staged.
+    // Try staged diff, then --no-index for untracked files.
+    if (!diff.trim()) {
+      const stagedDiff = await git.diff(["--cached", "--", filePath]);
+      if (stagedDiff.trim()) return stagedDiff;
+
+      // Untracked file: generate diff against /dev/null
+      try {
+        const result = await git.raw([
+          "diff", "--no-index", "/dev/null", filePath,
+        ]);
+        return result;
+      } catch (e: any) {
+        // git diff --no-index exits with code 1 when there are differences
+        if (e.message?.includes("exit code 1") || e.exitCode === 1) {
+          return typeof e.stdout === "string" ? e.stdout : "";
+        }
+        return "";
+      }
+    }
+    return diff;
   }
 
   async stage(projectPath: string, files: string[]): Promise<void> {

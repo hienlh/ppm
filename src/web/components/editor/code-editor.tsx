@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from "@codemirror/lang-javascript";
@@ -7,10 +7,11 @@ import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
+import { marked } from "marked";
 import type { Extension } from "@codemirror/state";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
-import { Loader2, FileWarning, ExternalLink } from "lucide-react";
+import { Loader2, FileWarning, ExternalLink, Code, Eye } from "lucide-react";
 
 /** Image extensions renderable inline */
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
@@ -69,6 +70,9 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const ext = filePath ? getFileExt(filePath) : "";
   const isImage = IMAGE_EXTS.has(ext);
   const isPdf = ext === PDF_EXT;
+  const isMarkdown = ext === "md" || ext === "mdx";
+  /** "edit" | "preview" for markdown files — default to preview */
+  const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
 
   // Load file content
   useEffect(() => {
@@ -191,26 +195,82 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const langExt = getLanguageExtension(filePath);
   if (langExt) extensions.push(langExt);
 
-  return (
-    <div className="h-full w-full overflow-hidden">
-      <CodeMirror
-        value={content ?? ""}
-        onChange={handleChange}
-        extensions={extensions}
-        theme={oneDark}
-        height="100%"
-        style={{ height: "100%", fontSize: "13px", fontFamily: "var(--font-mono)" }}
-        basicSetup={{
-          lineNumbers: true,
-          foldGutter: true,
-          autocompletion: true,
-          bracketMatching: true,
-          closeBrackets: true,
-          highlightActiveLine: true,
-          indentOnInput: true,
-        }}
-      />
+  const mdToggleBar = isMarkdown ? (
+    <div className="flex items-center gap-1 px-2 py-1 border-border shrink-0 bg-background">
+      <button
+        type="button"
+        onClick={() => setMdMode("edit")}
+        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+          mdMode === "edit" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Code className="size-3" />
+        Edit
+      </button>
+      <button
+        type="button"
+        onClick={() => setMdMode("preview")}
+        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+          mdMode === "preview" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+        }`}
+      >
+        <Eye className="size-3" />
+        Preview
+      </button>
     </div>
+  ) : null;
+
+  return (
+    <div className="flex flex-col h-full w-full overflow-hidden">
+      {/* Desktop: toggle at top */}
+      <div className="hidden md:block border-b">{mdToggleBar}</div>
+
+      {/* Markdown preview mode */}
+      {isMarkdown && mdMode === "preview" ? (
+        <MarkdownPreview content={content ?? ""} />
+      ) : (
+        <div className="flex-1 overflow-hidden">
+          <CodeMirror
+            value={content ?? ""}
+            onChange={handleChange}
+            extensions={extensions}
+            theme={oneDark}
+            height="100%"
+            style={{ height: "100%", fontSize: "13px", fontFamily: "var(--font-mono)" }}
+            basicSetup={{
+              lineNumbers: true,
+              foldGutter: true,
+              autocompletion: true,
+              bracketMatching: true,
+              closeBrackets: true,
+              highlightActiveLine: true,
+              indentOnInput: true,
+            }}
+          />
+        </div>
+      )}
+
+      {/* Mobile: toggle at bottom */}
+      <div className="md:hidden border-t">{mdToggleBar}</div>
+    </div>
+  );
+}
+
+/** Rendered markdown preview using marked */
+function MarkdownPreview({ content }: { content: string }) {
+  const html = useMemo(() => {
+    try {
+      return marked.parse(content, { gfm: true, breaks: true }) as string;
+    } catch {
+      return content;
+    }
+  }, [content]);
+
+  return (
+    <div
+      className="flex-1 overflow-auto p-4 markdown-content prose-sm"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 
