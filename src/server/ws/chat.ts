@@ -68,12 +68,14 @@ export const chatWebSocket = {
     const providerId = entry?.providerId ?? "mock";
 
     if (parsed.type === "message") {
-      // Ensure provider session has projectPath for skills/settings support
-      if (entry?.projectPath) {
-        const provider = providerRegistry.get(providerId);
-        if (provider && "ensureProjectPath" in provider) {
-          (provider as any).ensureProjectPath(sessionId, entry.projectPath);
-        }
+      // Resume session in provider FIRST so it exists in activeSessions,
+      // then backfill projectPath — fixes tool execution when server restarted
+      const provider = providerRegistry.get(providerId);
+      if (provider && "resumeSession" in provider) {
+        await (provider as any).resumeSession(sessionId);
+      }
+      if (entry?.projectPath && provider && "ensureProjectPath" in provider) {
+        (provider as any).ensureProjectPath(sessionId, entry.projectPath);
       }
 
       const abortController = new AbortController();

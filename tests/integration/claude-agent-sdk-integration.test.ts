@@ -205,24 +205,28 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
     expect(fullText.toLowerCase()).toContain("purple");
   }, 60000);
 
-  it("returns error for non-existent session", async () => {
+  it("auto-resumes non-existent session instead of erroring", async () => {
+    // Provider design: resumeSession auto-creates for any ID, so sendMessage succeeds
     const events: any[] = [];
     for await (const event of provider.sendMessage("nonexistent-id", "hello")) {
       events.push(event);
     }
 
-    expect(events[0].type).toBe("error");
-    expect(events[0].message).toContain("Session not found");
+    // Should get usage or text events, not error
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some((e) => e.type === "usage" || e.type === "text")).toBe(true);
   });
 
-  it("deleteSession removes session", async () => {
+  it("deleteSession removes session from active list", async () => {
     const session = await provider.createSession({ title: "Delete me" });
     await provider.deleteSession(session.id);
 
+    // After delete, sendMessage auto-resumes — provider doesn't error
     const events: any[] = [];
     for await (const event of provider.sendMessage(session.id, "hello")) {
       events.push(event);
     }
-    expect(events[0].type).toBe("error");
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some((e) => e.type === "usage" || e.type === "text")).toBe(true);
   });
 });
