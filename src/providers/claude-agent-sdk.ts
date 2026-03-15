@@ -212,7 +212,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           sessionId: isFirstMessage ? sessionId : undefined,
           resume: isFirstMessage ? undefined : sessionId,
           cwd: meta.projectPath,
-          settingSources: meta.projectPath ? ["project"] : undefined,
+          // Neutralize Anthropic env vars so SDK uses subscription, not project .env keys.
+          // Set to empty (not delete) so dotenv from project .env can't fill them back.
+          env: {
+            ...process.env,
+            ANTHROPIC_API_KEY: "",
+            ANTHROPIC_BASE_URL: "",
+            ANTHROPIC_AUTH_TOKEN: "",
+          },
+          // Override project-local Claude settings that may restrict tool permissions
+          settings: { permissions: { allow: [], deny: [] } },
+          settingSources: [],
           allowedTools: [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
             "WebSearch", "WebFetch", "AskUserQuestion",
@@ -233,7 +243,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       for await (const msg of q) {
         // Debug: log all SDK events to understand flow
-        console.log(`[SDK:${sessionId.slice(0,8)}] event type=${msg.type}`, msg.type === "assistant" ? `blocks=${JSON.stringify(((msg as any).message?.content ?? []).map((b:any) => b.type))}` : "");
 
         // Yield any queued approval events
         while (approvalEvents.length > 0) {
