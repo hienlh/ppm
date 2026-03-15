@@ -137,6 +137,8 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 | **ProjectService** | Project registry (YAML) | add, remove, get, list |
 | **ConfigService** | Config file management | load, save, getToken |
 | **ProviderRegistry** | AI provider routing | getDefault, send (delegates) |
+| **CloudflaredService** | Download cloudflared binary | ensureCloudflared, getCloudflaredPath |
+| **TunnelService** | Cloudflare Quick Tunnel lifecycle | startTunnel, stopTunnel, getTunnelUrl |
 
 **Key Files:** `src/services/*.service.ts`
 
@@ -485,17 +487,31 @@ Linux/macOS Host
   └── ~/.ppm/ (optional: session cache, logs)
 ```
 
-### Daemon Mode (Optional)
+### Daemon Mode (Default)
 ```
-$ ppm start --daemon
-  → Background process (nohup or systemd)
-  → Logs to ~/.ppm/server.log
-  → PID saved to ~/.ppm/server.pid
+$ ppm start
+  → Background process (background by default)
+  → Status saved to ~/.ppm/status.json (with PID, port, host, shareUrl)
+  → Fallback compat: ppm.pid read/written for backward compatibility
+
+$ ppm start --foreground
+  → Runs in foreground (debugging, CI/CD)
+  → WebSocket and all features fully functional
+  → Tunnel (--share) works in foreground mode
+
+$ ppm start --share
+  → Daemon mode + Cloudflare Quick Tunnel
+  → Downloads cloudflared to ~/.ppm/bin/ (if missing, shows progress)
+  → Spawns tunnel process, extracts public URL from stderr
+  → URL saved to status.json for parent process
+  → Auth warning if auth.enabled is false
 
 $ ppm stop
-  → Reads PID
-  → Sends SIGTERM
-  → Graceful shutdown (close WS, cleanup PTY)
+  → Reads ~/.ppm/status.json first (new format)
+  → Falls back to ppm.pid (compat)
+  → Sends SIGTERM to daemon
+  → Cleans up status.json and ppm.pid
+  → Graceful shutdown (close WS, cleanup PTY, stop tunnel)
 ```
 
 ### Future: Multi-Machine (Not in v2)

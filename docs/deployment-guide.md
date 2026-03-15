@@ -165,22 +165,83 @@ Server runs in foreground. Press `Ctrl+C` to stop.
 
 ### Daemon Mode (Production)
 
+**Daemon is now the default** — `ppm start` runs in background. Use `--foreground/-f` to run with logs visible (for debugging).
+
 ```bash
-# Start as background daemon
-ppm start --daemon
+# Start as background daemon (default)
+ppm start
 
-# Server runs in background
-# Logs written to ~/.ppm/server.log (optional)
+# Start with public URL via Cloudflare Quick Tunnel (v2+)
+ppm start --share
 
-# Check status
+# Start in foreground (debugging, shows logs)
+ppm start --foreground
+
+# Server status stored in ~/.ppm/status.json
+cat ~/.ppm/status.json
+
+# Check if running
 ps aux | grep ppm
 
 # Stop daemon
 ppm stop
 
-# Or manually
-kill $(cat ~/.ppm/server.pid)
+# Graceful shutdown: SIGTERM sent, tunnel stopped, cleanup files removed
 ```
+
+**Status File Format (v2+):**
+```json
+{
+  "pid": 12345,
+  "port": 8080,
+  "host": "0.0.0.0",
+  "shareUrl": "https://abc-123.trycloudflare.com"
+}
+```
+
+**Backward Compatibility:** If `~/.ppm/status.json` doesn't exist, `ppm stop` falls back to reading `~/.ppm/ppm.pid`.
+
+### Public URL Sharing via Cloudflare Tunnel (v2+)
+
+**Feature:** `ppm start --share` creates a temporary public URL for your local PPM instance via Cloudflare Quick Tunnel.
+
+**How It Works:**
+1. `ppm start --share` (or `-s`) spawns a background daemon
+2. Parent process downloads cloudflared binary to `~/.ppm/bin/` if missing (shows download progress)
+3. Daemon spawns cloudflared tunnel process
+4. Tunnel URL extracted from stderr (e.g., `https://abc-123.trycloudflare.com`)
+5. URL saved to `~/.ppm/status.json` for easy access
+6. Parent displays: "Share: https://abc-123.trycloudflare.com"
+
+**Requirements:**
+- Internet connectivity (tunnel uses Cloudflare's infrastructure)
+- ~15 MB disk space for cloudflared binary (downloaded once, cached)
+
+**Security Warning:**
+If `auth.enabled` is false in `~/.ppm/config.yaml`, PPM displays warning:
+```
+⚠ Warning: auth is disabled — your IDE is publicly accessible!
+  Enable auth in ~/.ppm/config.yaml or restart without --share.
+```
+
+Recommended: Always enable auth before using `--share`.
+
+**Example:**
+```bash
+# Share with auth enabled
+ppm start --share          # Safe: public URL, but auth required
+
+# Share without auth (not recommended)
+ppm start --share          # Warning: anyone can access your IDE
+
+# Disable sharing
+ppm stop                   # Tunnel process stopped automatically
+```
+
+**Cleanup:**
+- `ppm stop` gracefully shuts down the tunnel
+- Cloudflared process killed via SIGTERM
+- No dangling tunnels left behind
 
 ### Via systemd (Linux)
 
@@ -438,16 +499,24 @@ ppm chat send "test message" 2>&1
 ### Server Won't Start
 
 ```bash
-# Check logs
-tail -f ~/.ppm/server.log  # If daemon mode
+# Check status (v2+)
+cat ~/.ppm/status.json
+
+# Verify server is running
+ps aux | grep ppm
+
+# View logs (foreground mode only)
+ppm start --foreground    # Shows real-time logs
 
 # Verify config is valid YAML
 ppm config get port
 
 # Clear cache and restart
 rm -rf ~/.ppm/cache
-ppm start --verbose  # Enable debug logging (if available)
+ppm start
 ```
+
+**Note:** Daemon mode doesn't write to a log file by default. Use `ppm start --foreground` to see logs for debugging, or set up systemd with log redirection (see "Via systemd" section above).
 
 ---
 
@@ -625,7 +694,8 @@ For monitoring integrations (Prometheus, DataDog):
 ### Getting Help
 
 1. **GitHub Issues:** https://github.com/hienlh/ppm/issues
-2. **Logs:** Check `~/.ppm/server.log` for errors
+2. **Logs:** Run `ppm start --foreground` to see real-time logs; check `~/.ppm/status.json` for daemon status
 3. **Configuration:** Validate `ppm.yaml` syntax
 4. **Dependencies:** Ensure Bun, Git, Node are installed and up-to-date
+5. **Tunnel Issues:** Check `~/.ppm/bin/cloudflared` exists; re-download if corrupted
 
