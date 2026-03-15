@@ -6,4 +6,5 @@ export type {
   ChatEvent,
   ChatMessage,
   ToolApprovalHandler,
+  UsageInfo,
 } from "../types/chat.ts";

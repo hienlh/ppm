@@ -10,6 +10,7 @@ import type {
   SessionInfo,
   ChatEvent,
   ChatMessage,
+  UsageInfo,
 } from "./provider.interface.ts";
 
 /**
@@ -33,6 +34,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private messageCount = new Map<string, number>();
   /** Pending approval promises keyed by requestId */
   private pendingApprovals = new Map<string, PendingApproval>();
+  /** Active query objects for abort support */
+  private activeQueries = new Map<string, { close: () => void }>();
+  /** Latest known usage/rate-limit info (shared across all sessions) */
+  private latestUsage: UsageInfo = {};
 
   async createSession(config: SessionConfig): Promise<Session> {
     const id = crypto.randomUUID();
@@ -41,6 +46,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       providerId: this.id,
       title: config.title ?? "New Chat",
       projectName: config.projectName,
+      projectPath: config.projectPath,
       createdAt: new Date().toISOString(),
     };
     this.activeSessions.set(id, meta);
@@ -109,6 +115,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   async deleteSession(sessionId: string): Promise<void> {
     this.activeSessions.delete(sessionId);
     this.messageCount.delete(sessionId);
+  }
+
+  /**
+   * Ensure a session has projectPath set (for skills/settings support).
+   * Called by WS handler to backfill projectPath on resumed sessions.
+   */
+  ensureProjectPath(sessionId: string, projectPath: string): void {
+    const meta = this.activeSessions.get(sessionId);
+    if (meta && !meta.projectPath) {
+      meta.projectPath = projectPath;
+    }
   }
 
   /**
@@ -194,6 +211,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         options: {
           sessionId: isFirstMessage ? sessionId : undefined,
           resume: isFirstMessage ? undefined : sessionId,
+          cwd: meta.projectPath,
+          settingSources: meta.projectPath ? ["project"] : undefined,
           allowedTools: [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
             "WebSearch", "WebFetch", "AskUserQuestion",
@@ -204,6 +223,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           includePartialMessages: true,
         } as any,
       });
+
+      // Track active query for abort support
+      this.activeQueries.set(sessionId, q);
 
       let lastPartialText = "";
 
@@ -256,7 +278,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
+        // Rate limit event — extract utilization percentages
+        if ((msg as any).type === "rate_limit_event") {
+          const info = (msg as any).rate_limit_info;
+          if (info) {
+            const rateLimitType = info.rateLimitType as string | undefined;
+            const utilization = info.utilization as number | undefined;
+            if (rateLimitType && utilization != null) {
+              const usage: Record<string, number> = {};
+              if (rateLimitType === "five_hour") usage.fiveHour = utilization;
+              else if (rateLimitType.startsWith("seven_day")) usage.sevenDay = utilization;
+              // Cache latest rate limits
+              Object.assign(this.latestUsage, usage);
+              yield { type: "usage", usage };
+            }
+          }
+          continue;
+        }
+
         if (msg.type === "result") {
+          const result = msg as any;
+          // Yield final cost + any rate limit info from result
+          const usage: Record<string, unknown> = {};
+          if (result.total_cost_usd != null) usage.totalCostUsd = result.total_cost_usd;
+          if (Object.keys(usage).length > 0) {
+            yield { type: "usage", usage };
+          }
           break;
         }
       }
@@ -266,10 +313,30 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         yield approvalEvents.shift()!;
       }
     } catch (e) {
-      yield { type: "error", message: `SDK error: ${(e as Error).message}` };
+      const msg = (e as Error).message;
+      // Don't yield error for intentional abort
+      if (!msg.includes("abort")) {
+        yield { type: "error", message: `SDK error: ${msg}` };
+      }
+    } finally {
+      this.activeQueries.delete(sessionId);
     }
 
     yield { type: "done", sessionId };
+  }
+
+  /** Get latest cached usage/rate-limit info */
+  getUsage(): UsageInfo {
+    return { ...this.latestUsage };
+  }
+
+  /** Abort an active query for a session */
+  abortQuery(sessionId: string): void {
+    const q = this.activeQueries.get(sessionId);
+    if (q) {
+      q.close();
+      this.activeQueries.delete(sessionId);
+    }
   }
 
   async getMessages(sessionId: string): Promise<ChatMessage[]> {

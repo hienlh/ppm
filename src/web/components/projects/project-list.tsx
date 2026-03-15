@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { DirSuggest } from "./dir-suggest";
 
 export function ProjectList() {
   const { projects, activeProject, setActiveProject, fetchProjects, loading, error } =
@@ -148,11 +149,13 @@ export function ProjectList() {
           <div className="space-y-3">
             <div>
               <label className="text-sm text-text-secondary">Path (required)</label>
-              <Input
-                placeholder="/home/user/my-project"
+              <DirSuggest
                 value={addPath}
-                onChange={(e) => setAddPath(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAddProject()}
+                onChange={setAddPath}
+                onSelect={(item) => {
+                  if (!addName.trim()) setAddName(item.name);
+                }}
+                placeholder="/home/user/my-project"
                 autoFocus
               />
             </div>
