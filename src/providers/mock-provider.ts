@@ -25,6 +25,8 @@ export class MockProvider implements AIProvider {
 
   private sessions = new Map<string, Session>();
   private messageHistory = new Map<string, ChatMessage[]>();
+  /** Active abort controllers for cancel support */
+  private activeAborts = new Map<string, AbortController>();
 
   async createSession(config: SessionConfig): Promise<Session> {
     const id = crypto.randomUUID();
@@ -85,6 +87,10 @@ export class MockProvider implements AIProvider {
       timestamp: new Date().toISOString(),
     });
 
+    // Track abort controller for this session
+    const abortController = new AbortController();
+    this.activeAborts.set(sessionId, abortController);
+
     // Simulate thinking delay
     await sleep(300);
 
@@ -118,6 +124,7 @@ export class MockProvider implements AIProvider {
     // Stream response text word by word
     const words = responseText.split(" ");
     for (let i = 0; i < words.length; i++) {
+      if (abortController.signal.aborted) break;
       const chunk = (i === 0 ? "" : " ") + words[i];
       yield { type: "text", content: chunk };
       await sleep(50);
@@ -141,7 +148,17 @@ export class MockProvider implements AIProvider {
     });
     this.messageHistory.set(sessionId, history);
 
+    this.activeAborts.delete(sessionId);
     yield { type: "done", sessionId };
+  }
+
+  /** Abort an active query for a session (for cancel support) */
+  abortQuery(sessionId: string): void {
+    const controller = this.activeAborts.get(sessionId);
+    if (controller) {
+      controller.abort();
+      this.activeAborts.delete(sessionId);
+    }
   }
 
   getMessages(sessionId: string): ChatMessage[] {

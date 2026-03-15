@@ -2,7 +2,7 @@ import { Suspense, lazy } from "react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { Loader2 } from "lucide-react";
 
-const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown> }>>> = {
+const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
   projects: lazy(() =>
     import("@/components/projects/project-list").then((m) => ({
       default: m.ProjectList,
@@ -75,7 +75,7 @@ export function TabContent() {
             className={isActive ? "h-full w-full" : "hidden"}
           >
             <Suspense fallback={<LoadingFallback />}>
-              <Component metadata={tab.metadata} />
+              <Component metadata={tab.metadata} tabId={tab.id} />
             </Suspense>
           </div>
         );

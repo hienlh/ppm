@@ -93,6 +93,19 @@ gitRoutes.get("/pr-url", async (c) => {
   }
 });
 
+/** POST /git/discard { files } — discard unstaged changes (checkout tracked, clean untracked) */
+gitRoutes.post("/discard", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const { files } = await c.req.json<{ files: string[] }>();
+    if (!files?.length) return c.json(err("Missing: files"), 400);
+    await gitService.discardChanges(projectPath, files);
+    return c.json(ok({ discarded: files }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** POST /git/stage { files } */
 gitRoutes.post("/stage", async (c) => {
   try {
