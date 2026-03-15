@@ -1,14 +1,17 @@
 import {
   FolderOpen,
-  ChevronRight,
-  X,
+  Terminal,
+  MessageSquare,
   GitBranch,
   GitCommitHorizontal,
+  FileDiff,
+  Settings,
+  X,
+  FileCode,
 } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
-import { useTabStore } from "@/stores/tab-store";
+import { useTabStore, type TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { FileTree } from "@/components/explorer/file-tree";
 
@@ -17,39 +20,43 @@ interface MobileDrawerProps {
   onClose: () => void;
 }
 
+const TAB_ICONS: Record<TabType, React.ElementType> = {
+  projects: FolderOpen,
+  terminal: Terminal,
+  chat: MessageSquare,
+  editor: FileCode,
+  "git-graph": GitBranch,
+  "git-status": GitCommitHorizontal,
+  "git-diff": FileDiff,
+  settings: Settings,
+};
+
+const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
+  { type: "projects", label: "Projects" },
+  { type: "terminal", label: "Terminal" },
+  { type: "chat", label: "AI Chat" },
+  { type: "git-status", label: "Git Status" },
+  { type: "git-graph", label: "Git Graph" },
+  { type: "settings", label: "Settings" },
+];
+
 /**
- * Mobile sidebar overlay drawer.
- * [V2 FIX] NOT a hidden/flex toggle — fixed overlay with backdrop.
- * Includes project list + file tree + quick git actions.
+ * Mobile drawer overlay — opens from bottom-left menu button.
+ * Top: file tree of current project.
+ * Bottom: new tab options.
  */
 export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
-  const { projects, activeProject, setActiveProject, loading } =
-    useProjectStore();
+  const activeProject = useProjectStore((s) => s.activeProject);
   const openTab = useTabStore((s) => s.openTab);
 
-  function handleProjectClick(project: (typeof projects)[number]) {
-    setActiveProject(project);
-  }
-
-  function openGitStatus() {
-    openTab({
-      type: "git-status",
-      title: "Git Status",
-      metadata: { projectName: activeProject?.name },
-      projectId: activeProject?.name ?? null,
-      closable: true,
-    });
-    onClose();
-  }
-
-  function openGitGraph() {
-    openTab({
-      type: "git-graph",
-      title: "Git Graph",
-      metadata: { projectName: activeProject?.name },
-      projectId: activeProject?.name ?? null,
-      closable: true,
-    });
+  function handleNewTab(type: TabType) {
+    const needsProject =
+      type === "git-graph" || type === "git-status" || type === "git-diff" || type === "terminal" || type === "chat";
+    const metadata = needsProject
+      ? { projectName: activeProject?.name }
+      : undefined;
+    const label = NEW_TAB_OPTIONS.find((o) => o.type === type)?.label ?? type;
+    openTab({ type, title: label, metadata, projectId: activeProject?.name ?? null, closable: type !== "projects" });
     onClose();
   }
 
@@ -77,10 +84,13 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
+        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <FolderOpen className="size-4 text-primary" />
-            <span className="text-sm font-semibold">Projects</span>
+            <span className="text-sm font-semibold truncate">
+              {activeProject?.name ?? "PPM"}
+            </span>
           </div>
           <button
             onClick={onClose}
@@ -90,83 +100,36 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           </button>
         </div>
 
+        {/* File tree — takes remaining space */}
         <div className="flex-1 overflow-y-auto">
-          {/* Projects list */}
-          <div className="p-2 space-y-1">
-            {loading && (
-              <p className="px-2 py-1 text-xs text-text-secondary">
-                Loading...
-              </p>
-            )}
+          {activeProject ? (
+            <FileTree onFileOpen={onClose} />
+          ) : (
+            <p className="px-4 py-3 text-xs text-text-secondary">
+              No project selected.
+            </p>
+          )}
+        </div>
 
-            {!loading && projects.length === 0 && (
-              <p className="px-2 py-1 text-xs text-text-secondary">
-                No projects found.
-              </p>
-            )}
-
-            {projects.map((project) => (
+        {/* New tab options — pinned at bottom */}
+        <Separator />
+        <div className="px-2 py-2 space-y-0.5">
+          <p className="px-2 pb-1 text-xs font-semibold text-text-secondary uppercase tracking-wider">
+            New Tab
+          </p>
+          {NEW_TAB_OPTIONS.map((opt) => {
+            const Icon = TAB_ICONS[opt.type];
+            return (
               <button
-                key={project.name}
-                onClick={() => handleProjectClick(project)}
-                className={cn(
-                  "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors text-left",
-                  "min-h-[44px]",
-                  activeProject?.name === project.name
-                    ? "bg-surface text-foreground"
-                    : "text-text-secondary hover:bg-surface-elevated hover:text-foreground",
-                )}
+                key={opt.type}
+                onClick={() => handleNewTab(opt.type)}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-text-secondary hover:bg-surface-elevated hover:text-foreground transition-colors min-h-[40px]"
               >
-                <FolderOpen className="size-4 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="truncate font-medium">{project.name}</p>
-                  <p className="truncate text-xs text-text-subtle">
-                    {project.path}
-                  </p>
-                </div>
-                {project.branch && (
-                  <span className="text-xs text-primary shrink-0">
-                    {project.branch}
-                  </span>
-                )}
-                <ChevronRight className="size-3 text-text-subtle shrink-0" />
+                <Icon className="size-4 shrink-0" />
+                <span>{opt.label}</span>
               </button>
-            ))}
-          </div>
-
-          {/* Git quick actions */}
-          {activeProject && (
-            <>
-              <Separator className="my-1" />
-              <div className="px-2 space-y-1">
-                <button
-                  onClick={openGitStatus}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-text-secondary hover:bg-surface-elevated hover:text-foreground transition-colors min-h-[44px]"
-                >
-                  <GitCommitHorizontal className="size-4 shrink-0" />
-                  <span>Git Status</span>
-                </button>
-                <button
-                  onClick={openGitGraph}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-text-secondary hover:bg-surface-elevated hover:text-foreground transition-colors min-h-[44px]"
-                >
-                  <GitBranch className="size-4 shrink-0" />
-                  <span>Git Graph</span>
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* File tree */}
-          {activeProject && (
-            <>
-              <Separator className="my-1" />
-              <div className="px-4 py-2 text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                Files
-              </div>
-              <FileTree onFileOpen={onClose} />
-            </>
-          )}
+            );
+          })}
         </div>
       </div>
     </div>

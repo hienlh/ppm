@@ -60,15 +60,10 @@ function saveTabs(projectName: string, state: PersistedTabState) {
 }
 
 // ---------------------------------------------------------------------------
-// nextId counter — derives from loaded tabs to prevent collisions
+// Unique ID generator — uses crypto.randomUUID to avoid cross-project collisions
 // ---------------------------------------------------------------------------
-let nextId = 1;
-
-function bumpNextId(tabs: Tab[]) {
-  for (const tab of tabs) {
-    const num = parseInt(tab.id.replace("tab-", ""), 10);
-    if (!isNaN(num) && num >= nextId) nextId = num + 1;
-  }
+function generateTabId(): string {
+  return `tab-${crypto.randomUUID().slice(0, 8)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,11 +98,10 @@ export const useTabStore = create<TabStore>()((set, get) => ({
 
     // Load new project's tabs
     const loaded = loadTabs(projectName);
-    bumpNextId(loaded.tabs);
 
     // If no tabs, open default "Projects" tab
     if (loaded.tabs.length === 0) {
-      const defaultId = `tab-${nextId++}`;
+      const defaultId = generateTabId();
       const defaultTab: Tab = {
         id: defaultId,
         type: "projects",
@@ -144,7 +138,7 @@ export const useTabStore = create<TabStore>()((set, get) => ({
       }
     }
 
-    const id = `tab-${nextId++}`;
+    const id = generateTabId();
     const tab: Tab = { ...tabDef, id };
     set((s) => {
       const newTabs = [...s.tabs, tab];

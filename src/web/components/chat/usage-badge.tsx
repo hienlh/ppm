@@ -157,7 +157,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading }:
         </div>
       ) : (
         <p className="text-xs text-text-subtle">
-          No data — install <code className="bg-surface-elevated px-1 rounded">npm i -g ccburn</code>
+          No data — run <code className="bg-surface-elevated px-1 rounded">bun install</code>
         </p>
       )}
 

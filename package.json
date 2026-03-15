@@ -9,7 +9,8 @@
     "build:web": "bun run vite build --config vite.config.ts",
     "build": "bun run build:web && bun build src/index.ts --compile --outfile dist/ppm",
     "start": "bun run src/index.ts start",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "postinstall": "node node_modules/ccburn/scripts/postinstall.js"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
