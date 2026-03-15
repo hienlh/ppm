@@ -269,6 +269,17 @@ Multi-project, project-scoped API refactor with improved UX.
 
 ---
 
+### Cross-Platform Distribution (Planned)
+- Compile platform-specific binaries via `bun build --compile` (macOS, Linux, Windows)
+- Publish npm package with wrapper script that auto-detects platform and downloads correct binary
+- Enables `npx ppm init` without requiring Bun on the target machine
+- CI/CD pipeline for automated multi-platform builds on release
+
+**Estimated Effort:** 1 week
+**Dependencies:** CI/CD (GitHub Actions), npm publish pipeline
+
+---
+
 ### Cloud Sync (Future)
 - Optional cloud backup of chat sessions
 - Cross-device session sync

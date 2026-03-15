@@ -1,0 +1,17 @@
+# Dev files
+.claude/
+.github/
+.vite/
+.env
+.DS_Store
+.playwright-mcp
+.cursor/
+plans/
+tests/
+repomix-output.xml
+ppm.yaml
+*.pid
+*.log
+
+# Keep dist/web/ for pre-built frontend
+# (don't ignore dist/)

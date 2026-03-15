@@ -99,6 +99,8 @@ export async function startServer(options: {
       return app.fetch(req, server);
     },
     websocket: {
+      idleTimeout: 960, // 16 minutes — keepalive ping handles liveness
+      sendPong: true,
       open(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.open(ws);
         else terminalWebSocket.open(ws);
@@ -114,11 +116,25 @@ export async function startServer(options: {
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
 
-  console.log(`PPM server running on http://${host}:${server.port}`);
-  console.log(`Auth: ${configService.get("auth").enabled ? "enabled" : "disabled"}`);
-  if (configService.get("auth").enabled) {
-    console.log(`Token: ${configService.get("auth").token}`);
+  console.log(`\n  PPM v0.1.5 ready\n`);
+  console.log(`  ➜  Local:   http://localhost:${server.port}/`);
+
+  // List all network interfaces
+  const { networkInterfaces } = await import("node:os");
+  const nets = networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] ?? []) {
+      if (net.family === "IPv4" && !net.internal) {
+        console.log(`  ➜  Network: http://${net.address}:${server.port}/`);
+      }
+    }
   }
+
+  console.log(`\n  Auth: ${configService.get("auth").enabled ? "enabled" : "disabled"}`);
+  if (configService.get("auth").enabled) {
+    console.log(`  Token: ${configService.get("auth").token}`);
+  }
+  console.log();
 }
 
 // Internal entry point for daemon child process
@@ -164,6 +180,8 @@ if (process.argv.includes("__serve__")) {
       return app.fetch(req, server);
     },
     websocket: {
+      idleTimeout: 960,
+      sendPong: true,
       open(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.open(ws);
         else terminalWebSocket.open(ws);

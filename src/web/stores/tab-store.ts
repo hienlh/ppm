@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { randomId } from "@/lib/utils";
 
 export type TabType =
   | "projects"
@@ -60,10 +61,10 @@ function saveTabs(projectName: string, state: PersistedTabState) {
 }
 
 // ---------------------------------------------------------------------------
-// Unique ID generator — uses crypto.randomUUID to avoid cross-project collisions
+// Unique ID generator
 // ---------------------------------------------------------------------------
 function generateTabId(): string {
-  return `tab-${crypto.randomUUID().slice(0, 8)}`;
+  return `tab-${randomId()}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -378,6 +378,7 @@ export class ClaudeCodeCliProvider implements AIProvider {
               type: "tool_use",
               tool: block.name ?? "unknown",
               input: block.input ?? {},
+              toolUseId: block.id as string | undefined,
             });
           }
         }

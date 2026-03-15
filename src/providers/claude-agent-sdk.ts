@@ -232,6 +232,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let pendingToolCount = 0;
 
       for await (const msg of q) {
+        // Debug: log all SDK events to understand flow
+        console.log(`[SDK:${sessionId.slice(0,8)}] event type=${msg.type}`, msg.type === "assistant" ? `blocks=${JSON.stringify(((msg as any).message?.content ?? []).map((b:any) => b.type))}` : "");
+
         // Yield any queued approval events
         while (approvalEvents.length > 0) {
           yield approvalEvents.shift()!;
@@ -255,6 +258,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     type: "tool_result" as const,
                     output: typeof output === "string" ? output : JSON.stringify(output),
                     isError: !!block.is_error,
+                    toolUseId: block.tool_use_id as string | undefined,
                   };
                 }
               }
@@ -315,6 +319,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   type: "tool_use",
                   tool: block.name ?? "unknown",
                   input: block.input ?? {},
+                  toolUseId: block.id as string | undefined,
                 };
               }
             }
@@ -357,6 +362,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                       type: "tool_result" as const,
                       output: typeof output === "string" ? output : JSON.stringify(output),
                       isError: !!block.is_error,
+                      toolUseId: block.tool_use_id as string | undefined,
                     };
                   }
                 }
@@ -456,6 +462,7 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
           type: "tool_use",
           tool: (block.name as string) ?? "unknown",
           input: block.input ?? {},
+          toolUseId: block.id as string | undefined,
         });
       } else if (block.type === "tool_result") {
         const output = block.content ?? block.output ?? "";
@@ -463,6 +470,7 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
           type: "tool_result",
           output: typeof output === "string" ? output : JSON.stringify(output),
           isError: !!(block as Record<string, unknown>).is_error,
+          toolUseId: block.tool_use_id as string | undefined,
         });
       }
     }

@@ -298,10 +298,11 @@ type EventGroup =
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean };
 
 function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStreaming: boolean }) {
-  // Group: consecutive text → merged text block; tool_use + following tool_result → single tool block
+  // Group: consecutive text → merged text block; tool_use + tool_result paired by toolUseId
   const groups: EventGroup[] = [];
   let textBuffer = "";
 
+  // First pass: create groups for text and tool_use events
   for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
     if (event.type === "text") {
@@ -311,25 +312,9 @@ function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStr
         groups.push({ kind: "text", content: textBuffer });
         textBuffer = "";
       }
-      // Check if next event is its tool_result
-      const next = events[i + 1];
-      if (next?.type === "tool_result") {
-        groups.push({ kind: "tool", tool: event, result: next });
-        i++; // skip the result
-      } else {
-        groups.push({ kind: "tool", tool: event });
-      }
+      groups.push({ kind: "tool", tool: event });
     } else if (event.type === "tool_result") {
-      // Orphan tool_result (not preceded by tool_use) — attach to last tool group
-      if (textBuffer) {
-        groups.push({ kind: "text", content: textBuffer });
-        textBuffer = "";
-      }
-      const lastTool = [...groups].reverse().find((g) => g.kind === "tool") as EventGroup & { kind: "tool" } | undefined;
-      if (lastTool && !lastTool.result) {
-        lastTool.result = event;
-      }
-      // else: skip orphan tool_results — already merged by backend
+      // Skip tool_results in first pass — matched below
     } else {
       if (textBuffer) {
         groups.push({ kind: "text", content: textBuffer });
@@ -340,6 +325,29 @@ function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStr
   }
   if (textBuffer) {
     groups.push({ kind: "text", content: textBuffer });
+  }
+
+  // Second pass: match tool_result events to their tool_use by toolUseId
+  const toolResults = events.filter((e) => e.type === "tool_result");
+  for (const tr of toolResults) {
+    const trId = (tr as any).toolUseId;
+    // Match by ID if available
+    if (trId) {
+      const match = groups.find(
+        (g) => g.kind === "tool" && g.tool.type === "tool_use" && (g.tool as any).toolUseId === trId,
+      ) as (EventGroup & { kind: "tool" }) | undefined;
+      if (match) {
+        match.result = tr;
+        continue;
+      }
+    }
+    // Fallback: attach to first tool group without a result
+    const unmatched = groups.find(
+      (g) => g.kind === "tool" && !g.result,
+    ) as (EventGroup & { kind: "tool" }) | undefined;
+    if (unmatched) {
+      unmatched.result = tr;
+    }
   }
 
   // Mark tool groups as completed: if there are events after the tool group,

@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useTerminal } from "@/hooks/use-terminal";
 import { cn } from "@/lib/utils";
+import { Copy, ClipboardPaste } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalTabProps {
@@ -21,7 +22,7 @@ export function TerminalTab({ metadata }: TerminalTabProps) {
   const sessionId = (metadata?.sessionId as string) ?? "new";
   const projectName = metadata?.projectName as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
-  const { connected, reconnecting } = useTerminal({ sessionId, projectName, containerRef });
+  const { connected, reconnecting, sendData, getSelection } = useTerminal({ sessionId, projectName, containerRef });
   const [ctrlMode, setCtrlMode] = useState(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
@@ -39,41 +40,50 @@ export function TerminalTab({ metadata }: TerminalTabProps) {
     return () => vv.removeEventListener("resize", handleResize);
   }, []);
 
+  const focusTerminal = useCallback(() => {
+    const termElement = containerRef.current?.querySelector(
+      ".xterm-helper-textarea",
+    ) as HTMLTextAreaElement | null;
+    termElement?.focus();
+  }, []);
+
   const sendKey = useCallback(
     (value: string) => {
-      // Access the terminal container's xterm instance indirectly via the WS
-      // The useTerminal hook handles this — we need to dispatch to the terminal
-      const termElement = containerRef.current?.querySelector(
-        ".xterm-helper-textarea",
-      ) as HTMLTextAreaElement | null;
+      focusTerminal();
 
-      if (termElement) {
-        termElement.focus();
-      }
-
-      // For Ctrl combos, we rely on the terminal processing keystrokes
-      // For direct chars, dispatch input event
       if (ctrlMode && value.length === 1) {
         // Ctrl+key: send char code 1-26 for a-z
         const code = value.toLowerCase().charCodeAt(0) - 96;
         if (code >= 1 && code <= 26) {
-          // The terminal onData handler in useTerminal sends to WS
-          const event = new KeyboardEvent("keydown", {
-            key: value,
-            ctrlKey: true,
-            bubbles: true,
-          });
-          termElement?.dispatchEvent(event);
+          sendData(String.fromCharCode(code));
         }
         setCtrlMode(false);
         return;
       }
 
-      // For simple values, use input event approach by focusing textarea
-      // xterm handles the rest
+      sendData(value);
     },
-    [ctrlMode],
+    [ctrlMode, sendData, focusTerminal],
   );
+
+  const handleCopy = useCallback(async () => {
+    const selection = getSelection();
+    if (selection) {
+      await navigator.clipboard.writeText(selection);
+    }
+  }, [getSelection]);
+
+  const handlePaste = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        sendData(text);
+        focusTerminal();
+      }
+    } catch {
+      // Clipboard permission denied
+    }
+  }, [sendData, focusTerminal]);
 
   const isMobile = typeof window !== "undefined" && "ontouchstart" in window;
 
@@ -106,6 +116,19 @@ export function TerminalTab({ metadata }: TerminalTabProps) {
       {/* Mobile toolbar */}
       {isMobile && (
         <div className="flex items-center gap-1 px-2 py-1.5 bg-surface border-t border-border overflow-x-auto">
+          <button
+            onClick={handleCopy}
+            className="px-2 py-1.5 rounded text-xs min-w-[36px] min-h-[32px] bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground transition-colors select-none"
+          >
+            <Copy size={14} />
+          </button>
+          <button
+            onClick={handlePaste}
+            className="px-2 py-1.5 rounded text-xs min-w-[36px] min-h-[32px] bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground transition-colors select-none"
+          >
+            <ClipboardPaste size={14} />
+          </button>
+          <div className="w-px h-5 bg-border mx-0.5" />
           {MOBILE_KEYS.map((key) => (
             <button
               key={key.label}
