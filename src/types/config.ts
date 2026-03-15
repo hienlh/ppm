@@ -22,9 +22,14 @@ export interface AIConfig {
 }
 
 export interface AIProviderConfig {
-  type: "agent-sdk" | "cli";
+  type: "agent-sdk" | "mock";
   api_key_env?: string;
-  command?: string;
+  // Agent SDK-specific settings (ignored by mock provider)
+  model?: string;
+  effort?: "low" | "medium" | "high" | "max";
+  max_turns?: number;
+  max_budget_usd?: number;
+  thinking_budget_tokens?: number;
 }
 
 export const DEFAULT_CONFIG: PpmConfig = {
@@ -35,7 +40,49 @@ export const DEFAULT_CONFIG: PpmConfig = {
   ai: {
     default_provider: "claude",
     providers: {
-      claude: { type: "agent-sdk", api_key_env: "ANTHROPIC_API_KEY" },
+      claude: {
+        type: "agent-sdk",
+        api_key_env: "ANTHROPIC_API_KEY",
+        model: "claude-sonnet-4-6",
+        effort: "high",
+        max_turns: 100,
+      },
     },
   },
 };
+
+const VALID_TYPES = ["agent-sdk", "mock"] as const;
+const VALID_EFFORTS = ["low", "medium", "high", "max"] as const;
+const VALID_MODELS = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"] as const;
+
+/** Validate AI provider config fields. Returns array of error messages (empty = valid). */
+export function validateAIProviderConfig(config: Partial<AIProviderConfig>): string[] {
+  const errors: string[] = [];
+  if (config.type != null && !VALID_TYPES.includes(config.type as any)) {
+    errors.push(`type must be one of: ${VALID_TYPES.join(", ")}`);
+  }
+  if (config.model != null && !VALID_MODELS.includes(config.model as any)) {
+    errors.push(`model must be one of: ${VALID_MODELS.join(", ")}`);
+  }
+  if (config.effort && !VALID_EFFORTS.includes(config.effort as any)) {
+    errors.push(`effort must be one of: ${VALID_EFFORTS.join(", ")}`);
+  }
+  if (config.max_turns != null && (!Number.isInteger(config.max_turns) || config.max_turns < 1 || config.max_turns > 500)) {
+    errors.push("max_turns must be integer 1-500");
+  }
+  if (config.max_budget_usd != null && (config.max_budget_usd < 0.01 || config.max_budget_usd > 50)) {
+    errors.push("max_budget_usd must be 0.01-50.00");
+  }
+  if (config.thinking_budget_tokens != null && (!Number.isInteger(config.thinking_budget_tokens) || config.thinking_budget_tokens < 0)) {
+    errors.push("thinking_budget_tokens must be integer >= 0");
+  }
+  return errors;
+}
+
+/** Validate default_provider references an existing provider key */
+export function validateDefaultProvider(defaultProvider: string, providers: Record<string, unknown>): string | null {
+  if (!providers[defaultProvider]) {
+    return `default_provider "${defaultProvider}" not found in providers`;
+  }
+  return null;
+}

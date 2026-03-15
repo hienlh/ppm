@@ -45,6 +45,8 @@
 │  │ ppm.yaml         │  │ Git Repos        │  │ Session Storage │    │
 │  │ (projects list)  │  │ (local disk)     │  │ (in-memory only)│    │
 │  │ (auth token)     │  │                  │  │                 │    │
+│  │ (AI provider     │  │                  │  │                 │    │
+│  │  settings)       │  │                  │  │                 │    │
 │  └──────────────────┘  └──────────────────┘  └─────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
         ↓↑
@@ -93,6 +95,8 @@
 ```
 GET    /api/health              → Health check
 GET    /api/auth/check          → Verify auth token
+GET    /api/settings/ai         → Get AI provider settings
+PUT    /api/settings/ai         → Update AI provider settings
 POST   /api/projects            → Create project
 GET    /api/projects            → List projects
 DELETE /api/projects/:name      → Delete project
@@ -157,9 +161,9 @@ interface AIProvider {
 ```
 
 **Implementations:**
-- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use
-- **claude-code-cli** (Fallback) — Claude CLI subprocess, for offline environments
+- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use. Reads model/effort/maxTurns/budget/thinking from `ppm.yaml` AI config. Settings refreshed per query.
 - **mock-provider** (Testing) — Returns canned responses
+- **Note:** CLI provider removed (v2); agent SDK now sole AI provider
 
 ---
 
@@ -276,6 +280,78 @@ For each API request:
 - Sent from CLI via `-c <config>` flag
 - Stored in browser localStorage for session persistence
 - No expiry (single-user, local environment)
+
+---
+
+## AI Provider Configuration
+
+PPM exposes AI settings as global configuration (not per-session) via REST API and Settings UI. Configuration is stored in `ppm.yaml` and read fresh per query.
+
+### Configuration Shape
+```yaml
+ai:
+  default_provider: claude
+  providers:
+    claude:
+      type: agent-sdk
+      api_key_env: ANTHROPIC_API_KEY
+      model: claude-sonnet-4-6
+      effort: high
+      max_turns: 100
+      max_budget_usd: 2.00
+      thinking_budget_tokens: 10000
+```
+
+**Fields:**
+- `default_provider`: Active provider name (e.g., `claude`)
+- `type`: Provider type (`agent-sdk` or `mock`)
+- `api_key_env`: Environment variable containing API key
+- `model`: Model ID (e.g., `claude-sonnet-4-6`, `claude-opus-4-6`)
+- `effort`: Processing level (`low`, `medium`, `high`, `max`)
+- `max_turns`: Maximum interaction turns (1-500, default 100)
+- `max_budget_usd`: Spending limit in USD (optional)
+- `thinking_budget_tokens`: Extended thinking budget in tokens (optional, 0=disabled)
+
+### API Endpoints
+
+**GET /api/settings/ai** — Fetch current AI config
+```json
+{
+  "ok": true,
+  "data": {
+    "default_provider": "claude",
+    "providers": { "claude": {...} }
+  }
+}
+```
+
+**PUT /api/settings/ai** — Update AI config (shallow merge per provider)
+```json
+{
+  "providers": {
+    "claude": {
+      "model": "claude-opus-4-6",
+      "max_turns": 50
+    }
+  }
+}
+```
+Returns full updated config. Validates ranges/enums before writing.
+
+### How Provider Uses Settings
+
+1. **SDK Provider (`sendMessage`)**
+   - Calls `getProviderConfig()` to read fresh config from `configService`
+   - Maps snake_case config to camelCase SDK options
+   - Passes `model`, `effort`, `maxTurns`, `maxBudgetUsd`, `thinkingBudgetTokens` to `query()`
+   - Falls back to defaults if fields not set
+
+2. **Mock Provider**
+   - Ignores AI settings (always returns canned responses for testing)
+
+3. **Changes Take Effect**
+   - Immediately on next query (config read fresh each time)
+   - No active queries affected (config mid-flight not re-evaluated)
 
 ---
 
