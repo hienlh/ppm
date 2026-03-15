@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { setAuthToken } from "@/lib/api-client";
 import { Lock, AlertCircle } from "lucide-react";
+import { useSettingsStore } from "@/stores/settings-store";
 
 interface LoginScreenProps {
   onSuccess: () => void;
@@ -10,6 +11,7 @@ interface LoginScreenProps {
 
 export function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [token, setToken] = useState("");
+  const deviceName = useSettingsStore((s) => s.deviceName);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -50,8 +52,13 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
             <Lock className="size-6 text-primary" />
           </div>
           <h1 className="text-xl font-semibold text-foreground">PPM</h1>
+          {deviceName && (
+            <p className="text-xs text-text-subtle bg-surface-elevated inline-block px-2 py-0.5 rounded-full">
+              {deviceName}
+            </p>
+          )}
           <p className="text-sm text-text-secondary">
-            Enter your auth token to unlock
+            Enter your access password to unlock
           </p>
         </div>
 

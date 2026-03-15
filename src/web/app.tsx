@@ -25,6 +25,7 @@ export function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const theme = useSettingsStore((s) => s.theme);
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
+  const fetchServerInfo = useSettingsStore((s) => s.fetchServerInfo);
   const activeProject = useProjectStore((s) => s.activeProject);
 
   // Apply theme on mount and when it changes
@@ -39,6 +40,9 @@ export function App() {
       return () => mq.removeEventListener("change", handler);
     }
   }, [theme]);
+
+  // Fetch server info on mount (before auth — shown on login screen)
+  useEffect(() => { fetchServerInfo(); }, [fetchServerInfo]);
 
   // Auth check on mount
   useEffect(() => {

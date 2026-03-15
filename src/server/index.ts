@@ -15,8 +15,12 @@ export const app = new Hono();
 // CORS for dev
 app.use("*", cors());
 
-// Health check (before auth)
+// Public endpoints (before auth)
 app.get("/api/health", (c) => c.json(ok({ status: "running" })));
+app.get("/api/info", (c) => c.json(ok({
+  version: "0.2.0",
+  device_name: configService.get("device_name") || null,
+})));
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
