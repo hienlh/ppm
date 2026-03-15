@@ -228,6 +228,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       this.activeQueries.set(sessionId, q);
 
       let lastPartialText = "";
+      /** Number of tool_use blocks pending results (tools executing internally by SDK) */
+      let pendingToolCount = 0;
 
       for await (const msg of q) {
         // Yield any queued approval events
@@ -235,9 +237,50 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           yield approvalEvents.shift()!;
         }
 
+        // When tools were pending and a new assistant/stream_event arrives,
+        // the SDK has finished executing tools. Fetch tool_results from session history.
+        if (pendingToolCount > 0 && (msg.type === "assistant" || (msg as any).type === "partial" || (msg as any).type === "stream_event")) {
+          try {
+            const sessionMsgs = await getSessionMessages(sessionId);
+            // Find the last user message — it contains tool_result blocks
+            const lastUserMsg = [...sessionMsgs].reverse().find(
+              (m: any) => m.type === "user",
+            );
+            const userContent = (lastUserMsg as any)?.message?.content;
+            if (Array.isArray(userContent)) {
+              for (const block of userContent) {
+                if (block.type === "tool_result") {
+                  const output = block.content ?? block.output ?? "";
+                  yield {
+                    type: "tool_result" as const,
+                    output: typeof output === "string" ? output : JSON.stringify(output),
+                    isError: !!block.is_error,
+                  };
+                }
+              }
+            }
+          } catch {
+            // Session history unavailable — skip tool_results
+          }
+          pendingToolCount = 0;
+        }
+
         // Partial assistant message — streaming text deltas
-        if ((msg as any).type === "partial") {
+        if ((msg as any).type === "partial" || (msg as any).type === "stream_event") {
           const partial = msg as any;
+          // Handle stream_event (raw API events) for text deltas
+          if ((msg as any).type === "stream_event") {
+            const event = partial.event;
+            if (event?.type === "content_block_delta" && event.delta?.type === "text_delta") {
+              const text = event.delta.text ?? "";
+              if (text) {
+                lastPartialText += text;
+                yield { type: "text", content: text };
+              }
+            }
+            continue;
+          }
+          // Handle legacy "partial" type
           const content = partial.message?.content;
           if (Array.isArray(content)) {
             let fullText = "";
@@ -267,6 +310,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 assistantContent += block.text;
                 lastPartialText = "";
               } else if (block.type === "tool_use") {
+                pendingToolCount++;
                 yield {
                   type: "tool_use",
                   tool: block.name ?? "unknown",
@@ -297,6 +341,30 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         }
 
         if (msg.type === "result") {
+          // Flush any remaining pending tool_results before finishing
+          if (pendingToolCount > 0) {
+            try {
+              const sessionMsgs = await getSessionMessages(sessionId);
+              const lastUserMsg = [...sessionMsgs].reverse().find(
+                (m: any) => m.type === "user",
+              );
+              const userContent = (lastUserMsg as any)?.message?.content;
+              if (Array.isArray(userContent)) {
+                for (const block of userContent) {
+                  if (block.type === "tool_result") {
+                    const output = block.content ?? block.output ?? "";
+                    yield {
+                      type: "tool_result" as const,
+                      output: typeof output === "string" ? output : JSON.stringify(output),
+                      isError: !!block.is_error,
+                    };
+                  }
+                }
+              }
+            } catch {}
+            pendingToolCount = 0;
+          }
+
           const result = msg as any;
           // Yield final cost + any rate limit info from result
           const usage: Record<string, unknown> = {};
@@ -394,6 +462,7 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
         events.push({
           type: "tool_result",
           output: typeof output === "string" ? output : JSON.stringify(output),
+          isError: !!(block as Record<string, unknown>).is_error,
         });
       }
     }

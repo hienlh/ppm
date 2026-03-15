@@ -42,6 +42,7 @@ interface CliToolResultEvent {
   type: "tool_result";
   output?: unknown;
   content?: unknown;
+  is_error?: boolean;
 }
 
 interface CliErrorEvent {
@@ -392,6 +393,7 @@ export class ClaudeCodeCliProvider implements AIProvider {
         return [{
           type: "tool_result",
           output: typeof output === "string" ? output : JSON.stringify(output),
+          isError: !!trEvent.is_error,
         }];
       }
 
