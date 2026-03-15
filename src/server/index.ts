@@ -129,55 +129,87 @@ export async function startServer(options: {
     const pidFile = resolve(ppmDir, "ppm.pid");
     const statusFile = resolve(ppmDir, "status.json");
 
-    // If --share, download cloudflared in parent (shows progress to user)
+    // If --share, download cloudflared and start tunnel as independent process
+    let shareUrl: string | undefined;
+    let tunnelPid: number | undefined;
     if (options.share) {
       const { ensureCloudflared } = await import("../services/cloudflared.service.ts");
-      await ensureCloudflared();
+      const bin = await ensureCloudflared();
+
+      // Check if tunnel already running (reuse from previous server crash)
+      if (existsSync(statusFile)) {
+        try {
+          const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
+          if (prev.tunnelPid && prev.shareUrl) {
+            try {
+              process.kill(prev.tunnelPid, 0); // Check alive
+              console.log(`  Reusing existing tunnel (PID: ${prev.tunnelPid})`);
+              shareUrl = prev.shareUrl;
+              tunnelPid = prev.tunnelPid;
+            } catch { /* tunnel dead, spawn new one */ }
+          }
+        } catch {}
+      }
+
+      // Spawn new tunnel if no existing one
+      if (!shareUrl) {
+        console.log("  Starting share tunnel...");
+        const { openSync: openFd } = await import("node:fs");
+        const tunnelLog = resolve(ppmDir, "tunnel.log");
+        const tfd = openFd(tunnelLog, "a");
+        const tunnelProc = Bun.spawn({
+          cmd: [bin, "tunnel", "--url", `http://localhost:${port}`],
+          stdio: ["ignore", "ignore", tfd],
+          env: process.env,
+        });
+        tunnelProc.unref();
+        tunnelPid = tunnelProc.pid;
+
+        // Parse URL from tunnel.log (poll stderr output)
+        const urlRegex = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+        const pollStart = Date.now();
+        while (Date.now() - pollStart < 30_000) {
+          await Bun.sleep(500);
+          try {
+            const logContent = readFileSync(tunnelLog, "utf-8");
+            const match = logContent.match(urlRegex);
+            if (match) { shareUrl = match[0]; break; }
+          } catch {}
+        }
+        if (!shareUrl) console.warn("  ⚠  Tunnel started but URL not detected.");
+      }
     }
 
-    // Spawn child process with log file
+    // Spawn server child process with log file
     const { openSync } = await import("node:fs");
     const logFile = resolve(ppmDir, "ppm.log");
     const logFd = openSync(logFile, "a");
     const child = Bun.spawn({
       cmd: [
         process.execPath, "run", import.meta.dir + "/index.ts", "__serve__",
-        String(port), host, options.config ?? "", options.share ? "share" : "",
+        String(port), host, options.config ?? "",
       ],
       stdio: ["ignore", logFd, logFd],
       env: process.env,
     });
     child.unref();
+
+    // Write status file with both PIDs
+    const status = { pid: child.pid, port, host, shareUrl, tunnelPid };
+    writeFileSync(statusFile, JSON.stringify(status));
     writeFileSync(pidFile, String(child.pid));
 
-    // Poll for status.json (child writes it when ready)
-    const startTime = Date.now();
-    let status: { pid: number; port: number; host: string; shareUrl?: string } | null = null;
-    while (Date.now() - startTime < 30_000) {
-      if (existsSync(statusFile)) {
-        try {
-          status = JSON.parse(readFileSync(statusFile, "utf-8"));
-          break;
-        } catch { /* file not fully written yet */ }
+    console.log(`\n  PPM daemon started (PID: ${child.pid})\n`);
+    console.log(`  ➜  Local:   http://localhost:${port}/`);
+    if (shareUrl) {
+      console.log(`  ➜  Share:   ${shareUrl}`);
+      if (!configService.get("auth").enabled) {
+        console.log(`\n  ⚠  Warning: auth is disabled — your IDE is publicly accessible!`);
+        console.log(`     Enable auth in ~/.ppm/config.yaml or restart without --share.`);
       }
-      await Bun.sleep(200);
-    }
-
-    if (status) {
-      console.log(`\n  PPM daemon started (PID: ${status.pid})\n`);
-      console.log(`  ➜  Local:   http://localhost:${status.port}/`);
-      if (status.shareUrl) {
-        console.log(`  ➜  Share:   ${status.shareUrl}`);
-        if (!configService.get("auth").enabled) {
-          console.log(`\n  ⚠  Warning: auth is disabled — your IDE is publicly accessible!`);
-          console.log(`     Enable auth in ~/.ppm/config.yaml or restart without --share.`);
-        }
-        const qr = await import("qrcode-terminal");
-        console.log();
-        qr.generate(status.shareUrl, { small: true });
-      }
-    } else {
-      console.log(`\n  PPM daemon started (PID: ${child.pid}) but status not confirmed.`);
+      const qr = await import("qrcode-terminal");
+      console.log();
+      qr.generate(shareUrl, { small: true });
     }
 
     process.exit(0);
@@ -281,16 +313,9 @@ if (process.argv.includes("__serve__")) {
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
   const configPath = process.argv[idx + 3] || undefined;
-  const shareFlag = process.argv[idx + 4] === "share";
 
   configService.load(configPath);
-
-  const { resolve } = await import("node:path");
-  const { homedir } = await import("node:os");
-  const { writeFileSync, unlinkSync } = await import("node:fs");
-
-  const statusFile = resolve(homedir(), ".ppm", "status.json");
-  const pidFile = resolve(homedir(), ".ppm", "ppm.pid");
+  await setupLogFile();
 
   Bun.serve({
     port,
@@ -342,27 +367,5 @@ if (process.argv.includes("__serve__")) {
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
 
-  // Start tunnel if --share was passed (eagerly import so cleanup doesn't race)
-  let shareUrl: string | undefined;
-  const tunnel = shareFlag
-    ? (await import("../services/tunnel.service.ts")).tunnelService
-    : null;
-  if (tunnel) {
-    try {
-      shareUrl = await tunnel.startTunnel(port);
-    } catch { /* non-fatal: server runs without share URL */ }
-  }
-
-  // Write status file for parent to read
-  writeFileSync(statusFile, JSON.stringify({ pid: process.pid, port, host, shareUrl }));
-
-  // Cleanup on exit
-  const cleanup = () => {
-    try { unlinkSync(statusFile); } catch {}
-    try { unlinkSync(pidFile); } catch {}
-    tunnel?.stopTunnel();
-    process.exit(0);
-  };
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  console.log(`Server child ready on port ${port}`);
 }
