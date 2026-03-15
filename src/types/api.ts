@@ -24,6 +24,7 @@ export type TerminalWsMessage =
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
   | { type: "message"; content: string }
+  | { type: "cancel" }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown };
 
 export type ChatWsServerMessage =
@@ -31,5 +32,6 @@ export type ChatWsServerMessage =
   | { type: "tool_use"; tool: string; input: unknown }
   | { type: "tool_result"; output: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
+  | { type: "usage"; usage: { totalCostUsd?: number; fiveHour?: number; sevenDay?: number } }
   | { type: "done"; sessionId: string }
   | { type: "error"; message: string };

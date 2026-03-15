@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { projectService } from "../../services/project.service.ts";
+import { searchGitDirs } from "../../services/git-dirs.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 export const projectRoutes = new Hono();
@@ -25,6 +26,22 @@ projectRoutes.post("/", async (c) => {
     return c.json(ok(project), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 400);
+  }
+});
+
+/**
+ * GET /api/projects/suggest-dirs?path=/some/dir&q=search
+ * Deep-scan `path` (default: home dir) for directories containing .git.
+ * Results are cached for 5 minutes. Use `q` to filter by name/path.
+ */
+projectRoutes.get("/suggest-dirs", (c) => {
+  try {
+    const root = c.req.query("path") || undefined;
+    const query = c.req.query("q") ?? "";
+    const results = searchGitDirs(query, root);
+    return c.json(ok(results));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
   }
 });
 

@@ -1,11 +1,44 @@
 import { Hono } from "hono";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
+import { listSlashItems } from "../../services/slash-items.service.ts";
+import { fetchClaudeUsage } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const chatRoutes = new Hono<Env>();
+
+/** GET /chat/slash-items — list available slash commands and skills for the project */
+chatRoutes.get("/slash-items", (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const items = listSlashItems(projectPath);
+    return c.json(ok(items));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /chat/usage — get current usage/rate-limit info via ccburn */
+chatRoutes.get("/usage", async (c) => {
+  try {
+    const usage = await fetchClaudeUsage();
+    return c.json(ok({
+      fiveHour: usage.session?.utilization,
+      sevenDay: usage.weekly?.utilization,
+      fiveHourResetsAt: usage.session?.resetsAt,
+      sevenDayResetsAt: usage.weekly?.resetsAt,
+      // Extra detail for popup
+      session: usage.session,
+      weekly: usage.weekly,
+      weeklyOpus: usage.weeklyOpus,
+      weeklySonnet: usage.weeklySonnet,
+    }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
 
 /** GET /chat/providers — list available AI providers */
 chatRoutes.get("/providers", (c) => {
@@ -44,9 +77,11 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
 chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
+    const projectPath = c.get("projectPath");
     const body = await c.req.json<{ providerId?: string; title?: string }>();
     const session = await chatService.createSession(body.providerId, {
       projectName,
+      projectPath,
       title: body.title,
     });
     return c.json(ok(session), 201);
