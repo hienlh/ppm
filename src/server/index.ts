@@ -10,6 +10,39 @@ import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
 import { ok } from "../types/api.ts";
 
+/** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
+async function setupLogFile() {
+  const { resolve } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const { appendFileSync, mkdirSync, existsSync } = await import("node:fs");
+
+  const ppmDir = resolve(homedir(), ".ppm");
+  if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
+  const logPath = resolve(ppmDir, "ppm.log");
+
+  const origLog = console.log.bind(console);
+  const origError = console.error.bind(console);
+  const origWarn = console.warn.bind(console);
+
+  const writeLog = (level: string, args: unknown[]) => {
+    const ts = new Date().toISOString();
+    const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+    try { appendFileSync(logPath, `[${ts}] [${level}] ${msg}\n`); } catch {}
+  };
+
+  console.log = (...args: unknown[]) => { origLog(...args); writeLog("INFO", args); };
+  console.error = (...args: unknown[]) => { origError(...args); writeLog("ERROR", args); };
+  console.warn = (...args: unknown[]) => { origWarn(...args); writeLog("WARN", args); };
+
+  // Capture uncaught errors
+  process.on("uncaughtException", (err) => {
+    writeLog("FATAL", [`Uncaught exception: ${err.stack ?? err.message}`]);
+  });
+  process.on("unhandledRejection", (reason) => {
+    writeLog("FATAL", [`Unhandled rejection: ${reason}`]);
+  });
+}
+
 export const app = new Hono();
 
 // CORS for dev
@@ -62,6 +95,9 @@ export async function startServer(options: {
   configService.load(options.config);
   const port = parseInt(options.port ?? String(configService.get("port")), 10);
   const host = configService.get("host");
+
+  // Setup log file (both foreground and daemon modes)
+  await setupLogFile();
 
   const isDaemon = !options.foreground;
 
