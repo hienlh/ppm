@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import { VERSION } from "./version.ts";
 
 const program = new Command();
 
 program
   .name("ppm")
   .description("Personal Project Manager — mobile-first web IDE")
-  .version("0.2.2");
+  .version(VERSION);
 
 program
   .command("start")
