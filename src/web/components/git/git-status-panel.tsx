@@ -371,7 +371,7 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
       {/* Commit section */}
       <div className="border-t p-2 space-y-2 shrink-0">
         <textarea
-          className="w-full h-16 px-2 py-1.5 text-sm bg-muted/50 border rounded resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+          className="w-full h-16 px-3 py-2 text-base md:text-sm text-foreground bg-surface border border-border rounded-lg resize-none focus:outline-none focus:border-ring placeholder:text-muted-foreground"
           placeholder="Commit message..."
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
