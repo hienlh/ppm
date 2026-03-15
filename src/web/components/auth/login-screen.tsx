@@ -43,7 +43,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-dvh flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm bg-surface rounded-lg border border-border p-6 space-y-6">
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center size-12 mx-auto rounded-full bg-surface-elevated">
