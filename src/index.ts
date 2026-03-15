@@ -17,6 +17,11 @@ program
   .option("-s, --share", "Share via public URL (Cloudflare tunnel)")
   .option("-c, --config <path>", "Path to config file")
   .action(async (options) => {
+    // Auto-init on first run
+    const { hasConfig, initProject } = await import("./cli/commands/init.ts");
+    if (!hasConfig()) {
+      await initProject();
+    }
     const { startServer } = await import("./server/index.ts");
     await startServer(options);
   });
@@ -30,6 +35,15 @@ program
   });
 
 program
+  .command("status")
+  .description("Show PPM daemon status")
+  .option("--json", "Output as JSON")
+  .action(async (options) => {
+    const { showStatus } = await import("./cli/commands/status.ts");
+    await showStatus(options);
+  });
+
+program
   .command("open")
   .description("Open PPM in browser")
   .option("-c, --config <path>", "Path to config file")
@@ -40,10 +54,17 @@ program
 
 program
   .command("init")
-  .description("Initialize PPM configuration — scan for git repos, create config")
-  .action(async () => {
+  .description("Initialize PPM configuration (interactive or via flags)")
+  .option("-p, --port <port>", "Port to listen on")
+  .option("--scan <path>", "Directory to scan for git repos")
+  .option("--auth", "Enable authentication")
+  .option("--no-auth", "Disable authentication")
+  .option("--password <pw>", "Set access password")
+  .option("--share", "Pre-install cloudflared for sharing")
+  .option("-y, --yes", "Non-interactive mode (use defaults + flags)")
+  .action(async (options) => {
     const { initProject } = await import("./cli/commands/init.ts");
-    await initProject();
+    await initProject(options);
   });
 
 const { registerProjectsCommands } = await import("./cli/commands/projects.ts");

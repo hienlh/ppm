@@ -119,7 +119,7 @@ export function App() {
 
   if (authState === "checking") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="min-h-dvh flex items-center justify-center bg-background">
         <div className="animate-pulse text-text-secondary text-sm">
           Loading...
         </div>
@@ -133,7 +133,7 @@ export function App() {
 
   return (
     <TooltipProvider>
-      <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
+      <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden">
         {/* Main layout */}
         <div className="flex flex-1 overflow-hidden">
           {/* Desktop sidebar */}
