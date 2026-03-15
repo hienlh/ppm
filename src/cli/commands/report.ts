@@ -6,7 +6,7 @@ import { getRecentLogs } from "./logs.ts";
 const REPO = "hienlh/ppm";
 
 export async function reportBug() {
-  const version = "0.2.0";
+  const version = "0.2.1";
   const logs = getRecentLogs(30);
   const statusFile = resolve(homedir(), ".ppm", "status.json");
   let statusInfo = "(not running)";
