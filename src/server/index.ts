@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { configService } from "../services/config.service.ts";
+import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
@@ -61,7 +62,7 @@ app.use("*", cors());
 // Public endpoints (before auth)
 app.get("/api/health", (c) => c.json(ok({ status: "running" })));
 app.get("/api/info", (c) => c.json(ok({
-  version: "0.2.2",
+  version: VERSION,
   device_name: configService.get("device_name") || null,
 })));
 
@@ -199,7 +200,7 @@ export async function startServer(options: {
     writeFileSync(statusFile, JSON.stringify(status));
     writeFileSync(pidFile, String(child.pid));
 
-    console.log(`\n  PPM v0.2.2 daemon started (PID: ${child.pid})\n`);
+    console.log(`\n  PPM v${VERSION} daemon started (PID: ${child.pid})\n`);
     console.log(`  ➜  Local:   http://localhost:${port}/`);
     if (shareUrl) {
       console.log(`  ➜  Share:   ${shareUrl}`);
@@ -267,7 +268,7 @@ export async function startServer(options: {
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
 
-  console.log(`\n  PPM v0.2.2 ready\n`);
+  console.log(`\n  PPM v${VERSION} ready\n`);
   console.log(`  ➜  Local:   http://localhost:${server.port}/`);
 
   const { networkInterfaces } = await import("node:os");
