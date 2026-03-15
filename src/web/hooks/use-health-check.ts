@@ -1,8 +1,45 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 
-const POLL_INTERVAL = 5_000; // 5 seconds
+const POLL_INTERVAL = 5_000;
 const HEALTH_URL = "/api/health";
+const LOGS_URL = "/api/logs/recent";
+const REPO = "hienlh/ppm";
+
+/** Fetch recent server logs for bug report */
+async function fetchRecentLogs(): Promise<string> {
+  try {
+    const res = await fetch(LOGS_URL, { signal: AbortSignal.timeout(3000) });
+    const json = await res.json();
+    return json.ok ? json.data.logs : "(failed to fetch logs)";
+  } catch {
+    return "(server logs unavailable)";
+  }
+}
+
+/** Open GitHub issue pre-filled with crash context + logs */
+async function openBugReport() {
+  const logs = await fetchRecentLogs();
+  const title = encodeURIComponent("bug: server crashed unexpectedly");
+  const body = encodeURIComponent([
+    "## Environment",
+    `- URL: ${window.location.href}`,
+    `- UserAgent: ${navigator.userAgent}`,
+    `- Time: ${new Date().toISOString()}`,
+    "",
+    "## Description",
+    "The PPM server went down and restarted unexpectedly.",
+    "",
+    "## Steps to Reproduce",
+    "1. ",
+    "",
+    "## Recent Server Logs",
+    "```",
+    logs,
+    "```",
+  ].join("\n"));
+  window.open(`https://github.com/${REPO}/issues/new?title=${title}&body=${body}`, "_blank");
+}
 
 /**
  * Periodically pings /api/health. When server goes down and comes back,
@@ -20,27 +57,12 @@ export function useHealthCheck() {
         const res = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(3000) });
         if (res.ok) {
           if (wasDown.current && !isFirstCheck.current) {
-            // Server recovered after being down
             toast.warning("Server was restarted", {
-              description: "PPM server went down and recovered. If this was unexpected, please report it.",
+              description: "PPM server went down and recovered. If unexpected, please report it.",
               duration: 15_000,
               action: {
                 label: "Report Bug",
-                onClick: () => {
-                  const title = encodeURIComponent("bug: server crashed unexpectedly");
-                  const body = encodeURIComponent([
-                    "## Environment",
-                    `- URL: ${window.location.href}`,
-                    `- UserAgent: ${navigator.userAgent}`,
-                    "",
-                    "## Description",
-                    "The PPM server went down and restarted unexpectedly.",
-                    "",
-                    "## Additional Context",
-                    "<!-- Run `ppm logs` to attach recent server logs -->",
-                  ].join("\n"));
-                  window.open(`https://github.com/hienlh/ppm/issues/new?title=${title}&body=${body}`, "_blank");
-                },
+                onClick: () => openBugReport(),
               },
             });
             wasDown.current = false;
@@ -60,7 +82,6 @@ export function useHealthCheck() {
       }
     }
 
-    // Start polling after initial delay
     const initialDelay = setTimeout(() => {
       check();
       timer = setInterval(check, POLL_INTERVAL);

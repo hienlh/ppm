@@ -22,6 +22,23 @@ app.get("/api/info", (c) => c.json(ok({
   device_name: configService.get("device_name") || null,
 })));
 
+// Public: recent logs for bug reports (last 30 lines)
+app.get("/api/logs/recent", async (c) => {
+  const { resolve } = await import("node:path");
+  const { homedir } = await import("node:os");
+  const { existsSync, readFileSync } = await import("node:fs");
+  const logFile = resolve(homedir(), ".ppm", "ppm.log");
+  if (!existsSync(logFile)) return c.json(ok({ logs: "" }));
+  const content = readFileSync(logFile, "utf-8");
+  const lines = content.split("\n").slice(-30).join("\n").trim();
+  return c.json(ok({ logs: lines }));
+});
+
+// Dev-only: crash endpoint for testing health check UI
+if (process.env.NODE_ENV !== "production") {
+  app.get("/api/debug/crash", () => { process.exit(1); });
+}
+
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
