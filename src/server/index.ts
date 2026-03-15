@@ -64,13 +64,16 @@ export async function startServer(options: {
       await ensureCloudflared();
     }
 
-    // Spawn child process
+    // Spawn child process with log file
+    const { openSync } = await import("node:fs");
+    const logFile = resolve(ppmDir, "ppm.log");
+    const logFd = openSync(logFile, "a");
     const child = Bun.spawn({
       cmd: [
         process.execPath, "run", import.meta.dir + "/index.ts", "__serve__",
         String(port), host, options.config ?? "", options.share ? "share" : "",
       ],
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", logFd, logFd],
       env: process.env,
     });
     child.unref();

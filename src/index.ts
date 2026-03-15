@@ -6,7 +6,7 @@ const program = new Command();
 program
   .name("ppm")
   .description("Personal Project Manager — mobile-first web IDE")
-  .version("0.1.0");
+  .version("0.2.0");
 
 program
   .command("start")
@@ -50,6 +50,25 @@ program
   .action(async () => {
     const { openBrowser } = await import("./cli/commands/open.ts");
     await openBrowser();
+  });
+
+program
+  .command("logs")
+  .description("View PPM daemon logs")
+  .option("-n, --tail <lines>", "Number of lines to show", "50")
+  .option("-f, --follow", "Follow log output")
+  .option("--clear", "Clear log file")
+  .action(async (options) => {
+    const { showLogs } = await import("./cli/commands/logs.ts");
+    await showLogs(options);
+  });
+
+program
+  .command("report")
+  .description("Report a bug on GitHub (pre-fills env info + logs)")
+  .action(async () => {
+    const { reportBug } = await import("./cli/commands/report.ts");
+    await reportBug();
   });
 
 program
