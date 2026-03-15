@@ -223,6 +223,13 @@ export async function startServer(options: {
     fetch(req, server) {
       const url = new URL(req.url);
 
+      // WebSocket upgrade: /ws/health
+      if (url.pathname === "/ws/health") {
+        const upgraded = server.upgrade(req, { data: { type: "health" } });
+        if (upgraded) return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
       // WebSocket upgrade: /ws/project/:projectName/terminal/:id
       if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
@@ -254,14 +261,20 @@ export async function startServer(options: {
       idleTimeout: 960,
       sendPong: true,
       open(ws: any) {
-        if (ws.data?.type === "chat") chatWebSocket.open(ws);
+        if (ws.data?.type === "health") {
+          ws.send(JSON.stringify({ type: "health", status: "ok" }));
+        } else if (ws.data?.type === "chat") chatWebSocket.open(ws);
         else terminalWebSocket.open(ws);
       },
       message(ws: any, msg: any) {
-        if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
+        if (ws.data?.type === "health") {
+          // Respond to ping with pong
+          ws.send(JSON.stringify({ type: "health", status: "ok" }));
+        } else if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
         else terminalWebSocket.message(ws, msg);
       },
       close(ws: any) {
+        if (ws.data?.type === "health") return;
         if (ws.data?.type === "chat") chatWebSocket.close(ws);
         else terminalWebSocket.close(ws);
       },
@@ -324,6 +337,12 @@ if (process.argv.includes("__serve__")) {
     fetch(req, server) {
       const url = new URL(req.url);
 
+      if (url.pathname === "/ws/health") {
+        const upgraded = server.upgrade(req, { data: { type: "health" } });
+        if (upgraded) return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
       if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
         const projectName = parts[3] ?? "";
@@ -354,14 +373,19 @@ if (process.argv.includes("__serve__")) {
       idleTimeout: 960,
       sendPong: true,
       open(ws: any) {
-        if (ws.data?.type === "chat") chatWebSocket.open(ws);
+        if (ws.data?.type === "health") {
+          ws.send(JSON.stringify({ type: "health", status: "ok" }));
+        } else if (ws.data?.type === "chat") chatWebSocket.open(ws);
         else terminalWebSocket.open(ws);
       },
       message(ws: any, msg: any) {
-        if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
+        if (ws.data?.type === "health") {
+          ws.send(JSON.stringify({ type: "health", status: "ok" }));
+        } else if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
         else terminalWebSocket.message(ws, msg);
       },
       close(ws: any) {
+        if (ws.data?.type === "health") return;
         if (ws.data?.type === "chat") chatWebSocket.close(ws);
         else terminalWebSocket.close(ws);
       },

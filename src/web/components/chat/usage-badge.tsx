@@ -3,6 +3,7 @@ import type { UsageInfo, LimitBucket } from "../../../types/chat";
 
 interface UsageBadgeProps {
   usage: UsageInfo;
+  loading?: boolean;
   onClick?: () => void;
 }
 
@@ -18,7 +19,7 @@ function barColor(pct: number): string {
   return "bg-green-500";
 }
 
-export function UsageBadge({ usage, onClick }: UsageBadgeProps) {
+export function UsageBadge({ usage, loading, onClick }: UsageBadgeProps) {
   const fiveHourPct = usage.fiveHour != null ? Math.round(usage.fiveHour * 100) : null;
   const sevenDayPct = usage.sevenDay != null ? Math.round(usage.sevenDay * 100) : null;
 
@@ -34,7 +35,7 @@ export function UsageBadge({ usage, onClick }: UsageBadgeProps) {
       className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-hover ${colorClass}`}
       title="Click for usage details"
     >
-      <Activity className="size-3" />
+      {loading ? <RefreshCw className="size-3 animate-spin" /> : <Activity className="size-3" />}
       <span>5h:{fiveHourLabel}</span>
       <span className="text-text-subtle">·</span>
       <span>Wk:{sevenDayLabel}</span>
@@ -50,6 +51,7 @@ interface UsageDetailPanelProps {
   onClose: () => void;
   onReload?: () => void;
   loading?: boolean;
+  lastUpdatedAt?: number | null;
 }
 
 function formatResetTime(bucket?: LimitBucket): string | null {
@@ -74,34 +76,18 @@ function formatResetTime(bucket?: LimitBucket): string | null {
   return `${m}m`;
 }
 
-function statusLabel(status?: string): { text: string; color: string } | null {
-  if (!status) return null;
-  switch (status) {
-    case "ahead_of_pace": return { text: "Ahead of pace", color: "text-green-500" };
-    case "behind_pace": return { text: "Behind pace", color: "text-amber-500" };
-    case "on_pace": return { text: "On pace", color: "text-text-subtle" };
-    default: return { text: status.replace(/_/g, " "), color: "text-text-subtle" };
-  }
-}
-
 function BucketRow({ label, bucket }: { label: string; bucket?: LimitBucket }) {
   if (!bucket) return null;
   const pct = Math.round(bucket.utilization * 100);
   const reset = formatResetTime(bucket);
-  const status = statusLabel(bucket.status);
 
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-text-primary">{label}</span>
-        <div className="flex items-center gap-2">
-          {status && (
-            <span className={`text-[10px] ${status.color}`}>{status.text}</span>
-          )}
-          {reset && (
-            <span className="text-[10px] text-text-subtle">↻ {reset}</span>
-          )}
-        </div>
+        {reset && (
+          <span className="text-[10px] text-text-subtle">↻ {reset}</span>
+        )}
       </div>
       <div className="flex items-center gap-2">
         <div className="flex-1 h-2 rounded-full bg-border overflow-hidden">
@@ -118,7 +104,16 @@ function BucketRow({ label, bucket }: { label: string; bucket?: LimitBucket }) {
   );
 }
 
-export function UsageDetailPanel({ usage, visible, onClose, onReload, loading }: UsageDetailPanelProps) {
+function formatLastUpdated(ts: number | null | undefined): string | null {
+  if (!ts) return null;
+  const secs = Math.round((Date.now() - ts) / 1000);
+  if (secs < 5) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  return `${mins}m ago`;
+}
+
+export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, lastUpdatedAt }: UsageDetailPanelProps) {
   if (!visible) return null;
 
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
@@ -127,7 +122,12 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading }:
   return (
     <div className="border-b border-border bg-surface px-3 py-2.5 space-y-2.5">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-text-primary">Usage Limits</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-text-primary">Usage Limits</span>
+          {lastUpdatedAt && (
+            <span className="text-[10px] text-text-subtle">{formatLastUpdated(lastUpdatedAt)}</span>
+          )}
+        </div>
         <div className="flex items-center gap-1">
           {onReload && (
             <button

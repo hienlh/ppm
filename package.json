@@ -1,6 +1,6 @@
 {
   "name": "@hienlh/ppm",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "module": "src/index.ts",
   "type": "module",
@@ -8,7 +8,7 @@
     "ppm": "src/index.ts"
   },
   "scripts": {
-    "dev": "bun run --hot src/index.ts start -f & bun run vite --config vite.config.ts",
+    "dev": "bun run --hot src/index.ts start & bun run vite --config vite.config.ts & wait",
     "dev:server": "bun run --hot src/index.ts start -f",
     "dev:web": "bun run vite --config vite.config.ts",
     "build:web": "bun run vite build --config vite.config.ts",
@@ -16,7 +16,7 @@
     "start": "bun run src/index.ts start",
     "typecheck": "bunx tsc --noEmit",
     "prepublishOnly": "bun run build:web",
-    "postinstall": "node node_modules/ccburn/scripts/postinstall.js"
+    "postinstall": "echo 'postinstall done'"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
@@ -49,7 +49,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
-    "ccburn": "^0.6.0",
+
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, type DragEvent } from "react"
 import { Upload } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
+import { useUsage } from "@/hooks/use-usage";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { MessageList } from "./message-list";
@@ -49,6 +50,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const activeProject = useProjectStore((s) => s.activeProject);
   const updateTab = useTabStore((s) => s.updateTab);
 
+  // Usage runs independently — auto-refreshes on interval
+  const { usageInfo, usageLoading, lastUpdatedAt, refreshUsage, mergeUsage } =
+    useUsage(activeProject?.name ?? "", providerId);
+
   // Persist sessionId and providerId to tab metadata so reload restores the session
   useEffect(() => {
     if (!tabId || !sessionId) return;
@@ -62,14 +67,13 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     messagesLoading,
     isStreaming,
     pendingApproval,
-    usageInfo,
-    usageLoading,
     sendMessage,
     respondToApproval,
     cancelStreaming,
-    refreshUsage,
+    reconnect,
+    refetchMessages,
     isConnected,
-  } = useChat(sessionId, providerId, activeProject?.name ?? "");
+  } = useChat(sessionId, providerId, activeProject?.name ?? "", { onUsageEvent: mergeUsage });
 
   const handleNewSession = useCallback(() => {
     const projectName = activeProject?.name ?? null;
@@ -248,11 +252,23 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           <div className="flex items-center gap-2">
             <UsageBadge
               usage={usageInfo}
+              loading={usageLoading}
               onClick={() => setShowUsageDetail((v) => !v)}
             />
-            {isConnected && (
-              <span className="size-2 rounded-full bg-green-500" title="Connected" />
-            )}
+            <button
+              onClick={() => {
+                if (!isConnected) reconnect();
+                refetchMessages();
+              }}
+              className="group relative size-4 flex items-center justify-center rounded-full hover:bg-surface-hover transition-colors"
+              title={isConnected ? "Connected — click to refetch messages" : "Disconnected — click to reconnect"}
+            >
+              <span
+                className={`size-2 rounded-full transition-colors ${
+                  isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"
+                }`}
+              />
+            </button>
           </div>
         </div>
 
@@ -263,6 +279,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onClose={() => setShowUsageDetail(false)}
           onReload={refreshUsage}
           loading={usageLoading}
+          lastUpdatedAt={lastUpdatedAt}
         />
 
         {/* Pickers (in-flow, above input — only one visible at a time) */}

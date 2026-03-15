@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.3] - 2026-03-16
+
+### Changed
+- Replace ccburn CLI with native OAuth API fetch for usage limits (700ms vs 3-5s)
+- Health check uses WebSocket instead of HTTP polling (avoids browser 6-conn limit)
+- Usage tracking separated into independent `useUsage` hook with auto-refresh
+
+### Removed
+- `ccburn` dependency (no longer needed)
+
 ## [0.2.2] - 2026-03-15
 
 ### Added
