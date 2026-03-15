@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import {
-  FolderOpen,
   Terminal,
   MessageSquare,
   GitBranch,
@@ -62,7 +61,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action" },
       { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action" },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: openNewTab("git-status", "Git Status"), keywords: "changes diff staged", group: "action" },
-      { id: "projects", label: "Projects", icon: FolderOpen, action: openNewTab("projects", "Projects"), keywords: "open switch", group: "action" },
       { id: "settings", label: "Settings", icon: Settings, action: openNewTab("settings", "Settings"), keywords: "config preferences", group: "action" },
     ];
   }, [activeProject, openTab, onClose]);
