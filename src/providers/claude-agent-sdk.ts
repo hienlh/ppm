@@ -176,9 +176,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       const requestId = crypto.randomUUID();
 
+      const APPROVAL_TIMEOUT_MS = 60_000;
       const approvalPromise = new Promise<{ approved: boolean; data?: unknown }>(
         (resolve) => {
           this.pendingApprovals.set(requestId, { resolve });
+          // Auto-deny after timeout if FE doesn't respond
+          setTimeout(() => {
+            if (this.pendingApprovals.has(requestId)) {
+              this.pendingApprovals.delete(requestId);
+              resolve({ approved: false });
+            }
+          }, APPROVAL_TIMEOUT_MS);
         },
       );
 
@@ -191,7 +199,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       });
       approvalNotify?.();
 
-      // Wait for FE to send back answers
+      // Wait for FE to send back answers (or timeout)
       const result = await approvalPromise;
 
       if (result.approved && result.data) {
@@ -204,6 +212,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     };
 
     let assistantContent = "";
+    let resultSubtype: string | undefined;
+    let resultNumTurns: number | undefined;
 
     try {
       const q = query({
@@ -212,8 +222,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           sessionId: isFirstMessage ? sessionId : undefined,
           resume: isFirstMessage ? undefined : sessionId,
           cwd: meta.projectPath,
+          // Use full Claude Code system prompt (coding guidelines, security, response style)
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          // Load project CLAUDE.md, skills, and hooks from project directory
+          settingSources: ["project"],
           // Neutralize Anthropic env vars so SDK uses subscription, not project .env keys.
-          // Set to empty (not delete) so dotenv from project .env can't fill them back.
           env: {
             ...process.env,
             ANTHROPIC_API_KEY: "",
@@ -222,13 +235,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           },
           // Override project-local Claude settings that may restrict tool permissions
           settings: { permissions: { allow: [], deny: [] } },
-          settingSources: [],
           allowedTools: [
             "Read", "Write", "Edit", "Bash", "Glob", "Grep",
             "WebSearch", "WebFetch", "AskUserQuestion",
+            "Agent", "Skill", "TodoWrite", "ToolSearch",
           ],
           permissionMode: "bypassPermissions",
           allowDangerouslySkipPermissions: true,
+          maxTurns: 100,
           canUseTool,
           includePartialMessages: true,
         } as any,
@@ -247,6 +261,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // Yield any queued approval events
         while (approvalEvents.length > 0) {
           yield approvalEvents.shift()!;
+        }
+
+        // Capture SDK session metadata from init message
+        if (msg.type === "system" && (msg as any).subtype === "init") {
+          const initMsg = msg as any;
+          // SDK may assign a different session_id than our UUID
+          if (initMsg.session_id && initMsg.session_id !== sessionId) {
+            // Update our mapping so resume works with SDK's actual ID
+            const oldMeta = this.activeSessions.get(sessionId);
+            if (oldMeta) {
+              this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
+            }
+          }
+          continue;
         }
 
         // When tools were pending and a new assistant/stream_event arrives,
@@ -381,12 +409,31 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           const result = msg as any;
+          const subtype = result.subtype as string | undefined;
+
           // Yield final cost + any rate limit info from result
           const usage: Record<string, unknown> = {};
           if (result.total_cost_usd != null) usage.totalCostUsd = result.total_cost_usd;
           if (Object.keys(usage).length > 0) {
             yield { type: "usage", usage };
           }
+
+          // Surface non-success subtypes as errors so FE can display them
+          if (subtype && subtype !== "success") {
+            const errorMessages: Record<string, string> = {
+              error_max_turns: "Agent reached maximum turn limit.",
+              error_max_budget_usd: "Agent reached budget limit.",
+              error_during_execution: "Agent encountered an error during execution.",
+            };
+            yield {
+              type: "error",
+              message: errorMessages[subtype] ?? `Agent stopped: ${subtype}`,
+            };
+          }
+
+          // Store subtype and numTurns for the done event
+          resultSubtype = subtype;
+          resultNumTurns = result.num_turns as number | undefined;
           break;
         }
       }
@@ -405,7 +452,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       this.activeQueries.delete(sessionId);
     }
 
-    yield { type: "done", sessionId };
+    yield {
+      type: "done",
+      sessionId,
+      resultSubtype: resultSubtype as any,
+      numTurns: resultNumTurns,
+    };
   }
 
   /** Get latest cached usage/rate-limit info */
