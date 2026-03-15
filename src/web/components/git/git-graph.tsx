@@ -82,6 +82,9 @@ export function GitGraph({ metadata }: GitGraphProps) {
 
   useEffect(() => {
     fetchGraph();
+    // Auto-reload every 10 seconds
+    const interval = setInterval(fetchGraph, 10000);
+    return () => clearInterval(interval);
   }, [fetchGraph]);
 
   const gitAction = async (

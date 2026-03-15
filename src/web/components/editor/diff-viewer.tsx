@@ -11,7 +11,7 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import type { Extension } from "@codemirror/state";
 import { api, projectUrl } from "@/lib/api-client";
-import { Loader2, FileCode } from "lucide-react";
+import { Loader2, FileCode, PanelLeftOpen, PanelRightOpen, Columns2 } from "lucide-react";
 
 function getLanguageExtension(filename: string): Extension | null {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -56,6 +56,8 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const [fileContents, setFileContents] = useState<{ original: string; modified: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** "both" | "left" | "right" — controls which diff panel is expanded */
+  const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
   const containerRef = useRef<HTMLDivElement>(null);
   const mergeViewRef = useRef<MergeView | null>(null);
 
@@ -181,6 +183,27 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     };
   }, [original, modified, langExts, loading, error]);
 
+  // Apply expand mode by hiding left/right editor panels via CSS
+  useEffect(() => {
+    const mv = mergeViewRef.current;
+    if (!mv) return;
+    // MergeView exposes .a (left) and .b (right) EditorView instances
+    const leftPanel = mv.a.dom.closest(".cm-mergeViewEditor") as HTMLElement | null ?? mv.a.dom.parentElement;
+    const rightPanel = mv.b.dom.closest(".cm-mergeViewEditor") as HTMLElement | null ?? mv.b.dom.parentElement;
+    const container = containerRef.current;
+    const gutter = container?.querySelector<HTMLElement>(".cm-mergeViewGutter");
+
+    if (leftPanel) {
+      leftPanel.style.display = expandMode === "right" ? "none" : "";
+      leftPanel.style.flex = expandMode === "left" ? "1" : "";
+    }
+    if (rightPanel) {
+      rightPanel.style.display = expandMode === "left" ? "none" : "";
+      rightPanel.style.flex = expandMode === "right" ? "1" : "";
+    }
+    if (gutter) gutter.style.display = expandMode !== "both" ? "none" : "";
+  }, [expandMode, original, modified]);
+
   if (!projectName) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -206,7 +229,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     );
   }
 
-  if (!isFileCompare && (!diffText || diffText.trim() === "")) {
+  if (!isFileCompare && (!diffText || diffText.trim() === "") && !original && !modified) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
         <FileCode className="size-8" />
@@ -216,21 +239,52 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     );
   }
 
+  const expandToggle = (
+    <div className="flex items-center gap-0.5 shrink-0">
+      <button
+        type="button"
+        onClick={() => setExpandMode(expandMode === "left" ? "both" : "left")}
+        className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "left" ? "bg-muted text-foreground" : ""}`}
+        title="Expand original"
+      >
+        <PanelLeftOpen className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setExpandMode("both")}
+        className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "both" ? "bg-muted text-foreground" : ""}`}
+        title="Side by side"
+      >
+        <Columns2 className="size-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setExpandMode(expandMode === "right" ? "both" : "right")}
+        className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "right" ? "bg-muted text-foreground" : ""}`}
+        title="Expand modified"
+      >
+        <PanelRightOpen className="size-3.5" />
+      </button>
+    </div>
+  );
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b text-xs text-muted-foreground">
         <FileCode className="size-3.5" />
         {isFileCompare ? (
-          <span className="font-mono truncate">{file1} vs {file2}</span>
+          <span className="font-mono truncate flex-1">{file1} vs {file2}</span>
         ) : (
-          <>
+          <span className="flex-1 truncate">
             <span className="font-mono">{filePath ?? "Working tree changes"}</span>
             {(ref1 || ref2) && (
-              <span>({ref1?.slice(0, 7) ?? "HEAD"} vs {ref2?.slice(0, 7) ?? "working tree"})</span>
+              <span> ({ref1?.slice(0, 7) ?? "HEAD"} vs {ref2?.slice(0, 7) ?? "working tree"})</span>
             )}
-          </>
+          </span>
         )}
+        {/* Desktop: expand toggle in header */}
+        <div className="hidden md:block">{expandToggle}</div>
       </div>
 
       {/* MergeView container — side-by-side, pinch-zoom on mobile */}
@@ -239,6 +293,11 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
         className="flex-1 overflow-auto touch-pinch-zoom [&_.cm-mergeView]:h-full"
         style={{ WebkitOverflowScrolling: "touch" }}
       />
+
+      {/* Mobile: expand toggle at bottom */}
+      <div className="md:hidden flex justify-center border-t py-1 bg-background shrink-0">
+        {expandToggle}
+      </div>
     </div>
   );
 }
@@ -252,10 +311,16 @@ function parseDiff(diff: string): { original: string; modified: string } {
   for (const line of lines) {
     if (
       line.startsWith("diff --git") ||
+      line.startsWith("diff --no-index") ||
       line.startsWith("index ") ||
+      line.startsWith("new file") ||
+      line.startsWith("deleted file") ||
+      line.startsWith("old mode") ||
+      line.startsWith("new mode") ||
       line.startsWith("---") ||
       line.startsWith("+++") ||
-      line.startsWith("Binary files")
+      line.startsWith("Binary files") ||
+      line.startsWith("\\ No newline")
     ) continue;
 
     if (line.startsWith("@@")) { inHunk = true; continue; }

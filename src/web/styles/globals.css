@@ -215,6 +215,20 @@ body {
 .markdown-content strong { font-weight: 600; }
 .markdown-content em { font-style: italic; }
 
+/* Code block action buttons (copy/run) */
+.markdown-content pre .code-actions {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.markdown-content pre:hover .code-actions,
+.markdown-content pre:focus-within .code-actions {
+  opacity: 1;
+}
+/* Always visible on touch devices */
+@media (hover: none) {
+  .markdown-content pre .code-actions { opacity: 1; }
+}
+
 /* Streaming cursor blink animation */
 @keyframes blink {
   0%, 100% { opacity: 1; }

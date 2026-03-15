@@ -2,17 +2,17 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { marked } from "marked";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
+import { useTabStore } from "@/stores/tab-store";
+import { ToolCard } from "./tool-cards";
 import {
-  ChevronDown,
-  ChevronRight,
   AlertCircle,
-  Wrench,
-  CheckCircle2,
-  XCircle,
   ShieldAlert,
   Bot,
   FileText,
   Image as ImageIcon,
+  Copy,
+  Check,
+  TerminalSquare,
 } from "lucide-react";
 
 interface MessageListProps {
@@ -112,10 +112,10 @@ function MessageBubble({ message, isStreaming, projectName }: { message: ChatMes
   return (
     <div className="flex flex-col gap-2">
       {message.events && message.events.length > 0
-        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} />
+        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} />
         : message.content && (
             <div className="text-sm text-text-primary">
-              <MarkdownContent content={message.content} />
+              <MarkdownContent content={message.content} projectName={projectName} />
             </div>
           )}
     </div>
@@ -297,7 +297,7 @@ type EventGroup =
   | { kind: "text"; content: string }
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean };
 
-function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStreaming: boolean }) {
+function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatEvent[]; isStreaming: boolean; projectName?: string }) {
   // Group: consecutive text → merged text block; tool_use + tool_result paired by toolUseId
   const groups: EventGroup[] = [];
   let textBuffer = "";
@@ -368,11 +368,11 @@ function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStr
           const isLast = isStreaming && i === groups.length - 1;
           return (
             <div key={`text-${i}`} className="text-sm text-text-primary">
-              <StreamingText content={group.content} animate={isLast} />
+              <StreamingText content={group.content} animate={isLast} projectName={projectName} />
             </div>
           );
         }
-        return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} completed={group.completed} />;
+        return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} completed={group.completed} projectName={projectName} />;
       })}
     </>
   );
@@ -383,10 +383,10 @@ function InterleavedEvents({ events, isStreaming }: { events: ChatEvent[]; isStr
  * WebSocket already delivers tokens incrementally — no fake animation needed.
  * When `isStreaming=true`, shows a blinking cursor at the end.
  */
-function StreamingText({ content, animate: isStreaming }: { content: string; animate: boolean }) {
+function StreamingText({ content, animate: isStreaming, projectName }: { content: string; animate: boolean; projectName?: string }) {
   return (
     <>
-      <MarkdownContent content={content} />
+      <MarkdownContent content={content} projectName={projectName} />
       {isStreaming && (
         <span className="text-text-subtle text-sm animate-pulse">Thinking...</span>
       )}
@@ -431,8 +431,8 @@ marked.setOptions({
   breaks: true,
 });
 
-/** Renders markdown content using `marked` → HTML string */
-function MarkdownContent({ content }: { content: string }) {
+/** Renders markdown content with interactive code blocks and file links */
+function MarkdownContent({ content, projectName }: { content: string; projectName?: string }) {
   const html = useMemo(() => {
     try {
       return marked.parse(content) as string;
@@ -441,194 +441,106 @@ function MarkdownContent({ content }: { content: string }) {
     }
   }, [content]);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { openTab } = useTabStore();
+
+  // After render: inject copy/run buttons into <pre> blocks, handle file link clicks
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    // --- Code block copy/run buttons ---
+    container.querySelectorAll("pre").forEach((pre) => {
+      if (pre.querySelector(".code-actions")) return; // already added
+      const code = pre.querySelector("code");
+      const text = code?.textContent ?? pre.textContent ?? "";
+      // Detect language from class (e.g. "language-bash")
+      const langClass = code?.className ?? "";
+      const isBash = /language-(bash|sh|shell|zsh)/.test(langClass)
+        || (!langClass.includes("language-") && text.startsWith("$"));
+
+      // Wrapper for relative positioning
+      pre.style.position = "relative";
+
+      const actions = document.createElement("div");
+      actions.className = "code-actions absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity";
+      // Always visible on touch devices
+      pre.classList.add("group");
+
+      // Copy button
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "flex items-center justify-center size-6 rounded bg-surface-elevated/80 hover:bg-surface-elevated text-text-secondary hover:text-text-primary transition-colors border border-border/50";
+      copyBtn.title = "Copy";
+      copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(text);
+        copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+        setTimeout(() => {
+          copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
+        }, 2000);
+      });
+      actions.appendChild(copyBtn);
+
+      // Run in terminal button (bash only)
+      if (isBash) {
+        const runBtn = document.createElement("button");
+        runBtn.className = "flex items-center justify-center size-6 rounded bg-surface-elevated/80 hover:bg-surface-elevated text-text-secondary hover:text-text-primary transition-colors border border-border/50";
+        runBtn.title = "Run in terminal";
+        runBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`;
+        runBtn.addEventListener("click", () => {
+          // Copy to clipboard and open terminal
+          navigator.clipboard.writeText(text.replace(/^\$\s*/gm, ""));
+          if (projectName) {
+            openTab({
+              type: "terminal",
+              title: "Terminal",
+              metadata: { projectName },
+              projectId: projectName,
+              closable: true,
+            });
+          }
+        });
+        actions.appendChild(runBtn);
+      }
+
+      pre.appendChild(actions);
+    });
+
+    // --- File link click handling: open in editor tab ---
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const link = target.closest("a");
+      if (!link || !container.contains(link)) return;
+
+      const href = link.getAttribute("href") ?? "";
+      // Detect file paths: starts with / or ./ or contains common extensions
+      const isFilePath = /^(\/|\.\/|\.\.\/)/.test(href)
+        || /\.(ts|tsx|js|jsx|py|json|md|yaml|yml|toml|css|html|sh|go|rs|sql)$/i.test(href);
+      if (isFilePath && projectName) {
+        e.preventDefault();
+        openTab({
+          type: "editor",
+          title: href.split("/").pop() ?? href,
+          metadata: { filePath: href, projectName },
+          projectId: projectName,
+          closable: true,
+        });
+      }
+    };
+    container.addEventListener("click", handleClick);
+    return () => container.removeEventListener("click", handleClick);
+  }, [html, projectName, openTab]);
+
   return (
     <div
+      ref={containerRef}
       className="markdown-content prose-sm"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
 }
 
-/** Unified tool card: shows tool-specific summary + expandable details */
-function ToolCard({ tool, result, completed }: { tool: ChatEvent; result?: ChatEvent; completed?: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-
-  if (tool.type === "error") {
-    return (
-      <div className="flex items-center gap-2 rounded bg-red-500/10 border border-red-500/20 px-2 py-1.5 text-xs text-red-400">
-        <AlertCircle className="size-3" />
-        <span>{tool.message}</span>
-      </div>
-    );
-  }
-
-  const isApproval = tool.type === "approval_request";
-  const toolName = tool.type === "tool_use"
-    ? tool.tool
-    : isApproval
-      ? (tool as any).tool ?? "Tool"
-      : "Tool";
-  const input = tool.type === "tool_use"
-    ? (tool.input as Record<string, unknown>)
-    : isApproval
-      ? ((tool as any).input as Record<string, unknown>) ?? {}
-      : {};
-  const hasResult = result?.type === "tool_result";
-  const isError = hasResult && !!(result as any).isError;
-  // AskUserQuestion with answers already submitted → show as completed
-  const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
-  // Determine icon: error (red X) > success (green check) > pending (yellow wrench)
-  const isDone = hasResult || hasAnswers || completed;
-
-  return (
-    <div className="rounded border border-border bg-background text-xs">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-surface transition-colors min-w-0"
-      >
-        {expanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-        {isError
-          ? <XCircle className="size-3 text-red-400 shrink-0" />
-          : isDone
-            ? <CheckCircle2 className="size-3 text-green-400 shrink-0" />
-            : <Wrench className="size-3 text-yellow-400 shrink-0" />
-        }
-        <span className="truncate text-text-primary">
-          <ToolSummary name={toolName} input={input} />
-        </span>
-      </button>
-      {expanded && (
-        <div className="px-2 pb-2 space-y-1.5">
-          {(tool.type === "tool_use" || isApproval) && (
-            <ToolDetails name={toolName} input={input} />
-          )}
-          {hasResult && (
-            <pre className="overflow-x-auto text-text-subtle font-mono max-h-40 border-t border-border pt-1.5 whitespace-pre-wrap break-all">
-              {(result as any).output}
-            </pre>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Render one-line summary per tool type */
-function ToolSummary({ name, input }: { name: string; input: Record<string, unknown> }) {
-  const s = (v: unknown) => String(v ?? "");
-  switch (name) {
-    case "Read":
-    case "Write":
-    case "Edit":
-      return <>{name} <span className="text-text-subtle">{basename(s(input.file_path))}</span></>;
-    case "Bash":
-      return <>{name} <span className="font-mono text-text-subtle">{truncate(s(input.command), 60)}</span></>;
-    case "Glob":
-      return <>{name} <span className="font-mono text-text-subtle">{s(input.pattern)}</span></>;
-    case "Grep":
-      return <>{name} <span className="font-mono text-text-subtle">{truncate(s(input.pattern), 40)}</span></>;
-    case "WebSearch":
-      return <>{name} <span className="text-text-subtle">{truncate(s(input.query), 50)}</span></>;
-    case "WebFetch":
-      return <>{name} <span className="text-text-subtle">{truncate(s(input.url), 50)}</span></>;
-    case "AskUserQuestion": {
-      const qs = (input.questions as Array<{ question: string }>) ?? [];
-      const hasAns = !!(input.answers);
-      return <>{name} <span className="text-text-subtle">{qs.length} question{qs.length !== 1 ? "s" : ""}{hasAns ? " ✓" : ""}</span></>;
-    }
-    default:
-      return <>{name}</>;
-  }
-}
-
-/** Render expanded details per tool type */
-function ToolDetails({ name, input }: { name: string; input: Record<string, unknown> }) {
-  const s = (v: unknown) => String(v ?? "");
-  switch (name) {
-    case "Bash":
-      return (
-        <div className="space-y-1">
-          {!!input.description && <p className="text-text-subtle italic">{s(input.description)}</p>}
-          <pre className="font-mono text-text-secondary overflow-x-auto whitespace-pre-wrap break-all">{s(input.command)}</pre>
-        </div>
-      );
-    case "Read":
-    case "Write":
-    case "Edit":
-      return (
-        <div className="space-y-1">
-          <p className="font-mono text-text-secondary break-all">{s(input.file_path)}</p>
-          {name === "Edit" && !!input.old_string && (
-            <div className="border-l-2 border-red-400/40 pl-2">
-              <pre className="font-mono text-red-400/70 overflow-x-auto whitespace-pre-wrap">{truncate(s(input.old_string), 200)}</pre>
-            </div>
-          )}
-          {name === "Edit" && !!input.new_string && (
-            <div className="border-l-2 border-green-400/40 pl-2">
-              <pre className="font-mono text-green-400/70 overflow-x-auto whitespace-pre-wrap">{truncate(s(input.new_string), 200)}</pre>
-            </div>
-          )}
-          {name === "Write" && !!input.content && (
-            <pre className="font-mono text-text-subtle overflow-x-auto max-h-32 whitespace-pre-wrap">{truncate(s(input.content), 300)}</pre>
-          )}
-        </div>
-      );
-    case "Glob":
-      return <p className="font-mono text-text-secondary">{s(input.pattern)}{input.path ? ` in ${s(input.path)}` : ""}</p>;
-    case "Grep":
-      return (
-        <div className="space-y-0.5">
-          <p className="font-mono text-text-secondary">/{s(input.pattern)}/</p>
-          {!!input.path && <p className="text-text-subtle">in {s(input.path)}</p>}
-        </div>
-      );
-    case "AskUserQuestion": {
-      const qs = (input.questions as Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }>; multiSelect?: boolean }>) ?? [];
-      const answers = (input.answers as Record<string, string>) ?? {};
-      return (
-        <div className="space-y-2">
-          {qs.map((q, i) => (
-            <div key={i} className="space-y-0.5">
-              <p className="text-text-primary font-medium">{q.header ? `${q.header}: ` : ""}{q.question}</p>
-              <div className="flex flex-wrap gap-1">
-                {q.options.map((opt, oi) => {
-                  const answer = answers[q.question] ?? "";
-                  const isSelected = answer.split(", ").includes(opt.label);
-                  return (
-                    <span key={oi} className={`inline-block rounded px-1.5 py-0.5 text-xs border ${
-                      isSelected ? "border-accent bg-accent/20 text-text-primary" : "border-border text-text-subtle"
-                    }`}>
-                      {opt.label}
-                    </span>
-                  );
-                })}
-              </div>
-              {answers[q.question] && (
-                <p className="text-accent text-xs">Answer: {answers[q.question]}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      );
-    }
-    default:
-      return (
-        <pre className="overflow-x-auto text-text-secondary font-mono whitespace-pre-wrap break-all">
-          {JSON.stringify(input, null, 2)}
-        </pre>
-      );
-  }
-}
-
-function basename(path?: string): string {
-  if (!path) return "";
-  return path.split("/").pop() ?? path;
-}
-
-function truncate(str?: string, max = 50): string {
-  if (!str) return "";
-  return str.length > max ? str.slice(0, max) + "…" : str;
-}
+/* ToolCard, ToolSummary, ToolDetails extracted to ./tool-cards.tsx */
 
 function ApprovalCard({
   approval,
