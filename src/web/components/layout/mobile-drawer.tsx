@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import {
   FolderOpen,
   Terminal,
@@ -11,13 +12,13 @@ import {
   ChevronDown,
   Check,
   Plus,
+  Search,
 } from "lucide-react";
-import { useProjectStore } from "@/stores/project-store";
+import { useProjectStore, sortByRecent } from "@/stores/project-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { FileTree } from "@/components/explorer/file-tree";
-import { useState } from "react";
 
 interface MobileDrawerProps {
   isOpen: boolean;
@@ -43,10 +44,26 @@ const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "settings", label: "Settings" },
 ];
 
+/** Max projects shown before needing to search (mobile — larger items) */
+const MAX_VISIBLE_MOBILE = 5;
+
 export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   const { projects, activeProject, setActiveProject } = useProjectStore();
   const openTab = useTabStore((s) => s.openTab);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const sorted = useMemo(() => sortByRecent(projects), [projects]);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return sorted.slice(0, MAX_VISIBLE_MOBILE);
+    const q = query.toLowerCase();
+    return sorted.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q),
+    );
+  }, [sorted, query]);
+
+  const showSearch = projects.length > MAX_VISIBLE_MOBILE || query.length > 0;
 
   function handleNewTab(type: TabType) {
     const needsProject =
@@ -62,6 +79,12 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   function handleSelectProject(project: typeof projects[number]) {
     setActiveProject(project);
     setProjectPickerOpen(false);
+    setQuery("");
+  }
+
+  function handleTogglePicker() {
+    setProjectPickerOpen((v) => !v);
+    setQuery("");
   }
 
   return (
@@ -132,7 +155,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           {/* Project switcher — at very bottom for easy thumb access */}
           <div className="relative">
             <button
-              onClick={() => setProjectPickerOpen(!projectPickerOpen)}
+              onClick={handleTogglePicker}
               className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-surface-elevated transition-colors"
             >
               <FolderOpen className="size-4 text-primary shrink-0" />
@@ -147,28 +170,52 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
 
             {/* Project list popover — opens upward */}
             {projectPickerOpen && (
-              <div className="absolute bottom-full left-0 right-0 bg-background border border-border rounded-t-lg shadow-lg max-h-48 overflow-y-auto">
-                {projects.map((project) => (
-                  <button
-                    key={project.name}
-                    onClick={() => handleSelectProject(project)}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm transition-colors",
-                      activeProject?.name === project.name
-                        ? "bg-accent/10 text-text-primary"
-                        : "text-text-secondary hover:bg-surface-elevated",
-                    )}
-                  >
-                    <FolderOpen className="size-4 shrink-0" />
-                    <span className="truncate flex-1">{project.name}</span>
-                    {activeProject?.name === project.name && (
-                      <Check className="size-4 text-primary shrink-0" />
-                    )}
-                  </button>
-                ))}
-                {projects.length === 0 && (
-                  <p className="px-4 py-3 text-xs text-text-subtle text-center">No projects</p>
+              <div className="absolute bottom-full left-0 right-0 bg-background border border-border rounded-t-lg shadow-lg overflow-hidden">
+                {/* Search */}
+                {showSearch && (
+                  <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+                    <Search className="size-3.5 text-text-subtle shrink-0" />
+                    <input
+                      type="text"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Search projects..."
+                      className="flex-1 bg-transparent text-sm outline-none placeholder:text-text-subtle text-text-primary"
+                      autoFocus
+                    />
+                  </div>
                 )}
+
+                {/* Project list */}
+                <div className="max-h-56 overflow-y-auto">
+                  {filtered.map((project) => (
+                    <button
+                      key={project.name}
+                      onClick={() => handleSelectProject(project)}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 px-4 py-2 text-left transition-colors",
+                        activeProject?.name === project.name
+                          ? "bg-accent/10 text-text-primary"
+                          : "text-text-secondary hover:bg-surface-elevated",
+                      )}
+                    >
+                      <FolderOpen className="size-4 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{project.name}</p>
+                        <p className="text-xs text-text-subtle truncate">{project.path}</p>
+                      </div>
+                      {activeProject?.name === project.name && (
+                        <Check className="size-4 text-primary shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                  {filtered.length === 0 && (
+                    <p className="px-4 py-3 text-xs text-text-subtle text-center">
+                      {query ? "No matches" : "No projects"}
+                    </p>
+                  )}
+                </div>
+
                 {/* Add project */}
                 <button
                   onClick={() => {
