@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { marked } from "marked";
+import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import {
   ChevronDown,
@@ -9,6 +10,8 @@ import {
   CheckCircle2,
   ShieldAlert,
   Bot,
+  FileText,
+  Image as ImageIcon,
 } from "lucide-react";
 
 interface MessageListProps {
@@ -16,6 +19,7 @@ interface MessageListProps {
   pendingApproval: { requestId: string; tool: string; input: unknown } | null;
   onApprovalResponse: (requestId: string, approved: boolean, data?: unknown) => void;
   isStreaming: boolean;
+  projectName?: string;
 }
 
 export function MessageList({
@@ -23,6 +27,7 @@ export function MessageList({
   pendingApproval,
   onApprovalResponse,
   isStreaming,
+  projectName,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -60,6 +65,7 @@ export function MessageList({
             key={msg.id}
             message={msg}
             isStreaming={isStreaming && msg.id.startsWith("streaming-")}
+            projectName={projectName}
           />
         ))}
 
@@ -76,15 +82,9 @@ export function MessageList({
   );
 }
 
-function MessageBubble({ message, isStreaming }: { message: ChatMessage; isStreaming: boolean }) {
+function MessageBubble({ message, isStreaming, projectName }: { message: ChatMessage; isStreaming: boolean; projectName?: string }) {
   if (message.role === "user") {
-    return (
-      <div className="flex justify-end">
-        <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary max-w-[85%]">
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
-        </div>
-      </div>
-    );
+    return <UserBubble content={message.content} projectName={projectName} />;
   }
 
   if (message.role === "system") {
@@ -107,6 +107,172 @@ function MessageBubble({ message, isStreaming }: { message: ChatMessage; isStrea
             </div>
           )}
     </div>
+  );
+}
+
+/** Image extensions that can be previewed inline */
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+/** Parse user message content, extracting attached file paths and the actual text */
+function parseUserAttachments(content: string): { files: string[]; text: string } {
+  // Match: [Attached file: /path] or [Attached files:\n/path1\n/path2\n]
+  const singleMatch = content.match(/^\[Attached file: (.+?)\]\n\n?/);
+  if (singleMatch) {
+    return { files: [singleMatch[1]!], text: content.slice(singleMatch[0].length) };
+  }
+
+  const multiMatch = content.match(/^\[Attached files:\n([\s\S]+?)\]\n\n?/);
+  if (multiMatch) {
+    const files = multiMatch[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
+    return { files, text: content.slice(multiMatch[0].length) };
+  }
+
+  return { files: [], text: content };
+}
+
+/** Build a preview URL for an uploaded file (served from /chat/uploads/:filename) */
+function uploadPreviewUrl(filePath: string, projectName?: string): string {
+  const filename = filePath.split("/").pop() ?? "";
+  // Use a generic project name — the upload route is project-scoped but files are global
+  return `/api/project/${encodeURIComponent(projectName ?? "_")}/chat/uploads/${encodeURIComponent(filename)}`;
+}
+
+/** Check if a file path is an image based on extension */
+function isImagePath(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  if (dot === -1) return false;
+  return IMAGE_EXTS.has(path.slice(dot).toLowerCase());
+}
+
+function isPdfPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".pdf");
+}
+
+/** User message bubble with attachment rendering */
+function UserBubble({ content, projectName }: { content: string; projectName?: string }) {
+  const { files, text } = useMemo(() => parseUserAttachments(content), [content]);
+
+  return (
+    <div className="flex justify-end">
+      <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary max-w-[85%] space-y-2">
+        {/* Attached files */}
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {files.map((filePath, i) =>
+              isImagePath(filePath) ? (
+                <AuthImage
+                  key={i}
+                  src={uploadPreviewUrl(filePath, projectName)}
+                  alt={filePath.split("/").pop() ?? "image"}
+                />
+              ) : isPdfPath(filePath) ? (
+                <AuthFileLink
+                  key={i}
+                  src={uploadPreviewUrl(filePath, projectName)}
+                  filename={filePath.split("/").pop() ?? "document.pdf"}
+                  mimeType="application/pdf"
+                />
+              ) : (
+                <div
+                  key={i}
+                  className="flex items-center gap-1.5 rounded-md border border-border bg-background/50 px-2 py-1 text-xs text-text-secondary"
+                >
+                  <FileText className="size-3.5 shrink-0" />
+                  <span className="truncate max-w-40">{filePath.split("/").pop()}</span>
+                </div>
+              ),
+            )}
+          </div>
+        )}
+
+        {/* Text content */}
+        {text && <p className="whitespace-pre-wrap break-words">{text}</p>}
+      </div>
+    </div>
+  );
+}
+
+/** Fetches image with auth header, renders as blob URL */
+function AuthImage({ src, alt }: { src: string; alt: string }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let revoke: string | undefined;
+    const token = getAuthToken();
+    fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to load");
+        return r.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        revoke = url;
+        setBlobUrl(url);
+      })
+      .catch(() => setError(true));
+
+    return () => { if (revoke) URL.revokeObjectURL(revoke); };
+  }, [src]);
+
+  if (error) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-md border border-border bg-background/50 px-2 py-1 text-xs text-text-secondary">
+        <ImageIcon className="size-3.5 shrink-0" />
+        <span className="truncate max-w-40">{alt}</span>
+      </div>
+    );
+  }
+
+  if (!blobUrl) {
+    return <div className="rounded-md bg-surface border border-border h-24 w-32 animate-pulse" />;
+  }
+
+  return (
+    <a href={blobUrl} target="_blank" rel="noopener noreferrer" className="block">
+      <img
+        src={blobUrl}
+        alt={alt}
+        className="rounded-md max-h-48 max-w-full object-contain border border-border"
+      />
+    </a>
+  );
+}
+
+/** Fetches file with auth, opens in new browser tab (for PDFs, etc.) */
+function AuthFileLink({ src, filename, mimeType }: { src: string; filename: string; mimeType: string }) {
+  const [loading, setLoading] = useState(false);
+
+  const handleClick = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = getAuthToken();
+      const res = await fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!res.ok) throw new Error("Failed to load");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(new Blob([blob], { type: mimeType }));
+      window.open(url, "_blank");
+      // Revoke after a delay to let the new tab load
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      // Fallback: try direct link
+      window.open(src, "_blank");
+    } finally {
+      setLoading(false);
+    }
+  }, [src, mimeType]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={loading}
+      className="flex items-center gap-1.5 rounded-md border border-border bg-background/50 px-2 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text-primary transition-colors cursor-pointer disabled:opacity-50"
+    >
+      <FileText className="size-3.5 shrink-0 text-red-400" />
+      <span className="truncate max-w-40">{filename}</span>
+      {loading && <span className="animate-spin text-[10px]">...</span>}
+    </button>
   );
 }
 
