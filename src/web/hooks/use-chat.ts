@@ -4,10 +4,17 @@ import { getAuthToken, projectUrl } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent, UsageInfo } from "../../types/chat";
 import type { ChatWsServerMessage } from "../../types/api";
 
+/** Callback to forward WS usage events to the external useUsage hook */
+export type UsageEventCallback = (usage: Partial<UsageInfo>) => void;
+
 interface ApprovalRequest {
   requestId: string;
   tool: string;
   input: unknown;
+}
+
+interface UseChatOptions {
+  onUsageEvent?: UsageEventCallback;
 }
 
 interface UseChatReturn {
@@ -15,23 +22,22 @@ interface UseChatReturn {
   messagesLoading: boolean;
   isStreaming: boolean;
   pendingApproval: ApprovalRequest | null;
-  usageInfo: UsageInfo;
-  usageLoading: boolean;
   sendMessage: (content: string) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
-  refreshUsage: () => void;
+  reconnect: () => void;
+  refetchMessages: () => void;
   isConnected: boolean;
 }
 
-export function useChat(sessionId: string | null, providerId = "claude-sdk", projectName = ""): UseChatReturn {
+export function useChat(sessionId: string | null, providerId = "claude-sdk", projectName = "", options?: UseChatOptions): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const [usageInfo, setUsageInfo] = useState<UsageInfo>({});
-  const [usageLoading, setUsageLoading] = useState(false);
+  const onUsageEventRef = useRef(options?.onUsageEvent);
+  onUsageEventRef.current = options?.onUsageEvent;
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const isStreamingRef = useRef(false);
@@ -137,15 +143,8 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       }
 
       case "usage": {
-        // Merge usage info — accumulate totalCostUsd, track queryCostUsd
-        setUsageInfo((prev) => {
-          const next = { ...prev, ...data.usage };
-          if (data.usage.totalCostUsd != null) {
-            next.queryCostUsd = data.usage.totalCostUsd;
-            next.totalCostUsd = (prev.totalCostUsd ?? 0) + data.usage.totalCostUsd;
-          }
-          return next;
-        });
+        // Forward to external usage hook
+        onUsageEventRef.current?.(data.usage);
         break;
       }
 
@@ -230,7 +229,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}`
     : "";
 
-  const { send } = useWebSocket({
+  const { send, connect: wsReconnect } = useWebSocket({
     url: wsUrl,
     onMessage: handleMessage,
     autoConnect: !!sessionId && !!projectName,
@@ -248,20 +247,6 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     setIsConnected(false);
-
-    if (projectName) {
-      // Load cached usage/rate-limit info immediately
-      fetch(`${projectUrl(projectName)}/chat/usage?providerId=${providerId}`, {
-        headers: { Authorization: `Bearer ${getAuthToken()}` },
-      })
-        .then((r) => r.json())
-        .then((json: any) => {
-          if (!cancelled && json.ok && json.data) {
-            setUsageInfo((prev) => ({ ...prev, ...json.data }));
-          }
-        })
-        .catch(() => {});
-    }
 
     if (sessionId && projectName) {
       // Load message history
@@ -391,33 +376,37 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     setPendingApproval(null);
   }, [send]);
 
-  const refreshUsage = useCallback(() => {
-    if (!projectName) return;
-    setUsageLoading(true);
-    fetch(`${projectUrl(projectName)}/chat/usage?providerId=${providerId}&_t=${Date.now()}`, {
+  const reconnect = useCallback(() => {
+    setIsConnected(false);
+    wsReconnect();
+  }, [wsReconnect]);
+
+  const refetchMessages = useCallback(() => {
+    if (!sessionId || !projectName || isStreamingRef.current) return;
+    setMessagesLoading(true);
+    fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
       headers: { Authorization: `Bearer ${getAuthToken()}` },
     })
       .then((r) => r.json())
       .then((json: any) => {
-        if (json.ok && json.data) {
-          setUsageInfo((prev) => ({ ...prev, ...json.data }));
+        if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
+          setMessages(json.data);
         }
       })
       .catch(() => {})
-      .finally(() => setUsageLoading(false));
-  }, [projectName, providerId]);
+      .finally(() => setMessagesLoading(false));
+  }, [sessionId, providerId, projectName]);
 
   return {
     messages,
     messagesLoading,
     isStreaming,
     pendingApproval,
-    usageInfo,
-    usageLoading,
     sendMessage,
     respondToApproval,
     cancelStreaming,
-    refreshUsage,
+    reconnect,
+    refetchMessages,
     isConnected,
   };
 }

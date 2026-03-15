@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { listSlashItems } from "../../services/slash-items.service.ts";
-import { fetchClaudeUsage } from "../../services/claude-usage.service.ts";
+import { waitForFreshUsage } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -23,24 +23,19 @@ chatRoutes.get("/slash-items", (c) => {
   }
 });
 
-/** GET /chat/usage — get current usage/rate-limit info via ccburn */
+/** GET /chat/usage — await fresh data from ccburn (async, non-blocking to event loop) */
 chatRoutes.get("/usage", async (c) => {
-  try {
-    const usage = await fetchClaudeUsage();
-    return c.json(ok({
-      fiveHour: usage.session?.utilization,
-      sevenDay: usage.weekly?.utilization,
-      fiveHourResetsAt: usage.session?.resetsAt,
-      sevenDayResetsAt: usage.weekly?.resetsAt,
-      // Extra detail for popup
-      session: usage.session,
-      weekly: usage.weekly,
-      weeklyOpus: usage.weeklyOpus,
-      weeklySonnet: usage.weeklySonnet,
-    }));
-  } catch (e) {
-    return c.json(err((e as Error).message), 500);
-  }
+  const usage = await waitForFreshUsage();
+  return c.json(ok({
+    fiveHour: usage.session?.utilization,
+    sevenDay: usage.weekly?.utilization,
+    fiveHourResetsAt: usage.session?.resetsAt,
+    sevenDayResetsAt: usage.weekly?.resetsAt,
+    session: usage.session,
+    weekly: usage.weekly,
+    weeklyOpus: usage.weeklyOpus,
+    weeklySonnet: usage.weeklySonnet,
+  }));
 });
 
 /** GET /chat/providers — list available AI providers */

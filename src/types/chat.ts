@@ -41,12 +41,10 @@ export interface SessionInfo {
 
 export interface LimitBucket {
   utilization: number;
-  budgetPace: number;
   resetsAt: string;
   resetsInMinutes: number | null;
   resetsInHours: number | null;
   windowHours: number;
-  status: string;
 }
 
 export interface UsageInfo {
