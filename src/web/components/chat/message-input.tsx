@@ -100,15 +100,23 @@ export function MessageInput({
   // Handle parent selecting a slash item
   useEffect(() => {
     if (!slashSelected) return;
-    const commandText = `/${slashSelected.name} `;
-    setValue(commandText);
+    const el = textareaRef.current;
+    const cursorPos = el?.selectionStart ?? value.length;
+    const textBefore = value.slice(0, cursorPos);
+    const textAfter = value.slice(cursorPos);
+    // Find the /query pattern before cursor and replace it
+    const replaced = textBefore.replace(/(?:^|\s)\/\S*$/, (match) => {
+      const prefix = match.startsWith("/") ? "" : match[0]; // preserve whitespace
+      return `${prefix}/${slashSelected.name} `;
+    });
+    const newValue = replaced + textAfter;
+    setValue(newValue);
     onSlashStateChange?.(false, "");
     onFileStateChange?.(false, "");
-    const el = textareaRef.current;
     if (el) {
       el.focus();
       setTimeout(() => {
-        el.selectionStart = el.selectionEnd = commandText.length;
+        el.selectionStart = el.selectionEnd = replaced.length;
       }, 0);
     }
   }, [slashSelected]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -250,7 +258,7 @@ export function MessageInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSend();
       }
@@ -260,16 +268,17 @@ export function MessageInput({
 
   const updatePickerState = useCallback(
     (text: string, cursorPos: number) => {
-      // Check for slash at start of input
-      const slashMatch = text.match(/^\/(\S*)$/);
+      const textBefore = text.slice(0, cursorPos);
+
+      // Check for slash anywhere in text (after whitespace or at start)
+      const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
       if (slashMatch && slashItemsRef.current.length > 0) {
         onSlashStateChange?.(true, slashMatch[1] ?? "");
         onFileStateChange?.(false, "");
         return;
       }
 
-      // Check for @ anywhere in text (look at text before cursor)
-      const textBefore = text.slice(0, cursorPos);
+      // Check for @ anywhere in text (after whitespace or at start)
       const atMatch = textBefore.match(/@(\S*)$/);
       if (atMatch && fileItemsRef.current.length > 0) {
         onFileStateChange?.(true, atMatch[1] ?? "");
@@ -392,7 +401,7 @@ export function MessageInput({
           onPaste={handlePaste}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          placeholder={isStreaming ? "Send follow-up or press Stop..." : "Type / for commands, @ for files, or drop files..."}
+          placeholder={isStreaming ? "Follow-up or Stop..." : "Message... (⌘↵ to send)"}
           disabled={disabled}
           rows={1}
           className="flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring disabled:opacity-50 max-h-40"

@@ -350,14 +350,12 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
     }
   }
 
-  // Mark tool groups as completed: if there are events after the tool group,
-  // or streaming is finished, the tool has completed (even without explicit tool_result).
-  // The SDK doesn't emit tool_result during streaming — only in REST history.
+  // Mark tool groups without explicit tool_result as completed
+  // only when streaming is fully finished (no premature success indicators)
   for (let gi = 0; gi < groups.length; gi++) {
     const g = groups[gi]!;
     if (g.kind === "tool" && !g.result) {
-      const hasEventsAfter = gi < groups.length - 1;
-      g.completed = hasEventsAfter || !isStreaming;
+      g.completed = !isStreaming;
     }
   }
 

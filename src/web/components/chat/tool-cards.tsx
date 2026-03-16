@@ -8,7 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   AlertCircle,
-  Wrench,
+  Loader2,
   CheckCircle2,
   XCircle,
   ExternalLink,
@@ -77,7 +77,7 @@ export function ToolCard({
           ? <XCircle className="size-3 text-red-400 shrink-0" />
           : isDone
             ? <CheckCircle2 className="size-3 text-green-400 shrink-0" />
-            : <Wrench className="size-3 text-yellow-400 shrink-0" />}
+            : <Loader2 className="size-3 text-yellow-400 shrink-0 animate-spin" />}
         <span className="truncate text-text-primary">
           <ToolSummary name={toolName} input={input} />
         </span>
