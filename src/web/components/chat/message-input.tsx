@@ -258,7 +258,7 @@ export function MessageInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSend();
       }
@@ -401,7 +401,7 @@ export function MessageInput({
           onPaste={handlePaste}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          placeholder={isStreaming ? "Follow-up or Stop..." : "Message... (⌘↵ to send)"}
+          placeholder={isStreaming ? "Follow-up or Stop..." : "Message... (↵ to send)"}
           disabled={disabled}
           rows={1}
           className="flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring disabled:opacity-50 max-h-40"
