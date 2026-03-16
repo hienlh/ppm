@@ -83,6 +83,7 @@ export const chatWebSocket = {
       if (entryRef) entryRef.abort = abortController;
 
       try {
+        console.log(`[chat] session=${sessionId} sending message to provider=${providerId}`);
         for await (const event of chatService.sendMessage(
           providerId,
           sessionId,
@@ -91,7 +92,9 @@ export const chatWebSocket = {
           if (abortController.signal.aborted) break;
           ws.send(JSON.stringify(event));
         }
+        console.log(`[chat] session=${sessionId} stream completed`);
       } catch (e) {
+        console.error(`[chat] session=${sessionId} error:`, (e as Error).message);
         if (!abortController.signal.aborted) {
           ws.send(
             JSON.stringify({
