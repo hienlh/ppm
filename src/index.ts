@@ -36,6 +36,15 @@ program
   });
 
 program
+  .command("restart")
+  .description("Restart the server (keeps tunnel alive)")
+  .option("-c, --config <path>", "Path to config file")
+  .action(async (options) => {
+    const { restartServer } = await import("./cli/commands/restart.ts");
+    await restartServer(options);
+  });
+
+program
   .command("status")
   .description("Show PPM daemon status")
   .option("--json", "Output as JSON")

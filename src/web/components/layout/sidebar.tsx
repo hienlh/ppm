@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { FolderOpen, ChevronDown, Check, Plus, Search } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import { FolderOpen, ChevronDown, Check, Plus, Search, Bug } from "lucide-react";
 import { useProjectStore, sortByRecent } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { FileTree } from "@/components/explorer/file-tree";
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useSettingsStore } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
+import { openBugReport } from "@/lib/report-bug";
 
 /** Max projects shown before needing to search (desktop) */
 const MAX_VISIBLE = 8;
@@ -38,6 +39,8 @@ export function Sidebar() {
   function handleAddProject() {
     openTab({ type: "projects", title: "Projects", projectId: null, closable: true });
   }
+
+  const handleReportBug = useCallback(() => openBugReport(version), [version]);
 
   return (
     <aside className="hidden md:flex flex-col w-[280px] min-w-[280px] bg-background border-r border-border overflow-hidden">
@@ -130,10 +133,18 @@ export function Sidebar() {
         </div>
       )}
 
-      {/* Version footer */}
+      {/* Version footer + Report Bug */}
       {version && (
-        <div className="px-3 py-1.5 border-t border-border shrink-0">
+        <div className="flex items-center justify-between px-3 py-1.5 border-t border-border shrink-0">
           <span className="text-[10px] text-text-subtle">v{version}</span>
+          <button
+            onClick={handleReportBug}
+            title="Report a bug"
+            className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
+          >
+            <Bug className="size-3" />
+            <span>Report Bug</span>
+          </button>
         </div>
       )}
     </aside>

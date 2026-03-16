@@ -350,12 +350,24 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
     }
   }
 
-  // Mark tool groups without explicit tool_result as completed
-  // only when streaming is fully finished (no premature success indicators)
+  // Mark tool groups without explicit tool_result as completed when:
+  // 1. It's a Read and a later Edit on the same file has a result (Edit implies Read finished)
+  // 2. Streaming is fully finished
   for (let gi = 0; gi < groups.length; gi++) {
     const g = groups[gi]!;
     if (g.kind === "tool" && !g.result) {
-      g.completed = !isStreaming;
+      let impliedDone = false;
+      if (g.tool.type === "tool_use" && g.tool.tool === "Read") {
+        const readPath = (g.tool.input as any)?.file_path;
+        if (readPath) {
+          impliedDone = groups.slice(gi + 1).some(
+            (later) => later.kind === "tool" && later.result
+              && later.tool.type === "tool_use" && later.tool.tool === "Edit"
+              && (later.tool.input as any)?.file_path === readPath,
+          );
+        }
+      }
+      g.completed = impliedDone || !isStreaming;
     }
   }
 
