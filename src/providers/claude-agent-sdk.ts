@@ -212,7 +212,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       const requestId = crypto.randomUUID();
 
-      const APPROVAL_TIMEOUT_MS = 60_000;
+      const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5min — extended for FE reconnect
       const approvalPromise = new Promise<{ approved: boolean; data?: unknown }>(
         (resolve) => {
           this.pendingApprovals.set(requestId, { resolve });
@@ -304,7 +304,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let pendingToolCount = 0;
 
       for await (const msg of q) {
-        // Debug: log all SDK events to understand flow
 
         // Yield any queued approval events
         while (approvalEvents.length > 0) {
