@@ -1,12 +1,12 @@
 import { useState, useCallback, useRef, useEffect, type DragEvent } from "react";
-import { Upload, Bug } from "lucide-react";
+import { Upload, Bug, Copy, ExternalLink, X } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { openBugReport } from "@/lib/report-bug";
+import { buildBugReport, openGithubIssue, copyToClipboard } from "@/lib/report-bug";
 import { MessageList } from "./message-list";
 import { MessageInput, type ChatAttachment } from "./message-input";
 import { SessionPicker } from "./session-picker";
@@ -43,6 +43,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   // Usage detail panel
   const [showUsageDetail, setShowUsageDetail] = useState(false);
+
+  // Bug report popup
+  const [bugReportText, setBugReportText] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
@@ -260,7 +264,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             />
             {sessionId && (
               <button
-                onClick={() => openBugReport(version, { sessionId, projectName: activeProject?.name })}
+                onClick={async () => {
+                  const text = await buildBugReport(version, { sessionId, projectName: activeProject?.name });
+                  setBugReportText(text);
+                  setCopied(false);
+                }}
                 className="p-0.5 rounded hover:bg-surface-elevated text-text-subtle hover:text-text-secondary transition-colors"
                 title="Report bug for this chat session"
               >
@@ -325,6 +333,44 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           externalFiles={externalFiles}
         />
       </div>
+
+      {/* Bug report popup */}
+      {bugReportText && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/50" onClick={() => setBugReportText(null)} />
+          <div className="fixed inset-x-4 top-[10%] bottom-[10%] z-50 mx-auto max-w-lg flex flex-col rounded-lg border border-border bg-background shadow-xl">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+              <span className="text-sm font-medium">Bug Report</span>
+              <button onClick={() => setBugReportText(null)} className="p-1 rounded hover:bg-surface-elevated">
+                <X className="size-4" />
+              </button>
+            </div>
+            <pre className="flex-1 overflow-auto px-4 py-2 text-xs font-mono whitespace-pre-wrap break-all">{bugReportText}</pre>
+            <div className="flex gap-2 px-4 py-3 border-t border-border">
+              <button
+                onClick={async () => {
+                  const ok = await copyToClipboard(bugReportText);
+                  if (ok) setCopied(true);
+                }}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg bg-surface hover:bg-surface-elevated border border-border transition-colors"
+              >
+                <Copy className="size-4" />
+                {copied ? "Copied!" : "Copy"}
+              </button>
+              <button
+                onClick={() => {
+                  openGithubIssue(bugReportText);
+                  setBugReportText(null);
+                }}
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm rounded-lg bg-primary text-white hover:bg-primary/90 transition-colors"
+              >
+                <ExternalLink className="size-4" />
+                GitHub Issue
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

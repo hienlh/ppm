@@ -2,11 +2,11 @@ import { api, projectUrl } from "./api-client";
 
 const REPO = "hienlh/ppm";
 
-/** Collect diagnostic info and open a pre-filled GitHub issue in a new tab */
-export async function openBugReport(
+/** Build bug report body with diagnostic info */
+export async function buildBugReport(
   version: string | null,
   options?: { sessionId?: string; projectName?: string },
-) {
+): Promise<string> {
   let serverLogs = "(could not fetch)";
   try {
     const res = await fetch("/api/logs/recent");
@@ -24,7 +24,7 @@ export async function openBugReport(
     } catch {}
   }
 
-  const body = [
+  return [
     "## Environment",
     `- PPM: v${version ?? "unknown"}`,
     `- Browser: ${navigator.userAgent}`,
@@ -51,7 +51,29 @@ export async function openBugReport(
     serverLogs,
     "```",
   ].join("\n");
+}
 
+/** Open pre-filled GitHub issue in new tab */
+export function openGithubIssue(body: string) {
   const url = `https://github.com/${REPO}/issues/new?title=${encodeURIComponent("bug: ")}&body=${encodeURIComponent(body)}`;
   window.open(url, "_blank");
+}
+
+/** Copy text to clipboard */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Legacy: open bug report directly (used by sidebar/drawer) */
+export async function openBugReport(
+  version: string | null,
+  options?: { sessionId?: string; projectName?: string },
+) {
+  const body = await buildBugReport(version, options);
+  openGithubIssue(body);
 }
