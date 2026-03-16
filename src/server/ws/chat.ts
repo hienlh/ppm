@@ -1,6 +1,7 @@
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { logSessionEvent } from "../../services/session-log.service.ts";
 import type { ChatWsClientMessage } from "../../types/api.ts";
 
 /** Tracks active chat WS connections: sessionId -> ws + abort controller + project context */
@@ -83,6 +84,8 @@ export const chatWebSocket = {
       if (entryRef) entryRef.abort = abortController;
 
       try {
+        const userPreview = parsed.content.slice(0, 200);
+        logSessionEvent(sessionId, "USER", userPreview);
         console.log(`[chat] session=${sessionId} sending message to provider=${providerId}`);
         let eventCount = 0;
         for await (const event of chatService.sendMessage(
@@ -92,20 +95,35 @@ export const chatWebSocket = {
         )) {
           if (abortController.signal.aborted) break;
           eventCount++;
-          const evType = (event as any).type ?? "unknown";
-          if (evType === "error" || evType === "result") {
-            console.log(`[chat] session=${sessionId} event#${eventCount}: ${evType}`, JSON.stringify(event).slice(0, 300));
+          const ev = event as any;
+          const evType = ev.type ?? "unknown";
+          // Log every event to session log
+          if (evType === "text") {
+            logSessionEvent(sessionId, "TEXT", ev.content?.slice(0, 500) ?? "");
+          } else if (evType === "tool_use") {
+            logSessionEvent(sessionId, "TOOL_USE", `${ev.tool} ${JSON.stringify(ev.input).slice(0, 300)}`);
+          } else if (evType === "tool_result") {
+            logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
+          } else if (evType === "error") {
+            logSessionEvent(sessionId, "ERROR", ev.message ?? JSON.stringify(ev).slice(0, 300));
+          } else if (evType === "done") {
+            logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"}`);
+          } else {
+            logSessionEvent(sessionId, evType.toUpperCase(), JSON.stringify(ev).slice(0, 200));
           }
           ws.send(JSON.stringify(event));
         }
+        logSessionEvent(sessionId, "INFO", `Stream completed (${eventCount} events)`);
         console.log(`[chat] session=${sessionId} stream completed (${eventCount} events)`);
       } catch (e) {
-        console.error(`[chat] session=${sessionId} error:`, (e as Error).message);
+        const errMsg = (e as Error).message;
+        logSessionEvent(sessionId, "ERROR", `Exception: ${errMsg}`);
+        console.error(`[chat] session=${sessionId} error:`, errMsg);
         if (!abortController.signal.aborted) {
           ws.send(
             JSON.stringify({
               type: "error",
-              message: (e as Error).message,
+              message: errMsg,
             }),
           );
         }

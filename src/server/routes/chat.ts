@@ -6,6 +6,7 @@ import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { listSlashItems } from "../../services/slash-items.service.ts";
 import { waitForFreshUsage } from "../../services/claude-usage.service.ts";
+import { getSessionLog } from "../../services/session-log.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -97,6 +98,18 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 404);
+  }
+});
+
+/** GET /chat/sessions/:id/logs — get session-level debug logs */
+chatRoutes.get("/sessions/:id/logs", (c) => {
+  try {
+    const id = c.req.param("id");
+    const tail = parseInt(c.req.query("tail") ?? "200", 10);
+    const logs = getSessionLog(id, tail);
+    return c.json(ok({ logs }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
   }
 });
 

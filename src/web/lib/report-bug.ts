@@ -1,13 +1,28 @@
+import { api, projectUrl } from "./api-client";
+
 const REPO = "hienlh/ppm";
 
 /** Collect diagnostic info and open a pre-filled GitHub issue in a new tab */
-export async function openBugReport(version: string | null) {
-  let logs = "(could not fetch)";
+export async function openBugReport(
+  version: string | null,
+  options?: { sessionId?: string; projectName?: string },
+) {
+  let serverLogs = "(could not fetch)";
   try {
     const res = await fetch("/api/logs/recent");
     const json = await res.json();
-    if (json.ok) logs = json.data.logs || "(empty)";
+    if (json.ok) serverLogs = json.data.logs || "(empty)";
   } catch {}
+
+  let sessionLogs = "";
+  if (options?.sessionId && options?.projectName) {
+    try {
+      const data = await api.get<{ logs: string }>(
+        `${projectUrl(options.projectName)}/chat/sessions/${options.sessionId}/logs?tail=100`,
+      );
+      if (data.logs) sessionLogs = data.logs;
+    } catch {}
+  }
 
   const body = [
     "## Environment",
@@ -22,9 +37,18 @@ export async function openBugReport(version: string | null) {
     "",
     "## Expected Behavior",
     "",
-    "## Recent Logs (last 30 lines)",
+    ...(sessionLogs
+      ? [
+          `## Chat Session Logs (${options?.sessionId?.slice(0, 8)})`,
+          "```",
+          sessionLogs,
+          "```",
+          "",
+        ]
+      : []),
+    "## Server Logs (last 30 lines)",
     "```",
-    logs,
+    serverLogs,
     "```",
   ].join("\n");
 
