@@ -43,6 +43,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   const isStreamingRef = useRef(false);
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
+  const refetchRef = useRef<(() => void) | null>(null);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;
@@ -55,9 +56,29 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
 
-    // Handle connected event (custom, not in type)
+    // Handle connected event (new session)
     if ((data as any).type === "connected") {
       setIsConnected(true);
+      return;
+    }
+
+    // Handle status event (FE reconnected to existing session)
+    if ((data as any).type === "status") {
+      setIsConnected(true);
+      const status = data as any;
+      if (status.isStreaming) {
+        isStreamingRef.current = true;
+        setIsStreaming(true);
+      }
+      if (status.pendingApproval) {
+        setPendingApproval({
+          requestId: status.pendingApproval.requestId,
+          tool: status.pendingApproval.tool,
+          input: status.pendingApproval.input,
+        });
+      }
+      // Refetch history to catch up on events missed during disconnect
+      refetchRef.current?.();
       return;
     }
 
@@ -379,10 +400,12 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   const reconnect = useCallback(() => {
     setIsConnected(false);
     wsReconnect();
+    // Refetch history on manual reconnect to catch up on missed events
+    refetchRef.current?.();
   }, [wsReconnect]);
 
   const refetchMessages = useCallback(() => {
-    if (!sessionId || !projectName || isStreamingRef.current) return;
+    if (!sessionId || !projectName) return;
     setMessagesLoading(true);
     fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
       headers: { Authorization: `Bearer ${getAuthToken()}` },
@@ -391,11 +414,17 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       .then((json: any) => {
         if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
           setMessages(json.data);
+          // Reset streaming content refs so live tokens append cleanly after history
+          streamingContentRef.current = "";
+          streamingEventsRef.current = [];
         }
       })
       .catch(() => {})
       .finally(() => setMessagesLoading(false));
   }, [sessionId, providerId, projectName]);
+
+  // Keep refetchRef in sync so handleMessage (status event) can trigger refetch
+  refetchRef.current = refetchMessages;
 
   return {
     messages,
