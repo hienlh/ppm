@@ -10,6 +10,9 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
+      strategies: "injectManifest",
+      srcDir: ".",
+      filename: "sw.ts",
       manifest: {
         name: "PPM — Personal Project Manager",
         short_name: "PPM",
@@ -23,18 +26,8 @@ export default defineConfig({
           { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
         ],
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        runtimeCaching: [
-          {
-            urlPattern: /^https?:\/\/.*\/api\//,
-            handler: "NetworkOnly",
-          },
-          {
-            urlPattern: /^https?:\/\/.*\/ws\//,
-            handler: "NetworkOnly",
-          },
-        ],
       },
     }),
   ],
