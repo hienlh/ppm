@@ -19,8 +19,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { useTabStore, type TabType } from "@/stores/tab-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
-import { cn } from "@/lib/utils";
+import { useTabDrag } from "@/hooks/use-tab-drag";
+import { DraggableTab } from "./draggable-tab";
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
   projects: FolderOpen,
@@ -41,86 +43,79 @@ const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "settings", label: "Settings" },
 ];
 
-export function TabBar() {
-  const { tabs, activeTabId, setActiveTab, closeTab, openTab } = useTabStore();
+interface TabBarProps {
+  panelId?: string;
+}
+
+export function TabBar({ panelId }: TabBarProps) {
   const activeProject = useProjectStore((s) => s.activeProject);
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const prevTabCount = useRef(tabs.length);
+  const prevTabCount = useRef(0);
 
-  // Auto-scroll to active tab when a new tab is added
+  // Read tabs from panel-store if panelId given, else from tab-store (focused)
+  const panel = usePanelStore((s) => panelId ? s.panels[panelId] : s.panels[s.focusedPanelId]);
+  const tabs = panel?.tabs ?? [];
+  const activeTabId = panel?.activeTabId ?? null;
+  const effectivePanelId = panel?.id ?? usePanelStore.getState().focusedPanelId;
+
+  const { dropIndex, handleDragStart, handleDragOver, handleDragOverBar, handleDrop, handleDragEnd } =
+    useTabDrag(effectivePanelId);
+
+  // Auto-scroll to new tab
   useEffect(() => {
     if (tabs.length > prevTabCount.current && activeTabId) {
       const el = tabRefs.current.get(activeTabId);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-      }
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
     }
     prevTabCount.current = tabs.length;
   }, [tabs.length, activeTabId]);
 
   function handleNewTab(type: TabType) {
-    const needsProject =
-      type === "git-graph" || type === "git-status" || type === "git-diff" || type === "terminal" || type === "chat";
-    const metadata = needsProject
-      ? { projectName: activeProject?.name }
-      : undefined;
+    const needsProject = type === "git-graph" || type === "git-status" || type === "git-diff" || type === "terminal" || type === "chat";
+    const metadata = needsProject ? { projectName: activeProject?.name } : undefined;
 
-    openTab({
-      type,
-      title: NEW_TAB_OPTIONS.find((o) => o.type === type)?.label ?? type,
-      metadata,
-      projectId: activeProject?.name ?? null,
-      closable: true,
-    });
+    usePanelStore.getState().openTab(
+      {
+        type,
+        title: NEW_TAB_OPTIONS.find((o) => o.type === type)?.label ?? type,
+        metadata,
+        projectId: activeProject?.name ?? null,
+        closable: true,
+      },
+      effectivePanelId,
+    );
   }
 
   return (
-    <div className="hidden md:flex items-center h-[41px] border-b border-border bg-background">
+    <div
+      className="hidden md:flex items-center h-[41px] border-b border-border bg-background"
+      onDragOver={handleDragOverBar}
+      onDrop={handleDrop}
+    >
       <ScrollArea className="flex-1">
         <div className="flex items-center gap-0.5 px-2 py-1">
-          {tabs.map((tab) => {
-            const Icon = TAB_ICONS[tab.type];
-            const isActive = tab.id === activeTabId;
-            return (
-              <button
-                key={tab.id}
-                ref={(el) => {
-                  if (el) tabRefs.current.set(tab.id, el);
-                  else tabRefs.current.delete(tab.id);
-                }}
-                onClick={() => setActiveTab(tab.id)}
-                className={cn(
-                  "group flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md whitespace-nowrap transition-colors",
-                  "border-b-2 -mb-[1px]",
-                  isActive
-                    ? "border-primary bg-surface text-foreground"
-                    : "border-transparent text-text-secondary hover:text-foreground hover:bg-surface-elevated",
-                )}
-              >
-                <Icon className="size-4" />
-                <span className="max-w-[120px] truncate">{tab.title}</span>
-                {tab.closable && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(tab.id);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.stopPropagation();
-                        closeTab(tab.id);
-                      }
-                    }}
-                    className="ml-1 opacity-0 group-hover:opacity-100 rounded-sm hover:bg-surface-elevated p-0.5 transition-opacity"
-                  >
-                    <X className="size-3" />
-                  </span>
-                )}
-              </button>
-            );
-          })}
+          {tabs.map((tab, i) => (
+            <DraggableTab
+              key={tab.id}
+              tab={tab}
+              isActive={tab.id === activeTabId}
+              icon={TAB_ICONS[tab.type]}
+              showDropBefore={dropIndex === i}
+              onSelect={() => usePanelStore.getState().setActiveTab(tab.id, effectivePanelId)}
+              onClose={() => usePanelStore.getState().closeTab(tab.id, effectivePanelId)}
+              onDragStart={(e) => handleDragStart(e, tab.id)}
+              onDragOver={(e) => handleDragOver(e, tab.id, i)}
+              onDragEnd={handleDragEnd}
+              tabRef={(el) => {
+                if (el) tabRefs.current.set(tab.id, el);
+                else tabRefs.current.delete(tab.id);
+              }}
+            />
+          ))}
+          {/* Show drop indicator at the end */}
+          {dropIndex !== null && dropIndex >= tabs.length && (
+            <div className="w-0.5 h-6 bg-primary rounded-full" />
+          )}
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
@@ -135,10 +130,7 @@ export function TabBar() {
           {NEW_TAB_OPTIONS.map((opt) => {
             const Icon = TAB_ICONS[opt.type];
             return (
-              <DropdownMenuItem
-                key={opt.type}
-                onClick={() => handleNewTab(opt.type)}
-              >
+              <DropdownMenuItem key={opt.type} onClick={() => handleNewTab(opt.type)}>
                 <Icon className="size-4 mr-2" />
                 {opt.label}
               </DropdownMenuItem>

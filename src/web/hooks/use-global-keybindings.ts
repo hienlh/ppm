@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useTabStore } from "@/stores/tab-store";
+import { useSettingsStore } from "@/stores/settings-store";
 
 /**
  * Global keyboard shortcuts.
@@ -28,6 +29,13 @@ export function useGlobalKeybindings() {
 
       // Keydown shortcuts
       if (e.type !== "keydown") return;
+
+      // Cmd/Ctrl+B → Toggle sidebar
+      if (e.key === "b" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        useSettingsStore.getState().toggleSidebar();
+        return;
+      }
 
       // Alt+] / Alt+[ → Cycle tabs
       if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "]" || e.key === "[")) {
