@@ -13,6 +13,34 @@ import type {
   UsageInfo,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+
+/** Persistent PPM sessionId → SDK sessionId mapping */
+const SESSION_MAP_FILE = resolve(homedir(), ".ppm", "session-map.json");
+
+function loadSessionMap(): Record<string, string> {
+  try {
+    if (existsSync(SESSION_MAP_FILE)) return JSON.parse(readFileSync(SESSION_MAP_FILE, "utf-8"));
+  } catch {}
+  return {};
+}
+
+function saveSessionMapping(ppmId: string, sdkId: string): void {
+  const map = loadSessionMap();
+  map[ppmId] = sdkId;
+  try {
+    const dir = resolve(homedir(), ".ppm");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(SESSION_MAP_FILE, JSON.stringify(map));
+  } catch {}
+}
+
+function getSdkSessionId(ppmId: string): string {
+  const map = loadSessionMap();
+  return map[ppmId] ?? ppmId;
+}
 
 /**
  * Pending approval: canUseTool callback creates a promise,
@@ -225,13 +253,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     try {
       const providerConfig = this.getProviderConfig();
-      console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} cwd=${meta.projectPath ?? "(none)"} resume=${!isFirstMessage ? sessionId : "N/A"}`);
+      // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
+      const sdkId = getSdkSessionId(sessionId);
+      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} cwd=${meta.projectPath ?? "(none)"}`);
 
       const q = query({
         prompt: message,
         options: {
           sessionId: isFirstMessage ? sessionId : undefined,
-          resume: isFirstMessage ? undefined : sessionId,
+          resume: isFirstMessage ? undefined : sdkId,
           cwd: meta.projectPath,
           // Use full Claude Code system prompt (coding guidelines, security, response style)
           systemPrompt: { type: "preset", preset: "claude_code" },
@@ -286,7 +316,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const initMsg = msg as any;
           // SDK may assign a different session_id than our UUID
           if (initMsg.session_id && initMsg.session_id !== sessionId) {
-            // Update our mapping so resume works with SDK's actual ID
+            // Persist mapping so resume works after server restart
+            saveSessionMapping(sessionId, initMsg.session_id);
+            // Update our in-memory mapping
             const oldMeta = this.activeSessions.get(sessionId);
             if (oldMeta) {
               this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
@@ -299,7 +331,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // the SDK has finished executing tools. Fetch tool_results from session history.
         if (pendingToolCount > 0 && (msg.type === "assistant" || (msg as any).type === "partial" || (msg as any).type === "stream_event")) {
           try {
-            const sessionMsgs = await getSessionMessages(sessionId);
+            const sessionMsgs = await getSessionMessages(sdkId);
             // Find the last user message — it contains tool_result blocks
             const lastUserMsg = [...sessionMsgs].reverse().find(
               (m: any) => m.type === "user",
@@ -404,7 +436,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Flush any remaining pending tool_results before finishing
           if (pendingToolCount > 0) {
             try {
-              const sessionMsgs = await getSessionMessages(sessionId);
+              const sessionMsgs = await getSessionMessages(sdkId);
               const lastUserMsg = [...sessionMsgs].reverse().find(
                 (m: any) => m.type === "user",
               );
@@ -500,7 +532,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
-      const messages = await getSessionMessages(sessionId);
+      const sdkId = getSdkSessionId(sessionId);
+      const messages = await getSessionMessages(sdkId);
       const parsed = messages.map((msg) => parseSessionMessage(msg));
 
       // Merge tool_result user messages into the preceding assistant message
