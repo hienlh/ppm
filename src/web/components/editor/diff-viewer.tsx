@@ -50,11 +50,14 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const ref2 = metadata?.ref2 as string | undefined;
   const file1 = metadata?.file1 as string | undefined;
   const file2 = metadata?.file2 as string | undefined;
+  const inlineOriginal = metadata?.original as string | undefined;
+  const inlineModified = metadata?.modified as string | undefined;
+  const isInline = inlineOriginal != null || inlineModified != null;
   const isFileCompare = Boolean(file1 && file2);
 
   const [diffText, setDiffText] = useState<string | null>(null);
   const [fileContents, setFileContents] = useState<{ original: string; modified: string } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!isInline);
   const [error, setError] = useState<string | null>(null);
   /** "both" | "left" | "right" — controls which diff panel is expanded */
   const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
@@ -62,6 +65,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const mergeViewRef = useRef<MergeView | null>(null);
 
   useEffect(() => {
+    if (isInline) return; // No fetch needed for inline diffs
     if (!projectName) return;
     setLoading(true);
     setError(null);
@@ -101,10 +105,11 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   }, [filePath, projectName, ref1, ref2, file1, file2]);
 
   const { original, modified } = useMemo(() => {
+    if (isInline) return { original: inlineOriginal ?? "", modified: inlineModified ?? "" };
     if (isFileCompare && fileContents) return fileContents;
     if (!diffText) return { original: "", modified: "" };
     return parseDiff(diffText);
-  }, [diffText, isFileCompare, fileContents]);
+  }, [diffText, isInline, inlineOriginal, inlineModified, isFileCompare, fileContents]);
 
   const langExts = useMemo(() => {
     const langFile = filePath ?? file2 ?? file1;
@@ -204,7 +209,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     if (gutter) gutter.style.display = expandMode !== "both" ? "none" : "";
   }, [expandMode, original, modified]);
 
-  if (!projectName) {
+  if (!projectName && !isInline) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         No project selected.
@@ -229,7 +234,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     );
   }
 
-  if (!isFileCompare && (!diffText || diffText.trim() === "") && !original && !modified) {
+  if (!isInline && !isFileCompare && (!diffText || diffText.trim() === "") && !original && !modified) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
         <FileCode className="size-8" />

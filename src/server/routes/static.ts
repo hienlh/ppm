@@ -17,10 +17,10 @@ staticRoutes.use(
 );
 
 /** SPA fallback — serve index.html for all unmatched routes */
-staticRoutes.get("*", (c) => {
+staticRoutes.get("*", async (c) => {
   const indexPath = resolve(DIST_DIR, "index.html");
   if (existsSync(indexPath)) {
-    return c.html(Bun.file(indexPath).text());
+    return c.html(await Bun.file(indexPath).text());
   }
   return c.text("Frontend not built. Run: bun run build:web", 404);
 });

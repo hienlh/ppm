@@ -17,6 +17,7 @@ import {
   Bot,
   Globe,
   Code,
+  Columns2,
 } from "lucide-react";
 import type { ChatEvent } from "../../../types/chat";
 import { useTabStore } from "@/stores/tab-store";
@@ -161,6 +162,17 @@ function ToolDetails({
     });
   };
 
+  /** Open inline diff tab for Edit tool changes */
+  const openEditDiff = (filePath: string, oldStr: string, newStr: string) => {
+    openTab({
+      type: "git-diff",
+      title: `Diff ${filePath.split("/").pop() ?? filePath}`,
+      metadata: { filePath, projectName, original: oldStr, modified: newStr },
+      projectId: projectName ?? null,
+      closable: true,
+    });
+  };
+
   switch (name) {
     case "Bash":
       return (
@@ -186,15 +198,16 @@ function ToolDetails({
             <ExternalLink className="size-3 shrink-0" />
             {filePath}
           </button>
-          {name === "Edit" && !!input.old_string && (
-            <div className="border-l-2 border-red-400/40 pl-2">
-              <pre className="font-mono text-red-400/70 overflow-x-auto whitespace-pre-wrap">{truncate(s(input.old_string), 200)}</pre>
-            </div>
-          )}
-          {name === "Edit" && !!input.new_string && (
-            <div className="border-l-2 border-green-400/40 pl-2">
-              <pre className="font-mono text-green-400/70 overflow-x-auto whitespace-pre-wrap">{truncate(s(input.new_string), 200)}</pre>
-            </div>
+          {name === "Edit" && (!!input.old_string || !!input.new_string) && (
+            <button
+              type="button"
+              className="text-text-subtle hover:text-primary hover:underline text-left flex items-center gap-1"
+              onClick={() => openEditDiff(filePath, s(input.old_string), s(input.new_string))}
+              title="View diff in new tab"
+            >
+              <Columns2 className="size-3 shrink-0" />
+              View Diff
+            </button>
           )}
           {name === "Write" && !!input.content && (
             <pre className="font-mono text-text-subtle overflow-x-auto max-h-32 whitespace-pre-wrap">{truncate(s(input.content), 300)}</pre>

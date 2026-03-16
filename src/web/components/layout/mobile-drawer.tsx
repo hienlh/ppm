@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   FolderOpen,
   Terminal,
@@ -13,12 +13,15 @@ import {
   Check,
   Plus,
   Search,
+  Bug,
 } from "lucide-react";
 import { useProjectStore, sortByRecent } from "@/stores/project-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { FileTree } from "@/components/explorer/file-tree";
+import { openBugReport } from "@/lib/report-bug";
 
 interface MobileDrawerProps {
   isOpen: boolean;
@@ -50,6 +53,7 @@ const MAX_VISIBLE_MOBILE = 5;
 export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   const { projects, activeProject, setActiveProject } = useProjectStore();
   const openTab = useTabStore((s) => s.openTab);
+  const version = useSettingsStore((s) => s.version);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -86,6 +90,8 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
     setProjectPickerOpen((v) => !v);
     setQuery("");
   }
+
+  const handleReportBug = useCallback(() => openBugReport(version), [version]);
 
   return (
     <div
@@ -230,6 +236,18 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
                 </button>
               </div>
             )}
+          </div>
+
+          {/* Report Bug + Version */}
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border">
+            {version && <span className="text-[10px] text-text-subtle">v{version}</span>}
+            <button
+              onClick={handleReportBug}
+              className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
+            >
+              <Bug className="size-3" />
+              <span>Report Bug</span>
+            </button>
           </div>
         </div>
       </div>

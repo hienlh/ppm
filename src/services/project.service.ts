@@ -40,6 +40,49 @@ class ProjectService {
     return entry;
   }
 
+  /** Update a project's name and/or path */
+  update(
+    currentName: string,
+    updates: { name?: string; path?: string },
+  ): ProjectConfig {
+    const projects = configService.get("projects");
+    const idx = projects.findIndex((p) => p.name === currentName);
+    if (idx === -1) {
+      throw new Error(`Project not found: ${currentName}`);
+    }
+
+    const current = projects[idx]!;
+    const newName = updates.name?.trim() || current.name;
+    const newPath = updates.path ? resolve(updates.path) : current.path;
+
+    // Validate new path exists
+    if (updates.path && !existsSync(newPath)) {
+      throw new Error(`Path does not exist: ${newPath}`);
+    }
+
+    // Check name uniqueness (skip self)
+    if (
+      newName !== currentName &&
+      projects.some((p) => p.name === newName)
+    ) {
+      throw new Error(`Project "${newName}" already exists`);
+    }
+
+    // Check path uniqueness (skip self)
+    if (
+      newPath !== current.path &&
+      projects.some((p, i) => i !== idx && resolve(p.path) === newPath)
+    ) {
+      throw new Error(`Path "${newPath}" already registered`);
+    }
+
+    const updated: ProjectConfig = { path: newPath, name: newName };
+    projects[idx] = updated;
+    configService.set("projects", projects);
+    configService.save();
+    return updated;
+  }
+
   /** Remove a project by name or path */
   remove(nameOrPath: string): void {
     const projects = configService.get("projects");

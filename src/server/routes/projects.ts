@@ -45,6 +45,18 @@ projectRoutes.get("/suggest-dirs", (c) => {
   }
 });
 
+/** PATCH /api/projects/:name — update a project's name/path */
+projectRoutes.patch("/:name", async (c) => {
+  try {
+    const name = c.req.param("name");
+    const body = await c.req.json<{ name?: string; path?: string }>();
+    const updated = projectService.update(name, body);
+    return c.json(ok(updated));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
 /** DELETE /api/projects/:name — remove a project by name */
 projectRoutes.delete("/:name", (c) => {
   try {

@@ -118,6 +118,24 @@ export async function startServer(options: {
   // Setup log file (both foreground and daemon modes)
   await setupLogFile();
 
+  // Check if port is already in use before starting
+  const portInUse = await new Promise<boolean>((resolve) => {
+    const net = require("node:net") as typeof import("node:net");
+    const tester = net.createServer()
+      .once("error", (err: NodeJS.ErrnoException) => {
+        resolve(err.code === "EADDRINUSE");
+      })
+      .once("listening", () => {
+        tester.close(() => resolve(false));
+      })
+      .listen(port, host);
+  });
+  if (portInUse) {
+    console.error(`\n  ✗  Port ${port} is already in use.`);
+    console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
+    process.exit(1);
+  }
+
   const isDaemon = !options.foreground;
 
   if (isDaemon) {
@@ -137,17 +155,12 @@ export async function startServer(options: {
       const { ensureCloudflared } = await import("../services/cloudflared.service.ts");
       const bin = await ensureCloudflared();
 
-      // Check if tunnel already running (reuse from previous server crash)
+      // Kill any leftover tunnel from previous run
       if (existsSync(statusFile)) {
         try {
           const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
-          if (prev.tunnelPid && prev.shareUrl) {
-            try {
-              process.kill(prev.tunnelPid, 0); // Check alive
-              console.log(`  Reusing existing tunnel (PID: ${prev.tunnelPid})`);
-              shareUrl = prev.shareUrl;
-              tunnelPid = prev.tunnelPid;
-            } catch { /* tunnel dead, spawn new one */ }
+          if (prev.tunnelPid) {
+            try { process.kill(prev.tunnelPid); } catch { /* already dead */ }
           }
         } catch {}
       }
@@ -155,8 +168,10 @@ export async function startServer(options: {
       // Spawn new tunnel if no existing one
       if (!shareUrl) {
         console.log("  Starting share tunnel...");
-        const { openSync: openFd } = await import("node:fs");
+        const { openSync: openFd, writeFileSync: writeFs } = await import("node:fs");
         const tunnelLog = resolve(ppmDir, "tunnel.log");
+        // Truncate old log so we only match the new tunnel URL
+        writeFs(tunnelLog, "");
         const tfd = openFd(tunnelLog, "a");
         const tunnelProc = Bun.spawn({
           cmd: [bin, "tunnel", "--url", `http://localhost:${port}`],
@@ -212,6 +227,12 @@ export async function startServer(options: {
       console.log();
       qr.generate(shareUrl, { small: true });
     }
+
+    console.log(`  Commands:`);
+    console.log(`    ppm restart   Reload config (keeps tunnel URL)`);
+    console.log(`    ppm stop      Stop server & tunnel`);
+    console.log(`    ppm logs -f   Follow server logs`);
+    console.log();
 
     process.exit(0);
   }
