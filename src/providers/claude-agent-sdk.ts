@@ -265,8 +265,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           cwd: meta.projectPath,
           // Use full Claude Code system prompt (coding guidelines, security, response style)
           systemPrompt: { type: "preset", preset: "claude_code" },
-          // Load project CLAUDE.md, skills, and hooks from project directory
-          settingSources: ["project"],
+          // Load skills/settings from both user (~/.claude) and project directory
+          settingSources: ["user", "project"],
           // Neutralize Anthropic env vars so SDK uses subscription, not project .env keys.
           env: {
             ...process.env,
