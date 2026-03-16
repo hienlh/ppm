@@ -1,3 +1,9 @@
+export interface PushConfig {
+  vapid_public_key: string;
+  vapid_private_key: string;
+  vapid_subject: string;
+}
+
 export interface PpmConfig {
   device_name: string;
   port: number;
@@ -5,6 +11,7 @@ export interface PpmConfig {
   auth: AuthConfig;
   projects: ProjectConfig[];
   ai: AIConfig;
+  push?: PushConfig;
 }
 
 export interface AuthConfig {

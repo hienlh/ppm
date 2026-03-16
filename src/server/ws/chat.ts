@@ -108,6 +108,13 @@ export const chatWebSocket = {
             logSessionEvent(sessionId, "ERROR", ev.message ?? JSON.stringify(ev).slice(0, 300));
           } else if (evType === "done") {
             logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"}`);
+            // Fire-and-forget push notification with project + session title
+            import("../../services/push-notification.service.ts").then(({ pushService }) => {
+              const project = ws.data.projectName || "Project";
+              const session = chatService.getSession(sessionId);
+              const sessionTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
+              pushService.notifyAll("Chat completed", `${project} — ${sessionTitle}`).catch(() => {});
+            }).catch(() => {});
           } else {
             logSessionEvent(sessionId, evType.toUpperCase(), JSON.stringify(ev).slice(0, 200));
           }

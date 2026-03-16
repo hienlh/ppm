@@ -1,6 +1,6 @@
 {
   "name": "@hienlh/ppm",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "module": "src/index.ts",
   "type": "module",
@@ -25,6 +25,7 @@
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^6.0.1",
     "tailwindcss": "^4.2.1",
     "vite": "^8.0.0",
@@ -49,7 +50,6 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
-
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
@@ -68,6 +68,7 @@
     "simple-git": "^3.33.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
+    "web-push": "^3.6.7",
     "zustand": "^5.0.11"
   }
 }

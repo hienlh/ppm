@@ -5,6 +5,7 @@ import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { pushRoutes } from "./routes/push.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
@@ -97,6 +98,7 @@ app.get("/api/auth/check", (c) => c.json(ok(true)));
 
 // API routes
 app.route("/api/settings", settingsRoutes);
+app.route("/api/push", pushRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
 
