@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { FolderOpen, ChevronDown, Check, Plus, Search, Bug } from "lucide-react";
+import { FolderOpen, ChevronDown, Check, Plus, Search, Bug, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useProjectStore, sortByRecent } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { FileTree } from "@/components/explorer/file-tree";
@@ -22,6 +22,8 @@ export function Sidebar() {
   const openTab = useTabStore((s) => s.openTab);
   const deviceName = useSettingsStore((s) => s.deviceName);
   const version = useSettingsStore((s) => s.version);
+  const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const [query, setQuery] = useState("");
 
   const sorted = useMemo(() => sortByRecent(projects), [projects]);
@@ -41,6 +43,20 @@ export function Sidebar() {
   }
 
   const handleReportBug = useCallback(() => openBugReport(version), [version]);
+
+  if (sidebarCollapsed) {
+    return (
+      <aside className="hidden md:flex flex-col w-10 min-w-10 bg-background border-r border-border">
+        <button
+          onClick={toggleSidebar}
+          title="Expand sidebar (⌘B)"
+          className="flex items-center justify-center h-[41px] border-b border-border text-text-secondary hover:text-foreground transition-colors"
+        >
+          <PanelLeftOpen className="size-4" />
+        </button>
+      </aside>
+    );
+  }
 
   return (
     <aside className="hidden md:flex flex-col w-[280px] min-w-[280px] bg-background border-r border-border overflow-hidden">
@@ -133,10 +149,10 @@ export function Sidebar() {
         </div>
       )}
 
-      {/* Version footer + Report Bug */}
-      {version && (
-        <div className="flex items-center justify-between px-3 py-1.5 border-t border-border shrink-0">
-          <span className="text-[10px] text-text-subtle">v{version}</span>
+      {/* Version footer + Report Bug + Collapse */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-t border-border shrink-0">
+        {version && <span className="text-[10px] text-text-subtle">v{version}</span>}
+        <div className="flex items-center gap-2 ml-auto">
           <button
             onClick={handleReportBug}
             title="Report a bug"
@@ -145,8 +161,15 @@ export function Sidebar() {
             <Bug className="size-3" />
             <span>Report Bug</span>
           </button>
+          <button
+            onClick={toggleSidebar}
+            title="Collapse sidebar (⌘B)"
+            className="text-text-subtle hover:text-text-secondary transition-colors"
+          >
+            <PanelLeftClose className="size-3.5" />
+          </button>
         </div>
-      )}
+      </div>
     </aside>
   );
 }

@@ -6,33 +6,32 @@ const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
   theme: Theme;
+  sidebarCollapsed: boolean;
   deviceName: string | null;
   version: string | null;
   setTheme: (theme: Theme) => void;
+  toggleSidebar: () => void;
   fetchServerInfo: () => Promise<void>;
 }
 
-function loadPersistedTheme(): Theme {
+interface PersistedSettings {
+  theme?: Theme;
+  sidebarCollapsed?: boolean;
+}
+
+function loadPersistedSettings(): PersistedSettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored) as { theme?: Theme };
-      if (
-        parsed.theme === "light" ||
-        parsed.theme === "dark" ||
-        parsed.theme === "system"
-      ) {
-        return parsed.theme;
-      }
-    }
+    if (stored) return JSON.parse(stored) as PersistedSettings;
   } catch {
     // ignore
   }
-  return "dark";
+  return {};
 }
 
-function persistTheme(theme: Theme) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ theme }));
+function persistSettings(update: Partial<PersistedSettings>) {
+  const current = loadPersistedSettings();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, ...update }));
 }
 
 /** Apply the resolved theme class to <html> */
@@ -57,15 +56,24 @@ export function applyThemeClass(theme: Theme) {
   }
 }
 
-export const useSettingsStore = create<SettingsState>((set) => ({
-  theme: loadPersistedTheme(),
+const _initial = loadPersistedSettings();
+
+export const useSettingsStore = create<SettingsState>((set, get) => ({
+  theme: (_initial.theme === "light" || _initial.theme === "dark" || _initial.theme === "system") ? _initial.theme : "dark",
+  sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   deviceName: null,
   version: null,
 
   setTheme: (theme) => {
-    persistTheme(theme);
+    persistSettings({ theme });
     applyThemeClass(theme);
     set({ theme });
+  },
+
+  toggleSidebar: () => {
+    const next = !get().sidebarCollapsed;
+    persistSettings({ sidebarCollapsed: next });
+    set({ sidebarCollapsed: next });
   },
 
   fetchServerInfo: async () => {

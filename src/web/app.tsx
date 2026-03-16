@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { TabBar } from "@/components/layout/tab-bar";
-import { TabContent } from "@/components/layout/tab-content";
+import { PanelLayout } from "@/components/layout/panel-layout";
 import { Sidebar } from "@/components/layout/sidebar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileDrawer } from "@/components/layout/mobile-drawer";
@@ -148,15 +147,9 @@ export function App() {
           <Sidebar />
 
           {/* Content area */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Desktop tab bar */}
-            <TabBar />
-
-            {/* Tab content */}
-            <main className="flex-1 overflow-hidden pb-12 md:pb-0">
-              <TabContent />
-            </main>
-          </div>
+          <main className="flex-1 overflow-hidden pb-12 md:pb-0">
+            <PanelLayout />
+          </main>
         </div>
 
         {/* Mobile bottom nav */}
