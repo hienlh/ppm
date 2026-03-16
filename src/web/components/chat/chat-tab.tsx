@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef, useEffect, type DragEvent } from "react";
-import { Upload } from "lucide-react";
+import { Upload, Bug } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { openBugReport } from "@/lib/report-bug";
 import { MessageList } from "./message-list";
 import { MessageInput, type ChatAttachment } from "./message-input";
 import { SessionPicker } from "./session-picker";
@@ -49,6 +51,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   const activeProject = useProjectStore((s) => s.activeProject);
   const updateTab = useTabStore((s) => s.updateTab);
+  const version = useSettingsStore((s) => s.version);
 
   // Usage runs independently — auto-refreshes on interval
   const { usageInfo, usageLoading, lastUpdatedAt, refreshUsage, mergeUsage } =
@@ -255,6 +258,15 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
               loading={usageLoading}
               onClick={() => setShowUsageDetail((v) => !v)}
             />
+            {sessionId && (
+              <button
+                onClick={() => openBugReport(version, { sessionId, projectName: activeProject?.name })}
+                className="p-0.5 rounded hover:bg-surface-elevated text-text-subtle hover:text-text-secondary transition-colors"
+                title="Report bug for this chat session"
+              >
+                <Bug className="size-3.5" />
+              </button>
+            )}
             <button
               onClick={() => {
                 if (!isConnected) reconnect();
