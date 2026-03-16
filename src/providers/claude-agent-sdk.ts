@@ -225,6 +225,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     try {
       const providerConfig = this.getProviderConfig();
+      console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} cwd=${meta.projectPath ?? "(none)"} resume=${!isFirstMessage ? sessionId : "N/A"}`);
 
       const q = query({
         prompt: message,
@@ -437,14 +438,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
           // Surface non-success subtypes as errors so FE can display them
           if (subtype && subtype !== "success") {
+            // Extract error detail from SDK result if available
+            const sdkError = result.error ?? result.error_message ?? result.message ?? "";
+            const sdkDetail = typeof sdkError === "string" ? sdkError : JSON.stringify(sdkError);
             const errorMessages: Record<string, string> = {
               error_max_turns: "Agent reached maximum turn limit.",
               error_max_budget_usd: "Agent reached budget limit.",
               error_during_execution: "Agent encountered an error during execution.",
             };
+            const baseMsg = errorMessages[subtype] ?? `Agent stopped: ${subtype}`;
+            const fullMsg = sdkDetail ? `${baseMsg}\n${sdkDetail}` : baseMsg;
+            console.error(`[sdk] result error: subtype=${subtype} turns=${result.num_turns ?? 0} detail=${sdkDetail || "(none)"} raw=${JSON.stringify(result).slice(0, 500)}`);
             yield {
               type: "error",
-              message: errorMessages[subtype] ?? `Agent stopped: ${subtype}`,
+              message: fullMsg,
             };
           }
 
