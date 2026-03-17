@@ -37,15 +37,33 @@ export function MessageList({
   projectName,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
-
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initialLoadRef = useRef(true);
+  const userScrolledUpRef = useRef(false);
+
+  // Track if user has scrolled up (away from bottom)
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      // Consider "at bottom" if within 100px of the end
+      userScrolledUpRef.current = scrollHeight - scrollTop - clientHeight > 100;
+    };
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
 
   useEffect(() => {
-    // First load: jump instantly. Subsequent updates: smooth scroll.
-    const behavior = initialLoadRef.current ? "instant" : "smooth";
-    bottomRef.current?.scrollIntoView({ behavior: behavior as ScrollBehavior });
-    if (initialLoadRef.current && messages.length > 0) {
-      initialLoadRef.current = false;
+    // First load: always jump to bottom
+    if (initialLoadRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
+      if (messages.length > 0) initialLoadRef.current = false;
+      return;
+    }
+    // Only auto-scroll if user hasn't scrolled up
+    if (!userScrolledUpRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, pendingApproval]);
 
@@ -68,7 +86,7 @@ export function MessageList({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
       {messages
         .filter((msg) => {
           // Skip empty messages: no text content AND no events
