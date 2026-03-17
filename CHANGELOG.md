@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.4.0] - 2026-03-17
+
+### Added
+- Resizable sidebar (200-600px, persisted to localStorage)
+- Settings tab in sidebar (replaces history tab)
+- Command palette: F1, Shift+Shift, double-click/right-click tab bar
+- Filesystem file browser: type `/` or `~/` in command palette to browse any file
+- `/api/fs/list`, `/api/fs/read`, `/api/fs/write` endpoints (cross-platform, Node.js fs)
+- Editor supports opening external files (absolute paths outside project)
+- Shared MarkdownRenderer component with table scroll, link handling, file path detection
+- Clickable inline code: file names like `config.ts` are underlined and open in editor
+- Smart file open: 1 match opens directly, multiple matches open command palette
+- Middle-click on tab closes it
+- Chat toolbar: unified History, Config, Usage in single row with exclusive panels
+- History panel search input + refresh button
+- Compact AI settings for chat panel
+- Cmd/Ctrl+S prevents browser save dialog
+
+### Changed
+- Sidebar tab: History replaced with Settings
+- Tab bar: + button opens command palette instead of dropdown menu
+- Tab bar: + button inside scroll area, sticky when overflow
+- Settings removed from panel tabs (now in sidebar only)
+- External links in markdown open in new browser tab (target=_blank)
+- Tables in markdown auto-scroll horizontally on overflow
+- Removed toolbar from code editor and diff viewer
+
+### Fixed
+- Text selection preserved on mouse up (onMouseDown for panel focus)
+- Double-click text selection in chat (skip re-render if panel already focused)
+- Inline code file detection: split around `<pre>` blocks for correct matching
+
 ## [0.3.0] - 2026-03-17
 
 ### Added
