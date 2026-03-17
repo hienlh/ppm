@@ -65,6 +65,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private pendingApprovals = new Map<string, PendingApproval>();
   /** Active query objects for abort support */
   private activeQueries = new Map<string, { close: () => void }>();
+  /** Fork source: ppmSessionId → sourceSessionId (used on first message to fork) */
+  private forkSources = new Map<string, string>();
   /** Latest known usage/rate-limit info (shared across all sessions) */
   private latestUsage: UsageInfo = {};
 
@@ -164,6 +166,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     }
   }
 
+  /** Register a fork source — when this session sends its first message, it will fork from sourceId */
+  setForkSource(sessionId: string, sourceSessionId: string): void {
+    this.forkSources.set(sessionId, sourceSessionId);
+  }
+
   /**
    * Resolve a pending approval from FE (tool approval or AskUserQuestion answer).
    * Called by WS handler when client sends approval_response.
@@ -179,6 +186,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   async *sendMessage(
     sessionId: string,
     message: string,
+    opts?: { forkSession?: boolean },
   ): AsyncIterable<ChatEvent> {
     if (!this.activeSessions.has(sessionId)) {
       await this.resumeSession(sessionId);
@@ -192,6 +200,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const count = this.messageCount.get(sessionId) ?? 0;
     const isFirstMessage = count === 0;
     this.messageCount.set(sessionId, count + 1);
+
+    // Check if this session should fork from another
+    const forkSourceId = this.forkSources.get(sessionId);
+    const shouldFork = !!forkSourceId && isFirstMessage;
+    if (forkSourceId) this.forkSources.delete(sessionId);
 
     /**
      * Approval events to yield from the generator.
@@ -254,14 +267,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     try {
       const providerConfig = this.getProviderConfig();
       // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
-      const sdkId = getSdkSessionId(sessionId);
-      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} cwd=${meta.projectPath ?? "(none)"}`);
+      // For fork: use the source session's SDK id
+      const sdkId = shouldFork ? getSdkSessionId(forkSourceId!) : getSdkSessionId(sessionId);
+      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${meta.projectPath ?? "(none)"}`);
 
       const q = query({
         prompt: message,
         options: {
-          sessionId: isFirstMessage ? sessionId : undefined,
-          resume: isFirstMessage ? undefined : sdkId,
+          sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
+          resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
+          ...(shouldFork && { forkSession: true }),
           cwd: meta.projectPath,
           // Use full Claude Code system prompt (coding guidelines, security, response style)
           systemPrompt: { type: "preset", preset: "claude_code" },

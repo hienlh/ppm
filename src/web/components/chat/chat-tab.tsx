@@ -81,6 +81,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     isConnected,
   } = useChat(sessionId, providerId, projectName, { onUsageEvent: mergeUsage });
 
+  // Auto-send pending message for forked sessions (set by handleFork)
+  const pendingForkMsgRef = useRef(metadata?.pendingMessage as string | undefined);
+  useEffect(() => {
+    if (pendingForkMsgRef.current && isConnected && sessionId) {
+      const msg = pendingForkMsgRef.current;
+      pendingForkMsgRef.current = undefined;
+      if (tabId) updateTab(tabId, { metadata: { ...metadata, pendingMessage: undefined } });
+      setTimeout(() => sendMessage(msg), 100);
+    }
+  }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleNewSession = useCallback(() => {
     useTabStore.getState().openTab({
       type: "chat",
@@ -95,6 +106,27 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     setSessionId(session.id);
     setProviderId(session.providerId);
   }, []);
+
+  /** Fork current session and open new tab with the forked session, resending userMessage */
+  const handleFork = useCallback(async (userMessage: string) => {
+    if (!sessionId || !projectName) return;
+    try {
+      const { api, projectUrl } = await import("@/lib/api-client");
+      const forked = await api.post<{ id: string; forkedFrom: string }>(
+        `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
+      );
+      // Open new chat tab with forked session — it will send userMessage on connect
+      useTabStore.getState().openTab({
+        type: "chat",
+        title: `Fork: ${userMessage.slice(0, 30)}`,
+        metadata: { projectName, sessionId: forked.id, providerId, pendingMessage: userMessage },
+        projectId: projectName || null,
+        closable: true,
+      });
+    } catch (e) {
+      console.error("Fork failed:", e);
+    }
+  }, [sessionId, projectName, providerId]);
 
   /** Build message content with file references prepended */
   const buildMessageWithAttachments = useCallback(
@@ -245,6 +277,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         connectingElapsed={connectingElapsed}
         thinkingWarningThreshold={thinkingWarningThreshold}
         projectName={projectName}
+        onFork={!isStreaming ? handleFork : undefined}
       />
 
       {/* Bottom toolbar */}
