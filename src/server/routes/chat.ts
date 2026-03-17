@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { listSlashItems } from "../../services/slash-items.service.ts";
-import { waitForFreshUsage } from "../../services/claude-usage.service.ts";
+import { getCachedUsage } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -24,10 +24,11 @@ chatRoutes.get("/slash-items", (c) => {
   }
 });
 
-/** GET /chat/usage — await fresh data from ccburn (async, non-blocking to event loop) */
-chatRoutes.get("/usage", async (c) => {
-  const usage = await waitForFreshUsage();
+/** GET /chat/usage — return cached usage data (BE auto-polls in background) */
+chatRoutes.get("/usage", (c) => {
+  const usage = getCachedUsage();
   return c.json(ok({
+    lastFetchedAt: usage.lastFetchedAt,
     fiveHour: usage.session?.utilization,
     sevenDay: usage.weekly?.utilization,
     fiveHourResetsAt: usage.session?.resetsAt,

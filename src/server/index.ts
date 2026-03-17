@@ -377,6 +377,9 @@ export async function startServer(options: {
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
 
+  // Start background usage polling
+  import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
+
   console.log(`\n  PPM v${VERSION} ready\n`);
   console.log(`  ➜  Local:   http://localhost:${server.port}/`);
 

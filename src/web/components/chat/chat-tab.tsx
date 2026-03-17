@@ -50,7 +50,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const version = useSettingsStore((s) => s.version);
 
   // Usage runs independently — auto-refreshes on interval
-  const { usageInfo, usageLoading, lastUpdatedAt, refreshUsage, mergeUsage } =
+  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, mergeUsage } =
     useUsage(projectName, providerId);
 
   // Persist sessionId and providerId to tab metadata so reload restores the session
@@ -284,7 +284,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           usageInfo={usageInfo}
           usageLoading={usageLoading}
           refreshUsage={refreshUsage}
-          lastUpdatedAt={lastUpdatedAt}
+          lastFetchedAt={lastFetchedAt}
           sessionId={sessionId}
           onSelectSession={handleSelectSession}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}

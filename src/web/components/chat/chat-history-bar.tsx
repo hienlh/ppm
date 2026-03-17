@@ -15,8 +15,9 @@ interface ChatHistoryBarProps {
   usageInfo: UsageInfo;
   usageLoading?: boolean;
   refreshUsage?: () => void;
-  lastUpdatedAt?: number | null;
+  lastFetchedAt?: string | null;
   sessionId?: string | null;
+  onSelectSession?: (session: SessionInfo) => void;
   onBugReport?: () => void;
   isConnected?: boolean;
   onReconnect?: () => void;
@@ -37,8 +38,8 @@ function pctColor(pct: number): string {
 }
 
 export function ChatHistoryBar({
-  projectName, usageInfo, usageLoading, refreshUsage, lastUpdatedAt,
-  sessionId, onBugReport, isConnected, onReconnect,
+  projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
+  sessionId, onSelectSession, onBugReport, isConnected, onReconnect,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -69,13 +70,18 @@ export function ChatHistoryBar({
   }, [activePanel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openSession(session: SessionInfo) {
-    openTab({
-      type: "chat",
-      title: session.title || "Chat",
-      projectId: projectName ?? null,
-      metadata: { projectName, sessionId: session.id },
-      closable: true,
-    });
+    if (onSelectSession) {
+      onSelectSession(session);
+      setActivePanel(null);
+    } else {
+      openTab({
+        type: "chat",
+        title: session.title || "Chat",
+        projectId: projectName ?? null,
+        metadata: { projectName, sessionId: session.id },
+        closable: true,
+      });
+    }
   }
 
   // Filter sessions by search query
@@ -223,7 +229,7 @@ export function ChatHistoryBar({
           onClose={() => setActivePanel(null)}
           onReload={refreshUsage}
           loading={usageLoading}
-          lastUpdatedAt={lastUpdatedAt}
+          lastFetchedAt={lastFetchedAt}
         />
       )}
     </div>

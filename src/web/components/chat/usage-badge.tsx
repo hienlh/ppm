@@ -51,7 +51,7 @@ interface UsageDetailPanelProps {
   onClose: () => void;
   onReload?: () => void;
   loading?: boolean;
-  lastUpdatedAt?: number | null;
+  lastFetchedAt?: string | null;
 }
 
 function formatResetTime(bucket?: LimitBucket): string | null {
@@ -113,7 +113,7 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${mins}m ago`;
 }
 
-export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, lastUpdatedAt }: UsageDetailPanelProps) {
+export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, lastFetchedAt }: UsageDetailPanelProps) {
   if (!visible) return null;
 
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
@@ -124,8 +124,8 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary">Usage Limits</span>
-          {lastUpdatedAt && (
-            <span className="text-[10px] text-text-subtle">{formatLastUpdated(lastUpdatedAt)}</span>
+          {lastFetchedAt && (
+            <span className="text-[10px] text-text-subtle">{formatLastUpdated(new Date(lastFetchedAt).getTime())}</span>
           )}
         </div>
         <div className="flex items-center gap-1">
