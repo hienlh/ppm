@@ -3,18 +3,22 @@ import { homedir } from "node:os";
 import { existsSync, mkdirSync, chmodSync, renameSync, unlinkSync } from "node:fs";
 
 const CLOUDFLARED_DIR = resolve(homedir(), ".ppm", "bin");
-const CLOUDFLARED_PATH = resolve(CLOUDFLARED_DIR, "cloudflared");
+const isWindows = process.platform === "win32";
+const CLOUDFLARED_PATH = resolve(CLOUDFLARED_DIR, isWindows ? "cloudflared.exe" : "cloudflared");
 
-const OS_MAP: Record<string, string> = { darwin: "darwin", linux: "linux" };
+const OS_MAP: Record<string, string> = { darwin: "darwin", linux: "linux", win32: "windows" };
 const ARCH_MAP: Record<string, string> = { x64: "amd64", arm64: "arm64" };
 
 /** Build platform-specific GitHub release download URL.
- *  macOS uses .tgz archives, Linux uses raw binaries. */
+ *  macOS uses .tgz archives, Windows uses .exe, Linux uses raw binaries. */
 export function getDownloadUrl(): string {
   const os = OS_MAP[process.platform];
   const arch = ARCH_MAP[process.arch];
   if (!os || !arch) {
     throw new Error(`Unsupported platform: ${process.platform}-${process.arch}`);
+  }
+  if (os === "windows") {
+    return `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-${arch}.exe`;
   }
   const ext = os === "darwin" ? ".tgz" : "";
   return `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-${os}-${arch}${ext}`;
@@ -71,7 +75,8 @@ export async function ensureCloudflared(): Promise<string> {
 
   const url = getDownloadUrl();
   const isTgz = url.endsWith(".tgz");
-  const tmpPath = resolve(CLOUDFLARED_DIR, isTgz ? "cloudflared.tgz" : "cloudflared.tmp");
+  const isExe = url.endsWith(".exe");
+  const tmpPath = resolve(CLOUDFLARED_DIR, isTgz ? "cloudflared.tgz" : isExe ? "cloudflared.exe.tmp" : "cloudflared.tmp");
 
   try {
     const data = await downloadWithProgress(url);
@@ -83,7 +88,9 @@ export async function ensureCloudflared(): Promise<string> {
     } else {
       renameSync(tmpPath, CLOUDFLARED_PATH);
     }
-    chmodSync(CLOUDFLARED_PATH, 0o755);
+    if (!isWindows) {
+      chmodSync(CLOUDFLARED_PATH, 0o755);
+    }
   } catch (err) {
     try { unlinkSync(tmpPath); } catch {}
     try { unlinkSync(CLOUDFLARED_PATH); } catch {}
