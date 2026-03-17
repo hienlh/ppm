@@ -10,7 +10,7 @@ import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
-import { ok } from "../types/api.ts";
+import { ok, err } from "../types/api.ts";
 
 /** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
 async function setupLogFile() {
@@ -95,6 +95,86 @@ if (process.env.NODE_ENV !== "production") {
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
+
+// Filesystem file listing (for command palette) — cross-platform
+app.get("/api/fs/list", async (c) => {
+  const dir = c.req.query("dir");
+  if (!dir) return c.json(err("dir is required"), 400);
+
+  try {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { homedir } = await import("node:os");
+    const resolved = dir.startsWith("~") ? path.resolve(homedir(), dir.slice(2)) : path.resolve(dir);
+
+    const SKIP = new Set([".git", "node_modules", ".DS_Store"]);
+    const MAX_FILES = 200;
+    const MAX_DEPTH = 4;
+    const files: string[] = [];
+
+    function walk(dirPath: string, depth: number) {
+      if (depth > MAX_DEPTH || files.length >= MAX_FILES) return;
+      let entries: import("node:fs").Dirent[];
+      try { entries = fs.readdirSync(dirPath, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (SKIP.has(entry.name)) continue;
+        const full = path.join(dirPath, entry.name);
+        if (entry.isFile()) {
+          files.push(full);
+          if (files.length >= MAX_FILES) return;
+        } else if (entry.isDirectory()) {
+          walk(full, depth + 1);
+        }
+      }
+    }
+
+    walk(resolved, 0);
+    return c.json(ok(files));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+// Filesystem file read (for opening files outside project) — cross-platform
+app.get("/api/fs/read", async (c) => {
+  const filePath = c.req.query("path");
+  if (!filePath) return c.json(err("path is required"), 400);
+
+  try {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { homedir } = await import("node:os");
+    const resolved = filePath.startsWith("~") ? path.resolve(homedir(), filePath.slice(2)) : path.resolve(filePath);
+
+    if (!fs.existsSync(resolved)) return c.json(err("File not found"), 404);
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) return c.json(err("Not a file"), 400);
+    if (stat.size > 5 * 1024 * 1024) return c.json(err("File too large (>5MB)"), 400);
+
+    const content = fs.readFileSync(resolved, "utf-8");
+    return c.json(ok({ content, path: resolved }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+// Filesystem file write (for saving files outside project) — cross-platform
+app.put("/api/fs/write", async (c) => {
+  const body = await c.req.json<{ path: string; content: string }>();
+  if (!body.path || body.content == null) return c.json(err("path and content required"), 400);
+
+  try {
+    const pathMod = await import("node:path");
+    const fs = await import("node:fs");
+    const { homedir } = await import("node:os");
+    const resolved = body.path.startsWith("~") ? pathMod.resolve(homedir(), body.path.slice(2)) : pathMod.resolve(body.path);
+
+    fs.writeFileSync(resolved, body.content, "utf-8");
+    return c.json(ok(true));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
 
 // API routes
 app.route("/api/settings", settingsRoutes);

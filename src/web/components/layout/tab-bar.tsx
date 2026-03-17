@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import {
-  X,
   Plus,
   Terminal,
   MessageSquare,
@@ -9,17 +8,11 @@ import {
   Settings,
   FileCode,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabDrag } from "@/hooks/use-tab-drag";
+import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { DraggableTab } from "./draggable-tab";
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
@@ -31,13 +24,6 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   settings: Settings,
 };
 
-const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
-  { type: "terminal", label: "Terminal" },
-  { type: "chat", label: "AI Chat" },
-  { type: "git-graph", label: "Git Graph" },
-  { type: "settings", label: "Settings" },
-];
-
 interface TabBarProps {
   panelId?: string;
 }
@@ -45,6 +31,7 @@ interface TabBarProps {
 export function TabBar({ panelId }: TabBarProps) {
   const activeProject = useProjectStore((s) => s.activeProject);
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const scrollRef = useRef<HTMLDivElement>(null);
   const prevTabCount = useRef(0);
 
   // Read tabs from panel-store if panelId given, else from tab-store (focused)
@@ -65,20 +52,20 @@ export function TabBar({ panelId }: TabBarProps) {
     prevTabCount.current = tabs.length;
   }, [tabs.length, activeTabId]);
 
-  function handleNewTab(type: TabType) {
-    const needsProject = type === "git-graph" || type === "git-diff" || type === "terminal" || type === "chat";
-    const metadata = needsProject ? { projectName: activeProject?.name } : undefined;
+  /** Double-click on empty bar area → open command palette */
+  function handleBarDoubleClick(e: React.MouseEvent) {
+    // Only trigger if clicking directly on the bar or scroll container (not on a tab)
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-tab-item]")) return;
+    openCommandPalette();
+  }
 
-    usePanelStore.getState().openTab(
-      {
-        type,
-        title: NEW_TAB_OPTIONS.find((o) => o.type === type)?.label ?? type,
-        metadata,
-        projectId: activeProject?.name ?? null,
-        closable: true,
-      },
-      effectivePanelId,
-    );
+  /** Right-click on empty bar area → open command palette */
+  function handleBarContextMenu(e: React.MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-tab-item]")) return;
+    e.preventDefault();
+    openCommandPalette();
   }
 
   return (
@@ -86,8 +73,14 @@ export function TabBar({ panelId }: TabBarProps) {
       className="hidden md:flex items-center h-[41px] border-b border-border bg-background"
       onDragOver={handleDragOverBar}
       onDrop={handleDrop}
+      onDoubleClick={handleBarDoubleClick}
+      onContextMenu={handleBarContextMenu}
     >
-      <ScrollArea className="flex-1">
+      {/* Scrollable tabs + sticky + button */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-x-auto overflow-y-hidden min-w-0 scrollbar-none"
+      >
         <div className="flex items-center gap-0.5 px-2 py-1">
           {tabs.map((tab, i) => (
             <DraggableTab
@@ -111,28 +104,17 @@ export function TabBar({ panelId }: TabBarProps) {
           {dropIndex !== null && dropIndex >= tabs.length && (
             <div className="w-0.5 h-6 bg-primary rounded-full" />
           )}
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className="flex items-center justify-center size-8 mx-1 rounded-md text-text-secondary hover:text-foreground hover:bg-surface-elevated transition-colors">
+          {/* + button — inside flow, sticky when overflowing */}
+          <button
+            onClick={openCommandPalette}
+            title="Open command palette (Shift+Shift)"
+            className="flex items-center justify-center size-7 shrink-0 sticky right-1 rounded-md text-text-secondary hover:text-foreground hover:bg-surface-elevated transition-colors bg-background"
+          >
             <Plus className="size-4" />
           </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {NEW_TAB_OPTIONS.map((opt) => {
-            const Icon = TAB_ICONS[opt.type];
-            return (
-              <DropdownMenuItem key={opt.type} onClick={() => handleNewTab(opt.type)}>
-                <Icon className="size-4 mr-2" />
-                {opt.label}
-              </DropdownMenuItem>
-            );
-          })}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        </div>
+      </div>
     </div>
   );
 }

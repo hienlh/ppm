@@ -23,7 +23,7 @@ const EFFORT_OPTIONS = [
   { value: "max", label: "Max" },
 ];
 
-export function AISettingsSection() {
+export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   const [settings, setSettings] = useState<AISettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,11 +54,17 @@ export function AISettingsSection() {
     }
   };
 
+  const labelSize = compact ? "text-[11px]" : "text-sm";
+  const headingSize = compact ? "text-xs" : "text-sm";
+  const gapSize = compact ? "space-y-2" : "space-y-4";
+  const innerGap = compact ? "space-y-1.5" : "space-y-3";
+  const fieldGap = compact ? "space-y-1" : "space-y-1.5";
+
   if (!settings) {
     return (
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium text-text-secondary">AI Provider</h3>
-        <p className="text-sm text-text-subtle">
+      <div className={innerGap}>
+        <h3 className={`${headingSize} font-medium text-text-secondary`}>AI Provider</h3>
+        <p className={`${labelSize} text-text-subtle`}>
           {error ? `Error: ${error}` : "Loading..."}
         </p>
       </div>
@@ -66,17 +72,17 @@ export function AISettingsSection() {
   }
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-medium text-text-secondary">AI Provider</h3>
+    <div className={gapSize}>
+      <h3 className={`${headingSize} font-medium text-text-secondary`}>AI Provider</h3>
 
-      <div className="space-y-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="ai-model">Model</Label>
+      <div className={innerGap}>
+        <div className={fieldGap}>
+          <Label htmlFor="ai-model" className={compact ? labelSize : undefined}>Model</Label>
           <Select
             value={config?.model ?? "claude-sonnet-4-6"}
             onValueChange={(v) => handleSave("model", v)}
           >
-            <SelectTrigger id="ai-model" className="w-full">
+            <SelectTrigger id="ai-model" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -89,13 +95,13 @@ export function AISettingsSection() {
           </Select>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="ai-effort">Effort</Label>
+        <div className={fieldGap}>
+          <Label htmlFor="ai-effort" className={compact ? labelSize : undefined}>Effort</Label>
           <Select
             value={config?.effort ?? "high"}
             onValueChange={(v) => handleSave("effort", v)}
           >
-            <SelectTrigger id="ai-effort" className="w-full">
+            <SelectTrigger id="ai-effort" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -108,8 +114,8 @@ export function AISettingsSection() {
           </Select>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="ai-max-turns">Max Turns (1-500)</Label>
+        <div className={fieldGap}>
+          <Label htmlFor="ai-max-turns" className={compact ? labelSize : undefined}>Max Turns (1-500)</Label>
           <Input
             key={`turns-${revision}`}
             id="ai-max-turns"
@@ -117,6 +123,7 @@ export function AISettingsSection() {
             min={1}
             max={500}
             defaultValue={config?.max_turns ?? 100}
+            className={compact ? "h-7 text-[11px]" : undefined}
             onBlur={(e) => {
               const val = parseInt(e.target.value);
               if (!isNaN(val)) handleSave("max_turns", val);
@@ -124,8 +131,8 @@ export function AISettingsSection() {
           />
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="ai-budget">Max Budget (USD)</Label>
+        <div className={fieldGap}>
+          <Label htmlFor="ai-budget" className={compact ? labelSize : undefined}>Max Budget (USD)</Label>
           <Input
             key={`budget-${revision}`}
             id="ai-budget"
@@ -135,6 +142,7 @@ export function AISettingsSection() {
             max={50}
             defaultValue={config?.max_budget_usd ?? ""}
             placeholder="No limit"
+            className={compact ? "h-7 text-[11px]" : undefined}
             onBlur={(e) => {
               const val = parseFloat(e.target.value);
               handleSave("max_budget_usd", isNaN(val) ? undefined : val);
@@ -142,8 +150,8 @@ export function AISettingsSection() {
           />
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="ai-thinking">Thinking Budget (tokens)</Label>
+        <div className={fieldGap}>
+          <Label htmlFor="ai-thinking" className={compact ? labelSize : undefined}>Thinking Budget (tokens)</Label>
           <Input
             key={`thinking-${revision}`}
             id="ai-thinking"
@@ -151,6 +159,7 @@ export function AISettingsSection() {
             min={0}
             defaultValue={config?.thinking_budget_tokens ?? ""}
             placeholder="Disabled"
+            className={compact ? "h-7 text-[11px]" : undefined}
             onBlur={(e) => {
               const val = parseInt(e.target.value);
               handleSave("thinking_budget_tokens", isNaN(val) ? undefined : val);

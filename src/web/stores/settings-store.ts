@@ -2,13 +2,14 @@ import { create } from "zustand";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
-export type SidebarActiveTab = "explorer" | "git" | "history";
+export type SidebarActiveTab = "explorer" | "git" | "settings";
 
 const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
   theme: Theme;
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
   gitStatusViewMode: GitStatusViewMode;
   wordWrap: boolean;
   sidebarActiveTab: SidebarActiveTab;
@@ -16,6 +17,7 @@ interface SettingsState {
   version: string | null;
   setTheme: (theme: Theme) => void;
   toggleSidebar: () => void;
+  setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleWordWrap: () => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
@@ -25,6 +27,7 @@ interface SettingsState {
 interface PersistedSettings {
   theme?: Theme;
   sidebarCollapsed?: boolean;
+  sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
   wordWrap?: boolean;
   sidebarActiveTab?: SidebarActiveTab;
@@ -72,9 +75,10 @@ const _initial = loadPersistedSettings();
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   theme: (_initial.theme === "light" || _initial.theme === "dark" || _initial.theme === "system") ? _initial.theme : "system",
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
+  sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   wordWrap: _initial.wordWrap ?? false,
-  sidebarActiveTab: (_initial.sidebarActiveTab === "git" || _initial.sidebarActiveTab === "history") ? _initial.sidebarActiveTab : "explorer",
+  sidebarActiveTab: (_initial.sidebarActiveTab === "git" || _initial.sidebarActiveTab === "settings") ? _initial.sidebarActiveTab : "explorer",
   deviceName: null,
   version: null,
 
@@ -94,6 +98,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().sidebarCollapsed;
     persistSettings({ sidebarCollapsed: next });
     set({ sidebarCollapsed: next });
+  },
+
+  setSidebarWidth: (width) => {
+    const clamped = Math.max(200, Math.min(600, width));
+    persistSettings({ sidebarWidth: clamped });
+    set({ sidebarWidth: clamped });
   },
 
   setGitStatusViewMode: (mode) => {

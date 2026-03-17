@@ -2,6 +2,11 @@ import { useEffect, useState, useCallback } from "react";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
+/** Dispatch this event to open the command palette from anywhere */
+export function openCommandPalette() {
+  window.dispatchEvent(new Event("open-command-palette"));
+}
+
 /**
  * Global keyboard shortcuts.
  *
@@ -30,6 +35,19 @@ export function useGlobalKeybindings() {
       // Keydown shortcuts
       if (e.type !== "keydown") return;
 
+      // Cmd/Ctrl+S → Prevent browser save dialog (editor auto-saves)
+      if (e.key === "s" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        return;
+      }
+
+      // F1 → Open command palette
+      if (e.key === "F1") {
+        e.preventDefault();
+        setPaletteOpen(true);
+        return;
+      }
+
       // Cmd/Ctrl+B → Toggle sidebar
       if (e.key === "b" && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
         e.preventDefault();
@@ -50,11 +68,18 @@ export function useGlobalKeybindings() {
       }
     }
 
+    // Custom event listener for programmatic opening
+    function handleOpenPalette() {
+      setPaletteOpen(true);
+    }
+
     window.addEventListener("keydown", handler);
     window.addEventListener("keyup", handler);
+    window.addEventListener("open-command-palette", handleOpenPalette);
     return () => {
       window.removeEventListener("keydown", handler);
       window.removeEventListener("keyup", handler);
+      window.removeEventListener("open-command-palette", handleOpenPalette);
     };
   }, []);
 

@@ -117,6 +117,10 @@
   scrollbar-color: var(--color-border) transparent;
 }
 
+/* Hide scrollbar completely */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { scrollbar-width: none; }
+
 /* Disable global focus ring — components handle their own focus styles */
 :focus-visible {
   outline: none;

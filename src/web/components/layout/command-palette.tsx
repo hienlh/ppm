@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Terminal,
   MessageSquare,
@@ -7,11 +7,14 @@ import {
   Settings,
   Search,
   FileCode,
+  FolderOpen,
+  Loader2,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
+import { api } from "@/lib/api-client";
 
 interface CommandItem {
   id: string;
@@ -20,26 +23,45 @@ interface CommandItem {
   icon: React.ElementType;
   action: () => void;
   keywords?: string;
-  group: "action" | "file";
+  group: "action" | "file" | "fs";
 }
 
 /** Recursively flatten file tree into file-only list */
-function flattenFiles(nodes: FileNode[], prefix = ""): { name: string; path: string }[] {
+function flattenFiles(nodes: FileNode[]): { name: string; path: string }[] {
   const result: { name: string; path: string }[] = [];
   for (const node of nodes) {
     if (node.type === "file") {
       result.push({ name: node.name, path: node.path });
     }
     if (node.children) {
-      result.push(...flattenFiles(node.children, node.path));
+      result.push(...flattenFiles(node.children));
     }
   }
   return result;
 }
 
+/** Check if query looks like an absolute path (Unix: /, ~/ | Windows: C:\, ~\) */
+function isPathQuery(q: string): boolean {
+  return q.startsWith("/") || q.startsWith("~/") || q.startsWith("~\\") || /^[A-Za-z]:[/\\]/.test(q);
+}
+
+/** Extract the directory portion of a path for API call */
+function extractDir(q: string): string {
+  // Normalize to forward slash for splitting
+  const normalized = q.replace(/\\/g, "/");
+  if (normalized.endsWith("/")) return q;
+  const lastSlash = Math.max(normalized.lastIndexOf("/"), q.lastIndexOf("\\"));
+  return lastSlash > 0 ? q.slice(0, lastSlash + 1) : q;
+}
+
+// Cache: dir path → file list
+const fsCache = new Map<string, string[]>();
+
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
+  const [fsFiles, setFsFiles] = useState<string[]>([]);
+  const [fsLoading, setFsLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +69,36 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const activeProject = useProjectStore((s) => s.activeProject);
   const fileTree = useFileStore((s) => s.tree);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
+  const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
+
+  // Fetch filesystem files when path query changes directory
+  const fetchFsFiles = useCallback(async (dir: string) => {
+    if (fsCache.has(dir)) {
+      setFsFiles(fsCache.get(dir)!);
+      return;
+    }
+    setFsLoading(true);
+    try {
+      const files = await api.get<string[]>(`/api/fs/list?dir=${encodeURIComponent(dir)}`);
+      fsCache.set(dir, files);
+      setFsFiles(files);
+    } catch {
+      setFsFiles([]);
+    } finally {
+      setFsLoading(false);
+    }
+  }, []);
+
+  // When query changes and looks like a path, fetch files
+  useEffect(() => {
+    if (!isPathQuery(query)) {
+      setFsFiles([]);
+      return;
+    }
+    const dir = extractDir(query);
+    fetchFsFiles(dir);
+  }, [query, fetchFsFiles]);
 
   // Action commands
   const actionCommands = useMemo<CommandItem[]>(() => {
@@ -63,11 +115,20 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action" },
       { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action" },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action" },
-      { id: "settings", label: "Settings", icon: Settings, action: openNewTab("settings", "Settings"), keywords: "config preferences", group: "action" },
+      {
+        id: "settings", label: "Settings", icon: Settings,
+        action: () => {
+          if (sidebarCollapsed) toggleSidebar();
+          setSidebarActiveTab("settings");
+          onClose();
+        },
+        keywords: "config preferences theme",
+        group: "action",
+      },
     ];
-  }, [activeProject, openTab, onClose]);
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar]);
 
-  // File commands — derived from file store tree
+  // File commands — derived from file store tree (project files)
   const fileCommands = useMemo<CommandItem[]>(() => {
     const projectId = activeProject?.name ?? null;
     const meta = activeProject ? { projectName: activeProject.name } : undefined;
@@ -93,12 +154,56 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     }));
   }, [fileTree, activeProject, openTab, onClose]);
 
-  const allCommands = useMemo(() => [...actionCommands, ...fileCommands], [actionCommands, fileCommands]);
+  // Filesystem commands — from cached API results
+  const fsCommands = useMemo<CommandItem[]>(() => {
+    const projectId = activeProject?.name ?? null;
+    const meta = activeProject ? { projectName: activeProject.name } : undefined;
+
+    return fsFiles.map((fp) => {
+      const name = fp.split("/").pop() ?? fp;
+      return {
+        id: `fs:${fp}`,
+        label: name,
+        hint: fp,
+        icon: FolderOpen,
+        group: "fs" as const,
+        keywords: fp,
+        action: () => {
+          openTab({
+            type: "editor",
+            title: name,
+            projectId,
+            metadata: { ...meta, filePath: fp },
+            closable: true,
+          });
+          onClose();
+        },
+      };
+    });
+  }, [fsFiles, activeProject, openTab, onClose]);
+
+  const allCommands = useMemo(
+    () => [...actionCommands, ...fileCommands],
+    [actionCommands, fileCommands],
+  );
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return actionCommands; // show only actions when empty
+    // Path mode — search filesystem results using filename portion only
+    if (isPathQuery(query)) {
+      // Extract the part after the last / as the filename filter
+      const lastSlash = query.lastIndexOf("/");
+      const fileFilter = lastSlash >= 0 ? query.slice(lastSlash + 1).toLowerCase() : "";
+      if (!fileFilter) return fsCommands.slice(0, 50); // show all if query ends with /
+      return fsCommands.filter((c) => {
+        const name = c.label.toLowerCase();
+        const path = (c.keywords ?? "").toLowerCase();
+        return name.includes(fileFilter) || path.includes(fileFilter);
+      }).slice(0, 50);
+    }
+
+    // Normal mode
+    if (!query.trim()) return actionCommands;
     const q = query.toLowerCase();
-    // Fuzzy-ish: every character of query must appear in order
     const matchesFuzzy = (text: string) => {
       let ti = 0;
       for (let qi = 0; qi < q.length; qi++) {
@@ -111,13 +216,14 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     return allCommands.filter(
       (c) => matchesFuzzy(c.label.toLowerCase()) || (c.keywords && matchesFuzzy(c.keywords.toLowerCase())),
     );
-  }, [allCommands, actionCommands, query]);
+  }, [allCommands, actionCommands, fsCommands, query]);
 
   // Reset state when opening
   useEffect(() => {
     if (open) {
       setQuery("");
       setSelectedIdx(0);
+      setFsFiles([]);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
@@ -158,6 +264,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   if (!open) return null;
 
+  const pathMode = isPathQuery(query);
+
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]" onClick={onClose}>
       <div className="fixed inset-0 bg-black/50" />
@@ -174,18 +282,28 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search actions & files..."
+            placeholder="Search actions & files... (type / or ~/ for filesystem)"
             className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-subtle"
           />
+          {fsLoading && <Loader2 className="size-3.5 animate-spin text-text-subtle shrink-0" />}
           <kbd className="hidden sm:inline-flex items-center rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-subtle font-mono">
             ESC
           </kbd>
         </div>
 
+        {/* Path mode hint */}
+        {pathMode && !fsLoading && fsFiles.length === 0 && query.length < 4 && (
+          <div className="px-3 py-2 text-xs text-text-subtle border-b border-border/50">
+            Type a directory path to browse files (e.g. ~/Projects/)
+          </div>
+        )}
+
         {/* Results */}
         <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
           {filtered.length === 0 ? (
-            <p className="px-3 py-4 text-sm text-text-subtle text-center">No results</p>
+            <p className="px-3 py-4 text-sm text-text-subtle text-center">
+              {fsLoading ? "Searching..." : "No results"}
+            </p>
           ) : (
             filtered.map((cmd, i) => {
               const Icon = cmd.icon;
@@ -210,6 +328,18 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               );
             })
           )}
+        </div>
+
+        {/* Shortcut hint */}
+        <div className="flex items-center justify-center gap-1.5 border-t border-border px-3 py-1.5">
+          <span className="text-[10px] text-text-subtle">Press</span>
+          <kbd className="inline-flex items-center rounded border border-border bg-surface px-1 py-0.5 text-[10px] text-text-subtle font-mono">
+            Shift
+          </kbd>
+          <kbd className="inline-flex items-center rounded border border-border bg-surface px-1 py-0.5 text-[10px] text-text-subtle font-mono">
+            Shift
+          </kbd>
+          <span className="text-[10px] text-text-subtle">to open this palette</span>
         </div>
       </div>
     </div>
