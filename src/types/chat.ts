@@ -76,6 +76,7 @@ export type ResultSubtype =
 
 export type ChatEvent =
   | { type: "text"; content: string; parentToolUseId?: string }
+  | { type: "thinking"; content: string; parentToolUseId?: string }
   | { type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string; children?: ChatEvent[] }
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }

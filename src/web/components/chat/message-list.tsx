@@ -9,6 +9,7 @@ import {
   AlertCircle,
   ShieldAlert,
   Bot,
+  ChevronRight,
   FileText,
   Image as ImageIcon,
   Copy,
@@ -321,6 +322,7 @@ function AuthFileLink({ src, filename, mimeType }: { src: string; filename: stri
  */
 type EventGroup =
   | { kind: "text"; content: string }
+  | { kind: "thinking"; content: string }
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean };
 
 function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatEvent[]; isStreaming: boolean; projectName?: string }) {
@@ -328,9 +330,21 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
   const groups: EventGroup[] = [];
   let textBuffer = "";
 
-  // First pass: create groups for text and tool_use events
+  // First pass: create groups for text, thinking, and tool_use events
+  let thinkingBuffer = "";
   for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
+    if (event.type === "thinking") {
+      // Flush text buffer first if any
+      if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
+      thinkingBuffer += event.content;
+      continue;
+    }
+    // Flush thinking buffer when non-thinking event arrives
+    if (thinkingBuffer) {
+      groups.push({ kind: "thinking", content: thinkingBuffer });
+      thinkingBuffer = "";
+    }
     if (event.type === "text") {
       textBuffer += event.content;
     } else if (event.type === "tool_use") {
@@ -348,6 +362,9 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
       }
       groups.push({ kind: "tool", tool: event });
     }
+  }
+  if (thinkingBuffer) {
+    groups.push({ kind: "thinking", content: thinkingBuffer });
   }
   if (textBuffer) {
     groups.push({ kind: "text", content: textBuffer });
@@ -400,6 +417,9 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
   return (
     <>
       {groups.map((group, i) => {
+        if (group.kind === "thinking") {
+          return <ThinkingBlock key={`think-${i}`} content={group.content} isStreaming={isStreaming && i === groups.length - 1} />;
+        }
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
           return (
@@ -411,6 +431,34 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
         return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} completed={group.completed} projectName={projectName} />;
       })}
     </>
+  );
+}
+
+/** Collapsible thinking block — shows Claude's reasoning, collapsed by default when done */
+function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [expanded, setExpanded] = useState(isStreaming);
+
+  // Auto-collapse when streaming finishes
+  useEffect(() => {
+    if (!isStreaming && content.length > 0) setExpanded(false);
+  }, [isStreaming, content.length]);
+
+  return (
+    <div className="rounded border border-border/50 bg-surface/30 text-xs">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-surface transition-colors text-text-subtle"
+      >
+        {isStreaming ? <Loader2 className="size-3 animate-spin" /> : <ChevronRight className={`size-3 transition-transform ${expanded ? "rotate-90" : ""}`} />}
+        <span>Thinking{isStreaming ? "..." : ""}</span>
+        {!isStreaming && <span className="text-text-subtle/50 ml-auto">{content.length > 100 ? `${Math.round(content.length / 4)} tokens` : ""}</span>}
+      </button>
+      {expanded && (
+        <div className="px-2 pb-2 text-text-subtle/80 whitespace-pre-wrap max-h-60 overflow-y-auto text-[11px] leading-relaxed">
+          {content}
+        </div>
+      )}
+    </div>
   );
 }
 
