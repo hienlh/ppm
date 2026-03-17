@@ -44,49 +44,47 @@ export function MessageList({
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initialLoadRef = useRef(true);
-  const stickToBottomRef = useRef(true);
-  const programmaticScrollRef = useRef(false);
+  const [autoScroll, setAutoScroll] = useState(true);
 
-  // Detect user scroll: wheel or touch = user intent to scroll up/down
+  // User scrolls up → disable auto-scroll; scrolls to bottom → re-enable
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    // User scrolled with wheel/touch → check if they're near bottom
-    const handleWheel = () => {
-      // Use rAF to read scroll position after the scroll happens
-      requestAnimationFrame(() => {
-        if (!container) return;
-        const { scrollTop, scrollHeight, clientHeight } = container;
-        const distFromBottom = scrollHeight - scrollTop - clientHeight;
-        stickToBottomRef.current = distFromBottom < 50;
-      });
+    let lastScrollTop = container.scrollTop;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const atBottom = scrollHeight - scrollTop - clientHeight < 30;
+
+      if (scrollTop < lastScrollTop && !atBottom) {
+        // Scrolled up → disable
+        setAutoScroll(false);
+      } else if (atBottom) {
+        // Hit bottom → re-enable
+        setAutoScroll(true);
+      }
+      lastScrollTop = scrollTop;
     };
 
-    container.addEventListener("wheel", handleWheel, { passive: true });
-    container.addEventListener("touchmove", handleWheel, { passive: true });
-    return () => {
-      container.removeEventListener("wheel", handleWheel);
-      container.removeEventListener("touchmove", handleWheel);
-    };
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
   }, []);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    // First load: always jump to bottom
     if (initialLoadRef.current) {
       container.scrollTop = container.scrollHeight;
       if (messages.length > 0) initialLoadRef.current = false;
       return;
     }
 
-    // Only auto-scroll if user hasn't scrolled up
-    if (stickToBottomRef.current) {
+    if (autoScroll) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages, pendingApproval]);
+  }, [messages, pendingApproval, autoScroll]);
 
   if (messagesLoading) {
     return (
