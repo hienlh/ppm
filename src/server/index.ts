@@ -415,6 +415,18 @@ export async function startServer(options: {
     console.log(`  Token: ${configService.get("auth").token}`);
   }
   console.log();
+
+  // Graceful shutdown — stop server + tunnel on exit (especially important on Windows)
+  const shutdown = () => {
+    try { server.stop(true); } catch {}
+    try {
+      // Dynamic import to avoid circular — tunnel may not be loaded
+      import("../services/tunnel.service.ts").then(({ tunnelService }) => tunnelService.stopTunnel()).catch(() => {});
+    } catch {}
+  };
+  process.on("SIGINT", () => { shutdown(); process.exit(0); });
+  process.on("SIGTERM", () => { shutdown(); process.exit(0); });
+  process.on("exit", shutdown);
 }
 
 // Internal entry point for daemon child process
