@@ -83,7 +83,7 @@ export function App() {
   useUrlSync();
 
   // Global keyboard shortcuts (Shift+Shift → command palette, Alt+[/] → cycle tabs)
-  const { paletteOpen, closePalette } = useGlobalKeybindings();
+  const { paletteOpen, paletteInitialQuery, closePalette } = useGlobalKeybindings();
 
   // Health check — detects server crash/restart
   useHealthCheck();
@@ -208,7 +208,7 @@ export function App() {
         />
 
         {/* Command palette (Shift+Shift) */}
-        <CommandPalette open={paletteOpen} onClose={closePalette} />
+        <CommandPalette open={paletteOpen} onClose={closePalette} initialQuery={paletteInitialQuery} />
 
         {/* Toast notifications */}
         <Toaster

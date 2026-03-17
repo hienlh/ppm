@@ -1,6 +1,8 @@
 import { useMemo, useRef, useEffect } from "react";
 import { marked } from "marked";
 import { useTabStore } from "@/stores/tab-store";
+import { openCommandPalette } from "@/hooks/use-global-keybindings";
+import { api } from "@/lib/api-client";
 
 // Configure marked globally
 marked.use({ gfm: true, breaks: true });
@@ -66,30 +68,77 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       }
     });
 
-    // --- Click handler for file links ---
-    const handleClick = (e: MouseEvent) => {
+    // --- Make inline <code> with file-like names clickable ---
+    const FILE_EXT_RE = /\.(ts|tsx|js|jsx|py|json|md|yaml|yml|toml|css|html|sh|go|rs|sql|rb|java|kt|swift|c|cpp|h|hpp)$/i;
+    container.querySelectorAll("code").forEach((code) => {
+      // Skip code inside <pre> (code blocks)
+      if (code.closest("pre")) return;
+      if (code.hasAttribute("data-file-clickable")) return;
+      const text = (code.textContent ?? "").trim();
+      if (!text || text.includes(" ")) return;
+      // Must look like a file path
+      if (!FILE_EXT_RE.test(text) && !/^(\/|\.\/|\.\.\/)/.test(text)) return;
+      code.setAttribute("data-file-clickable", text);
+      code.style.cursor = "pointer";
+      code.style.textDecoration = "underline";
+      code.style.textDecorationStyle = "dotted";
+    });
+
+    // --- Click handler for file links and clickable code ---
+    const handleClick = async (e: MouseEvent) => {
       const target = e.target as HTMLElement;
+
+      // Check <a data-file-path> first
       const link = target.closest("a[data-file-path]") as HTMLAnchorElement | null;
-      if (!link || !container.contains(link)) return;
+      if (link && container.contains(link)) {
+        e.preventDefault();
+        const filePath = link.getAttribute("data-file-path") ?? "";
+        openFileOrSearch(filePath);
+        return;
+      }
 
-      const filePath = link.getAttribute("data-file-path") ?? "";
-      if (!filePath) return;
+      // Check clickable <code> elements
+      const code = target.closest("code[data-file-clickable]") as HTMLElement | null;
+      if (code && container.contains(code)) {
+        const filePath = code.getAttribute("data-file-clickable") ?? "";
+        openFileOrSearch(filePath);
+        return;
+      }
+    };
 
-      e.preventDefault();
-
-      // Absolute path → use /api/fs/read (external file)
+    /** Try to open file in editor; if not found, open command palette to search */
+    function openFileOrSearch(filePath: string) {
       const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
       const meta: Record<string, unknown> = { filePath };
       if (projectName) meta.projectName = projectName;
 
-      openTab({
-        type: "editor",
-        title: filePath.split("/").pop() ?? filePath,
-        metadata: meta,
-        projectId: isAbsolute ? null : (projectName ?? null),
-        closable: true,
-      });
-    };
+      // Try to open — if it fails (file not found), fall back to command palette search
+      if (isAbsolute) {
+        api.get(`/api/fs/read?path=${encodeURIComponent(filePath)}`).then(() => {
+          openTab({
+            type: "editor",
+            title: filePath.split("/").pop() ?? filePath,
+            metadata: meta,
+            projectId: null,
+            closable: true,
+          });
+        }).catch(() => {
+          openCommandPalette(filePath);
+        });
+      } else if (projectName) {
+        // Relative path — just open it (editor will handle errors)
+        openTab({
+          type: "editor",
+          title: filePath.split("/").pop() ?? filePath,
+          metadata: meta,
+          projectId: projectName,
+          closable: true,
+        });
+      } else {
+        // No project, no absolute path — search via command palette
+        openCommandPalette(filePath);
+      }
+    }
 
     container.addEventListener("click", handleClick);
 
