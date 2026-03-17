@@ -109,7 +109,7 @@ export function TabBar({ panelId }: TabBarProps) {
           <button
             onClick={() => openCommandPalette()}
             title="Open command palette (Shift+Shift)"
-            className="flex items-center justify-center size-10 shrink-0 sticky right-0 border-t-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
+            className="flex items-center justify-center size-10 shrink-0 sticky right-0 border-b-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
           >
             <Plus className="size-4" />
           </button>
