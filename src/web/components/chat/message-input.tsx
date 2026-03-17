@@ -381,7 +381,7 @@ export function MessageInput({
   const showCancel = isStreaming && !hasContent;
 
   return (
-    <div className="px-2 pb-2 pt-0.5 md:px-3 md:pb-3 md:pt-1 bg-background">
+    <div className="p-2 md:p-3 bg-background">
       {/* Attachment chips (above input) */}
       <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
