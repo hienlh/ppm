@@ -162,22 +162,6 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b text-xs text-muted-foreground">
-        <FileCode className="size-3.5" />
-        {isFileCompare ? (
-          <span className="font-mono truncate flex-1">{file1} vs {file2}</span>
-        ) : (
-          <span className="flex-1 truncate">
-            <span className="font-mono">{filePath ?? "Working tree changes"}</span>
-            {(ref1 || ref2) && (
-              <span> ({ref1?.slice(0, 7) ?? "HEAD"} vs {ref2?.slice(0, 7) ?? "working tree"})</span>
-            )}
-          </span>
-        )}
-        <div className="hidden md:block">{expandToggle}</div>
-      </div>
-
       {/* Monaco DiffEditor */}
       <div className="flex-1 overflow-hidden">
         <DiffEditor
@@ -197,11 +181,6 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
           }}
           loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
         />
-      </div>
-
-      {/* Mobile expand toggle */}
-      <div className="md:hidden flex justify-center border-t py-1 bg-background shrink-0">
-        {expandToggle}
       </div>
     </div>
   );

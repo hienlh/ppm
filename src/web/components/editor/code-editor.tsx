@@ -192,13 +192,6 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
-      {/* Desktop toolbar */}
-      <div className="hidden md:flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-background">
-        {mdModeButtons}
-        <div className="flex-1" />
-        {wrapBtn}
-      </div>
-
       {isMarkdown && mdMode === "preview" ? (
         <MarkdownPreview content={content ?? ""} />
       ) : (
@@ -225,13 +218,6 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
           />
         </div>
       )}
-
-      {/* Mobile toolbar */}
-      <div className="md:hidden flex items-center gap-1 px-2 py-1 border-t shrink-0 bg-background">
-        {mdModeButtons}
-        <div className="flex-1" />
-        {wrapBtn}
-      </div>
     </div>
   );
 }
