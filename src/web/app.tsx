@@ -217,6 +217,7 @@ export function App() {
         {/* Toast notifications */}
         <Toaster
           position="bottom-left"
+          closeButton
           toastOptions={{
             className: "bg-surface border-border text-foreground",
           }}
