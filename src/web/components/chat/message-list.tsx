@@ -456,20 +456,6 @@ function ThinkingIndicator({ lastMessage, streamingStatus, elapsed }: { lastMess
     );
   }
 
-  // After tool execution — waiting for Claude to continue
-  const events = lastMessage.events;
-  if (events && events.length > 0) {
-    const lastEvent = events[events.length - 1]!;
-    if (lastEvent?.type === "tool_use" || lastEvent?.type === "tool_result") {
-      return (
-        <div className="flex items-center gap-2 text-text-subtle text-sm">
-          <Loader2 className="size-3 animate-spin" />
-          <span>Processing...</span>
-        </div>
-      );
-    }
-  }
-
   return null;
 }
 
