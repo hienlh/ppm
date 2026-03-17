@@ -170,6 +170,17 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
         break;
       }
 
+      case "thinking": {
+        const pid = (data as any).parentToolUseId as string | undefined;
+        if (pid && routeToParent(data, pid)) {
+          syncMessages();
+          break;
+        }
+        streamingEventsRef.current.push(data);
+        syncMessages();
+        break;
+      }
+
       case "tool_use": {
         const pid = (data as any).parentToolUseId as string | undefined;
         if (pid && routeToParent(data, pid)) {

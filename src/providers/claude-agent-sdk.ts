@@ -386,11 +386,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Handle stream_event (raw API events) for text deltas
           if ((msg as any).type === "stream_event") {
             const event = partial.event;
-            if (event?.type === "content_block_delta" && event.delta?.type === "text_delta") {
-              const text = event.delta.text ?? "";
-              if (text) {
-                lastPartialText += text;
-                yield { type: "text", content: text, ...(parentId && { parentToolUseId: parentId }) };
+            if (event?.type === "content_block_delta") {
+              if (event.delta?.type === "text_delta") {
+                const text = event.delta.text ?? "";
+                if (text) {
+                  lastPartialText += text;
+                  yield { type: "text", content: text, ...(parentId && { parentToolUseId: parentId }) };
+                }
+              } else if (event.delta?.type === "thinking_delta") {
+                const thinking = event.delta.thinking ?? "";
+                if (thinking) {
+                  yield { type: "thinking", content: thinking, ...(parentId && { parentToolUseId: parentId }) } as any;
+                }
               }
             }
             continue;
