@@ -205,6 +205,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
   }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh file tree when window regains focus
+  // TODO: Replace with fs.watch + WebSocket push for real-time sync without needing window focus
   useEffect(() => {
     const handleFocus = () => { if (activeProject) fetchTree(activeProject.name); };
     window.addEventListener("focus", handleFocus);
