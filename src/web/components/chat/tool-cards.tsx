@@ -65,10 +65,13 @@ export function ToolCard({
   const hasResult = result?.type === "tool_result";
   const isError = hasResult && !!(result as any).isError;
   const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
+  const isSubagent = (toolName === "Agent" || toolName === "Task") && tool.type === "tool_use";
+  const children = isSubagent ? (tool as any).children as ChatEvent[] | undefined : undefined;
+  const hasChildren = children && children.length > 0;
   const isDone = hasResult || hasAnswers || completed;
 
   return (
-    <div className="rounded border border-border bg-background text-xs">
+    <div className={`rounded border text-xs ${isSubagent ? "border-accent/30 bg-accent/5" : "border-border bg-background"}`}>
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-surface transition-colors min-w-0"
@@ -82,11 +85,18 @@ export function ToolCard({
         <span className="truncate text-text-primary">
           <ToolSummary name={toolName} input={input} />
         </span>
+        {hasChildren && (
+          <span className="ml-auto text-[10px] text-text-subtle shrink-0">{children!.length} steps</span>
+        )}
       </button>
       {expanded && (
         <div className="px-2 pb-2 space-y-1.5">
           {(tool.type === "tool_use" || tool.type === "approval_request") && (
             <ToolDetails name={toolName} input={input} projectName={projectName} />
+          )}
+          {/* Subagent children: render nested tool events */}
+          {hasChildren && (
+            <SubagentChildren events={children!} projectName={projectName} />
           )}
           {hasResult && (
             <ToolResultView toolName={toolName} output={(result as any).output} />
@@ -391,6 +401,49 @@ function CollapsibleOutput({ output }: { output: string }) {
       }`}>
         {output}
       </pre>
+    </div>
+  );
+}
+
+/** Render subagent child events — nested tool_use/tool_result + text */
+function SubagentChildren({ events, projectName }: { events: ChatEvent[]; projectName?: string }) {
+  // Group children similar to InterleavedEvents: pair tool_use + tool_result, merge text
+  type ChildGroup =
+    | { kind: "text"; content: string }
+    | { kind: "tool"; tool: ChatEvent; result?: ChatEvent };
+
+  const groups: ChildGroup[] = [];
+  let textBuffer = "";
+
+  for (const ev of events) {
+    if (ev.type === "text") {
+      textBuffer += ev.content;
+    } else if (ev.type === "tool_use") {
+      if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
+      groups.push({ kind: "tool", tool: ev });
+    } else if (ev.type === "tool_result") {
+      // Match to last unmatched tool_use by toolUseId
+      const trId = (ev as any).toolUseId;
+      const match = trId
+        ? groups.find((g) => g.kind === "tool" && g.tool.type === "tool_use" && (g.tool as any).toolUseId === trId && !g.result) as (ChildGroup & { kind: "tool" }) | undefined
+        : groups.findLast((g) => g.kind === "tool" && !g.result) as (ChildGroup & { kind: "tool" }) | undefined;
+      if (match) match.result = ev;
+    }
+  }
+  if (textBuffer) groups.push({ kind: "text", content: textBuffer });
+
+  return (
+    <div className="border-l-2 border-accent/20 pl-2 space-y-1 mt-1">
+      {groups.map((g, i) => {
+        if (g.kind === "text") {
+          return (
+            <div key={`st-${i}`} className="text-text-secondary text-[11px]">
+              <MiniMarkdown content={g.content} maxHeight="max-h-24" />
+            </div>
+          );
+        }
+        return <ToolCard key={`sc-${i}`} tool={g.tool} result={g.result} completed={!!(g.result)} projectName={projectName} />;
+      })}
     </div>
   );
 }

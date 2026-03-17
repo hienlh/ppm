@@ -300,10 +300,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       this.activeQueries.set(sessionId, q);
 
       let lastPartialText = "";
-      /** Number of tool_use blocks pending results (tools executing internally by SDK) */
+      /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
 
       for await (const msg of q) {
+        // Extract parent_tool_use_id from SDK message (present on subagent-scoped messages)
+        const parentId = (msg as any).parent_tool_use_id as string | undefined;
 
         // Yield any queued approval events
         while (approvalEvents.length > 0) {
@@ -326,9 +328,31 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
-        // When tools were pending and a new assistant/stream_event arrives,
+        // Handle `user` messages directly — they contain tool_result blocks (e.g. after Agent finishes).
+        // Extract tool_results from user messages that are top-level (no parentId).
+        if ((msg as any).type === "user" && !parentId) {
+          const userContent = (msg as any).message?.content;
+          if (Array.isArray(userContent)) {
+            for (const block of userContent) {
+              if (block.type === "tool_result") {
+                const output = block.content ?? block.output ?? "";
+                yield {
+                  type: "tool_result" as const,
+                  output: typeof output === "string" ? output : JSON.stringify(output),
+                  isError: !!block.is_error,
+                  toolUseId: block.tool_use_id as string | undefined,
+                };
+                if (pendingToolCount > 0) pendingToolCount--;
+              }
+            }
+          }
+          continue;
+        }
+
+        // When top-level tools were pending and a new TOP-LEVEL message arrives,
         // the SDK has finished executing tools. Fetch tool_results from session history.
-        if (pendingToolCount > 0 && (msg.type === "assistant" || (msg as any).type === "partial" || (msg as any).type === "stream_event")) {
+        // Skip this for child messages (parentId set) — subagent internals don't mean parent tools finished.
+        if (pendingToolCount > 0 && !parentId && (msg.type === "assistant" || (msg as any).type === "partial" || (msg as any).type === "stream_event")) {
           try {
             const sessionMsgs = await getSessionMessages(sdkId);
             // Find the last user message — it contains tool_result blocks
@@ -365,7 +389,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               const text = event.delta.text ?? "";
               if (text) {
                 lastPartialText += text;
-                yield { type: "text", content: text };
+                yield { type: "text", content: text, ...(parentId && { parentToolUseId: parentId }) };
               }
             }
             continue;
@@ -380,7 +404,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (fullText.length > lastPartialText.length) {
               const delta = fullText.slice(lastPartialText.length);
               lastPartialText = fullText;
-              yield { type: "text", content: delta };
+              yield { type: "text", content: delta, ...(parentId && { parentToolUseId: parentId }) };
             }
           }
           continue;
@@ -393,19 +417,25 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             for (const block of content) {
               if (block.type === "text" && typeof block.text === "string") {
                 if (block.text.length > lastPartialText.length) {
-                  yield { type: "text", content: block.text.slice(lastPartialText.length) };
+                  yield { type: "text", content: block.text.slice(lastPartialText.length), ...(parentId && { parentToolUseId: parentId }) };
                 } else if (lastPartialText.length === 0) {
-                  yield { type: "text", content: block.text };
+                  yield { type: "text", content: block.text, ...(parentId && { parentToolUseId: parentId }) };
                 }
                 assistantContent += block.text;
                 lastPartialText = "";
               } else if (block.type === "tool_use") {
-                pendingToolCount++;
+                // Only track pending count for top-level tools (not subagent children).
+                // Child tools are executed internally by the SDK subagent — their results
+                // stream as child messages and don't need the pendingToolCount flush mechanism.
+                if (!parentId) {
+                  pendingToolCount++;
+                }
                 yield {
                   type: "tool_use",
                   tool: block.name ?? "unknown",
                   input: block.input ?? {},
                   toolUseId: block.id as string | undefined,
+                  ...(parentId && { parentToolUseId: parentId }),
                 };
               }
             }
@@ -549,6 +579,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         merged.push(msg);
       }
 
+      // Nest child events under their parent Agent/Task tool_use's children array
+      for (const msg of merged) {
+        if (!msg.events) continue;
+        nestChildEvents(msg.events);
+      }
+
       return merged.filter(
         (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),
       );
@@ -559,9 +595,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 }
 
 /** Parse SDK SessionMessage into ChatMessage with events for tool_use blocks */
-function parseSessionMessage(msg: { uuid: string; type: string; message: unknown }): ChatMessage {
+function parseSessionMessage(msg: { uuid: string; type: string; message: unknown; parent_tool_use_id?: string | null }): ChatMessage {
   const message = msg.message as Record<string, unknown> | undefined;
   const role = msg.type as "user" | "assistant";
+  const parentId = (msg as any).parent_tool_use_id as string | undefined;
 
   // Parse content blocks for both user and assistant messages
   const events: ChatEvent[] = [];
@@ -572,7 +609,7 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
       if (block.type === "text" && typeof block.text === "string") {
         textContent += block.text;
         if (role === "assistant") {
-          events.push({ type: "text", content: block.text });
+          events.push({ type: "text", content: block.text, ...(parentId && { parentToolUseId: parentId }) });
         }
       } else if (block.type === "tool_use") {
         events.push({
@@ -580,6 +617,7 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
           tool: (block.name as string) ?? "unknown",
           input: block.input ?? {},
           toolUseId: block.id as string | undefined,
+          ...(parentId && { parentToolUseId: parentId }),
         });
       } else if (block.type === "tool_result") {
         const output = block.content ?? block.output ?? "";
@@ -588,6 +626,7 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
           output: typeof output === "string" ? output : JSON.stringify(output),
           isError: !!(block as Record<string, unknown>).is_error,
           toolUseId: block.tool_use_id as string | undefined,
+          ...(parentId && { parentToolUseId: parentId }),
         });
       }
     }
@@ -602,6 +641,40 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
     events: events.length > 0 ? events : undefined,
     timestamp: new Date().toISOString(),
   };
+}
+
+/**
+ * Move events with parentToolUseId into their parent Agent/Task tool_use's children array.
+ * Mutates the array in-place: child events are removed from the top level and pushed into parent.children.
+ */
+function nestChildEvents(events: ChatEvent[]): void {
+  // Build map of Agent/Task tool_use events by toolUseId
+  const parentMap = new Map<string, ChatEvent & { type: "tool_use" }>();
+  for (const ev of events) {
+    if (ev.type === "tool_use" && (ev.tool === "Agent" || ev.tool === "Task") && ev.toolUseId) {
+      parentMap.set(ev.toolUseId, ev);
+    }
+  }
+  if (parentMap.size === 0) return;
+
+  // Collect indices of child events to remove
+  const childIndices: number[] = [];
+  for (let i = 0; i < events.length; i++) {
+    const ev = events[i]!;
+    const pid = (ev as any).parentToolUseId as string | undefined;
+    if (!pid) continue;
+    const parent = parentMap.get(pid);
+    if (parent) {
+      if (!parent.children) parent.children = [];
+      parent.children.push(ev);
+      childIndices.push(i);
+    }
+  }
+
+  // Remove children from flat array (reverse order to keep indices valid)
+  for (let i = childIndices.length - 1; i >= 0; i--) {
+    events.splice(childIndices[i]!, 1);
+  }
 }
 
 /** Extract plain text from message payload */
