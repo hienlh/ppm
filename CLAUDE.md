@@ -15,11 +15,28 @@ PPM (Project & Process Manager) — a web-based IDE/project manager with AI chat
 ## Commands
 
 ```bash
-bun dev:server    # Start backend (port from ~/.ppm/config.yaml)
+bun dev:server    # Start backend dev (port 8081, uses ~/.ppm/config.dev.yaml)
 bun dev:web       # Start Vite frontend (port 5173)
 bun test          # Run all tests
 bun test tests/integration/  # Integration tests only
 ```
+
+## Dev Config
+
+Local dev uses a **separate config file** from production:
+
+- **Dev**: `~/.ppm/config.dev.yaml` — port **8081**
+- **Production**: `~/.ppm/config.yaml` — port **8080**
+
+`bun dev:server` automatically passes `-c ~/.ppm/config.dev.yaml`. Create this file on a new machine by copying `ppm.example.yaml` to `~/.ppm/config.dev.yaml` and setting `port: 8081`.
+
+## Release Process
+
+1. Commit feature/fix changes
+2. Update `CHANGELOG.md` with all changes
+3. Bump version in `package.json` — patch for small changes, minor/major for large ones
+4. Commit: `chore: bump version to x.x.x`
+5. Publish: `npm publish --access public`
 
 ## Quick SDK Tool Test
 
