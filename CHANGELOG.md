@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.2] - 2026-03-17
+
+### Added
+- Subagent/tool hierarchy: Agent/Task tool cards show nested child tools (Bash, Read, etc.)
+- Child events streamed with `parentToolUseId` and grouped under parent Agent card
+- Collapsible subagent container with accent border and step counter
+- Follow-up messages sent immediately (cancel + send) instead of queuing until done
+
+### Fixed
+- Tool status indicators (spinner/checkmark) now correctly reflect completion state
+- `pendingToolCount` no longer incremented for subagent child tools
+- Top-level tool_results extracted directly from SDK `user` messages
+- Windows: cloudflared binary download (`.exe` support)
+- Windows: static file serving replaced hono serveStatic with Bun.file() for path compatibility
+
 ## [0.4.1] - 2026-03-17
 
 ### Fixed
