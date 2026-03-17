@@ -1,6 +1,7 @@
 import type { AIProvider } from "./provider.interface.ts";
 import { MockProvider } from "./mock-provider.ts";
 import { ClaudeAgentSdkProvider } from "./claude-agent-sdk.ts";
+import { configService } from "../services/config.service.ts";
 
 export interface ProviderInfo {
   id: string;
@@ -9,13 +10,9 @@ export interface ProviderInfo {
 
 class ProviderRegistry {
   private providers = new Map<string, AIProvider>();
-  private defaultId: string | null = null;
 
   register(provider: AIProvider): void {
     this.providers.set(provider.id, provider);
-    if (!this.defaultId) {
-      this.defaultId = provider.id;
-    }
   }
 
   get(id: string): AIProvider | undefined {
@@ -29,15 +26,19 @@ class ProviderRegistry {
     }));
   }
 
+  /** Get the default provider based on config's default_provider */
   getDefault(): AIProvider {
-    if (!this.defaultId) throw new Error("No providers registered");
-    const provider = this.providers.get(this.defaultId);
-    if (!provider) throw new Error("Default provider not found");
-    return provider;
+    const defaultId = configService.get("ai").default_provider;
+    const provider = this.providers.get(defaultId);
+    if (provider) return provider;
+    // Fallback to "claude" if config value doesn't match any registered provider
+    const fallback = this.providers.get("claude");
+    if (fallback) return fallback;
+    throw new Error(`Default provider "${defaultId}" not found in registry`);
   }
 }
 
-/** Singleton registry — first registered = default */
+/** Singleton registry */
 export const providerRegistry = new ProviderRegistry();
-providerRegistry.register(new ClaudeAgentSdkProvider()); // default — real streaming, multi-turn
-providerRegistry.register(new MockProvider());            // testing only
+providerRegistry.register(new ClaudeAgentSdkProvider());
+providerRegistry.register(new MockProvider()); // testing only

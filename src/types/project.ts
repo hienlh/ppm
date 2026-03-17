@@ -1,6 +1,7 @@
 export interface Project {
   name: string;
   path: string;
+  color?: string;
 }
 
 export interface ProjectInfo extends Project {

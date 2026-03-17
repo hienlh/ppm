@@ -2,11 +2,9 @@ import { useEffect, useRef } from "react";
 import {
   X,
   Plus,
-  FolderOpen,
   Terminal,
   MessageSquare,
   GitBranch,
-  GitCommitHorizontal,
   FileDiff,
   Settings,
   FileCode,
@@ -25,12 +23,10 @@ import { useTabDrag } from "@/hooks/use-tab-drag";
 import { DraggableTab } from "./draggable-tab";
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
-  projects: FolderOpen,
   terminal: Terminal,
   chat: MessageSquare,
   editor: FileCode,
   "git-graph": GitBranch,
-  "git-status": GitCommitHorizontal,
   "git-diff": FileDiff,
   settings: Settings,
 };
@@ -39,7 +35,6 @@ const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
   { type: "chat", label: "AI Chat" },
   { type: "git-graph", label: "Git Graph" },
-  { type: "git-status", label: "Git Status" },
   { type: "settings", label: "Settings" },
 ];
 
@@ -71,7 +66,7 @@ export function TabBar({ panelId }: TabBarProps) {
   }, [tabs.length, activeTabId]);
 
   function handleNewTab(type: TabType) {
-    const needsProject = type === "git-graph" || type === "git-status" || type === "git-diff" || type === "terminal" || type === "chat";
+    const needsProject = type === "git-graph" || type === "git-diff" || type === "terminal" || type === "chat";
     const metadata = needsProject ? { projectName: activeProject?.name } : undefined;
 
     usePanelStore.getState().openTab(

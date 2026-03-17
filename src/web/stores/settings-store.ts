@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
+export type SidebarActiveTab = "explorer" | "git" | "history";
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -10,12 +11,14 @@ interface SettingsState {
   sidebarCollapsed: boolean;
   gitStatusViewMode: GitStatusViewMode;
   wordWrap: boolean;
+  sidebarActiveTab: SidebarActiveTab;
   deviceName: string | null;
   version: string | null;
   setTheme: (theme: Theme) => void;
   toggleSidebar: () => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleWordWrap: () => void;
+  setSidebarActiveTab: (tab: SidebarActiveTab) => void;
   fetchServerInfo: () => Promise<void>;
 }
 
@@ -24,6 +27,7 @@ interface PersistedSettings {
   sidebarCollapsed?: boolean;
   gitStatusViewMode?: GitStatusViewMode;
   wordWrap?: boolean;
+  sidebarActiveTab?: SidebarActiveTab;
 }
 
 function loadPersistedSettings(): PersistedSettings {
@@ -70,6 +74,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
   wordWrap: _initial.wordWrap ?? false,
+  sidebarActiveTab: (_initial.sidebarActiveTab === "git" || _initial.sidebarActiveTab === "history") ? _initial.sidebarActiveTab : "explorer",
   deviceName: null,
   version: null,
 
@@ -77,6 +82,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     persistSettings({ theme });
     applyThemeClass(theme);
     set({ theme });
+    // Save to server (fire-and-forget)
+    fetch("/api/settings/theme", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ theme }),
+    }).catch(() => {});
   },
 
   toggleSidebar: () => {
@@ -96,16 +107,32 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ wordWrap: next });
   },
 
+  setSidebarActiveTab: (tab) => {
+    persistSettings({ sidebarActiveTab: tab });
+    set({ sidebarActiveTab: tab });
+  },
+
   fetchServerInfo: async () => {
     try {
-      const res = await fetch("/api/info");
-      const json = await res.json();
-      if (json.ok) {
-        const { device_name, version } = json.data;
+      const [infoRes, themeRes] = await Promise.all([
+        fetch("/api/info"),
+        fetch("/api/settings/theme"),
+      ]);
+      const infoJson = await infoRes.json();
+      if (infoJson.ok) {
+        const { device_name, version } = infoJson.data;
         set({ deviceName: device_name || null, version: version || null });
         if (device_name) {
           document.title = `PPM — ${device_name}`;
         }
+      }
+      const themeJson = await themeRes.json();
+      if (themeJson.ok && themeJson.data?.theme) {
+        const serverTheme = themeJson.data.theme as Theme;
+        // Server theme takes precedence — sync to local
+        persistSettings({ theme: serverTheme });
+        applyThemeClass(serverTheme);
+        set({ theme: serverTheme });
       }
     } catch {}
   },

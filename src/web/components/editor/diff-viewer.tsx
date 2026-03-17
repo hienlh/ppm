@@ -1,43 +1,22 @@
-import { useEffect, useState, useMemo, useRef } from "react";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { EditorView, lineNumbers } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
-import { MergeView } from "@codemirror/merge";
-import { javascript } from "@codemirror/lang-javascript";
-import { python } from "@codemirror/lang-python";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import type { Extension } from "@codemirror/state";
+import { useEffect, useState, useMemo } from "react";
+import { DiffEditor } from "@monaco-editor/react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { Loader2, FileCode, PanelLeftOpen, PanelRightOpen, Columns2, WrapText } from "lucide-react";
 
-function getLanguageExtension(filename: string): Extension | null {
+function getMonacoLanguage(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
-  switch (ext) {
-    case "js":
-    case "jsx":
-      return javascript({ jsx: true });
-    case "ts":
-    case "tsx":
-      return javascript({ jsx: true, typescript: true });
-    case "py":
-      return python();
-    case "html":
-      return html();
-    case "css":
-    case "scss":
-      return css();
-    case "json":
-      return json();
-    case "md":
-    case "mdx":
-      return markdown();
-    default:
-      return null;
-  }
+  const map: Record<string, string> = {
+    js: "javascript", jsx: "javascript",
+    ts: "typescript", tsx: "typescript",
+    py: "python", html: "html",
+    css: "css", scss: "scss",
+    json: "json", md: "markdown", mdx: "markdown",
+    yaml: "yaml", yml: "yaml",
+    sh: "shell", bash: "shell",
+  };
+  return map[ext] ?? "plaintext";
 }
 
 interface DiffViewerProps {
@@ -60,25 +39,21 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const [fileContents, setFileContents] = useState<{ original: string; modified: string } | null>(null);
   const [loading, setLoading] = useState(!isInline);
   const [error, setError] = useState<string | null>(null);
-  /** "both" | "left" | "right" — controls which diff panel is expanded */
   const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
   const { wordWrap, toggleWordWrap } = useSettingsStore();
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mergeViewRef = useRef<MergeView | null>(null);
+  const monacoTheme = useMonacoTheme();
 
   useEffect(() => {
-    if (isInline) return; // No fetch needed for inline diffs
+    if (isInline) return;
     if (!projectName) return;
     setLoading(true);
     setError(null);
 
     if (file1 && file2) {
-      const params = new URLSearchParams();
-      params.set("file1", file1);
-      params.set("file2", file2);
+      const params = new URLSearchParams({ file1, file2 });
       api
         .get<{ original: string; modified: string }>(
-          `${projectUrl(projectName)}/files/compare?${params.toString()}`,
+          `${projectUrl(projectName)}/files/compare?${params}`,
         )
         .then((data) => { setFileContents(data); setLoading(false); })
         .catch((err) => { setError(err instanceof Error ? err.message : "Failed to compare files"); setLoading(false); });
@@ -87,15 +62,14 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
 
     let url: string;
     if (filePath) {
-      const params = new URLSearchParams();
-      params.set("file", filePath);
+      const params = new URLSearchParams({ file: filePath });
       if (ref1) params.set("ref", ref1);
-      url = `${projectUrl(projectName)}/git/file-diff?${params.toString()}`;
+      url = `${projectUrl(projectName)}/git/file-diff?${params}`;
     } else if (ref1 || ref2) {
       const params = new URLSearchParams();
       if (ref1) params.set("ref1", ref1);
       if (ref2) params.set("ref2", ref2);
-      url = `${projectUrl(projectName)}/git/diff?${params.toString()}`;
+      url = `${projectUrl(projectName)}/git/diff?${params}`;
     } else {
       url = `${projectUrl(projectName)}/git/diff`;
     }
@@ -104,7 +78,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       .get<{ diff: string }>(url)
       .then((data) => { setDiffText(data.diff); setLoading(false); })
       .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load diff"); setLoading(false); });
-  }, [filePath, projectName, ref1, ref2, file1, file2]);
+  }, [filePath, projectName, ref1, ref2, file1, file2, isInline]);
 
   const { original, modified } = useMemo(() => {
     if (isInline) return { original: inlineOriginal ?? "", modified: inlineModified ?? "" };
@@ -113,104 +87,10 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     return parseDiff(diffText);
   }, [diffText, isInline, inlineOriginal, inlineModified, isFileCompare, fileContents]);
 
-  const langExts = useMemo(() => {
+  const language = useMemo(() => {
     const langFile = filePath ?? file2 ?? file1;
-    if (!langFile) return [];
-    const ext = getLanguageExtension(langFile);
-    return ext ? [ext] : [];
+    return langFile ? getMonacoLanguage(langFile) : "plaintext";
   }, [filePath, file1, file2]);
-
-  // Create MergeView when content is ready
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || loading || error) return;
-    if (!original && !modified) return;
-
-    // Clean up previous
-    if (mergeViewRef.current) {
-      mergeViewRef.current.destroy();
-      mergeViewRef.current = null;
-    }
-
-    const isMobile = window.innerWidth < 768;
-    const sharedExts: Extension[] = [
-      ...langExts,
-      oneDark,
-      EditorView.editable.of(false),
-      EditorState.readOnly.of(true),
-      lineNumbers(),
-      ...(wordWrap ? [EditorView.lineWrapping] : []),
-      EditorView.theme({
-        "&": { fontSize: "13px", fontFamily: "var(--font-mono)" },
-        // Character-level highlight: bold background, NO underline
-        "& .cm-changedText": {
-          textDecoration: "none !important",
-          borderBottom: "none !important",
-          textDecorationLine: "none !important",
-          backgroundColor: "rgba(16, 185, 129, 0.4) !important",
-          borderRadius: "2px",
-        },
-        "& .cm-deletedChunk .cm-changedText": {
-          backgroundColor: "rgba(239, 68, 68, 0.4) !important",
-        },
-      }),
-    ];
-
-    const mv = new MergeView({
-      parent: container,
-      a: { doc: original, extensions: sharedExts },
-      b: { doc: modified, extensions: sharedExts },
-      orientation: "a-b",
-      revertControls: undefined,
-      highlightChanges: true, // Highlight changed characters within a line
-      gutter: true,
-    });
-
-    mergeViewRef.current = mv;
-
-    // Sync horizontal scroll between both editors
-    const scrollerA = mv.a.dom.querySelector(".cm-scroller") as HTMLElement | null;
-    const scrollerB = mv.b.dom.querySelector(".cm-scroller") as HTMLElement | null;
-    let syncing = false;
-    const syncScroll = (source: HTMLElement, target: HTMLElement) => {
-      if (syncing) return;
-      syncing = true;
-      target.scrollLeft = source.scrollLeft;
-      syncing = false;
-    };
-    const onScrollA = () => scrollerA && scrollerB && syncScroll(scrollerA, scrollerB);
-    const onScrollB = () => scrollerA && scrollerB && syncScroll(scrollerB, scrollerA);
-    scrollerA?.addEventListener("scroll", onScrollA);
-    scrollerB?.addEventListener("scroll", onScrollB);
-
-    return () => {
-      scrollerA?.removeEventListener("scroll", onScrollA);
-      scrollerB?.removeEventListener("scroll", onScrollB);
-      mv.destroy();
-      mergeViewRef.current = null;
-    };
-  }, [original, modified, langExts, loading, error, wordWrap]);
-
-  // Apply expand mode by hiding left/right editor panels via CSS
-  useEffect(() => {
-    const mv = mergeViewRef.current;
-    if (!mv) return;
-    // MergeView exposes .a (left) and .b (right) EditorView instances
-    const leftPanel = mv.a.dom.closest(".cm-mergeViewEditor") as HTMLElement | null ?? mv.a.dom.parentElement;
-    const rightPanel = mv.b.dom.closest(".cm-mergeViewEditor") as HTMLElement | null ?? mv.b.dom.parentElement;
-    const container = containerRef.current;
-    const gutter = container?.querySelector<HTMLElement>(".cm-mergeViewGutter");
-
-    if (leftPanel) {
-      leftPanel.style.display = expandMode === "right" ? "none" : "";
-      leftPanel.style.flex = expandMode === "left" ? "1" : "";
-    }
-    if (rightPanel) {
-      rightPanel.style.display = expandMode === "left" ? "none" : "";
-      rightPanel.style.flex = expandMode === "right" ? "1" : "";
-    }
-    if (gutter) gutter.style.display = expandMode !== "both" ? "none" : "";
-  }, [expandMode, original, modified]);
 
   if (!projectName && !isInline) {
     return (
@@ -231,9 +111,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full text-destructive text-sm">
-        {error}
-      </div>
+      <div className="flex items-center justify-center h-full text-destructive text-sm">{error}</div>
     );
   }
 
@@ -247,26 +125,26 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     );
   }
 
+  // expandMode left/right → inline diff (Monaco has no single-side mode)
+  const renderSideBySide = expandMode === "both";
+
   const expandToggle = (
     <div className="flex items-center gap-0.5 shrink-0">
-      <button
-        type="button"
+      <button type="button"
         onClick={() => setExpandMode(expandMode === "left" ? "both" : "left")}
         className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "left" ? "bg-muted text-foreground" : ""}`}
         title="Expand original"
       >
         <PanelLeftOpen className="size-3.5" />
       </button>
-      <button
-        type="button"
+      <button type="button"
         onClick={() => setExpandMode("both")}
         className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "both" ? "bg-muted text-foreground" : ""}`}
         title="Side by side"
       >
         <Columns2 className="size-3.5" />
       </button>
-      <button
-        type="button"
+      <button type="button"
         onClick={() => setExpandMode(expandMode === "right" ? "both" : "right")}
         className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "right" ? "bg-muted text-foreground" : ""}`}
         title="Expand modified"
@@ -274,10 +152,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
         <PanelRightOpen className="size-3.5" />
       </button>
       <div className="w-px h-3.5 bg-border mx-0.5 shrink-0" />
-      <button
-        type="button"
-        onClick={toggleWordWrap}
-        title="Toggle word wrap"
+      <button type="button" onClick={toggleWordWrap} title="Toggle word wrap"
         className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
       >
         <WrapText className="size-3.5" />
@@ -300,18 +175,31 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
             )}
           </span>
         )}
-        {/* Desktop: expand toggle in header */}
         <div className="hidden md:block">{expandToggle}</div>
       </div>
 
-      {/* MergeView container — side-by-side, pinch-zoom on mobile */}
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-auto touch-pinch-zoom [&_.cm-mergeView]:h-full"
-        style={{ WebkitOverflowScrolling: "touch" }}
-      />
+      {/* Monaco DiffEditor */}
+      <div className="flex-1 overflow-hidden">
+        <DiffEditor
+          height="100%"
+          language={language}
+          original={original}
+          modified={modified}
+          theme={monacoTheme}
+          options={{
+            fontSize: 13,
+            fontFamily: "Menlo, Monaco, Consolas, monospace",
+            wordWrap: wordWrap ? "on" : "off",
+            renderSideBySide,
+            readOnly: true,
+            automaticLayout: true,
+            scrollBeyondLastLine: false,
+          }}
+          loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
+        />
+      </div>
 
-      {/* Mobile: expand toggle at bottom */}
+      {/* Mobile expand toggle */}
       <div className="md:hidden flex justify-center border-t py-1 bg-background shrink-0">
         {expandToggle}
       </div>
@@ -327,16 +215,11 @@ function parseDiff(diff: string): { original: string; modified: string } {
 
   for (const line of lines) {
     if (
-      line.startsWith("diff --git") ||
-      line.startsWith("diff --no-index") ||
-      line.startsWith("index ") ||
-      line.startsWith("new file") ||
-      line.startsWith("deleted file") ||
-      line.startsWith("old mode") ||
-      line.startsWith("new mode") ||
-      line.startsWith("---") ||
-      line.startsWith("+++") ||
-      line.startsWith("Binary files") ||
+      line.startsWith("diff --git") || line.startsWith("diff --no-index") ||
+      line.startsWith("index ") || line.startsWith("new file") ||
+      line.startsWith("deleted file") || line.startsWith("old mode") ||
+      line.startsWith("new mode") || line.startsWith("---") ||
+      line.startsWith("+++") || line.startsWith("Binary files") ||
       line.startsWith("\\ No newline")
     ) continue;
 
@@ -347,7 +230,7 @@ function parseDiff(diff: string): { original: string; modified: string } {
       originalLines.push(line.slice(1));
     } else if (line.startsWith("+")) {
       modifiedLines.push(line.slice(1));
-    } else if (line.startsWith(" ") || line === "") {
+    } else {
       const content = line.startsWith(" ") ? line.slice(1) : line;
       originalLines.push(content);
       modifiedLines.push(content);

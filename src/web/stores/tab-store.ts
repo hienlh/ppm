@@ -2,12 +2,10 @@ import { create } from "zustand";
 import { usePanelStore } from "./panel-store";
 
 export type TabType =
-  | "projects"
   | "terminal"
   | "chat"
   | "editor"
   | "git-graph"
-  | "git-status"
   | "git-diff"
   | "settings";
 

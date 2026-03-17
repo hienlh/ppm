@@ -1,21 +1,32 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  FolderOpen, Terminal, MessageSquare, GitBranch, GitCommitHorizontal,
-  FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical,
+  Terminal, MessageSquare, GitBranch,
+  FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
+import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
+import { resolveProjectColor } from "@/lib/project-palette";
+import { getProjectInitials } from "@/lib/project-avatar";
 import type { TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 
+const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
+  { type: "terminal", label: "Terminal" },
+  { type: "chat", label: "AI Chat" },
+  { type: "git-graph", label: "Git Graph" },
+  { type: "settings", label: "Settings" },
+];
+const NEW_TAB_LABELS: Partial<Record<TabType, string>> = Object.fromEntries(NEW_TAB_OPTIONS.map((o) => [o.type, o.label]));
+
 const TAB_ICONS: Record<TabType, React.ElementType> = {
-  projects: FolderOpen, terminal: Terminal, chat: MessageSquare, editor: FileCode,
-  "git-graph": GitBranch, "git-status": GitCommitHorizontal, "git-diff": FileDiff, settings: Settings,
+  terminal: Terminal, chat: MessageSquare, editor: FileCode,
+  "git-graph": GitBranch, "git-diff": FileDiff, settings: Settings,
 };
 
-interface MobileNavProps { onMenuPress: () => void; }
+interface MobileNavProps { onMenuPress: () => void; onProjectsPress: () => void; }
 
-export function MobileNav({ onMenuPress }: MobileNavProps) {
+export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
   const panel = usePanelStore((s) => s.panels[s.focusedPanelId]);
   const panelCount = usePanelStore((s) => Object.keys(s.panels).length);
@@ -26,6 +37,7 @@ export function MobileNav({ onMenuPress }: MobileNavProps) {
   const prevTabCount = useRef(tabs.length);
 
   const [menuTabId, setMenuTabId] = useState<string | null>(null);
+  const [newTabSheetOpen, setNewTabSheetOpen] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -66,6 +78,29 @@ export function MobileNav({ onMenuPress }: MobileNavProps) {
   const menuTab = menuTabId ? tabs.find((t) => t.id === menuTabId) : null;
   const menuTabIdx = menuTabId ? tabs.findIndex((t) => t.id === menuTabId) : -1;
 
+  const { activeProject: activeProjectForTab } = useProjectStore.getState();
+  function handleNewTab(type: TabType) {
+    const needsProject = type === "git-graph" || type === "git-diff" || type === "terminal" || type === "chat";
+    const metadata = needsProject ? { projectName: activeProjectForTab?.name } : undefined;
+    usePanelStore.getState().openTab(
+      { type, title: NEW_TAB_LABELS[type] ?? type, metadata, projectId: activeProjectForTab?.name ?? null, closable: true },
+      focusedPanelId,
+    );
+    setNewTabSheetOpen(false);
+  }
+
+  // Active project avatar for the Projects button
+  const { activeProject, projects, customOrder } = useProjectStore();
+  const ordered = resolveOrder(projects, customOrder ?? null);
+  const allNames = ordered.map((p) => p.name);
+  const activeIdx = ordered.findIndex((p) => p.name === activeProject?.name);
+  const activeColor = activeProject
+    ? resolveProjectColor(activeProject.color, activeIdx >= 0 ? activeIdx : 0)
+    : "#4f86c6";
+  const activeInitials = activeProject
+    ? getProjectInitials(activeProject.name, allNames)
+    : null;
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-background border-t border-border z-40 select-none">
       <div className="flex items-center h-12">
@@ -103,7 +138,55 @@ export function MobileNav({ onMenuPress }: MobileNavProps) {
             );
           })}
         </div>
+
+        {/* Add tab button */}
+        <button
+          onClick={() => setNewTabSheetOpen(true)}
+          className="flex items-center justify-center size-12 shrink-0 border-t-2 border-transparent text-text-secondary"
+        >
+          <Plus className="size-4" />
+        </button>
+
+        {/* Projects button (rightmost) */}
+        <button
+          onClick={onProjectsPress}
+          className="flex items-center justify-center size-12 shrink-0 text-text-secondary border-l border-border"
+          title="Switch project"
+        >
+          {activeInitials ? (
+            <div
+              className="size-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+              style={{ background: activeColor }}
+            >
+              {activeInitials}
+            </div>
+          ) : (
+            <Layers className="size-5" />
+          )}
+        </button>
       </div>
+
+      {/* New tab action sheet */}
+      {newTabSheetOpen && (
+        <>
+          <div className="fixed inset-0 z-50" onClick={() => setNewTabSheetOpen(false)} />
+          <div className="fixed bottom-14 left-2 right-2 z-50 bg-surface border border-border rounded-lg shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-150">
+            <div className="px-3 py-2 text-xs text-text-secondary border-b border-border">New Tab</div>
+            {NEW_TAB_OPTIONS.map((opt) => {
+              const Icon = TAB_ICONS[opt.type];
+              return (
+                <button
+                  key={opt.type}
+                  onClick={() => handleNewTab(opt.type)}
+                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated"
+                >
+                  <Icon className="size-4" /> {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* Long-press action sheet */}
       {menuTab && (

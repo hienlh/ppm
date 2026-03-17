@@ -159,7 +159,7 @@ export const chatWebSocket = {
   open(ws: ChatWsSocket) {
     const { sessionId, projectName } = ws.data;
     const session = chatService.getSession(sessionId);
-    const providerId = session?.providerId ?? "claude-sdk";
+    const providerId = session?.providerId ?? providerRegistry.getDefault().id;
 
     let projectPath: string | undefined;
     if (projectName) {
@@ -238,7 +238,7 @@ export const chatWebSocket = {
     }
 
     const entry = activeSessions.get(sessionId);
-    const providerId = entry?.providerId ?? "mock";
+    const providerId = entry?.providerId ?? providerRegistry.getDefault().id;
 
     if (parsed.type === "message") {
       // Resume session in provider first

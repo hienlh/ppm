@@ -13,6 +13,7 @@ class ProjectService {
     return projects.map((p) => ({
       name: p.name,
       path: p.path,
+      ...(p.color ? { color: p.color } : {}),
     }));
   }
 

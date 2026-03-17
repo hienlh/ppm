@@ -1,10 +1,10 @@
 # PPM Project Roadmap & Status
 
-**Last Updated:** March 15, 2026
+**Last Updated:** March 17, 2026
 
 ## Current Version: v2.0 (In Progress)
 
-### Overall Progress: 85%
+### Overall Progress: 90%
 
 Multi-project, project-scoped API refactor with improved UX.
 
@@ -49,13 +49,21 @@ Multi-project, project-scoped API refactor with improved UX.
 - URL sync for project/tab/file state
 - Tab metadata persistence in localStorage
 
+**Latest Work (260317):**
+- Project Switcher Bar: 52px left sidebar with project avatars, drag-to-reorder
+- Project color customization (12-color palette or custom hex)
+- Mobile ProjectBottomSheet for project selection
+- Keep-alive workspace switching (hide/show instead of unmount, preserves xterm DOM)
+- Sidebar tab system: Explorer / Git / History tabs (removed projects/git-status tab types)
+- Smart project initials with collision detection (1-char, 2-char, or index fallback)
+
 ---
 
 ### Phase 4: File Explorer & Editor ✅ Complete
 - FileTree component with directory expansion
-- CodeMirror 6 integration with syntax highlighting
+- Monaco Editor integration with syntax highlighting
 - File read/write operations
-- Diff viewer (Diff2HTML)
+- Monaco diff viewer for git diffs
 
 **Status:** Done
 
@@ -63,6 +71,11 @@ Multi-project, project-scoped API refactor with improved UX.
 - Chat file attachments (drag-drop, paste)
 - File viewer for images/PDFs/markdown
 - Better error messages
+
+**Latest Work (260317):**
+- Migrated CodeMirror → Monaco Editor (@monaco-editor/react) for better syntax highlighting and diff viewer
+- Alt+Z keyboard shortcut for word wrap toggle in editor and diff viewer
+- Improved code completion and IntelliSense
 
 ---
 
@@ -206,6 +219,11 @@ Multi-project, project-scoped API refactor with improved UX.
 - [x] File attachments in chat
 - [x] Mobile responsive improvements
 - [x] URL sync for bookmarking/sharing
+- [x] Project Switcher Bar (52px sidebar, avatars, colors, reordering) (260317)
+- [x] Keep-alive workspace switching (preserve xterm DOM) (260317)
+- [x] Sidebar tab system (Explorer/Git/History) (260317)
+- [x] Monaco Editor migration (CodeMirror → Monaco) (260317)
+- [x] Project color customization (12-color palette + custom hex) (260317)
 - [ ] Complete test coverage (60% complete)
 - [ ] Documentation (in progress)
 - [ ] Security audit (planned)

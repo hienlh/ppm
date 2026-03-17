@@ -168,15 +168,8 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           projectFocused: newProjectFocused,
         });
       } else {
-        // Create default layout for new project
+        // Create empty layout — EmptyPanel will show quick-open buttons
         const p = createPanel();
-        const defaultTab: Tab = {
-          id: generateTabId(), type: "chat", title: "AI Chat", projectId: projectName, closable: true,
-          metadata: { projectName },
-        };
-        p.tabs = [defaultTab];
-        p.activeTabId = defaultTab.id;
-        p.tabHistory = [defaultTab.id];
         const newGrid = [[p.id]];
 
         // Merge into flat panels map

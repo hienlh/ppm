@@ -92,10 +92,10 @@
   --color-text-subtle: #94a3b8;
 }
 
-/* Scrollbar styling */
+/* Scrollbar styling — thin & unobtrusive */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -104,11 +104,17 @@
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: #525c6a;
+}
+
+/* Firefox thin scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
 }
 
 /* Disable global focus ring — components handle their own focus styles */

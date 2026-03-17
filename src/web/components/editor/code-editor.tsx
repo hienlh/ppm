@@ -1,54 +1,32 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import CodeMirror from "@uiw/react-codemirror";
-import { oneDark } from "@codemirror/theme-one-dark";
-import { javascript } from "@codemirror/lang-javascript";
-import { python } from "@codemirror/lang-python";
-import { html } from "@codemirror/lang-html";
-import { css } from "@codemirror/lang-css";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
+import Editor, { type OnMount } from "@monaco-editor/react";
+import type * as MonacoType from "monaco-editor";
 import { marked } from "marked";
-import type { Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { Loader2, FileWarning, ExternalLink, Code, Eye, WrapText } from "lucide-react";
 
 /** Image extensions renderable inline */
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
 
-/** PDF extension */
-const PDF_EXT = "pdf";
-
 function getFileExt(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";
 }
 
-function getLanguageExtension(filename: string): Extension | null {
+function getMonacoLanguage(filename: string): string {
   const ext = getFileExt(filename);
-  switch (ext) {
-    case "js":
-    case "jsx":
-      return javascript({ jsx: true });
-    case "ts":
-    case "tsx":
-      return javascript({ jsx: true, typescript: true });
-    case "py":
-      return python();
-    case "html":
-      return html();
-    case "css":
-    case "scss":
-      return css();
-    case "json":
-      return json();
-    case "md":
-    case "mdx":
-      return markdown();
-    default:
-      return null;
-  }
+  const map: Record<string, string> = {
+    js: "javascript", jsx: "javascript",
+    ts: "typescript", tsx: "typescript",
+    py: "python", html: "html",
+    css: "css", scss: "scss",
+    json: "json", md: "markdown", mdx: "markdown",
+    yaml: "yaml", yml: "yaml",
+    sh: "shell", bash: "shell",
+  };
+  return map[ext] ?? "plaintext";
 }
 
 interface CodeEditorProps {
@@ -66,46 +44,22 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const [unsaved, setUnsaved] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestContentRef = useRef<string>("");
+  const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   const { tabs, updateTab } = useTabStore();
-
   const { wordWrap, toggleWordWrap } = useSettingsStore();
-  // Ref so the memoized domEventHandlers always calls the latest toggleWordWrap
-  const toggleWordWrapRef = useRef(toggleWordWrap);
-  useEffect(() => { toggleWordWrapRef.current = toggleWordWrap; }, [toggleWordWrap]);
-
-  // TODO: Alt+Z shortcut not working on macOS — Option+Z inserts "Ω" before handler fires.
-  // Needs investigation: try Prec.highest(keymap.of(...)) or window capture listener.
-  const wrapKeyHandler = useMemo(() => EditorView.domEventHandlers({
-    keydown(e) {
-      if (e.altKey && (e.key === "z" || e.key === "Z")) {
-        e.preventDefault();
-        toggleWordWrapRef.current();
-        return true;
-      }
-      return false;
-    },
-    beforeinput(e) {
-      if (e.data === "Ω") { e.preventDefault(); return true; }
-      return false;
-    },
-  }), []);
+  const monacoTheme = useMonacoTheme();
 
   const ownTab = tabs.find((t) => t.id === tabId);
   const ext = filePath ? getFileExt(filePath) : "";
   const isImage = IMAGE_EXTS.has(ext);
-  const isPdf = ext === PDF_EXT;
+  const isPdf = ext === "pdf";
   const isMarkdown = ext === "md" || ext === "mdx";
-  /** "edit" | "preview" for markdown files — default to preview */
   const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
 
   // Load file content
   useEffect(() => {
     if (!filePath || !projectName) return;
-    // Skip loading for images and PDFs — they use raw endpoint
-    if (isImage || isPdf) {
-      setLoading(false);
-      return;
-    }
+    if (isImage || isPdf) { setLoading(false); return; }
 
     setLoading(true);
     setError(null);
@@ -125,9 +79,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
         setLoading(false);
       });
 
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    };
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [filePath, projectName, isImage, isPdf]);
 
   // Update tab title unsaved indicator
@@ -135,38 +87,37 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     if (!ownTab) return;
     const baseName = filePath?.split("/").pop() ?? "Untitled";
     const newTitle = unsaved ? `${baseName} \u25CF` : baseName;
-    if (ownTab.title !== newTitle) {
-      updateTab(ownTab.id, { title: newTitle });
-    }
+    if (ownTab.title !== newTitle) updateTab(ownTab.id, { title: newTitle });
   }, [unsaved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveFile = useCallback(
     async (text: string) => {
       if (!filePath || !projectName) return;
       try {
-        await api.put(`${projectUrl(projectName)}/files/write`, {
-          path: filePath,
-          content: text,
-        });
+        await api.put(`${projectUrl(projectName)}/files/write`, { path: filePath, content: text });
         setUnsaved(false);
-      } catch {
-        // Silent save failure — user sees unsaved indicator persists
-      }
+      } catch { /* Silent — unsaved indicator persists */ }
     },
     [filePath, projectName],
   );
 
-  function handleChange(value: string) {
-    setContent(value);
-    latestContentRef.current = value;
+  function handleChange(value: string | undefined) {
+    const val = value ?? "";
+    setContent(val);
+    latestContentRef.current = val;
     setUnsaved(true);
-
-    // Debounced auto-save (1s)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      saveFile(latestContentRef.current);
-    }, 1000);
+    saveTimerRef.current = setTimeout(() => saveFile(latestContentRef.current), 1000);
   }
+
+  const handleEditorMount: OnMount = useCallback((editor, monaco) => {
+    editorRef.current = editor;
+    // Alt+Z → toggle word wrap
+    editor.addCommand(
+      monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
+      () => useSettingsStore.getState().toggleWordWrap(),
+    );
+  }, []);
 
   if (!filePath || !projectName) {
     return (
@@ -187,23 +138,13 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-full text-error text-sm">
-        {error}
-      </div>
+      <div className="flex items-center justify-center h-full text-error text-sm">{error}</div>
     );
   }
 
-  // --- Image preview ---
-  if (isImage) {
-    return <ImagePreview filePath={filePath} projectName={projectName} />;
-  }
+  if (isImage) return <ImagePreview filePath={filePath} projectName={projectName} />;
+  if (isPdf) return <PdfPreview filePath={filePath} projectName={projectName} />;
 
-  // --- PDF viewer ---
-  if (isPdf) {
-    return <PdfPreview filePath={filePath} projectName={projectName} />;
-  }
-
-  // --- Binary file (base64 encoding) — cannot edit ---
   if (encoding === "base64") {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
@@ -214,46 +155,24 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     );
   }
 
-  // --- Text editor ---
-  const extensions: Extension[] = [];
-  const langExt = getLanguageExtension(filePath);
-  if (langExt) extensions.push(langExt);
-  if (wordWrap) extensions.push(EditorView.lineWrapping);
-  extensions.push(wrapKeyHandler);
-
   const mdModeButtons = isMarkdown ? (
     <>
-      <button
-        type="button"
-        onClick={() => setMdMode("edit")}
-        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-          mdMode === "edit" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-        }`}
+      <button type="button" onClick={() => setMdMode("edit")}
+        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${mdMode === "edit" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
       >
-        <Code className="size-3" />
-        Edit
+        <Code className="size-3" /> Edit
       </button>
-      <button
-        type="button"
-        onClick={() => setMdMode("preview")}
-        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-          mdMode === "preview" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-        }`}
+      <button type="button" onClick={() => setMdMode("preview")}
+        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${mdMode === "preview" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
       >
-        <Eye className="size-3" />
-        Preview
+        <Eye className="size-3" /> Preview
       </button>
     </>
   ) : null;
 
   const wrapBtn = (
-    <button
-      type="button"
-      onClick={toggleWordWrap}
-      title="Toggle word wrap (Alt+Z)"
-      className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
-        wordWrap ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
-      }`}
+    <button type="button" onClick={toggleWordWrap} title="Toggle word wrap (Alt+Z)"
+      className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${wordWrap ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
     >
       <WrapText className="size-3" />
       <span className="hidden sm:inline">Wrap</span>
@@ -262,39 +181,41 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
-      {/* Desktop toolbar at top */}
+      {/* Desktop toolbar */}
       <div className="hidden md:flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-background">
         {mdModeButtons}
         <div className="flex-1" />
         {wrapBtn}
       </div>
 
-      {/* Markdown preview mode */}
       {isMarkdown && mdMode === "preview" ? (
         <MarkdownPreview content={content ?? ""} />
       ) : (
         <div className="flex-1 overflow-hidden">
-          <CodeMirror
+          <Editor
+            height="100%"
+            language={getMonacoLanguage(filePath)}
             value={content ?? ""}
             onChange={handleChange}
-            extensions={extensions}
-            theme={oneDark}
-            height="100%"
-            style={{ height: "100%", fontSize: "13px", fontFamily: "var(--font-mono)" }}
-            basicSetup={{
-              lineNumbers: true,
-              foldGutter: true,
-              autocompletion: true,
-              bracketMatching: true,
-              closeBrackets: true,
-              highlightActiveLine: true,
-              indentOnInput: true,
+            onMount={handleEditorMount}
+            theme={monacoTheme}
+            options={{
+              fontSize: 13,
+              fontFamily: "Menlo, Monaco, Consolas, monospace",
+              wordWrap: wordWrap ? "on" : "off",
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              automaticLayout: true,
+              lineNumbers: "on",
+              folding: true,
+              bracketPairColorization: { enabled: true },
             }}
+            loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
           />
         </div>
       )}
 
-      {/* Mobile toolbar at bottom */}
+      {/* Mobile toolbar */}
       <div className="md:hidden flex items-center gap-1 px-2 py-1 border-t shrink-0 bg-background">
         {mdModeButtons}
         <div className="flex-1" />
@@ -304,14 +225,10 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   );
 }
 
-/** Rendered markdown preview using marked */
 function MarkdownPreview({ content }: { content: string }) {
   const html = useMemo(() => {
-    try {
-      return marked.parse(content, { gfm: true, breaks: true }) as string;
-    } catch {
-      return content;
-    }
+    try { return marked.parse(content, { gfm: true, breaks: true }) as string; }
+    catch { return content; }
   }, [content]);
 
   return (
@@ -322,7 +239,6 @@ function MarkdownPreview({ content }: { content: string }) {
   );
 }
 
-/** Inline image preview with auth */
 function ImagePreview({ filePath, projectName }: { filePath: string; projectName: string }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -332,15 +248,8 @@ function ImagePreview({ filePath, projectName }: { filePath: string; projectName
     const url = `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`;
     const token = getAuthToken();
     fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed");
-        return r.blob();
-      })
-      .then((blob) => {
-        const objUrl = URL.createObjectURL(blob);
-        revoke = objUrl;
-        setBlobUrl(objUrl);
-      })
+      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.blob(); })
+      .then((blob) => { const u = URL.createObjectURL(blob); revoke = u; setBlobUrl(u); })
       .catch(() => setError(true));
     return () => { if (revoke) URL.revokeObjectURL(revoke); };
   }, [filePath, projectName]);
@@ -353,15 +262,9 @@ function ImagePreview({ filePath, projectName }: { filePath: string; projectName
       </div>
     );
   }
-
   if (!blobUrl) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="size-5 animate-spin text-text-subtle" />
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
   }
-
   return (
     <div className="flex items-center justify-center h-full p-4 bg-surface overflow-auto">
       <img src={blobUrl} alt={filePath} className="max-w-full max-h-full object-contain" />
@@ -369,7 +272,6 @@ function ImagePreview({ filePath, projectName }: { filePath: string; projectName
   );
 }
 
-/** PDF preview — fetches with auth, opens blob in iframe or new tab */
 function PdfPreview({ filePath, projectName }: { filePath: string; projectName: string }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -379,22 +281,16 @@ function PdfPreview({ filePath, projectName }: { filePath: string; projectName: 
     const url = `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`;
     const token = getAuthToken();
     fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed");
-        return r.blob();
-      })
+      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.blob(); })
       .then((blob) => {
-        const objUrl = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
-        revoke = objUrl;
-        setBlobUrl(objUrl);
+        const u = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
+        revoke = u; setBlobUrl(u);
       })
       .catch(() => setError(true));
     return () => { if (revoke) URL.revokeObjectURL(revoke); };
   }, [filePath, projectName]);
 
-  const openInNewTab = useCallback(() => {
-    if (blobUrl) window.open(blobUrl, "_blank");
-  }, [blobUrl]);
+  const openInNewTab = useCallback(() => { if (blobUrl) window.open(blobUrl, "_blank"); }, [blobUrl]);
 
   if (error) {
     return (
@@ -404,34 +300,18 @@ function PdfPreview({ filePath, projectName }: { filePath: string; projectName: 
       </div>
     );
   }
-
   if (!blobUrl) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="size-5 animate-spin text-text-subtle" />
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
   }
-
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar */}
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-background shrink-0">
         <span className="text-xs text-text-secondary truncate">{filePath}</span>
-        <button
-          onClick={openInNewTab}
-          className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors"
-        >
-          <ExternalLink className="size-3" />
-          Open in new tab
+        <button onClick={openInNewTab} className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors">
+          <ExternalLink className="size-3" /> Open in new tab
         </button>
       </div>
-      {/* Embedded PDF viewer */}
-      <iframe
-        src={blobUrl}
-        title={filePath}
-        className="flex-1 w-full border-none"
-      />
+      <iframe src={blobUrl} title={filePath} className="flex-1 w-full border-none" />
     </div>
   );
 }

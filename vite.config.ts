@@ -2,12 +2,16 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import monacoEditorPlugin from "vite-plugin-monaco-editor";
 import { resolve } from "path";
 
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    ((monacoEditorPlugin as unknown as { default?: (opts: object) => object }).default ?? (monacoEditorPlugin as unknown as (opts: object) => object))({
+      languages: ["javascript", "typescript", "python", "html", "css", "json", "markdown", "yaml", "shell"],
+    }),
     VitePWA({
       registerType: "autoUpdate",
       strategies: "injectManifest",
@@ -45,9 +49,9 @@ export default defineConfig({
     host: true,
     port: 5173,
     proxy: {
-      "/api": "http://localhost:8080",
+      "/api": "http://localhost:8081",
       "/ws": {
-        target: "ws://localhost:8080",
+        target: "ws://localhost:8081",
         ws: true,
       },
     },

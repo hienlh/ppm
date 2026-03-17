@@ -21,7 +21,8 @@ export function SettingsTab() {
   const { permission, isSubscribed, loading, subscribe, unsubscribe } = usePushNotification();
 
   return (
-    <div className="h-full p-4 space-y-6 overflow-auto max-w-lg">
+    <div className="h-full w-full overflow-auto">
+    <div className="p-4 space-y-6 max-w-lg mx-auto">
       <h2 className="text-lg font-semibold">Settings</h2>
 
       <div className="space-y-3">
@@ -101,6 +102,7 @@ export function SettingsTab() {
           A mobile-first web IDE for managing your projects.
         </p>
       </div>
+    </div>
     </div>
   );
 }

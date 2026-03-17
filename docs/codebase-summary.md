@@ -74,26 +74,29 @@ ppm/
 │       │   ├── use-websocket.ts     # Generic WebSocket adapter
 │       │   ├── use-terminal.ts      # Terminal I/O over WebSocket
 │       │   └── use-url-sync.ts      # Sync state to URL (project, tab, file selections)
-│       ├── lib/                     # Utilities (5 files, 290 LOC)
+│       ├── lib/                     # Utilities (7 files, 340 LOC)
 │       │   ├── api-client.ts        # Fetch wrapper with auth token
 │       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
 │       │   ├── ws-client.ts         # WebSocket wrapper
 │       │   ├── file-support.ts      # File type detection (language -> icon)
+│       │   ├── project-avatar.ts    # Smart project initials (collision resolution) (v2.0+)
+│       │   ├── project-palette.ts   # 12-color palette for project avatars (v2.0+)
 │       │   └── utils.ts             # Utility functions (clsx, classname merging)
 │       ├── styles/
 │       │   └── globals.css          # Tailwind directives, custom CSS
 │       └── components/              # React components (organized by feature)
 │           ├── auth/                # Login screen (88 LOC)
-│           ├── chat/                # Chat UI (2202 LOC, 9 files)
+│           ├── chat/                # Chat UI (2300+ LOC, 10 files)
 │           │   ├── chat-tab.tsx     # Main chat interface
+│           │   ├── chat-history-panel.tsx # History tab showing chat sessions (v2.0+)
 │           │   ├── message-list.tsx # Scrollable messages with tool display
 │           │   ├── message-input.tsx # Input with file attach, slash command picker
 │           │   ├── session-picker.tsx # Switch between sessions
 │           │   ├── usage-badge.tsx  # Token usage display
 │           │   └── ... 4 more
-│           ├── editor/              # Code editor (615 LOC, 3 files)
-│           │   ├── code-editor.tsx  # CodeMirror integration
-│           │   ├── diff-viewer.tsx  # Diff2HTML for git diffs
+│           ├── editor/              # Code editor (650+ LOC, 3 files)
+│           │   ├── code-editor.tsx  # Monaco Editor integration (@monaco-editor/react, v2.0+)
+│           │   ├── diff-viewer.tsx  # Monaco diff viewer for git diffs (v2.0+)
 │           │   └── editor-placeholder.tsx
 │           ├── explorer/            # File tree (489 LOC, 2 files)
 │           │   ├── file-tree.tsx    # Directory tree view
@@ -102,8 +105,10 @@ ppm/
 │           │   ├── git-status-panel.tsx # Status, staging UI
 │           │   ├── git-graph.tsx    # Mermaid-based commit graph
 │           │   └── git-placeholder.tsx
-│           ├── layout/              # Layout components (567 LOC, 5 files)
-│           │   ├── sidebar.tsx      # Left sidebar (project, file tree, sections)
+│           ├── layout/              # Layout components (750+ LOC, 7 files)
+│           │   ├── project-bar.tsx      # Narrow 52px sidebar with project avatars, context menus
+│           │   ├── project-bottom-sheet.tsx # Mobile project switcher (bottom sheet)
+│           │   ├── sidebar.tsx      # Left sidebar (Explorer/Git/History tabs, file tree)
 │           │   ├── tab-bar.tsx      # Top tab bar (chat, editor, git, terminal)
 │           │   ├── tab-content.tsx  # Router for tab content
 │           │   ├── mobile-nav.tsx   # Mobile hamburger navigation
@@ -265,7 +270,7 @@ UI updates staged/unstaged lists
 |---------|---------|---------|
 | hono | HTTP framework | 4.12.8 |
 | simple-git | Git CLI wrapper | 3.33 |
-| @uiw/react-codemirror | Code editor | 4.25.8 |
+| @monaco-editor/react | Code editor (v2.0+) | Latest |
 | xterm | Terminal emulator | 6.0 |
 | zustand | State management | 5.0.11 |
 | @anthropic-ai/claude-agent-sdk | AI provider | 0.2.76 |
