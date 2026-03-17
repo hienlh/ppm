@@ -312,7 +312,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
                     type: "chat",
                     title: "AI Chat",
                     projectId,
-                    metadata: { projectName: activeProject?.name, prefillInput: query.trim() },
+                    metadata: { projectName: activeProject?.name, pendingMessage: query.trim() },
                     closable: true,
                   });
                   onClose();
