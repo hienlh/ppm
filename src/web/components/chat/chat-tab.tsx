@@ -4,12 +4,11 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
 import { useTabStore } from "@/stores/tab-store";
-import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { buildBugReport, openGithubIssue, copyToClipboard } from "@/lib/report-bug";
 import { MessageList } from "./message-list";
 import { MessageInput, type ChatAttachment } from "./message-input";
-import { SessionPicker } from "./session-picker";
+import { Bot } from "lucide-react";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { UsageBadge, UsageDetailPanel } from "./usage-badge";
@@ -53,13 +52,25 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [externalFiles, setExternalFiles] = useState<File[] | null>(null);
   const dragCounterRef = useRef(0);
 
-  const activeProject = useProjectStore((s) => s.activeProject);
+  // Use tab's own project, not global activeProject (keep-alive: hidden tabs must not react to switches)
+  const projectName = (metadata?.projectName as string) ?? "";
   const updateTab = useTabStore((s) => s.updateTab);
   const version = useSettingsStore((s) => s.version);
 
+  // Fetch AI model name
+  const [modelName, setModelName] = useState<string>("");
+  useEffect(() => {
+    api.get<{ default_provider: string; providers: Record<string, { model?: string }> }>("/api/settings/ai")
+      .then((ai) => {
+        const provider = ai.providers[ai.default_provider];
+        setModelName(provider?.model ?? ai.default_provider);
+      })
+      .catch(() => {});
+  }, []);
+
   // Usage runs independently — auto-refreshes on interval
   const { usageInfo, usageLoading, lastUpdatedAt, refreshUsage, mergeUsage } =
-    useUsage(activeProject?.name ?? "", providerId);
+    useUsage(projectName, providerId);
 
   // Persist sessionId and providerId to tab metadata so reload restores the session
   useEffect(() => {
@@ -80,18 +91,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     reconnect,
     refetchMessages,
     isConnected,
-  } = useChat(sessionId, providerId, activeProject?.name ?? "", { onUsageEvent: mergeUsage });
+  } = useChat(sessionId, providerId, projectName, { onUsageEvent: mergeUsage });
 
   const handleNewSession = useCallback(() => {
-    const projectName = activeProject?.name ?? null;
     useTabStore.getState().openTab({
       type: "chat",
       title: "AI Chat",
       metadata: { projectName },
-      projectId: projectName,
+      projectId: projectName || null,
       closable: true,
     });
-  }, [activeProject?.name]);
+  }, [projectName]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
     setSessionId(session.id);
@@ -127,7 +137,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
       if (!sessionId) {
         try {
-          const pName = activeProject?.name ?? (metadata?.project as string) ?? "";
+          const pName = projectName;
           const session = await api.post<Session>(`${projectUrl(pName)}/chat/sessions`, {
             providerId,
             title: content.slice(0, 50),
@@ -145,7 +155,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       }
       sendMessage(fullContent);
     },
-    [sessionId, providerId, metadata?.project, sendMessage, buildMessageWithAttachments, activeProject?.name],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments],
   );
 
   // --- Slash picker handlers ---
@@ -243,19 +253,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         pendingApproval={pendingApproval}
         onApprovalResponse={respondToApproval}
         isStreaming={isStreaming}
-        projectName={activeProject?.name}
+        projectName={projectName}
       />
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-background shrink-0">
         {/* Session bar */}
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/50">
-          <SessionPicker
-            currentSessionId={sessionId}
-            onSelectSession={handleSelectSession}
-            onNewSession={handleNewSession}
-            projectName={activeProject?.name}
-          />
+          <div className="flex items-center gap-1.5 text-xs text-text-secondary px-1">
+            <Bot className="size-3.5" />
+            <span className="truncate max-w-[180px]">{modelName || "AI"}</span>
+          </div>
           <div className="flex items-center gap-2">
             <UsageBadge
               usage={usageInfo}
@@ -265,7 +273,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             {sessionId && (
               <button
                 onClick={async () => {
-                  const text = await buildBugReport(version, { sessionId, projectName: activeProject?.name });
+                  const text = await buildBugReport(version, { sessionId, projectName: projectName });
                   setBugReportText(text);
                   setCopied(false);
                 }}
@@ -323,7 +331,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onSend={handleSend}
           isStreaming={isStreaming}
           onCancel={cancelStreaming}
-          projectName={activeProject?.name}
+          projectName={projectName}
           onSlashStateChange={handleSlashStateChange}
           onSlashItemsLoaded={setSlashItems}
           slashSelected={slashSelected}
