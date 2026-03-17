@@ -26,6 +26,7 @@ export function useGlobalKeybindings() {
         const now = Date.now();
         if (now - lastShiftUp < 400) {
           lastShiftUp = 0;
+          setPaletteInitialQuery("");
           setPaletteOpen(true);
           return;
         }
@@ -45,6 +46,7 @@ export function useGlobalKeybindings() {
       // F1 → Open command palette
       if (e.key === "F1") {
         e.preventDefault();
+        setPaletteInitialQuery("");
         setPaletteOpen(true);
         return;
       }
@@ -71,8 +73,8 @@ export function useGlobalKeybindings() {
 
     // Custom event listener for programmatic opening
     function handleOpenPalette(e: Event) {
-      const query = (e as CustomEvent).detail as string | undefined;
-      if (query) setPaletteInitialQuery(query);
+      const query = (e as CustomEvent).detail;
+      setPaletteInitialQuery(typeof query === "string" ? query : "");
       setPaletteOpen(true);
     }
 
