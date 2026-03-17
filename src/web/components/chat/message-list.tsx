@@ -44,31 +44,47 @@ export function MessageList({
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initialLoadRef = useRef(true);
-  const userScrolledUpRef = useRef(false);
+  const stickToBottomRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
 
-  // Track if user has scrolled up (away from bottom)
+  // Detect user scroll: wheel or touch = user intent to scroll up/down
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      // Consider "at bottom" if within 100px of the end
-      userScrolledUpRef.current = scrollHeight - scrollTop - clientHeight > 100;
+
+    // User scrolled with wheel/touch → check if they're near bottom
+    const handleWheel = () => {
+      // Use rAF to read scroll position after the scroll happens
+      requestAnimationFrame(() => {
+        if (!container) return;
+        const { scrollTop, scrollHeight, clientHeight } = container;
+        const distFromBottom = scrollHeight - scrollTop - clientHeight;
+        stickToBottomRef.current = distFromBottom < 50;
+      });
     };
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => container.removeEventListener("scroll", handleScroll);
+
+    container.addEventListener("wheel", handleWheel, { passive: true });
+    container.addEventListener("touchmove", handleWheel, { passive: true });
+    return () => {
+      container.removeEventListener("wheel", handleWheel);
+      container.removeEventListener("touchmove", handleWheel);
+    };
   }, []);
 
   useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
     // First load: always jump to bottom
     if (initialLoadRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "instant" as ScrollBehavior });
+      container.scrollTop = container.scrollHeight;
       if (messages.length > 0) initialLoadRef.current = false;
       return;
     }
+
     // Only auto-scroll if user hasn't scrolled up
-    if (!userScrolledUpRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (stickToBottomRef.current) {
+      container.scrollTop = container.scrollHeight;
     }
   }, [messages, pendingApproval]);
 
