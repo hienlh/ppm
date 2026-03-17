@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.1] - 2026-03-18
+
+### Added
+- Sidebar tabs auto-hide text when width < 240px (icons only)
+- Auto-refresh file tree on window focus (TODO: fs.watch for real-time)
+- Drag-and-drop project reorder on desktop, move up/down on mobile
+- Test notification button in settings
+- Mobile drawer settings tab (replaces history), project sheet settings button works
+- Push notification error feedback with 5s timeout on service worker
+
+### Fixed
+- Tab bar bottom border alignment with -mb-px overlap
+- Close button on toast notifications
+- Remove bug report icon from chat toolbar
+- Push subscribe infinite loading in dev mode (service worker timeout)
+
 ## [0.5.0] - 2026-03-18
 
 ### Added
