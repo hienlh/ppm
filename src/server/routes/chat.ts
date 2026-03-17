@@ -101,6 +101,30 @@ chatRoutes.delete("/sessions/:id", async (c) => {
   }
 });
 
+/** POST /chat/sessions/:id/fork — fork session into a new one (for rewind/branch) */
+chatRoutes.post("/sessions/:id/fork", async (c) => {
+  try {
+    const sourceId = c.req.param("id");
+    const projectName = c.get("projectName");
+    const projectPath = c.get("projectPath");
+    const providerId = c.req.query("providerId") ?? "claude";
+    // Create a new PPM session that will fork from sourceId on first message
+    const session = await chatService.createSession(providerId, {
+      projectName,
+      projectPath,
+      title: "Forked Chat",
+    });
+    // Store fork source so WS handler knows to use forkSession on first message
+    const provider = providerRegistry.get(providerId);
+    if (provider && "setForkSource" in provider) {
+      (provider as any).setForkSource(session.id, sourceId);
+    }
+    return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /chat/sessions/:id/logs — get session-level debug logs */
 chatRoutes.get("/sessions/:id/logs", (c) => {
   try {
