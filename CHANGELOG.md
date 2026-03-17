@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0] - 2026-03-18
+
+### Added
+- **Thinking block**: Stream Claude's extended thinking in collapsible block (auto-collapse when done)
+- **Fork/Rewind**: Retry from any user message — forks session, opens new tab with full history
+- **Streaming status**: "Thinking... (5s)" with elapsed timer, adaptive warning threshold
+- **Command palette "Ask AI"**: No results → Enter sends query to new chat tab
+- **Usage auto-polling**: BE fetches every 60s with retry, FE reads cache with `lastFetchedAt` timestamp
+- **Mobile bottom sheet**: Command palette as bottom sheet on mobile, + button opens it
+- **Scroll to bottom**: Floating button when user scrolls up, auto-stick-to-bottom with use-stick-to-bottom
+- **Prompt-kit input**: Rounded container with textarea + action bar, compact on mobile
+
+### Fixed
+- WS race condition: entry.ws null during reconnect → all stream events dropped
+- Always send `done` from stream loop finally block (prevents infinite spinner)
+- Child tool_results from subagent user messages now yielded correctly
+- React re-render: new parent object on children update for shallow comparison
+- ThinkingIndicator: show only after tool_result, not while tool running
+- Settings button opens sidebar tab instead of creating new tab
+- 429 rate limit on usage API handled gracefully
+- Global BugReportPopup via custom event
+
 ## [0.4.5] - 2026-03-17
 
 ### Fixed
