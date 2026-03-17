@@ -20,7 +20,7 @@ class TunnelService {
     const bin = await ensureCloudflared();
 
     const proc = Bun.spawn(
-      [bin, "tunnel", "--url", `http://localhost:${port}`],
+      [bin, "tunnel", "--url", `http://127.0.0.1:${port}`],
       { stderr: "pipe", stdout: "ignore", stdin: "ignore" },
     );
     this.childProcess = proc;
