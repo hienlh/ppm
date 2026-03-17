@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft } from "lucide-react";
+import { X, Check, Plus, Settings, Pencil, Trash2, Palette, ArrowLeft } from "lucide-react";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -34,7 +34,11 @@ function ProjectAvatar({ name, color, allNames }: { name: string; color: string;
 }
 
 export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps) {
-  const { projects, activeProject, setActiveProject, setProjectColor, moveProject, renameProject, deleteProject, customOrder } = useProjectStore();
+  const { projects, activeProject, setActiveProject, setProjectColor, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore();
+
+  // Drag reorder state
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
   const openTab = useTabStore((s) => s.openTab);
   const version = useSettingsStore((s) => s.version);
 
@@ -130,22 +134,6 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
         setColorPickerOpen(true);
       },
     },
-    ...(actionIdx > 0 ? [{
-      label: "Move Up",
-      icon: ChevronUp,
-      onClick: async () => {
-        await moveProject(actionTarget, "up");
-        setActionTarget(null);
-      },
-    }] : []),
-    ...(actionIdx < ordered.length - 1 ? [{
-      label: "Move Down",
-      icon: ChevronDown,
-      onClick: async () => {
-        await moveProject(actionTarget, "down");
-        setActionTarget(null);
-      },
-    }] : []),
     {
       label: "Delete",
       icon: Trash2,
@@ -221,9 +209,25 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
             return (
               <div
                 key={project.name}
+                draggable
+                onDragStart={() => setDragIdx(idx)}
+                onDragOver={(e) => { e.preventDefault(); setDropIdx(idx); }}
+                onDragLeave={() => setDropIdx(null)}
+                onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                onDrop={() => {
+                  if (dragIdx != null && dragIdx !== idx) {
+                    const names = ordered.map((p) => p.name);
+                    const [moved] = names.splice(dragIdx, 1);
+                    names.splice(idx, 0, moved!);
+                    reorderProjects(names);
+                  }
+                  setDragIdx(null); setDropIdx(null);
+                }}
                 className={cn(
-                  "flex items-center gap-3 px-4 py-3 transition-colors active:bg-surface-elevated",
+                  "flex items-center gap-3 px-4 py-3 transition-all active:bg-surface-elevated",
                   isActive && "bg-accent/10",
+                  dragIdx === idx && "opacity-40",
+                  dropIdx === idx && dragIdx !== idx && "border-t-2 border-accent",
                 )}
                 onClick={() => !isRenaming && handleSelectProject(project.name)}
                 onTouchStart={() => startLongPress(project.name)}

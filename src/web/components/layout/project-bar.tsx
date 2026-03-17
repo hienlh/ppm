@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, Bug } from "lucide-react";
+import { Plus, Settings, Pencil, Trash2, Palette, Bug } from "lucide-react";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -70,10 +70,14 @@ function ColorPicker({ current, onChange }: { current: string; onChange: (c: str
 // ProjectBar
 // ---------------------------------------------------------------------------
 export function ProjectBar() {
-  const { projects, activeProject, setActiveProject, setProjectColor, moveProject, renameProject, deleteProject, customOrder } = useProjectStore();
+  const { projects, activeProject, setActiveProject, setProjectColor, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore();
   const openTab = useTabStore((s) => s.openTab);
   const version = useSettingsStore((s) => s.version);
   const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
+
+  // Drag-and-drop reorder
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
 
   const ordered = resolveOrder(projects, customOrder);
   const allNames = ordered.map((p) => p.name);
@@ -161,14 +165,33 @@ export function ProjectBar() {
         {ordered.map((project, idx) => {
           const color = resolveProjectColor(project.color, idx);
           const isActive = activeProject?.name === project.name;
+          const isDragging = dragIdx === idx;
+          const isDropTarget = dropIdx === idx && dragIdx !== idx;
           return (
             <ContextMenu key={project.name}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <ContextMenuTrigger asChild>
                     <button
+                      draggable
+                      onDragStart={() => setDragIdx(idx)}
+                      onDragOver={(e) => { e.preventDefault(); setDropIdx(idx); }}
+                      onDragLeave={() => setDropIdx(null)}
+                      onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                      onDrop={() => {
+                        if (dragIdx != null && dragIdx !== idx) {
+                          const names = ordered.map((p) => p.name);
+                          const [moved] = names.splice(dragIdx, 1);
+                          names.splice(idx, 0, moved!);
+                          reorderProjects(names);
+                        }
+                        setDragIdx(null);
+                        setDropIdx(null);
+                      }}
                       onClick={() => setActiveProject(project)}
-                      className="p-1 rounded-lg hover:bg-surface-elevated transition-colors"
+                      className={`p-1 rounded-lg hover:bg-surface-elevated transition-all ${
+                        isDragging ? "opacity-40 scale-90" : ""
+                      } ${isDropTarget ? "ring-2 ring-accent" : ""}`}
                     >
                       <ProjectAvatar name={project.name} color={color} active={isActive} allNames={allNames} />
                     </button>
@@ -185,19 +208,6 @@ export function ProjectBar() {
                 </ContextMenuItem>
                 <ContextMenuItem onClick={() => openColor(project.name, color)}>
                   <Palette className="size-3.5 mr-2" /> Change Color
-                </ContextMenuItem>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  disabled={idx === 0}
-                  onClick={() => moveProject(project.name, "up")}
-                >
-                  <ChevronUp className="size-3.5 mr-2" /> Move Up
-                </ContextMenuItem>
-                <ContextMenuItem
-                  disabled={idx === ordered.length - 1}
-                  onClick={() => moveProject(project.name, "down")}
-                >
-                  <ChevronDown className="size-3.5 mr-2" /> Move Down
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem
