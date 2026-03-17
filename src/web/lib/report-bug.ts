@@ -69,11 +69,20 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-/** Legacy: open bug report directly (used by sidebar/drawer) */
+/** Open bug report popup globally via custom event */
+export function openBugReportPopup(
+  version: string | null,
+  options?: { sessionId?: string; projectName?: string },
+) {
+  buildBugReport(version, options).then((body) => {
+    window.dispatchEvent(new CustomEvent("open-bug-report", { detail: body }));
+  });
+}
+
+/** @deprecated Use openBugReportPopup instead */
 export async function openBugReport(
   version: string | null,
   options?: { sessionId?: string; projectName?: string },
 ) {
-  const body = await buildBugReport(version, options);
-  openGithubIssue(body);
+  openBugReportPopup(version, options);
 }

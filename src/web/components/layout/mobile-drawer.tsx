@@ -7,7 +7,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { ChatHistoryPanel } from "@/components/chat/chat-history-panel";
-import { openBugReport } from "@/lib/report-bug";
+import { openBugReportPopup } from "@/lib/report-bug";
 import { cn } from "@/lib/utils";
 
 type DrawerTab = "explorer" | "git" | "history";
@@ -28,7 +28,7 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
   const version = useSettingsStore((s) => s.version);
   const [activeTab, setActiveTab] = useState<DrawerTab>("explorer");
 
-  const handleReportBug = useCallback(() => openBugReport(version), [version]);
+  const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
 
   return (
     <div
