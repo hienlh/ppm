@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, Bug } from "lucide-react";
-import { openBugReport } from "@/lib/report-bug";
+import { openBugReportPopup } from "@/lib/report-bug";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -73,7 +73,7 @@ export function ProjectBar() {
   const { projects, activeProject, setActiveProject, setProjectColor, moveProject, renameProject, deleteProject, customOrder } = useProjectStore();
   const openTab = useTabStore((s) => s.openTab);
   const version = useSettingsStore((s) => s.version);
-  const handleReportBug = useCallback(() => openBugReport(version), [version]);
+  const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
 
   const ordered = resolveOrder(projects, customOrder);
   const allNames = ordered.map((p) => p.name);

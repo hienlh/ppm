@@ -19,6 +19,7 @@ import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useHealthCheck } from "@/hooks/use-health-check";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
@@ -209,6 +210,9 @@ export function App() {
 
         {/* Command palette (Shift+Shift) */}
         <CommandPalette open={paletteOpen} onClose={closePalette} initialQuery={paletteInitialQuery} />
+
+        {/* Global bug report popup */}
+        <BugReportPopup />
 
         {/* Toast notifications */}
         <Toaster
