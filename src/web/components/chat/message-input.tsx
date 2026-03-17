@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { Send, Square, Paperclip } from "lucide-react";
+import { ArrowUp, Square, Paperclip } from "lucide-react";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
 import { isSupportedFile, isImageFile } from "@/lib/file-support";
@@ -366,30 +366,16 @@ export function MessageInput({
   const showCancel = isStreaming && !hasContent;
 
   return (
-    <div className="border-t border-border bg-background">
-      {/* Attachment chips */}
-      <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+    <div className="px-3 pb-3 pt-1 bg-background">
+      {/* Rounded input container */}
+      <div
+        className="border border-border rounded-2xl bg-surface shadow-sm cursor-text"
+        onClick={() => !disabled && textareaRef.current?.focus()}
+      >
+        {/* Attachment chips */}
+        <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
-      {/* Input row */}
-      <div className="flex items-end gap-2 p-3">
-        {/* Attach button */}
-        <button
-          type="button"
-          onClick={handleAttachClick}
-          disabled={disabled}
-          className="flex items-center justify-center rounded-lg p-2 text-text-subtle hover:text-text-primary hover:bg-surface transition-colors shrink-0 disabled:opacity-50"
-          aria-label="Attach file"
-        >
-          <Paperclip className="size-4" />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={handleFileInputChange}
-        />
-
+        {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={value}
@@ -401,29 +387,55 @@ export function MessageInput({
           onPaste={handlePaste}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          placeholder={isStreaming ? "Follow-up or Stop..." : "Message... (↵ to send)"}
+          placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
           disabled={disabled}
           rows={1}
-          className="flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring disabled:opacity-50 max-h-40"
+          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base md:text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40"
         />
-        {showCancel ? (
-          <button
-            onClick={onCancel}
-            className="flex items-center justify-center rounded-lg bg-red-600 p-2 text-white hover:bg-red-500 transition-colors shrink-0"
-            aria-label="Stop response"
-          >
-            <Square className="size-4" />
-          </button>
-        ) : (
-          <button
-            onClick={handleSend}
-            disabled={disabled || !hasContent}
-            className="flex items-center justify-center rounded-lg bg-primary p-2 text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-            aria-label="Send message"
-          >
-            <Send className="size-4" />
-          </button>
-        )}
+
+        {/* Action bar */}
+        <div className="flex items-center justify-between px-3 pb-2">
+          <div className="flex items-center gap-1">
+            {/* Attach button */}
+            <button
+              type="button"
+              onClick={handleAttachClick}
+              disabled={disabled}
+              className="flex items-center justify-center size-8 rounded-full text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
+              aria-label="Attach file"
+            >
+              <Paperclip className="size-4" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
+          </div>
+
+          <div className="flex items-center gap-1">
+            {showCancel ? (
+              <button
+                onClick={onCancel}
+                className="flex items-center justify-center size-8 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
+                aria-label="Stop response"
+              >
+                <Square className="size-3.5" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={disabled || !hasContent}
+                className="flex items-center justify-center size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label="Send message"
+              >
+                <ArrowUp className="size-4" />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
