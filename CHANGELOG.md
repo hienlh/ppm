@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1] - 2026-03-17
+
+### Fixed
+- Command palette crash when initialQuery is not a string (TypeError: q.startsWith)
+- Reset paletteInitialQuery on all keyboard triggers (Shift+Shift, F1)
+- Disable Monaco editor diagnostics (semantic, syntax, suggestions) for JS/TS
+- Windows support for cloudflared binary download
+
 ## [0.4.0] - 2026-03-17
 
 ### Added
