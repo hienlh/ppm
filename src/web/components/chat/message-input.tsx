@@ -382,76 +382,110 @@ export function MessageInput({
 
   return (
     <div className="px-2 pb-2 pt-0.5 md:px-3 md:pb-3 md:pt-1 bg-background">
+      {/* Attachment chips (above input) */}
+      <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+
       {/* Rounded input container */}
       <div
         className="border border-border rounded-xl md:rounded-2xl bg-surface shadow-sm cursor-text"
         onClick={() => !disabled && textareaRef.current?.focus()}
       >
-        {/* Attachment chips */}
-        <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
-
-        {/* Textarea */}
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => {
-            handleChange(e.target.value);
-            handleInput();
-          }}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
-          disabled={disabled}
-          rows={1}
-          className="w-full resize-none bg-transparent px-3 pt-2 pb-0.5 md:px-4 md:pt-3 md:pb-1 text-sm md:text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40"
-        />
-
-        {/* Action bar */}
-        <div className="flex items-center justify-between px-2 pb-1.5 md:px-3 md:pb-2">
-          <div className="flex items-center gap-1">
-            {/* Attach button */}
+        {/* Mobile: single row — attach + textarea + send */}
+        <div className="flex items-end gap-1 md:hidden px-2 py-1.5">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
+            disabled={disabled}
+            className="flex items-center justify-center size-7 shrink-0 rounded-full text-text-subtle hover:text-text-primary transition-colors disabled:opacity-50"
+            aria-label="Attach file"
+          >
+            <Paperclip className="size-4" />
+          </button>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => { handleChange(e.target.value); handleInput(); }}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            placeholder={isStreaming ? "Follow-up..." : "Ask anything..."}
+            disabled={disabled}
+            rows={1}
+            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-32"
+          />
+          {showCancel ? (
             <button
-              type="button"
-              onClick={handleAttachClick}
-              disabled={disabled}
-              className="flex items-center justify-center size-7 md:size-8 rounded-full text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
-              aria-label="Attach file"
+              onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
+              className="flex items-center justify-center size-7 shrink-0 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
+              aria-label="Stop"
             >
-              <Paperclip className="size-4" />
+              <Square className="size-3" />
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={handleFileInputChange}
-            />
-          </div>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); handleSend(); }}
+              disabled={disabled || !hasContent}
+              className="flex items-center justify-center size-7 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 transition-colors"
+              aria-label="Send"
+            >
+              <ArrowUp className="size-3.5" />
+            </button>
+          )}
+        </div>
 
-          <div className="flex items-center gap-1">
-            {showCancel ? (
+        {/* Desktop: textarea + action bar below */}
+        <div className="hidden md:block">
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => { handleChange(e.target.value); handleInput(); }}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
+            disabled={disabled}
+            rows={1}
+            className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40"
+          />
+          <div className="flex items-center justify-between px-3 pb-2">
+            <div className="flex items-center gap-1">
               <button
-                onClick={onCancel}
-                className="flex items-center justify-center size-7 md:size-8 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
-                aria-label="Stop response"
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
+                disabled={disabled}
+                className="flex items-center justify-center size-8 rounded-full text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
+                aria-label="Attach file"
               >
-                <Square className="size-3.5" />
+                <Paperclip className="size-4" />
               </button>
-            ) : (
-              <button
-                onClick={handleSend}
-                disabled={disabled || !hasContent}
-                className="flex items-center justify-center size-7 md:size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                aria-label="Send message"
-              >
-                <ArrowUp className="size-4" />
-              </button>
-            )}
+            </div>
+            <div className="flex items-center gap-1">
+              {showCancel ? (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
+                  className="flex items-center justify-center size-8 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
+                  aria-label="Stop response"
+                >
+                  <Square className="size-3.5" />
+                </button>
+              ) : (
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleSend(); }}
+                  disabled={disabled || !hasContent}
+                  className="flex items-center justify-center size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Send message"
+                >
+                  <ArrowUp className="size-4" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
+
+      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
     </div>
   );
 }
