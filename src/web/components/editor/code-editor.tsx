@@ -128,6 +128,17 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
       monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
       () => useSettingsStore.getState().toggleWordWrap(),
     );
+    // Disable all diagnostics — PPM is a lightweight editor, not a full IDE
+    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+      noSuggestionDiagnostics: true,
+    });
+    monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+      noSuggestionDiagnostics: true,
+    });
   }, []);
 
   if (!filePath || (!isExternalFile && !projectName)) {
