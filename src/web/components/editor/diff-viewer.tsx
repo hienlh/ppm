@@ -11,7 +11,8 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import type { Extension } from "@codemirror/state";
 import { api, projectUrl } from "@/lib/api-client";
-import { Loader2, FileCode, PanelLeftOpen, PanelRightOpen, Columns2 } from "lucide-react";
+import { useSettingsStore } from "@/stores/settings-store";
+import { Loader2, FileCode, PanelLeftOpen, PanelRightOpen, Columns2, WrapText } from "lucide-react";
 
 function getLanguageExtension(filename: string): Extension | null {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -61,6 +62,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const [error, setError] = useState<string | null>(null);
   /** "both" | "left" | "right" — controls which diff panel is expanded */
   const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
+  const { wordWrap, toggleWordWrap } = useSettingsStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const mergeViewRef = useRef<MergeView | null>(null);
 
@@ -137,6 +139,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       EditorView.editable.of(false),
       EditorState.readOnly.of(true),
       lineNumbers(),
+      ...(wordWrap ? [EditorView.lineWrapping] : []),
       EditorView.theme({
         "&": { fontSize: "13px", fontFamily: "var(--font-mono)" },
         // Character-level highlight: bold background, NO underline
@@ -186,7 +189,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       mv.destroy();
       mergeViewRef.current = null;
     };
-  }, [original, modified, langExts, loading, error]);
+  }, [original, modified, langExts, loading, error, wordWrap]);
 
   // Apply expand mode by hiding left/right editor panels via CSS
   useEffect(() => {
@@ -269,6 +272,15 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
         title="Expand modified"
       >
         <PanelRightOpen className="size-3.5" />
+      </button>
+      <div className="w-px h-3.5 bg-border mx-0.5 shrink-0" />
+      <button
+        type="button"
+        onClick={toggleWordWrap}
+        title="Toggle word wrap"
+        className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
+      >
+        <WrapText className="size-3.5" />
       </button>
     </div>
   );

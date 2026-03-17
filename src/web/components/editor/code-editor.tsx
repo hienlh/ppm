@@ -9,9 +9,11 @@ import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { marked } from "marked";
 import type { Extension } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
-import { Loader2, FileWarning, ExternalLink, Code, Eye } from "lucide-react";
+import { useSettingsStore } from "@/stores/settings-store";
+import { Loader2, FileWarning, ExternalLink, Code, Eye, WrapText } from "lucide-react";
 
 /** Image extensions renderable inline */
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
@@ -65,6 +67,27 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestContentRef = useRef<string>("");
   const { tabs, updateTab } = useTabStore();
+
+  const { wordWrap, toggleWordWrap } = useSettingsStore();
+  // Ref so the memoized domEventHandlers always calls the latest toggleWordWrap
+  const toggleWordWrapRef = useRef(toggleWordWrap);
+  useEffect(() => { toggleWordWrapRef.current = toggleWordWrap; }, [toggleWordWrap]);
+
+  // Alt+Z handler — intercepts at DOM level to prevent macOS "Ω" insertion
+  const wrapKeyHandler = useMemo(() => EditorView.domEventHandlers({
+    keydown(e) {
+      if (e.altKey && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        toggleWordWrapRef.current();
+        return true;
+      }
+      return false;
+    },
+    beforeinput(e) {
+      if (e.data === "Ω") { e.preventDefault(); return true; }
+      return false;
+    },
+  }), []);
 
   const ownTab = tabs.find((t) => t.id === tabId);
   const ext = filePath ? getFileExt(filePath) : "";
@@ -194,9 +217,11 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const extensions: Extension[] = [];
   const langExt = getLanguageExtension(filePath);
   if (langExt) extensions.push(langExt);
+  if (wordWrap) extensions.push(EditorView.lineWrapping);
+  extensions.push(wrapKeyHandler);
 
-  const mdToggleBar = isMarkdown ? (
-    <div className="flex items-center gap-1 px-2 py-1 border-border shrink-0 bg-background">
+  const mdModeButtons = isMarkdown ? (
+    <>
       <button
         type="button"
         onClick={() => setMdMode("edit")}
@@ -217,13 +242,31 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
         <Eye className="size-3" />
         Preview
       </button>
-    </div>
+    </>
   ) : null;
+
+  const wrapBtn = (
+    <button
+      type="button"
+      onClick={toggleWordWrap}
+      title="Toggle word wrap (Alt+Z)"
+      className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
+        wordWrap ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      <WrapText className="size-3" />
+      <span className="hidden sm:inline">Wrap</span>
+    </button>
+  );
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
-      {/* Desktop: toggle at top */}
-      <div className="hidden md:block border-b">{mdToggleBar}</div>
+      {/* Desktop toolbar at top */}
+      <div className="hidden md:flex items-center gap-1 px-2 py-1 border-b shrink-0 bg-background">
+        {mdModeButtons}
+        <div className="flex-1" />
+        {wrapBtn}
+      </div>
 
       {/* Markdown preview mode */}
       {isMarkdown && mdMode === "preview" ? (
@@ -250,8 +293,12 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
         </div>
       )}
 
-      {/* Mobile: toggle at bottom */}
-      <div className="md:hidden border-t">{mdToggleBar}</div>
+      {/* Mobile toolbar at bottom */}
+      <div className="md:hidden flex items-center gap-1 px-2 py-1 border-t shrink-0 bg-background">
+        {mdModeButtons}
+        <div className="flex-1" />
+        {wrapBtn}
+      </div>
     </div>
   );
 }
