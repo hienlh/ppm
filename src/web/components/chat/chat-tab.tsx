@@ -8,10 +8,9 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { buildBugReport, openGithubIssue, copyToClipboard } from "@/lib/report-bug";
 import { MessageList } from "./message-list";
 import { MessageInput, type ChatAttachment } from "./message-input";
-import { Bot } from "lucide-react";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
-import { UsageBadge, UsageDetailPanel } from "./usage-badge";
+import { ChatHistoryBar } from "./chat-history-bar";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
 
@@ -40,9 +39,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [fileFilter, setFileFilter] = useState("");
   const [fileSelected, setFileSelected] = useState<FileNode | null>(null);
 
-  // Usage detail panel
-  const [showUsageDetail, setShowUsageDetail] = useState(false);
-
   // Bug report popup
   const [bugReportText, setBugReportText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -56,17 +52,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const projectName = (metadata?.projectName as string) ?? "";
   const updateTab = useTabStore((s) => s.updateTab);
   const version = useSettingsStore((s) => s.version);
-
-  // Fetch AI model name
-  const [modelName, setModelName] = useState<string>("");
-  useEffect(() => {
-    api.get<{ default_provider: string; providers: Record<string, { model?: string }> }>("/api/settings/ai")
-      .then((ai) => {
-        const provider = ai.providers[ai.default_provider];
-        setModelName(provider?.model ?? ai.default_provider);
-      })
-      .catch(() => {});
-  }, []);
 
   // Usage runs independently — auto-refreshes on interval
   const { usageInfo, usageLoading, lastUpdatedAt, refreshUsage, mergeUsage } =
@@ -258,56 +243,24 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-background shrink-0">
-        {/* Session bar */}
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/50">
-          <div className="flex items-center gap-1.5 text-xs text-text-secondary px-1">
-            <Bot className="size-3.5" />
-            <span className="truncate max-w-[180px]">{modelName || "AI"}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <UsageBadge
-              usage={usageInfo}
-              loading={usageLoading}
-              onClick={() => setShowUsageDetail((v) => !v)}
-            />
-            {sessionId && (
-              <button
-                onClick={async () => {
-                  const text = await buildBugReport(version, { sessionId, projectName: projectName });
-                  setBugReportText(text);
-                  setCopied(false);
-                }}
-                className="p-0.5 rounded hover:bg-surface-elevated text-text-subtle hover:text-text-secondary transition-colors"
-                title="Report bug for this chat session"
-              >
-                <Bug className="size-3.5" />
-              </button>
-            )}
-            <button
-              onClick={() => {
-                if (!isConnected) reconnect();
-                refetchMessages();
-              }}
-              className="group relative size-4 flex items-center justify-center rounded-full hover:bg-surface-hover transition-colors"
-              title={isConnected ? "Connected — click to refetch messages" : "Disconnected — click to reconnect"}
-            >
-              <span
-                className={`size-2 rounded-full transition-colors ${
-                  isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"
-                }`}
-              />
-            </button>
-          </div>
-        </div>
-
-        {/* Usage detail panel (in-flow) */}
-        <UsageDetailPanel
-          usage={usageInfo}
-          visible={showUsageDetail}
-          onClose={() => setShowUsageDetail(false)}
-          onReload={refreshUsage}
-          loading={usageLoading}
+        {/* Unified toolbar: History, Config, Usage, Bug report, Connection */}
+        <ChatHistoryBar
+          projectName={projectName}
+          usageInfo={usageInfo}
+          usageLoading={usageLoading}
+          refreshUsage={refreshUsage}
           lastUpdatedAt={lastUpdatedAt}
+          sessionId={sessionId}
+          onBugReport={sessionId ? async () => {
+            const text = await buildBugReport(version, { sessionId, projectName });
+            setBugReportText(text);
+            setCopied(false);
+          } : undefined}
+          isConnected={isConnected}
+          onReconnect={() => {
+            if (!isConnected) reconnect();
+            refetchMessages();
+          }}
         />
 
         {/* Pickers (in-flow, above input — only one visible at a time) */}

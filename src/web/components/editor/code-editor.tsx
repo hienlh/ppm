@@ -56,21 +56,27 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const isMarkdown = ext === "md" || ext === "mdx";
   const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
 
+  // Detect external (absolute) file path — not relative to project
+  const isExternalFile = filePath ? /^(\/|[A-Za-z]:[/\\])/.test(filePath) : false;
+
   // Load file content
   useEffect(() => {
-    if (!filePath || !projectName) return;
+    if (!filePath) return;
+    if (!isExternalFile && !projectName) return;
     if (isImage || isPdf) { setLoading(false); return; }
 
     setLoading(true);
     setError(null);
 
+    const readUrl = isExternalFile
+      ? `/api/fs/read?path=${encodeURIComponent(filePath)}`
+      : `${projectUrl(projectName!)}/files/read?path=${encodeURIComponent(filePath)}`;
+
     api
-      .get<{ content: string; encoding: string }>(
-        `${projectUrl(projectName)}/files/read?path=${encodeURIComponent(filePath)}`,
-      )
+      .get<{ content: string; encoding?: string }>(readUrl)
       .then((data) => {
         setContent(data.content);
-        setEncoding(data.encoding);
+        if (data.encoding) setEncoding(data.encoding);
         latestContentRef.current = data.content;
         setLoading(false);
       })
@@ -80,7 +86,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
       });
 
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [filePath, projectName, isImage, isPdf]);
+  }, [filePath, projectName, isImage, isPdf, isExternalFile]);
 
   // Update tab title unsaved indicator
   useEffect(() => {
@@ -92,13 +98,18 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
 
   const saveFile = useCallback(
     async (text: string) => {
-      if (!filePath || !projectName) return;
+      if (!filePath) return;
+      if (!isExternalFile && !projectName) return;
       try {
-        await api.put(`${projectUrl(projectName)}/files/write`, { path: filePath, content: text });
+        if (isExternalFile) {
+          await api.put("/api/fs/write", { path: filePath, content: text });
+        } else {
+          await api.put(`${projectUrl(projectName!)}/files/write`, { path: filePath, content: text });
+        }
         setUnsaved(false);
       } catch { /* Silent — unsaved indicator persists */ }
     },
-    [filePath, projectName],
+    [filePath, projectName, isExternalFile],
   );
 
   function handleChange(value: string | undefined) {
@@ -119,7 +130,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     );
   }, []);
 
-  if (!filePath || !projectName) {
+  if (!filePath || (!isExternalFile && !projectName)) {
     return (
       <div className="flex items-center justify-center h-full text-text-secondary text-sm">
         No file selected.
@@ -142,8 +153,8 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     );
   }
 
-  if (isImage) return <ImagePreview filePath={filePath} projectName={projectName} />;
-  if (isPdf) return <PdfPreview filePath={filePath} projectName={projectName} />;
+  if (isImage) return <ImagePreview filePath={filePath!} projectName={projectName!} />;
+  if (isPdf) return <PdfPreview filePath={filePath!} projectName={projectName!} />;
 
   if (encoding === "base64") {
     return (

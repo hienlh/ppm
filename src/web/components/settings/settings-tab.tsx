@@ -22,26 +22,26 @@ export function SettingsTab() {
 
   return (
     <div className="h-full w-full overflow-auto">
-    <div className="p-4 space-y-6 max-w-lg mx-auto">
-      <h2 className="text-lg font-semibold">Settings</h2>
+    <div className="p-3 space-y-4">
+      <h2 className="text-sm font-semibold">Settings</h2>
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium text-text-secondary">Theme</h3>
-        <div className="flex gap-2">
+      <div className="space-y-2">
+        <h3 className="text-xs font-medium text-text-secondary">Theme</h3>
+        <div className="flex gap-1.5">
           {THEME_OPTIONS.map((opt) => {
             const Icon = opt.icon;
             return (
               <Button
                 key={opt.value}
                 variant={theme === opt.value ? "default" : "outline"}
-                size="lg"
+                size="sm"
                 onClick={() => setTheme(opt.value)}
                 className={cn(
-                  "flex-1 gap-2",
+                  "flex-1 gap-1.5 text-xs h-8",
                   theme === opt.value && "ring-2 ring-primary",
                 )}
               >
-                <Icon className="size-4" />
+                <Icon className="size-3.5" />
                 {opt.label}
               </Button>
             );
@@ -55,22 +55,23 @@ export function SettingsTab() {
 
       <Separator />
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium text-text-secondary">Notifications</h3>
+      <div className="space-y-2">
+        <h3 className="text-xs font-medium text-text-secondary">Notifications</h3>
         {!pushSupported ? (
-          <p className="text-sm text-text-subtle">
-            Push notifications are not supported in this browser.
+          <p className="text-xs text-text-subtle">
+            Push notifications not supported in this browser.
           </p>
         ) : (
           <>
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {isSubscribed ? <Bell className="size-4" /> : <BellOff className="size-4" />}
-                <span className="text-sm">Push notifications</span>
+              <div className="flex items-center gap-1.5">
+                {isSubscribed ? <Bell className="size-3.5" /> : <BellOff className="size-3.5" />}
+                <span className="text-xs">Push notifications</span>
               </div>
               <Button
                 variant={isSubscribed ? "default" : "outline"}
                 size="sm"
+                className="h-7 text-xs"
                 disabled={loading || permission === "denied"}
                 onClick={() => (isSubscribed ? unsubscribe() : subscribe())}
               >
@@ -78,12 +79,12 @@ export function SettingsTab() {
               </Button>
             </div>
             {permission === "denied" && (
-              <p className="text-xs text-destructive">
+              <p className="text-[11px] text-destructive">
                 Notifications blocked. Enable in browser settings.
               </p>
             )}
             {isIosNonPwa && (
-              <p className="text-xs text-text-subtle">
+              <p className="text-[11px] text-text-subtle">
                 On iOS, install PPM to Home Screen for push notifications.
               </p>
             )}
@@ -93,12 +94,12 @@ export function SettingsTab() {
 
       <Separator />
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium text-text-secondary">About</h3>
-        <p className="text-sm text-text-secondary">
+      <div className="space-y-1.5">
+        <h3 className="text-xs font-medium text-text-secondary">About</h3>
+        <p className="text-xs text-text-secondary">
           PPM — Personal Project Manager
         </p>
-        <p className="text-xs text-text-subtle">
+        <p className="text-[11px] text-text-subtle">
           A mobile-first web IDE for managing your projects.
         </p>
       </div>

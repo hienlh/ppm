@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Loader2, Terminal, MessageSquare, GitBranch, Settings } from "lucide-react";
+import { Loader2, Terminal, MessageSquare, GitBranch } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import type { TabType } from "@/stores/tab-store";
@@ -11,7 +11,6 @@ const QUICK_OPEN_TABS: { type: TabType; label: string; icon: React.ElementType }
   { type: "terminal", label: "Terminal", icon: Terminal },
   { type: "chat", label: "AI Chat", icon: MessageSquare },
   { type: "git-graph", label: "Git Graph", icon: GitBranch },
-  { type: "settings", label: "Settings", icon: Settings },
 ];
 
 const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
