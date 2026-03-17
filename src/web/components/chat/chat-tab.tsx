@@ -71,6 +71,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     isStreaming,
     streamingStatus,
     connectingElapsed,
+    thinkingWarningThreshold,
     pendingApproval,
     sendMessage,
     respondToApproval,
@@ -242,6 +243,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         isStreaming={isStreaming}
         streamingStatus={streamingStatus}
         connectingElapsed={connectingElapsed}
+        thinkingWarningThreshold={thinkingWarningThreshold}
         projectName={projectName}
       />
 

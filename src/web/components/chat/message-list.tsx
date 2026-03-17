@@ -25,6 +25,7 @@ interface MessageListProps {
   isStreaming: boolean;
   streamingStatus?: StreamingStatus;
   connectingElapsed?: number;
+  thinkingWarningThreshold?: number;
   projectName?: string;
 }
 
@@ -36,6 +37,7 @@ export function MessageList({
   isStreaming,
   streamingStatus,
   connectingElapsed,
+  thinkingWarningThreshold,
   projectName,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -111,7 +113,7 @@ export function MessageList({
           : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
       )}
 
-      {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} elapsed={connectingElapsed} />}
+      {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} elapsed={connectingElapsed} warningThreshold={thinkingWarningThreshold} />}
 
       <div ref={bottomRef} />
     </div>
@@ -434,7 +436,7 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
  * - After tool: "Processing..."
  * - Text streaming: hidden
  */
-function ThinkingIndicator({ lastMessage, streamingStatus, elapsed }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus; elapsed?: number }) {
+function ThinkingIndicator({ lastMessage, streamingStatus, elapsed, warningThreshold = 15 }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus; elapsed?: number; warningThreshold?: number }) {
   // Show "Thinking" when:
   // 1. No assistant message yet (waiting for first response)
   // 2. Last event is tool_use/tool_result (Claude thinking after tool execution)
@@ -450,7 +452,7 @@ function ThinkingIndicator({ lastMessage, streamingStatus, elapsed }: { lastMess
 
   if (!isWaiting && !isAfterTool) return null;
 
-  const isLong = isWaiting && (elapsed ?? 0) >= 15;
+  const isLong = isWaiting && (elapsed ?? 0) >= warningThreshold;
   return (
     <div className="flex flex-col gap-1 text-sm">
       <div className="flex items-center gap-2 text-text-subtle">
