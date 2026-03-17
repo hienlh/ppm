@@ -13,6 +13,7 @@ export function usePushNotification() {
   const [permission, setPermission] = useState<NotificationPermission>("default");
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Check current permission and subscription state on mount
   useEffect(() => {
@@ -24,13 +25,29 @@ export function usePushNotification() {
 
   const subscribe = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       // 1. Request notification permission
       const perm = await Notification.requestPermission();
       setPermission(perm);
-      if (perm !== "granted") return;
+      if (perm !== "granted") {
+        setError("Permission denied");
+        return;
+      }
 
-      // 2. Get VAPID public key from server
+      // 2. Check service worker is available (with timeout)
+      if (!navigator.serviceWorker?.controller && !navigator.serviceWorker?.ready) {
+        setError("Service worker not available (dev mode?)");
+        return;
+      }
+
+      const swReady = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Service worker timeout")), 5000)),
+      ]);
+      if (!swReady) throw new Error("Service worker not ready");
+
+      // 3. Get VAPID public key from server
       const headers: Record<string, string> = {};
       const token = getAuthToken();
       if (token) headers.Authorization = `Bearer ${token}`;
@@ -39,14 +56,13 @@ export function usePushNotification() {
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "Failed to get VAPID key");
 
-      // 3. Subscribe via PushManager
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
+      // 4. Subscribe via PushManager
+      const sub = await swReady.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(json.data.publicKey).buffer as ArrayBuffer,
       });
 
-      // 4. Send subscription to server
+      // 5. Send subscription to server
       await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
@@ -56,6 +72,8 @@ export function usePushNotification() {
       setIsSubscribed(true);
       localStorage.setItem("ppm-push-subscribed", "true");
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "Subscribe failed";
+      setError(msg);
       console.error("[push] Subscribe failed:", err);
     } finally {
       setLoading(false);
@@ -92,5 +110,5 @@ export function usePushNotification() {
     }
   }, []);
 
-  return { permission, isSubscribed, loading, subscribe, unsubscribe };
+  return { permission, isSubscribed, loading, error, subscribe, unsubscribe };
 }
