@@ -26,6 +26,7 @@ interface UseChatReturn {
   isStreaming: boolean;
   streamingStatus: StreamingStatus;
   connectingElapsed: number;
+  thinkingWarningThreshold: number;
   pendingApproval: ApprovalRequest | null;
   sendMessage: (content: string) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
@@ -42,6 +43,8 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   const [streamingStatus, setStreamingStatus] = useState<StreamingStatus>("idle");
   /** Elapsed seconds while connecting (sent by BE heartbeat every 5s) */
   const [connectingElapsed, setConnectingElapsed] = useState(0);
+  /** Warning threshold in seconds — higher for deeper thinking modes */
+  const [thinkingWarningThreshold, setThinkingWarningThreshold] = useState(15);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const onUsageEventRef = useRef(options?.onUsageEvent);
@@ -69,6 +72,22 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       const s = (data as any).status ?? "idle";
       setStreamingStatus(s);
       setConnectingElapsed(s === "connecting" ? ((data as any).elapsed ?? 0) : 0);
+      // Compute warning threshold based on effort/thinking budget
+      if (s === "connecting") {
+        const effort = (data as any).effort as string | undefined;
+        const budget = (data as any).thinkingBudget as number | undefined;
+        // Higher thinking = longer acceptable wait time
+        let threshold = 15; // default
+        if (budget && budget > 0) {
+          // Rough: 1k tokens ≈ 2s thinking time
+          threshold = Math.max(15, Math.round(budget / 500));
+        } else if (effort === "high") {
+          threshold = 30;
+        } else if (effort === "low") {
+          threshold = 10;
+        }
+        setThinkingWarningThreshold(threshold);
+      }
       return;
     }
 
@@ -450,6 +469,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     isStreaming,
     streamingStatus,
     connectingElapsed,
+    thinkingWarningThreshold,
     pendingApproval,
     sendMessage,
     respondToApproval,

@@ -81,8 +81,13 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
     logSessionEvent(sessionId, "USER", userPreview);
     console.log(`[chat] session=${sessionId} sending message to provider=${providerId}`);
 
-    // Send "connecting" status so FE shows progress
-    safeSend(sessionId, { type: "streaming_status", status: "connecting" });
+    // Send "connecting" status with thinking config so FE can set appropriate warning threshold
+    const { configService } = await import("../../services/config.service.ts");
+    const ai = configService.get("ai");
+    const pCfg = ai.providers[ai.default_provider ?? "claude"] ?? {};
+    const effort = (pCfg as Record<string, unknown>).effort as string | undefined;
+    const thinkingBudget = (pCfg as Record<string, unknown>).thinking_budget_tokens as number | undefined;
+    safeSend(sessionId, { type: "streaming_status", status: "connecting", effort, thinkingBudget });
 
     let eventCount = 0;
     let firstEventReceived = false;
