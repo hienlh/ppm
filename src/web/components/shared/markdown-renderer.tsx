@@ -1,6 +1,7 @@
 import { useMemo, useRef, useEffect } from "react";
 import { marked } from "marked";
 import { useTabStore } from "@/stores/tab-store";
+import { useFileStore, type FileNode } from "@/stores/file-store";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl } from "@/lib/api-client";
 
@@ -78,6 +79,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 
   const containerRef = useRef<HTMLDivElement>(null);
   const openTab = useTabStore((s) => s.openTab);
+  const fileTree = useFileStore((s) => s.tree);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -103,26 +105,61 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       }
     };
 
+    /** Search file tree for matches by filename */
+    function findInTree(nodes: FileNode[], name: string): string[] {
+      const results: string[] = [];
+      for (const node of nodes) {
+        if (node.type === "file" && node.name === name) results.push(node.path);
+        if (node.children) results.push(...findInTree(node.children, name));
+      }
+      return results;
+    }
+
     function openFileOrSearch(filePath: string) {
       if (!filePath) return;
       const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
-      const meta: Record<string, unknown> = { filePath };
-      if (projectName) meta.projectName = projectName;
+      const isRelative = /^(\.\/|\.\.\/)/.test(filePath);
+      const fileName = filePath.split("/").pop() ?? filePath;
 
+      // Absolute path → verify then open
       if (isAbsolute) {
-        // Verify existence, then open or fallback to search
+        const meta: Record<string, unknown> = { filePath };
+        if (projectName) meta.projectName = projectName;
         api.get(`/api/fs/read?path=${encodeURIComponent(filePath)}`).then(() => {
-          openTab({ type: "editor", title: filePath.split("/").pop() ?? filePath, metadata: meta, projectId: null, closable: true });
+          openTab({ type: "editor", title: fileName, metadata: meta, projectId: null, closable: true });
         }).catch(() => openCommandPalette(filePath));
-      } else if (projectName) {
-        // Verify file exists in project, fallback to command palette search
+        return;
+      }
+
+      // Relative path with ./ or ../ → try exact path in project
+      if (isRelative && projectName) {
+        const meta: Record<string, unknown> = { filePath, projectName };
         api.get(`${projectUrl(projectName)}/files/read?path=${encodeURIComponent(filePath)}`)
           .then(() => {
-            openTab({ type: "editor", title: filePath.split("/").pop() ?? filePath, metadata: meta, projectId: projectName, closable: true });
+            openTab({ type: "editor", title: fileName, metadata: meta, projectId: projectName, closable: true });
           })
-          .catch(() => openCommandPalette(filePath));
+          .catch(() => searchAndOpen(fileName));
+        return;
+      }
+
+      // Just a filename → search in project tree
+      searchAndOpen(fileName);
+    }
+
+    /** Search project file tree; if 1 match → open directly, else → command palette */
+    function searchAndOpen(fileName: string) {
+      const matches = findInTree(fileTree, fileName);
+      if (matches.length === 1) {
+        const match = matches[0]!;
+        openTab({
+          type: "editor",
+          title: fileName,
+          metadata: { filePath: match, projectName },
+          projectId: projectName ?? null,
+          closable: true,
+        });
       } else {
-        openCommandPalette(filePath);
+        openCommandPalette(fileName);
       }
     }
 
