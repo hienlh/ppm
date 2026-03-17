@@ -70,7 +70,7 @@ export function TabBar({ panelId }: TabBarProps) {
 
   return (
     <div
-      className="hidden md:flex items-center h-[41px] border-b border-border bg-background"
+      className="hidden md:flex items-center h-10 border-b border-border bg-background"
       onDragOver={handleDragOverBar}
       onDrop={handleDrop}
       onDoubleClick={handleBarDoubleClick}
@@ -81,7 +81,7 @@ export function TabBar({ panelId }: TabBarProps) {
         ref={scrollRef}
         className="flex-1 overflow-x-auto overflow-y-hidden min-w-0 scrollbar-none"
       >
-        <div className="flex items-center gap-0.5 px-2 py-1">
+        <div className="flex items-center h-10">
           {tabs.map((tab, i) => (
             <DraggableTab
               key={tab.id}
@@ -107,9 +107,9 @@ export function TabBar({ panelId }: TabBarProps) {
 
           {/* + button — inside flow, sticky when overflowing */}
           <button
-            onClick={openCommandPalette}
+            onClick={() => openCommandPalette()}
             title="Open command palette (Shift+Shift)"
-            className="flex items-center justify-center size-7 shrink-0 sticky right-1 rounded-md text-text-secondary hover:text-foreground hover:bg-surface-elevated transition-colors bg-background"
+            className="flex items-center justify-center size-10 shrink-0 sticky right-0 border-t-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
           >
             <Plus className="size-4" />
           </button>

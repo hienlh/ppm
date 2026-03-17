@@ -34,11 +34,11 @@ export function DraggableTab({
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         className={cn(
-          "group flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md whitespace-nowrap transition-colors",
-          "border-b-2 -mb-[1px] cursor-grab active:cursor-grabbing",
+          "group flex items-center gap-1 px-3 h-full whitespace-nowrap text-xs transition-colors",
+          "border-t-2 cursor-grab active:cursor-grabbing",
           isActive
-            ? "border-primary bg-surface text-foreground"
-            : "border-transparent text-text-secondary hover:text-foreground hover:bg-surface-elevated",
+            ? "border-primary bg-surface text-primary"
+            : "border-transparent text-text-secondary hover:text-foreground",
         )}
       >
         <Icon className="size-4" />
