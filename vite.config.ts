@@ -53,6 +53,8 @@ export default defineConfig({
       "/ws": {
         target: "ws://localhost:8081",
         ws: true,
+        // Disable timeout to prevent proxy from closing long-running WS connections
+        timeout: 0,
       },
     },
   },

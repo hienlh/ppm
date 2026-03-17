@@ -108,7 +108,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       // First event received — stop heartbeat, switch to streaming status
       if (!firstEventReceived) {
         firstEventReceived = true;
-        clearInterval(heartbeat);
+        if (heartbeat) clearInterval(heartbeat);
         safeSend(sessionId, { type: "streaming_status", status: "streaming" });
       }
 
@@ -264,6 +264,12 @@ export const chatWebSocket = {
     } catch {
       ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
       return;
+    }
+
+    // Ensure entry.ws is current — may be stale if open/close race during reconnect
+    const entry0 = activeSessions.get(sessionId);
+    if (entry0 && entry0.ws !== ws) {
+      entry0.ws = ws;
     }
 
     const entry = activeSessions.get(sessionId);
