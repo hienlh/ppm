@@ -250,6 +250,16 @@ export const chatWebSocket = {
         (provider as any).ensureProjectPath(sessionId, entry.projectPath);
       }
 
+      // If already streaming, abort current query first and wait for cleanup
+      if (entry?.isStreaming && entry.abort) {
+        console.log(`[chat] session=${sessionId} aborting current query for new message`);
+        entry.abort.abort();
+        // Wait for stream loop to finish cleanup
+        if (entry.streamPromise) {
+          await entry.streamPromise;
+        }
+      }
+
       // Store promise reference on entry to prevent GC from collecting the async operation.
       // Use setTimeout(0) to detach from WS handler's async scope.
       if (entry) {

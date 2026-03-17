@@ -82,74 +82,76 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       return;
     }
 
+    /**
+     * Route a child event to its parent Agent/Task tool_use's children array.
+     * Returns true if routed (caller should skip flat append), false if no parent found.
+     */
+    const routeToParent = (childEvent: ChatEvent, parentToolUseId: string): boolean => {
+      const parent = streamingEventsRef.current.find(
+        (e) => e.type === "tool_use"
+          && (e.tool === "Agent" || e.tool === "Task")
+          && (e as any).toolUseId === parentToolUseId,
+      );
+      if (parent && parent.type === "tool_use") {
+        if (!parent.children) parent.children = [];
+        parent.children.push(childEvent);
+        return true;
+      }
+      return false;
+    };
+
+    /** Trigger re-render with latest events snapshot */
+    const syncMessages = () => {
+      const content = streamingContentRef.current;
+      const events = [...streamingEventsRef.current];
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant" && !last.id.startsWith("final-")) {
+          return [...prev.slice(0, -1), { ...last, content, events }];
+        }
+        return [...prev, {
+          id: `streaming-${Date.now()}`,
+          role: "assistant" as const,
+          content,
+          events,
+          timestamp: new Date().toISOString(),
+        }];
+      });
+    };
+
     switch (data.type) {
       case "text": {
+        const pid = (data as any).parentToolUseId as string | undefined;
+        if (pid && routeToParent(data, pid)) {
+          // Child text routed to parent — just re-render
+          syncMessages();
+          break;
+        }
         streamingContentRef.current += data.content;
         streamingEventsRef.current.push(data);
-        // Snapshot BEFORE queueing setState — React 18 batching may delay updater execution
-        const txtContent = streamingContentRef.current;
-        const txtEvents = [...streamingEventsRef.current];
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant" && !last.id.startsWith("final-")) {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, content: txtContent, events: txtEvents },
-            ];
-          }
-          return [
-            ...prev,
-            {
-              id: `streaming-${Date.now()}`,
-              role: "assistant" as const,
-              content: txtContent,
-              events: txtEvents,
-              timestamp: new Date().toISOString(),
-            },
-          ];
-        });
+        syncMessages();
         break;
       }
 
       case "tool_use": {
+        const pid = (data as any).parentToolUseId as string | undefined;
+        if (pid && routeToParent(data, pid)) {
+          syncMessages();
+          break;
+        }
         streamingEventsRef.current.push(data);
-        const tuContent = streamingContentRef.current;
-        const tuEvents = [...streamingEventsRef.current];
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, events: tuEvents },
-            ];
-          }
-          return [
-            ...prev,
-            {
-              id: `streaming-${Date.now()}`,
-              role: "assistant" as const,
-              content: tuContent,
-              events: tuEvents,
-              timestamp: new Date().toISOString(),
-            },
-          ];
-        });
+        syncMessages();
         break;
       }
 
       case "tool_result": {
+        const pid = (data as any).parentToolUseId as string | undefined;
+        if (pid && routeToParent(data, pid)) {
+          syncMessages();
+          break;
+        }
         streamingEventsRef.current.push(data);
-        const trEvents = [...streamingEventsRef.current];
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, events: trEvents },
-            ];
-          }
-          return prev;
-        });
+        syncMessages();
         break;
       }
 
@@ -217,30 +219,8 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
         });
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
-
-        // Flush queued message if user typed while streaming
-        const queued = pendingMessageRef.current;
-        if (queued) {
-          pendingMessageRef.current = null;
-          // Add user message to list
-          setMessages((prev2) => [
-            ...prev2,
-            {
-              id: `user-${Date.now()}`,
-              role: "user" as const,
-              content: queued,
-              timestamp: new Date().toISOString(),
-            },
-          ]);
-          streamingContentRef.current = "";
-          streamingEventsRef.current = [];
-          isStreamingRef.current = true;
-          setIsStreaming(true);
-          sendRef.current(JSON.stringify({ type: "message", content: queued }));
-        } else {
-          isStreamingRef.current = false;
-          setIsStreaming(false);
-        }
+        isStreamingRef.current = false;
+        setIsStreaming(false);
         break;
       }
     }
@@ -303,10 +283,23 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     (content: string) => {
       if (!content.trim()) return;
 
-      // If streaming, queue message to send after current stream finishes
-      if (isStreaming) {
-        pendingMessageRef.current = content;
-        return;
+      // If streaming, cancel current stream first then send immediately
+      if (isStreamingRef.current) {
+        // Finalize current streaming message
+        const finalContent = streamingContentRef.current;
+        const finalEvents = [...streamingEventsRef.current];
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            return [
+              ...prev.slice(0, -1),
+              { ...last, id: `final-${Date.now()}`, content: finalContent || last.content, events: finalEvents.length > 0 ? finalEvents : last.events },
+            ];
+          }
+          return prev;
+        });
+        // Tell backend to abort current query
+        send(JSON.stringify({ type: "cancel" }));
       }
 
       // Add user message
@@ -323,12 +316,14 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       // Reset streaming state
       streamingContentRef.current = "";
       streamingEventsRef.current = [];
+      pendingMessageRef.current = null;
       isStreamingRef.current = true;
       setIsStreaming(true);
+      setPendingApproval(null);
 
       send(JSON.stringify({ type: "message", content }));
     },
-    [send, isStreaming],
+    [send],
   );
 
   const respondToApproval = useCallback(
