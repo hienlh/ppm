@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { StreamingStatus } from "@/hooks/use-chat";
@@ -9,6 +10,7 @@ import {
   AlertCircle,
   ShieldAlert,
   Bot,
+  ChevronDown,
   ChevronRight,
   FileText,
   Image as ImageIcon,
@@ -45,58 +47,7 @@ export function MessageList({
   projectName,
   onFork,
 }: MessageListProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const initialLoadRef = useRef(true);
-  const autoScrollRef = useRef(true);
-
-  // Detect user scroll intent via wheel/touch/keyboard — NOT scroll events
-  // (scroll events fire on programmatic scrollTop too, causing false positives)
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    const checkPosition = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      autoScrollRef.current = scrollHeight - scrollTop - clientHeight < 30;
-    };
-
-    // Wheel: check after browser processes it
-    const onWheel = () => requestAnimationFrame(checkPosition);
-    // Touch: check on end
-    const onTouchEnd = () => requestAnimationFrame(checkPosition);
-    // Keyboard: Page Up/Down, Home, End, Arrow keys
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"].includes(e.key)) {
-        requestAnimationFrame(checkPosition);
-      }
-    };
-
-    container.addEventListener("wheel", onWheel, { passive: true });
-    container.addEventListener("touchend", onTouchEnd, { passive: true });
-    container.addEventListener("keydown", onKeyDown);
-    return () => {
-      container.removeEventListener("wheel", onWheel);
-      container.removeEventListener("touchend", onTouchEnd);
-      container.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
-
-  // Auto-scroll to bottom when new content arrives (if user hasn't scrolled up)
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    if (initialLoadRef.current) {
-      container.scrollTop = container.scrollHeight;
-      if (messages.length > 0) initialLoadRef.current = false;
-      return;
-    }
-
-    if (autoScrollRef.current) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [messages, pendingApproval]);
+  // Scroll handled by StickToBottom wrapper — no manual scroll logic needed
 
   if (messagesLoading) {
     return (
@@ -117,34 +68,49 @@ export function MessageList({
   }
 
   return (
-    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-      {messages
-        .filter((msg) => {
-          // Skip empty messages: no text content AND no events
-          const hasContent = msg.content && msg.content.trim().length > 0;
-          const hasEvents = msg.events && msg.events.length > 0;
-          return hasContent || hasEvents;
-        })
-        .map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            isStreaming={isStreaming && msg.id.startsWith("streaming-")}
-            projectName={projectName}
-            onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
-          />
-        ))}
+    <StickToBottom className="flex-1 overflow-y-auto" resize="smooth" initial="instant">
+      <StickToBottom.Content className="p-4 space-y-4">
+        {messages
+          .filter((msg) => {
+            const hasContent = msg.content && msg.content.trim().length > 0;
+            const hasEvents = msg.events && msg.events.length > 0;
+            return hasContent || hasEvents;
+          })
+          .map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              isStreaming={isStreaming && msg.id.startsWith("streaming-")}
+              projectName={projectName}
+              onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
+            />
+          ))}
 
-      {pendingApproval && (
-        pendingApproval.tool === "AskUserQuestion"
-          ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
-          : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
-      )}
+        {pendingApproval && (
+          pendingApproval.tool === "AskUserQuestion"
+            ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
+            : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
+        )}
 
-      {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} elapsed={connectingElapsed} warningThreshold={thinkingWarningThreshold} />}
+        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} elapsed={connectingElapsed} warningThreshold={thinkingWarningThreshold} />}
+      </StickToBottom.Content>
+      <ScrollToBottomButton />
+    </StickToBottom>
+  );
+}
 
-      <div ref={bottomRef} />
-    </div>
+/** Floating button to scroll back to bottom when user has scrolled up */
+function ScrollToBottomButton() {
+  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  if (isAtBottom) return null;
+  return (
+    <button
+      onClick={() => scrollToBottom()}
+      className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 rounded-full bg-surface-elevated border border-border text-xs text-text-secondary hover:text-foreground shadow-lg transition-all"
+    >
+      <ChevronDown className="size-3" />
+      Scroll to bottom
+    </button>
   );
 }
 
