@@ -2,7 +2,7 @@ import { useMemo, useRef, useEffect } from "react";
 import { marked } from "marked";
 import { useTabStore } from "@/stores/tab-store";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
-import { api } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 
 // Configure marked globally
 marked.use({ gfm: true, breaks: true });
@@ -115,7 +115,12 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
           openTab({ type: "editor", title: filePath.split("/").pop() ?? filePath, metadata: meta, projectId: null, closable: true });
         }).catch(() => openCommandPalette(filePath));
       } else if (projectName) {
-        openTab({ type: "editor", title: filePath.split("/").pop() ?? filePath, metadata: meta, projectId: projectName, closable: true });
+        // Verify file exists in project, fallback to command palette search
+        api.get(`${projectUrl(projectName)}/files/read?path=${encodeURIComponent(filePath)}`)
+          .then(() => {
+            openTab({ type: "editor", title: filePath.split("/").pop() ?? filePath, metadata: meta, projectId: projectName, closable: true });
+          })
+          .catch(() => openCommandPalette(filePath));
       } else {
         openCommandPalette(filePath);
       }
