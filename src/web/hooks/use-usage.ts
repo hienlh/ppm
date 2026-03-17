@@ -2,12 +2,13 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { getAuthToken, projectUrl } from "@/lib/api-client";
 import type { UsageInfo } from "../../types/chat";
 
-const POLL_INTERVAL = 60_000; // 60s auto-refresh
+const POLL_INTERVAL = 30_000; // read cache every 30s
 
 interface UseUsageReturn {
   usageInfo: UsageInfo;
   usageLoading: boolean;
-  lastUpdatedAt: number | null;
+  /** ISO timestamp from BE — when usage was actually fetched from Anthropic API */
+  lastFetchedAt: string | null;
   refreshUsage: () => void;
   /** Merge partial usage from WebSocket events (cost tracking) */
   mergeUsage: (partial: Partial<UsageInfo>) => void;
@@ -16,38 +17,31 @@ interface UseUsageReturn {
 export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsageReturn {
   const [usageInfo, setUsageInfo] = useState<UsageInfo>({});
   const [usageLoading, setUsageLoading] = useState(false);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchUsage = useCallback((bustCache = false) => {
+  const fetchUsage = useCallback(() => {
     if (!projectName) return;
     setUsageLoading(true);
-    const qs = bustCache ? `&_t=${Date.now()}` : "";
-    fetch(`${projectUrl(projectName)}/chat/usage?providerId=${providerId}${qs}`, {
+    fetch(`${projectUrl(projectName)}/chat/usage?providerId=${providerId}`, {
       headers: { Authorization: `Bearer ${getAuthToken()}` },
     })
       .then((r) => r.json())
       .then((json: any) => {
         if (json.ok && json.data) {
           setUsageInfo((prev) => ({ ...prev, ...json.data }));
-          setLastUpdatedAt(Date.now());
+          if (json.data.lastFetchedAt) setLastFetchedAt(json.data.lastFetchedAt);
         }
       })
       .catch(() => {})
       .finally(() => setUsageLoading(false));
   }, [projectName, providerId]);
 
-  // Initial fetch + auto-refresh interval
+  // Read cache on mount + auto-refresh
   useEffect(() => {
     fetchUsage();
-    timerRef.current = setInterval(() => fetchUsage(true), POLL_INTERVAL);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [fetchUsage]);
-
-  const refreshUsage = useCallback(() => {
-    fetchUsage(true);
+    timerRef.current = setInterval(fetchUsage, POLL_INTERVAL);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [fetchUsage]);
 
   const mergeUsage = useCallback((partial: Partial<UsageInfo>) => {
@@ -61,5 +55,5 @@ export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsa
     });
   }, []);
 
-  return { usageInfo, usageLoading, lastUpdatedAt, refreshUsage, mergeUsage };
+  return { usageInfo, usageLoading, lastFetchedAt, refreshUsage: fetchUsage, mergeUsage };
 }
