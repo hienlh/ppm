@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -104,17 +105,9 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
     label: string;
     files: string[];
   } | null>(null);
-  const { openTab, updateTab } = useTabStore();
-
-  // Restore viewMode from tab metadata
-  const viewMode: ViewMode =
-    (metadata?.viewMode as ViewMode) === "tree" ? "tree" : "flat";
-
-  const setViewMode = (mode: ViewMode) => {
-    if (tabId) {
-      updateTab(tabId, { metadata: { ...metadata, viewMode: mode } });
-    }
-  };
+  const { openTab } = useTabStore();
+  const viewMode = useSettingsStore((s) => s.gitStatusViewMode);
+  const setViewMode = useSettingsStore((s) => s.setGitStatusViewMode);
 
   const fetchStatus = useCallback(async () => {
     if (!projectName) return;

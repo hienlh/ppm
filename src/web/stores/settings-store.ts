@@ -1,22 +1,29 @@
 import { create } from "zustand";
 
 export type Theme = "light" | "dark" | "system";
+export type GitStatusViewMode = "flat" | "tree";
 
 const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
   theme: Theme;
   sidebarCollapsed: boolean;
+  gitStatusViewMode: GitStatusViewMode;
+  wordWrap: boolean;
   deviceName: string | null;
   version: string | null;
   setTheme: (theme: Theme) => void;
   toggleSidebar: () => void;
+  setGitStatusViewMode: (mode: GitStatusViewMode) => void;
+  toggleWordWrap: () => void;
   fetchServerInfo: () => Promise<void>;
 }
 
 interface PersistedSettings {
   theme?: Theme;
   sidebarCollapsed?: boolean;
+  gitStatusViewMode?: GitStatusViewMode;
+  wordWrap?: boolean;
 }
 
 function loadPersistedSettings(): PersistedSettings {
@@ -59,8 +66,10 @@ export function applyThemeClass(theme: Theme) {
 const _initial = loadPersistedSettings();
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  theme: (_initial.theme === "light" || _initial.theme === "dark" || _initial.theme === "system") ? _initial.theme : "dark",
+  theme: (_initial.theme === "light" || _initial.theme === "dark" || _initial.theme === "system") ? _initial.theme : "system",
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
+  gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
+  wordWrap: _initial.wordWrap ?? false,
   deviceName: null,
   version: null,
 
@@ -74,6 +83,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().sidebarCollapsed;
     persistSettings({ sidebarCollapsed: next });
     set({ sidebarCollapsed: next });
+  },
+
+  setGitStatusViewMode: (mode) => {
+    persistSettings({ gitStatusViewMode: mode });
+    set({ gitStatusViewMode: mode });
+  },
+
+  toggleWordWrap: () => {
+    const next = !get().wordWrap;
+    persistSettings({ wordWrap: next });
+    set({ wordWrap: next });
   },
 
   fetchServerInfo: async () => {
