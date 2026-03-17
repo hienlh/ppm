@@ -18,7 +18,7 @@ const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
 
 export function SettingsTab() {
   const { theme, setTheme } = useSettingsStore();
-  const { permission, isSubscribed, loading, subscribe, unsubscribe } = usePushNotification();
+  const { permission, isSubscribed, loading, error: pushError, subscribe, unsubscribe } = usePushNotification();
 
   return (
     <div className="h-full w-full overflow-auto">
@@ -89,6 +89,9 @@ export function SettingsTab() {
               >
                 Test notification
               </Button>
+            )}
+            {pushError && (
+              <p className="text-[11px] text-destructive">{pushError}</p>
             )}
             {permission === "denied" && (
               <p className="text-[11px] text-destructive">
