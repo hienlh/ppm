@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
+import type { StreamingStatus } from "@/hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 
@@ -12,6 +13,7 @@ import {
   Image as ImageIcon,
   Copy,
   Check,
+  Loader2,
   TerminalSquare,
 } from "lucide-react";
 
@@ -21,6 +23,7 @@ interface MessageListProps {
   pendingApproval: { requestId: string; tool: string; input: unknown } | null;
   onApprovalResponse: (requestId: string, approved: boolean, data?: unknown) => void;
   isStreaming: boolean;
+  streamingStatus?: StreamingStatus;
   projectName?: string;
 }
 
@@ -30,6 +33,7 @@ export function MessageList({
   pendingApproval,
   onApprovalResponse,
   isStreaming,
+  streamingStatus,
   projectName,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -87,7 +91,7 @@ export function MessageList({
           : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
       )}
 
-      {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} />}
+      {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} />}
 
       <div ref={bottomRef} />
     </div>
@@ -405,28 +409,33 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
 }
 
 /**
- * Shows "Thinking..." when:
- * - No assistant message yet (waiting for first response)
- * - Last event is tool_use/tool_result (waiting for Claude after tool execution)
+ * Shows streaming status with phase-specific messages:
+ * - connecting: "Connecting to Claude..."
+ * - streaming + no response yet: "Waiting for response..."
+ * - streaming + after tool: "Processing tool results..."
+ * - streaming + text flowing: null (text itself is the indicator)
  */
-function ThinkingIndicator({ lastMessage }: { lastMessage?: ChatMessage }) {
-  // No assistant message yet
-  if (!lastMessage || lastMessage.role !== "assistant") {
+function ThinkingIndicator({ lastMessage, streamingStatus }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus }) {
+  // Phase 1: Connecting to Claude API
+  if (streamingStatus === "connecting" || !lastMessage || lastMessage.role !== "assistant") {
+    const label = streamingStatus === "connecting" ? "Connecting to Claude..." : "Waiting for response...";
     return (
       <div className="flex items-center gap-2 text-text-subtle text-sm">
-        <span className="animate-pulse">Thinking...</span>
+        <Loader2 className="size-3 animate-spin" />
+        <span>{label}</span>
       </div>
     );
   }
 
-  // Check if last event is non-text (tool_use, tool_result) → waiting for next response
+  // Phase 2: After tool execution — waiting for Claude to continue
   const events = lastMessage.events;
   if (events && events.length > 0) {
     const lastEvent = events[events.length - 1]!;
     if (lastEvent?.type === "tool_use" || lastEvent?.type === "tool_result") {
       return (
         <div className="flex items-center gap-2 text-text-subtle text-sm">
-          <span className="animate-pulse">Thinking...</span>
+          <Loader2 className="size-3 animate-spin" />
+          <span>Processing...</span>
         </div>
       );
     }

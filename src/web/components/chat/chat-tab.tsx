@@ -69,6 +69,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     messages,
     messagesLoading,
     isStreaming,
+    streamingStatus,
     pendingApproval,
     sendMessage,
     respondToApproval,
@@ -238,6 +239,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         pendingApproval={pendingApproval}
         onApprovalResponse={respondToApproval}
         isStreaming={isStreaming}
+        streamingStatus={streamingStatus}
         projectName={projectName}
       />
 
@@ -251,6 +253,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           refreshUsage={refreshUsage}
           lastUpdatedAt={lastUpdatedAt}
           sessionId={sessionId}
+          onSelectSession={handleSelectSession}
           onBugReport={sessionId ? async () => {
             const text = await buildBugReport(version, { sessionId, projectName });
             setBugReportText(text);
