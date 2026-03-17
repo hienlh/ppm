@@ -78,6 +78,18 @@ export function SettingsTab() {
                 {loading ? "..." : isSubscribed ? "On" : "Off"}
               </Button>
             </div>
+            {isSubscribed && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs w-full"
+                onClick={() => {
+                  new Notification("PPM Test", { body: "Push notifications are working!" });
+                }}
+              >
+                Test notification
+              </Button>
+            )}
             {permission === "denied" && (
               <p className="text-[11px] text-destructive">
                 Notifications blocked. Enable in browser settings.
