@@ -10,6 +10,7 @@ import { resolveProjectColor } from "@/lib/project-palette";
 import { getProjectInitials } from "@/lib/project-avatar";
 import type { TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
+import { openCommandPalette } from "@/hooks/use-global-keybindings";
 
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
@@ -139,9 +140,9 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           })}
         </div>
 
-        {/* Add tab button */}
+        {/* Add tab — opens command palette */}
         <button
-          onClick={() => setNewTabSheetOpen(true)}
+          onClick={() => openCommandPalette()}
           className="flex items-center justify-center size-12 shrink-0 border-t-2 border-transparent text-text-secondary"
         >
           <Plus className="size-4" />
