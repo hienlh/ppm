@@ -435,28 +435,37 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
  * - Text streaming: hidden
  */
 function ThinkingIndicator({ lastMessage, streamingStatus, elapsed }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus; elapsed?: number }) {
-  // No assistant response yet — still connecting/waiting
-  if (!lastMessage || lastMessage.role !== "assistant") {
-    const isLong = (elapsed ?? 0) >= 15;
-    return (
-      <div className="flex flex-col gap-1 text-sm">
-        <div className="flex items-center gap-2 text-text-subtle">
-          <Loader2 className="size-3 animate-spin" />
-          <span>
-            Thinking
-            {(elapsed ?? 0) > 0 && <span className="text-text-subtle/60">... ({elapsed}s)</span>}
-          </span>
-        </div>
-        {isLong && (
-          <p className="text-xs text-yellow-500/80 ml-5">
-            Taking longer than usual — may be rate-limited or API slow. Try sending a new message to retry.
-          </p>
-        )}
-      </div>
-    );
-  }
+  // Show "Thinking" when:
+  // 1. No assistant message yet (waiting for first response)
+  // 2. Last event is tool_use/tool_result (Claude thinking after tool execution)
+  // Hide when text is actively streaming (text itself is the indicator)
 
-  return null;
+  const isWaiting = !lastMessage || lastMessage.role !== "assistant";
+  const isAfterTool = (() => {
+    if (!lastMessage?.events?.length) return false;
+    const last = lastMessage.events[lastMessage.events.length - 1]!;
+    return last.type === "tool_use" || last.type === "tool_result";
+  })();
+
+  if (!isWaiting && !isAfterTool) return null;
+
+  const isLong = isWaiting && (elapsed ?? 0) >= 15;
+  return (
+    <div className="flex flex-col gap-1 text-sm">
+      <div className="flex items-center gap-2 text-text-subtle">
+        <Loader2 className="size-3 animate-spin" />
+        <span>
+          Thinking
+          {isWaiting && (elapsed ?? 0) > 0 && <span className="text-text-subtle/60">... ({elapsed}s)</span>}
+        </span>
+      </div>
+      {isLong && (
+        <p className="text-xs text-yellow-500/80 ml-5">
+          Taking longer than usual — may be rate-limited or API slow. Try sending a new message to retry.
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Wrapper: delegates to shared MarkdownRenderer with code actions enabled */
