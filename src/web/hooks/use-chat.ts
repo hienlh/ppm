@@ -218,6 +218,8 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       }
 
       case "done": {
+        // Idempotent: may receive duplicate done (provider + stream loop finally)
+        if (!isStreamingRef.current) break;
         // Finalize the streaming message — capture refs before clearing
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];

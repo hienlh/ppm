@@ -164,6 +164,8 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
+    // Always send done — guarantees FE resets isStreaming even if provider didn't yield done
+    safeSend(sessionId, { type: "done", sessionId });
     entry.abort = undefined;
     entry.isStreaming = false;
     entry.pendingApprovalEvent = undefined;
