@@ -15,6 +15,7 @@ import {
   Copy,
   Check,
   Loader2,
+  RotateCcw,
   TerminalSquare,
 } from "lucide-react";
 
@@ -28,6 +29,8 @@ interface MessageListProps {
   connectingElapsed?: number;
   thinkingWarningThreshold?: number;
   projectName?: string;
+  /** Called when user clicks Fork/Rewind — opens new forked chat tab */
+  onFork?: (userMessage: string) => void;
 }
 
 export function MessageList({
@@ -40,46 +43,57 @@ export function MessageList({
   connectingElapsed,
   thinkingWarningThreshold,
   projectName,
+  onFork,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initialLoadRef = useRef(true);
   const autoScrollRef = useRef(true);
-  const skipScrollEventRef = useRef(false);
 
-  // User scrolls up → disable auto-scroll; scrolls to bottom → re-enable
+  // Detect user scroll intent via wheel/touch/keyboard — NOT scroll events
+  // (scroll events fire on programmatic scrollTop too, causing false positives)
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    const handleScroll = () => {
-      // Skip scroll events triggered by our programmatic scrollTop assignment
-      if (skipScrollEventRef.current) {
-        skipScrollEventRef.current = false;
-        return;
-      }
+    const checkPosition = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
-      const atBottom = scrollHeight - scrollTop - clientHeight < 30;
-      autoScrollRef.current = atBottom;
+      autoScrollRef.current = scrollHeight - scrollTop - clientHeight < 30;
     };
 
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => container.removeEventListener("scroll", handleScroll);
+    // Wheel: check after browser processes it
+    const onWheel = () => requestAnimationFrame(checkPosition);
+    // Touch: check on end
+    const onTouchEnd = () => requestAnimationFrame(checkPosition);
+    // Keyboard: Page Up/Down, Home, End, Arrow keys
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"].includes(e.key)) {
+        requestAnimationFrame(checkPosition);
+      }
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: true });
+    container.addEventListener("touchend", onTouchEnd, { passive: true });
+    container.addEventListener("keydown", onKeyDown);
+    return () => {
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("touchend", onTouchEnd);
+      container.removeEventListener("keydown", onKeyDown);
+    };
   }, []);
 
+  // Auto-scroll to bottom when new content arrives (if user hasn't scrolled up)
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
     if (initialLoadRef.current) {
-      skipScrollEventRef.current = true;
       container.scrollTop = container.scrollHeight;
       if (messages.length > 0) initialLoadRef.current = false;
       return;
     }
 
     if (autoScrollRef.current) {
-      skipScrollEventRef.current = true;
       container.scrollTop = container.scrollHeight;
     }
   }, [messages, pendingApproval]);
@@ -117,6 +131,7 @@ export function MessageList({
             message={msg}
             isStreaming={isStreaming && msg.id.startsWith("streaming-")}
             projectName={projectName}
+            onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
           />
         ))}
 
@@ -133,9 +148,9 @@ export function MessageList({
   );
 }
 
-function MessageBubble({ message, isStreaming, projectName }: { message: ChatMessage; isStreaming: boolean; projectName?: string }) {
+function MessageBubble({ message, isStreaming, projectName, onFork }: { message: ChatMessage; isStreaming: boolean; projectName?: string; onFork?: () => void }) {
   if (message.role === "user") {
-    return <UserBubble content={message.content} projectName={projectName} />;
+    return <UserBubble content={message.content} projectName={projectName} onFork={onFork} />;
   }
 
   if (message.role === "system") {
@@ -200,12 +215,12 @@ function isPdfPath(path: string): boolean {
 }
 
 /** User message bubble with attachment rendering */
-function UserBubble({ content, projectName }: { content: string; projectName?: string }) {
+function UserBubble({ content, projectName, onFork }: { content: string; projectName?: string; onFork?: () => void }) {
   const { files, text } = useMemo(() => parseUserAttachments(content), [content]);
 
   return (
-    <div className="flex justify-end">
-      <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary max-w-[85%] space-y-2">
+    <div className="flex justify-end group/user">
+      <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary max-w-[85%] space-y-2 relative">
         {/* Attached files */}
         {files.length > 0 && (
           <div className="flex flex-wrap gap-2">
@@ -238,6 +253,16 @@ function UserBubble({ content, projectName }: { content: string; projectName?: s
 
         {/* Text content */}
         {text && <p className="whitespace-pre-wrap break-words">{text}</p>}
+        {/* Fork/Rewind button — visible on hover */}
+        {onFork && (
+          <button
+            onClick={onFork}
+            title="Retry from this message (fork session)"
+            className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover/user:opacity-100 transition-opacity size-6 flex items-center justify-center rounded bg-surface border border-border text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
+          >
+            <RotateCcw className="size-3" />
+          </button>
+        )}
       </div>
     </div>
   );
