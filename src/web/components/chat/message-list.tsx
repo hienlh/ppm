@@ -441,10 +441,11 @@ function ThinkingIndicator({ lastMessage, streamingStatus, elapsed }: { lastMess
   // Hide when text is actively streaming (text itself is the indicator)
 
   const isWaiting = !lastMessage || lastMessage.role !== "assistant";
+  // Show Thinking only after tool_result (tool finished), not tool_use (tool still running)
   const isAfterTool = (() => {
     if (!lastMessage?.events?.length) return false;
     const last = lastMessage.events[lastMessage.events.length - 1]!;
-    return last.type === "tool_use" || last.type === "tool_result";
+    return last.type === "tool_result";
   })();
 
   if (!isWaiting && !isAfterTool) return null;
