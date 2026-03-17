@@ -13,5 +13,10 @@ ppm.yaml
 *.pid
 *.log
 
+# Compiled binary — too large for npm (users run via bun directly)
+dist/ppm
+
+# Vite may leak absolute paths into src/web/
+src/web/Users/
+
 # Keep dist/web/ for pre-built frontend
-# (don't ignore dist/)

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.3] - 2026-03-17
+
+### Fixed
+- npm package too large (79MB→~2MB): exclude compiled binary and leaked Monaco workers
+- Add `dist/ppm` and `src/web/Users/` to .npmignore
+
 ## [0.4.2] - 2026-03-17
 
 ### Added
