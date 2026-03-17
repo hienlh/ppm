@@ -287,10 +287,10 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const pathMode = isPathQuery(query);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end md:items-start justify-center md:pt-[20vh]" onClick={onClose}>
       <div className="fixed inset-0 bg-black/50" />
       <div
-        className="relative z-10 w-full max-w-md rounded-lg border border-border bg-background shadow-2xl overflow-hidden"
+        className="relative z-10 w-full max-w-md rounded-t-xl md:rounded-xl border border-border bg-background shadow-2xl overflow-hidden max-h-[80vh] md:max-h-none"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
