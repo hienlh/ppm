@@ -242,19 +242,38 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     el?.scrollIntoView({ block: "nearest" });
   }, [selectedIdx]);
 
+  /** Open chat tab with query as message (used by "Ask AI" fallback) */
+  const askAi = useCallback(() => {
+    if (!query.trim()) return;
+    const projectId = activeProject?.name ?? null;
+    openTab({
+      type: "chat",
+      title: "AI Chat",
+      projectId,
+      metadata: { projectName: activeProject?.name, pendingMessage: query.trim() },
+      closable: true,
+    });
+    onClose();
+  }, [query, activeProject, openTab, onClose]);
+
   function handleKeyDown(e: React.KeyboardEvent) {
+    const len = filtered.length;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        setSelectedIdx((i) => (i + 1) % filtered.length);
+        if (len > 0) setSelectedIdx((i) => (i + 1) % len);
         break;
       case "ArrowUp":
         e.preventDefault();
-        setSelectedIdx((i) => (i - 1 + filtered.length) % filtered.length);
+        if (len > 0) setSelectedIdx((i) => (i - 1 + len) % len);
         break;
       case "Enter":
         e.preventDefault();
-        filtered[selectedIdx]?.action();
+        if (len > 0) {
+          filtered[selectedIdx]?.action();
+        } else if (query.trim()) {
+          askAi();
+        }
         break;
       case "Escape":
         e.preventDefault();
@@ -306,17 +325,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
               <p className="px-3 py-4 text-sm text-text-subtle text-center">Searching...</p>
             ) : query.trim() ? (
               <button
-                onClick={() => {
-                  const projectId = activeProject?.name ?? null;
-                  openTab({
-                    type: "chat",
-                    title: "AI Chat",
-                    projectId,
-                    metadata: { projectName: activeProject?.name, pendingMessage: query.trim() },
-                    closable: true,
-                  });
-                  onClose();
-                }}
+                onClick={askAi}
                 className="flex items-center gap-3 w-full px-3 py-3 text-sm text-left text-text-secondary hover:bg-accent/15 hover:text-text-primary transition-colors"
               >
                 <MessageSquare className="size-4 shrink-0 text-accent" />
