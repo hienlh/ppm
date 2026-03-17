@@ -391,7 +391,7 @@ export function MessageInput({
         onClick={() => !disabled && textareaRef.current?.focus()}
       >
         {/* Mobile: single row — attach + textarea + send */}
-        <div className="flex items-end gap-1 md:hidden px-2 py-1.5">
+        <div className="flex items-end gap-1 md:hidden px-2 py-2">
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
