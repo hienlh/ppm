@@ -2,9 +2,9 @@ import { useEffect, useState, useCallback } from "react";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 
-/** Dispatch this event to open the command palette from anywhere */
-export function openCommandPalette() {
-  window.dispatchEvent(new Event("open-command-palette"));
+/** Dispatch this event to open the command palette from anywhere, optionally with initial query */
+export function openCommandPalette(initialQuery?: string) {
+  window.dispatchEvent(new CustomEvent("open-command-palette", { detail: initialQuery }));
 }
 
 /**
@@ -15,6 +15,7 @@ export function openCommandPalette() {
  */
 export function useGlobalKeybindings() {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteInitialQuery, setPaletteInitialQuery] = useState("");
 
   useEffect(() => {
     let lastShiftUp = 0;
@@ -69,7 +70,9 @@ export function useGlobalKeybindings() {
     }
 
     // Custom event listener for programmatic opening
-    function handleOpenPalette() {
+    function handleOpenPalette(e: Event) {
+      const query = (e as CustomEvent).detail as string | undefined;
+      if (query) setPaletteInitialQuery(query);
       setPaletteOpen(true);
     }
 
@@ -83,7 +86,7 @@ export function useGlobalKeybindings() {
     };
   }, []);
 
-  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const closePalette = useCallback(() => { setPaletteOpen(false); setPaletteInitialQuery(""); }, []);
 
-  return { paletteOpen, closePalette };
+  return { paletteOpen, paletteInitialQuery, closePalette };
 }

@@ -57,7 +57,7 @@ function extractDir(q: string): string {
 // Cache: dir path → file list
 const fsCache = new Map<string, string[]>();
 
-export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boolean; onClose: () => void; initialQuery?: string }) {
   const [query, setQuery] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [fsFiles, setFsFiles] = useState<string[]>([]);
@@ -221,7 +221,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   // Reset state when opening
   useEffect(() => {
     if (open) {
-      setQuery("");
+      setQuery(initialQuery);
       setSelectedIdx(0);
       setFsFiles([]);
       requestAnimationFrame(() => inputRef.current?.focus());
