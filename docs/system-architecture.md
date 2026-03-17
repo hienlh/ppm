@@ -65,12 +65,17 @@
 
 **Responsibilities:**
 - Render UI for file explorer, editor, terminal, chat
+- Project switching with visual indicators (avatars, colors, keep-alive workspaces)
 - Capture user input (text, file uploads, terminal commands)
 - Display streaming responses, terminal output
 - Handle authentication (token in localStorage)
 
 **Key Files:**
 - `src/web/app.tsx` — Root React component
+- `src/web/components/layout/project-bar.tsx` — Narrow left sidebar with project avatars (52px width)
+- `src/web/components/layout/project-bottom-sheet.tsx` — Mobile project switcher (bottom sheet)
+- `src/web/components/layout/sidebar.tsx` — Main sidebar with Explorer/Git/History tabs
+- `src/web/components/chat/chat-history-panel.tsx` — History tab content (chat sessions)
 - `src/web/components/` — UI components
 - `src/cli/commands/` — CLI command handlers
 
@@ -100,6 +105,8 @@ PUT    /api/settings/ai         → Update AI provider settings
 POST   /api/projects            → Create project
 GET    /api/projects            → List projects
 DELETE /api/projects/:name      → Delete project
+PATCH  /api/projects/reorder    → Reorder projects by name order
+PATCH  /api/projects/:name/color → Set project color (hex string)
 GET    /api/project/:name/chat/sessions           → List sessions
 POST   /api/project/:name/chat/sessions           → Create session
 GET    /api/project/:name/chat/sessions/:id/messages → Get history
@@ -252,6 +259,58 @@ HTTP/1.1 200 OK
 2. Client sends: `{ type: "input", data: "ls\n" }`
 3. Server sends: `{ type: "output", data: "file1 file2\n" }`
 4. Client sends: `{ type: "resize", cols: 80, rows: 24 }`
+
+---
+
+## Project Workspace Management
+
+### Keep-Alive Pattern (v2.0+)
+When switching projects, workspaces are preserved instead of destroyed:
+1. **Workspace Mount State**: Each project's UI (tabs, terminal xterm DOM, file selections) remains mounted in the DOM
+2. **Visibility Toggle**: CSS `display: none/block` hides/shows workspaces instead of React unmounting
+3. **Terminal DOM Persistence**: xterm.js terminal instances retain their DOM structure across switches (prevents re-render flicker)
+4. **Cache Efficiency**: Zustand stores persist open tabs, selections, and scroll positions per project
+
+**Benefits:**
+- Instant project switching (no DOM reconstruction)
+- Terminal history preserved across switches
+- Smooth UX without flashing/re-rendering
+- Reduced network requests (cached UI state)
+
+### Project Color & Ordering (v2.0+)
+**Storage**: Colors stored as optional `color` field in `Project` interface (hex string or undefined)
+
+**Endpoints:**
+- `PATCH /api/projects/:name/color` — Update project color
+- `PATCH /api/projects/reorder` — Reorder projects array in config
+
+**UI Components:**
+- `ProjectBar` (52px sidebar) — Shows project avatars with color backgrounds, context menu for reorder/rename/delete/color-picker
+- `ProjectBottomSheet` (mobile) — Bottom sheet switcher with scrollable project list
+- `ProjectAvatar` utility — Generates smart initials with collision resolution (prefer 1-char, fallback to 2-char or index)
+- `PROJECT_PALETTE` — 12-color palette for default colors when not customized
+
+---
+
+## Code Editor Migration (v2.0+)
+
+**Migration**: CodeMirror 6 → Monaco Editor (@monaco-editor/react)
+
+**Reasons:**
+- Better syntax highlighting for complex languages
+- Superior IntelliSense and code completion
+- Performance improvements on large files
+- More polished diff viewer experience
+
+**Components Updated:**
+- `src/web/components/editor/code-editor.tsx` — Monaco Editor with language detection
+- `src/web/components/editor/diff-viewer.tsx` — Monaco diff viewer for git diffs
+
+**Features:**
+- Alt+Z toggle for word wrap
+- Automatic language detection from file extension
+- Theme sync with app dark/light mode
+- Responsive layout with proper scrolling
 
 ---
 

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import yaml from "js-yaml";
 import type { PpmConfig } from "../types/config.ts";
-import { DEFAULT_CONFIG } from "../types/config.ts";
+import { DEFAULT_CONFIG, sanitizeConfig } from "../types/config.ts";
 
 const PPM_DIR = resolve(homedir(), ".ppm");
 const GLOBAL_CONFIG_PATH = resolve(PPM_DIR, "config.yaml");
@@ -32,6 +32,10 @@ class ConfigService {
           // Auto-generate token if auth enabled but token is empty
           if (this.config.auth.enabled && !this.config.auth.token) {
             this.config.auth.token = randomBytes(16).toString("hex");
+            this.save();
+          }
+          // Fix invalid config values and persist corrections
+          if (sanitizeConfig(this.config)) {
             this.save();
           }
           return this.config;

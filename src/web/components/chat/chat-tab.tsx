@@ -25,7 +25,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     (metadata?.sessionId as string) ?? null,
   );
   const [providerId, setProviderId] = useState<string>(
-    (metadata?.providerId as string) ?? "claude-sdk",
+    (metadata?.providerId as string) ?? "claude",
   );
 
   // Slash picker state

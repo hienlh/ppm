@@ -3,20 +3,51 @@ import { configService } from "../../services/config.service.ts";
 import {
   validateAIProviderConfig,
   validateDefaultProvider,
+  VALID_PROVIDERS,
   type AIProviderConfig,
+  type ThemeConfig,
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
 
 export const settingsRoutes = new Hono();
 
+/** Strip api_key_env from all providers in an AI config object */
+function stripSensitiveFields(ai: { providers: Record<string, unknown> }) {
+  const clone = structuredClone(ai);
+  for (const provider of Object.values(clone.providers)) {
+    delete (provider as Record<string, unknown>).api_key_env;
+  }
+  return clone;
+}
+
+// ── Theme ─────────────────────────────────────────────────────────────
+
+/** GET /settings/theme */
+settingsRoutes.get("/theme", (c) => {
+  return c.json(ok({ theme: configService.get("theme") ?? "system" }));
+});
+
+/** PUT /settings/theme */
+settingsRoutes.put("/theme", async (c) => {
+  try {
+    const { theme } = await c.req.json<{ theme: ThemeConfig }>();
+    if (!["light", "dark", "system"].includes(theme)) {
+      return c.json(err("theme must be light, dark, or system"), 400);
+    }
+    configService.set("theme", theme);
+    configService.save();
+    return c.json(ok({ theme }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+// ── AI ────────────────────────────────────────────────────────────────
+
 /** GET /settings/ai — return current AI config (strips api_key_env) */
 settingsRoutes.get("/ai", (c) => {
-  const ai = structuredClone(configService.get("ai"));
-  // Strip sensitive env var names from response
-  for (const provider of Object.values(ai.providers)) {
-    delete (provider as unknown as Record<string, unknown>).api_key_env;
-  }
-  return c.json(ok(ai));
+  const ai = configService.get("ai");
+  return c.json(ok(stripSensitiveFields(ai)));
 });
 
 /** PUT /settings/ai — update AI provider settings, writes to yaml */
@@ -54,8 +85,11 @@ settingsRoutes.put("/ai", async (c) => {
       }
     }
 
-    // Validate default_provider references existing provider
+    // Validate default_provider is in allowed list and references existing provider
     if (body.default_provider) {
+      if (!VALID_PROVIDERS.includes(body.default_provider as any)) {
+        return c.json(err(`default_provider must be one of: ${VALID_PROVIDERS.join(", ")}`), 400);
+      }
       const dpErr = validateDefaultProvider(updated.default_provider, updated.providers);
       if (dpErr) return c.json(err(dpErr), 400);
     }
@@ -63,7 +97,7 @@ settingsRoutes.put("/ai", async (c) => {
     configService.set("ai", updated);
     configService.save();
 
-    return c.json(ok(updated));
+    return c.json(ok(stripSensitiveFields(updated)));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }

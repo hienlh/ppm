@@ -3,11 +3,6 @@ import { useTabStore, type TabType } from "@/stores/tab-store";
 import { Loader2 } from "lucide-react";
 
 const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
-  projects: lazy(() =>
-    import("@/components/projects/project-list").then((m) => ({
-      default: m.ProjectList,
-    })),
-  ),
   terminal: lazy(() =>
     import("@/components/terminal/terminal-tab").then((m) => ({
       default: m.TerminalTab,
@@ -26,11 +21,6 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   "git-graph": lazy(() =>
     import("@/components/git/git-graph").then((m) => ({
       default: m.GitGraph,
-    })),
-  ),
-  "git-status": lazy(() =>
-    import("@/components/git/git-status-panel").then((m) => ({
-      default: m.GitStatusPanel,
     })),
   ),
   "git-diff": lazy(() =>

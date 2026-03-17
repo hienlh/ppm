@@ -1,10 +1,18 @@
 import { Suspense, lazy } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Terminal, MessageSquare, GitBranch, Settings } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
+import { useProjectStore } from "@/stores/project-store";
 import type { TabType } from "@/stores/tab-store";
 import { TabBar } from "./tab-bar";
 import { SplitDropOverlay } from "./split-drop-overlay";
 import { cn } from "@/lib/utils";
+
+const QUICK_OPEN_TABS: { type: TabType; label: string; icon: React.ElementType }[] = [
+  { type: "terminal", label: "Terminal", icon: Terminal },
+  { type: "chat", label: "AI Chat", icon: MessageSquare },
+  { type: "git-graph", label: "Git Graph", icon: GitBranch },
+  { type: "settings", label: "Settings", icon: Settings },
+];
 
 const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
   terminal: lazy(() => import("@/components/terminal/terminal-tab").then((m) => ({ default: m.TerminalTab }))),
@@ -43,9 +51,7 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
 
       <div className="flex-1 overflow-hidden relative">
         {panel.tabs.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-text-secondary text-sm">
-            Drop a tab here
-          </div>
+          <EmptyPanel panelId={panelId} />
         ) : (
           panel.tabs.map((tab) => {
             const Component = TAB_COMPONENTS[tab.type];
@@ -60,6 +66,40 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
           })
         )}
         <SplitDropOverlay panelId={panelId} />
+      </div>
+    </div>
+  );
+}
+
+function EmptyPanel({ panelId }: { panelId: string }) {
+  const activeProject = useProjectStore((s) => s.activeProject);
+
+  function openTab(type: TabType) {
+    const needsProject = type !== "settings";
+    const metadata = needsProject && activeProject ? { projectName: activeProject.name } : undefined;
+    usePanelStore.getState().openTab(
+      { type, title: QUICK_OPEN_TABS.find((t) => t.type === type)?.label ?? type, metadata, projectId: activeProject?.name ?? null, closable: true },
+      panelId,
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-4 text-text-secondary">
+      <p className="text-sm">Open a tab to get started</p>
+      <div className="flex flex-col md:flex-row flex-wrap justify-center gap-2">
+        {QUICK_OPEN_TABS.map((opt) => {
+          const Icon = opt.icon;
+          return (
+            <button
+              key={opt.type}
+              onClick={() => openTab(opt.type)}
+              className="flex items-center gap-2 px-4 py-2 rounded-md border border-border bg-surface hover:bg-surface-elevated text-sm text-foreground transition-colors"
+            >
+              <Icon className="size-4" />
+              {opt.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

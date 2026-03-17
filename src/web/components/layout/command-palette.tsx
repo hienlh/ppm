@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 
 interface CommandItem {
@@ -45,6 +46,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const openTab = useTabStore((s) => s.openTab);
   const activeProject = useProjectStore((s) => s.activeProject);
   const fileTree = useFileStore((s) => s.tree);
+  const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
 
   // Action commands
   const actionCommands = useMemo<CommandItem[]>(() => {
@@ -60,7 +62,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action" },
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action" },
       { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action" },
-      { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: openNewTab("git-status", "Git Status"), keywords: "changes diff staged", group: "action" },
+      { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action" },
       { id: "settings", label: "Settings", icon: Settings, action: openNewTab("settings", "Settings"), keywords: "config preferences", group: "action" },
     ];
   }, [activeProject, openTab, onClose]);

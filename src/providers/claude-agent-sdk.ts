@@ -56,8 +56,8 @@ interface PendingApproval {
  * Uses canUseTool callback for tool approvals and AskUserQuestion.
  */
 export class ClaudeAgentSdkProvider implements AIProvider {
-  id = "claude-sdk";
-  name = "Claude Agent SDK";
+  id = "claude";
+  name = "Claude";
 
   private activeSessions = new Map<string, Session>();
   private messageCount = new Map<string, number>();

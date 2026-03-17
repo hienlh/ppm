@@ -4,10 +4,13 @@ export interface PushConfig {
   vapid_subject: string;
 }
 
+export type ThemeConfig = "light" | "dark" | "system";
+
 export interface PpmConfig {
   device_name: string;
   port: number;
   host: string;
+  theme: ThemeConfig;
   auth: AuthConfig;
   projects: ProjectConfig[];
   ai: AIConfig;
@@ -22,6 +25,7 @@ export interface AuthConfig {
 export interface ProjectConfig {
   path: string;
   name: string;
+  color?: string;
 }
 
 export interface AIConfig {
@@ -44,6 +48,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   device_name: "",
   port: 8080,
   host: "0.0.0.0",
+  theme: "system",
   auth: { enabled: true, token: "" },
   projects: [],
   ai: {
@@ -63,6 +68,9 @@ export const DEFAULT_CONFIG: PpmConfig = {
 const VALID_TYPES = ["agent-sdk", "mock"] as const;
 const VALID_EFFORTS = ["low", "medium", "high", "max"] as const;
 const VALID_MODELS = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"] as const;
+/** Only these values are allowed for default_provider in config */
+export const VALID_PROVIDERS = ["claude"] as const;
+const VALID_THEMES: ThemeConfig[] = ["light", "dark", "system"];
 
 /** Validate AI provider config fields. Returns array of error messages (empty = valid). */
 export function validateAIProviderConfig(config: Partial<AIProviderConfig>): string[] {
@@ -94,4 +102,33 @@ export function validateDefaultProvider(defaultProvider: string, providers: Reco
     return `default_provider "${defaultProvider}" not found in providers`;
   }
   return null;
+}
+
+/**
+ * Sanitize a loaded config — fix invalid values to defaults.
+ * Returns true if any field was corrected (caller should save).
+ */
+export function sanitizeConfig(config: PpmConfig): boolean {
+  let dirty = false;
+
+  // Fix invalid theme
+  if (!VALID_THEMES.includes(config.theme)) {
+    config.theme = DEFAULT_CONFIG.theme;
+    dirty = true;
+  }
+
+  // Fix invalid default_provider — must be in VALID_PROVIDERS
+  if (!VALID_PROVIDERS.includes(config.ai.default_provider as any)) {
+    config.ai.default_provider = DEFAULT_CONFIG.ai.default_provider;
+    dirty = true;
+  }
+
+  // Ensure the default provider has a config entry
+  if (!config.ai.providers[config.ai.default_provider]) {
+    config.ai.providers[config.ai.default_provider] =
+      structuredClone(DEFAULT_CONFIG.ai.providers[DEFAULT_CONFIG.ai.default_provider]!);
+    dirty = true;
+  }
+
+  return dirty;
 }

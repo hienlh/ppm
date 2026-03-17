@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { projectService } from "../../services/project.service.ts";
+import { configService } from "../../services/config.service.ts";
 import { searchGitDirs } from "../../services/git-dirs.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -42,6 +43,48 @@ projectRoutes.get("/suggest-dirs", (c) => {
     return c.json(ok(results));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PATCH /api/projects/reorder — reorder projects array */
+projectRoutes.patch("/reorder", async (c) => {
+  try {
+    const body = await c.req.json<{ order: string[] }>();
+    if (!Array.isArray(body.order)) {
+      return c.json(err("Missing required field: order (string[])"), 400);
+    }
+    const projects = configService.get("projects");
+    const orderMap = new Map(body.order.map((name, i) => [name, i]));
+    const reordered = [...projects].sort((a, b) => {
+      const ai = orderMap.get(a.name) ?? Infinity;
+      const bi = orderMap.get(b.name) ?? Infinity;
+      return ai - bi;
+    });
+    configService.set("projects", reordered);
+    configService.save();
+    return c.json(ok({ reordered: reordered.length }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** PATCH /api/projects/:name/color — set project color */
+projectRoutes.patch("/:name/color", async (c) => {
+  try {
+    const name = c.req.param("name");
+    const body = await c.req.json<{ color: string | null }>();
+    const projects = configService.get("projects");
+    const idx = projects.findIndex((p) => p.name === name);
+    if (idx === -1) return c.json(err(`Project not found: ${name}`), 404);
+    const updated = { ...projects[idx]! };
+    if (body.color) updated.color = body.color;
+    else delete updated.color;
+    projects[idx] = updated;
+    configService.set("projects", projects);
+    configService.save();
+    return c.json(ok(updated));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
   }
 });
 
