@@ -34,8 +34,8 @@ export function DraggableTab({
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         className={cn(
-          "group flex items-center gap-1 px-3 h-full whitespace-nowrap text-xs transition-colors",
-          "border-t-2 cursor-grab active:cursor-grabbing",
+          "group flex items-center gap-1 px-3 h-10 whitespace-nowrap text-xs transition-colors",
+          "border-b-2 cursor-grab active:cursor-grabbing",
           isActive
             ? "border-primary bg-surface text-primary"
             : "border-transparent text-text-secondary hover:text-foreground",
