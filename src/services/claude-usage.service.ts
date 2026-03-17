@@ -120,13 +120,16 @@ function parseApiBucket(raw: Record<string, any>, windowHours: number): LimitBuc
 async function fetchWithRetry(): Promise<void> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      cache = await fetchUsageFromApi();
+      const data = await fetchUsageFromApi();
+      cache = data;
       return;
     } catch (e) {
+      const msg = (e as Error).message ?? "";
+      // Don't retry on 429 — just use stale cache
+      if (msg.includes("429")) return;
       if (attempt < MAX_RETRIES) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY));
       }
-      // Keep stale cache on failure
     }
   }
 }
