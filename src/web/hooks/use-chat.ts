@@ -25,6 +25,7 @@ interface UseChatReturn {
   messagesLoading: boolean;
   isStreaming: boolean;
   streamingStatus: StreamingStatus;
+  connectingElapsed: number;
   pendingApproval: ApprovalRequest | null;
   sendMessage: (content: string) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
@@ -39,6 +40,8 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingStatus, setStreamingStatus] = useState<StreamingStatus>("idle");
+  /** Elapsed seconds while connecting (sent by BE heartbeat every 5s) */
+  const [connectingElapsed, setConnectingElapsed] = useState(0);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const onUsageEventRef = useRef(options?.onUsageEvent);
@@ -63,7 +66,9 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
 
     // Handle streaming status updates (connecting → streaming → idle)
     if ((data as any).type === "streaming_status") {
-      setStreamingStatus((data as any).status ?? "idle");
+      const s = (data as any).status ?? "idle";
+      setStreamingStatus(s);
+      setConnectingElapsed(s === "connecting" ? ((data as any).elapsed ?? 0) : 0);
       return;
     }
 
@@ -442,6 +447,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     messagesLoading,
     isStreaming,
     streamingStatus,
+    connectingElapsed,
     pendingApproval,
     sendMessage,
     respondToApproval,

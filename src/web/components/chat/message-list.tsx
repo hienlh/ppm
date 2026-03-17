@@ -24,6 +24,7 @@ interface MessageListProps {
   onApprovalResponse: (requestId: string, approved: boolean, data?: unknown) => void;
   isStreaming: boolean;
   streamingStatus?: StreamingStatus;
+  connectingElapsed?: number;
   projectName?: string;
 }
 
@@ -34,6 +35,7 @@ export function MessageList({
   onApprovalResponse,
   isStreaming,
   streamingStatus,
+  connectingElapsed,
   projectName,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -109,7 +111,7 @@ export function MessageList({
           : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
       )}
 
-      {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} />}
+      {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} elapsed={connectingElapsed} />}
 
       <div ref={bottomRef} />
     </div>
@@ -427,18 +429,29 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
 }
 
 /**
- * Shows streaming status based on what FE has received so far:
- * - No assistant message yet: "Connecting to Claude..." (waiting for first SDK response)
- * - Assistant exists but last event is tool_use/tool_result: "Processing..."
- * - Text is actively streaming: hidden (text itself is the indicator)
+ * Shows streaming status with elapsed time and warnings:
+ * - No assistant message: "Connecting to Claude..." with elapsed timer
+ * - After tool: "Processing..."
+ * - Text streaming: hidden
  */
-function ThinkingIndicator({ lastMessage, streamingStatus }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus }) {
+function ThinkingIndicator({ lastMessage, streamingStatus, elapsed }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus; elapsed?: number }) {
   // No assistant response yet — still connecting/waiting
   if (!lastMessage || lastMessage.role !== "assistant") {
+    const isLong = (elapsed ?? 0) >= 15;
     return (
-      <div className="flex items-center gap-2 text-text-subtle text-sm">
-        <Loader2 className="size-3 animate-spin" />
-        <span>{streamingStatus === "connecting" ? "Connecting to Claude..." : "Waiting for response..."}</span>
+      <div className="flex flex-col gap-1 text-sm">
+        <div className="flex items-center gap-2 text-text-subtle">
+          <Loader2 className="size-3 animate-spin" />
+          <span>
+            {streamingStatus === "connecting" ? "Connecting to Claude" : "Waiting for response"}
+            {(elapsed ?? 0) > 0 && <span className="text-text-subtle/60">... ({elapsed}s)</span>}
+          </span>
+        </div>
+        {isLong && (
+          <p className="text-xs text-yellow-500/80 ml-5">
+            Taking longer than usual — may be rate-limited or API slow. Try sending a new message to retry.
+          </p>
+        )}
       </div>
     );
   }
