@@ -45,18 +45,23 @@ function transformHtml(raw: string): string {
     return isFile ? `<a href="${href}" data-file-path="${href}"` : match;
   });
 
-  // Inline <code> (NOT inside <pre>) with file-like names → make clickable
-  // Match <code>filename.ext</code> but not <pre>...<code>...</code>...</pre>
-  html = html.replace(
-    /(?<!<pre[^>]*>[\s\S]*?)<code>([^<]+)<\/code>/g,
-    (match, text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed || trimmed.includes(" ")) return match;
-      // Must have a recognizable file extension or look like a path
-      if (!FILE_EXT_RE.test(trimmed) && !/^(\/|\.\/|\.\.\/)/.test(trimmed)) return match;
-      return `<code data-file-clickable="${trimmed}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${text}</code>`;
-    },
-  );
+  // Inline <code> with file-like names → make clickable
+  // Split by <pre>...</pre> blocks to avoid transforming code inside them
+  const parts = html.split(/(<pre[\s\S]*?<\/pre>)/g);
+  html = parts.map((part) => {
+    // Skip <pre> blocks
+    if (part.startsWith("<pre")) return part;
+    // Transform inline <code> in non-pre content
+    return part.replace(
+      /<code>([^<]+)<\/code>/g,
+      (match, text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed || trimmed.includes(" ")) return match;
+        if (!FILE_EXT_RE.test(trimmed) && !/^(\/|\.\/|\.\.\/)/.test(trimmed)) return match;
+        return `<code data-file-clickable="${trimmed}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${text}</code>`;
+      },
+    );
+  }).join("");
 
   return html;
 }
