@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "@/lib/api-client";
+import { parseUrlState } from "@/hooks/use-url-sync";
 
 export interface Project {
   name: string;
@@ -107,9 +108,14 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try {
       const projects = await api.get<ProjectInfo[]>("/api/projects");
       set({ projects, loading: false });
-      // Auto-select first project if none active
+      // Auto-select: restore from URL first, then fall back to first project
       set((s) => {
         if (!s.activeProject && projects.length > 0) {
+          const { projectName: urlProject } = parseUrlState();
+          if (urlProject) {
+            const match = projects.find((p) => p.name === urlProject);
+            if (match) return { activeProject: match };
+          }
           const sorted = resolveOrder(projects, s.customOrder);
           return { activeProject: sorted[0] };
         }
