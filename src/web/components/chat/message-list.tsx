@@ -443,7 +443,7 @@ function ThinkingIndicator({ lastMessage, streamingStatus, elapsed }: { lastMess
         <div className="flex items-center gap-2 text-text-subtle">
           <Loader2 className="size-3 animate-spin" />
           <span>
-            {streamingStatus === "connecting" ? "Connecting to Claude" : "Waiting for response"}
+            Thinking
             {(elapsed ?? 0) > 0 && <span className="text-text-subtle/60">... ({elapsed}s)</span>}
           </span>
         </div>
