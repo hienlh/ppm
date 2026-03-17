@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { listSlashItems } from "../../services/slash-items.service.ts";
-import { getCachedUsage } from "../../services/claude-usage.service.ts";
+import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -24,8 +24,11 @@ chatRoutes.get("/slash-items", (c) => {
   }
 });
 
-/** GET /chat/usage — return cached usage data (BE auto-polls in background) */
-chatRoutes.get("/usage", (c) => {
+/** GET /chat/usage — return cached usage. ?refresh=1 forces fresh fetch first. */
+chatRoutes.get("/usage", async (c) => {
+  if (c.req.query("refresh")) {
+    await refreshUsageNow();
+  }
   const usage = getCachedUsage();
   return c.json(ok({
     lastFetchedAt: usage.lastFetchedAt,

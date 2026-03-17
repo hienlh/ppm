@@ -20,10 +20,11 @@ export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsa
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchUsage = useCallback(() => {
+  const doFetch = useCallback((forceRefresh = false) => {
     if (!projectName) return;
     setUsageLoading(true);
-    fetch(`${projectUrl(projectName)}/chat/usage?providerId=${providerId}`, {
+    const qs = forceRefresh ? "&refresh=1" : "";
+    fetch(`${projectUrl(projectName)}/chat/usage?providerId=${providerId}${qs}`, {
       headers: { Authorization: `Bearer ${getAuthToken()}` },
     })
       .then((r) => r.json())
@@ -37,12 +38,15 @@ export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsa
       .finally(() => setUsageLoading(false));
   }, [projectName, providerId]);
 
-  // Read cache on mount + auto-refresh
+  // Read cache on mount + auto-read every POLL_INTERVAL
   useEffect(() => {
-    fetchUsage();
-    timerRef.current = setInterval(fetchUsage, POLL_INTERVAL);
+    doFetch();
+    timerRef.current = setInterval(() => doFetch(), POLL_INTERVAL);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [fetchUsage]);
+  }, [doFetch]);
+
+  /** Manual refresh — tells BE to fetch fresh from Anthropic API */
+  const refreshUsage = useCallback(() => doFetch(true), [doFetch]);
 
   const mergeUsage = useCallback((partial: Partial<UsageInfo>) => {
     setUsageInfo((prev) => {
@@ -55,5 +59,5 @@ export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsa
     });
   }, []);
 
-  return { usageInfo, usageLoading, lastFetchedAt, refreshUsage: fetchUsage, mergeUsage };
+  return { usageInfo, usageLoading, lastFetchedAt, refreshUsage, mergeUsage };
 }
