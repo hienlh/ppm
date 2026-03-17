@@ -42,6 +42,7 @@ function flattenFiles(nodes: FileNode[]): { name: string; path: string }[] {
 
 /** Check if query looks like an absolute path (Unix: /, ~/ | Windows: C:\, ~\) */
 function isPathQuery(q: string): boolean {
+  if (!q) return false;
   return q.startsWith("/") || q.startsWith("~/") || q.startsWith("~\\") || /^[A-Za-z]:[/\\]/.test(q);
 }
 
@@ -221,7 +222,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   // Reset state when opening
   useEffect(() => {
     if (open) {
-      setQuery(initialQuery);
+      setQuery(initialQuery || "");
       setSelectedIdx(0);
       setFsFiles([]);
       requestAnimationFrame(() => inputRef.current?.focus());
