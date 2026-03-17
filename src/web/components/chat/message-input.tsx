@@ -35,6 +35,8 @@ interface MessageInputProps {
   fileSelected?: FileNode | null;
   /** External files added via drag-drop on parent */
   externalFiles?: File[] | null;
+  /** Pre-fill input value (e.g. from command palette "Ask AI") */
+  initialValue?: string;
 }
 
 export function MessageInput({
@@ -50,13 +52,26 @@ export function MessageInput({
   onFileItemsLoaded,
   fileSelected,
   externalFiles,
+  initialValue,
 }: MessageInputProps) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue ?? "");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
   const fileItemsRef = useRef<FileNode[]>([]);
+
+  // Apply initialValue when it changes (e.g. "Ask AI" from command palette)
+  useEffect(() => {
+    if (initialValue) {
+      setValue(initialValue);
+      // Focus and move cursor to end
+      setTimeout(() => {
+        const ta = textareaRef.current;
+        if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
+      }, 50);
+    }
+  }, [initialValue]);
 
   // Fetch slash items when projectName changes
   useEffect(() => {
@@ -366,10 +381,10 @@ export function MessageInput({
   const showCancel = isStreaming && !hasContent;
 
   return (
-    <div className="px-3 pb-3 pt-1 bg-background">
+    <div className="px-2 pb-2 pt-0.5 md:px-3 md:pb-3 md:pt-1 bg-background">
       {/* Rounded input container */}
       <div
-        className="border border-border rounded-2xl bg-surface shadow-sm cursor-text"
+        className="border border-border rounded-xl md:rounded-2xl bg-surface shadow-sm cursor-text"
         onClick={() => !disabled && textareaRef.current?.focus()}
       >
         {/* Attachment chips */}
@@ -390,11 +405,11 @@ export function MessageInput({
           placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
           disabled={disabled}
           rows={1}
-          className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base md:text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40"
+          className="w-full resize-none bg-transparent px-3 pt-2 pb-0.5 md:px-4 md:pt-3 md:pb-1 text-sm md:text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40"
         />
 
         {/* Action bar */}
-        <div className="flex items-center justify-between px-3 pb-2">
+        <div className="flex items-center justify-between px-2 pb-1.5 md:px-3 md:pb-2">
           <div className="flex items-center gap-1">
             {/* Attach button */}
             <button
