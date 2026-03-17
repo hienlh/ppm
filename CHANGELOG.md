@@ -1,10 +1,10 @@
 # Changelog
 
-## [0.4.3] - 2026-03-17
+## [0.4.4] - 2026-03-17
 
 ### Fixed
-- npm package too large (79MB→~2MB): exclude compiled binary and leaked Monaco workers
-- Add `dist/ppm` and `src/web/Users/` to .npmignore
+- Windows: cloudflared tunnel uses 127.0.0.1 instead of localhost (IPv6 mismatch)
+- npm package size reduced from 79MB to ~580KB (exclude compiled binary + leaked Monaco workers)
 
 ## [0.4.2] - 2026-03-17
 
