@@ -3,7 +3,7 @@
  * Handles summary + details for all SDK tool types.
  */
 import { useState, useMemo } from "react";
-import { marked } from "marked";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import {
   ChevronDown,
   ChevronRight,
@@ -450,20 +450,7 @@ function SubagentChildren({ events, projectName }: { events: ChatEvent[]; projec
 
 /** Inline markdown renderer for tool details (prompt, result) */
 function MiniMarkdown({ content, maxHeight = "max-h-48" }: { content: string; maxHeight?: string }) {
-  const html = useMemo(() => {
-    try {
-      return marked.parse(content, { gfm: true, breaks: true }) as string;
-    } catch {
-      return content;
-    }
-  }, [content]);
-
-  return (
-    <div
-      className={`markdown-content prose-sm text-text-secondary overflow-auto ${maxHeight}`}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <MarkdownRenderer content={content} className={`text-text-secondary overflow-auto ${maxHeight}`} />;
 }
 
 function basename(path?: string): string {

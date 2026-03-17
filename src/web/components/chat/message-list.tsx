@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { marked } from "marked";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
-import { useTabStore } from "@/stores/tab-store";
 import { ToolCard } from "./tool-cards";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+
 import {
   AlertCircle,
   ShieldAlert,
@@ -435,119 +435,9 @@ function ThinkingIndicator({ lastMessage }: { lastMessage?: ChatMessage }) {
   return null;
 }
 
-/** Configure marked for safe rendering */
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-});
-
-/** Renders markdown content with interactive code blocks and file links */
+/** Wrapper: delegates to shared MarkdownRenderer with code actions enabled */
 function MarkdownContent({ content, projectName }: { content: string; projectName?: string }) {
-  const html = useMemo(() => {
-    try {
-      return marked.parse(content) as string;
-    } catch {
-      return content;
-    }
-  }, [content]);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const { openTab } = useTabStore();
-
-  // After render: inject copy/run buttons into <pre> blocks, handle file link clicks
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    // --- Code block copy/run buttons ---
-    container.querySelectorAll("pre").forEach((pre) => {
-      if (pre.querySelector(".code-actions")) return; // already added
-      const code = pre.querySelector("code");
-      const text = code?.textContent ?? pre.textContent ?? "";
-      // Detect language from class (e.g. "language-bash")
-      const langClass = code?.className ?? "";
-      const isBash = /language-(bash|sh|shell|zsh)/.test(langClass)
-        || (!langClass.includes("language-") && text.startsWith("$"));
-
-      // Wrapper for relative positioning
-      pre.style.position = "relative";
-
-      const actions = document.createElement("div");
-      actions.className = "code-actions absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity";
-      // Always visible on touch devices
-      pre.classList.add("group");
-
-      // Copy button
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "flex items-center justify-center size-6 rounded bg-surface-elevated/80 hover:bg-surface-elevated text-text-secondary hover:text-text-primary transition-colors border border-border/50";
-      copyBtn.title = "Copy";
-      copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
-      copyBtn.addEventListener("click", () => {
-        navigator.clipboard.writeText(text);
-        copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-        setTimeout(() => {
-          copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
-        }, 2000);
-      });
-      actions.appendChild(copyBtn);
-
-      // Run in terminal button (bash only)
-      if (isBash) {
-        const runBtn = document.createElement("button");
-        runBtn.className = "flex items-center justify-center size-6 rounded bg-surface-elevated/80 hover:bg-surface-elevated text-text-secondary hover:text-text-primary transition-colors border border-border/50";
-        runBtn.title = "Run in terminal";
-        runBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`;
-        runBtn.addEventListener("click", () => {
-          // Copy to clipboard and open terminal
-          navigator.clipboard.writeText(text.replace(/^\$\s*/gm, ""));
-          if (projectName) {
-            openTab({
-              type: "terminal",
-              title: "Terminal",
-              metadata: { projectName },
-              projectId: projectName,
-              closable: true,
-            });
-          }
-        });
-        actions.appendChild(runBtn);
-      }
-
-      pre.appendChild(actions);
-    });
-
-    // --- File link click handling: open in editor tab ---
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      const link = target.closest("a");
-      if (!link || !container.contains(link)) return;
-
-      const href = link.getAttribute("href") ?? "";
-      // Detect file paths: starts with / or ./ or contains common extensions
-      const isFilePath = /^(\/|\.\/|\.\.\/)/.test(href)
-        || /\.(ts|tsx|js|jsx|py|json|md|yaml|yml|toml|css|html|sh|go|rs|sql)$/i.test(href);
-      if (isFilePath && projectName) {
-        e.preventDefault();
-        openTab({
-          type: "editor",
-          title: href.split("/").pop() ?? href,
-          metadata: { filePath: href, projectName },
-          projectId: projectName,
-          closable: true,
-        });
-      }
-    };
-    container.addEventListener("click", handleClick);
-    return () => container.removeEventListener("click", handleClick);
-  }, [html, projectName, openTab]);
-
-  return (
-    <div
-      ref={containerRef}
-      className="markdown-content prose-sm"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <MarkdownRenderer content={content} projectName={projectName} codeActions />;
 }
 
 /* ToolCard, ToolSummary, ToolDetails extracted to ./tool-cards.tsx */
