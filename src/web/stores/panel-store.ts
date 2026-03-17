@@ -16,7 +16,10 @@ import {
 } from "./panel-utils";
 
 /** Tab types that can only have 1 instance per project */
-const SINGLETON_TYPES = new Set<TabType>(["git-status", "git-graph", "settings", "projects"]);
+const SINGLETON_TYPES = new Set<TabType>(["git-graph", "settings"]);
+
+/** Tab types removed in a prior version — filter them out when loading persisted state */
+const OBSOLETE_TAB_TYPES = new Set(["projects", "git-status"]);
 
 function generateTabId(): string {
   return `tab-${randomId()}`;
@@ -37,6 +40,10 @@ export interface PanelStore {
   grid: string[][];
   focusedPanelId: string;
   currentProject: string | null;
+
+  /** Keep-alive: per-project grid snapshots (for hidden workspaces) */
+  projectGrids: Record<string, string[][]>;
+  projectFocused: Record<string, string>;
 
   // Project lifecycle
   switchProject: (projectName: string) => void;
@@ -70,9 +77,16 @@ function defaultLayout(): { panels: Record<string, Panel>; grid: string[][]; foc
 // Store
 // ---------------------------------------------------------------------------
 export const usePanelStore = create<PanelStore>()((set, get) => {
+  /** Save only the active project's panels to localStorage */
   function persist() {
     const { currentProject, panels, grid, focusedPanelId } = get();
-    if (currentProject) savePanelLayout(currentProject, { panels, grid, focusedPanelId });
+    if (!currentProject) return;
+    const panelIds = new Set(grid.flat());
+    const projectPanels: Record<string, Panel> = {};
+    for (const [id, p] of Object.entries(panels)) {
+      if (panelIds.has(id)) projectPanels[id] = p;
+    }
+    savePanelLayout(currentProject, { panels: projectPanels, grid, focusedPanelId });
   }
 
   function findPanel(tabId: string): Panel | undefined {
@@ -86,25 +100,98 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
   return {
     ...defaultLayout(),
     currentProject: null,
+    projectGrids: {},
+    projectFocused: {},
 
     switchProject: (projectName) => {
-      const { currentProject } = get();
-      if (currentProject) persist();
+      const { currentProject, panels, grid, focusedPanelId, projectGrids, projectFocused } = get();
 
+      // No-op if same project
+      if (currentProject === projectName) return;
+
+      // Snapshot current project's state
+      const newProjectGrids = { ...projectGrids };
+      const newProjectFocused = { ...projectFocused };
+
+      if (currentProject) {
+        newProjectGrids[currentProject] = grid;
+        newProjectFocused[currentProject] = focusedPanelId;
+        // Persist to localStorage
+        const panelIds = new Set(grid.flat());
+        const currentPanels: Record<string, Panel> = {};
+        for (const [id, p] of Object.entries(panels)) {
+          if (panelIds.has(id)) currentPanels[id] = p;
+        }
+        savePanelLayout(currentProject, { panels: currentPanels, grid, focusedPanelId });
+      }
+
+      // Already in memory → restore from snapshot (no localStorage read)
+      if (newProjectGrids[projectName]) {
+        const restoredGrid = newProjectGrids[projectName]!;
+        const restoredFocused = newProjectFocused[projectName] ?? restoredGrid[0]?.[0] ?? "";
+        set({
+          currentProject: projectName,
+          grid: restoredGrid,
+          focusedPanelId: restoredFocused,
+          projectGrids: newProjectGrids,
+          projectFocused: newProjectFocused,
+        });
+        return;
+      }
+
+      // Load from localStorage
       const loaded = loadPanelLayout(projectName);
       if (loaded && Object.keys(loaded.panels).length > 0) {
-        set({ currentProject: projectName, ...loaded });
+        // Migrate: remove obsolete tab types
+        const migratedPanels: typeof loaded.panels = {};
+        for (const [pid, panel] of Object.entries(loaded.panels)) {
+          const filteredTabs = panel.tabs.filter((t) => !OBSOLETE_TAB_TYPES.has(t.type));
+          const filteredHistory = panel.tabHistory.filter(
+            (id) => filteredTabs.some((t) => t.id === id),
+          );
+          const activeTabId = panel.activeTabId && filteredTabs.some((t) => t.id === panel.activeTabId)
+            ? panel.activeTabId
+            : (filteredHistory[filteredHistory.length - 1] ?? filteredTabs[0]?.id ?? null);
+          migratedPanels[pid] = { ...panel, tabs: filteredTabs, tabHistory: filteredHistory, activeTabId };
+        }
+
+        // Merge into flat panels map (keep-alive: old panels stay)
+        const mergedPanels = { ...panels, ...migratedPanels };
+        newProjectGrids[projectName] = loaded.grid;
+        newProjectFocused[projectName] = loaded.focusedPanelId;
+        set({
+          currentProject: projectName,
+          panels: mergedPanels,
+          grid: loaded.grid,
+          focusedPanelId: loaded.focusedPanelId,
+          projectGrids: newProjectGrids,
+          projectFocused: newProjectFocused,
+        });
       } else {
+        // Create default layout for new project
         const p = createPanel();
         const defaultTab: Tab = {
-          id: generateTabId(), type: "projects", title: "Projects", projectId: null, closable: true,
+          id: generateTabId(), type: "chat", title: "AI Chat", projectId: projectName, closable: true,
+          metadata: { projectName },
         };
         p.tabs = [defaultTab];
         p.activeTabId = defaultTab.id;
         p.tabHistory = [defaultTab.id];
-        const layout = { panels: { [p.id]: p }, grid: [[p.id]], focusedPanelId: p.id };
-        savePanelLayout(projectName, layout);
-        set({ currentProject: projectName, ...layout });
+        const newGrid = [[p.id]];
+
+        // Merge into flat panels map
+        const mergedPanels = { ...panels, [p.id]: p };
+        newProjectGrids[projectName] = newGrid;
+        newProjectFocused[projectName] = p.id;
+        savePanelLayout(projectName, { panels: { [p.id]: p }, grid: newGrid, focusedPanelId: p.id });
+        set({
+          currentProject: projectName,
+          panels: mergedPanels,
+          grid: newGrid,
+          focusedPanelId: p.id,
+          projectGrids: newProjectGrids,
+          projectFocused: newProjectFocused,
+        });
       }
     },
 

@@ -7,24 +7,26 @@ import { SplitDropOverlay } from "./split-drop-overlay";
 import { cn } from "@/lib/utils";
 
 const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
-  projects: lazy(() => import("@/components/projects/project-list").then((m) => ({ default: m.ProjectList }))),
   terminal: lazy(() => import("@/components/terminal/terminal-tab").then((m) => ({ default: m.TerminalTab }))),
   chat: lazy(() => import("@/components/chat/chat-tab").then((m) => ({ default: m.ChatTab }))),
   editor: lazy(() => import("@/components/editor/code-editor").then((m) => ({ default: m.CodeEditor }))),
   "git-graph": lazy(() => import("@/components/git/git-graph").then((m) => ({ default: m.GitGraph }))),
-  "git-status": lazy(() => import("@/components/git/git-status-panel").then((m) => ({ default: m.GitStatusPanel }))),
   "git-diff": lazy(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
   settings: lazy(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
 };
 
 interface EditorPanelProps {
   panelId: string;
+  projectName: string;
 }
 
-export function EditorPanel({ panelId }: EditorPanelProps) {
+export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
   const panel = usePanelStore((s) => s.panels[panelId]);
   const isFocused = usePanelStore((s) => s.focusedPanelId === panelId);
-  const panelCount = usePanelStore((s) => Object.keys(s.panels).length);
+  const panelCount = usePanelStore((s) => {
+    const grid = s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? [[]]);
+    return grid.flat().length;
+  });
 
   if (!panel) return null;
 

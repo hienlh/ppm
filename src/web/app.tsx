@@ -3,8 +3,10 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { PanelLayout } from "@/components/layout/panel-layout";
 import { Sidebar } from "@/components/layout/sidebar";
+import { ProjectBar } from "@/components/layout/project-bar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileDrawer } from "@/components/layout/mobile-drawer";
+import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -17,12 +19,17 @@ import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useHealthCheck } from "@/hooks/use-health-check";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
 export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [projectSheetOpen, setProjectSheetOpen] = useState(false);
+  const [mountedProjects, setMountedProjects] = useState<Set<string>>(
+    () => new Set(["__global__"]),
+  );
   const theme = useSettingsStore((s) => s.theme);
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const fetchServerInfo = useSettingsStore((s) => s.fetchServerInfo);
@@ -113,6 +120,15 @@ export function App() {
     useTabStore.getState().switchProject(projectName);
   }, [activeProject?.name]);
 
+  // Keep-alive: mount workspace on first visit, never unmount
+  useEffect(() => {
+    const projectName = activeProject?.name ?? "__global__";
+    setMountedProjects((prev) => {
+      if (prev.has(projectName)) return prev;
+      return new Set([...prev, projectName]);
+    });
+  }, [activeProject?.name]);
+
   // On initial auth with no project selected, ensure a tab set exists
   useEffect(() => {
     if (authState === "authenticated" && !activeProject) {
@@ -138,27 +154,49 @@ export function App() {
     return <LoginScreen onSuccess={handleLoginSuccess} />;
   }
 
+  const activeProjectName = activeProject?.name ?? "__global__";
+
   return (
     <TooltipProvider>
       <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden">
         {/* Main layout */}
         <div className="flex flex-1 overflow-hidden">
+          {/* Desktop project bar (far left, non-collapsible) */}
+          <ProjectBar />
+
           {/* Desktop sidebar */}
           <Sidebar />
 
-          {/* Content area */}
-          <main className="flex-1 overflow-hidden pb-12 md:pb-0">
-            <PanelLayout />
-          </main>
+          {/* Content area — keep-alive per project */}
+          {[...mountedProjects].map((projectName) => (
+            <div
+              key={projectName}
+              className={cn(
+                "flex-1 overflow-hidden pb-12 md:pb-0",
+                activeProjectName !== projectName && "hidden",
+              )}
+            >
+              <PanelLayout projectName={projectName} />
+            </div>
+          ))}
         </div>
 
         {/* Mobile bottom nav */}
-        <MobileNav onMenuPress={() => setDrawerOpen(true)} />
+        <MobileNav
+          onMenuPress={() => setDrawerOpen(true)}
+          onProjectsPress={() => setProjectSheetOpen(true)}
+        />
 
         {/* Mobile drawer overlay */}
         <MobileDrawer
           isOpen={drawerOpen}
           onClose={() => setDrawerOpen(false)}
+        />
+
+        {/* Mobile project bottom sheet */}
+        <ProjectBottomSheet
+          isOpen={projectSheetOpen}
+          onClose={() => setProjectSheetOpen(false)}
         />
 
         {/* Command palette (Shift+Shift) */}

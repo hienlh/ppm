@@ -3,34 +3,40 @@ import { GripVertical, GripHorizontal } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { EditorPanel } from "./editor-panel";
 
-export function PanelLayout() {
-  const grid = usePanelStore((s) => s.grid);
-  const panelCount = Object.keys(usePanelStore((s) => s.panels)).length;
+interface PanelLayoutProps {
+  projectName: string;
+}
+
+export function PanelLayout({ projectName }: PanelLayoutProps) {
+  const grid = usePanelStore((s) =>
+    s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? [[]]),
+  );
+  const panelCount = grid.flat().length;
 
   if (panelCount <= 1 && grid[0]?.[0]) {
-    return <EditorPanel panelId={grid[0][0]} />;
+    return <EditorPanel panelId={grid[0][0]} projectName={projectName} />;
   }
 
   return (
     <Group orientation="horizontal" style={{ height: "100%" }}>
       {grid.map((column, colIdx) => (
-        <ColumnPanel key={`col-${colIdx}`} column={column} colIdx={colIdx} totalCols={grid.length} />
+        <ColumnPanel key={`col-${colIdx}`} column={column} colIdx={colIdx} totalCols={grid.length} projectName={projectName} />
       ))}
     </Group>
   );
 }
 
-function ColumnPanel({ column, colIdx, totalCols }: { column: string[]; colIdx: number; totalCols: number }) {
+function ColumnPanel({ column, colIdx, totalCols, projectName }: { column: string[]; colIdx: number; totalCols: number; projectName: string }) {
   const defaultSize = `${Math.round(100 / totalCols)}%`;
   return (
     <>
       <Panel minSize="15%" defaultSize={defaultSize}>
         {column.length === 1 ? (
-          <EditorPanel panelId={column[0]!} />
+          <EditorPanel panelId={column[0]!} projectName={projectName} />
         ) : (
           <Group orientation="vertical">
             {column.map((panelId, rowIdx) => (
-              <RowPanel key={panelId} panelId={panelId} rowIdx={rowIdx} totalRows={column.length} />
+              <RowPanel key={panelId} panelId={panelId} rowIdx={rowIdx} totalRows={column.length} projectName={projectName} />
             ))}
           </Group>
         )}
@@ -40,12 +46,12 @@ function ColumnPanel({ column, colIdx, totalCols }: { column: string[]; colIdx: 
   );
 }
 
-function RowPanel({ panelId, rowIdx, totalRows }: { panelId: string; rowIdx: number; totalRows: number }) {
+function RowPanel({ panelId, rowIdx, totalRows, projectName }: { panelId: string; rowIdx: number; totalRows: number; projectName: string }) {
   const defaultSize = `${Math.round(100 / totalRows)}%`;
   return (
     <>
       <Panel minSize="15%" defaultSize={defaultSize}>
-        <EditorPanel panelId={panelId} />
+        <EditorPanel panelId={panelId} projectName={projectName} />
       </Panel>
       {rowIdx < totalRows - 1 && <ResizeHandle orientation="horizontal" />}
     </>
