@@ -96,7 +96,7 @@ export function Sidebar() {
               )}
             >
               <Icon className="size-3.5" />
-              <span>{tab.label}</span>
+              {sidebarWidth >= 240 && <span>{tab.label}</span>}
             </button>
           );
         })}
