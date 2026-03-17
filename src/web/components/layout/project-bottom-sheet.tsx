@@ -77,7 +77,9 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
   }
 
   function handleSettings() {
-    openTab({ type: "settings", title: "Settings", projectId: null, closable: true });
+    const { sidebarCollapsed, toggleSidebar, setSidebarActiveTab } = useSettingsStore.getState();
+    if (sidebarCollapsed) toggleSidebar();
+    setSidebarActiveTab("settings");
     handleClose();
   }
 
