@@ -204,6 +204,13 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     }
   }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-refresh file tree when window regains focus
+  useEffect(() => {
+    const handleFocus = () => { if (activeProject) fetchTree(activeProject.name); };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [activeProject, fetchTree]);
+
   function handleAction(action: string, node: FileNode) {
     if (action === "copy-path") {
       navigator.clipboard.writeText(node.path).catch(() => {});
