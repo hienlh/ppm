@@ -92,6 +92,7 @@ interface ProjectStore {
   addProject: (path: string, name?: string) => Promise<ProjectInfo>;
   setProjectColor: (name: string, color: string | null) => Promise<void>;
   moveProject: (name: string, direction: "up" | "down") => Promise<void>;
+  reorderProjects: (newOrder: string[]) => Promise<void>;
   renameProject: (name: string, newName: string) => Promise<void>;
   deleteProject: (name: string) => Promise<void>;
 }
@@ -159,6 +160,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     saveCustomOrder(newOrder);
     await api.patch("/api/projects/reorder", { order: newOrder });
     set({ customOrder: newOrder });
+  },
+
+  reorderProjects: async (newOrder) => {
+    saveCustomOrder(newOrder);
+    set({ customOrder: newOrder });
+    await api.patch("/api/projects/reorder", { order: newOrder }).catch(() => {});
   },
 
   renameProject: async (name, newName) => {
