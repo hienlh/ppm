@@ -409,25 +409,23 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
 }
 
 /**
- * Shows streaming status with phase-specific messages:
- * - connecting: "Connecting to Claude..."
- * - streaming + no response yet: "Waiting for response..."
- * - streaming + after tool: "Processing tool results..."
- * - streaming + text flowing: null (text itself is the indicator)
+ * Shows streaming status based on what FE has received so far:
+ * - No assistant message yet: "Connecting to Claude..." (waiting for first SDK response)
+ * - Assistant exists but last event is tool_use/tool_result: "Processing..."
+ * - Text is actively streaming: hidden (text itself is the indicator)
  */
 function ThinkingIndicator({ lastMessage, streamingStatus }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus }) {
-  // Phase 1: Connecting to Claude API
-  if (streamingStatus === "connecting" || !lastMessage || lastMessage.role !== "assistant") {
-    const label = streamingStatus === "connecting" ? "Connecting to Claude..." : "Waiting for response...";
+  // No assistant response yet — still connecting/waiting
+  if (!lastMessage || lastMessage.role !== "assistant") {
     return (
       <div className="flex items-center gap-2 text-text-subtle text-sm">
         <Loader2 className="size-3 animate-spin" />
-        <span>{label}</span>
+        <span>{streamingStatus === "connecting" ? "Connecting to Claude..." : "Waiting for response..."}</span>
       </div>
     );
   }
 
-  // Phase 2: After tool execution — waiting for Claude to continue
+  // After tool execution — waiting for Claude to continue
   const events = lastMessage.events;
   if (events && events.length > 0) {
     const lastEvent = events[events.length - 1]!;
