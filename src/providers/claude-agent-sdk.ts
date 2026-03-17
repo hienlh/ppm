@@ -328,9 +328,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
-        // Handle `user` messages directly — they contain tool_result blocks (e.g. after Agent finishes).
-        // Extract tool_results from user messages that are top-level (no parentId).
-        if ((msg as any).type === "user" && !parentId) {
+        // Handle `user` messages — they contain tool_result blocks.
+        // Top-level: e.g. after Agent finishes. Child: subagent internal tool results.
+        if ((msg as any).type === "user") {
           const userContent = (msg as any).message?.content;
           if (Array.isArray(userContent)) {
             for (const block of userContent) {
@@ -341,8 +341,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   output: typeof output === "string" ? output : JSON.stringify(output),
                   isError: !!block.is_error,
                   toolUseId: block.tool_use_id as string | undefined,
+                  ...(parentId && { parentToolUseId: parentId }),
                 };
-                if (pendingToolCount > 0) pendingToolCount--;
+                if (!parentId && pendingToolCount > 0) pendingToolCount--;
               }
             }
           }
