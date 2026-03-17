@@ -95,20 +95,22 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
 
     /**
      * Route a child event to its parent Agent/Task tool_use's children array.
+     * Creates a new parent object to ensure React detects the change on re-render.
      * Returns true if routed (caller should skip flat append), false if no parent found.
      */
     const routeToParent = (childEvent: ChatEvent, parentToolUseId: string): boolean => {
-      const parent = streamingEventsRef.current.find(
+      const idx = streamingEventsRef.current.findIndex(
         (e) => e.type === "tool_use"
           && (e.tool === "Agent" || e.tool === "Task")
           && (e as any).toolUseId === parentToolUseId,
       );
-      if (parent && parent.type === "tool_use") {
-        if (!parent.children) parent.children = [];
-        parent.children.push(childEvent);
-        return true;
-      }
-      return false;
+      if (idx === -1) return false;
+      const parent = streamingEventsRef.current[idx]!;
+      if (parent.type !== "tool_use") return false;
+      // Create new object so React detects the change via shallow comparison
+      const newChildren = [...(parent.children ?? []), childEvent];
+      streamingEventsRef.current[idx] = { ...parent, children: newChildren };
+      return true;
     };
 
     /** Trigger re-render with latest events snapshot */
