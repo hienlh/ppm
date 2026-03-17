@@ -1,7 +1,7 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
-import { marked } from "marked";
+import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -223,17 +223,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
 }
 
 function MarkdownPreview({ content }: { content: string }) {
-  const html = useMemo(() => {
-    try { return marked.parse(content, { gfm: true, breaks: true }) as string; }
-    catch { return content; }
-  }, [content]);
-
-  return (
-    <div
-      className="flex-1 overflow-auto p-4 markdown-content prose-sm"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
+  return <MarkdownRenderer content={content} className="flex-1 overflow-auto p-4" />;
 }
 
 function ImagePreview({ filePath, projectName }: { filePath: string; projectName: string }) {
