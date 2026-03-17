@@ -73,7 +73,8 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const toggleWordWrapRef = useRef(toggleWordWrap);
   useEffect(() => { toggleWordWrapRef.current = toggleWordWrap; }, [toggleWordWrap]);
 
-  // Alt+Z handler — intercepts at DOM level to prevent macOS "Ω" insertion
+  // TODO: Alt+Z shortcut not working on macOS — Option+Z inserts "Ω" before handler fires.
+  // Needs investigation: try Prec.highest(keymap.of(...)) or window capture listener.
   const wrapKeyHandler = useMemo(() => EditorView.domEventHandlers({
     keydown(e) {
       if (e.altKey && (e.key === "z" || e.key === "Z")) {
