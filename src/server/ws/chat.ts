@@ -73,16 +73,31 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
   entry.needsCatchUp = false;
   entry.catchUpText = "";
 
+  // Heartbeat interval — declared outside try so finally can clear it
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+
   try {
     const userPreview = content.slice(0, 200);
     logSessionEvent(sessionId, "USER", userPreview);
     console.log(`[chat] session=${sessionId} sending message to provider=${providerId}`);
 
-    // Send "connecting" status so FE shows progress instead of just "Thinking..."
+    // Send "connecting" status so FE shows progress
     safeSend(sessionId, { type: "streaming_status", status: "connecting" });
 
     let eventCount = 0;
     let firstEventReceived = false;
+    const startTime = Date.now();
+
+    // Heartbeat: while waiting for first response, send elapsed time every 5s
+    // so FE can show "Connecting... (15s)" and warn if it takes too long
+    heartbeat = setInterval(() => {
+      if (firstEventReceived || abortController.signal.aborted) {
+        clearInterval(heartbeat);
+        return;
+      }
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      safeSend(sessionId, { type: "streaming_status", status: "connecting", elapsed });
+    }, 5_000);
 
     for await (const event of chatService.sendMessage(providerId, sessionId, content)) {
       if (abortController.signal.aborted) break;
@@ -90,9 +105,10 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       const ev = event as any;
       const evType = ev.type ?? "unknown";
 
-      // Send "streaming" status on first event so FE knows Claude responded
+      // First event received — stop heartbeat, switch to streaming status
       if (!firstEventReceived) {
         firstEventReceived = true;
+        clearInterval(heartbeat);
         safeSend(sessionId, { type: "streaming_status", status: "streaming" });
       }
 
@@ -147,6 +163,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       safeSend(sessionId, { type: "error", message: errMsg });
     }
   } finally {
+    if (heartbeat) clearInterval(heartbeat);
     entry.abort = undefined;
     entry.isStreaming = false;
     entry.pendingApprovalEvent = undefined;

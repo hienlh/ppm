@@ -70,6 +70,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     messagesLoading,
     isStreaming,
     streamingStatus,
+    connectingElapsed,
     pendingApproval,
     sendMessage,
     respondToApproval,
@@ -240,6 +241,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         onApprovalResponse={respondToApproval}
         isStreaming={isStreaming}
         streamingStatus={streamingStatus}
+        connectingElapsed={connectingElapsed}
         projectName={projectName}
       />
 
