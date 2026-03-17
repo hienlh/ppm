@@ -27,7 +27,15 @@ type AuthState = "checking" | "authenticated" | "unauthenticated";
 export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "settings" | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
+
+  // Listen for "open-mobile-settings" event (from project bottom sheet)
+  useEffect(() => {
+    const handler = () => { setDrawerTab("settings"); setDrawerOpen(true); };
+    window.addEventListener("open-mobile-settings", handler);
+    return () => window.removeEventListener("open-mobile-settings", handler);
+  }, []);
   const [mountedProjects, setMountedProjects] = useState<Set<string>>(
     () => new Set(["__global__"]),
   );
@@ -199,7 +207,8 @@ export function App() {
         {/* Mobile drawer overlay */}
         <MobileDrawer
           isOpen={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
+          onClose={() => { setDrawerOpen(false); setDrawerTab(undefined); }}
+          initialTab={drawerTab}
         />
 
         {/* Mobile project bottom sheet */}

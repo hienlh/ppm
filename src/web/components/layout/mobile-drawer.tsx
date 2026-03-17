@@ -1,32 +1,39 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
-  X, Bug, FolderOpen, GitBranch, MessageSquare,
+  X, Bug, FolderOpen, GitBranch, Settings,
 } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
-import { ChatHistoryPanel } from "@/components/chat/chat-history-panel";
+import { SettingsTab } from "@/components/settings/settings-tab";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { cn } from "@/lib/utils";
 
-type DrawerTab = "explorer" | "git" | "history";
+type DrawerTab = "explorer" | "git" | "settings";
 
 const TABS: { id: DrawerTab; label: string; icon: React.ElementType }[] = [
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "git", label: "Git", icon: GitBranch },
-  { id: "history", label: "History", icon: MessageSquare },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 interface MobileDrawerProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Open directly to a specific tab */
+  initialTab?: DrawerTab;
 }
 
-export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
+export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps) {
   const { activeProject } = useProjectStore();
   const version = useSettingsStore((s) => s.version);
-  const [activeTab, setActiveTab] = useState<DrawerTab>("explorer");
+  const [activeTab, setActiveTab] = useState<DrawerTab>(initialTab ?? "explorer");
+
+  // Sync when initialTab changes (e.g. settings button opens drawer)
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab]);
 
   const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
 
@@ -79,8 +86,8 @@ export function MobileDrawer({ isOpen, onClose }: MobileDrawerProps) {
           {activeTab === "git" && (
             <GitStatusPanel metadata={{ projectName: activeProject?.name }} />
           )}
-          {activeTab === "history" && (
-            <ChatHistoryPanel projectName={activeProject?.name} />
+          {activeTab === "settings" && (
+            <SettingsTab />
           )}
         </div>
 
