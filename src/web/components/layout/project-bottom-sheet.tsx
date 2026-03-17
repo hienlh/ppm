@@ -78,10 +78,16 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
   }
 
   function handleSettings() {
+    handleClose();
+    // Mobile: open drawer with settings tab
+    if (window.innerWidth < 768) {
+      window.dispatchEvent(new Event("open-mobile-settings"));
+      return;
+    }
+    // Desktop: open sidebar settings tab
     const { sidebarCollapsed, toggleSidebar, setSidebarActiveTab } = useSettingsStore.getState();
     if (sidebarCollapsed) toggleSidebar();
     setSidebarActiveTab("settings");
-    handleClose();
   }
 
   async function handleRename() {
