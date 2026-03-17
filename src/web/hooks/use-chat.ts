@@ -17,10 +17,14 @@ interface UseChatOptions {
   onUsageEvent?: UsageEventCallback;
 }
 
+/** Streaming phase: connecting → streaming → idle */
+export type StreamingStatus = "idle" | "connecting" | "streaming";
+
 interface UseChatReturn {
   messages: ChatMessage[];
   messagesLoading: boolean;
   isStreaming: boolean;
+  streamingStatus: StreamingStatus;
   pendingApproval: ApprovalRequest | null;
   sendMessage: (content: string) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
@@ -34,6 +38,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingStatus, setStreamingStatus] = useState<StreamingStatus>("idle");
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const onUsageEventRef = useRef(options?.onUsageEvent);
@@ -55,6 +60,12 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
 
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
+
+    // Handle streaming status updates (connecting → streaming → idle)
+    if ((data as any).type === "streaming_status") {
+      setStreamingStatus((data as any).status ?? "idle");
+      return;
+    }
 
     // Handle connected event (new session)
     if ((data as any).type === "connected") {
@@ -195,6 +206,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
         });
         isStreamingRef.current = false;
         setIsStreaming(false);
+        setStreamingStatus("idle");
         break;
       }
 
@@ -221,6 +233,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
         streamingEventsRef.current = [];
         isStreamingRef.current = false;
         setIsStreaming(false);
+        setStreamingStatus("idle");
         break;
       }
     }
@@ -319,6 +332,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       pendingMessageRef.current = null;
       isStreamingRef.current = true;
       setIsStreaming(true);
+      setStreamingStatus("connecting");
       setPendingApproval(null);
 
       send(JSON.stringify({ type: "message", content }));
@@ -425,6 +439,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     messages,
     messagesLoading,
     isStreaming,
+    streamingStatus,
     pendingApproval,
     sendMessage,
     respondToApproval,

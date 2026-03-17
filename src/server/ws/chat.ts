@@ -77,14 +77,24 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
     const userPreview = content.slice(0, 200);
     logSessionEvent(sessionId, "USER", userPreview);
     console.log(`[chat] session=${sessionId} sending message to provider=${providerId}`);
-    let eventCount = 0;
 
+    // Send "connecting" status so FE shows progress instead of just "Thinking..."
+    safeSend(sessionId, { type: "streaming_status", status: "connecting" });
+
+    let eventCount = 0;
+    let firstEventReceived = false;
 
     for await (const event of chatService.sendMessage(providerId, sessionId, content)) {
       if (abortController.signal.aborted) break;
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
+
+      // Send "streaming" status on first event so FE knows Claude responded
+      if (!firstEventReceived) {
+        firstEventReceived = true;
+        safeSend(sessionId, { type: "streaming_status", status: "streaming" });
+      }
 
       // Log every event
       if (evType === "text") {
