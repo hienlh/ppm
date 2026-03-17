@@ -27,7 +27,7 @@ chatRoutes.get("/slash-items", (c) => {
 /** GET /chat/usage — return cached usage. ?refresh=1 forces fresh fetch first. */
 chatRoutes.get("/usage", async (c) => {
   if (c.req.query("refresh")) {
-    await refreshUsageNow();
+    try { await refreshUsageNow(); } catch { /* use stale cache */ }
   }
   const usage = getCachedUsage();
   return c.json(ok({
