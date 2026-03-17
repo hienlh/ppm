@@ -1,10 +1,28 @@
 # Changelog
 
-## [0.2.21] - 2026-03-17
+## [0.3.0] - 2026-03-17
+
+### Added
+- Project Switcher Bar: 52px non-collapsible sidebar with project avatars and quick-access buttons
+- Project color customization with 12-color palette + custom hex input
+- Project drag-to-reorder (PATCH /api/projects/reorder endpoint)
+- Mobile ProjectBottomSheet for project switching on touch devices
+- Sidebar tab system: Explorer, Git, History (replaces dropdown)
+- Chat history panel in sidebar
+- Smart project initials with collision detection
+- EmptyPanel quick-open buttons for new workspaces
+- Device name badge on mobile
+
+### Changed
+- Migrated code editor from CodeMirror 6 to Monaco Editor (@monaco-editor/react)
+- Migrated diff viewer to Monaco DiffEditor
+- Thin scrollbar styling (5px webkit, scrollbar-width:thin Firefox)
+- Removed obsolete tab types: projects, git-status (consolidated into sidebar)
 
 ### Fixed
-- Keep-alive workspace switching: panel-store now holds per-project grid snapshots so hidden workspaces retain DOM and tab state
-- Chat tab no longer reloads on project switch — reads projectName from own metadata instead of global activeProject
+- Keep-alive workspace switching: per-project grid snapshots preserve DOM and tab state
+- Chat tab reads projectName from own metadata instead of global activeProject
+- Chat provider ID default corrected: "claude-sdk" → "claude"
 
 ## [0.2.4] - 2026-03-17
 
