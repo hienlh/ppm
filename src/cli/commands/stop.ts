@@ -45,6 +45,14 @@ export async function stopServer() {
   // Kill tunnel process (independent from server)
   if (tunnelPid) killPid(tunnelPid, "tunnel");
 
+  // Windows fallback: kill orphan cloudflared processes spawned by PPM
+  if (process.platform === "win32") {
+    try {
+      const cfPath = resolve(homedir(), ".ppm", "bin", "cloudflared.exe");
+      Bun.spawnSync(["taskkill", "/F", "/IM", "cloudflared.exe"], { stdout: "ignore", stderr: "ignore" });
+    } catch {}
+  }
+
   cleanup();
   console.log("PPM stopped.");
 }

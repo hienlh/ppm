@@ -29,10 +29,13 @@ class TunnelService {
     if (this.cleanupHandler) {
       process.off("SIGINT", this.cleanupHandler);
       process.off("SIGTERM", this.cleanupHandler);
+      process.off("exit", this.cleanupHandler);
     }
     this.cleanupHandler = () => this.stopTunnel();
     process.on("SIGINT", this.cleanupHandler);
     process.on("SIGTERM", this.cleanupHandler);
+    // Windows: SIGINT/SIGTERM may not fire on Ctrl+C — use 'exit' as fallback
+    process.on("exit", this.cleanupHandler);
 
     // Read stderr to find tunnel URL, then keep draining to avoid SIGPIPE
     const reader = proc.stderr.getReader();
@@ -81,6 +84,7 @@ class TunnelService {
     if (this.cleanupHandler) {
       process.off("SIGINT", this.cleanupHandler);
       process.off("SIGTERM", this.cleanupHandler);
+      process.off("exit", this.cleanupHandler);
       this.cleanupHandler = null;
     }
     if (this.childProcess) {
