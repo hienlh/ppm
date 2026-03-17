@@ -8,8 +8,8 @@
     "ppm": "src/index.ts"
   },
   "scripts": {
-    "dev": "bun run --hot src/index.ts start & bun run vite --config vite.config.ts & wait",
-    "dev:server": "bun run --hot src/index.ts start -f",
+    "dev": "bun run --hot src/index.ts start -c ~/.ppm/config.dev.yaml & bun run vite --config vite.config.ts & wait",
+    "dev:server": "bun run --hot src/index.ts start -c ~/.ppm/config.dev.yaml",
     "dev:web": "bun run vite --config vite.config.ts",
     "build:web": "bun run vite build --config vite.config.ts",
     "build": "bun run build:web && bun build src/index.ts --compile --outfile dist/ppm",
