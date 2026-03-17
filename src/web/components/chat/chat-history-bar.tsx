@@ -150,17 +150,6 @@ export function ChatHistoryBar({
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Bug report */}
-        {sessionId && onBugReport && (
-          <button
-            onClick={onBugReport}
-            className="p-1 rounded hover:bg-surface-elevated text-text-subtle hover:text-text-secondary transition-colors"
-            title="Report bug"
-          >
-            <MessageSquare className="size-3" />
-          </button>
-        )}
-
         {/* Connection indicator */}
         {onReconnect && (
           <button
