@@ -31,6 +31,15 @@ function formatDate(iso: string): string {
   }
 }
 
+function relativeTime(iso: string): string {
+  const secs = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 5) return "now";
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h`;
+}
+
 function pctColor(pct: number): string {
   if (pct >= 90) return "text-red-500";
   if (pct >= 70) return "text-amber-500";
@@ -133,6 +142,9 @@ export function ChatHistoryBar({
           <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
           <span className="text-text-subtle">·</span>
           <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
+          {lastFetchedAt && (
+            <span className="text-text-subtle/50 font-normal text-[9px] ml-0.5">{relativeTime(lastFetchedAt)}</span>
+          )}
         </button>
 
         {/* Spacer */}
