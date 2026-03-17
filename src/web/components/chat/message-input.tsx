@@ -416,7 +416,7 @@ export function MessageInput({
               type="button"
               onClick={handleAttachClick}
               disabled={disabled}
-              className="flex items-center justify-center size-8 rounded-full text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
+              className="flex items-center justify-center size-7 md:size-8 rounded-full text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
               aria-label="Attach file"
             >
               <Paperclip className="size-4" />
@@ -434,7 +434,7 @@ export function MessageInput({
             {showCancel ? (
               <button
                 onClick={onCancel}
-                className="flex items-center justify-center size-8 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
+                className="flex items-center justify-center size-7 md:size-8 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
                 aria-label="Stop response"
               >
                 <Square className="size-3.5" />
@@ -443,7 +443,7 @@ export function MessageInput({
               <button
                 onClick={handleSend}
                 disabled={disabled || !hasContent}
-                className="flex items-center justify-center size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                className="flex items-center justify-center size-7 md:size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 aria-label="Send message"
               >
                 <ArrowUp className="size-4" />
