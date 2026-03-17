@@ -302,9 +302,29 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         {/* Results */}
         <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
           {filtered.length === 0 ? (
-            <p className="px-3 py-4 text-sm text-text-subtle text-center">
-              {fsLoading ? "Searching..." : "No results"}
-            </p>
+            fsLoading ? (
+              <p className="px-3 py-4 text-sm text-text-subtle text-center">Searching...</p>
+            ) : query.trim() ? (
+              <button
+                onClick={() => {
+                  const projectId = activeProject?.name ?? null;
+                  openTab({
+                    type: "chat",
+                    title: "AI Chat",
+                    projectId,
+                    metadata: { projectName: activeProject?.name, prefillInput: query.trim() },
+                    closable: true,
+                  });
+                  onClose();
+                }}
+                className="flex items-center gap-3 w-full px-3 py-3 text-sm text-left text-text-secondary hover:bg-accent/15 hover:text-text-primary transition-colors"
+              >
+                <MessageSquare className="size-4 shrink-0 text-accent" />
+                <span>Ask AI: <span className="text-text-primary font-medium">{query.trim().slice(0, 60)}</span></span>
+              </button>
+            ) : (
+              <p className="px-3 py-4 text-sm text-text-subtle text-center">No results</p>
+            )
           ) : (
             filtered.map((cmd, i) => {
               const Icon = cmd.icon;

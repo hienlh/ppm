@@ -332,6 +332,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onFileItemsLoaded={setFileItems}
           fileSelected={fileSelected}
           externalFiles={externalFiles}
+          initialValue={metadata?.prefillInput as string | undefined}
         />
       </div>
 
