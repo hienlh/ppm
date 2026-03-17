@@ -44,27 +44,23 @@ export function MessageList({
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const initialLoadRef = useRef(true);
-  const [autoScroll, setAutoScroll] = useState(true);
+  const autoScrollRef = useRef(true);
+  const skipScrollEventRef = useRef(false);
 
   // User scrolls up → disable auto-scroll; scrolls to bottom → re-enable
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    let lastScrollTop = container.scrollTop;
-
     const handleScroll = () => {
+      // Skip scroll events triggered by our programmatic scrollTop assignment
+      if (skipScrollEventRef.current) {
+        skipScrollEventRef.current = false;
+        return;
+      }
       const { scrollTop, scrollHeight, clientHeight } = container;
       const atBottom = scrollHeight - scrollTop - clientHeight < 30;
-
-      if (scrollTop < lastScrollTop && !atBottom) {
-        // Scrolled up → disable
-        setAutoScroll(false);
-      } else if (atBottom) {
-        // Hit bottom → re-enable
-        setAutoScroll(true);
-      }
-      lastScrollTop = scrollTop;
+      autoScrollRef.current = atBottom;
     };
 
     container.addEventListener("scroll", handleScroll, { passive: true });
@@ -76,15 +72,17 @@ export function MessageList({
     if (!container) return;
 
     if (initialLoadRef.current) {
+      skipScrollEventRef.current = true;
       container.scrollTop = container.scrollHeight;
       if (messages.length > 0) initialLoadRef.current = false;
       return;
     }
 
-    if (autoScroll) {
+    if (autoScrollRef.current) {
+      skipScrollEventRef.current = true;
       container.scrollTop = container.scrollHeight;
     }
-  }, [messages, pendingApproval, autoScroll]);
+  }, [messages, pendingApproval]);
 
   if (messagesLoading) {
     return (
