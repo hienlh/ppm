@@ -18,42 +18,42 @@ export function PanelLayout({ projectName }: PanelLayoutProps) {
   }
 
   return (
-    <Group orientation="horizontal" style={{ height: "100%" }}>
-      {grid.map((column, colIdx) => (
-        <ColumnPanel key={`col-${colIdx}`} column={column} colIdx={colIdx} totalCols={grid.length} projectName={projectName} />
+    <Group orientation="vertical" style={{ height: "100%" }}>
+      {grid.map((row, rowIdx) => (
+        <RowGroup key={`row-${rowIdx}`} row={row} rowIdx={rowIdx} totalRows={grid.length} projectName={projectName} />
       ))}
     </Group>
   );
 }
 
-function ColumnPanel({ column, colIdx, totalCols, projectName }: { column: string[]; colIdx: number; totalCols: number; projectName: string }) {
-  const defaultSize = `${Math.round(100 / totalCols)}%`;
+function RowGroup({ row, rowIdx, totalRows, projectName }: { row: string[]; rowIdx: number; totalRows: number; projectName: string }) {
+  const defaultSize = `${Math.round(100 / totalRows)}%`;
   return (
     <>
       <Panel minSize="15%" defaultSize={defaultSize}>
-        {column.length === 1 ? (
-          <EditorPanel panelId={column[0]!} projectName={projectName} />
+        {row.length === 1 ? (
+          <EditorPanel panelId={row[0]!} projectName={projectName} />
         ) : (
-          <Group orientation="vertical">
-            {column.map((panelId, rowIdx) => (
-              <RowPanel key={panelId} panelId={panelId} rowIdx={rowIdx} totalRows={column.length} projectName={projectName} />
+          <Group orientation="horizontal">
+            {row.map((panelId, colIdx) => (
+              <ColPanel key={panelId} panelId={panelId} colIdx={colIdx} totalCols={row.length} projectName={projectName} />
             ))}
           </Group>
         )}
       </Panel>
-      {colIdx < totalCols - 1 && <ResizeHandle orientation="vertical" />}
+      {rowIdx < totalRows - 1 && <ResizeHandle orientation="horizontal" />}
     </>
   );
 }
 
-function RowPanel({ panelId, rowIdx, totalRows, projectName }: { panelId: string; rowIdx: number; totalRows: number; projectName: string }) {
-  const defaultSize = `${Math.round(100 / totalRows)}%`;
+function ColPanel({ panelId, colIdx, totalCols, projectName }: { panelId: string; colIdx: number; totalCols: number; projectName: string }) {
+  const defaultSize = `${Math.round(100 / totalCols)}%`;
   return (
     <>
       <Panel minSize="15%" defaultSize={defaultSize}>
         <EditorPanel panelId={panelId} projectName={projectName} />
       </Panel>
-      {rowIdx < totalRows - 1 && <ResizeHandle orientation="horizontal" />}
+      {colIdx < totalCols - 1 && <ResizeHandle orientation="vertical" />}
     </>
   );
 }
@@ -64,8 +64,8 @@ function ResizeHandle({ orientation }: { orientation: "horizontal" | "vertical" 
     <Separator
       className={`
         group/handle relative flex items-center justify-center
-        ${isVertical ? "w-2 cursor-col-resize" : "h-2 cursor-row-resize"}
-        bg-border/50 hover:bg-primary/30 active:bg-primary/50
+        ${isVertical ? "w-1 cursor-col-resize" : "h-1 cursor-row-resize"}
+        bg-border/30 hover:bg-primary/30 active:bg-primary/50
         transition-colors duration-150
       `}
     >

@@ -5,6 +5,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Cross-platform basename — handles both / and \ separators */
+export function basename(filePath: string): string {
+  return filePath.split(/[/\\]/).pop() ?? filePath;
+}
+
 /** crypto.randomUUID() fallback for non-secure contexts (HTTP) */
 export function randomId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {

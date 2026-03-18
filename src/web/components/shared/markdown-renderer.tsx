@@ -4,6 +4,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl } from "@/lib/api-client";
+import { basename } from "@/lib/utils";
 
 // Configure marked globally
 marked.use({ gfm: true, breaks: true });
@@ -11,6 +12,8 @@ marked.use({ gfm: true, breaks: true });
 /** Common text file extensions that PPM can open as editor tabs */
 const FILE_EXTS = "ts|tsx|js|jsx|mjs|cjs|py|json|md|mdx|yaml|yml|toml|css|scss|less|html|htm|sh|bash|zsh|go|rs|sql|rb|java|kt|swift|c|cpp|h|hpp|cs|vue|svelte|txt|env|cfg|conf|ini|xml|csv|log|dockerfile|makefile|gradle";
 const FILE_EXT_RE = new RegExp(`\\.(${FILE_EXTS})$`, "i");
+/** Glob/regex chars that indicate a pattern, not a real file */
+const GLOB_CHARS_RE = /[*?{}\[\]]/;
 
 interface MarkdownRendererProps {
   content: string;
@@ -39,11 +42,12 @@ function transformHtml(raw: string): string {
     '<a href="$1" target="_blank" rel="noopener noreferrer"',
   );
 
-  // <a> with file paths → add data-file-path
+  // <a> with file paths → add data-file-path (only files, not folders or glob patterns)
   html = html.replace(/<a\s+href="([^"]+)"/g, (match, href: string) => {
     if (/^https?:\/\//.test(href)) return match; // already handled
-    const isFile = /^(\/|\.\/|\.\.\/)/.test(href) || FILE_EXT_RE.test(href);
-    return isFile ? `<a href="${href}" data-file-path="${href}"` : match;
+    if (GLOB_CHARS_RE.test(href)) return match; // skip glob/regex patterns
+    if (!FILE_EXT_RE.test(href)) return match; // must have a file extension
+    return `<a href="${href}" data-file-path="${href}"`;
   });
 
   // Inline <code> with file-like names → make clickable
@@ -58,7 +62,8 @@ function transformHtml(raw: string): string {
       (match, text: string) => {
         const trimmed = text.trim();
         if (!trimmed || trimmed.includes(" ")) return match;
-        if (!FILE_EXT_RE.test(trimmed) && !/^(\/|\.\/|\.\.\/)/.test(trimmed)) return match;
+        if (GLOB_CHARS_RE.test(trimmed)) return match; // skip glob/regex patterns
+        if (!FILE_EXT_RE.test(trimmed)) return match; // must have a file extension
         return `<code data-file-clickable="${trimmed}" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted">${text}</code>`;
       },
     );
@@ -119,7 +124,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       if (!filePath) return;
       const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
       const isRelative = /^(\.\/|\.\.\/)/.test(filePath);
-      const fileName = filePath.split("/").pop() ?? filePath;
+      const fileName = basename(filePath);
 
       // Absolute path → verify then open
       if (isAbsolute) {
@@ -138,16 +143,17 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
           .then(() => {
             openTab({ type: "editor", title: fileName, metadata: meta, projectId: projectName, closable: true });
           })
-          .catch(() => searchAndOpen(fileName));
+          .catch(() => searchAndOpen(filePath));
         return;
       }
 
       // Just a filename → search in project tree
-      searchAndOpen(fileName);
+      searchAndOpen(filePath);
     }
 
-    /** Search project file tree; if 1 match → open directly, else → command palette */
-    function searchAndOpen(fileName: string) {
+    /** Search project file tree; if 1 match → open directly, else → command palette with full path */
+    function searchAndOpen(filePath: string) {
+      const fileName = basename(filePath);
       const matches = findInTree(fileTree, fileName);
       if (matches.length === 1) {
         const match = matches[0]!;
@@ -159,7 +165,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
           closable: true,
         });
       } else {
-        openCommandPalette(fileName);
+        openCommandPalette(filePath);
       }
     }
 

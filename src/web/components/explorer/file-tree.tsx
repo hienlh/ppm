@@ -14,7 +14,7 @@ import {
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
-import { cn } from "@/lib/utils";
+import { cn, basename } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ContextMenu,
@@ -220,8 +220,8 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     if (action === "compare-selected" && selectedFiles.length === 2) {
       const file1 = selectedFiles[0]!;
       const file2 = selectedFiles[1]!;
-      const name1 = file1.split("/").pop() ?? file1;
-      const name2 = file2.split("/").pop() ?? file2;
+      const name1 = basename(file1);
+      const name2 = basename(file2);
       openTab({
         type: "git-diff",
         title: `Compare ${name1} vs ${name2}`,

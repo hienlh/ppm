@@ -17,8 +17,8 @@ export function SplitDropOverlay({ panelId }: SplitDropOverlayProps) {
   const isMobile = usePanelStore((s) => s.isMobile());
   const pos = findPanelPosition(grid, panelId);
 
-  const canSplitH = !isMobile && grid.length < maxColumns(false);
-  const canSplitV = pos ? (grid[pos.col]?.length ?? 0) < MAX_ROWS : false;
+  const canSplitV = !isMobile && grid.length < MAX_ROWS;
+  const canSplitH = pos ? !isMobile && (grid[pos.row]?.length ?? 0) < maxColumns(false) : false;
 
   const getZone = useCallback(
     (e: React.DragEvent): DropZone => {
@@ -74,7 +74,7 @@ export function SplitDropOverlay({ panelId }: SplitDropOverlayProps) {
           }
         } else {
           // Split: create new panel on the TARGET panel's edge
-          const direction = zone === "top" ? "up" as const : zone as "left" | "right" | "down";
+          const direction = zone === "top" ? "up" as const : zone === "bottom" ? "down" as const : zone as "left" | "right";
           store.splitPanel(direction, payload.tabId, payload.panelId, panelId);
         }
       } catch { /* ignore */ }

@@ -15,6 +15,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { api } from "@/lib/api-client";
+import { basename } from "@/lib/utils";
 
 interface CommandItem {
   id: string;
@@ -161,7 +162,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     const meta = activeProject ? { projectName: activeProject.name } : undefined;
 
     return fsFiles.map((fp) => {
-      const name = fp.split("/").pop() ?? fp;
+      const name = basename(fp);
       return {
         id: `fs:${fp}`,
         label: name,

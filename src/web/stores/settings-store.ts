@@ -76,7 +76,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   theme: (_initial.theme === "light" || _initial.theme === "dark" || _initial.theme === "system") ? _initial.theme : "system",
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   sidebarWidth: _initial.sidebarWidth ?? 280,
-  gitStatusViewMode: _initial.gitStatusViewMode === "tree" ? "tree" : "flat",
+  gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   wordWrap: _initial.wordWrap ?? false,
   sidebarActiveTab: (_initial.sidebarActiveTab === "git" || _initial.sidebarActiveTab === "settings") ? _initial.sidebarActiveTab : "explorer",
   deviceName: null,

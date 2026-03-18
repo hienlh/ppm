@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.5.3] - 2026-03-18
+
+### Added
+- `ppm status -a` — list all PPM and cloudflared system processes (tracked + untracked)
+- `ppm stop -a` — kill all PPM and cloudflared processes including orphan/zombie ones
+- Terminal light theme support — xterm colors follow system/user theme setting
+- Git status panel: dropdown actions, `onNavigate` callback for mobile drawer auto-close
+- Diff viewer: force inline mode on mobile (<768px), ResizeObserver for dynamic height
+- Cross-platform `basename()` utility in `@/lib/utils`
+
+### Fixed
+- Panel grid was column-major (`grid[col][row]`) — corrected to row-major (`grid[row][col]`)
+- Panel split directions (horizontal adds column within row, vertical adds new row)
+- Mobile textarea auto-resize using correct ref (`mobileTextareaRef`)
+- Attachment chips moved inside input container for better alignment
+- Resize handle thickness reduced (2→1) for cleaner look
+- `init` command: use `path.basename()` instead of manual split
+- Server daemon spawn: use `path.resolve()` for `import.meta.dir` path join
+- Remove leftover SDK debug `console.log` statements
+
+### Changed
+- Config service: added diagnostic logging for config search path resolution
+- `MAX_ROWS` increased from 2 to 3
+- Panel layout orientations swapped: outer=vertical (rows), inner=horizontal (columns)
+
 ## [0.5.2] - 2026-03-18
 
 ### Added

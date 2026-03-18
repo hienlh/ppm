@@ -371,11 +371,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       const pos = findPanelPosition(grid, positionPanelId);
       if (!pos) return false;
 
-      // Check constraints
+      // Check constraints — grid is row-major: grid[row][col]
       const isHorizontal = direction === "left" || direction === "right";
       const isVertical = direction === "up" || direction === "down";
-      if (isHorizontal && grid.length >= maxColumns(mobile)) return false;
-      if (isVertical && (grid[pos.col]?.length ?? 0) >= MAX_ROWS) return false;
+      if (isHorizontal && (grid[pos.row]?.length ?? 0) >= maxColumns(mobile)) return false;
+      if (isVertical && grid.length >= MAX_ROWS) return false;
 
       const newPanel = createPanel([tab], tab.id);
       newPanel.tabHistory = [tab.id];
@@ -389,18 +389,19 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
 
       let newGrid: string[][];
       if (isHorizontal) {
-        newGrid = [...grid];
-        const insertCol = direction === "right" ? pos.col + 1 : pos.col;
-        newGrid.splice(insertCol, 0, [newPanel.id]);
-      } else {
-        // up: insert before current row, down: insert after
-        newGrid = grid.map((col, c) => {
-          if (c !== pos.col) return col;
-          const newCol = [...col];
-          const insertRow = direction === "down" ? pos.row + 1 : pos.row;
-          newCol.splice(insertRow, 0, newPanel.id);
-          return newCol;
+        // Add column within the same row
+        newGrid = grid.map((row, r) => {
+          if (r !== pos.row) return row;
+          const newRow = [...row];
+          const insertCol = direction === "right" ? pos.col + 1 : pos.col;
+          newRow.splice(insertCol, 0, newPanel.id);
+          return newRow;
         });
+      } else {
+        // Add new row to the grid
+        newGrid = [...grid];
+        const insertRow = direction === "down" ? pos.row + 1 : pos.row;
+        newGrid.splice(insertRow, 0, [newPanel.id]);
       }
 
       set((s) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -42,6 +42,20 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
   const { wordWrap, toggleWordWrap } = useSettingsStore();
   const monacoTheme = useMonacoTheme();
+
+  // Measure container height — Monaco needs explicit pixel height on mobile
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerHeight, setContainerHeight] = useState<number | undefined>();
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry) setContainerHeight(Math.floor(entry.contentRect.height));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     if (isInline) return;
@@ -92,6 +106,10 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     return langFile ? getMonacoLanguage(langFile) : "plaintext";
   }, [filePath, file1, file2]);
 
+  // Force inline on mobile (<768px) since side-by-side is too narrow
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+  const renderSideBySide = !isMobile && expandMode === "both";
+
   if (!projectName && !isInline) {
     return (
       <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -124,9 +142,6 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       </div>
     );
   }
-
-  // expandMode left/right → inline diff (Monaco has no single-side mode)
-  const renderSideBySide = expandMode === "both";
 
   const expandToggle = (
     <div className="flex items-center gap-0.5 shrink-0">
@@ -163,24 +178,30 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Monaco DiffEditor */}
-      <div className="flex-1 overflow-hidden">
-        <DiffEditor
-          height="100%"
-          language={language}
-          original={original}
-          modified={modified}
-          theme={monacoTheme}
-          options={{
-            fontSize: 13,
-            fontFamily: "Menlo, Monaco, Consolas, monospace",
-            wordWrap: wordWrap ? "on" : "off",
-            renderSideBySide,
-            readOnly: true,
-            automaticLayout: true,
-            scrollBeyondLastLine: false,
-          }}
-          loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
-        />
+      <div ref={containerRef} className="flex-1 overflow-hidden">
+        {containerHeight && containerHeight > 0 ? (
+          <DiffEditor
+            height={containerHeight}
+            language={language}
+            original={original}
+            modified={modified}
+            theme={monacoTheme}
+            options={{
+              fontSize: isMobile ? 11 : 13,
+              fontFamily: "Menlo, Monaco, Consolas, monospace",
+              wordWrap: isMobile ? "on" : wordWrap ? "on" : "off",
+              renderSideBySide,
+              readOnly: true,
+              automaticLayout: true,
+              scrollBeyondLastLine: false,
+            }}
+            loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
+          />
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="size-5 animate-spin text-text-subtle" />
+          </div>
+        )}
       </div>
     </div>
   );

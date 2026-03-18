@@ -149,9 +149,6 @@ export function ChatHistoryBar({
               <span className={pctColor(contextWindowPct)}>Ctx:{contextWindowPct}%</span>
             </>
           )}
-          {lastFetchedAt && (
-            <span className="text-text-subtle/50 font-normal text-[9px] ml-0.5">{relativeTime(lastFetchedAt)}</span>
-          )}
         </button>
 
         {/* Spacer */}

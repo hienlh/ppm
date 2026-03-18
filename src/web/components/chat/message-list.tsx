@@ -5,6 +5,7 @@ import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { StreamingStatus } from "@/hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { basename } from "@/lib/utils";
 
 import {
   AlertCircle,
@@ -164,7 +165,7 @@ function parseUserAttachments(content: string): { files: string[]; text: string 
 
 /** Build a preview URL for an uploaded file (served from /chat/uploads/:filename) */
 function uploadPreviewUrl(filePath: string, projectName?: string): string {
-  const filename = filePath.split("/").pop() ?? "";
+  const filename = basename(filePath);
   // Use a generic project name — the upload route is project-scoped but files are global
   return `/api/project/${encodeURIComponent(projectName ?? "_")}/chat/uploads/${encodeURIComponent(filename)}`;
 }
@@ -195,13 +196,13 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
                 <AuthImage
                   key={i}
                   src={uploadPreviewUrl(filePath, projectName)}
-                  alt={filePath.split("/").pop() ?? "image"}
+                  alt={basename(filePath) || "image"}
                 />
               ) : isPdfPath(filePath) ? (
                 <AuthFileLink
                   key={i}
                   src={uploadPreviewUrl(filePath, projectName)}
-                  filename={filePath.split("/").pop() ?? "document.pdf"}
+                  filename={basename(filePath) || "document.pdf"}
                   mimeType="application/pdf"
                 />
               ) : (
@@ -210,7 +211,7 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
                   className="flex items-center gap-1.5 rounded-md border border-border bg-background/50 px-2 py-1 text-xs text-text-secondary"
                 >
                   <FileText className="size-3.5 shrink-0" />
-                  <span className="truncate max-w-40">{filePath.split("/").pop()}</span>
+                  <span className="truncate max-w-40">{basename(filePath)}</span>
                 </div>
               ),
             )}

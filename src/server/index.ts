@@ -282,9 +282,10 @@ export async function startServer(options: {
     const { openSync } = await import("node:fs");
     const logFile = resolve(ppmDir, "ppm.log");
     const logFd = openSync(logFile, "a");
+    const { resolve: resolvePath } = await import("node:path");
     const child = Bun.spawn({
       cmd: [
-        process.execPath, "run", import.meta.dir + "/index.ts", "__serve__",
+        process.execPath, "run", resolvePath(import.meta.dir, "index.ts"), "__serve__",
         String(port), host, options.config ?? "",
       ],
       stdio: ["ignore", logFd, logFd],

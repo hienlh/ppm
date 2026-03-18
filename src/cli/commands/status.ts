@@ -53,8 +53,73 @@ function getDaemonStatus(): DaemonStatus {
   return dead;
 }
 
-export async function showStatus(options: { json?: boolean }) {
+interface ProcessInfo {
+  pid: number;
+  command: string;
+  args: string;
+}
+
+function findSystemProcesses(name: string): ProcessInfo[] {
+  try {
+    const result = Bun.spawnSync(["pgrep", "-afl", name], { stdout: "pipe", stderr: "ignore" });
+    const output = result.stdout.toString().trim();
+    if (!output) return [];
+    return output.split("\n").map((line) => {
+      const spaceIdx = line.indexOf(" ");
+      const pid = parseInt(line.substring(0, spaceIdx), 10);
+      const rest = line.substring(spaceIdx + 1);
+      return { pid, command: name, args: rest };
+    }).filter((p) => !isNaN(p.pid));
+  } catch { return []; }
+}
+
+export async function showStatus(options: { json?: boolean; all?: boolean }) {
   const status = getDaemonStatus();
+
+  if (options.all) {
+    const ppmProcs = findSystemProcesses("ppm");
+    const cfProcs = findSystemProcesses("cloudflared");
+
+    if (options.json) {
+      console.log(JSON.stringify({ tracked: status, ppm: ppmProcs, cloudflared: cfProcs }));
+      return;
+    }
+
+    console.log(`\n  PPM system processes\n`);
+
+    // Tracked daemon
+    console.log("  Tracked daemon:");
+    if (status.running) {
+      console.log(`    Server:  running (PID: ${status.pid})`);
+      if (status.port) console.log(`    Local:   http://localhost:${status.port}/`);
+    } else {
+      console.log("    Server:  not running");
+    }
+    if (status.tunnelPid) {
+      console.log(`    Tunnel:  ${status.tunnelAlive ? "running" : "stopped"} (PID: ${status.tunnelPid})`);
+    }
+    if (status.shareUrl) console.log(`    Share:   ${status.shareUrl}`);
+
+    // All bun/node processes running PPM server
+    const serverProcs = ppmProcs.filter((p) => p.args.includes("ppm") && !p.args.includes("pgrep"));
+    if (serverProcs.length > 0) {
+      console.log(`\n  PPM-related processes (${serverProcs.length}):`);
+      for (const p of serverProcs) console.log(`    PID ${p.pid}  ${p.args}`);
+    }
+
+    // All cloudflared processes
+    if (cfProcs.length > 0) {
+      console.log(`\n  Cloudflared processes (${cfProcs.length}):`);
+      for (const p of cfProcs) console.log(`    PID ${p.pid}  ${p.args}`);
+    }
+
+    if (serverProcs.length === 0 && cfProcs.length === 0 && !status.running) {
+      console.log("\n  No PPM or cloudflared processes found.");
+    }
+
+    console.log();
+    return;
+  }
 
   if (options.json) {
     console.log(JSON.stringify(status));

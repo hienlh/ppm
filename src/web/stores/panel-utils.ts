@@ -13,7 +13,7 @@ export interface Panel {
 
 export interface PanelLayout {
   panels: Record<string, Panel>;
-  /** grid[col][row] = panelId */
+  /** grid[row][col] = panelId */
   grid: string[][];
   focusedPanelId: string;
 }
@@ -39,18 +39,20 @@ export function maxColumns(isMobile: boolean): number {
   return isMobile ? 1 : 3;
 }
 
-/** Max rows per column */
-export const MAX_ROWS = 2;
+/** Max rows in the grid */
+export const MAX_ROWS = 3;
 
 // ---------------------------------------------------------------------------
 // Grid manipulation
 // ---------------------------------------------------------------------------
-export function gridAddColumn(grid: string[][], panelId: string): string[][] {
+/** Add a new row to the grid (outer array) */
+export function gridAddRow(grid: string[][], panelId: string): string[][] {
   return [...grid, [panelId]];
 }
 
-export function gridAddRow(grid: string[][], colIndex: number, panelId: string): string[][] {
-  return grid.map((col, i) => (i === colIndex ? [...col, panelId] : col));
+/** Add a column within an existing row (inner array) */
+export function gridAddColumn(grid: string[][], rowIndex: number, panelId: string): string[][] {
+  return grid.map((row, i) => (i === rowIndex ? [...row, panelId] : row));
 }
 
 export function gridRemovePanel(grid: string[][], panelId: string): string[][] {
@@ -59,10 +61,10 @@ export function gridRemovePanel(grid: string[][], panelId: string): string[][] {
     .filter((col) => col.length > 0);
 }
 
-export function findPanelPosition(grid: string[][], panelId: string): { col: number; row: number } | null {
-  for (let c = 0; c < grid.length; c++) {
-    const r = grid[c]!.indexOf(panelId);
-    if (r !== -1) return { col: c, row: r };
+export function findPanelPosition(grid: string[][], panelId: string): { row: number; col: number } | null {
+  for (let r = 0; r < grid.length; r++) {
+    const c = grid[r]!.indexOf(panelId);
+    if (c !== -1) return { row: r, col: c };
   }
   return null;
 }

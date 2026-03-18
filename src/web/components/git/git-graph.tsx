@@ -14,6 +14,7 @@ import {
   GripVertical,
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { basename } from "@/lib/utils";
 import { useTabStore } from "@/stores/tab-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -582,7 +583,7 @@ export function GitGraph({ metadata }: GitGraphProps) {
                 className="flex items-center gap-2 py-0.5 text-xs hover:bg-muted/50 rounded px-1 cursor-pointer"
                 onClick={() => openTab({
                   type: "git-diff",
-                  title: `Diff ${file.path.split("/").pop()}`,
+                  title: `Diff ${basename(file.path)}`,
                   closable: true,
                   metadata: {
                     projectName,

@@ -30,9 +30,10 @@ program
 program
   .command("stop")
   .description("Stop the PPM daemon")
-  .action(async () => {
+  .option("-a, --all", "Kill all PPM and cloudflared processes (including untracked)")
+  .action(async (options) => {
     const { stopServer } = await import("./cli/commands/stop.ts");
-    await stopServer();
+    await stopServer(options);
   });
 
 program
@@ -47,6 +48,7 @@ program
 program
   .command("status")
   .description("Show PPM daemon status")
+  .option("-a, --all", "Show all PPM and cloudflared processes (including untracked)")
   .option("--json", "Output as JSON")
   .action(async (options) => {
     const { showStatus } = await import("./cli/commands/status.ts");
