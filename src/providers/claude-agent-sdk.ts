@@ -289,6 +289,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultSubtype: string | undefined;
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
+    let firstEventReceived = false;
+    let sdkTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
     try {
       const providerConfig = this.getProviderConfig();
@@ -378,10 +380,33 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
 
+      // First-event timeout: if SDK hangs (common on Windows/Bun), close query and run diagnostics
+      const SDK_TIMEOUT_MS = 30_000;
+      sdkTimeoutId = setTimeout(async () => {
+        if (firstEventReceived) return;
+        console.error(`[sdk] TIMEOUT: no events after ${SDK_TIMEOUT_MS / 1000}s — closing query and running diagnostics`);
+        try { q.close(); } catch {}
+
+        // Direct CLI test to determine if the issue is SDK-specific or CLI-wide
+        try {
+          const directProc = Bun.spawnSync({
+            cmd: ["claude", "-p", "say ok", "--output-format", "stream-json", "--max-turns", "1"],
+            stdout: "pipe", stderr: "pipe",
+            cwd: effectiveCwd,
+            env: { ...process.env, ...this.getProjectEnvOverrides(meta.projectPath) },
+          });
+          console.log(`[sdk] direct CLI test: exit=${directProc.exitCode} stdout=${directProc.stdout.toString().trim().slice(0, 500)} stderr=${directProc.stderr.toString().trim().slice(0, 300)}`);
+        } catch (e) {
+          console.error(`[sdk] direct CLI test failed: ${(e as Error).message}`);
+        }
+      }, SDK_TIMEOUT_MS);
+
       let sdkEventCount = 0;
       for await (const msg of q) {
         sdkEventCount++;
         if (sdkEventCount === 1) {
+          firstEventReceived = true;
+          clearTimeout(sdkTimeoutId);
           console.log(`[sdk] first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
         }
         // Extract parent_tool_use_id from SDK message (present on subagent-scoped messages)
@@ -621,16 +646,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       while (approvalEvents.length > 0) {
         yield approvalEvents.shift()!;
       }
+
+      // If no events were received, the timeout closed the query — surface error to user
+      if (sdkEventCount === 0 && !firstEventReceived) {
+        yield {
+          type: "error",
+          message: "Claude SDK did not respond (query timed out). This may be a Bun + Windows compatibility issue. Try: `ppm chat` from terminal, or run with Node.js: `npx tsx src/index.ts start -f`",
+        };
+      }
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       const stack = (e as Error).stack ?? "";
       console.error(`[sdk] error: ${msg}`);
       if (stack) console.error(`[sdk] stack: ${stack}`);
-      // Don't yield error for intentional abort
-      if (!msg.includes("abort")) {
+      // Don't yield error for intentional abort or timeout-triggered close
+      if (!msg.includes("abort") && !msg.includes("closed")) {
         yield { type: "error", message: `SDK error: ${msg}` };
       }
+      // If closed by timeout (no events received), provide user-facing error
+      if (!firstEventReceived) {
+        yield {
+          type: "error",
+          message: "Claude SDK did not respond (query timed out). This may be a Bun + Windows compatibility issue. Try: `ppm chat` from terminal, or run with Node.js: `npx tsx src/index.ts start -f`",
+        };
+      }
     } finally {
+      clearTimeout(sdkTimeoutId);
       this.activeQueries.delete(sessionId);
     }
 

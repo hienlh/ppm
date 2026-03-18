@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.11] - 2026-03-18
+
+### Fixed
+- **SDK 30s timeout with diagnostics** — if SDK query produces no events within 30s, auto-closes the query, runs a direct `claude -p` test, and shows a clear error to the user instead of hanging forever
+- **Better error messages** — timeout error suggests using `ppm chat` (terminal) or Node.js as workaround for Bun+Windows SDK issue
+
 ## [0.5.10] - 2026-03-18
 
 ### Added
