@@ -75,6 +75,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
 
   // Heartbeat interval — declared outside try so finally can clear it
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let lastContextWindowPct: number | undefined;
 
   try {
     const userPreview = content.slice(0, 200);
@@ -127,7 +128,8 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       } else if (evType === "error") {
         logSessionEvent(sessionId, "ERROR", ev.message ?? JSON.stringify(ev).slice(0, 300));
       } else if (evType === "done") {
-        logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"}`);
+        logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%`);
+        if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
         // Fire-and-forget push notification
         import("../../services/push-notification.service.ts").then(({ pushService }) => {
           const project = entry.projectName || "Project";
@@ -170,7 +172,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     // Always send done — guarantees FE resets isStreaming even if provider didn't yield done
-    safeSend(sessionId, { type: "done", sessionId });
+    safeSend(sessionId, { type: "done", sessionId, contextWindowPct: lastContextWindowPct });
     entry.abort = undefined;
     entry.isStreaming = false;
     entry.pendingApprovalEvent = undefined;

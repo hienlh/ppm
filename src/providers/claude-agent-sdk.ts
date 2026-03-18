@@ -543,7 +543,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           resultNumTurns = result.num_turns as number | undefined;
 
           // Extract context window usage from modelUsage
-          const modelUsage = result.modelUsage as Record<string, any> | undefined;
+          console.log(`[sdk] result keys: ${Object.keys(result).join(", ")}`);
+          console.log(`[sdk] result.modelUsage: ${JSON.stringify(result.modelUsage)?.slice(0, 500)}`);
+          console.log(`[sdk] result.model_usage: ${JSON.stringify(result.model_usage)?.slice(0, 500)}`);
+          console.log(`[sdk] result.usage: ${JSON.stringify(result.usage)?.slice(0, 500)}`);
+          const modelUsage = (result.modelUsage ?? result.model_usage) as Record<string, any> | undefined;
           if (modelUsage) {
             for (const usage of Object.values(modelUsage)) {
               const cw = usage.contextWindow ?? 0;
