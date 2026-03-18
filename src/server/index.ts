@@ -302,7 +302,7 @@ export async function startServer(options: {
     const logFd = openSync(logFile, "a");
     const { resolve: resolvePath } = await import("node:path");
     const script = resolvePath(import.meta.dir, "index.ts");
-    const args = ["__serve__", String(port), host, options.config ?? ""];
+    const args = ["__serve__", String(port), host, options.config ?? ""].filter(Boolean);
 
     let childPid: number;
 

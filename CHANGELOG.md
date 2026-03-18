@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.5] - 2026-03-18
+
+### Fixed
+- **Windows: PowerShell Start-Process fails with empty config arg** — filter empty strings from daemon spawn arguments
+
 ## [0.5.4] - 2026-03-18
 
 ### Fixed
