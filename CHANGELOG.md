@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.7] - 2026-03-18
+
+### Fixed
+- **Windows: PowerShell Start-Process rejects same file for stdout/stderr** — use separate `.err.log` for stderr redirect
+
 ## [0.5.6] - 2026-03-18
 
 ### Added

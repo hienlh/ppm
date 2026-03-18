@@ -310,13 +310,15 @@ export async function startServer(options: {
       // Windows: Bun.spawn child may die when parent exits (same job object).
       // Use PowerShell Start-Process to create a truly detached process.
       const bunExe = process.execPath.replace(/\\/g, "\\\\");
+      const logEscaped = logFile.replace(/\\/g, "\\\\");
+      const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
       const argStr = ["run", script, ...args].map((a) => `'${a}'`).join(",");
       const psCmd = [
         `$p = Start-Process -PassThru -WindowStyle Hidden`,
         `-FilePath '${bunExe}'`,
         `-ArgumentList ${argStr}`,
-        `-RedirectStandardOutput '${logFile.replace(/\\/g, "\\\\")}'`,
-        `-RedirectStandardError '${logFile.replace(/\\/g, "\\\\")}'`,
+        `-RedirectStandardOutput '${logEscaped}'`,
+        `-RedirectStandardError '${errLog}'`,
         `; Write-Output $p.Id`,
       ].join(" ");
       const result = Bun.spawnSync({
