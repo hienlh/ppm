@@ -97,6 +97,7 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
       },
     }),
   ],
@@ -107,7 +108,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: resolve(__dirname, "dist/web"),
+    outDir: "../../dist/web",
     emptyOutDir: true,
   },
   server: {
