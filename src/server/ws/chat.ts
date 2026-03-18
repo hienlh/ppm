@@ -96,12 +96,24 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
 
     // Heartbeat: while waiting for first response, send elapsed time every 5s
     // so FE can show "Connecting... (15s)" and warn if it takes too long
+    const CONNECTION_TIMEOUT_S = 120; // 2min max wait for first SDK event
     heartbeat = setInterval(() => {
       if (firstEventReceived || abortController.signal.aborted) {
         clearInterval(heartbeat);
         return;
       }
       const elapsed = Math.round((Date.now() - startTime) / 1000);
+      if (elapsed >= CONNECTION_TIMEOUT_S) {
+        clearInterval(heartbeat);
+        console.error(`[chat] session=${sessionId} SDK connection timeout after ${elapsed}s`);
+        logSessionEvent(sessionId, "ERROR", `SDK connection timeout after ${elapsed}s — subprocess may have failed to start`);
+        safeSend(sessionId, {
+          type: "error",
+          message: `Claude SDK failed to respond after ${elapsed}s. Check that "claude" CLI works in your terminal, or try: ppm start -f`,
+        });
+        abortController.abort();
+        return;
+      }
       safeSend(sessionId, { type: "streaming_status", status: "connecting", elapsed });
     }, 5_000);
 

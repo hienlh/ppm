@@ -6,6 +6,7 @@ import { authMiddleware } from "./middleware/auth.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { pushRoutes } from "./routes/push.ts";
+import { tunnelRoutes } from "./routes/tunnel.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
@@ -178,6 +179,7 @@ app.put("/api/fs/write", async (c) => {
 
 // API routes
 app.route("/api/settings", settingsRoutes);
+app.route("/api/tunnel", tunnelRoutes);
 app.route("/api/push", pushRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
@@ -269,7 +271,7 @@ export async function startServer(options: {
             stdout: "pipe", stderr: "pipe",
           });
           tunnelPid = parseInt(result.stdout.toString().trim(), 10);
-          if (isNaN(tunnelPid)) tunnelPid = null;
+          if (isNaN(tunnelPid)) tunnelPid = undefined;
         } else {
           const tfd = openFd(tunnelLog, "a");
           const tunnelProc = Bun.spawn({
@@ -461,7 +463,7 @@ export async function startServer(options: {
     try {
       const { tunnelService } = await import("../services/tunnel.service.ts");
       console.log("\n  Starting share tunnel...");
-      const shareUrl = await tunnelService.startTunnel(server.port);
+      const shareUrl = await tunnelService.startTunnel(server.port!);
       console.log(`  ➜  Share:   ${shareUrl}`);
       if (!configService.get("auth").enabled) {
         console.log(`\n  ⚠  Warning: auth is disabled — your IDE is publicly accessible!`);

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.8] - 2026-03-18
+
+### Fixed
+- **Windows: Claude SDK chat not connecting** — stopped unconditionally clearing `ANTHROPIC_API_KEY` env var; now only neutralizes keys found in project `.env` files (prevents .env poisoning without breaking API key auth users)
+- **Chat connection timeout** — added 120s timeout for SDK first response; shows clear error message instead of spinning forever
+
+### Added
+- **Share tunnel from UI** — Share button in project bar starts Cloudflare tunnel with QR code and copy URL
+- **Tunnel API** — `GET/POST /api/tunnel` endpoints to check status, start, and stop tunnels
+
 ## [0.5.7] - 2026-03-18
 
 ### Fixed

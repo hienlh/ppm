@@ -68,6 +68,26 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   /** Fork source: ppmSessionId → sourceSessionId (used on first message to fork) */
   private forkSources = new Map<string, string>();
 
+  /** Env vars to neutralize — only if project .env contains them (prevents .env poisoning) */
+  private readonly SENSITIVE_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
+
+  private getProjectEnvOverrides(projectPath?: string): Record<string, string> {
+    if (!projectPath) return {};
+    try {
+      const envPath = resolve(projectPath, ".env");
+      if (!existsSync(envPath)) return {};
+      const content = readFileSync(envPath, "utf-8");
+      const overrides: Record<string, string> = {};
+      for (const key of this.SENSITIVE_ENV_KEYS) {
+        if (content.includes(key)) {
+          overrides[key] = "";
+          console.log(`[sdk] Neutralizing ${key} from project .env (prevents poisoning)`);
+        }
+      }
+      return overrides;
+    } catch { return {}; }
+  }
+
   /** Read current provider config from yaml (fresh each call) */
   private getProviderConfig(): Partial<import("../types/config.ts").AIProviderConfig> {
     const ai = configService.get("ai");
@@ -275,7 +295,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
       // For fork: use the source session's SDK id
       const sdkId = shouldFork ? getSdkSessionId(forkSourceId!) : getSdkSessionId(sessionId);
-      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${meta.projectPath ?? "(none)"}`);
+      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${meta.projectPath ?? "(none)"} platform=${process.platform}`);
 
       const q = query({
         prompt: message,
@@ -288,12 +308,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           systemPrompt: { type: "preset", preset: "claude_code" },
           // Load skills/settings from both user (~/.claude) and project directory
           settingSources: ["user", "project"],
-          // Neutralize Anthropic env vars so SDK uses subscription, not project .env keys.
+          // Neutralize project .env keys that would override user's global auth.
+          // Only clear if the project's .env contains them (prevents .env poisoning).
+          // Keep global env vars intact for API key auth users.
           env: {
             ...process.env,
-            ANTHROPIC_API_KEY: "",
-            ANTHROPIC_BASE_URL: "",
-            ANTHROPIC_AUTH_TOKEN: "",
+            ...this.getProjectEnvOverrides(meta.projectPath),
           },
           // Override project-local Claude settings that may restrict tool permissions
           settings: { permissions: { allow: [], deny: [] } },
@@ -319,12 +339,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // Track active query for abort support
       this.activeQueries.set(sessionId, q);
+      console.log(`[sdk] query object created, starting iteration...`);
 
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
 
+      let sdkEventCount = 0;
       for await (const msg of q) {
+        sdkEventCount++;
+        if (sdkEventCount === 1) {
+          console.log(`[sdk] first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
+        }
         // Extract parent_tool_use_id from SDK message (present on subagent-scoped messages)
         const parentId = (msg as any).parent_tool_use_id as string | undefined;
 
