@@ -28,6 +28,11 @@ export class WsClient {
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
+      // Send "ready" handshake — triggers server to send status/connected.
+      // Through Cloudflare tunnels, the server's open-handler message may not
+      // arrive because the end-to-end data path isn't fully established yet.
+      // This roundtrip ensures the path is working before status is sent.
+      try { this.ws?.send(JSON.stringify({ type: "ready" })); } catch {}
     };
 
     this.ws.onmessage = (event) => {
