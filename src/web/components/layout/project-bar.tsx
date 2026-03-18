@@ -150,6 +150,7 @@ export function ProjectBar() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareLoading, setShareLoading] = useState(false);
+  const [shareChecking, setShareChecking] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -157,18 +158,22 @@ export function ProjectBar() {
     if (shareOpen) { setShareOpen(false); return; }
     setShareOpen(true);
     setShareError(null);
+    setShareUrl(null);
+    setShareChecking(true);
 
-    // Check existing tunnel
+    // Only check existing tunnel, don't auto-start
     try {
       const status = await api.get<{ active: boolean; url: string | null }>("/api/tunnel");
       if (status.active && status.url) {
         setShareUrl(status.url);
-        return;
       }
-    } catch { /* ignore, will try to start */ }
+    } catch { /* no existing tunnel */ }
+    setShareChecking(false);
+  }, [shareOpen]);
 
-    // Start tunnel
+  const handleStartTunnel = useCallback(async () => {
     setShareLoading(true);
+    setShareError(null);
     try {
       const result = await api.post<{ url: string }>("/api/tunnel/start", {});
       setShareUrl(result.url);
@@ -177,7 +182,7 @@ export function ProjectBar() {
     } finally {
       setShareLoading(false);
     }
-  }, [shareOpen]);
+  }, []);
 
   const handleCopyUrl = useCallback(() => {
     if (!shareUrl) return;
@@ -298,20 +303,67 @@ export function ProjectBar() {
         {shareOpen && (
           <div className="absolute left-[56px] bottom-0 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Share Link</span>
+              <span className="text-sm font-medium">Share</span>
               <button onClick={() => setShareOpen(false)} className="text-text-subtle hover:text-foreground">
                 <X className="size-3.5" />
               </button>
             </div>
-            {shareLoading && (
+
+            {/* Checking existing tunnel */}
+            {shareChecking && (
               <div className="flex items-center gap-2 text-muted-foreground text-xs">
                 <Loader2 className="size-4 animate-spin" />
-                <span>Starting tunnel...</span>
+                <span>Checking...</span>
               </div>
             )}
-            {shareError && (
-              <p className="text-xs text-destructive">{shareError}</p>
+
+            {/* No tunnel yet — show start button */}
+            {!shareChecking && !shareUrl && !shareLoading && !shareError && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Create a public link so others can access this PPM instance from anywhere.
+                </p>
+                <button
+                  onClick={handleStartTunnel}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  <Share2 className="size-3.5" />
+                  Start Sharing
+                </button>
+              </div>
             )}
+
+            {/* Starting tunnel */}
+            {shareLoading && (
+              <div className="flex flex-col items-center gap-2 py-2">
+                <Loader2 className="size-5 animate-spin text-primary" />
+                <span className="text-xs text-muted-foreground">Starting tunnel... this may take a moment</span>
+              </div>
+            )}
+
+            {/* Error */}
+            {shareError && (
+              <div className="space-y-2">
+                <p className="text-xs text-destructive">{shareError}</p>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={handleStartTunnel}
+                    className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-muted transition-colors"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => { setShareOpen(false); handleReportBug(); }}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border text-destructive hover:bg-destructive/10 transition-colors"
+                  >
+                    <Bug className="size-3" />
+                    Report
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Tunnel active — show QR + URL */}
             {shareUrl && (
               <>
                 <div className="flex justify-center">
