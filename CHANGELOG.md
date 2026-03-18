@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.4] - 2026-03-18
+
+### Fixed
+- **Windows: daemon process dies when parent exits** — use PowerShell `Start-Process` for truly detached daemon and tunnel processes on Windows
+- **Windows: `ppm status -a` / `stop -a` crash** — replaced `pgrep` (Unix-only) with `wmic` on Windows
+- Daemon startup now verifies child process is alive after 500ms — shows clear error + suggests `-f` if daemon fails
+
 ## [0.5.3] - 2026-03-18
 
 ### Added

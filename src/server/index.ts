@@ -254,14 +254,32 @@ export async function startServer(options: {
         const tunnelLog = resolve(ppmDir, "tunnel.log");
         // Truncate old log so we only match the new tunnel URL
         writeFs(tunnelLog, "");
-        const tfd = openFd(tunnelLog, "a");
-        const tunnelProc = Bun.spawn({
-          cmd: [bin, "tunnel", "--url", `http://localhost:${port}`],
-          stdio: ["ignore", "ignore", tfd],
-          env: process.env,
-        });
-        tunnelProc.unref();
-        tunnelPid = tunnelProc.pid;
+
+        if (process.platform === "win32") {
+          // Windows: use PowerShell for detached tunnel process
+          const psCmd = [
+            `$p = Start-Process -PassThru -WindowStyle Hidden`,
+            `-FilePath '${bin.replace(/\\/g, "\\\\")}'`,
+            `-ArgumentList 'tunnel','--url','http://localhost:${port}'`,
+            `-RedirectStandardError '${tunnelLog.replace(/\\/g, "\\\\")}'`,
+            `; Write-Output $p.Id`,
+          ].join(" ");
+          const result = Bun.spawnSync({
+            cmd: ["powershell", "-NoProfile", "-Command", psCmd],
+            stdout: "pipe", stderr: "pipe",
+          });
+          tunnelPid = parseInt(result.stdout.toString().trim(), 10);
+          if (isNaN(tunnelPid)) tunnelPid = null;
+        } else {
+          const tfd = openFd(tunnelLog, "a");
+          const tunnelProc = Bun.spawn({
+            cmd: [bin, "tunnel", "--url", `http://localhost:${port}`],
+            stdio: ["ignore", "ignore", tfd],
+            env: process.env,
+          });
+          tunnelProc.unref();
+          tunnelPid = tunnelProc.pid;
+        }
 
         // Parse URL from tunnel.log (poll stderr output)
         const urlRegex = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
@@ -283,22 +301,64 @@ export async function startServer(options: {
     const logFile = resolve(ppmDir, "ppm.log");
     const logFd = openSync(logFile, "a");
     const { resolve: resolvePath } = await import("node:path");
-    const child = Bun.spawn({
-      cmd: [
-        process.execPath, "run", resolvePath(import.meta.dir, "index.ts"), "__serve__",
-        String(port), host, options.config ?? "",
-      ],
-      stdio: ["ignore", logFd, logFd],
-      env: process.env,
-    });
-    child.unref();
+    const script = resolvePath(import.meta.dir, "index.ts");
+    const args = ["__serve__", String(port), host, options.config ?? ""];
+
+    let childPid: number;
+
+    if (process.platform === "win32") {
+      // Windows: Bun.spawn child may die when parent exits (same job object).
+      // Use PowerShell Start-Process to create a truly detached process.
+      const bunExe = process.execPath.replace(/\\/g, "\\\\");
+      const argStr = ["run", script, ...args].map((a) => `'${a}'`).join(",");
+      const psCmd = [
+        `$p = Start-Process -PassThru -WindowStyle Hidden`,
+        `-FilePath '${bunExe}'`,
+        `-ArgumentList ${argStr}`,
+        `-RedirectStandardOutput '${logFile.replace(/\\/g, "\\\\")}'`,
+        `-RedirectStandardError '${logFile.replace(/\\/g, "\\\\")}'`,
+        `; Write-Output $p.Id`,
+      ].join(" ");
+      const result = Bun.spawnSync({
+        cmd: ["powershell", "-NoProfile", "-Command", psCmd],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      childPid = parseInt(result.stdout.toString().trim(), 10);
+      if (isNaN(childPid)) {
+        console.error("  ✗  Failed to start daemon on Windows.");
+        console.error(`     ${result.stderr.toString().trim()}`);
+        console.error("     Try: ppm start -f (foreground mode)");
+        process.exit(1);
+      }
+    } else {
+      // macOS/Linux: Bun.spawn + unref works fine
+      const child = Bun.spawn({
+        cmd: [process.execPath, "run", script, ...args],
+        stdio: ["ignore", logFd, logFd],
+        env: process.env,
+      });
+      child.unref();
+      childPid = child.pid;
+    }
+
+    // Verify daemon is alive after brief startup
+    await Bun.sleep(500);
+    let alive = false;
+    try { process.kill(childPid, 0); alive = true; } catch {}
+    if (!alive) {
+      console.error("  ✗  Daemon exited immediately after start.");
+      console.error("     Check logs: ppm logs");
+      console.error("     Or try: ppm start -f (foreground mode)");
+      process.exit(1);
+    }
 
     // Write status file with both PIDs
-    const status = { pid: child.pid, port, host, shareUrl, tunnelPid };
+    const status = { pid: childPid, port, host, shareUrl, tunnelPid };
     writeFileSync(statusFile, JSON.stringify(status));
-    writeFileSync(pidFile, String(child.pid));
+    writeFileSync(pidFile, String(childPid));
 
-    console.log(`\n  PPM v${VERSION} daemon started (PID: ${child.pid})\n`);
+    console.log(`\n  PPM v${VERSION} daemon started (PID: ${childPid})\n`);
     console.log(`  ➜  Local:   http://localhost:${port}/`);
     if (shareUrl) {
       console.log(`  ➜  Share:   ${shareUrl}`);
