@@ -354,6 +354,26 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         console.log(`[sdk] claude CLI: ${claudePath || "(not found in PATH)"}`);
       } catch { console.log("[sdk] claude CLI: check failed"); }
 
+      // Quick CLI version check — verify the binary actually runs from this process
+      try {
+        const verProc = Bun.spawnSync({
+          cmd: ["claude", "--version"],
+          stdout: "pipe", stderr: "pipe",
+          cwd: effectiveCwd,
+        });
+        console.log(`[sdk] claude --version: exit=${verProc.exitCode} out="${verProc.stdout.toString().trim().slice(0, 100)}"`);
+        if (verProc.exitCode !== 0) {
+          console.error(`[sdk] claude --version stderr: ${verProc.stderr.toString().trim().slice(0, 300)}`);
+        }
+      } catch (e) {
+        console.error(`[sdk] claude --version failed: ${(e as Error).message}`);
+      }
+
+      // Log env keys relevant to SDK auth (values redacted)
+      const authKeys = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"];
+      const envStatus = authKeys.map(k => `${k}=${process.env[k] ? "SET" : "unset"}`).join(" ");
+      console.log(`[sdk] env auth: ${envStatus}`);
+
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;

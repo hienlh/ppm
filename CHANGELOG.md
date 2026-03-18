@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.10] - 2026-03-18
+
+### Added
+- **SDK diagnostic logging** — logs `claude --version` output, auth env var status (SET/unset) before each query; helps identify why SDK hangs on Windows
+
 ## [0.5.9] - 2026-03-18
 
 ### Fixed
