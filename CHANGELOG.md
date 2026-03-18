@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.2] - 2026-03-18
+
+### Added
+- Context window usage percentage (Ctx:N%) in chat header bar
+- SDK rate-limit and cost events write directly to backend cache
+
+### Fixed
+- Windows: path separator in project resolution (`/` → `path.sep`)
+- Windows: session resume hangs when session not found in SDK history
+- Usage detail panel shows "No data" even when badge has data (unified to single REST polling source)
+
+### Changed
+- Usage data flows through single backend cache instead of dual WS + REST paths
+- Frontend only polls REST endpoint for usage (removed WebSocket mergeUsage path)
+
 ## [0.5.1] - 2026-03-18
 
 ### Added
