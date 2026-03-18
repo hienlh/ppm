@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Plus, Settings, Pencil, Trash2, Palette, Bug, Share2, Loader2, Copy, Check, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { openBugReportPopup } from "@/lib/report-bug";
@@ -153,6 +154,15 @@ export function ProjectBar() {
   const [shareChecking, setShareChecking] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const shareBtnRef = useRef<HTMLButtonElement>(null);
+  const [popoverPos, setPopoverPos] = useState<{ left: number; bottom: number } | null>(null);
+
+  // Position popover relative to button
+  useEffect(() => {
+    if (!shareOpen || !shareBtnRef.current) { setPopoverPos(null); return; }
+    const rect = shareBtnRef.current.getBoundingClientRect();
+    setPopoverPos({ left: rect.right + 6, bottom: window.innerHeight - rect.bottom });
+  }, [shareOpen]);
 
   const handleShare = useCallback(async () => {
     if (shareOpen) { setShareOpen(false); return; }
@@ -283,10 +293,11 @@ export function ProjectBar() {
       </div>
 
       {/* Footer: share + report bug + settings */}
-      <div className="shrink-0 flex flex-col items-center gap-1 py-2 border-t border-border relative">
+      <div className="shrink-0 flex flex-col items-center gap-1 py-2 border-t border-border">
         <Tooltip>
           <TooltipTrigger asChild>
             <button
+              ref={shareBtnRef}
               onClick={handleShare}
               className={cn(
                 "flex items-center justify-center size-8 rounded-md transition-colors",
@@ -299,94 +310,102 @@ export function ProjectBar() {
           <TooltipContent side="right">Share</TooltipContent>
         </Tooltip>
 
-        {/* Share popover */}
-        {shareOpen && (
-          <div className="absolute left-[56px] bottom-0 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Share</span>
-              <button onClick={() => setShareOpen(false)} className="text-text-subtle hover:text-foreground">
-                <X className="size-3.5" />
-              </button>
-            </div>
-
-            {/* Checking existing tunnel */}
-            {shareChecking && (
-              <div className="flex items-center gap-2 text-muted-foreground text-xs">
-                <Loader2 className="size-4 animate-spin" />
-                <span>Checking...</span>
-              </div>
-            )}
-
-            {/* No tunnel yet — show start button */}
-            {!shareChecking && !shareUrl && !shareLoading && !shareError && (
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  Create a public link so others can access this PPM instance from anywhere.
-                </p>
-                <button
-                  onClick={handleStartTunnel}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                >
-                  <Share2 className="size-3.5" />
-                  Start Sharing
+        {/* Share popover — rendered via portal to escape overflow-hidden */}
+        {shareOpen && popoverPos && createPortal(
+          <>
+            {/* Backdrop to close popover */}
+            <div className="fixed inset-0 z-40" onClick={() => setShareOpen(false)} />
+            <div
+              className="fixed z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 space-y-3"
+              style={{ left: popoverPos.left, bottom: popoverPos.bottom }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Share</span>
+                <button onClick={() => setShareOpen(false)} className="text-text-subtle hover:text-foreground">
+                  <X className="size-3.5" />
                 </button>
               </div>
-            )}
 
-            {/* Starting tunnel */}
-            {shareLoading && (
-              <div className="flex flex-col items-center gap-2 py-2">
-                <Loader2 className="size-5 animate-spin text-primary" />
-                <span className="text-xs text-muted-foreground">Starting tunnel... this may take a moment</span>
-              </div>
-            )}
+              {/* Checking existing tunnel */}
+              {shareChecking && (
+                <div className="flex items-center gap-2 text-muted-foreground text-xs">
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>Checking...</span>
+                </div>
+              )}
 
-            {/* Error */}
-            {shareError && (
-              <div className="space-y-2">
-                <p className="text-xs text-destructive">{shareError}</p>
-                <div className="flex gap-1.5">
+              {/* No tunnel yet — show start button */}
+              {!shareChecking && !shareUrl && !shareLoading && !shareError && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">
+                    Create a public link so others can access this PPM instance from anywhere.
+                  </p>
                   <button
                     onClick={handleStartTunnel}
-                    className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-muted transition-colors"
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
                   >
-                    Retry
-                  </button>
-                  <button
-                    onClick={() => { setShareOpen(false); handleReportBug(); }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border text-destructive hover:bg-destructive/10 transition-colors"
-                  >
-                    <Bug className="size-3" />
-                    Report
+                    <Share2 className="size-3.5" />
+                    Start Sharing
                   </button>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Tunnel active — show QR + URL */}
-            {shareUrl && (
-              <>
-                <div className="flex justify-center">
-                  <QRCodeSVG value={shareUrl} size={160} />
+              {/* Starting tunnel */}
+              {shareLoading && (
+                <div className="flex flex-col items-center gap-2 py-2">
+                  <Loader2 className="size-5 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground">Starting tunnel... this may take a moment</span>
                 </div>
-                <div className="flex items-center gap-1">
-                  <input
-                    readOnly
-                    value={shareUrl}
-                    className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded border border-border truncate"
-                    onClick={(e) => (e.target as HTMLInputElement).select()}
-                  />
-                  <button
-                    onClick={handleCopyUrl}
-                    className="flex items-center justify-center size-7 rounded border border-border bg-muted hover:bg-accent transition-colors shrink-0"
-                    title="Copy URL"
-                  >
-                    {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
-                  </button>
+              )}
+
+              {/* Error */}
+              {shareError && (
+                <div className="space-y-2">
+                  <p className="text-xs text-destructive">{shareError}</p>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={handleStartTunnel}
+                      className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-muted transition-colors"
+                    >
+                      Retry
+                    </button>
+                    <button
+                      onClick={() => { setShareOpen(false); handleReportBug(); }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <Bug className="size-3" />
+                      Report
+                    </button>
+                  </div>
                 </div>
-              </>
-            )}
-          </div>
+              )}
+
+              {/* Tunnel active — show QR + URL */}
+              {shareUrl && (
+                <>
+                  <div className="flex justify-center">
+                    <QRCodeSVG value={shareUrl} size={160} />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <input
+                      readOnly
+                      value={shareUrl}
+                      className="flex-1 text-xs font-mono text-foreground bg-muted px-2 py-1.5 rounded border border-border truncate"
+                      onClick={(e) => (e.target as HTMLInputElement).select()}
+                    />
+                    <button
+                      onClick={handleCopyUrl}
+                      className="flex items-center justify-center size-7 rounded border border-border text-muted-foreground bg-muted hover:bg-accent hover:text-foreground transition-colors shrink-0"
+                      title="Copy URL"
+                    >
+                      {copied ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </>,
+          document.body,
         )}
 
         <Tooltip>
