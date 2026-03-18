@@ -116,8 +116,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }): AsyncGenerator<any> {
     const args = ["-p", opts.prompt, "--verbose", "--output-format", "stream-json"];
 
-    // Session management
-    if (!opts.isFirstMessage || opts.shouldFork) {
+    // Session management — only resume if we have a confirmed CLI session ID.
+    // When sdkId === sessionId, no init event was received (new or previously failed session).
+    if (opts.sdkId !== opts.sessionId) {
       args.push("--resume", opts.sdkId);
     }
 
