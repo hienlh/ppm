@@ -17,20 +17,37 @@ function killPid(pid: number, label: string): boolean {
   }
 }
 
-function killAllByName(name: string): number {
+function findPidsByName(name: string): number[] {
   try {
+    if (process.platform === "win32") {
+      // Windows: use wmic to find processes
+      const result = Bun.spawnSync(
+        ["wmic", "process", "where", `CommandLine like '%${name}%'`, "get", "ProcessId", "/format:csv"],
+        { stdout: "pipe", stderr: "ignore" },
+      );
+      const output = result.stdout.toString().trim();
+      if (!output) return [];
+      return output.split("\n").slice(1)
+        .map((line) => parseInt(line.trim().split(",").pop() ?? "", 10))
+        .filter((pid) => !isNaN(pid) && pid !== process.pid);
+    }
+    // macOS/Linux: use pgrep
     const result = Bun.spawnSync(["pgrep", "-fl", name], { stdout: "pipe", stderr: "ignore" });
     const output = result.stdout.toString().trim();
-    if (!output) return 0;
-    const pids = output.split("\n")
+    if (!output) return [];
+    return output.split("\n")
       .map((line) => parseInt(line.trim(), 10))
       .filter((pid) => !isNaN(pid) && pid !== process.pid);
-    let killed = 0;
-    for (const pid of pids) {
-      if (killPid(pid, `${name}`)) killed++;
-    }
-    return killed;
-  } catch { return 0; }
+  } catch { return []; }
+}
+
+function killAllByName(name: string): number {
+  const pids = findPidsByName(name);
+  let killed = 0;
+  for (const pid of pids) {
+    if (killPid(pid, name)) killed++;
+  }
+  return killed;
 }
 
 export async function stopServer(options?: { all?: boolean }) {

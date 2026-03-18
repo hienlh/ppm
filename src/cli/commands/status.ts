@@ -61,6 +61,25 @@ interface ProcessInfo {
 
 function findSystemProcesses(name: string): ProcessInfo[] {
   try {
+    if (process.platform === "win32") {
+      // Windows: use wmic to list processes matching name
+      const result = Bun.spawnSync(
+        ["wmic", "process", "where", `CommandLine like '%${name}%'`, "get", "ProcessId,CommandLine", "/format:csv"],
+        { stdout: "pipe", stderr: "ignore" },
+      );
+      const output = result.stdout.toString().trim();
+      if (!output) return [];
+      return output.split("\n").slice(1) // skip header
+        .map((line) => {
+          const parts = line.trim().split(",");
+          if (parts.length < 3) return null;
+          const pid = parseInt(parts[parts.length - 1]!, 10);
+          const cmdLine = parts.slice(1, -1).join(",");
+          return { pid, command: name, args: cmdLine };
+        })
+        .filter((p): p is ProcessInfo => p !== null && !isNaN(p.pid) && p.args.includes(name));
+    }
+    // macOS/Linux: use pgrep
     const result = Bun.spawnSync(["pgrep", "-afl", name], { stdout: "pipe", stderr: "ignore" });
     const output = result.stdout.toString().trim();
     if (!output) return [];
