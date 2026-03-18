@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.21] - 2026-03-18
+
+### Added
+- **Share: local network URL** — share popover now shows a "Local Network" link (device IP + port) for same-network access, always visible without starting a tunnel
+- **Share: separate Cloudflare section** — public tunnel URL shown under "Public (Cloudflare)" label with QR code, only after user clicks "Start Sharing"
+
 ## [0.5.20] - 2026-03-18
 
 ### Fixed
