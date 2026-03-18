@@ -150,10 +150,11 @@ export function ProjectBar() {
   // Share tunnel
   const [shareOpen, setShareOpen] = useState(false);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [shareLoading, setShareLoading] = useState(false);
   const [shareChecking, setShareChecking] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
   const shareBtnRef = useRef<HTMLButtonElement>(null);
   const [popoverPos, setPopoverPos] = useState<{ left: number; bottom: number } | null>(null);
 
@@ -169,14 +170,14 @@ export function ProjectBar() {
     setShareOpen(true);
     setShareError(null);
     setShareUrl(null);
+    setLocalUrl(null);
     setShareChecking(true);
 
-    // Only check existing tunnel, don't auto-start
+    // Check existing tunnel + get local IP
     try {
-      const status = await api.get<{ active: boolean; url: string | null }>("/api/tunnel");
-      if (status.active && status.url) {
-        setShareUrl(status.url);
-      }
+      const status = await api.get<{ active: boolean; url: string | null; localUrl: string | null }>("/api/tunnel");
+      if (status.active && status.url) setShareUrl(status.url);
+      if (status.localUrl) setLocalUrl(status.localUrl);
     } catch { /* no existing tunnel */ }
     setShareChecking(false);
   }, [shareOpen]);
@@ -194,12 +195,11 @@ export function ProjectBar() {
     }
   }, []);
 
-  const handleCopyUrl = useCallback(() => {
-    if (!shareUrl) return;
-    navigator.clipboard.writeText(shareUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [shareUrl]);
+  const handleCopyUrl = useCallback((url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopied(url);
+    setTimeout(() => setCopied(null), 2000);
+  }, []);
 
   function handleSettings() {
     const { sidebarCollapsed, toggleSidebar, setSidebarActiveTab } = useSettingsStore.getState();
@@ -334,6 +334,28 @@ export function ProjectBar() {
                 </div>
               )}
 
+              {/* Local network URL — always show when available */}
+              {!shareChecking && localUrl && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Local Network</span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      readOnly
+                      value={localUrl}
+                      className="flex-1 text-xs font-mono text-foreground bg-muted px-2 py-1.5 rounded border border-border truncate"
+                      onClick={(e) => (e.target as HTMLInputElement).select()}
+                    />
+                    <button
+                      onClick={() => handleCopyUrl(localUrl)}
+                      className="flex items-center justify-center size-7 rounded border border-border text-muted-foreground bg-muted hover:bg-accent hover:text-foreground transition-colors shrink-0"
+                      title="Copy URL"
+                    >
+                      {copied === localUrl ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* No tunnel yet — show start button */}
               {!shareChecking && !shareUrl && !shareLoading && !shareError && (
                 <div className="space-y-2">
@@ -380,9 +402,10 @@ export function ProjectBar() {
                 </div>
               )}
 
-              {/* Tunnel active — show QR + URL */}
+              {/* Tunnel active — show QR + public URL */}
               {shareUrl && (
-                <>
+                <div className="space-y-1">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Public (Cloudflare)</span>
                   <div className="flex justify-center">
                     <QRCodeSVG value={shareUrl} size={160} />
                   </div>
@@ -394,14 +417,14 @@ export function ProjectBar() {
                       onClick={(e) => (e.target as HTMLInputElement).select()}
                     />
                     <button
-                      onClick={handleCopyUrl}
+                      onClick={() => handleCopyUrl(shareUrl)}
                       className="flex items-center justify-center size-7 rounded border border-border text-muted-foreground bg-muted hover:bg-accent hover:text-foreground transition-colors shrink-0"
                       title="Copy URL"
                     >
-                      {copied ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
+                      {copied === shareUrl ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
                     </button>
                   </div>
-                </>
+                </div>
               )}
             </div>
           </>,
