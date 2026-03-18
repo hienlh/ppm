@@ -1,6 +1,8 @@
 import { useState, useCallback } from "react";
-import { Plus, Settings, Pencil, Trash2, Palette, Bug } from "lucide-react";
+import { Plus, Settings, Pencil, Trash2, Palette, Bug, Share2, Loader2, Copy, Check, X } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { openBugReportPopup } from "@/lib/report-bug";
+import { api } from "@/lib/api-client";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -144,6 +146,46 @@ export function ProjectBar() {
     setAddOpen(true);
   }
 
+  // Share tunnel
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleShare = useCallback(async () => {
+    if (shareOpen) { setShareOpen(false); return; }
+    setShareOpen(true);
+    setShareError(null);
+
+    // Check existing tunnel
+    try {
+      const status = await api.get<{ active: boolean; url: string | null }>("/api/tunnel");
+      if (status.active && status.url) {
+        setShareUrl(status.url);
+        return;
+      }
+    } catch { /* ignore, will try to start */ }
+
+    // Start tunnel
+    setShareLoading(true);
+    try {
+      const result = await api.post<{ url: string }>("/api/tunnel/start", {});
+      setShareUrl(result.url);
+    } catch (e) {
+      setShareError(e instanceof Error ? e.message : "Failed to start tunnel");
+    } finally {
+      setShareLoading(false);
+    }
+  }, [shareOpen]);
+
+  const handleCopyUrl = useCallback(() => {
+    if (!shareUrl) return;
+    navigator.clipboard.writeText(shareUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [shareUrl]);
+
   function handleSettings() {
     const { sidebarCollapsed, toggleSidebar, setSidebarActiveTab } = useSettingsStore.getState();
     if (sidebarCollapsed) toggleSidebar();
@@ -235,8 +277,66 @@ export function ProjectBar() {
         </Tooltip>
       </div>
 
-      {/* Footer: report bug + settings */}
-      <div className="shrink-0 flex flex-col items-center gap-1 py-2 border-t border-border">
+      {/* Footer: share + report bug + settings */}
+      <div className="shrink-0 flex flex-col items-center gap-1 py-2 border-t border-border relative">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={handleShare}
+              className={cn(
+                "flex items-center justify-center size-8 rounded-md transition-colors",
+                shareOpen ? "text-primary bg-primary/10" : "text-text-subtle hover:text-foreground hover:bg-surface-elevated",
+              )}
+            >
+              <Share2 className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right">Share</TooltipContent>
+        </Tooltip>
+
+        {/* Share popover */}
+        {shareOpen && (
+          <div className="absolute left-[56px] bottom-0 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Share Link</span>
+              <button onClick={() => setShareOpen(false)} className="text-text-subtle hover:text-foreground">
+                <X className="size-3.5" />
+              </button>
+            </div>
+            {shareLoading && (
+              <div className="flex items-center gap-2 text-muted-foreground text-xs">
+                <Loader2 className="size-4 animate-spin" />
+                <span>Starting tunnel...</span>
+              </div>
+            )}
+            {shareError && (
+              <p className="text-xs text-destructive">{shareError}</p>
+            )}
+            {shareUrl && (
+              <>
+                <div className="flex justify-center">
+                  <QRCodeSVG value={shareUrl} size={160} />
+                </div>
+                <div className="flex items-center gap-1">
+                  <input
+                    readOnly
+                    value={shareUrl}
+                    className="flex-1 text-xs font-mono bg-muted px-2 py-1.5 rounded border border-border truncate"
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                  />
+                  <button
+                    onClick={handleCopyUrl}
+                    className="flex items-center justify-center size-7 rounded border border-border bg-muted hover:bg-accent transition-colors shrink-0"
+                    title="Copy URL"
+                  >
+                    {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         <Tooltip>
           <TooltipTrigger asChild>
             <button
