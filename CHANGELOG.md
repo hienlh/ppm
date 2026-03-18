@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.14] - 2026-03-18
+
+### Fixed
+- **Windows: `claude` .cmd resolution** — `Bun.spawn` can't resolve `.cmd` wrapper scripts (npm globals) directly. Now spawns via `cmd /c claude` so Windows shell resolves PATH correctly
+
 ## [0.5.13] - 2026-03-18
 
 ### Fixed

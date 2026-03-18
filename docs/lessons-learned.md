@@ -42,6 +42,25 @@ settingSources: [],
 
 ---
 
+### Windows: SDK query() hangs — direct CLI fallback
+
+**Problem**: On Windows, Bun subprocess stdin pipe buffering prevents SDK `query()` from working. Data written to stdin stays in buffer, never reaches the CLI child process → async iterator yields zero events → hangs forever.
+
+**Root cause**: Python SDK had identical issue (#208), fixed with `asyncio.StreamWriter.drain()`. TypeScript SDK lacks this fix.
+
+**Workaround**: Bypass SDK on Windows — spawn `claude -p --verbose --output-format stream-json` directly. CLI stream-json output uses same event types as SDK (`system/init`, `assistant`, `result`, `rate_limit_event`), so existing event handling works unchanged.
+
+**Caveat**: CLI stream-json doesn't emit per-token `stream_event` deltas. Provider synthesizes them by chunking `assistant` message text into ~30-char pieces as synthetic `content_block_delta` events.
+
+**Tracking**:
+- Python SDK #208 (FIXED): stdin drain fix
+- TS SDK #44 (OPEN): query() yields zero events
+- TS SDK #64 (OPEN): bash tool hangs on empty output
+
+**File**: `src/providers/claude-agent-sdk.ts` — `queryDirectCli()` method
+
+---
+
 ## WebSocket Chat Architecture
 
 ### Event flow: SDK → Provider → WS → Frontend
