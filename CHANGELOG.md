@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.20] - 2026-03-18
+
+### Fixed
+- **Build: relative outDir for Monaco plugin** — use relative `outDir` path (`../../dist/web`) instead of `resolve(__dirname, ...)` to fix Monaco editor worker plugin on Windows builds
+- **PWA: increase cache size limit** — set `maximumFileSizeToCacheInBytes` to 15MB so large Monaco/worker bundles are cached by the service worker
+
 ## [0.5.19] - 2026-03-18
 
 ### Fixed
