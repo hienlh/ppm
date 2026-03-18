@@ -40,6 +40,7 @@ chatRoutes.get("/usage", async (c) => {
     weekly: usage.weekly,
     weeklyOpus: usage.weeklyOpus,
     weeklySonnet: usage.weeklySonnet,
+    totalCostUsd: usage.totalCostUsd,
   }));
 });
 

@@ -50,7 +50,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const version = useSettingsStore((s) => s.version);
 
   // Usage runs independently — auto-refreshes on interval
-  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage, mergeUsage } =
+  const { usageInfo, usageLoading, lastFetchedAt, refreshUsage } =
     useUsage(projectName, providerId);
 
   // Persist sessionId and providerId to tab metadata so reload restores the session
@@ -75,7 +75,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     reconnect,
     refetchMessages,
     isConnected,
-  } = useChat(sessionId, providerId, projectName, { onUsageEvent: mergeUsage });
+  } = useChat(sessionId, providerId, projectName);
 
   // Auto-send pending message for forked sessions (set by handleFork)
   const pendingForkMsgRef = useRef(metadata?.pendingMessage as string | undefined);

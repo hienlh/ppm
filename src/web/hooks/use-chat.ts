@@ -1,20 +1,13 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useWebSocket } from "./use-websocket";
 import { getAuthToken, projectUrl } from "@/lib/api-client";
-import type { ChatMessage, ChatEvent, UsageInfo } from "../../types/chat";
+import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { ChatWsServerMessage } from "../../types/api";
-
-/** Callback to forward WS usage events to the external useUsage hook */
-export type UsageEventCallback = (usage: Partial<UsageInfo>) => void;
 
 interface ApprovalRequest {
   requestId: string;
   tool: string;
   input: unknown;
-}
-
-interface UseChatOptions {
-  onUsageEvent?: UsageEventCallback;
 }
 
 /** Streaming phase: connecting → streaming → idle */
@@ -36,7 +29,7 @@ interface UseChatReturn {
   isConnected: boolean;
 }
 
-export function useChat(sessionId: string | null, providerId = "claude-sdk", projectName = "", options?: UseChatOptions): UseChatReturn {
+export function useChat(sessionId: string | null, providerId = "claude-sdk", projectName = ""): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -47,8 +40,6 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   const [thinkingWarningThreshold, setThinkingWarningThreshold] = useState(15);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const onUsageEventRef = useRef(options?.onUsageEvent);
-  onUsageEventRef.current = options?.onUsageEvent;
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const isStreamingRef = useRef(false);
@@ -210,12 +201,6 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
           tool: data.tool,
           input: data.input,
         });
-        break;
-      }
-
-      case "usage": {
-        // Forward to external usage hook
-        onUsageEventRef.current?.(data.usage);
         break;
       }
 

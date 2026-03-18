@@ -10,8 +10,6 @@ interface UseUsageReturn {
   /** ISO timestamp from BE — when usage was actually fetched from Anthropic API */
   lastFetchedAt: string | null;
   refreshUsage: () => void;
-  /** Merge partial usage from WebSocket events (cost tracking) */
-  mergeUsage: (partial: Partial<UsageInfo>) => void;
 }
 
 export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsageReturn {
@@ -48,16 +46,5 @@ export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsa
   /** Manual refresh — tells BE to fetch fresh from Anthropic API */
   const refreshUsage = useCallback(() => doFetch(true), [doFetch]);
 
-  const mergeUsage = useCallback((partial: Partial<UsageInfo>) => {
-    setUsageInfo((prev) => {
-      const next = { ...prev, ...partial };
-      if (partial.totalCostUsd != null) {
-        next.queryCostUsd = partial.totalCostUsd;
-        next.totalCostUsd = (prev.totalCostUsd ?? 0) + partial.totalCostUsd;
-      }
-      return next;
-    });
-  }, []);
-
-  return { usageInfo, usageLoading, lastFetchedAt, refreshUsage, mergeUsage };
+  return { usageInfo, usageLoading, lastFetchedAt, refreshUsage };
 }
