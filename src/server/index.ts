@@ -358,7 +358,7 @@ export async function startServer(options: {
     writeFileSync(statusFile, JSON.stringify(status));
     writeFileSync(pidFile, String(childPid));
 
-    console.log(`\n  PPM v${VERSION} daemon started (PID: ${childPid})\n`);
+    console.log(`  Daemon started (PID: ${childPid})\n`);
     console.log(`  ➜  Local:   http://localhost:${port}/`);
     if (shareUrl) {
       console.log(`  ➜  Share:   ${shareUrl}`);
@@ -441,7 +441,7 @@ export async function startServer(options: {
   // Start background usage polling
   import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
 
-  console.log(`\n  PPM v${VERSION} ready\n`);
+  console.log(`\n  PPM ready\n`);
   console.log(`  ➜  Local:   http://localhost:${server.port}/`);
 
   const { networkInterfaces } = await import("node:os");

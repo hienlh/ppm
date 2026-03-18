@@ -7,7 +7,10 @@ const program = new Command();
 program
   .name("ppm")
   .description("Personal Project Manager — mobile-first web IDE")
-  .version(VERSION);
+  .version(VERSION)
+  .hook("preAction", () => {
+    console.log(`  PPM v${VERSION}\n`);
+  });
 
 program
   .command("start")
