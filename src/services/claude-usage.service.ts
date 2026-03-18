@@ -17,6 +17,8 @@ export interface ClaudeUsage {
   weekly?: LimitBucket;
   weeklyOpus?: LimitBucket;
   weeklySonnet?: LimitBucket;
+  /** Cumulative cost from SDK result events */
+  totalCostUsd?: number;
 }
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -151,6 +153,38 @@ export function stopUsagePolling(): void {
 /** Get cached usage (fast, synchronous read — FE just reads this) */
 export function getCachedUsage(): ClaudeUsage {
   return cache;
+}
+
+/**
+ * Merge SDK rate-limit / cost events into the cache so the REST endpoint
+ * always returns the freshest data — even when the OAuth Usage API is unreachable.
+ */
+export function updateFromSdkEvent(
+  rateLimitType?: string,
+  utilization?: number,
+  costUsd?: number,
+): void {
+  if (rateLimitType && utilization != null) {
+    if (rateLimitType === "five_hour") {
+      cache.session = {
+        ...(cache.session ?? { resetsAt: "", resetsInMinutes: null, resetsInHours: null, windowHours: 5 }),
+        utilization,
+      };
+    } else if (rateLimitType.startsWith("seven_day")) {
+      const key: keyof ClaudeUsage =
+        rateLimitType === "seven_day_opus" ? "weeklyOpus"
+          : rateLimitType === "seven_day_sonnet" ? "weeklySonnet"
+          : "weekly";
+      cache[key] = {
+        ...(cache[key] as LimitBucket ?? { resetsAt: "", resetsInMinutes: null, resetsInHours: null, windowHours: 168 }),
+        utilization,
+      };
+    }
+    if (!cache.lastFetchedAt) cache.lastFetchedAt = new Date().toISOString();
+  }
+  if (costUsd != null) {
+    cache.totalCostUsd = (cache.totalCostUsd ?? 0) + costUsd;
+  }
 }
 
 /** Force immediate refresh (e.g. after a chat completes) */

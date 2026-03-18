@@ -10,9 +10,9 @@ import type {
   SessionInfo,
   ChatEvent,
   ChatMessage,
-  UsageInfo,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
+import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
@@ -67,8 +67,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private activeQueries = new Map<string, { close: () => void }>();
   /** Fork source: ppmSessionId → sourceSessionId (used on first message to fork) */
   private forkSources = new Map<string, string>();
-  /** Latest known usage/rate-limit info (shared across all sessions) */
-  private latestUsage: UsageInfo = {};
 
   /** Read current provider config from yaml (fresh each call) */
   private getProviderConfig(): Partial<import("../types/config.ts").AIProviderConfig> {
@@ -263,6 +261,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let assistantContent = "";
     let resultSubtype: string | undefined;
     let resultNumTurns: number | undefined;
+    let resultContextWindowPct: number | undefined;
 
     try {
       const providerConfig = this.getProviderConfig();
@@ -466,19 +465,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           continue;
         }
 
-        // Rate limit event — extract utilization percentages
+        // Rate limit event — write to shared usage cache (REST endpoint serves it)
         if ((msg as any).type === "rate_limit_event") {
           const info = (msg as any).rate_limit_info;
           if (info) {
             const rateLimitType = info.rateLimitType as string | undefined;
             const utilization = info.utilization as number | undefined;
             if (rateLimitType && utilization != null) {
-              const usage: Record<string, number> = {};
-              if (rateLimitType === "five_hour") usage.fiveHour = utilization;
-              else if (rateLimitType.startsWith("seven_day")) usage.sevenDay = utilization;
-              // Cache latest rate limits
-              Object.assign(this.latestUsage, usage);
-              yield { type: "usage", usage };
+              updateFromSdkEvent(rateLimitType, utilization);
             }
           }
           continue;
@@ -513,11 +507,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const result = msg as any;
           const subtype = result.subtype as string | undefined;
 
-          // Yield final cost + any rate limit info from result
-          const usage: Record<string, unknown> = {};
-          if (result.total_cost_usd != null) usage.totalCostUsd = result.total_cost_usd;
-          if (Object.keys(usage).length > 0) {
-            yield { type: "usage", usage };
+          // Write cost to shared usage cache
+          if (result.total_cost_usd != null) {
+            updateFromSdkEvent(undefined, undefined, result.total_cost_usd);
           }
 
           // Surface non-success subtypes as errors so FE can display them
@@ -542,6 +534,19 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Store subtype and numTurns for the done event
           resultSubtype = subtype;
           resultNumTurns = result.num_turns as number | undefined;
+
+          // Extract context window usage from modelUsage
+          const modelUsage = result.modelUsage as Record<string, any> | undefined;
+          if (modelUsage) {
+            for (const usage of Object.values(modelUsage)) {
+              const cw = usage.contextWindow ?? 0;
+              if (cw > 0) {
+                const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+                resultContextWindowPct = Math.min(Math.round((total / cw) * 100), 100);
+                break;
+              }
+            }
+          }
           break;
         }
       }
@@ -565,13 +570,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       sessionId,
       resultSubtype: resultSubtype as any,
       numTurns: resultNumTurns,
+      contextWindowPct: resultContextWindowPct,
     };
   }
 
-  /** Get latest cached usage/rate-limit info */
-  getUsage(): UsageInfo {
-    return { ...this.latestUsage };
-  }
 
   /** Abort an active query for a session */
   abortQuery(sessionId: string): void {
