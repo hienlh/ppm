@@ -17,7 +17,45 @@ function killPid(pid: number, label: string): boolean {
   }
 }
 
-export async function stopServer() {
+function killAllByName(name: string): number {
+  try {
+    const result = Bun.spawnSync(["pgrep", "-fl", name], { stdout: "pipe", stderr: "ignore" });
+    const output = result.stdout.toString().trim();
+    if (!output) return 0;
+    const pids = output.split("\n")
+      .map((line) => parseInt(line.trim(), 10))
+      .filter((pid) => !isNaN(pid) && pid !== process.pid);
+    let killed = 0;
+    for (const pid of pids) {
+      if (killPid(pid, `${name}`)) killed++;
+    }
+    return killed;
+  } catch { return 0; }
+}
+
+export async function stopServer(options?: { all?: boolean }) {
+  if (options?.all) {
+    console.log("  Stopping all PPM and cloudflared processes...\n");
+    const cfKilled = killAllByName("cloudflared");
+    // Kill bun processes listening on PPM ports (from status.json or common ports)
+    let serverKilled = 0;
+    if (existsSync(STATUS_FILE)) {
+      try {
+        const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+        if (data.pid) { killPid(data.pid, "server"); serverKilled++; }
+      } catch {}
+    }
+    if (existsSync(PID_FILE)) {
+      try {
+        const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+        if (!isNaN(pid)) { killPid(pid, "server (pidfile)"); serverKilled++; }
+      } catch {}
+    }
+    cleanup();
+    console.log(`\n  Done. Killed ${cfKilled} cloudflared + ${serverKilled} server process(es).`);
+    return;
+  }
+
   let status: { pid?: number; tunnelPid?: number } | null = null;
 
   // Read status.json
@@ -48,7 +86,6 @@ export async function stopServer() {
   // Windows fallback: kill orphan cloudflared processes spawned by PPM
   if (process.platform === "win32") {
     try {
-      const cfPath = resolve(homedir(), ".ppm", "bin", "cloudflared.exe");
       Bun.spawnSync(["taskkill", "/F", "/IM", "cloudflared.exe"], { stdout: "ignore", stderr: "ignore" });
     } catch {}
   }

@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import type { ChatEvent } from "../../../types/chat";
 import { useTabStore } from "@/stores/tab-store";
+import { basename } from "@/lib/utils";
 
 /** Extract tool name and input from a ChatEvent */
 function extractToolInfo(tool: ChatEvent): { toolName: string; input: Record<string, unknown> } {
@@ -165,7 +166,7 @@ function ToolDetails({
     if (!projectName) return;
     openTab({
       type: "editor",
-      title: filePath.split("/").pop() ?? filePath,
+      title: basename(filePath),
       metadata: { filePath, projectName },
       projectId: projectName,
       closable: true,
@@ -176,7 +177,7 @@ function ToolDetails({
   const openEditDiff = (filePath: string, oldStr: string, newStr: string) => {
     openTab({
       type: "git-diff",
-      title: `Diff ${filePath.split("/").pop() ?? filePath}`,
+      title: `Diff ${basename(filePath)}`,
       metadata: { filePath, projectName, original: oldStr, modified: newStr },
       projectId: projectName ?? null,
       closable: true,
@@ -453,10 +454,6 @@ function MiniMarkdown({ content, maxHeight = "max-h-48" }: { content: string; ma
   return <MarkdownRenderer content={content} className={`text-text-secondary overflow-auto ${maxHeight}`} />;
 }
 
-function basename(path?: string): string {
-  if (!path) return "";
-  return path.split("/").pop() ?? path;
-}
 
 function truncate(str?: string, max = 50): string {
   if (!str) return "";

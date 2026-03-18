@@ -10,7 +10,7 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
   if (attachments.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-1.5 px-3 pt-2">
+    <div className="flex flex-wrap gap-1.5 px-2 md:px-4 pt-2">
       {attachments.map((att) => (
         <div
           key={att.id}

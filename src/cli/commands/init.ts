@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { input, confirm, select, password } from "@inquirer/prompts";
@@ -173,7 +173,7 @@ export async function initProject(options: InitOptions = {}) {
   let added = 0;
 
   for (const repoPath of repos) {
-    const name = repoPath.split("/").pop() ?? "unknown";
+    const name = basename(repoPath);
     if (existing.some((p) => resolve(p.path) === repoPath || p.name === name)) continue;
     try {
       projectService.add(repoPath, name);

@@ -1,7 +1,61 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { useSettingsStore, type Theme } from "@/stores/settings-store";
+
+const DARK_THEME: ITheme = {
+  background: "#0f1419",
+  foreground: "#e5e7eb",
+  cursor: "#e5e7eb",
+  selectionBackground: "#3b82f640",
+  black: "#1a1f2e",
+  red: "#ef4444",
+  green: "#10b981",
+  yellow: "#f59e0b",
+  blue: "#3b82f6",
+  magenta: "#a855f7",
+  cyan: "#06b6d4",
+  white: "#e5e7eb",
+  brightBlack: "#6b7280",
+  brightRed: "#f87171",
+  brightGreen: "#34d399",
+  brightYellow: "#fbbf24",
+  brightBlue: "#60a5fa",
+  brightMagenta: "#c084fc",
+  brightCyan: "#22d3ee",
+  brightWhite: "#f9fafb",
+};
+
+const LIGHT_THEME: ITheme = {
+  background: "#ffffff",
+  foreground: "#1a1f2e",
+  cursor: "#1a1f2e",
+  selectionBackground: "#2563eb30",
+  black: "#1a1f2e",
+  red: "#dc2626",
+  green: "#059669",
+  yellow: "#d97706",
+  blue: "#2563eb",
+  magenta: "#9333ea",
+  cyan: "#0891b2",
+  white: "#f8fafc",
+  brightBlack: "#64748b",
+  brightRed: "#ef4444",
+  brightGreen: "#10b981",
+  brightYellow: "#f59e0b",
+  brightBlue: "#3b82f6",
+  brightMagenta: "#a855f7",
+  brightCyan: "#06b6d4",
+  brightWhite: "#ffffff",
+};
+
+function resolveTheme(theme: Theme): ITheme {
+  if (theme === "system") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? DARK_THEME : LIGHT_THEME;
+  }
+  return theme === "light" ? LIGHT_THEME : DARK_THEME;
+}
 
 interface UseTerminalOptions {
   sessionId: string;
@@ -123,28 +177,7 @@ export function useTerminal(
       cursorBlink: true,
       fontSize: 13,
       fontFamily: "var(--font-mono)",
-      theme: {
-        background: "#0f1419",
-        foreground: "#e5e7eb",
-        cursor: "#e5e7eb",
-        selectionBackground: "#3b82f640",
-        black: "#1a1f2e",
-        red: "#ef4444",
-        green: "#10b981",
-        yellow: "#f59e0b",
-        blue: "#3b82f6",
-        magenta: "#a855f7",
-        cyan: "#06b6d4",
-        white: "#e5e7eb",
-        brightBlack: "#6b7280",
-        brightRed: "#f87171",
-        brightGreen: "#34d399",
-        brightYellow: "#fbbf24",
-        brightBlue: "#60a5fa",
-        brightMagenta: "#c084fc",
-        brightCyan: "#22d3ee",
-        brightWhite: "#f9fafb",
-      },
+      theme: resolveTheme(useSettingsStore.getState().theme),
     });
 
     const fitAddon = new FitAddon();
@@ -180,7 +213,17 @@ export function useTerminal(
     });
     resizeObserver.observe(container);
 
+    // React to theme changes
+    let prevTheme = useSettingsStore.getState().theme;
+    const unsubTheme = useSettingsStore.subscribe((state) => {
+      if (state.theme !== prevTheme) {
+        prevTheme = state.theme;
+        term.options.theme = resolveTheme(state.theme);
+      }
+    });
+
     return () => {
+      unsubTheme();
       resizeObserver.disconnect();
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       wsRef.current?.close();

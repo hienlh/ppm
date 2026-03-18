@@ -5,6 +5,7 @@ import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { Loader2, FileWarning, ExternalLink, Code, Eye, WrapText } from "lucide-react";
 
@@ -91,7 +92,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   // Update tab title unsaved indicator
   useEffect(() => {
     if (!ownTab) return;
-    const baseName = filePath?.split("/").pop() ?? "Untitled";
+    const baseName = filePath ? basename(filePath) : "Untitled";
     const newTitle = unsaved ? `${baseName} \u25CF` : baseName;
     if (ownTab.title !== newTitle) updateTab(ownTab.id, { title: newTitle });
   }, [unsaved]); // eslint-disable-line react-hooks/exhaustive-deps

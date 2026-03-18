@@ -58,7 +58,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
   // Context menu actions
   const pos = findPanelPosition(grid, focusedPanelId);
-  const canSplitDown = pos ? (grid[pos.col]?.length ?? 0) < MAX_ROWS : false;
+  const canSplitDown = pos ? grid.length < MAX_ROWS : false;
   const otherPanelIds = Object.keys(usePanelStore.getState().panels).filter((id) => id !== focusedPanelId);
 
   function moveTabLeft(tabId: string) {

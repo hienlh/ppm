@@ -23,12 +23,18 @@ class ConfigService {
     ].filter(Boolean) as string[];
 
     for (const p of searchPaths) {
-      if (existsSync(p)) {
+      const found = existsSync(p);
+      if (!found) {
+        console.log(`[config] Not found: ${p}`);
+        continue;
+      }
+      try {
         const raw = readFileSync(p, "utf-8");
         const parsed = yaml.load(raw) as Partial<PpmConfig> | null;
         if (parsed) {
           this.config = { ...structuredClone(DEFAULT_CONFIG), ...parsed };
           this.configPath = p;
+          console.log(`[config] Loaded from: ${p}`);
           // Auto-generate token if auth enabled but token is empty
           if (this.config.auth.enabled && !this.config.auth.token) {
             this.config.auth.token = randomBytes(16).toString("hex");
@@ -40,10 +46,14 @@ class ConfigService {
           }
           return this.config;
         }
+        console.log(`[config] Empty or invalid YAML: ${p}`);
+      } catch (err) {
+        console.error(`[config] Error reading ${p}:`, (err as Error).message);
       }
     }
 
     // No config found — create default
+    console.log(`[config] No config found, creating default at ${GLOBAL_CONFIG_PATH}`);
     this.config = this.createDefault();
     return this.config;
   }

@@ -57,6 +57,7 @@ export function MessageInput({
   const [value, setValue] = useState(initialValue ?? "");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
   const fileItemsRef = useRef<FileNode[]>([]);
@@ -238,7 +239,7 @@ export function MessageInput({
           );
         });
       }
-      textareaRef.current?.focus();
+      (mobileTextareaRef.current ?? textareaRef.current)?.focus();
     },
     [uploadFile],
   );
@@ -266,9 +267,8 @@ export function MessageInput({
       if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
     }
     setAttachments([]);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
   }, [value, attachments, disabled, onSend, onSlashStateChange, onFileStateChange]);
 
   const handleKeyDown = useCallback(
@@ -320,8 +320,8 @@ export function MessageInput({
     [updatePickerState],
   );
 
-  const handleInput = useCallback(() => {
-    const el = textareaRef.current;
+  const handleInput = useCallback((e?: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const el = e?.target ?? textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 160) + "px";
@@ -382,14 +382,13 @@ export function MessageInput({
 
   return (
     <div className="p-2 md:p-3 bg-background">
-      {/* Attachment chips (above input) */}
-      <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
-
       {/* Rounded input container */}
       <div
         className="border border-border rounded-xl md:rounded-2xl bg-surface shadow-sm cursor-text"
-        onClick={() => !disabled && textareaRef.current?.focus()}
+        onClick={() => !disabled && (mobileTextareaRef.current ?? textareaRef.current)?.focus()}
       >
+        {/* Attachment chips (inside container, aligned with input) */}
+        <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: single row — attach + textarea + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
           <button
@@ -402,9 +401,9 @@ export function MessageInput({
             <Paperclip className="size-4" />
           </button>
           <textarea
-            ref={textareaRef}
+            ref={mobileTextareaRef}
             value={value}
-            onChange={(e) => { handleChange(e.target.value); handleInput(); }}
+            onChange={(e) => { handleChange(e.target.value); handleInput(e); }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onDrop={handleDrop}
@@ -412,7 +411,7 @@ export function MessageInput({
             placeholder={isStreaming ? "Follow-up..." : "Ask anything..."}
             disabled={disabled}
             rows={1}
-            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-32"
+            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20"
           />
           {showCancel ? (
             <button
@@ -439,7 +438,7 @@ export function MessageInput({
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => { handleChange(e.target.value); handleInput(); }}
+            onChange={(e) => { handleChange(e.target.value); handleInput(e); }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onDrop={handleDrop}

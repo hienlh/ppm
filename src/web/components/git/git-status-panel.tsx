@@ -14,10 +14,17 @@ import {
   FileText,
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { basename } from "@/lib/utils";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +38,8 @@ import type { GitStatus, GitFileChange } from "../../../types/git";
 interface GitStatusPanelProps {
   metadata?: Record<string, unknown>;
   tabId?: string;
+  /** Called after an action that opens a new tab (e.g. view diff, open file) */
+  onNavigate?: () => void;
 }
 
 type ViewMode = "flat" | "tree";
@@ -94,7 +103,7 @@ function collectFiles(node: TreeNode): GitFileChange[] {
   return result;
 }
 
-export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
+export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelProps) {
   const projectName = metadata?.projectName as string | undefined;
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -222,7 +231,7 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
   const openDiff = (file: GitFileChange) => {
     openTab({
       type: "git-diff",
-      title: file.path.split("/").pop() ?? file.path,
+      title: basename(file.path),
       closable: true,
       metadata: {
         projectName,
@@ -230,12 +239,13 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
       },
       projectId: projectName ?? null,
     });
+    onNavigate?.();
   };
 
   const openFile = (file: GitFileChange) => {
     openTab({
       type: "editor",
-      title: file.path.split("/").pop() ?? file.path,
+      title: basename(file.path),
       closable: true,
       metadata: {
         projectName,
@@ -243,6 +253,7 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
       },
       projectId: projectName ?? null,
     });
+    onNavigate?.();
   };
 
   const allUnstaged = useMemo(
@@ -325,14 +336,15 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
       )}
 
       <ScrollArea className="flex-1 overflow-hidden">
-        <div className="p-2 space-y-3 overflow-hidden">
+        <div className="p-1.5 space-y-2 overflow-hidden">
           {/* Staged Changes */}
           <FileSection
             title="Staged Changes"
             count={status?.staged.length ?? 0}
             files={status?.staged ?? []}
             viewMode={viewMode}
-            actionIcon={<Minus className="size-3.5" />}
+            actionIcon={<Minus className="size-3" />}
+            actionAllIcon={<Minus className="size-3" />}
             actionTitle="Unstage"
             onAction={(f) => unstageFiles([f.path])}
             onActionAll={
@@ -353,7 +365,8 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
             count={allUnstaged.length}
             files={allUnstaged}
             viewMode={viewMode}
-            actionIcon={<Plus className="size-3.5" />}
+            actionIcon={<Plus className="size-3" />}
+            actionAllIcon={<Plus className="size-3" />}
             actionTitle="Stage"
             onAction={(f) => stageFiles([f.path])}
             onActionAll={
@@ -477,7 +490,7 @@ export function GitStatusPanel({ metadata, tabId }: GitStatusPanelProps) {
 /*  Action buttons                                                     */
 /* ------------------------------------------------------------------ */
 
-/** Inline action buttons for a file / folder row */
+/** Overlay action buttons — visible on desktop hover, hidden on mobile */
 function ActionButtons({
   showRevert,
   onRevert,
@@ -496,42 +509,33 @@ function ActionButtons({
   disabled: boolean;
 }) {
   return (
-    <div className="flex items-center gap-0.5 shrink-0 ml-1">
+    <div className="hidden md:flex absolute right-0 top-0 bottom-0 items-center gap-0.5 pl-6 pr-1 bg-gradient-to-l from-background from-70% to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
       {onOpenFile && (
         <button
           type="button"
-          className="flex items-center justify-center size-7 rounded border border-border/60 bg-muted/60 text-muted-foreground hover:bg-primary/15 hover:text-primary hover:border-primary/40 active:scale-95 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenFile();
-          }}
+          className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-primary active:scale-95 transition-colors"
+          onClick={(e) => { e.stopPropagation(); onOpenFile(); }}
           disabled={disabled}
           title="Open file"
         >
-          <FileText className="size-3.5" />
+          <FileText className="size-3" />
         </button>
       )}
       {showRevert && onRevert && (
         <button
           type="button"
-          className="flex items-center justify-center size-7 rounded border border-border/60 bg-muted/60 text-muted-foreground hover:bg-destructive/15 hover:text-destructive hover:border-destructive/40 active:scale-95 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRevert();
-          }}
+          className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-destructive active:scale-95 transition-colors"
+          onClick={(e) => { e.stopPropagation(); onRevert(); }}
           disabled={disabled}
           title="Discard changes"
         >
-          <Undo2 className="size-3.5" />
+          <Undo2 className="size-3" />
         </button>
       )}
       <button
         type="button"
-        className="flex items-center justify-center size-7 rounded border border-border/60 bg-muted/60 text-muted-foreground hover:bg-accent hover:text-accent-foreground active:scale-95 transition-colors"
-        onClick={(e) => {
-          e.stopPropagation();
-          onAction();
-        }}
+        className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-accent-foreground active:scale-95 transition-colors"
+        onClick={(e) => { e.stopPropagation(); onAction(); }}
         disabled={disabled}
         title={actionTitle}
       >
@@ -551,6 +555,7 @@ function FileSection({
   files,
   viewMode,
   actionIcon,
+  actionAllIcon,
   actionTitle,
   onAction,
   onActionAll,
@@ -568,6 +573,7 @@ function FileSection({
   files: GitFileChange[];
   viewMode: ViewMode;
   actionIcon: React.ReactNode;
+  actionAllIcon?: React.ReactNode;
   actionTitle: string;
   onAction: (f: GitFileChange) => void;
   onActionAll?: () => void;
@@ -582,26 +588,26 @@ function FileSection({
 }) {
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between mb-0.5">
         <span className="text-xs font-medium text-muted-foreground uppercase">
           {title} ({count})
         </span>
         {onActionAll && count > 0 && (
-          <Button
-            variant="ghost"
-            size="xs"
+          <button
+            type="button"
+            className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-accent-foreground active:scale-95 transition-colors"
             onClick={onActionAll}
             disabled={disabled}
             title={actionAllLabel}
           >
-            {actionAllLabel}
-          </Button>
+            {actionAllIcon}
+          </button>
         )}
       </div>
       {files.length === 0 ? (
         <p className="text-xs text-muted-foreground px-1">No changes</p>
       ) : viewMode === "flat" ? (
-        <div className="divide-y divide-border/40 w-full overflow-hidden">
+        <div className="w-full overflow-hidden">
           {files.map((f) => (
             <FileRow
               key={f.path}
@@ -663,21 +669,26 @@ function FileRow({
   onRevert?: (f: GitFileChange) => void;
   displayName?: string;
 }) {
-  return (
-    <div className="flex items-center gap-1 hover:bg-muted/50 rounded px-1 py-1 w-full min-w-0">
+  const row = (
+    <div className="group relative flex items-center gap-1 hover:bg-muted/50 rounded pl-1 py-px w-full min-w-0">
       <span
         className={`text-xs font-mono w-4 text-center shrink-0 ${STATUS_COLORS[file.status] ?? ""}`}
       >
         {file.status}
       </span>
+      {/* Desktop: click opens diff */}
       <button
         type="button"
-        className="flex-1 text-left text-xs font-mono truncate hover:underline min-w-0"
+        className="hidden md:block flex-1 text-left text-xs font-mono truncate hover:underline min-w-0"
         onClick={() => onClickFile(file)}
         title={file.path}
       >
         {displayName ?? file.path}
       </button>
+      {/* Mobile: plain text (tap handled by DropdownMenu trigger) */}
+      <span className="md:hidden flex-1 text-left text-xs font-mono truncate min-w-0">
+        {displayName ?? file.path}
+      </span>
       <ActionButtons
         showRevert={showRevert}
         onRevert={onRevert ? () => onRevert(file) : undefined}
@@ -688,6 +699,42 @@ function FileRow({
         disabled={disabled}
       />
     </div>
+  );
+
+  // Mobile: wrap in dropdown menu
+  return (
+    <>
+      {/* Desktop — just the row */}
+      <div className="hidden md:block">{row}</div>
+      {/* Mobile — dropdown trigger */}
+      <div className="md:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>{row}</DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-40">
+            <DropdownMenuItem onClick={() => onClickFile(file)}>
+              View Diff
+            </DropdownMenuItem>
+            {onOpenFile && (
+              <DropdownMenuItem onClick={() => onOpenFile(file)}>
+                Open File
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => onAction(file)} disabled={disabled}>
+              {actionTitle}
+            </DropdownMenuItem>
+            {showRevert && onRevert && (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => onRevert(file)}
+                disabled={disabled}
+              >
+                Discard Changes
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
   );
 }
 
@@ -782,18 +829,22 @@ function TreeNodeView({
   const [expanded, setExpanded] = useState(true);
   const isDir = node.children.length > 0 && !node.file;
 
+  // Connector style constants
+  const railX = depth * 12 - 6; // parent's vertical rail x position
+  const connectorCls = "absolute border-dashed border-border";
+
   if (node.file) {
     return (
-      <div
-        className="relative overflow-hidden border-b border-border/30"
-        style={{ paddingLeft: depth * 16 }}
-      >
-        {/* Vertical indent line */}
+      <div className="relative" style={{ paddingLeft: depth * 12 }}>
         {depth > 0 && (
-          <div
-            className="absolute top-0 bottom-0 border-l border-border/30"
-            style={{ left: depth * 16 - 8 }}
-          />
+          <>
+            {/* Vertical segment — stops at row center for last child */}
+            <div className={`${connectorCls} border-l`}
+              style={{ left: railX, top: 0, bottom: isLast ? "50%" : 0 }} />
+            {/* Horizontal branch to content */}
+            <div className={`${connectorCls} border-t`}
+              style={{ left: railX, top: "50%", width: 6 }} />
+          </>
         )}
         <FileRow
           file={node.file}
@@ -815,55 +866,81 @@ function TreeNodeView({
     const folderFiles = collectFiles(node);
 
     return (
-      <div className="relative overflow-hidden">
-        {/* Vertical indent line for this level */}
+      <div className="relative">
         {depth > 0 && (
-          <div
-            className="absolute top-0 border-l border-border/30"
-            style={{ left: depth * 16 - 8, bottom: isLast ? "50%" : 0 }}
-          />
+          <>
+            {/* Vertical segment — full height for non-last, stops at folder row center for last */}
+            <div className={`${connectorCls} border-l`}
+              style={{ left: railX, top: 0, ...(isLast ? { height: 13 } : { bottom: 0 }) }} />
+            {/* Horizontal branch to folder label */}
+            <div className={`${connectorCls} border-t`}
+              style={{ left: railX, top: 13, width: 8 }} />
+          </>
         )}
         {/* Folder row */}
-        <div
-          className="flex items-center hover:bg-muted/50 rounded py-1 pr-1 border-b border-border/30"
-          style={{ paddingLeft: depth * 16 + 4 }}
-        >
-          <button
-            type="button"
-            className="flex items-center gap-1 flex-1 min-w-0 text-xs font-mono text-muted-foreground"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? (
-              <ChevronDown className="size-3.5 shrink-0" />
-            ) : (
-              <ChevronRight className="size-3.5 shrink-0" />
-            )}
-            <span className="truncate font-semibold">{node.name}</span>
-            <span className="text-[10px] opacity-60 shrink-0">
-              ({folderFiles.length})
-            </span>
-          </button>
-          <ActionButtons
-            showRevert={showRevert}
-            onRevert={
-              onFolderRevert
-                ? () => onFolderRevert(folderFiles, node.fullPath)
-                : undefined
-            }
-            onAction={() => onFolderAction?.(folderFiles)}
-            actionIcon={actionIcon}
-            actionTitle={`${actionTitle} ${node.name}/`}
-            disabled={disabled}
-          />
-        </div>
-        {/* Children with vertical guide line */}
-        {expanded && (
-          <div className="relative">
-            {/* Continuous vertical line for children */}
+        {(() => {
+          const folderRow = (
             <div
-              className="absolute top-0 bottom-0 border-l border-border/30"
-              style={{ left: depth * 16 + 8 }}
-            />
+              className="group relative flex items-center hover:bg-muted/50 rounded py-0.5"
+              style={{ paddingLeft: depth * 12 + 2 }}
+            >
+              <button
+                type="button"
+                className="flex items-center gap-1 flex-1 min-w-0 text-xs font-mono text-muted-foreground"
+                onClick={() => setExpanded(!expanded)}
+              >
+                {expanded ? (
+                  <ChevronDown className="size-3.5 shrink-0" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0" />
+                )}
+                <span className="truncate font-semibold">{node.name}</span>
+                <span className="text-[10px] opacity-60 shrink-0">
+                  ({folderFiles.length})
+                </span>
+              </button>
+              <ActionButtons
+                showRevert={showRevert}
+                onRevert={
+                  onFolderRevert
+                    ? () => onFolderRevert(folderFiles, node.fullPath)
+                    : undefined
+                }
+                onAction={() => onFolderAction?.(folderFiles)}
+                actionIcon={actionIcon}
+                actionTitle={`${actionTitle} ${node.name}/`}
+                disabled={disabled}
+              />
+            </div>
+          );
+          return (
+            <>
+              <div className="hidden md:block">{folderRow}</div>
+              <div className="md:hidden">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>{folderRow}</DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-40">
+                    <DropdownMenuItem onClick={() => onFolderAction?.(folderFiles)} disabled={disabled}>
+                      {actionTitle} {node.name}/
+                    </DropdownMenuItem>
+                    {onFolderRevert && (
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => onFolderRevert(folderFiles, node.fullPath)}
+                        disabled={disabled}
+                      >
+                        Discard Changes
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </>
+          );
+        })()}
+        {/* Children — each child draws its own connector segment */}
+        {expanded && (
+          <div>
             {node.children.map((child, i) => (
               <TreeNodeView
                 key={child.fullPath}
