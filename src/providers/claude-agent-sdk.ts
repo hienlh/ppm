@@ -94,9 +94,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const existing = this.activeSessions.get(sessionId);
     if (existing) return existing;
 
+    // Check if we have a mapped SDK session ID (from a previous query)
+    const mappedSdkId = getSdkSessionId(sessionId);
+
     try {
       const sdkSessions = await sdkListSessions({ limit: 100 });
-      const found = sdkSessions.find((s) => s.sessionId === sessionId);
+      const found = sdkSessions.find(
+        (s) => s.sessionId === sessionId || s.sessionId === mappedSdkId,
+      );
       if (found) {
         const meta: Session = {
           id: sessionId,
@@ -112,6 +117,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // SDK not available
     }
 
+    // Session not found in SDK history — treat as new so first message
+    // creates a fresh SDK session instead of trying to resume.
     const meta: Session = {
       id: sessionId,
       providerId: this.id,
@@ -119,7 +126,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       createdAt: new Date().toISOString(),
     };
     this.activeSessions.set(sessionId, meta);
-    this.messageCount.set(sessionId, 1);
+    this.messageCount.set(sessionId, 0);
     return meta;
   }
 
