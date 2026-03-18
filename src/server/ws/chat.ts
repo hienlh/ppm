@@ -301,6 +301,23 @@ export const chatWebSocket = {
     const entry = activeSessions.get(sessionId);
     const providerId = entry?.providerId ?? providerRegistry.getDefault().id;
 
+    // Client-initiated handshake — FE sends "ready" after onopen.
+    // Re-send status so tunnel connections (Cloudflare) that missed the
+    // open-handler message still get connected/status confirmation.
+    if (parsed.type === "ready") {
+      if (entry) {
+        ws.send(JSON.stringify({
+          type: "status",
+          sessionId,
+          isStreaming: entry.isStreaming,
+          pendingApproval: entry.pendingApprovalEvent ?? null,
+        }));
+      } else {
+        ws.send(JSON.stringify({ type: "connected", sessionId }));
+      }
+      return;
+    }
+
     if (parsed.type === "message") {
       // Resume session in provider first
       const provider = providerRegistry.get(providerId);

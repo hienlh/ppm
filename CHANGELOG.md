@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.19] - 2026-03-18
+
+### Fixed
+- **Cloudflare tunnel: WS handshake** — FE now sends `{ type: "ready" }` after `onopen`, server responds with status. Through Cloudflare tunnels, the server's `open`-handler message may not arrive because the end-to-end data path isn't fully established when the local WS opens. The roundtrip handshake ensures the path is working before sending connected/status confirmation.
+
 ## [0.5.18] - 2026-03-18
 
 ### Fixed
