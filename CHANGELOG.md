@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.12] - 2026-03-18
+
+### Fixed
+- **Windows: direct CLI fallback for chat** — on Windows, bypass SDK `query()` (broken due to Bun subprocess pipe buffering) and spawn `claude -p --verbose --output-format stream-json` directly. Same event format, same features — streaming, tools, session resume all work
+- Removed SDK timeout/diagnostic code (no longer needed with direct CLI fallback)
+
 ## [0.5.11] - 2026-03-18
 
 ### Fixed
