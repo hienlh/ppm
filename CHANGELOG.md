@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.16] - 2026-03-18
+
+### Fixed
+- **Windows: fix `--resume` with non-existent session** — only pass `--resume` to CLI when a confirmed session mapping exists (from a previous `system/init` event). Previously, failed first messages (ENOENT, TypeError) incremented `messageCount` but never saved a mapping, causing subsequent messages to `--resume` with a PPM UUID the CLI doesn't recognize
+
 ## [0.5.15] - 2026-03-18
 
 ### Fixed
