@@ -92,6 +92,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * Direct CLI fallback for Windows — spawns `claude -p` with stream-json output.
    * Workaround for Bun + Windows SDK subprocess pipe buffering issue.
    * Returns an async generator yielding the same event types as SDK query().
+   *
+   * TODO: Remove this fallback when TypeScript SDK fixes Windows stdin pipe buffering.
+   * Tracking issues:
+   *   - Python SDK #208 (FIXED): https://github.com/anthropics/claude-agent-sdk-python/issues/208
+   *     Fix: stdin drain() after writes — TypeScript SDK lacks equivalent fix.
+   *   - TS SDK #44 (OPEN): https://github.com/anthropics/claude-agent-sdk-typescript/issues/44
+   *     query() yields zero events for 3+ minutes on Windows.
+   *   - TS SDK #64 (OPEN): https://github.com/anthropics/claude-agent-sdk-typescript/issues/64
+   *     Bash tool hangs on empty output — related pipe/EOF handling issue.
+   * When these are resolved, switch back to SDK query() by removing the
+   * `useDirectCli` branch in sendMessage() and deleting this method.
    */
   private async *queryDirectCli(opts: {
     prompt: string;
@@ -119,10 +130,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // Permission mode
     args.push("--permission-mode", "bypassPermissions", "--dangerously-skip-permissions");
 
-    console.log(`[sdk-cli] spawning: claude ${args.slice(0, 6).join(" ")}... cwd=${opts.cwd}`);
+    // On Windows, `claude` is a .cmd wrapper (npm global) — Bun.spawn can't resolve .cmd
+    // files directly. Use `cmd /c` to let the Windows shell find it via PATH.
+    const cmd = process.platform === "win32"
+      ? ["cmd", "/c", "claude", ...args]
+      : ["claude", ...args];
+    console.log(`[sdk-cli] spawning: ${cmd.slice(0, 7).join(" ")}... cwd=${opts.cwd}`);
 
     const proc = Bun.spawn({
-      cmd: ["claude", ...args],
+      cmd,
       cwd: opts.cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -424,7 +440,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const queryEnv = { ...process.env, ...this.getProjectEnvOverrides(meta.projectPath) };
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform}`);
 
-      // On Windows, use direct CLI fallback (SDK query() hangs due to Bun subprocess pipe buffering)
+      // TODO: Remove when TS SDK fixes Windows stdin pipe buffering (see queryDirectCli() JSDoc for tracking issues)
+      // On Windows, SDK query() hangs because Bun subprocess stdin pipe never flushes to child process.
       const useDirectCli = process.platform === "win32";
       let eventSource: AsyncIterable<any>;
 
