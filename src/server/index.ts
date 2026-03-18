@@ -421,6 +421,7 @@ export async function startServer(options: {
     websocket: {
       idleTimeout: 960,
       sendPong: true,
+      perMessageDeflate: false, // Disable compression — Cloudflare tunnels can mangle compressed frames
       open(ws: any) {
         if (ws.data?.type === "health") {
           ws.send(JSON.stringify({ type: "health", status: "ok" }));
@@ -548,6 +549,7 @@ if (process.argv.includes("__serve__")) {
     websocket: {
       idleTimeout: 960,
       sendPong: true,
+      perMessageDeflate: false,
       open(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.open(ws);
         else terminalWebSocket.open(ws);

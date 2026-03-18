@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.18] - 2026-03-18
+
+### Fixed
+- **Cloudflare tunnel: WebSocket events not reaching FE** — switch from protocol-level `ws.ping()` to application-level JSON pings (Cloudflare can intercept protocol pings, masking dead connections). Disable `perMessageDeflate` to prevent compressed frame issues through tunnel proxy. Add diagnostic logging to `safeSend` to detect dropped messages.
+
 ## [0.5.17] - 2026-03-18
 
 ### Fixed

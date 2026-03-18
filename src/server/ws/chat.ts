@@ -37,11 +37,17 @@ const activeSessions = new Map<string, SessionEntry>();
 /** Send event to FE if connected, silently drop otherwise */
 function safeSend(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
-  if (!entry?.ws) return;
+  if (!entry?.ws) {
+    const evType = (event as any)?.type ?? "unknown";
+    if (evType !== "streaming_status" && evType !== "ping") {
+      console.warn(`[chat] session=${sessionId} safeSend: ws=null, dropping ${evType}`);
+    }
+    return;
+  }
   try {
     entry.ws.send(JSON.stringify(event));
-  } catch {
-    // WS may have closed between check and send — ignore
+  } catch (e) {
+    console.warn(`[chat] session=${sessionId} safeSend: send failed (${(e as Error).message})`);
   }
 }
 
@@ -225,10 +231,12 @@ export const chatWebSocket = {
         existing.cleanupTimer = undefined;
       }
       if (existing.pingInterval) clearInterval(existing.pingInterval);
+      // Use application-level pings (JSON messages) instead of protocol-level ws.ping().
+      // Protocol-level pings can be intercepted by Cloudflare tunnels, causing the server
+      // to think the connection is alive when the data path to the client is broken.
       existing.pingInterval = setInterval(() => {
         try {
-          if (ws.ping) ws.ping();
-          else ws.send(JSON.stringify({ type: "ping" }));
+          ws.send(JSON.stringify({ type: "ping" }));
         } catch { /* ws may be closed */ }
       }, PING_INTERVAL_MS);
       existing.ws = ws;
@@ -251,11 +259,10 @@ export const chatWebSocket = {
       return;
     }
 
-    // New session entry
+    // New session entry — use application-level pings for Cloudflare tunnel compatibility
     const pingInterval = setInterval(() => {
       try {
-        if (ws.ping) ws.ping();
-        else ws.send(JSON.stringify({ type: "ping" }));
+        ws.send(JSON.stringify({ type: "ping" }));
       } catch { /* ws may be closed */ }
     }, PING_INTERVAL_MS);
 
