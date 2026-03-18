@@ -88,6 +88,100 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     } catch { return {}; }
   }
 
+  /**
+   * Direct CLI fallback for Windows — spawns `claude -p` with stream-json output.
+   * Workaround for Bun + Windows SDK subprocess pipe buffering issue.
+   * Returns an async generator yielding the same event types as SDK query().
+   */
+  private async *queryDirectCli(opts: {
+    prompt: string;
+    cwd: string;
+    sessionId: string;
+    sdkId: string;
+    isFirstMessage: boolean;
+    shouldFork: boolean;
+    env: Record<string, string | undefined>;
+    providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
+  }): AsyncGenerator<any> {
+    const args = ["-p", opts.prompt, "--verbose", "--output-format", "stream-json"];
+
+    // Session management
+    if (!opts.isFirstMessage || opts.shouldFork) {
+      args.push("--resume", opts.sdkId);
+    }
+
+    // Config-driven options
+    if (opts.providerConfig.model) args.push("--model", opts.providerConfig.model);
+    const maxTurns = opts.providerConfig.max_turns ?? 100;
+    args.push("--max-turns", String(maxTurns));
+    if (opts.providerConfig.effort) args.push("--effort", opts.providerConfig.effort);
+
+    // Permission mode
+    args.push("--permission-mode", "bypassPermissions", "--dangerously-skip-permissions");
+
+    console.log(`[sdk-cli] spawning: claude ${args.slice(0, 6).join(" ")}... cwd=${opts.cwd}`);
+
+    const proc = Bun.spawn({
+      cmd: ["claude", ...args],
+      cwd: opts.cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: opts.env as Record<string, string>,
+    });
+
+    // Store proc for abort support
+    const abortHandle = { close: () => { try { proc.kill(); } catch {} } };
+    this.activeQueries.set(opts.sessionId, abortHandle as any);
+
+    try {
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? ""; // Keep incomplete last line in buffer
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const event = JSON.parse(trimmed);
+            yield event;
+          } catch {
+            // Skip non-JSON lines (e.g. progress indicators)
+          }
+        }
+      }
+
+      // Process remaining buffer
+      if (buffer.trim()) {
+        try { yield JSON.parse(buffer.trim()); } catch {}
+      }
+
+      // Wait for process to exit
+      const exitCode = await proc.exited;
+      console.log(`[sdk-cli] process exited: code=${exitCode}`);
+
+      // Read stderr if process failed
+      if (exitCode !== 0) {
+        try {
+          const errReader = proc.stderr.getReader();
+          const { value: errBytes } = await errReader.read();
+          const stderr = errBytes ? new TextDecoder().decode(errBytes).trim() : "";
+          if (stderr) console.error(`[sdk-cli] stderr: ${stderr.slice(0, 500)}`);
+        } catch {}
+      }
+    } finally {
+      this.activeQueries.delete(opts.sessionId);
+      try { proc.kill(); } catch {}
+    }
+  }
+
   /** Read current provider config from yaml (fresh each call) */
   private getProviderConfig(): Partial<import("../types/config.ts").AIProviderConfig> {
     const ai = configService.get("ai");
@@ -289,9 +383,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultSubtype: string | undefined;
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
-    let firstEventReceived = false;
-    let sdkTimeoutId: ReturnType<typeof setTimeout> | undefined;
-
     try {
       const providerConfig = this.getProviderConfig();
       // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
@@ -300,113 +391,67 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Fallback cwd: SDK needs a valid working directory even when no project is selected.
       // On Windows daemons, undefined cwd can cause the subprocess to fail silently.
       const effectiveCwd = meta.projectPath || homedir();
+      const queryEnv = { ...process.env, ...this.getProjectEnvOverrides(meta.projectPath) };
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform}`);
 
-      const q = query({
-        prompt: message,
-        options: {
-          sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
-          resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
-          ...(shouldFork && { forkSession: true }),
+      // On Windows, use direct CLI fallback (SDK query() hangs due to Bun subprocess pipe buffering)
+      const useDirectCli = process.platform === "win32";
+      let eventSource: AsyncIterable<any>;
+
+      if (useDirectCli) {
+        console.log(`[sdk] Windows detected — using direct CLI fallback (bypasses SDK pipe issue)`);
+        eventSource = this.queryDirectCli({
+          prompt: message,
           cwd: effectiveCwd,
-          // Use full Claude Code system prompt (coding guidelines, security, response style)
-          systemPrompt: { type: "preset", preset: "claude_code" },
-          // Load skills/settings from both user (~/.claude) and project directory
-          settingSources: ["user", "project"],
-          // Neutralize project .env keys that would override user's global auth.
-          // Only clear if the project's .env contains them (prevents .env poisoning).
-          // Keep global env vars intact for API key auth users.
-          env: {
-            ...process.env,
-            ...this.getProjectEnvOverrides(meta.projectPath),
-          },
-          // Override project-local Claude settings that may restrict tool permissions
-          settings: { permissions: { allow: [], deny: [] } },
-          allowedTools: [
-            "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-            "WebSearch", "WebFetch", "AskUserQuestion",
-            "Agent", "Skill", "TodoWrite", "ToolSearch",
-          ],
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
-          // Config-driven values from ppm.yaml
-          ...(providerConfig.model && { model: providerConfig.model }),
-          ...(providerConfig.effort && { effort: providerConfig.effort }),
-          maxTurns: providerConfig.max_turns ?? 100,
-          ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-          ...(providerConfig.thinking_budget_tokens != null && {
-            thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
-          }),
-          canUseTool,
-          includePartialMessages: true,
-        } as any,
-      });
-
-      // Track active query for abort support
-      this.activeQueries.set(sessionId, q);
-      console.log(`[sdk] query object created, starting iteration...`);
-
-      // Verify claude CLI is accessible (early warning on Windows daemons)
-      try {
-        const which = Bun.spawnSync({
-          cmd: process.platform === "win32" ? ["where", "claude"] : ["which", "claude"],
-          stdout: "pipe", stderr: "pipe",
+          sessionId,
+          sdkId,
+          isFirstMessage,
+          shouldFork,
+          env: queryEnv,
+          providerConfig,
         });
-        const claudePath = which.stdout.toString().trim().split("\n")[0];
-        console.log(`[sdk] claude CLI: ${claudePath || "(not found in PATH)"}`);
-      } catch { console.log("[sdk] claude CLI: check failed"); }
-
-      // Quick CLI version check — verify the binary actually runs from this process
-      try {
-        const verProc = Bun.spawnSync({
-          cmd: ["claude", "--version"],
-          stdout: "pipe", stderr: "pipe",
-          cwd: effectiveCwd,
+      } else {
+        const q = query({
+          prompt: message,
+          options: {
+            sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
+            resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
+            ...(shouldFork && { forkSession: true }),
+            cwd: effectiveCwd,
+            systemPrompt: { type: "preset", preset: "claude_code" },
+            settingSources: ["user", "project"],
+            env: queryEnv,
+            settings: { permissions: { allow: [], deny: [] } },
+            allowedTools: [
+              "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+              "WebSearch", "WebFetch", "AskUserQuestion",
+              "Agent", "Skill", "TodoWrite", "ToolSearch",
+            ],
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            ...(providerConfig.model && { model: providerConfig.model }),
+            ...(providerConfig.effort && { effort: providerConfig.effort }),
+            maxTurns: providerConfig.max_turns ?? 100,
+            ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
+            ...(providerConfig.thinking_budget_tokens != null && {
+              thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
+            }),
+            canUseTool,
+            includePartialMessages: true,
+          } as any,
         });
-        console.log(`[sdk] claude --version: exit=${verProc.exitCode} out="${verProc.stdout.toString().trim().slice(0, 100)}"`);
-        if (verProc.exitCode !== 0) {
-          console.error(`[sdk] claude --version stderr: ${verProc.stderr.toString().trim().slice(0, 300)}`);
-        }
-      } catch (e) {
-        console.error(`[sdk] claude --version failed: ${(e as Error).message}`);
+        this.activeQueries.set(sessionId, q);
+        eventSource = q;
       }
-
-      // Log env keys relevant to SDK auth (values redacted)
-      const authKeys = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"];
-      const envStatus = authKeys.map(k => `${k}=${process.env[k] ? "SET" : "unset"}`).join(" ");
-      console.log(`[sdk] env auth: ${envStatus}`);
 
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
 
-      // First-event timeout: if SDK hangs (common on Windows/Bun), close query and run diagnostics
-      const SDK_TIMEOUT_MS = 30_000;
-      sdkTimeoutId = setTimeout(async () => {
-        if (firstEventReceived) return;
-        console.error(`[sdk] TIMEOUT: no events after ${SDK_TIMEOUT_MS / 1000}s — closing query and running diagnostics`);
-        try { q.close(); } catch {}
-
-        // Direct CLI test to determine if the issue is SDK-specific or CLI-wide
-        try {
-          const directProc = Bun.spawnSync({
-            cmd: ["claude", "-p", "say ok", "--output-format", "stream-json", "--max-turns", "1"],
-            stdout: "pipe", stderr: "pipe",
-            cwd: effectiveCwd,
-            env: { ...process.env, ...this.getProjectEnvOverrides(meta.projectPath) },
-          });
-          console.log(`[sdk] direct CLI test: exit=${directProc.exitCode} stdout=${directProc.stdout.toString().trim().slice(0, 500)} stderr=${directProc.stderr.toString().trim().slice(0, 300)}`);
-        } catch (e) {
-          console.error(`[sdk] direct CLI test failed: ${(e as Error).message}`);
-        }
-      }, SDK_TIMEOUT_MS);
-
       let sdkEventCount = 0;
-      for await (const msg of q) {
+      for await (const msg of eventSource) {
         sdkEventCount++;
         if (sdkEventCount === 1) {
-          firstEventReceived = true;
-          clearTimeout(sdkTimeoutId);
           console.log(`[sdk] first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
         }
         // Extract parent_tool_use_id from SDK message (present on subagent-scoped messages)
@@ -647,31 +692,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         yield approvalEvents.shift()!;
       }
 
-      // If no events were received, the timeout closed the query — surface error to user
-      if (sdkEventCount === 0 && !firstEventReceived) {
-        yield {
-          type: "error",
-          message: "Claude SDK did not respond (query timed out). This may be a Bun + Windows compatibility issue. Try: `ppm chat` from terminal, or run with Node.js: `npx tsx src/index.ts start -f`",
-        };
+      if (sdkEventCount === 0) {
+        yield { type: "error", message: "Claude did not respond. Check that 'claude' CLI works in your terminal." };
       }
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
-      const stack = (e as Error).stack ?? "";
       console.error(`[sdk] error: ${msg}`);
-      if (stack) console.error(`[sdk] stack: ${stack}`);
-      // Don't yield error for intentional abort or timeout-triggered close
       if (!msg.includes("abort") && !msg.includes("closed")) {
         yield { type: "error", message: `SDK error: ${msg}` };
       }
-      // If closed by timeout (no events received), provide user-facing error
-      if (!firstEventReceived) {
-        yield {
-          type: "error",
-          message: "Claude SDK did not respond (query timed out). This may be a Bun + Windows compatibility issue. Try: `ppm chat` from terminal, or run with Node.js: `npx tsx src/index.ts start -f`",
-        };
-      }
     } finally {
-      clearTimeout(sdkTimeoutId);
       this.activeQueries.delete(sessionId);
     }
 
