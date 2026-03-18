@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import { configService } from "../../services/config.service.ts";
 
 /**
@@ -15,7 +15,7 @@ export function resolveProjectPath(nameOrPath: string): string {
   // Path fallback — must be within a registered project
   const abs = resolve(nameOrPath);
   const allowed = projects.some(
-    (p) => abs === resolve(p.path) || abs.startsWith(resolve(p.path) + "/"),
+    (p) => abs === resolve(p.path) || abs.startsWith(resolve(p.path) + sep),
   );
   if (!allowed) throw new Error(`Project not found: ${nameOrPath}`);
   return abs;
