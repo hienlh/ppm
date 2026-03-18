@@ -108,18 +108,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     prompt: string;
     cwd: string;
     sessionId: string;
-    sdkId: string;
-    isFirstMessage: boolean;
-    shouldFork: boolean;
+    resumeSessionId?: string;
     env: Record<string, string | undefined>;
     providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
   }): AsyncGenerator<any> {
     const args = ["-p", opts.prompt, "--verbose", "--output-format", "stream-json"];
 
-    // Session management — only resume if we have a confirmed CLI session ID.
-    // When sdkId === sessionId, no init event was received (new or previously failed session).
-    if (opts.sdkId !== opts.sessionId) {
-      args.push("--resume", opts.sdkId);
+    // Session management — resume if caller confirmed a valid session ID
+    if (opts.resumeSessionId) {
+      args.push("--resume", opts.resumeSessionId);
     }
 
     // Config-driven options
@@ -464,14 +461,29 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let eventSource: AsyncIterable<any>;
 
       if (useDirectCli) {
-        console.log(`[sdk] Windows detected — using direct CLI fallback (bypasses SDK pipe issue)`);
+        // Determine resumeSessionId for CLI --resume flag:
+        // 1. Explicit mapping exists (sdkId !== sessionId) → use mapped SDK ID
+        // 2. No mapping but session has messages on disk → session was created with PPM UUID, resume it
+        // 3. No mapping, no messages → truly new session, don't resume
+        let resumeSessionId: string | undefined;
+        if (sdkId !== sessionId) {
+          resumeSessionId = sdkId;
+        } else if (!isFirstMessage) {
+          try {
+            const existingMsgs = await getSessionMessages(sessionId);
+            if (existingMsgs.length > 0) {
+              resumeSessionId = sessionId;
+              saveSessionMapping(sessionId, sessionId);
+              console.log(`[sdk] session ${sessionId} exists on disk (${existingMsgs.length} msgs) — will resume`);
+            }
+          } catch {}
+        }
+        console.log(`[sdk] Windows detected — using direct CLI fallback (resume=${resumeSessionId ?? "none"})`);
         eventSource = this.queryDirectCli({
           prompt: message,
           cwd: effectiveCwd,
           sessionId,
-          sdkId,
-          isFirstMessage,
-          shouldFork,
+          resumeSessionId,
           env: queryEnv,
           providerConfig,
         });

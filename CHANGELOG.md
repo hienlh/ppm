@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.17] - 2026-03-18
+
+### Fixed
+- **Windows: resume sessions that exist on disk** — when no explicit mapping but `getSessionMessages()` finds messages, use PPM UUID for `--resume` (session was created with that ID). Prevents losing conversation context when resuming old sessions via CLI fallback
+
 ## [0.5.16] - 2026-03-18
 
 ### Fixed
