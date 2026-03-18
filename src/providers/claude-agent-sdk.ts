@@ -213,13 +213,30 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const exitCode = await proc.exited;
       console.log(`[sdk-cli] process exited: code=${exitCode}`);
 
-      // Read stderr if process failed
+      // Read all stderr and surface error to frontend
       if (exitCode !== 0) {
         try {
           const errReader = proc.stderr.getReader();
-          const { value: errBytes } = await errReader.read();
-          const stderr = errBytes ? new TextDecoder().decode(errBytes).trim() : "";
-          if (stderr) console.error(`[sdk-cli] stderr: ${stderr.slice(0, 500)}`);
+          const stderrDecoder = new TextDecoder();
+          const errParts: string[] = [];
+          while (true) {
+            const { done, value } = await errReader.read();
+            if (done) break;
+            if (value) errParts.push(stderrDecoder.decode(value, { stream: true }));
+          }
+          const fullStderr = errParts.join("").trim();
+          if (fullStderr) {
+            // Actual error is at the END (minified source dump comes first)
+            console.error(`[sdk-cli] stderr (last 1500): ${fullStderr.slice(-1500)}`);
+            // Extract meaningful error line (e.g. "Error: ...", "TypeError: ...")
+            const errMatch = fullStderr.match(/\b(?:Error|TypeError|SyntaxError|ReferenceError|RangeError):\s*.+/);
+            const errorMsg = errMatch ? errMatch[0].slice(0, 500) : fullStderr.slice(-300);
+            yield {
+              type: "result",
+              subtype: "error_during_execution",
+              error: `CLI exited with code ${exitCode}: ${errorMsg}`,
+            };
+          }
         } catch {}
       }
     } finally {

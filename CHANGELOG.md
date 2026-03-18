@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.15] - 2026-03-18
+
+### Fixed
+- **Windows: surface CLI errors to frontend** — read all stderr (not just first 500 chars), extract actual error message from end of output, yield as error event so frontend shows real crash reason instead of silent failure
+
 ## [0.5.14] - 2026-03-18
 
 ### Fixed
