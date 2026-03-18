@@ -151,6 +151,36 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (!trimmed) continue;
           try {
             const event = JSON.parse(trimmed);
+            // CLI stream-json doesn't emit per-token stream_event deltas — it sends
+            // complete assistant messages. Synthesize stream_event deltas so the FE
+            // gets a smooth streaming experience (same as SDK with includePartialMessages).
+            if (event.type === "assistant" && event.message?.content) {
+              for (const block of event.message.content) {
+                if (block.type === "text" && block.text) {
+                  // Emit text in ~30-char chunks as synthetic stream_event deltas
+                  const text = block.text as string;
+                  const CHUNK = 30;
+                  for (let i = 0; i < text.length; i += CHUNK) {
+                    yield {
+                      type: "stream_event",
+                      event: {
+                        type: "content_block_delta",
+                        delta: { type: "text_delta", text: text.slice(i, i + CHUNK) },
+                      },
+                    };
+                  }
+                } else if (block.type === "thinking" && block.thinking) {
+                  yield {
+                    type: "stream_event",
+                    event: {
+                      type: "content_block_delta",
+                      delta: { type: "thinking_delta", thinking: block.thinking },
+                    },
+                  };
+                }
+              }
+            }
+            // Always yield the original event too (for init, result, rate_limit, etc.)
             yield event;
           } catch {
             // Skip non-JSON lines (e.g. progress indicators)

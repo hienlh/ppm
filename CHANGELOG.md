@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.13] - 2026-03-18
+
+### Fixed
+- **Windows: simulated token streaming** — CLI `stream-json` only emits complete `assistant` messages (no per-token deltas). Now synthesizes `stream_event` / `content_block_delta` events in ~30-char chunks so FE gets smooth typing effect instead of all text appearing at once
+
 ## [0.5.12] - 2026-03-18
 
 ### Fixed
