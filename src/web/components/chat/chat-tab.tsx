@@ -69,6 +69,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     connectingElapsed,
     thinkingWarningThreshold,
     pendingApproval,
+    contextWindowPct,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -282,6 +283,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         <ChatHistoryBar
           projectName={projectName}
           usageInfo={usageInfo}
+          contextWindowPct={contextWindowPct}
           usageLoading={usageLoading}
           refreshUsage={refreshUsage}
           lastFetchedAt={lastFetchedAt}

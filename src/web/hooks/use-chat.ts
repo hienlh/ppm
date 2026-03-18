@@ -21,6 +21,8 @@ interface UseChatReturn {
   connectingElapsed: number;
   thinkingWarningThreshold: number;
   pendingApproval: ApprovalRequest | null;
+  /** Context window usage % from last completed query (0–100) */
+  contextWindowPct: number | null;
   sendMessage: (content: string) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
@@ -39,6 +41,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   /** Warning threshold in seconds — higher for deeper thinking modes */
   const [thinkingWarningThreshold, setThinkingWarningThreshold] = useState(15);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
+  const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
@@ -235,6 +238,10 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
       case "done": {
         // Idempotent: may receive duplicate done (provider + stream loop finally)
         if (!isStreamingRef.current) break;
+        // Capture context window usage from SDK result
+        if (data.contextWindowPct != null) {
+          setContextWindowPct(data.contextWindowPct);
+        }
         // Finalize the streaming message — capture refs before clearing
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
@@ -467,6 +474,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     connectingElapsed,
     thinkingWarningThreshold,
     pendingApproval,
+    contextWindowPct,
     sendMessage,
     respondToApproval,
     cancelStreaming,

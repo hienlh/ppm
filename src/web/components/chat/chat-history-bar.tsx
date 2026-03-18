@@ -13,6 +13,7 @@ type PanelType = "history" | "config" | "usage" | null;
 interface ChatHistoryBarProps {
   projectName: string;
   usageInfo: UsageInfo;
+  contextWindowPct?: number | null;
   usageLoading?: boolean;
   refreshUsage?: () => void;
   lastFetchedAt?: string | null;
@@ -47,7 +48,7 @@ function pctColor(pct: number): string {
 }
 
 export function ChatHistoryBar({
-  projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
+  projectName, usageInfo, contextWindowPct, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, onSelectSession, onBugReport, isConnected, onReconnect,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
@@ -142,6 +143,12 @@ export function ChatHistoryBar({
           <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
           <span className="text-text-subtle">·</span>
           <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
+          {contextWindowPct != null && (
+            <>
+              <span className="text-text-subtle">·</span>
+              <span className={pctColor(contextWindowPct)}>Ctx:{contextWindowPct}%</span>
+            </>
+          )}
           {lastFetchedAt && (
             <span className="text-text-subtle/50 font-normal text-[9px] ml-0.5">{relativeTime(lastFetchedAt)}</span>
           )}
