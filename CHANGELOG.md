@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.6] - 2026-03-18
+
+### Added
+- All CLI commands now print PPM version before execution for easy version verification
+
 ## [0.5.5] - 2026-03-18
 
 ### Fixed
