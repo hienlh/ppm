@@ -295,7 +295,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
       // For fork: use the source session's SDK id
       const sdkId = shouldFork ? getSdkSessionId(forkSourceId!) : getSdkSessionId(sessionId);
-      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${meta.projectPath ?? "(none)"} platform=${process.platform}`);
+      // Fallback cwd: SDK needs a valid working directory even when no project is selected.
+      // On Windows daemons, undefined cwd can cause the subprocess to fail silently.
+      const effectiveCwd = meta.projectPath || homedir();
+      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform}`);
 
       const q = query({
         prompt: message,
@@ -303,7 +306,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
           resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
           ...(shouldFork && { forkSession: true }),
-          cwd: meta.projectPath,
+          cwd: effectiveCwd,
           // Use full Claude Code system prompt (coding guidelines, security, response style)
           systemPrompt: { type: "preset", preset: "claude_code" },
           // Load skills/settings from both user (~/.claude) and project directory
@@ -340,6 +343,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Track active query for abort support
       this.activeQueries.set(sessionId, q);
       console.log(`[sdk] query object created, starting iteration...`);
+
+      // Verify claude CLI is accessible (early warning on Windows daemons)
+      try {
+        const which = Bun.spawnSync({
+          cmd: process.platform === "win32" ? ["where", "claude"] : ["which", "claude"],
+          stdout: "pipe", stderr: "pipe",
+        });
+        const claudePath = which.stdout.toString().trim().split("\n")[0];
+        console.log(`[sdk] claude CLI: ${claudePath || "(not found in PATH)"}`);
+      } catch { console.log("[sdk] claude CLI: check failed"); }
 
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
@@ -589,7 +602,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         yield approvalEvents.shift()!;
       }
     } catch (e) {
-      const msg = (e as Error).message;
+      const msg = (e as Error).message ?? String(e);
+      const stack = (e as Error).stack ?? "";
+      console.error(`[sdk] error: ${msg}`);
+      if (stack) console.error(`[sdk] stack: ${stack}`);
       // Don't yield error for intentional abort
       if (!msg.includes("abort")) {
         yield { type: "error", message: `SDK error: ${msg}` };

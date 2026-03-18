@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.9] - 2026-03-18
+
+### Fixed
+- **Windows: SDK query hangs silently** — provide fallback `cwd` (home directory) when no project selected; undefined cwd caused SDK subprocess to fail on Windows daemons
+- **Better SDK diagnostics** — log claude CLI path check, full error stack on failure; helps debug Windows daemon PATH issues
+
 ## [0.5.8] - 2026-03-18
 
 ### Fixed
