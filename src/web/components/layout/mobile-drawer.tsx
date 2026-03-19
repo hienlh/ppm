@@ -1,20 +1,22 @@
 import { useState, useCallback, useEffect } from "react";
 import {
-  X, Bug, FolderOpen, GitBranch, Settings,
+  X, Bug, FolderOpen, GitBranch, Settings, Database,
 } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
+import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { cn } from "@/lib/utils";
 
-type DrawerTab = "explorer" | "git" | "settings";
+type DrawerTab = "explorer" | "git" | "settings" | "database";
 
 const TABS: { id: DrawerTab; label: string; icon: React.ElementType }[] = [
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "git", label: "Git", icon: GitBranch },
+  { id: "database", label: "Database", icon: Database },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -85,6 +87,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           )}
           {activeTab === "git" && (
             <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />
+          )}
+          {activeTab === "database" && (
+            <DatabaseSidebar />
           )}
           {activeTab === "settings" && (
             <SettingsTab />

@@ -9,11 +9,13 @@ interface Props { metadata?: Record<string, unknown>; tabId?: string }
 
 export function PostgresViewer({ metadata }: Props) {
   const initialConn = (metadata?.connectionString as string) ?? "";
-  const pg = usePostgres();
+  const connectionId = metadata?.connectionId as number | undefined;
+  const pg = usePostgres(connectionId);
 
+  // When connectionId present, the hook auto-connects — skip connection form
   if (!pg.connected) return <ConnectionForm initialValue={initialConn} onConnect={pg.connect} loading={pg.loading} error={pg.error} />;
 
-  return <ConnectedView pg={pg} />;
+  return <ConnectedView pg={pg} initialTable={metadata?.tableName as string | undefined} />;
 }
 
 /* ---------- Connection Form ---------- */
@@ -42,8 +44,15 @@ function ConnectionForm({ initialValue, onConnect, loading, error }: {
 }
 
 /* ---------- Connected View ---------- */
-function ConnectedView({ pg }: { pg: ReturnType<typeof usePostgres> }) {
+function ConnectedView({ pg, initialTable }: { pg: ReturnType<typeof usePostgres>; initialTable?: string }) {
   const [queryPanelOpen, setQueryPanelOpen] = useState(false);
+
+  // Jump to initial table from sidebar click
+  const [didInit, setDidInit] = useState(false);
+  if (initialTable && !didInit && pg.tables.length > 0 && pg.selectedTable !== initialTable) {
+    const t = pg.tables.find((t) => t.name === initialTable);
+    if (t) { setDidInit(true); pg.selectTable(t.name, t.schema); }
+  }
 
   return (
     <div className="flex h-full w-full overflow-hidden">

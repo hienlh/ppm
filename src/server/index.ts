@@ -10,6 +10,8 @@ import { tunnelRoutes } from "./routes/tunnel.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { postgresRoutes } from "./routes/postgres.ts";
+import { databaseRoutes } from "./routes/database.ts";
+import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
 import { ok, err } from "../types/api.ts";
@@ -56,6 +58,9 @@ async function setupLogFile() {
     writeLog("FATAL", [`Unhandled rejection: ${reason}`]);
   });
 }
+
+// Register database adapters at module load time
+initAdapters();
 
 export const app = new Hono();
 
@@ -185,6 +190,7 @@ app.route("/api/push", pushRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
 app.route("/api/postgres", postgresRoutes);
+app.route("/api/db", databaseRoutes);
 
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);

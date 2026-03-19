@@ -1,15 +1,17 @@
 import { useCallback, useRef } from "react";
-import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
+import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { cn } from "@/lib/utils";
 
 const TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "git", label: "Git", icon: GitBranch },
+  { id: "database", label: "Database", icon: Database },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -122,6 +124,9 @@ export function Sidebar() {
         )}
         {sidebarActiveTab === "git" && (
           <GitStatusPanel metadata={{ projectName: activeProject?.name }} />
+        )}
+        {sidebarActiveTab === "database" && (
+          <DatabaseSidebar />
         )}
         {sidebarActiveTab === "settings" && (
           <SettingsTab />

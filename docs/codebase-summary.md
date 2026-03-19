@@ -9,7 +9,7 @@ ppm/
 ├── src/
 │   ├── index.ts                     # CLI entry point (Commander.js program)
 │   ├── cli/
-│   │   ├── commands/                # CLI command implementations (13 files, 1541 LOC)
+│   │   ├── commands/                # CLI command implementations (14 files, 1700 LOC)
 │   │   │   ├── start.ts             # Start server (background by default, --foreground/-f, --share/-s for tunnel)
 │   │   │   ├── stop.ts              # Stop daemon (reads status.json or ppm.pid, graceful shutdown)
 │   │   │   ├── restart.ts           # Restart daemon (keeps tunnel alive)
@@ -21,7 +21,8 @@ ppm/
 │   │   │   ├── projects.ts          # Add/remove/list/scan projects
 │   │   │   ├── config-cmd.ts        # View/set config values
 │   │   │   ├── git-cmd.ts           # Git operations (status, diff, log, commit)
-│   │   │   └── chat-cmd.ts          # Chat CLI (send messages, manage sessions)
+│   │   │   ├── chat-cmd.ts          # Chat CLI (send messages, manage sessions)
+│   │   │   └── db-cmd.ts            # Database CLI (list, query, manage connections)
 │   │   └── utils/
 │   │       └── project-resolver.ts  # Resolve project name -> path
 │   ├── server/
@@ -35,6 +36,7 @@ ppm/
 │   │   │   ├── chat.ts              # GET/POST/DELETE sessions, GET messages, usage, slash-items
 │   │   │   ├── git.ts               # GET status, diff, log, graph; POST commit, stage, discard
 │   │   │   ├── files.ts             # GET tree, read, diff; PUT write; POST mkdir, delete
+│   │   │   ├── database.ts          # GET/POST/PUT/DELETE /api/db/connections (CRUD), query execution
 │   │   │   └── static.ts            # Serve dist/web/index.html (frontend)
 │   │   ├── helpers/
 │   │   │   └── resolve-project.ts   # Helper to resolve project from request params
@@ -46,10 +48,10 @@ ppm/
 │   │   ├── claude-agent-sdk.ts      # Primary: SDK integration, tool approval, Windows CLI fallback, .env poisoning mitigation
 │   │   ├── mock-provider.ts         # Test provider (ignores config)
 │   │   └── registry.ts              # ProviderRegistry (singleton, router to active provider)
-│   ├── services/                    # Business logic (14 files, 2502 LOC)
+│   ├── services/                    # Business logic (18 files, 3100 LOC)
 │   │   ├── chat.service.ts          # Session lifecycle, message streaming
 │   │   ├── config.service.ts        # Config loading (YAML→SQLite migration)
-│   │   ├── db.service.ts            # SQLite persistence (schema v1, WAL mode, 6 tables)
+│   │   ├── db.service.ts            # SQLite persistence (schema v3, WAL mode, 8 tables, connection CRUD)
 │   │   ├── project.service.ts       # Project CRUD, scanning, resolution
 │   │   ├── file.service.ts          # File ops with path validation
 │   │   ├── git.service.ts           # Git operations (status, diff, log, graph)
@@ -60,11 +62,19 @@ ppm/
 │   │   ├── slash-items.service.ts   # /slash command detection & completion
 │   │   ├── git-dirs.service.ts      # Cached git directory discovery
 │   │   ├── cloudflared.service.ts   # Download cloudflared binary (platform-specific)
-│   │   └── tunnel.service.ts        # Cloudflare Quick Tunnel lifecycle
-│   ├── types/                       # TypeScript interfaces (6 files, 357 LOC)
+│   │   ├── tunnel.service.ts        # Cloudflare Quick Tunnel lifecycle
+│   │   ├── table-cache.service.ts   # Table metadata cache & search for DB connections
+│   │   └── database/                # Database adapters & registry
+│   │       ├── adapter-registry.ts  # DatabaseAdapter registry (extensible)
+│   │       ├── sqlite-adapter.ts    # SQLite connection, query execution
+│   │       ├── postgres-adapter.ts  # PostgreSQL connection, query execution
+│   │       ├── init-adapters.ts     # Initialize adapters at server start
+│   │       └── readonly-check.ts    # isReadOnlyQuery() safety regex (CTE-safe)
+│   ├── types/                       # TypeScript interfaces (7 files, 450 LOC)
 │   │   ├── api.ts                   # ApiResponse envelope, WebSocket message types
 │   │   ├── chat.ts                  # Session, Message, ChatEvent types
 │   │   ├── config.ts                # Config schema
+│   │   ├── database.ts              # DatabaseAdapter, DbConnectionConfig, DbTableInfo, etc.
 │   │   ├── git.ts                   # GitStatus, GitDiff, GitCommit types
 │   │   ├── project.ts               # Project interface
 │   │   └── terminal.ts              # Terminal types
@@ -88,7 +98,7 @@ ppm/
 │       │   ├── use-health-check.ts  # Detect server crashes/restarts via health endpoint
 │       │   ├── use-usage.ts         # Fetch token usage from backend
 │       │   └── use-push-notification.ts # Web push notifications via Service Worker
-│       ├── lib/                     # Utilities (10 files)
+│       ├── lib/                     # Utilities (11 files)
 │       │   ├── api-client.ts        # Fetch wrapper with auth token, envelope unwrapping
 │       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
 │       │   ├── ws-client.ts         # WebSocket with exponential backoff + Cloudflare handshake
@@ -96,6 +106,7 @@ ppm/
 │       │   ├── project-avatar.ts    # Smart project initials (collision resolution)
 │       │   ├── project-palette.ts   # 12-color palette for project avatars
 │       │   ├── use-monaco-theme.ts  # Sync Monaco Editor theme with app theme
+│       │   ├── color-utils.ts       # WCAG color contrast helper
 │       │   └── utils.ts             # Helpers (cn, randomId, basename, etc.)
 │       ├── styles/
 │       │   └── globals.css          # Tailwind directives, custom CSS
@@ -130,21 +141,33 @@ ppm/
 │           │   ├── editor-panel.tsx  # Wrapper for tab content within a panel
 │           │   ├── project-bar.tsx   # 52px sidebar with project avatars, share popover
 │           │   ├── project-bottom-sheet.tsx # Mobile project switcher
-│           │   ├── sidebar.tsx       # Left sidebar (Explorer/Git/Settings tabs)
-│           │   ├── tab-bar.tsx       # Tab bar with icons
-│           │   ├── draggable-tab.tsx  # Draggable tab with context menu, rename
+│           │   ├── sidebar.tsx       # Left sidebar (Explorer/Git/Database/Settings tabs)
+│           │   ├── tab-bar.tsx       # Tab bar with icons, connection color display
+│           │   ├── draggable-tab.tsx  # Draggable tab with context menu, rename, connection color
 │           │   ├── tab-content.tsx    # Router for tab content
 │           │   ├── split-drop-overlay.tsx # Drop zone for tab splitting
-│           │   ├── command-palette.tsx # Global command palette (Shift+Shift)
+│           │   ├── command-palette.tsx # Global command palette (Shift+Shift, DB table search)
 │           │   ├── add-project-form.tsx # Modal form to add projects
 │           │   ├── mobile-nav.tsx    # Bottom navigation for mobile
 │           │   └── mobile-drawer.tsx # Mobile overlay drawer
+│           ├── database/            # Database management (5 files, 300+ LOC)
+│           │   ├── database-sidebar.tsx # Sidebar tab container (connection list, form)
+│           │   ├── connection-list.tsx # Connections list with actions, color badges
+│           │   ├── connection-form-dialog.tsx # Create/edit connection form (SQLite/Postgres)
+│           │   ├── connection-color-picker.tsx # WCAG contrast-aware color picker
+│           │   └── use-connections.ts # Hook for connection CRUD operations
 │           ├── projects/            # Project management (339 LOC, 2 files)
 │           ├── settings/            # Settings panel (theme + AI provider config UI)
 │           ├── terminal/            # xterm.js wrapper (143 LOC, 2 files)
 │           ├── shared/              # Shared components (2 files)
 │           │   ├── markdown-renderer.tsx # Render Markdown with syntax highlighting
 │           │   └── bug-report-popup.tsx  # Global bug report popup
+│           ├── sqlite/              # SQLite viewer (unified connectionId API mode)
+│           │   ├── sqlite-viewer.tsx # Display table data, execute queries
+│           │   └── use-sqlite.ts    # Hook for SQLite operations via /api/db routes
+│           ├── postgres/            # PostgreSQL viewer (unified connectionId API mode)
+│           │   ├── postgres-viewer.tsx # Display table data, execute queries
+│           │   └── use-postgres.ts  # Hook for Postgres operations via /api/db routes
 │           └── ui/                  # Radix + shadcn primitives (14 files)
 │               └── button, input, label, dialog, dropdown-menu, select, tabs, tooltip, etc.
 ├── tests/
@@ -201,11 +224,11 @@ ppm/
 - **Pattern:** Project-scoped routing via ProviderRegistry
 
 ### Service Layer (src/services/)
-- **Responsibility:** Business logic, data operations, infrastructure (tunneling)
+- **Responsibility:** Business logic, data operations, infrastructure (tunneling, database connections)
 - **Services:**
   - **ChatService** — Session lifecycle, message queueing, streaming
   - **ConfigService** — Config loading (YAML→SQLite migration)
-  - **DbService** — SQLite persistence (6 tables, WAL mode, schema migrations)
+  - **DbService** — SQLite persistence (8 tables, WAL mode, schema v3, connection CRUD, table cache)
   - **GitService** — Git commands via simple-git
   - **FileService** — File ops with path validation
   - **ProjectService** — Project CRUD, scanning, resolution
@@ -215,7 +238,11 @@ ppm/
   - **SessionLogService** — Audit logs with sensitive data redaction
   - **CloudflaredService** — Download/cache cloudflared binary (platform-aware)
   - **TunnelService** — Spawn tunnel, extract URL, cleanup on exit
-- **Pattern:** Singleton services, dependency injection via imports
+  - **TableCacheService** — Cache table metadata across connections, search tables by name
+  - **DatabaseAdapterRegistry** — Register/retrieve DatabaseAdapter implementations (extensible pattern)
+  - **SQLiteAdapter** — SQLite connection/query execution with readonly checks
+  - **PostgresAdapter** — PostgreSQL connection/query execution with readonly checks
+- **Pattern:** Singleton services, dependency injection via imports, adapter registry for extensibility
 
 ### Provider Layer (src/providers/)
 - **Responsibility:** AI model abstraction, config-driven initialization

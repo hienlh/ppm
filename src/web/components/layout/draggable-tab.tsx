@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { X } from "lucide-react";
 import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
+import { isDarkColor } from "@/lib/color-utils";
 
 interface DraggableTabProps {
   tab: Tab;
@@ -41,6 +42,14 @@ export function DraggableTab({
     }
   };
 
+  const tabColor = tab.metadata?.connectionColor as string | undefined;
+  const colorStyle = tabColor
+    ? {
+        backgroundColor: isActive ? tabColor : `${tabColor}33`,
+        color: isActive && isDarkColor(tabColor) ? "#fff" : undefined,
+      }
+    : undefined;
+
   return (
     <div className="relative flex items-center">
       {showDropBefore && (
@@ -55,12 +64,14 @@ export function DraggableTab({
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
+        style={colorStyle}
         className={cn(
           "group flex items-center gap-1 px-3 h-10 whitespace-nowrap text-xs transition-colors",
           "border-b-2 -mb-px cursor-grab active:cursor-grabbing",
-          isActive
+          !colorStyle && (isActive
             ? "border-primary text-primary"
-            : "border-transparent text-text-secondary hover:text-foreground",
+            : "border-transparent text-text-secondary hover:text-foreground"),
+          colorStyle && "border-transparent",
         )}
       >
         <Icon className="size-4" />

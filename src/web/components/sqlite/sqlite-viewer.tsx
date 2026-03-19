@@ -13,7 +13,23 @@ interface SqliteViewerProps {
 export function SqliteViewer({ metadata }: SqliteViewerProps) {
   const filePath = metadata?.filePath as string | undefined;
   const projectName = metadata?.projectName as string | undefined;
+  const connectionId = metadata?.connectionId as number | undefined;
+  const initialTable = metadata?.tableName as string | undefined;
   const [queryPanelOpen, setQueryPanelOpen] = useState(false);
+
+  // Connection-based mode: skip file selection requirement
+  if (connectionId) {
+    return (
+      <SqliteViewerInner
+        projectName=""
+        dbPath=""
+        connectionId={connectionId}
+        initialTable={initialTable}
+        queryPanelOpen={queryPanelOpen}
+        onToggleQueryPanel={() => setQueryPanelOpen((v) => !v)}
+      />
+    );
+  }
 
   if (!filePath || !projectName) {
     return (
@@ -34,11 +50,19 @@ export function SqliteViewer({ metadata }: SqliteViewerProps) {
 }
 
 function SqliteViewerInner({
-  projectName, dbPath, queryPanelOpen, onToggleQueryPanel,
+  projectName, dbPath, connectionId, initialTable, queryPanelOpen, onToggleQueryPanel,
 }: {
-  projectName: string; dbPath: string; queryPanelOpen: boolean; onToggleQueryPanel: () => void;
+  projectName: string; dbPath: string; connectionId?: number; initialTable?: string;
+  queryPanelOpen: boolean; onToggleQueryPanel: () => void;
 }) {
-  const sqlite = useSqlite(projectName, dbPath);
+  const sqlite = useSqlite(projectName, dbPath, connectionId);
+
+  // Jump to initial table from sidebar click
+  const [didInit, setDidInit] = useState(false);
+  if (initialTable && !didInit && sqlite.tables.length > 0 && sqlite.selectedTable !== initialTable) {
+    setDidInit(true);
+    sqlite.selectTable(initialTable);
+  }
 
   if (sqlite.error && sqlite.tables.length === 0) {
     return (
