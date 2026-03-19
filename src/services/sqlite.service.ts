@@ -34,10 +34,11 @@ interface CachedDb {
 class SqliteService {
   private cache = new Map<string, CachedDb>();
 
-  /** Resolve and validate db path within project */
+  /** Resolve db path — supports both project-relative and absolute paths */
   private resolvePath(projectPath: string, dbRelPath: string): string {
-    const abs = resolve(projectPath, dbRelPath);
-    if (!abs.startsWith(projectPath)) throw new Error("Access denied: path outside project");
+    const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(dbRelPath);
+    const abs = isAbsolute ? dbRelPath : resolve(projectPath, dbRelPath);
+    if (!isAbsolute && !abs.startsWith(projectPath)) throw new Error("Access denied: path outside project");
     if (!existsSync(abs)) throw new Error(`Database not found: ${dbRelPath}`);
     return abs;
   }
@@ -117,7 +118,7 @@ class SqliteService {
     if (isSelect) {
       const stmt = db.query(sql);
       const rows = stmt.all() as Record<string, unknown>[];
-      const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+      const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
       return { columns, rows, rowsAffected: 0, changeType: "select" };
     }
 

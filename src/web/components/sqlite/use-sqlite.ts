@@ -28,7 +28,7 @@ export function useSqlite(projectName: string, dbPath: string) {
     try {
       const data = await api.get<TableInfo[]>(`${base}/tables?${qs}`);
       setTables(data);
-      if (data.length > 0 && !selectedTable) setSelectedTable(data[0].name);
+      if (data.length > 0 && !selectedTable) setSelectedTable(data[0]!.name);
     } catch (e) {
       setError((e as Error).message);
     } finally {
