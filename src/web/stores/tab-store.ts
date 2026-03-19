@@ -6,6 +6,7 @@ export type TabType =
   | "chat"
   | "editor"
   | "sqlite"
+  | "postgres"
   | "git-graph"
   | "git-diff"
   | "settings";
