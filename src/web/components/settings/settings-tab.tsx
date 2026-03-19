@@ -4,6 +4,7 @@ import { Separator } from "@/components/ui/separator";
 import { useSettingsStore, type Theme } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
+import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
@@ -106,6 +107,10 @@ export function SettingsTab() {
           </>
         )}
       </div>
+
+      <Separator />
+
+      <KeyboardShortcutsSection />
 
       <Separator />
 

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { configService } from "../../services/config.service.ts";
+import { getConfigValue, setConfigValue } from "../../services/db.service.ts";
 import {
   validateAIProviderConfig,
   validateDefaultProvider,
@@ -98,6 +99,38 @@ settingsRoutes.put("/ai", async (c) => {
     configService.save();
 
     return c.json(ok(stripSensitiveFields(updated)));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+// ── Keybindings ──────────────────────────────────────────────────────
+
+const KEYBINDINGS_KEY = "keybindings";
+
+/** GET /settings/keybindings — return user overrides (partial) */
+settingsRoutes.get("/keybindings", (c) => {
+  const raw = getConfigValue(KEYBINDINGS_KEY);
+  const overrides: Record<string, string> = raw ? JSON.parse(raw) : {};
+  return c.json(ok(overrides));
+});
+
+/** PUT /settings/keybindings — save user overrides (partial, only changed keys) */
+settingsRoutes.put("/keybindings", async (c) => {
+  try {
+    const body = await c.req.json<Record<string, string | null>>();
+    // Merge with existing overrides
+    const raw = getConfigValue(KEYBINDINGS_KEY);
+    const current: Record<string, string> = raw ? JSON.parse(raw) : {};
+    for (const [actionId, combo] of Object.entries(body)) {
+      if (combo === null) {
+        delete current[actionId]; // reset to default
+      } else {
+        current[actionId] = combo;
+      }
+    }
+    setConfigValue(KEYBINDINGS_KEY, JSON.stringify(current));
+    return c.json(ok(current));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
