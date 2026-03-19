@@ -119,9 +119,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     if (isPathQuery(query) || query.trim().length < 2) { setDbResults([]); return; }
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/db/search?q=${encodeURIComponent(query.trim())}`);
-        const json = await res.json() as { ok: boolean; data?: DbSearchResult[] };
-        setDbResults(json.ok ? (json.data ?? []) : []);
+        const data = await api.get<DbSearchResult[]>(`/api/db/search?q=${encodeURIComponent(query.trim())}`);
+        setDbResults(data ?? []);
       } catch { setDbResults([]); }
     }, 300);
     return () => clearTimeout(timer);
@@ -219,11 +218,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     connectionColor: r.connectionColor,
     action: () => {
       openTab({
-        type: r.connectionType === "postgres" ? "postgres" : "sqlite",
+        type: "database",
         title: `${r.connectionName} · ${r.tableName}`,
         projectId: null,
         closable: true,
-        metadata: { connectionId: r.connectionId, tableName: r.tableName, schemaName: r.schemaName, connectionColor: r.connectionColor },
+        metadata: { connectionId: r.connectionId, connectionName: r.connectionName, dbType: r.connectionType, tableName: r.tableName, schemaName: r.schemaName, connectionColor: r.connectionColor },
       });
       onClose();
     },

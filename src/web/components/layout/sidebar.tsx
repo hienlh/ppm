@@ -97,8 +97,7 @@ export function Sidebar() {
                   : "border-transparent text-text-secondary hover:text-foreground",
               )}
             >
-              <Icon className="size-3.5" />
-              {sidebarWidth >= 240 && <span>{tab.label}</span>}
+              <Icon className="size-3.5" title={tab.label} />
             </button>
           );
         })}

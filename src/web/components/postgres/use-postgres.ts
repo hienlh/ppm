@@ -50,12 +50,9 @@ export function usePostgres(connectionId?: number) {
     if (unifiedBase) {
       setLoading(true);
       try {
-        const data = await api.get<PgTableInfo[]>(`${unifiedBase}/tables`);
+        // Use cached tables (no live DB query) — sidebar handles sync
+        const data = await api.get<PgTableInfo[]>(`${unifiedBase}/tables?cached=1`);
         setTables(data);
-        if (data.length > 0 && !selectedTable) {
-          setSelectedTable(data[0]!.name);
-          setSelectedSchema(data[0]!.schema ?? "public");
-        }
       } catch (e) { setError((e as Error).message); }
       finally { setLoading(false); }
       return;

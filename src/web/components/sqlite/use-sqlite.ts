@@ -23,21 +23,21 @@ export function useSqlite(projectName: string, dbPath: string, connectionId?: nu
   const base = unifiedBase ?? `${projectUrl(projectName)}/sqlite`;
   const qs = unifiedBase ? "" : `path=${encodeURIComponent(dbPath)}`;
 
-  // Fetch tables on mount
+  // Fetch tables on mount — use cache when connectionId (sidebar handles live sync)
   const fetchTables = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const qsPart = qs ? `?${qs}` : "";
+      const qsPart = unifiedBase ? "?cached=1" : qs ? `?${qs}` : "";
       const data = await api.get<TableInfo[]>(`${base}/tables${qsPart}`);
       setTables(data);
-      if (data.length > 0 && !selectedTable) setSelectedTable(data[0]!.name);
+      if (!unifiedBase && data.length > 0 && !selectedTable) setSelectedTable(data[0]!.name);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [base, qs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [base, qs, unifiedBase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchTables(); }, [fetchTables]);
 
