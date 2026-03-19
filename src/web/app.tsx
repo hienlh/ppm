@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { PanelLayout } from "@/components/layout/panel-layout";
@@ -8,7 +8,7 @@ import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileDrawer } from "@/components/layout/mobile-drawer";
 import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
 import { LoginScreen } from "@/components/auth/login-screen";
-import { useProjectStore } from "@/stores/project-store";
+import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import {
   useSettingsStore,
@@ -44,6 +44,9 @@ export function App() {
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const fetchServerInfo = useSettingsStore((s) => s.fetchServerInfo);
   const activeProject = useProjectStore((s) => s.activeProject);
+
+  // Capture URL state on mount — before any effect can overwrite it
+  const initialUrlRef = useRef(parseUrlState());
 
   // Apply theme on mount and when it changes
   useEffect(() => {
@@ -112,23 +115,24 @@ export function App() {
     if (authState !== "authenticated") return;
 
     fetchProjects().then(() => {
-      const { projectName: urlProject, tabId: urlTab } = parseUrlState();
-      const projects = useProjectStore.getState().projects;
+      const { projectName: urlProject, tabId: urlTab } = initialUrlRef.current;
+      const { projects, customOrder } = useProjectStore.getState();
+      if (projects.length === 0) return;
 
-      if (urlProject) {
-        const matched = projects.find((p) => p.name === urlProject);
-        if (matched) {
-          useProjectStore.getState().setActiveProject(matched);
-          // After switchProject runs, restore active tab from URL
-          if (urlTab) {
-            queueMicrotask(() => {
-              const { tabs } = useTabStore.getState();
-              if (tabs.some((t) => t.id === urlTab)) {
-                useTabStore.getState().setActiveTab(urlTab);
-              }
-            });
-          }
-          return;
+      // URL project takes priority, then fall back to first sorted project
+      let target = urlProject ? projects.find((p) => p.name === urlProject) : undefined;
+      if (!target) {
+        target = resolveOrder(projects, customOrder)[0];
+      }
+      if (target) {
+        useProjectStore.getState().setActiveProject(target);
+        if (urlProject && urlTab) {
+          queueMicrotask(() => {
+            const { tabs } = useTabStore.getState();
+            if (tabs.some((t) => t.id === urlTab)) {
+              useTabStore.getState().setActiveTab(urlTab);
+            }
+          });
         }
       }
     });
