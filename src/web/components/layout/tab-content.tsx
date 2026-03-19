@@ -18,6 +18,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.CodeEditor,
     })),
   ),
+  sqlite: lazy(() =>
+    import("@/components/sqlite/sqlite-viewer").then((m) => ({
+      default: m.SqliteViewer,
+    })),
+  ),
   "git-graph": lazy(() =>
     import("@/components/git/git-graph").then((m) => ({
       default: m.GitGraph,

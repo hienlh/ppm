@@ -5,7 +5,7 @@
 **PPM** (Personal Project Manager) is a full-stack, mobile-first web IDE designed for developers to manage code projects with AI-powered assistance. It combines a responsive web interface, real-time terminal access, AI chat with tool support, and Git integration into a cohesive development environment.
 
 Built on the **Bun runtime** for performance, PPM enables developers to:
-- Browse and edit project files with CodeMirror syntax highlighting
+- Browse and edit project files with Monaco Editor syntax highlighting
 - Execute commands via xterm.js terminal with full PTY support
 - Chat with Claude AI with file attachments and slash commands
 - View Git status, diffs, and commit graphs in real-time
@@ -25,9 +25,9 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 ### Core Features (Implemented v2)
 - **Project Management** — Create, switch, and manage multiple projects via CLI and web UI
 - **File Explorer** — Browse directory trees, create/edit/delete files with path traversal protection
-- **Code Editor** — CodeMirror 6 with syntax highlighting, line numbers, theme support (dark/light)
+- **Code Editor** — Monaco Editor with syntax highlighting, IntelliSense, diff viewer, theme support (dark/light)
 - **Terminal** — Full xterm.js with Bun PTY, resize handling, multiple terminal sessions per project
-- **AI Chat** — Streaming Claude messages with tool use (file read/write, git commands), file attachments, slash command detection
+- **AI Chat** — Streaming Claude messages with tool use (file read/write, git commands), file attachments, slash commands, auto-generated session titles
 - **Git Integration** — Status, diffs, commit graphs, branch management, staging/committing
 - **PWA** — Installable web app with offline support
 - **Authentication** — Token-based auth with auto-generated tokens in config
@@ -62,10 +62,10 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 - **Trade-off:** Larger CSS bundle; mitigated by tree-shaking, critical CSS extraction
 - **Impact:** Consistent, accessible, maintainable UI with dark/light theme support
 
-### Editor: CodeMirror 6 + Diff2HTML
-- **Why:** Modular, extensible, supports syntax highlighting, merge views, live collaboration
-- **Trade-off:** More complex API than Monaco; justified by Bun compatibility and flexibility
-- **Impact:** Supports 50+ languages, diffing, real-time file changes
+### Editor: Monaco Editor (@monaco-editor/react)
+- **Why:** Superior IntelliSense, syntax highlighting, built-in diff viewer, industry-standard code editor
+- **Trade-off:** Larger bundle size; justified by feature richness and developer experience
+- **Impact:** 50+ languages, IntelliSense, word wrap toggle (Alt+Z), Monaco diff viewer
 
 ### Terminal: xterm.js + Bun PTY
 - **Why:** xterm.js is industry-standard terminal emulator; Bun PTY avoids node-pty complexity
@@ -77,10 +77,10 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 - **Trade-off:** Anthropic-specific; can swap via provider registry pattern
 - **Impact:** Rich conversation capabilities, reliable streaming, tool approval flow
 
-### Database: None (Filesystem-based)
-- **Why:** Single-machine design, YAML project registry, stateless server
-- **Trade-off:** No persistence across server restarts for chat; mitigated by session IDs in URL
-- **Impact:** Zero infrastructure, fast startup, git-friendly config
+### Database: SQLite (migrating from YAML)
+- **Why:** Richer persistence for sessions, usage tracking, audit logs; single-file DB suits single-machine design
+- **Trade-off:** Added dependency; mitigated by Bun's built-in SQLite support (bun:sqlite)
+- **Impact:** Session mapping, push subscriptions, usage history, config storage with YAML backward compat
 
 ### Build: Vite 8.0
 - **Why:** ESM-native, fast hot reload, TypeScript support, PWA plugin
@@ -190,13 +190,16 @@ ppm stop                       # Stop daemon
 | Version | Status | Focus | Date |
 |---------|--------|-------|------|
 | **v1** | Complete | Initial prototype (single project, basic chat, terminal) | Feb 2025 |
-| **v2** | In Progress | Multi-project, project-scoped APIs, improved UI/UX, daemon mode, --share flag | Mar 2025 |
-| **v3** | Planned | Collaborative editing, plugin architecture | Q2 2025 |
+| **v2** | Complete (v0.5.21) | Multi-project, Monaco Editor, auto-title sessions, daemon mode, --share flag, SQLite migration | Mar 2026 |
+| **v3** | Planned | Collaborative editing, plugin architecture | Q2 2026 |
 
-### v2 Changes (Mar 2025)
-- **Daemon Mode as Default:** `ppm start` now runs background daemon by default. `--foreground/-f` flag for debugging.
+### v2 Changes (Mar 2026)
+- **Daemon Mode as Default:** `ppm start` runs background daemon by default. `--foreground/-f` flag for debugging.
 - **Public URL Sharing:** `ppm start --share` creates Cloudflare Quick Tunnel public URL. Auto-downloads cloudflared binary.
+- **Monaco Editor:** Migrated from CodeMirror 6 to Monaco Editor with IntelliSense and diff viewer.
+- **Auto-Title Sessions:** Chat sessions auto-generate titles from SDK summary after first message.
+- **SQLite Persistence:** Migrating from YAML to SQLite for config, sessions, usage, push subscriptions.
+- **Web Push Notifications:** Push notification support via Service Worker.
+- **Session Logging:** Audit trail with sensitive data redaction.
 - **Status File:** `~/.ppm/status.json` (new format) replaces `ppm.pid` with backward compatibility.
-- **Auth Warning:** Warns if `--share` used without auth enabled.
-- **New Services:** `cloudflared.service.ts` (binary download), `tunnel.service.ts` (tunnel lifecycle).
 

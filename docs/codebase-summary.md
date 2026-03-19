@@ -1,6 +1,6 @@
 # PPM Codebase Summary
 
-Generated from repomix analysis of 96 TypeScript files, 14K LOC, 194K tokens.
+Generated from codebase analysis of 133 TypeScript files, ~22K LOC.
 
 ## Directory Structure
 
@@ -9,12 +9,16 @@ ppm/
 ├── src/
 │   ├── index.ts                     # CLI entry point (Commander.js program)
 │   ├── cli/
-│   │   ├── commands/                # CLI command implementations (8 files, 907 LOC)
+│   │   ├── commands/                # CLI command implementations (13 files, 1541 LOC)
 │   │   │   ├── start.ts             # Start server (background by default, --foreground/-f, --share/-s for tunnel)
 │   │   │   ├── stop.ts              # Stop daemon (reads status.json or ppm.pid, graceful shutdown)
+│   │   │   ├── restart.ts           # Restart daemon (keeps tunnel alive)
+│   │   │   ├── status.ts            # Show daemon status
 │   │   │   ├── open.ts              # Open browser to http://localhost:PORT
-│   │   │   ├── init.ts              # Initialize ppm.yaml config (scan git repos)
-│   │   │   ├── projects.ts          # Add/remove/list projects
+│   │   │   ├── logs.ts              # Tail daemon logs
+│   │   │   ├── report.ts            # File bug report on GitHub
+│   │   │   ├── init.ts              # Initialize config (scan git repos, DB profile support)
+│   │   │   ├── projects.ts          # Add/remove/list/scan projects
 │   │   │   ├── config-cmd.ts        # View/set config values
 │   │   │   ├── git-cmd.ts           # Git operations (status, diff, log, commit)
 │   │   │   └── chat-cmd.ts          # Chat CLI (send messages, manage sessions)
@@ -37,24 +41,27 @@ ppm/
 │   │   └── ws/
 │   │       ├── chat.ts              # WebSocket chat streaming (220 LOC)
 │   │       └── terminal.ts          # WebSocket terminal I/O (terminal.service.ts integration)
-│   ├── providers/                   # AI Provider adapters (3 files, 574 LOC)
+│   ├── providers/                   # AI Provider adapters (4 files, 1190 LOC)
 │   │   ├── provider.interface.ts    # AIProvider interface (createSession, sendMessage, onToolApproval)
-│   │   ├── claude-agent-sdk.ts      # Primary: @anthropic-ai/claude-agent-sdk. Reads config from configService.
+│   │   ├── claude-agent-sdk.ts      # Primary: SDK integration, tool approval, Windows CLI fallback, .env poisoning mitigation
 │   │   ├── mock-provider.ts         # Test provider (ignores config)
 │   │   └── registry.ts              # ProviderRegistry (singleton, router to active provider)
-│   ├── services/                    # Business logic (11 files, 1761 LOC)
-│   │   ├── chat.service.ts          # Session lifecycle, message streaming, streaming to clients
-│   │   ├── git.service.ts           # Git operations (372 LOC): status, diff, log, graph, branches
-│   │   ├── file.service.ts          # File ops (261 LOC): tree, read, write, delete, mkdir, path validation
-│   │   ├── project.service.ts       # YAML project registry (108 LOC)
-│   │   ├── terminal.service.ts      # PTY management (200+ LOC), Bun.spawn native shell
-│   │   ├── config.service.ts        # YAML config loading (91 LOC)
+│   ├── services/                    # Business logic (14 files, 2502 LOC)
+│   │   ├── chat.service.ts          # Session lifecycle, message streaming
+│   │   ├── config.service.ts        # Config loading (YAML→SQLite migration)
+│   │   ├── db.service.ts            # SQLite persistence (schema v1, WAL mode, 6 tables)
+│   │   ├── project.service.ts       # Project CRUD, scanning, resolution
+│   │   ├── file.service.ts          # File ops with path validation
+│   │   ├── git.service.ts           # Git operations (status, diff, log, graph)
+│   │   ├── terminal.service.ts      # PTY management, Bun.spawn native shell
+│   │   ├── claude-usage.service.ts  # Token tracking, cost calculation
+│   │   ├── push-notification.service.ts # Web push subscriptions
+│   │   ├── session-log.service.ts   # Session audit logs with redaction
 │   │   ├── slash-items.service.ts   # /slash command detection & completion
-│   │   ├── claude-usage.service.ts  # Token usage via ccburn library
 │   │   ├── git-dirs.service.ts      # Cached git directory discovery
-│   │   ├── cloudflared.service.ts   # Download cloudflared binary from GitHub (platform-specific)
-│   │   └── tunnel.service.ts        # Cloudflare Quick Tunnel lifecycle (spawn, capture URL, cleanup)
-│   ├── types/                       # TypeScript interfaces (6 files, 258 LOC)
+│   │   ├── cloudflared.service.ts   # Download cloudflared binary (platform-specific)
+│   │   └── tunnel.service.ts        # Cloudflare Quick Tunnel lifecycle
+│   ├── types/                       # TypeScript interfaces (6 files, 357 LOC)
 │   │   ├── api.ts                   # ApiResponse envelope, WebSocket message types
 │   │   ├── chat.ts                  # Session, Message, ChatEvent types
 │   │   ├── config.ts                # Config schema
@@ -64,36 +71,49 @@ ppm/
 │   └── web/                         # React frontend (Vite)
 │       ├── main.tsx                 # React mount (<App> into #root)
 │       ├── app.tsx                  # Root component (auth check, project load, theme)
-│       ├── stores/                  # Zustand state stores (4 files, 383 LOC)
-│       │   ├── project-store.ts     # Active project, projects list
-│       │   ├── tab-store.ts         # Open tabs (chat, editor, git, terminal)
-│       │   ├── file-store.ts        # Open files, selections
-│       │   └── settings-store.ts    # Theme, auth token
-│       ├── hooks/                   # Custom React hooks (4 files, 716 LOC)
-│       │   ├── use-chat.ts          # Chat streaming, WebSocket, message history (420 LOC)
-│       │   ├── use-websocket.ts     # Generic WebSocket adapter
-│       │   ├── use-terminal.ts      # Terminal I/O over WebSocket
-│       │   └── use-url-sync.ts      # Sync state to URL (project, tab, file selections)
-│       ├── lib/                     # Utilities (7 files, 340 LOC)
-│       │   ├── api-client.ts        # Fetch wrapper with auth token
+│       ├── stores/                  # Zustand state stores (6 files)
+│       │   ├── project-store.ts     # Active project, projects list, localStorage persistence
+│       │   ├── tab-store.ts         # Tab facade, delegates to panel-store
+│       │   ├── panel-store.ts       # Grid layout, panel creation/movement, keep-alive snapshots
+│       │   ├── panel-utils.ts       # Layout algorithm helpers, grid manipulation
+│       │   ├── file-store.ts        # File cache
+│       │   └── settings-store.ts    # Theme, sidebar state, git view mode, device name
+│       ├── hooks/                   # Custom React hooks (9 files)
+│       │   ├── use-chat.ts          # Chat streaming, messages, approvals, context window tracking
+│       │   ├── use-websocket.ts     # WebSocket connection with auto-reconnect
+│       │   ├── use-terminal.ts      # Terminal connection and streaming
+│       │   ├── use-url-sync.ts      # Sync browser URL with active project/tab state
+│       │   ├── use-tab-drag.ts      # Tab drag-and-drop logic
+│       │   ├── use-global-keybindings.ts # Global shortcuts (Shift+Shift palette, Alt+[/] tab cycling)
+│       │   ├── use-health-check.ts  # Detect server crashes/restarts via health endpoint
+│       │   ├── use-usage.ts         # Fetch token usage from backend
+│       │   └── use-push-notification.ts # Web push notifications via Service Worker
+│       ├── lib/                     # Utilities (10 files)
+│       │   ├── api-client.ts        # Fetch wrapper with auth token, envelope unwrapping
 │       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
-│       │   ├── ws-client.ts         # WebSocket wrapper
-│       │   ├── file-support.ts      # File type detection (language -> icon)
-│       │   ├── project-avatar.ts    # Smart project initials (collision resolution) (v2.0+)
-│       │   ├── project-palette.ts   # 12-color palette for project avatars (v2.0+)
-│       │   └── utils.ts             # Utility functions (clsx, classname merging)
+│       │   ├── ws-client.ts         # WebSocket with exponential backoff + Cloudflare handshake
+│       │   ├── file-support.ts      # File type detection (language, icons, preview)
+│       │   ├── project-avatar.ts    # Smart project initials (collision resolution)
+│       │   ├── project-palette.ts   # 12-color palette for project avatars
+│       │   ├── use-monaco-theme.ts  # Sync Monaco Editor theme with app theme
+│       │   └── utils.ts             # Helpers (cn, randomId, basename, etc.)
 │       ├── styles/
 │       │   └── globals.css          # Tailwind directives, custom CSS
 │       └── components/              # React components (organized by feature)
 │           ├── auth/                # Login screen (88 LOC)
-│           ├── chat/                # Chat UI (2300+ LOC, 10 files)
-│           │   ├── chat-tab.tsx     # Main chat interface
-│           │   ├── chat-history-panel.tsx # History tab showing chat sessions (v2.0+)
-│           │   ├── message-list.tsx # Scrollable messages with tool display
-│           │   ├── message-input.tsx # Input with file attach, slash command picker
-│           │   ├── session-picker.tsx # Switch between sessions
+│           ├── chat/                # Chat UI (12 files)
+│           │   ├── chat-tab.tsx     # Main chat container, session picker, streaming
+│           │   ├── chat-history-bar.tsx # Session history sidebar, inline rename
+│           │   ├── chat-history-panel.tsx # Full session list modal
+│           │   ├── message-list.tsx # Scrolling message view with tool results
+│           │   ├── message-input.tsx # Textarea with attachments, @ slash commands
+│           │   ├── session-picker.tsx # Dropdown to select/create session
+│           │   ├── file-picker.tsx  # Filterable file tree picker
+│           │   ├── slash-command-picker.tsx # Command palette for / prefix
+│           │   ├── tool-cards.tsx   # Render SDK tool results/approvals
 │           │   ├── usage-badge.tsx  # Token usage display
-│           │   └── ... 4 more
+│           │   ├── attachment-chips.tsx # Display attached files
+│           │   └── chat-placeholder.tsx # Empty state
 │           ├── editor/              # Code editor (650+ LOC, 3 files)
 │           │   ├── code-editor.tsx  # Monaco Editor integration (@monaco-editor/react, v2.0+)
 │           │   ├── diff-viewer.tsx  # Monaco diff viewer for git diffs (v2.0+)
@@ -105,26 +125,36 @@ ppm/
 │           │   ├── git-status-panel.tsx # Status, staging UI
 │           │   ├── git-graph.tsx    # Mermaid-based commit graph
 │           │   └── git-placeholder.tsx
-│           ├── layout/              # Layout components (750+ LOC, 7 files)
-│           │   ├── project-bar.tsx      # Narrow 52px sidebar with project avatars, context menus
-│           │   ├── project-bottom-sheet.tsx # Mobile project switcher (bottom sheet)
-│           │   ├── sidebar.tsx      # Left sidebar (Explorer/Git/History tabs, file tree)
-│           │   ├── tab-bar.tsx      # Top tab bar (chat, editor, git, terminal)
-│           │   ├── tab-content.tsx  # Router for tab content
-│           │   ├── mobile-nav.tsx   # Mobile hamburger navigation
-│           │   └── mobile-drawer.tsx # Offcanvas drawer
+│           ├── layout/              # Layout components (13 files)
+│           │   ├── panel-layout.tsx  # Main grid layout (react-resizable-panels)
+│           │   ├── editor-panel.tsx  # Wrapper for tab content within a panel
+│           │   ├── project-bar.tsx   # 52px sidebar with project avatars, share popover
+│           │   ├── project-bottom-sheet.tsx # Mobile project switcher
+│           │   ├── sidebar.tsx       # Left sidebar (Explorer/Git/Settings tabs)
+│           │   ├── tab-bar.tsx       # Tab bar with icons
+│           │   ├── draggable-tab.tsx  # Draggable tab with context menu, rename
+│           │   ├── tab-content.tsx    # Router for tab content
+│           │   ├── split-drop-overlay.tsx # Drop zone for tab splitting
+│           │   ├── command-palette.tsx # Global command palette (Shift+Shift)
+│           │   ├── add-project-form.tsx # Modal form to add projects
+│           │   ├── mobile-nav.tsx    # Bottom navigation for mobile
+│           │   └── mobile-drawer.tsx # Mobile overlay drawer
 │           ├── projects/            # Project management (339 LOC, 2 files)
 │           ├── settings/            # Settings panel (theme + AI provider config UI)
 │           ├── terminal/            # xterm.js wrapper (143 LOC, 2 files)
-│           └── ui/                  # Radix + shadcn primitives (1018 LOC, 10 files)
-│               └── button.tsx, dialog.tsx, dropdown-menu.tsx, ... (base components)
+│           ├── shared/              # Shared components (2 files)
+│           │   ├── markdown-renderer.tsx # Render Markdown with syntax highlighting
+│           │   └── bug-report-popup.tsx  # Global bug report popup
+│           └── ui/                  # Radix + shadcn primitives (14 files)
+│               └── button, input, label, dialog, dropdown-menu, select, tabs, tooltip, etc.
 ├── tests/
 │   ├── test-setup.ts                # Disable auth for tests
 │   ├── unit/
 │   │   ├── providers/               # Mock provider, SDK tests
-│   │   └── services/                # Chat service tests
+│   │   └── services/                # Chat, config, db, session-log, push-notification tests
 │   └── integration/
 │       ├── claude-agent-sdk-integration.test.ts
+│       ├── sqlite-migration.test.ts # SQLite migration validation
 │       ├── api/                     # Chat route tests
 │       └── ws/                      # WebSocket tests
 ├── scripts/
@@ -174,13 +204,17 @@ ppm/
 - **Responsibility:** Business logic, data operations, infrastructure (tunneling)
 - **Services:**
   - **ChatService** — Session lifecycle, message queueing, streaming
+  - **ConfigService** — Config loading (YAML→SQLite migration)
+  - **DbService** — SQLite persistence (6 tables, WAL mode, schema migrations)
   - **GitService** — Git commands via simple-git
   - **FileService** — File ops with path validation
-  - **ProjectService** — YAML registry management
+  - **ProjectService** — Project CRUD, scanning, resolution
   - **TerminalService** — PTY lifecycle, shell spawning
-  - **ConfigService** — Config file loading
-  - **CloudflaredService** — Download/cache cloudflared binary (platform-aware, shows progress)
-  - **TunnelService** — Spawn tunnel, extract URL from stderr, cleanup on exit
+  - **ClaudeUsageService** — Token tracking, cost calculation
+  - **PushNotificationService** — Web push subscriptions
+  - **SessionLogService** — Audit logs with sensitive data redaction
+  - **CloudflaredService** — Download/cache cloudflared binary (platform-aware)
+  - **TunnelService** — Spawn tunnel, extract URL, cleanup on exit
 - **Pattern:** Singleton services, dependency injection via imports
 
 ### Provider Layer (src/providers/)
@@ -194,10 +228,11 @@ ppm/
 ### Frontend Layer (src/web/)
 - **Responsibility:** React UI for project management, chat, terminal, editor
 - **Key Stores:**
-  - **ProjectStore** — Active project, project list
-  - **TabStore** — Open tabs per project
-  - **FileStore** — File selections
-  - **SettingsStore** — Auth, theme
+  - **ProjectStore** — Active project, project list, localStorage persistence
+  - **TabStore** — Tab facade, delegates to panel-store
+  - **PanelStore** — Grid layout, panel creation, keep-alive snapshots
+  - **FileStore** — File cache
+  - **SettingsStore** — Theme, sidebar, git view, device name
 - **Pattern:** Zustand for state, React.lazy() for tab content splitting
 
 ## Data Flow Diagrams
@@ -270,7 +305,7 @@ UI updates staged/unstaged lists
 |---------|---------|---------|
 | hono | HTTP framework | 4.12.8 |
 | simple-git | Git CLI wrapper | 3.33 |
-| @monaco-editor/react | Code editor (v2.0+) | Latest |
+| @monaco-editor/react | Code editor | 4.7.0 |
 | xterm | Terminal emulator | 6.0 |
 | zustand | State management | 5.0.11 |
 | @anthropic-ai/claude-agent-sdk | AI provider | 0.2.76 |

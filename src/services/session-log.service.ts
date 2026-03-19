@@ -1,43 +1,31 @@
-import { resolve } from "node:path";
-import { homedir } from "node:os";
-import { appendFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
-
-const SESSION_LOG_DIR = resolve(homedir(), ".ppm", "sessions");
-
-/** Ensure log directory exists */
-function ensureDir() {
-  if (!existsSync(SESSION_LOG_DIR)) mkdirSync(SESSION_LOG_DIR, { recursive: true });
-}
+import { insertSessionLog, getSessionLogs as dbGetSessionLogs } from "./db.service.ts";
 
 /** Redact sensitive values */
 function redact(text: string): string {
   return text
     .replace(/Token:\s*\S+/gi, "Token: [REDACTED]")
     .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
-    .replace(/password['":\s]+\S+/gi, "password: [REDACTED]")
-    .replace(/api[_-]?key['":\s]+\S+/gi, "api_key: [REDACTED]")
+    .replace(/password['\":\s]+\S+/gi, "password: [REDACTED]")
+    .replace(/api[_-]?key['\":\s]+\S+/gi, "api_key: [REDACTED]")
     .replace(/ANTHROPIC_API_KEY=\S+/gi, "ANTHROPIC_API_KEY=[REDACTED]")
-    .replace(/secret['":\s]+\S+/gi, "secret: [REDACTED]");
+    .replace(/secret['\":\s]+\S+/gi, "secret: [REDACTED]");
 }
 
-/** Append a log entry to a session's log file */
+/** Append a log entry to a session's log in SQLite */
 export function logSessionEvent(sessionId: string, level: string, message: string) {
-  ensureDir();
-  const ts = new Date().toISOString();
-  const logFile = resolve(SESSION_LOG_DIR, `${sessionId}.log`);
   try {
-    appendFileSync(logFile, `[${ts}] [${level}] ${redact(message)}\n`);
+    insertSessionLog(sessionId, level, redact(message));
   } catch { /* ignore write errors */ }
 }
 
-/** Read a session's log file (last N lines) */
+/** Read a session's log entries (last N lines) */
 export function getSessionLog(sessionId: string, tailLines = 100): string {
-  const logFile = resolve(SESSION_LOG_DIR, `${sessionId}.log`);
-  if (!existsSync(logFile)) return "";
   try {
-    const content = readFileSync(logFile, "utf-8");
-    const lines = content.split("\n");
-    return lines.slice(-tailLines).join("\n").trim();
+    const rows = dbGetSessionLogs(sessionId, tailLines);
+    // Reverse to chronological order (DB returns DESC)
+    return rows.reverse().map((r) =>
+      `[${r.created_at}] [${r.level}] ${r.message}`
+    ).join("\n").trim();
   } catch {
     return "";
   }

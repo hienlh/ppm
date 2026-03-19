@@ -73,8 +73,10 @@ function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodePr
       toggleFileSelect(node.path);
       return;
     }
+    const ext = node.name.split(".").pop()?.toLowerCase() ?? "";
+    const isSqlite = ext === "db" || ext === "sqlite" || ext === "sqlite3";
     openTab({
-      type: "editor",
+      type: isSqlite ? "sqlite" : "editor",
       title: node.name,
       metadata: { filePath: node.path, projectName },
       projectId: projectName,

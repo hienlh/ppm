@@ -87,11 +87,18 @@ ppm --version
 # Generate config and scan for git repositories
 ppm init
 
-# Output: ~/.config/ppm/ppm.yaml (or current directory)
+# Output: ~/.ppm/config.yaml
 # Auto-generates auth token
 ```
 
-### Config File Structure (ppm.yaml)
+### Dev vs Production Config
+
+- **Production:** `~/.ppm/config.yaml` — port **8080** (default)
+- **Development:** `~/.ppm/config.dev.yaml` — port **8081**
+
+`bun dev:server` automatically passes `-c ~/.ppm/config.dev.yaml`. Create dev config by copying `ppm.example.yaml` and setting `port: 8081`.
+
+### Config File Structure (config.yaml)
 
 ```yaml
 port: 8080
@@ -105,7 +112,7 @@ projects:
   - name: project-b
     path: /path/to/project-b
 providers:
-  default: claude-agent-sdk  # or claude-code-cli for fallback
+  default: claude-agent-sdk  # or mock for testing
 ```
 
 ### Customize Configuration
@@ -133,8 +140,8 @@ ppm projects remove my-project
 
 #### Set AI Provider
 ```bash
-# Use Claude Code CLI fallback (for offline environments)
-ppm config set providers.default claude-code-cli
+# Use mock provider (for testing)
+ppm config set providers.default mock
 
 # Switch back to SDK (default)
 ppm config set providers.default claude-agent-sdk
@@ -337,12 +344,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # Your Anthropic API key
 ppm start
 ```
 
-If using Claude CLI fallback:
-```bash
-export CLAUDE_API_KEY="sk-ant-..."
-# Ensure `claude` CLI is installed and in PATH
-which claude  # Should find the binary
-```
+**Note:** On Windows, SDK uses CLI fallback (`claude` binary) for Bun subprocess pipe buffering issues. Ensure `claude` is in PATH.
 
 ---
 
@@ -526,7 +528,7 @@ ppm start
 
 - [ ] Change default auth token: `ppm config set auth.token "$(openssl rand -hex 32)"`
 - [ ] Verify only necessary projects are in `ppm.yaml`
-- [ ] Set appropriate file permissions: `chmod 600 ~/.config/ppm/ppm.yaml`
+- [ ] Set appropriate file permissions: `chmod 600 ~/.ppm/config.yaml ~/.ppm/ppm.db`
 - [ ] Keep Bun updated: `bun upgrade`
 - [ ] Keep dependencies updated: `bun update`
 - [ ] Review firewall rules (localhost only recommended)
@@ -572,7 +574,7 @@ Then access via `https://ppm.example.com` with SSL certificate.
 
 ```bash
 # 1. Backup existing config
-cp ~/.config/ppm/ppm.yaml ~/.config/ppm/ppm.yaml.backup
+cp ~/.ppm/config.yaml ~/.ppm/config.yaml.backup
 
 # 2. Stop running server
 ppm stop
@@ -603,7 +605,7 @@ ppm stop
 # ./ppm-v1 start
 
 # 3. Restore backup if config changed
-# cp ~/.config/ppm/ppm.yaml.backup ~/.config/ppm/ppm.yaml
+# cp ~/.ppm/config.yaml.backup ~/.ppm/config.yaml
 ```
 
 ---
