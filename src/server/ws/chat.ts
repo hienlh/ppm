@@ -2,6 +2,7 @@ import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
+import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
 import type { ChatWsClientMessage } from "../../types/api.ts";
 
 const PING_INTERVAL_MS = 15_000; // 15s keepalive
@@ -148,6 +149,16 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       } else if (evType === "done") {
         logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
+        // Fire-and-forget: fetch updated session title from SDK summary
+        sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
+          const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
+          if (found?.summary) {
+            safeSend(sessionId, { type: "title_updated", title: found.summary });
+            // Also update in-memory session title
+            const session = chatService.getSession(sessionId);
+            if (session) session.title = found.summary;
+          }
+        }).catch(() => {});
         // Fire-and-forget push notification
         import("../../services/push-notification.service.ts").then(({ pushService }) => {
           const project = entry.projectName || "Project";
@@ -254,7 +265,18 @@ export const chatWebSocket = {
         sessionId,
         isStreaming: existing.isStreaming,
         pendingApproval: existing.pendingApprovalEvent ?? null,
+        sessionTitle: session?.title || null,
       }));
+      // Async: resolve title from SDK if in-memory title is generic
+      if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
+        sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
+          const found = sessions.find((s) => s.sessionId === sessionId);
+          if (found?.summary) {
+            safeSend(sessionId, { type: "title_updated", title: found.summary });
+            if (session) session.title = found.summary;
+          }
+        }).catch(() => {});
+      }
       console.log(`[chat] session=${sessionId} FE reconnected (streaming=${existing.isStreaming}, catchUp=${existing.needsCatchUp})`);
       return;
     }
@@ -276,7 +298,17 @@ export const chatWebSocket = {
       needsCatchUp: false,
       catchUpText: "",
     });
-    ws.send(JSON.stringify({ type: "connected", sessionId }));
+    ws.send(JSON.stringify({ type: "connected", sessionId, sessionTitle: session?.title || null }));
+    // Async: resolve title from SDK if in-memory title is generic
+    if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
+      sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
+        const found = sessions.find((s) => s.sessionId === sessionId);
+        if (found?.summary) {
+          safeSend(sessionId, { type: "title_updated", title: found.summary });
+          if (session) session.title = found.summary;
+        }
+      }).catch(() => {});
+    }
   },
 
   async message(ws: ChatWsSocket, msg: string | ArrayBuffer | Uint8Array) {

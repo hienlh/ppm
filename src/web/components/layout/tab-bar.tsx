@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import {
   Plus,
   Terminal,
@@ -13,7 +13,9 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabDrag } from "@/hooks/use-tab-drag";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
+import { api, projectUrl } from "@/lib/api-client";
 import { DraggableTab } from "./draggable-tab";
+import type { Tab } from "@/stores/tab-store";
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal,
@@ -51,6 +53,16 @@ export function TabBar({ panelId }: TabBarProps) {
     }
     prevTabCount.current = tabs.length;
   }, [tabs.length, activeTabId]);
+
+  /** Rename a chat session tab — calls PATCH API + updates tab store */
+  const handleRenameTab = useCallback((tab: Tab, newTitle: string) => {
+    useTabStore.getState().updateTab(tab.id, { title: newTitle });
+    const pName = tab.metadata?.projectName as string | undefined;
+    const sId = tab.metadata?.sessionId as string | undefined;
+    if (pName && sId) {
+      api.patch(`${projectUrl(pName)}/chat/sessions/${sId}`, { title: newTitle }).catch(() => {});
+    }
+  }, []);
 
   /** Double-click on empty bar area → open command palette */
   function handleBarDoubleClick(e: React.MouseEvent) {
@@ -98,6 +110,7 @@ export function TabBar({ panelId }: TabBarProps) {
                 if (el) tabRefs.current.set(tab.id, el);
                 else tabRefs.current.delete(tab.id);
               }}
+              onRename={tab.type === "chat" ? (title) => handleRenameTab(tab, title) : undefined}
             />
           ))}
           {/* Show drop indicator at the end */}

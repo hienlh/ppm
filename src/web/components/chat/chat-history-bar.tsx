@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -55,6 +55,9 @@ export function ChatHistoryBar({
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null);
   const openTab = useTabStore((s) => s.openTab);
 
   const togglePanel = (panel: PanelType) => {
@@ -93,6 +96,27 @@ export function ChatHistoryBar({
       });
     }
   }
+
+  const startEditing = useCallback((session: SessionInfo, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingId(session.id);
+    setEditingTitle(session.title || "");
+    setTimeout(() => editInputRef.current?.select(), 0);
+  }, []);
+
+  const saveTitle = useCallback(async () => {
+    if (!editingId || !editingTitle.trim() || !projectName) {
+      setEditingId(null);
+      return;
+    }
+    try {
+      await api.patch(`${projectUrl(projectName)}/chat/sessions/${editingId}`, { title: editingTitle.trim() });
+      setSessions((prev) => prev.map((s) => s.id === editingId ? { ...s, title: editingTitle.trim() } : s));
+    } catch { /* silent */ }
+    setEditingId(null);
+  }, [editingId, editingTitle, projectName]);
+
+  const cancelEditing = useCallback(() => setEditingId(null), []);
 
   // Filter sessions by search query
   const filteredSessions = searchQuery.trim()
@@ -202,17 +226,53 @@ export function ChatHistoryBar({
               </div>
             ) : (
               filteredSessions.map((session) => (
-                <button
+                <div
                   key={session.id}
-                  onClick={() => openSession(session)}
-                  className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors"
+                  className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group"
                 >
                   <MessageSquare className="size-3 shrink-0 text-text-subtle" />
-                  <span className="text-[11px] truncate flex-1">{session.title || "Untitled"}</span>
-                  {session.updatedAt && (
+                  {editingId === session.id ? (
+                    <form
+                      className="flex items-center gap-1 flex-1 min-w-0"
+                      onSubmit={(e) => { e.preventDefault(); saveTitle(); }}
+                    >
+                      <input
+                        ref={editInputRef}
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onBlur={saveTitle}
+                        onKeyDown={(e) => { if (e.key === "Escape") cancelEditing(); }}
+                        className="flex-1 min-w-0 bg-surface-elevated text-[11px] text-text-primary px-1 py-0.5 rounded border border-border outline-none focus:border-primary"
+                        autoFocus
+                      />
+                      <button type="submit" className="p-0.5 text-green-500 hover:text-green-400" onClick={(e) => e.stopPropagation()}>
+                        <Check className="size-3" />
+                      </button>
+                      <button type="button" className="p-0.5 text-text-subtle hover:text-text-secondary" onClick={(e) => { e.stopPropagation(); cancelEditing(); }}>
+                        <X className="size-3" />
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => openSession(session)}
+                        className="text-[11px] truncate flex-1 text-left"
+                      >
+                        {session.title || "Untitled"}
+                      </button>
+                      <button
+                        onClick={(e) => startEditing(session, e)}
+                        className="p-0.5 rounded text-text-subtle hover:text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Rename session"
+                      >
+                        <Pencil className="size-3" />
+                      </button>
+                    </>
+                  )}
+                  {editingId !== session.id && session.updatedAt && (
                     <span className="text-[10px] text-text-subtle shrink-0">{formatDate(session.updatedAt)}</span>
                   )}
-                </button>
+                </div>
               ))
             )}
           </div>
