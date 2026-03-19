@@ -1,15 +1,21 @@
 # Changelog
 
-## [0.6.5] - 2026-03-19
+## [0.6.6] - 2026-03-19
 
 ### Added
-- **Unified database viewer**: open connections/tables from sidebar in a single "database" tab (replaces separate SQLite/Postgres tabs for connection-based access)
-- **Connection list tree UI**: tree guide lines, inline table search filter, click-to-expand connections
+- **Database management sidebar**: full CRUD for SQLite + PostgreSQL connections with color-coded groups, readonly enforcement, CLI commands (`ppm db list/add/remove/test/tables/schema/data/query`)
+- **Unified database viewer**: generic `database-viewer.tsx` + `use-database.ts` hook — one viewer for all DB types via adapter pattern, auto-switches SQL dialect (PostgreSQL/SQLite)
+- **Connection list tree UI**: dashed tree guide lines for groups and tables, inline table search filter, click-to-expand connections
+- **Command palette DB search**: debounced search across cached tables (300ms, 2+ chars)
+- **Tab data caching**: sessionStorage cache for instant table data display on page reload, with background refresh
+- **Reload button**: toolbar button to force-refresh table data bypassing cache
 - **Cached tables API**: `?cached=1` param for instant sidebar table loads without re-querying the database
 
 ### Fixed
-- **Login infinite reload**: keybindings API call fired before auth check, causing 401 → token removal → reload loop after SQLite migration
-- **ApiClient reload guard**: sessionStorage-based guard prevents infinite reload loops from pre-auth 401
+- **SQLite cell update**: adapter now uses actual PK column instead of hardcoded `rowid`
+- **Breadcrumb wrong table**: fixed race condition where `fetchTables` auto-selected first table before `initialTable` jump
+- **Auth header missing**: database API calls now use shared `api` client with Bearer token
+- **Stale closure in cell update**: `updateCell`/`executeQuery` pass explicit table args to avoid stale React closure
 - **Tool card crash**: TodoWrite/AskUserQuestion cards crashed when SDK sent non-array input fields
 - **Effort level "max"**: removed unsupported effort level, auto-downgrades to "high" on config load
 - **Provider ID mismatch**: fixed stale "claude-sdk" references across routes, hooks, and tests
