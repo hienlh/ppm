@@ -35,7 +35,7 @@ describe("validateAIProviderConfig", () => {
   });
 
   it("accepts all valid effort values", () => {
-    for (const effort of ["low", "medium", "high", "max"] as const) {
+    for (const effort of ["low", "medium", "high"] as const) {
       expect(validateAIProviderConfig({ effort })).toHaveLength(0);
     }
   });

@@ -38,7 +38,7 @@ export interface AIProviderConfig {
   api_key_env?: string;
   // Agent SDK-specific settings (ignored by mock provider)
   model?: string;
-  effort?: "low" | "medium" | "high" | "max";
+  effort?: "low" | "medium" | "high";
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
@@ -66,7 +66,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
 };
 
 const VALID_TYPES = ["agent-sdk", "mock"] as const;
-const VALID_EFFORTS = ["low", "medium", "high", "max"] as const;
+const VALID_EFFORTS = ["low", "medium", "high"] as const;
 const VALID_MODELS = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"] as const;
 /** Only these values are allowed for default_provider in config */
 export const VALID_PROVIDERS = ["claude"] as const;
@@ -128,6 +128,14 @@ export function sanitizeConfig(config: PpmConfig): boolean {
     config.ai.providers[config.ai.default_provider] =
       structuredClone(DEFAULT_CONFIG.ai.providers[DEFAULT_CONFIG.ai.default_provider]!);
     dirty = true;
+  }
+
+  // Downgrade "max" effort → "high" (not available for Claude.ai subscribers)
+  for (const provider of Object.values(config.ai.providers)) {
+    if ((provider as any).effort === "max") {
+      provider.effort = "high";
+      dirty = true;
+    }
   }
 
   return dirty;
