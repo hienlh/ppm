@@ -5,13 +5,16 @@ import { useTabStore } from "@/stores/tab-store";
  * Parse the current URL to extract project name and tab ID.
  * Expected format: /project/:projectName/tab/:tabId
  */
-export function parseUrlState(): { projectName: string | null; tabId: string | null } {
+export function parseUrlState(): { projectName: string | null; tabId: string | null; openChat: string | null } {
   const path = window.location.pathname;
   const match = path.match(/^\/project\/([^/]+)(?:\/tab\/([^/]+))?/);
-  if (!match) return { projectName: null, tabId: null };
+  const params = new URLSearchParams(window.location.search);
+  const openChat = params.get("openChat");
+  if (!match) return { projectName: null, tabId: null, openChat };
   return {
     projectName: match[1] ? decodeURIComponent(match[1]) : null,
     tabId: match[2] ? decodeURIComponent(match[2]) : null,
+    openChat,
   };
 }
 

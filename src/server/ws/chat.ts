@@ -35,6 +35,14 @@ interface SessionEntry {
 /** Tracks active sessions — persists even when FE disconnects */
 const activeSessions = new Map<string, SessionEntry>();
 
+/** Check if any frontend client is currently connected via WebSocket */
+export function hasActiveClient(): boolean {
+  for (const entry of activeSessions.values()) {
+    if (entry.ws) return true;
+  }
+  return false;
+}
+
 /** Send event to FE if connected, silently drop otherwise */
 function safeSend(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
@@ -159,15 +167,34 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
             if (session) session.title = found.summary;
           }
         }).catch(() => {});
-        // Fire-and-forget push notification
-        import("../../services/push-notification.service.ts").then(({ pushService }) => {
+        // Fire-and-forget notification broadcast (push + telegram)
+        import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
           const sessionTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
-          pushService.notifyAll("Chat completed", `${project} — ${sessionTitle}`).catch(() => {});
+          notificationService.broadcast("done", {
+            title: "Chat completed",
+            body: `${project} — ${sessionTitle}`,
+            project,
+            sessionId,
+            sessionTitle,
+          });
         }).catch(() => {});
       } else if (evType === "approval_request") {
         entry.pendingApprovalEvent = ev;
+        // Fire-and-forget notification for approval/question
+        import("../../services/notification.service.ts").then(({ notificationService }) => {
+          const project = entry.projectName || "Project";
+          const session = chatService.getSession(sessionId);
+          const sTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
+          const isQuestion = ev.tool === "AskUserQuestion";
+          const nType = isQuestion ? "question" : "approval_request";
+          const title = isQuestion ? "AI has a question" : "Waiting for approval";
+          const body = isQuestion
+            ? `${project} — ${sTitle}`
+            : `${project} — ${ev.tool} needs permission`;
+          notificationService.broadcast(nType as any, { title, body, project, sessionId, sessionTitle: sTitle, tool: ev.tool });
+        }).catch(() => {});
       } else {
         logSessionEvent(sessionId, evType.toUpperCase(), JSON.stringify(ev).slice(0, 200));
       }

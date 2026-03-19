@@ -6,6 +6,7 @@ import {
   validateDefaultProvider,
   VALID_PROVIDERS,
   type AIProviderConfig,
+  type TelegramConfig,
   type ThemeConfig,
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
@@ -133,5 +134,56 @@ settingsRoutes.put("/keybindings", async (c) => {
     return c.json(ok(current));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
+  }
+});
+
+// ── Telegram ──────────────────────────────────────────────────────────
+
+/** GET /settings/telegram — return current telegram config (masks bot_token) */
+settingsRoutes.get("/telegram", (c) => {
+  const tg = configService.get("telegram") as TelegramConfig | undefined;
+  if (!tg) return c.json(ok({ bot_token: "", chat_id: "" }));
+  return c.json(ok({
+    bot_token: tg.bot_token ? `${tg.bot_token.slice(0, 6)}...` : "",
+    chat_id: tg.chat_id,
+  }));
+});
+
+/** PUT /settings/telegram — save telegram bot_token + chat_id */
+settingsRoutes.put("/telegram", async (c) => {
+  try {
+    const body = await c.req.json<{ bot_token?: string; chat_id?: string }>();
+    const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "", chat_id: "" };
+    const updated: TelegramConfig = {
+      bot_token: body.bot_token ?? current.bot_token,
+      chat_id: body.chat_id ?? current.chat_id,
+    };
+    configService.set("telegram", updated);
+    configService.save();
+    return c.json(ok({
+      bot_token: updated.bot_token ? `${updated.bot_token.slice(0, 6)}...` : "",
+      chat_id: updated.chat_id,
+    }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** POST /settings/telegram/test — send a test message */
+settingsRoutes.post("/telegram/test", async (c) => {
+  try {
+    const body = await c.req.json<{ bot_token?: string; chat_id?: string }>();
+    const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "", chat_id: "" };
+    const token = body.bot_token || current.bot_token;
+    const chatId = body.chat_id || current.chat_id;
+    if (!token || !chatId) {
+      return c.json(err("bot_token and chat_id are required"), 400);
+    }
+    const { telegramService } = await import("../../services/telegram-notification.service.ts");
+    const result = await telegramService.sendTest(token, chatId);
+    if (!result.ok) return c.json(err(result.error ?? "Failed"), 500);
+    return c.json(ok({ sent: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
   }
 });

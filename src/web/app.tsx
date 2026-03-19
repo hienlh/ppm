@@ -18,6 +18,7 @@ import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useHealthCheck } from "@/hooks/use-health-check";
+import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { cn } from "@/lib/utils";
@@ -102,6 +103,19 @@ export function App() {
   // Health check — detects server crash/restart
   useHealthCheck();
 
+  // Notification badge — syncs document.title + favicon with unread count
+  useNotificationBadge();
+
+  // Warn before closing browser tab (prevents accidental Ctrl+W)
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [authState]);
+
   // Load keybindings after auth confirmed (must not call ApiClient before auth)
   useEffect(() => {
     if (authState !== "authenticated") return;
@@ -115,7 +129,7 @@ export function App() {
     if (authState !== "authenticated") return;
 
     fetchProjects().then(() => {
-      const { projectName: urlProject, tabId: urlTab } = initialUrlRef.current;
+      const { projectName: urlProject, tabId: urlTab, openChat } = initialUrlRef.current;
       const { projects, customOrder } = useProjectStore.getState();
       if (projects.length === 0) return;
 
@@ -134,6 +148,31 @@ export function App() {
             }
           });
         }
+      }
+
+      // Deep link: ?openChat=sessionId — open/focus the chat tab
+      if (openChat) {
+        queueMicrotask(() => {
+          const { tabs, setActiveTab, openTab } = useTabStore.getState();
+          const existing = tabs.find(
+            (t) => t.type === "chat" && t.metadata?.sessionId === openChat,
+          );
+          if (existing) {
+            setActiveTab(existing.id);
+          } else {
+            openTab({
+              type: "chat",
+              title: "Chat",
+              projectId: target?.name ?? null,
+              closable: true,
+              metadata: { sessionId: openChat },
+            });
+          }
+          // Clean up query param
+          const url = new URL(window.location.href);
+          url.searchParams.delete("openChat");
+          window.history.replaceState(null, "", url.pathname);
+        });
       }
     });
   }, [authState, fetchProjects]);

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Terminal, MessageSquare, GitBranch, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
+  ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
@@ -11,6 +12,8 @@ import { getProjectInitials } from "@/lib/project-avatar";
 import type { TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
+import { useNotificationStore, notificationColor } from "@/stores/notification-store";
+import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
 
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
@@ -35,7 +38,12 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const tabs = panel?.tabs ?? [];
   const activeTabId = panel?.activeTabId ?? null;
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const mobileScrollRef = useRef<HTMLDivElement>(null);
   const prevTabCount = useRef(tabs.length);
+  const notifications = useNotificationStore((s) => s.notifications);
+  const { canScrollLeft, canScrollRight, scrollLeft: doScrollLeft, scrollRight: doScrollRight } =
+    useTabOverflow(mobileScrollRef);
+  const hiddenUnread = getHiddenUnreadDirection(mobileScrollRef.current, tabRefs.current as Map<string, HTMLElement>, tabs, notifications);
 
   const [menuTabId, setMenuTabId] = useState<string | null>(null);
   const [newTabSheetOpen, setNewTabSheetOpen] = useState(false);
@@ -109,15 +117,31 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           <Menu className="size-5" />
         </button>
 
-        <div className="flex-1 flex items-center h-12 overflow-x-auto">
+        <div className="flex-1 relative flex items-center h-12">
+          {/* Left scroll arrow */}
+          {canScrollLeft && (
+            <button onClick={doScrollLeft} className="absolute left-0 z-10 flex items-center justify-center size-8 bg-gradient-to-r from-background via-background to-transparent">
+              <span className="relative">
+                <ChevronLeft className="size-3.5 text-text-secondary" />
+                {hiddenUnread.left && <span className={cn("absolute -top-1 -right-0.5 size-1.5 rounded-full", notificationColor(hiddenUnread.left))} />}
+              </span>
+            </button>
+          )}
+          <div ref={mobileScrollRef} className="flex-1 flex items-center h-12 overflow-x-auto scrollbar-none">
           {tabs.map((tab) => {
             const Icon = TAB_ICONS[tab.type];
             const isActive = tab.id === activeTabId;
+            const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
+            const entry = sessionId ? notifications.get(sessionId) : undefined;
+            const notiType = entry && entry.count > 0 ? entry.type : null;
             return (
               <button
                 key={tab.id}
                 ref={(el) => { if (el) tabRefs.current.set(tab.id, el); else tabRefs.current.delete(tab.id); }}
-                onClick={() => usePanelStore.getState().setActiveTab(tab.id)}
+                onClick={() => {
+                  usePanelStore.getState().setActiveTab(tab.id);
+                  if (sessionId) useNotificationStore.getState().clearForSession(sessionId);
+                }}
                 onTouchStart={() => startLongPress(tab.id)}
                 onTouchEnd={cancelLongPress}
                 onTouchMove={cancelLongPress}
@@ -127,7 +151,12 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
                   isActive ? "border-primary bg-surface text-primary" : "border-transparent text-text-secondary",
                 )}
               >
-                <Icon className="size-4" />
+                <span className="relative">
+                  <Icon className="size-4" />
+                  {notiType && !isActive && (
+                    <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notiType))} />
+                  )}
+                </span>
                 <span className="max-w-[80px] truncate">{tab.title}</span>
                 {tab.closable && (
                   <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); usePanelStore.getState().closeTab(tab.id); }}
@@ -138,6 +167,16 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
               </button>
             );
           })}
+          </div>
+          {/* Right scroll arrow */}
+          {canScrollRight && (
+            <button onClick={doScrollRight} className="absolute right-0 z-10 flex items-center justify-center size-8 bg-gradient-to-l from-background via-background to-transparent">
+              <span className="relative">
+                <ChevronRight className="size-3.5 text-text-secondary" />
+                {hiddenUnread.right && <span className={cn("absolute -top-1 -left-0.5 size-1.5 rounded-full", notificationColor(hiddenUnread.right))} />}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Add tab — opens command palette */}

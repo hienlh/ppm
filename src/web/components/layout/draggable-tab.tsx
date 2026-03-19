@@ -3,12 +3,15 @@ import { X } from "lucide-react";
 import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { isDarkColor } from "@/lib/color-utils";
+import { notificationColor } from "@/stores/notification-store";
 
 interface DraggableTabProps {
   tab: Tab;
   isActive: boolean;
   icon: React.ElementType;
   showDropBefore: boolean;
+  /** Notification type if unread (null = no unread). Controls badge color. */
+  notificationType?: string | null;
   onSelect: () => void;
   onClose: () => void;
   onDragStart: (e: React.DragEvent) => void;
@@ -20,7 +23,7 @@ interface DraggableTabProps {
 }
 
 export function DraggableTab({
-  tab, isActive, icon: Icon, showDropBefore, onSelect, onClose,
+  tab, isActive, icon: Icon, showDropBefore, notificationType, onSelect, onClose,
   onDragStart, onDragOver, onDragEnd, tabRef, onRename,
 }: DraggableTabProps) {
   const [editing, setEditing] = useState(false);
@@ -74,7 +77,12 @@ export function DraggableTab({
           colorStyle && "border-transparent",
         )}
       >
-        <Icon className="size-4" />
+        <span className="relative">
+          <Icon className="size-4" />
+          {notificationType && !isActive && (
+            <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notificationType))} />
+          )}
+        </span>
         {editing ? (
           <input
             ref={inputRef}

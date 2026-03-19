@@ -8,6 +8,8 @@ import {
   Settings,
   FileCode,
   Database,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -15,7 +17,10 @@ import { useProjectStore } from "@/stores/project-store";
 import { useTabDrag } from "@/hooks/use-tab-drag";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl } from "@/lib/api-client";
+import { useNotificationStore, notificationColor } from "@/stores/notification-store";
+import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
 import { DraggableTab } from "./draggable-tab";
+import { cn } from "@/lib/utils";
 import type { Tab } from "@/stores/tab-store";
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
@@ -48,6 +53,13 @@ export function TabBar({ panelId }: TabBarProps) {
 
   const { dropIndex, handleDragStart, handleDragOver, handleDragOverBar, handleDrop, handleDragEnd } =
     useTabDrag(effectivePanelId);
+
+  const notifications = useNotificationStore((s) => s.notifications);
+  const { canScrollLeft, canScrollRight, scrollLeft: doScrollLeft, scrollRight: doScrollRight } =
+    useTabOverflow(scrollRef);
+
+  // Hidden unread direction — recomputed when notifications or scroll changes
+  const hiddenUnread = getHiddenUnreadDirection(scrollRef.current, tabRefs.current as Map<string, HTMLElement>, tabs, notifications);
 
   // Auto-scroll to new tab
   useEffect(() => {
@@ -86,26 +98,49 @@ export function TabBar({ panelId }: TabBarProps) {
 
   return (
     <div
-      className="hidden md:flex items-center h-10 border-b border-border bg-background"
+      className="hidden md:flex items-center h-10 border-b border-border bg-background relative"
       onDragOver={handleDragOverBar}
       onDrop={handleDrop}
       onDoubleClick={handleBarDoubleClick}
       onContextMenu={handleBarContextMenu}
     >
+      {/* Left scroll arrow */}
+      {canScrollLeft && (
+        <button
+          onClick={doScrollLeft}
+          className="absolute left-0 z-10 flex items-center justify-center size-8 bg-gradient-to-r from-background via-background to-transparent"
+        >
+          <span className="relative">
+            <ChevronLeft className="size-4 text-text-secondary" />
+            {hiddenUnread.left && (
+              <span className={cn("absolute -top-1 -right-0.5 size-2 rounded-full", notificationColor(hiddenUnread.left))} />
+            )}
+          </span>
+        </button>
+      )}
+
       {/* Scrollable tabs + sticky + button */}
       <div
         ref={scrollRef}
         className="flex-1 overflow-x-auto overflow-y-hidden min-w-0 scrollbar-none"
       >
         <div className="flex items-center h-10">
-          {tabs.map((tab, i) => (
+          {tabs.map((tab, i) => {
+            const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
+            const entry = sessionId ? notifications.get(sessionId) : undefined;
+            const notiType = entry && entry.count > 0 ? entry.type : null;
+            return (
             <DraggableTab
               key={tab.id}
               tab={tab}
               isActive={tab.id === activeTabId}
               icon={TAB_ICONS[tab.type]}
               showDropBefore={dropIndex === i}
-              onSelect={() => usePanelStore.getState().setActiveTab(tab.id, effectivePanelId)}
+              notificationType={notiType}
+              onSelect={() => {
+                usePanelStore.getState().setActiveTab(tab.id, effectivePanelId);
+                if (sessionId) useNotificationStore.getState().clearForSession(sessionId);
+              }}
               onClose={() => usePanelStore.getState().closeTab(tab.id, effectivePanelId)}
               onDragStart={(e) => handleDragStart(e, tab.id)}
               onDragOver={(e) => handleDragOver(e, tab.id, i)}
@@ -116,7 +151,8 @@ export function TabBar({ panelId }: TabBarProps) {
               }}
               onRename={tab.type === "chat" ? (title) => handleRenameTab(tab, title) : undefined}
             />
-          ))}
+            );
+          })}
           {/* Show drop indicator at the end */}
           {dropIndex !== null && dropIndex >= tabs.length && (
             <div className="w-0.5 h-6 bg-primary rounded-full" />
@@ -132,6 +168,21 @@ export function TabBar({ panelId }: TabBarProps) {
           </button>
         </div>
       </div>
+
+      {/* Right scroll arrow */}
+      {canScrollRight && (
+        <button
+          onClick={doScrollRight}
+          className="absolute right-10 z-10 flex items-center justify-center size-8 bg-gradient-to-l from-background via-background to-transparent"
+        >
+          <span className="relative">
+            <ChevronRight className="size-4 text-text-secondary" />
+            {hiddenUnread.right && (
+              <span className={cn("absolute -top-1 -left-0.5 size-2 rounded-full", notificationColor(hiddenUnread.right))} />
+            )}
+          </span>
+        </button>
+      )}
     </div>
   );
 }

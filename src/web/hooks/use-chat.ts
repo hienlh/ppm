@@ -1,6 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useWebSocket } from "./use-websocket";
 import { getAuthToken, projectUrl } from "@/lib/api-client";
+import { useNotificationStore } from "@/stores/notification-store";
+import { usePanelStore } from "@/stores/panel-store";
+import { playNotificationSound } from "@/lib/notification-sounds";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { ChatWsServerMessage } from "../../types/api";
 
@@ -33,6 +36,16 @@ interface UseChatReturn {
   isConnected: boolean;
 }
 
+/** Check if the chat tab for this session is the active foreground tab */
+function isSessionTabActive(sid: string): boolean {
+  if (document.hidden) return false;
+  const { panels, focusedPanelId } = usePanelStore.getState();
+  const panel = panels[focusedPanelId];
+  if (!panel) return false;
+  const activeTab = panel.tabs.find((t) => t.id === panel.activeTabId);
+  return activeTab?.type === "chat" && activeTab.metadata?.sessionId === sid;
+}
+
 export function useChat(sessionId: string | null, providerId = "claude", projectName = ""): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -52,6 +65,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
   const refetchRef = useRef<(() => void) | null>(null);
+  // Refs for notification dispatch inside handleMessage (which has [] deps)
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const projectNameRef = useRef(projectName);
+  projectNameRef.current = projectName;
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;
@@ -215,6 +233,12 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           tool: data.tool,
           input: data.input,
         });
+        // Local notification badge — only if this tab is NOT active
+        if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
+          const nType = data.tool === "AskUserQuestion" ? "question" : "approval_request";
+          useNotificationStore.getState().addNotification(sessionIdRef.current, nType, projectNameRef.current);
+          playNotificationSound(nType);
+        }
         break;
       }
 
@@ -252,6 +276,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         // Capture context window usage from SDK result
         if (data.contextWindowPct != null) {
           setContextWindowPct(data.contextWindowPct);
+        }
+        // Local notification badge — only if this tab is NOT active
+        if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
+          useNotificationStore.getState().addNotification(sessionIdRef.current, "done", projectNameRef.current);
+          playNotificationSound("done");
         }
         // Finalize the streaming message — capture refs before clearing
         const finalContent = streamingContentRef.current;
