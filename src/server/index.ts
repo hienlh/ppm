@@ -485,12 +485,14 @@ export async function startServer(options: {
   }
   console.log();
 
-  // Graceful shutdown — stop server + tunnel on exit (especially important on Windows)
+  // Graceful shutdown — stop server + tunnel + DB on exit
   const shutdown = () => {
     try { server.stop(true); } catch {}
     try {
-      // Dynamic import to avoid circular — tunnel may not be loaded
       import("../services/tunnel.service.ts").then(({ tunnelService }) => tunnelService.stopTunnel()).catch(() => {});
+    } catch {}
+    try {
+      import("../services/db.service.ts").then(({ closeDb }) => closeDb()).catch(() => {});
     } catch {}
   };
   process.on("SIGINT", () => { shutdown(); process.exit(0); });
@@ -504,6 +506,12 @@ if (process.argv.includes("__serve__")) {
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
   const configPath = process.argv[idx + 3] || undefined;
+
+  // Set DB profile for daemon child (detect "dev" from config path)
+  const { setDbProfile } = await import("../services/db.service.ts");
+  if (configPath && /dev/i.test(configPath)) {
+    setDbProfile("dev");
+  }
 
   configService.load(configPath);
   await setupLogFile();

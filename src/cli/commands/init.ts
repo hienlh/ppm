@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { input, confirm, select, password } from "@inquirer/prompts";
 import { configService } from "../../services/config.service.ts";
 import { projectService } from "../../services/project.service.ts";
+import { getAllConfig } from "../../services/db.service.ts";
 
 const DEFAULT_PORT = 3210;
 
@@ -18,10 +19,14 @@ export interface InitOptions {
 }
 
 /** Check if config already exists */
+/** Check if config already exists (DB or legacy YAML) */
 export function hasConfig(): boolean {
+  try {
+    const dbConfig = getAllConfig();
+    if (Object.keys(dbConfig).length > 0) return true;
+  } catch {}
   const globalConfig = resolve(homedir(), ".ppm", "config.yaml");
-  const localConfig = resolve(process.cwd(), "ppm.yaml");
-  return existsSync(globalConfig) || existsSync(localConfig);
+  return existsSync(globalConfig);
 }
 
 export async function initProject(options: InitOptions = {}) {

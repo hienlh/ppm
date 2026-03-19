@@ -13,33 +13,13 @@ import type {
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
+import { getSessionMapping, setSessionMapping } from "../services/db.service.ts";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-
-/** Persistent PPM sessionId → SDK sessionId mapping */
-const SESSION_MAP_FILE = resolve(homedir(), ".ppm", "session-map.json");
-
-function loadSessionMap(): Record<string, string> {
-  try {
-    if (existsSync(SESSION_MAP_FILE)) return JSON.parse(readFileSync(SESSION_MAP_FILE, "utf-8"));
-  } catch {}
-  return {};
-}
-
-function saveSessionMapping(ppmId: string, sdkId: string): void {
-  const map = loadSessionMap();
-  map[ppmId] = sdkId;
-  try {
-    const dir = resolve(homedir(), ".ppm");
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(SESSION_MAP_FILE, JSON.stringify(map));
-  } catch {}
-}
+import { readFileSync, existsSync } from "node:fs";
 
 function getSdkSessionId(ppmId: string): string {
-  const map = loadSessionMap();
-  return map[ppmId] ?? ppmId;
+  return getSessionMapping(ppmId) ?? ppmId;
 }
 
 /**
@@ -473,7 +453,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const existingMsgs = await getSessionMessages(sessionId);
             if (existingMsgs.length > 0) {
               resumeSessionId = sessionId;
-              saveSessionMapping(sessionId, sessionId);
+              setSessionMapping(sessionId, sessionId);
               console.log(`[sdk] session ${sessionId} exists on disk (${existingMsgs.length} msgs) — will resume`);
             }
           } catch {}
@@ -592,7 +572,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // SDK may assign a different session_id than our UUID
           if (initMsg.session_id && initMsg.session_id !== sessionId) {
             // Persist mapping so resume works after server restart
-            saveSessionMapping(sessionId, initMsg.session_id);
+            setSessionMapping(sessionId, initMsg.session_id);
             // Update our in-memory mapping
             const oldMeta = this.activeSessions.get(sessionId);
             if (oldMeta) {

@@ -19,8 +19,16 @@ program
   .option("-f, --foreground", "Run in foreground (default: background daemon)")
   .option("-d, --daemon", "Run as background daemon (default, kept for compat)")
   .option("-s, --share", "Share via public URL (Cloudflare tunnel)")
-  .option("-c, --config <path>", "Path to config file")
+  .option("-c, --config <path>", "Path to config file (YAML import into DB)")
+  .option("--profile <name>", "DB profile name (e.g. 'dev' → ppm.dev.db)")
   .action(async (options) => {
+    // Set DB profile before any DB access
+    const { setDbProfile } = await import("./services/db.service.ts");
+    if (options.profile) {
+      setDbProfile(options.profile);
+    } else if (options.config && /dev/i.test(options.config)) {
+      setDbProfile("dev");
+    }
     // Auto-init on first run
     const { hasConfig, initProject } = await import("./cli/commands/init.ts");
     if (!hasConfig()) {

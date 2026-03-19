@@ -34,19 +34,19 @@
 │  │  ┌──────────────────────────────────────────────────────────┐ │   │
 │  │  │ ProviderRegistry (routes to active AI provider)         │ │   │
 │  │  │ ┌───────────────────────┬──────────────────────────┐   │ │   │
-│  │  │ │ claude-agent-sdk      │ claude-code-cli (CLI)   │   │ │   │
-│  │  │ │ @anthropic/SDK (prim) │ Fallback subprocess    │   │ │   │
+│  │  │ │ claude-agent-sdk      │ mock-provider (test)    │   │ │   │
+│  │  │ │ @anthropic/SDK (prim) │ Returns canned resp.   │   │ │   │
 │  │  │ └───────────────────────┴──────────────────────────┘   │ │   │
 │  │  └──────────────────────────────────────────────────────────┘ │   │
 │  └────────────────────────────────────────────────────────────────┘   │
 │                                                                        │
 │  Config & State (src/services/)                                       │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐    │
-│  │ ppm.yaml         │  │ Git Repos        │  │ Session Storage │    │
-│  │ (projects list)  │  │ (local disk)     │  │ (in-memory only)│    │
-│  │ (auth token)     │  │                  │  │                 │    │
-│  │ (AI provider     │  │                  │  │                 │    │
-│  │  settings)       │  │                  │  │                 │    │
+│  │ SQLite DB        │  │ Git Repos        │  │ Session Storage │    │
+│  │ (config, projs)  │  │ (local disk)     │  │ (SQLite + SDK)  │    │
+│  │ (session map)    │  │                  │  │ (session_map,   │    │
+│  │ (push subs,      │  │                  │  │  session_logs,  │    │
+│  │  usage, logs)    │  │                  │  │  usage_history) │    │
 │  └──────────────────┘  └──────────────────┘  └─────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
         ↓↑
@@ -54,7 +54,8 @@
    │  Filesystem Access (Local Only)                │
    │  • Project directories (git repos)             │
    │  • File read/write operations                  │
-   │  • Config file (ppm.yaml)                      │
+   │  • SQLite database (~/.ppm/ppm.db)              │
+   │  • Legacy config file (~/.ppm/config.yaml)      │
    └────────────────────────────────────────────────┘
 ```
 
@@ -138,11 +139,15 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 | Service | Purpose | Key Methods |
 |---------|---------|-------------|
 | **ChatService** | Session management, message streaming | createSession, streamMessage, getHistory |
+| **ConfigService** | Config loading (YAML→SQLite migration) | load, save, getToken |
+| **DbService** | SQLite persistence (6 tables, WAL) | getDb, openTestDb, schema migrations |
 | **GitService** | Git command execution | status, diff, commit, stage, branch |
 | **FileService** | File operations with validation | read, write, tree, delete, mkdir |
 | **TerminalService** | PTY lifecycle, shell spawning | spawn, write, kill |
-| **ProjectService** | Project registry (YAML) | add, remove, get, list |
-| **ConfigService** | Config file management | load, save, getToken |
+| **ProjectService** | Project CRUD, scanning | add, remove, get, list, scan |
+| **ClaudeUsageService** | Token tracking, cost calculation | trackUsage, getUsage |
+| **PushNotificationService** | Web push subscriptions | subscribe, unsubscribe, notify |
+| **SessionLogService** | Audit logs with redaction | logSession, getLog |
 | **ProviderRegistry** | AI provider routing | getDefault, send (delegates) |
 | **CloudflaredService** | Download cloudflared binary | ensureCloudflared, getCloudflaredPath |
 | **TunnelService** | Cloudflare Quick Tunnel lifecycle | startTunnel, stopTunnel, getTunnelUrl |
@@ -170,25 +175,28 @@ interface AIProvider {
 ```
 
 **Implementations:**
-- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use. Reads model/effort/maxTurns/budget/thinking from `ppm.yaml` AI config. Settings refreshed per query.
+- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use. Reads model/effort/maxTurns/budget/thinking from config. Settings refreshed per query. Windows CLI fallback for Bun subprocess pipe issues. .env poisoning mitigation.
 - **mock-provider** (Testing) — Returns canned responses
-- **Note:** CLI provider removed (v2); agent SDK now sole AI provider
+- **Note:** CLI provider removed (v2); agent SDK is sole AI provider with Windows CLI fallback
 
 ---
 
-### Data Access Layer (Filesystem + Git)
-**Components:** Direct filesystem access, simple-git wrapper
+### Data Access Layer (SQLite + Filesystem + Git)
+**Components:** SQLite via bun:sqlite, direct filesystem access, simple-git wrapper
 
 **Responsibilities:**
+- Persist config, projects, session maps, usage, logs in SQLite
 - Read/write project files with path validation
 - Execute git commands via simple-git
 - Cache directory listings
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
+- SQLite: WAL mode, foreign keys, lazy init, schema v1 with 6 tables
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)
+- Migration: Automatic YAML→SQLite migration on first run with new db.service
 
 ---
 
@@ -196,10 +204,11 @@ interface AIProvider {
 **Component:** Zustand stores in browser
 
 **Stores:**
-- **projectStore** — Active project, project list
-- **tabStore** — Open tabs (chat, editor, git, terminal)
-- **fileStore** — Selected files, editor content
-- **settingsStore** — Auth token, theme preference
+- **projectStore** — Active project, project list, localStorage persistence
+- **tabStore** — Tab facade, delegates to panelStore
+- **panelStore** — Grid layout (rows/columns), panel creation/movement, keep-alive snapshots
+- **fileStore** — File cache
+- **settingsStore** — Theme, sidebar state, git view mode, device name
 
 **Pattern:** Selectors for subscriptions (only re-render affected components)
 

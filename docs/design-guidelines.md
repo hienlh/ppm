@@ -296,7 +296,7 @@ screens: {
 
 ```tsx
 // src/web/components/editor/code-editor.tsx
-// CodeMirror 6 integration with syntax highlighting
+// Monaco Editor integration (@monaco-editor/react)
 
 <CodeEditor
   language="javascript"
@@ -307,10 +307,13 @@ screens: {
 />
 
 // Features:
-// - 50+ language support
+// - 50+ language support with IntelliSense
 // - Real-time syntax highlighting
 // - Line numbers, code folding
 // - Find/replace (Ctrl+H)
+// - Word wrap toggle (Alt+Z)
+// - Monaco diff viewer for git diffs
+// - Theme sync with app dark/light mode
 ```
 
 ### Terminal Component

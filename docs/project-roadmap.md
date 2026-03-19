@@ -1,12 +1,12 @@
 # PPM Project Roadmap & Status
 
-**Last Updated:** March 17, 2026
+**Last Updated:** March 19, 2026
 
-## Current Version: v2.0 (In Progress)
+## Current Version: v2.0 (Complete v0.5.21)
 
-### Overall Progress: 90%
+### Overall Progress: 95%
 
-Multi-project, project-scoped API refactor with improved UX.
+Multi-project, project-scoped API refactor with improved UX, Monaco Editor, auto-title chat sessions.
 
 ---
 
@@ -61,21 +61,20 @@ Multi-project, project-scoped API refactor with improved UX.
 
 ### Phase 4: File Explorer & Editor ✅ Complete
 - FileTree component with directory expansion
-- Monaco Editor integration with syntax highlighting
+- Monaco Editor integration with syntax highlighting and IntelliSense
 - File read/write operations
 - Monaco diff viewer for git diffs
 
-**Status:** Done
-
-**Latest Work (260315):**
-- Chat file attachments (drag-drop, paste)
-- File viewer for images/PDFs/markdown
-- Better error messages
+**Status:** Done, CodeMirror fully removed (v0.5.17+)
 
 **Latest Work (260317):**
 - Migrated CodeMirror → Monaco Editor (@monaco-editor/react) for better syntax highlighting and diff viewer
 - Alt+Z keyboard shortcut for word wrap toggle in editor and diff viewer
 - Improved code completion and IntelliSense
+
+**Latest Work (260319):**
+- CodeMirror fully removed from codebase
+- Monaco Editor polishing for large file performance
 
 ---
 
@@ -122,6 +121,11 @@ Multi-project, project-scoped API refactor with improved UX.
 - Usage badge (token tracking)
 - Session management (save/load)
 
+**Latest Work (260319):**
+- Auto-generate session title from SDK summary on first message
+- Inline session rename in chat UI
+- Session history tab persistence
+
 ---
 
 ### Phase 8: CLI Commands ✅ Complete
@@ -149,25 +153,29 @@ Multi-project, project-scoped API refactor with improved UX.
 
 ---
 
-### Phase 10: Testing ✅ In Progress (60%)
+### Phase 10: Testing ✅ In Progress (65%)
 
-#### Unit Tests (40% complete)
+#### Unit Tests (50% complete)
 - [x] Mock provider tests
 - [x] ChatService tests
+- [x] ConfigService tests
+- [x] DbService tests (SQLite)
 - [ ] FileService tests
 - [ ] GitService tests
 - [x] Zustand store tests
+- [x] SessionLogService tests (redaction)
 
-#### Integration Tests (30% complete)
+#### Integration Tests (40% complete)
 - [x] Claude Agent SDK integration
 - [x] Chat WebSocket flow
+- [x] SQLite migration validation
 - [ ] Terminal WebSocket flow
 - [ ] Git operations
 - [ ] File operations
 
 #### E2E Tests (0% — Planned for v3)
 
-**Status:** Partial, needs completion
+**Status:** Making progress, good coverage for core services
 
 ---
 
@@ -222,13 +230,16 @@ Multi-project, project-scoped API refactor with improved UX.
 - [x] Project Switcher Bar (52px sidebar, avatars, colors, reordering) (260317)
 - [x] Keep-alive workspace switching (preserve xterm DOM) (260317)
 - [x] Sidebar tab system (Explorer/Git/History) (260317)
-- [x] Monaco Editor migration (CodeMirror → Monaco) (260317)
+- [x] Monaco Editor migration (CodeMirror → Monaco, fully removed) (260317-260319)
 - [x] Project color customization (12-color palette + custom hex) (260317)
-- [ ] Complete test coverage (60% complete)
-- [ ] Documentation (in progress)
+- [x] Auto-generate chat session titles from SDK summary (260319)
+- [x] Inline session rename UI (260319)
+- [x] SQLite migration (db.service.ts, backward YAML compat) (in progress)
+- [ ] Complete test coverage (65% complete)
+- [x] Documentation updates (260319)
 - [ ] Security audit (planned)
 
-**Target Release:** March 31, 2026
+**Release Status:** v0.5.21 released, v2.0 essentially complete
 
 ---
 
@@ -355,8 +366,8 @@ Multi-project, project-scoped API refactor with improved UX.
 | Version | Status | Features | Target Date |
 |---------|--------|----------|-------------|
 | **v1.0** | Released | Single project, basic chat, terminal | Feb 28, 2025 |
-| **v2.0** | In Progress | Multi-project, project-scoped API, improved UX | Mar 31, 2026 |
-| **v2.1** | Planned | Bug fixes, performance improvements | Apr 15, 2026 |
+| **v2.0** | Complete (v0.5.21) | Multi-project, project-scoped API, improved UX, Monaco Editor, auto-title | Mar 19, 2026 |
+| **v2.1** | Planned | Complete test coverage, SQLite finalization, bug fixes | Apr 15, 2026 |
 | **v3.0** | Planned | Collaborative editing, custom tools, plugins | Jun 30, 2026 |
 | **v4.0** | Planned | Cloud sync, advanced git, profiling UI | Sep 30, 2026 |
 
@@ -392,10 +403,11 @@ Multi-project, project-scoped API refactor with improved UX.
 | Dependency | Version | Risk | Monitoring |
 |-----------|---------|------|-----------|
 | Bun | 1.3.6+ | Medium | Check security advisories weekly |
-| Claude Agent SDK | 0.2.76 | Low | Follow Anthropic releases |
+| Claude Agent SDK | 0.2.76+ | Low | Follow Anthropic releases for model updates |
 | React | 19.2.4 | Low | Monitor for breaking changes |
-| TypeScript | 5.9.3 | Low | Plan upgrades quarterly |
+| TypeScript | 5.9.3+ | Low | Plan upgrades quarterly |
 | xterm.js | 6.0 | Low | Check for terminal rendering bugs |
+| Monaco Editor | 4.7.0+ | Low | Monitor for accessibility improvements |
 
 ---
 

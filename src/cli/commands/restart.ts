@@ -37,6 +37,12 @@ export async function restartServer(options: { config?: string }) {
   // Brief pause for port release
   await Bun.sleep(500);
 
+  // Set DB profile before loading config
+  const { setDbProfile } = await import("../../services/db.service.ts");
+  if (options.config && /dev/i.test(options.config)) {
+    setDbProfile("dev");
+  }
+
   // Reload config for new server
   const { configService } = await import("../../services/config.service.ts");
   configService.load(options.config);
