@@ -4,6 +4,11 @@ export interface PushConfig {
   vapid_subject: string;
 }
 
+export interface TelegramConfig {
+  bot_token: string;
+  chat_id: string;
+}
+
 export type ThemeConfig = "light" | "dark" | "system";
 
 export interface PpmConfig {
@@ -15,6 +20,7 @@ export interface PpmConfig {
   projects: ProjectConfig[];
   ai: AIConfig;
   push?: PushConfig;
+  telegram?: TelegramConfig;
 }
 
 export interface AuthConfig {

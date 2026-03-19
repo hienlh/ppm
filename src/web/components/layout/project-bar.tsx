@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Plus, Settings, Pencil, Trash2, Palette, Bug, Share2, Loader2, Copy, Check, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { AddProjectForm } from "@/components/layout/add-project-form";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useNotificationStore, selectProjectUrgentType, notificationColor } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -34,15 +35,22 @@ function ProjectAvatar({ name, color, active, allNames }: {
   name: string; color: string; active: boolean; allNames: string[];
 }) {
   const initials = getProjectInitials(name, allNames);
+  const selector = useMemo(() => selectProjectUrgentType(name), [name]);
+  const urgentType = useNotificationStore(selector);
   return (
-    <div
-      className={cn(
-        "size-10 rounded-full flex items-center justify-center text-xs font-bold text-white select-none shrink-0",
-        active && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+    <div className="relative">
+      <div
+        className={cn(
+          "size-10 rounded-full flex items-center justify-center text-xs font-bold text-white select-none shrink-0",
+          active && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+        )}
+        style={{ background: color }}
+      >
+        {initials}
+      </div>
+      {urgentType && (
+        <div className={cn("absolute -top-0.5 -right-0.5 size-2.5 rounded-full border-2 border-background", notificationColor(urgentType))} />
       )}
-      style={{ background: color }}
-    >
-      {initials}
     </div>
   );
 }

@@ -19,7 +19,7 @@ const PPM_DIR = resolve(homedir(), ".ppm");
 
 /** Top-level config keys stored in the config table (not projects) */
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
-  "device_name", "port", "host", "theme", "auth", "ai", "push",
+  "device_name", "port", "host", "theme", "auth", "ai", "push", "telegram",
 ];
 
 class ConfigService {

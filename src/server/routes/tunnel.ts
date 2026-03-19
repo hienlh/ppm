@@ -1,19 +1,8 @@
 import { Hono } from "hono";
-import { networkInterfaces } from "node:os";
 import { tunnelService } from "../../services/tunnel.service.ts";
 import { configService } from "../../services/config.service.ts";
+import { getLocalIp } from "../../lib/network-utils.ts";
 import { ok, err } from "../../types/api.ts";
-
-/** Return first non-internal IPv4 address */
-function getLocalIp(): string | null {
-  const nets = networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name] ?? []) {
-      if (net.family === "IPv4" && !net.internal) return net.address;
-    }
-  }
-  return null;
-}
 
 export const tunnelRoutes = new Hono();
 
