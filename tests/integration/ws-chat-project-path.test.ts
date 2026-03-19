@@ -19,7 +19,7 @@ describe("WS chat handler — projectPath backfill on resumed sessions", () => {
   });
 
   it("ensureProjectPath works AFTER resumeSession (fixed flow)", async () => {
-    const provider = providerRegistry.get("claude-sdk") as ClaudeAgentSdkProvider;
+    const provider = providerRegistry.get("claude") as ClaudeAgentSdkProvider;
     const sessionId = crypto.randomUUID();
 
     // Simulate server restart: provider has no knowledge of this session
@@ -38,7 +38,7 @@ describe("WS chat handler — projectPath backfill on resumed sessions", () => {
   });
 
   it("ensureProjectPath fails WITHOUT resumeSession (old broken flow)", () => {
-    const provider = providerRegistry.get("claude-sdk") as ClaudeAgentSdkProvider;
+    const provider = providerRegistry.get("claude") as ClaudeAgentSdkProvider;
     const sessionId = crypto.randomUUID();
 
     // Old flow: ensureProjectPath BEFORE resumeSession
@@ -51,7 +51,7 @@ describe("WS chat handler — projectPath backfill on resumed sessions", () => {
   });
 
   it("sendMessage uses projectPath as cwd after proper resume flow", async () => {
-    const provider = providerRegistry.get("claude-sdk") as ClaudeAgentSdkProvider;
+    const provider = providerRegistry.get("claude") as ClaudeAgentSdkProvider;
 
     // Create session with projectPath (simulates normal create via REST API)
     const session = await provider.createSession({

@@ -8,7 +8,7 @@ describe("ChatService", () => {
     });
 
     expect(session.id).toBeTruthy();
-    expect(session.providerId).toBe("claude-sdk"); // default provider
+    expect(session.providerId).toBe("claude"); // default provider
     expect(session.title).toBe("Test");
   });
 

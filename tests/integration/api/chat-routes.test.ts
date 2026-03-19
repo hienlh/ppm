@@ -29,7 +29,7 @@ describe("Chat REST API", () => {
     expect(json.ok).toBe(true);
     expect(Array.isArray(json.data)).toBe(true);
     const ids = json.data.map((p: any) => p.id);
-    expect(ids).toContain("claude-sdk");
+    expect(ids).toContain("claude");
     expect(ids).toContain("mock");
   });
 

@@ -33,7 +33,7 @@ interface UseChatReturn {
   isConnected: boolean;
 }
 
-export function useChat(sessionId: string | null, providerId = "claude-sdk", projectName = ""): UseChatReturn {
+export function useChat(sessionId: string | null, providerId = "claude", projectName = ""): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);

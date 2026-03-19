@@ -70,7 +70,7 @@ chatRoutes.get("/sessions", async (c) => {
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
     const id = c.req.param("id");
-    const providerId = c.req.query("providerId") ?? "claude-sdk";
+    const providerId = c.req.query("providerId") ?? "claude";
     const messages = await chatService.getMessages(providerId, id);
     return c.json(ok(messages));
   } catch (e) {
@@ -99,7 +99,7 @@ chatRoutes.post("/sessions", async (c) => {
 chatRoutes.delete("/sessions/:id", async (c) => {
   try {
     const id = c.req.param("id");
-    const providerId = c.req.query("providerId") ?? "claude-sdk";
+    const providerId = c.req.query("providerId") ?? "claude";
     await chatService.deleteSession(providerId, id);
     return c.json(ok({ deleted: id }));
   } catch (e) {
