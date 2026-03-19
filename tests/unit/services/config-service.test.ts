@@ -17,7 +17,10 @@ describe("ConfigService (SQLite-backed)", () => {
   });
 
   afterEach(() => {
-    closeDb();
+    // Restore auth disabled for other test files, re-init test DB
+    (configService as any).config.auth = { enabled: false, token: "" };
+    const testDb = openTestDb();
+    setDb(testDb);
   });
 
   describe("load()", () => {

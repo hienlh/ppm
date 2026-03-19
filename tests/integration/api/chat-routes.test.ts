@@ -3,8 +3,11 @@ import "../../test-setup.ts"; // disable auth
 import { configService } from "../../../src/services/config.service.ts";
 import { app } from "../../../src/server/index.ts";
 
-// Register a test project so resolveProjectPath succeeds
+// Ensure clean state: test DB + auth disabled + test project registered
 beforeAll(() => {
+  const { setDb, openTestDb } = require("../../../src/services/db.service.ts");
+  setDb(openTestDb());
+  (configService as any).config.auth = { enabled: false, token: "" };
   const projects = configService.get("projects");
   if (!projects.find((p) => p.name === "test")) {
     projects.push({ name: "test", path: process.cwd() });
