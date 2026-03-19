@@ -525,11 +525,58 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
 
+      // Retry logic: if SDK returns error_during_execution with 0 turns on first event,
+      // it's a transient subprocess failure — retry once before surfacing the error.
+      const MAX_RETRIES = 1;
+      let retryCount = 0;
+
+      retryLoop: while (true) {
       let sdkEventCount = 0;
       for await (const msg of eventSource) {
         sdkEventCount++;
         if (sdkEventCount === 1) {
           console.log(`[sdk] first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
+          // Detect immediate failure: first event is a result with error + 0 turns
+          if ((msg as any).type === "result" && (msg as any).subtype === "error_during_execution" && ((msg as any).num_turns ?? 0) === 0 && retryCount < MAX_RETRIES) {
+            retryCount++;
+            console.warn(`[sdk] transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
+            // Re-create query for retry — don't reuse sessionId in case SDK partially created it
+            if (!useDirectCli) {
+              const q = query({
+                prompt: message,
+                options: {
+                  // On retry, let SDK generate a fresh session to avoid conflicts
+                  sessionId: undefined,
+                  resume: undefined,
+                  ...(shouldFork && { forkSession: true }),
+                  cwd: effectiveCwd,
+                  systemPrompt: { type: "preset", preset: "claude_code" },
+                  settingSources: ["user", "project"],
+                  env: queryEnv,
+                  settings: { permissions: { allow: [], deny: [] } },
+                  allowedTools: [
+                    "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+                    "WebSearch", "WebFetch", "AskUserQuestion",
+                    "Agent", "Skill", "TodoWrite", "ToolSearch",
+                  ],
+                  permissionMode: "bypassPermissions",
+                  allowDangerouslySkipPermissions: true,
+                  ...(providerConfig.model && { model: providerConfig.model }),
+                  ...(providerConfig.effort && { effort: providerConfig.effort }),
+                  maxTurns: providerConfig.max_turns ?? 100,
+                  ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
+                  ...(providerConfig.thinking_budget_tokens != null && {
+                    thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
+                  }),
+                  canUseTool,
+                  includePartialMessages: true,
+                } as any,
+              });
+              this.activeQueries.set(sessionId, q);
+              eventSource = q;
+            }
+            continue retryLoop;
+          }
         }
         // Extract parent_tool_use_id from SDK message (present on subagent-scoped messages)
         const parentId = (msg as any).parent_tool_use_id as string | undefined;
@@ -727,9 +774,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
           // Surface non-success subtypes as errors so FE can display them
           if (subtype && subtype !== "success") {
-            // Extract error detail from SDK result if available
-            const sdkError = result.error ?? result.error_message ?? result.message ?? "";
+            // Extract error detail from SDK result — check multiple possible fields
+            const sdkError = result.error ?? result.error_message ?? result.message ?? result.reason ?? "";
             const sdkDetail = typeof sdkError === "string" ? sdkError : JSON.stringify(sdkError);
+            // Log full result for debugging (truncated at 2000 chars)
+            console.error(`[sdk] result error: subtype=${subtype} turns=${result.num_turns ?? 0} detail=${sdkDetail || "(none)"}`);
+            console.error(`[sdk] result full dump: ${JSON.stringify(result).slice(0, 2000)}`);
             const errorMessages: Record<string, string> = {
               error_max_turns: "Agent reached maximum turn limit.",
               error_max_budget_usd: "Agent reached budget limit.",
@@ -737,7 +787,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             };
             const baseMsg = errorMessages[subtype] ?? `Agent stopped: ${subtype}`;
             const fullMsg = sdkDetail ? `${baseMsg}\n${sdkDetail}` : baseMsg;
-            console.error(`[sdk] result error: subtype=${subtype} turns=${result.num_turns ?? 0} detail=${sdkDetail || "(none)"} raw=${JSON.stringify(result).slice(0, 500)}`);
             yield {
               type: "error",
               message: fullMsg,
@@ -772,6 +821,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (sdkEventCount === 0) {
         yield { type: "error", message: "Claude did not respond. Check that 'claude' CLI works in your terminal." };
       }
+      break; // Exit retryLoop — normal completion
+      } // end retryLoop
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       console.error(`[sdk] error: ${msg}`);
