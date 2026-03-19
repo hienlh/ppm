@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0] - 2026-03-20
+
+### Added
+- **Notification system**: Zustand-based notification store with per-session tracking, unread counts in document title, and SVG favicon badge
+- **Notification sounds**: 3 distinct Web Audio API tones — ascending chime (done), urgent alert (approval), soft triplet (question)
+- **Notification badge colors**: red (approval_request), amber (question), blue (done) on tabs, project avatars, and scroll arrows
+- **Telegram notifications**: Bot API integration with offline-only delivery, SSRF-safe bot token validation, HTML message formatting with deep links
+- **Telegram settings UI**: Bot token + chat ID configuration with save/test buttons, test uses saved config when inputs empty
+- **Settings accordion**: Collapsible sections for General, Notifications, Tunnel, Telegram, AI, and About
+- **Tab overflow indicators**: Color-coded scroll arrows showing most urgent hidden notification type
+- **Deep link support**: `?openChat=sessionId` query param to open/focus specific chat tabs
+- **Database export/import**: Bulk export/import connections with deduplication, validation, and dropdown menu UI
+- **Shared network utility**: Extracted `getLocalIp()` to `src/lib/network-utils.ts`
+
+### Changed
+- README simplified with concise quick-start guide
+
 ## [0.6.7] - 2026-03-19
 
 ### Added

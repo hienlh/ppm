@@ -1,6 +1,6 @@
 {
   "name": "@hienlh/ppm",
-  "version": "0.6.7",
+  "version": "0.7.0",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "module": "src/index.ts",
   "type": "module",
