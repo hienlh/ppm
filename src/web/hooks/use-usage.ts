@@ -12,7 +12,7 @@ interface UseUsageReturn {
   refreshUsage: () => void;
 }
 
-export function useUsage(projectName: string, providerId = "claude-sdk"): UseUsageReturn {
+export function useUsage(projectName: string, providerId = "claude"): UseUsageReturn {
   const [usageInfo, setUsageInfo] = useState<UsageInfo>({});
   const [usageLoading, setUsageLoading] = useState(false);
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);

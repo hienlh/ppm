@@ -160,7 +160,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
 
     expect(session.id).toBeTruthy();
     expect(session.id).not.toContain("pending");
-    expect(session.providerId).toBe("claude-sdk");
+    expect(session.providerId).toBe("claude");
     expect(session.title).toBe("Integration Test");
     expect(session.projectName).toBe("test-project");
   });
