@@ -70,6 +70,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     thinkingWarningThreshold,
     pendingApproval,
     contextWindowPct,
+    sessionTitle,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -77,6 +78,13 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     refetchMessages,
     isConnected,
   } = useChat(sessionId, providerId, projectName);
+
+  // Update tab title when SDK summary arrives
+  useEffect(() => {
+    if (tabId && sessionTitle) {
+      updateTab(tabId, { title: sessionTitle });
+    }
+  }, [sessionTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-send pending message for forked sessions (set by handleFork)
   const pendingForkMsgRef = useRef(metadata?.pendingMessage as string | undefined);
@@ -102,7 +110,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleSelectSession = useCallback((session: SessionInfo) => {
     setSessionId(session.id);
     setProviderId(session.providerId);
-  }, []);
+    if (tabId) updateTab(tabId, { title: session.title || "Chat" });
+  }, [tabId, updateTab]);
 
   /** Fork current session and open new tab with the forked session, resending userMessage */
   const handleFork = useCallback(async (userMessage: string) => {

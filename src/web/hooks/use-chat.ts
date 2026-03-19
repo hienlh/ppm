@@ -23,6 +23,8 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   /** Context window usage % from last completed query (0–100) */
   contextWindowPct: number | null;
+  /** Updated session title from SDK summary (set after stream completes) */
+  sessionTitle: string | null;
   sendMessage: (content: string) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
@@ -42,6 +44,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
   const [thinkingWarningThreshold, setThinkingWarningThreshold] = useState(15);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
@@ -60,6 +63,12 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
 
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
+
+    // Handle title updates from SDK summary
+    if ((data as any).type === "title_updated") {
+      setSessionTitle((data as any).title ?? null);
+      return;
+    }
 
     // Handle streaming status updates (connecting → streaming → idle)
     if ((data as any).type === "streaming_status") {
@@ -88,6 +97,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     // Handle connected event (new session)
     if ((data as any).type === "connected") {
       setIsConnected(true);
+      if ((data as any).sessionTitle) setSessionTitle((data as any).sessionTitle);
       return;
     }
 
@@ -95,6 +105,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     if ((data as any).type === "status") {
       setIsConnected(true);
       const status = data as any;
+      if (status.sessionTitle) setSessionTitle(status.sessionTitle);
       if (status.isStreaming) {
         isStreamingRef.current = true;
         setIsStreaming(true);
@@ -475,6 +486,7 @@ export function useChat(sessionId: string | null, providerId = "claude-sdk", pro
     thinkingWarningThreshold,
     pendingApproval,
     contextWindowPct,
+    sessionTitle,
     sendMessage,
     respondToApproval,
     cancelStreaming,

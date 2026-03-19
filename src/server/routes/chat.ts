@@ -4,6 +4,7 @@ import { mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
+import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { listSlashItems } from "../../services/slash-items.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
@@ -103,6 +104,24 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 404);
+  }
+});
+
+/** PATCH /chat/sessions/:id — rename a session */
+chatRoutes.patch("/sessions/:id", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ title?: string }>();
+    if (!body.title?.trim()) return c.json(err("title is required"), 400);
+    const title = body.title.trim();
+    // Persist to SDK so Claude Code CLI also sees the custom title
+    await sdkRenameSession(id, title);
+    // Also update in-memory session
+    const session = chatService.getSession(id);
+    if (session) session.title = title;
+    return c.json(ok({ id, title }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
   }
 });
 

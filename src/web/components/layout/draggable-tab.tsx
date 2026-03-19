@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from "react";
 import { X } from "lucide-react";
 import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
@@ -13,12 +14,33 @@ interface DraggableTabProps {
   onDragOver: (e: React.DragEvent) => void;
   onDragEnd: () => void;
   tabRef: (el: HTMLButtonElement | null) => void;
+  /** If provided, double-clicking the title enters inline rename mode */
+  onRename?: (newTitle: string) => void;
 }
 
 export function DraggableTab({
   tab, isActive, icon: Icon, showDropBefore, onSelect, onClose,
-  onDragStart, onDragOver, onDragEnd, tabRef,
+  onDragStart, onDragOver, onDragEnd, tabRef, onRename,
 }: DraggableTabProps) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(tab.title);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      setEditValue(tab.title);
+      setTimeout(() => inputRef.current?.select(), 0);
+    }
+  }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const commitRename = () => {
+    setEditing(false);
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== tab.title && onRename) {
+      onRename(trimmed);
+    }
+  };
+
   return (
     <div className="relative flex items-center">
       {showDropBefore && (
@@ -27,7 +49,7 @@ export function DraggableTab({
       <button
         ref={tabRef}
         data-tab-item
-        draggable
+        draggable={!editing}
         onClick={onSelect}
         onAuxClick={(e) => { if (e.button === 1 && tab.closable) { e.preventDefault(); onClose(); } }}
         onDragStart={onDragStart}
@@ -42,8 +64,32 @@ export function DraggableTab({
         )}
       >
         <Icon className="size-4" />
-        <span className="max-w-[120px] truncate">{tab.title}</span>
-        {tab.closable && (
+        {editing ? (
+          <input
+            ref={inputRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitRename();
+              if (e.key === "Escape") setEditing(false);
+              e.stopPropagation();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-[120px] bg-surface-elevated text-xs px-1 py-0.5 rounded border border-border outline-none focus:border-primary"
+            autoFocus
+          />
+        ) : (
+          <span
+            className="max-w-[120px] truncate"
+            onDoubleClick={(e) => {
+              if (onRename) { e.stopPropagation(); setEditing(true); }
+            }}
+          >
+            {tab.title}
+          </span>
+        )}
+        {tab.closable && !editing && (
           <span
             role="button"
             tabIndex={0}
