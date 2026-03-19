@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.3] - 2026-03-19
+
+### Added
+- **Customizable keyboard shortcuts**: new settings section with click-to-record UI, synced to server (SQLite) across browsers
+- **New shortcuts**: Open Chat (`Mod+Shift+L`), Open Terminal (`` Mod+` ``), Open Settings (`Mod+,`), Git Graph (`Mod+Shift+G`), Git Status sidebar (`Mod+Shift+E`), Switch Project 1-9 (`Mod+1..9`)
+- Locked shortcuts shown with lock icon, browser-reserved warning banner
+
+### Fixed
+- **Chat picker Enter key**: pressing Enter now selects the slash/file picker item instead of also sending the message
+
 ## [0.6.2] - 2026-03-19
 
 ### Added
