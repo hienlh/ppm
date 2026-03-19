@@ -90,19 +90,22 @@ export function useDatabase(connectionId: number) {
     try {
       const result = await api.post<DbQueryResult>(`${base}/query`, { sql: sqlText });
       setQueryResult(result);
-      if (result.changeType === "modify") fetchTableData();
+      if (result.changeType === "modify") fetchTableData(selectedTable ?? undefined, selectedSchema);
     } catch (e) {
       setQueryError((e as Error).message);
     } finally {
       setQueryLoading(false);
     }
-  }, [base, fetchTableData]);
+  }, [base, selectedTable, selectedSchema, fetchTableData]);
 
   const updateCell = useCallback(async (pkColumn: string, pkValue: unknown, column: string, value: unknown) => {
     if (!selectedTable) return;
+    const t = selectedTable;
+    const s = selectedSchema;
     try {
-      await api.put(`${base}/cell`, { table: selectedTable, schema: selectedSchema, pkColumn, pkValue, column, value });
-      fetchTableData();
+      await api.put(`${base}/cell`, { table: t, schema: s, pkColumn, pkValue, column, value });
+      // Re-fetch with explicit args to avoid stale closure
+      fetchTableData(t, s);
     } catch (e) {
       setError((e as Error).message);
     }

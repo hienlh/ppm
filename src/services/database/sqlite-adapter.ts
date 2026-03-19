@@ -49,7 +49,6 @@ export const sqliteAdapter: DatabaseAdapter = {
 
   async updateCell(config: DbConnectionConfig, table: string, opts): Promise<void> {
     if (!config.path) throw new Error("Missing path");
-    // SQLite uses rowid as PK for cell updates
-    sqliteService.updateCell(config.path, config.path, table, Number(opts.pkValue), opts.column, opts.value);
+    sqliteService.updateCell(config.path, config.path, table, opts.pkValue as number, opts.column, opts.value, opts.pkColumn);
   },
 };

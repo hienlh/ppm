@@ -130,10 +130,11 @@ class SqliteService {
   updateCell(
     projectPath: string, dbPath: string, table: string,
     rowid: number, column: string, value: unknown,
+    pkColumn = "rowid",
   ): void {
     const abs = this.resolvePath(projectPath, dbPath);
     const db = this.open(abs);
-    db.run(`UPDATE "${table}" SET "${column}" = ? WHERE rowid = ?`, [value as never, rowid]);
+    db.run(`UPDATE "${table}" SET "${column}" = ? WHERE "${pkColumn}" = ?`, [value as never, rowid]);
   }
 
   /** Close all cached databases (for shutdown) */
