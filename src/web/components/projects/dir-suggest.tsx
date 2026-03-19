@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { FolderGit2, Loader2 } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { Input } from "@/components/ui/input";
+import { BrowseButton } from "@/components/ui/browse-button";
 
 interface DirSuggestItem {
   path: string;
@@ -105,19 +106,28 @@ export function DirSuggest({ value, onChange, onSelect, placeholder, autoFocus }
 
   return (
     <div className="relative">
-      <div className="relative">
-        <Input
-          placeholder={placeholder ?? "/home/user/my-project"}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => filtered.length > 0 && setShowSuggestions(true)}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-          autoFocus={autoFocus}
+      <div className="flex gap-1.5 items-center">
+        <div className="relative flex-1">
+          <Input
+            placeholder={placeholder ?? "/home/user/my-project"}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => filtered.length > 0 && setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            autoFocus={autoFocus}
+          />
+          {loading && (
+            <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 size-4 text-text-subtle animate-spin" />
+          )}
+        </div>
+        <BrowseButton
+          mode="folder"
+          onSelect={(path) => {
+            onChange(path);
+            onSelect?.({ path, name: path.split("/").pop() ?? path });
+          }}
         />
-        {loading && (
-          <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 size-4 text-text-subtle animate-spin" />
-        )}
       </div>
       {showSuggestions && filtered.length > 0 && (
         <div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded-md border border-border bg-surface shadow-lg">
