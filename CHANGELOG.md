@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.5] - 2026-03-19
+
+### Added
+- **Unified database viewer**: open connections/tables from sidebar in a single "database" tab (replaces separate SQLite/Postgres tabs for connection-based access)
+- **Connection list tree UI**: tree guide lines, inline table search filter, click-to-expand connections
+- **Cached tables API**: `?cached=1` param for instant sidebar table loads without re-querying the database
+
+### Fixed
+- **Login infinite reload**: keybindings API call fired before auth check, causing 401 → token removal → reload loop after SQLite migration
+- **ApiClient reload guard**: sessionStorage-based guard prevents infinite reload loops from pre-auth 401
+- **Tool card crash**: TodoWrite/AskUserQuestion cards crashed when SDK sent non-array input fields
+- **Effort level "max"**: removed unsupported effort level, auto-downgrades to "high" on config load
+- **Provider ID mismatch**: fixed stale "claude-sdk" references across routes, hooks, and tests
+- **Test suite**: fixed all 19 test failures (isolation, flaky assertions, missing cloudflared skip)
+
 ## [0.6.4] - 2026-03-19
 
 ### Fixed
