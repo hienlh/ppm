@@ -134,12 +134,12 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
     case "Task":
       return <><Bot className="size-3 inline" /> {name} <span className="text-text-subtle">{truncate(s(input.description || input.prompt), 60)}</span></>;
     case "TodoWrite": {
-      const todos = (input.todos as Array<{ content: string; status: string }>) ?? [];
+      const todos = Array.isArray(input.todos) ? input.todos as Array<{ content: string; status: string }> : [];
       const done = todos.filter((t) => t.status === "completed").length;
       return <><ListTodo className="size-3 inline" /> {name} <span className="text-text-subtle">{done}/{todos.length} done</span></>;
     }
     case "AskUserQuestion": {
-      const qs = (input.questions as Array<{ question: string }>) ?? [];
+      const qs = Array.isArray(input.questions) ? input.questions as Array<{ question: string }> : [];
       const hasAns = !!(input.answers);
       return <>{name} <span className="text-text-subtle">{qs.length} question{qs.length !== 1 ? "s" : ""}{hasAns ? " ✓" : ""}</span></>;
     }
