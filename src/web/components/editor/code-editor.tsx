@@ -11,6 +11,8 @@ import { Loader2, FileWarning, ExternalLink, Code, Eye, WrapText } from "lucide-
 
 /** Image extensions renderable inline */
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
+/** SQLite extensions — redirect to sqlite viewer */
+const SQLITE_EXTS = new Set(["db", "sqlite", "sqlite3"]);
 
 function getFileExt(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";
@@ -54,8 +56,14 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const ext = filePath ? getFileExt(filePath) : "";
   const isImage = IMAGE_EXTS.has(ext);
   const isPdf = ext === "pdf";
+  const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
   const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
+
+  // Redirect .db files to sqlite viewer by changing tab type
+  useEffect(() => {
+    if (isSqlite && tabId) updateTab(tabId, { type: "sqlite" });
+  }, [isSqlite, tabId, updateTab]);
 
   // Detect external (absolute) file path — not relative to project
   const isExternalFile = filePath ? /^(\/|[A-Za-z]:[/\\])/.test(filePath) : false;

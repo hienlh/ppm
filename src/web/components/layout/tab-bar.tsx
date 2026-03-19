@@ -7,6 +7,7 @@ import {
   FileDiff,
   Settings,
   FileCode,
+  Database,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -21,6 +22,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal,
   chat: MessageSquare,
   editor: FileCode,
+  sqlite: Database,
   "git-graph": GitBranch,
   "git-diff": FileDiff,
   settings: Settings,

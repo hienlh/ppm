@@ -73,6 +73,7 @@ function DataTable({ columns, rows, schema, onCellUpdate }: {
   const commitEdit = useCallback(() => {
     if (!editingCell) return;
     const row = rows[editingCell.rowIdx];
+    if (!row) return;
     const rowid = row.rowid as number;
     const oldVal = row[editingCell.col];
     if (String(oldVal ?? "") !== editValue) {
