@@ -3,10 +3,11 @@ import { Plus } from "lucide-react";
 import { useTabStore } from "@/stores/tab-store";
 import { ConnectionList } from "./connection-list";
 import { ConnectionFormDialog } from "./connection-form-dialog";
+import { ConnectionImportExport } from "./connection-import-export";
 import { useConnections, type Connection, type CreateConnectionData, type UpdateConnectionData } from "./use-connections";
 
 export function DatabaseSidebar() {
-  const { connections, loading, cachedTables, createConnection, updateConnection, deleteConnection, testConnection, refreshTables } = useConnections();
+  const { connections, loading, cachedTables, createConnection, updateConnection, deleteConnection, testConnection, refreshTables, exportConnections, importConnections } = useConnections();
   const openTab = useTabStore((s) => s.openTab);
   const [addOpen, setAddOpen] = useState(false);
   const [editConn, setEditConn] = useState<Connection | null>(null);
@@ -41,13 +42,16 @@ export function DatabaseSidebar() {
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
         <span className="text-[10px] font-semibold text-text-subtle uppercase tracking-wider">Database</span>
-        <button
-          onClick={() => setAddOpen(true)}
-          className="flex items-center justify-center size-5 rounded hover:bg-surface-elevated transition-colors text-text-subtle hover:text-foreground"
-          title="Add connection"
-        >
-          <Plus className="size-3.5" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <ConnectionImportExport onExport={exportConnections} onImport={importConnections} />
+          <button
+            onClick={() => setAddOpen(true)}
+            className="flex items-center justify-center size-5 rounded hover:bg-surface-elevated transition-colors text-text-subtle hover:text-foreground"
+            title="Add connection"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Connection list */}

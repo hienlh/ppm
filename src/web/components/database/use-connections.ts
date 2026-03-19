@@ -88,5 +88,17 @@ export function useConnections() {
     setCachedTables((prev) => new Map(prev).set(id, tables));
   }, []);
 
-  return { connections, loading, cachedTables, createConnection, updateConnection, deleteConnection, testConnection, refreshTables };
+  const exportConnections = useCallback(async () => {
+    return api.get<{ version: number; exported_at: string; connections: unknown[] }>("/api/db/connections/export");
+  }, []);
+
+  const importConnections = useCallback(async (data: { connections: unknown[] }) => {
+    const result = await api.post<{ imported: number; skipped: number; errors: string[]; connections: Connection[] }>(
+      "/api/db/connections/import", data,
+    );
+    await fetchConnections();
+    return result;
+  }, [fetchConnections]);
+
+  return { connections, loading, cachedTables, createConnection, updateConnection, deleteConnection, testConnection, refreshTables, exportConnections, importConnections };
 }

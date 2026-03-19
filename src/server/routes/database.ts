@@ -43,6 +43,63 @@ databaseRoutes.get("/connections", (c) => {
   }
 });
 
+/** GET /api/db/connections/export — full connection data including credentials */
+databaseRoutes.get("/connections/export", (c) => {
+  try {
+    const conns = getConnections();
+    const exported = conns.map(({ id, sort_order, created_at, updated_at, ...rest }) => rest);
+    return c.json(ok({ version: 1, exported_at: new Date().toISOString(), connections: exported }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /api/db/connections/import — bulk create from exported JSON */
+databaseRoutes.post("/connections/import", async (c) => {
+  try {
+    const body = await c.req.json<{ connections: Array<{ type: string; name: string; connection_config: string; group_name?: string | null; color?: string | null; readonly?: number }> }>();
+    if (!Array.isArray(body.connections)) return c.json(err("connections array is required"), 400);
+
+    const existingNames = new Set(getConnections().map((c) => c.name));
+    const created: ReturnType<typeof sanitizeConn>[] = [];
+    const errors: string[] = [];
+
+    for (const entry of body.connections) {
+      try {
+        if (!entry.type || !entry.name || !entry.connection_config) {
+          errors.push(`Skipped: missing type/name/connection_config`);
+          continue;
+        }
+        if (!["sqlite", "postgres"].includes(entry.type)) {
+          errors.push(`Skipped "${entry.name}": invalid type "${entry.type}"`);
+          continue;
+        }
+        let config: ConnectionConfig;
+        try { config = JSON.parse(entry.connection_config); } catch {
+          errors.push(`Skipped "${entry.name}": invalid connection_config JSON`);
+          continue;
+        }
+
+        // Deduplicate name
+        let name = entry.name;
+        let suffix = 2;
+        while (existingNames.has(name)) { name = `${entry.name} (${suffix++})`; }
+        existingNames.add(name);
+
+        const conn = insertConnection(entry.type as "sqlite" | "postgres", name, config, entry.group_name, entry.color);
+        if (entry.readonly === 0) updateConnection(conn.id, { readonly: 0 });
+        created.push(sanitizeConn(getConnectionById(conn.id)!));
+      } catch (e) {
+        errors.push(`Failed "${entry.name}": ${(e as Error).message}`);
+      }
+    }
+
+    return c.json(ok({ imported: created.length, skipped: errors.length, errors, connections: created }), 201);
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /api/db/connections/:id */
 databaseRoutes.get("/connections/:id", (c) => {
   const conn = resolveConn(c.req.param("id"));
