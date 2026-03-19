@@ -1,4 +1,5 @@
 const TOKEN_KEY = "ppm-auth-token";
+const RELOAD_GUARD_KEY = "ppm-auth-reload-ts";
 
 class ApiClient {
   private baseUrl: string;
@@ -65,7 +66,12 @@ class ApiClient {
   private async handleResponse<T>(res: Response): Promise<T> {
     if (res.status === 401) {
       localStorage.removeItem(TOKEN_KEY);
-      window.location.reload();
+      // Guard against infinite reload loops: skip reload if we already reloaded within 3s
+      const lastReload = Number(sessionStorage.getItem(RELOAD_GUARD_KEY) || "0");
+      if (Date.now() - lastReload > 3000) {
+        sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
+        window.location.reload();
+      }
       throw new Error("Unauthorized");
     }
 

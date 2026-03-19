@@ -58,12 +58,9 @@ export function App() {
     }
   }, [theme]);
 
-  // Fetch server info + keybindings on mount (before auth — shown on login screen)
+  // Fetch server info on mount (before auth — shown on login screen)
   useEffect(() => {
     fetchServerInfo();
-    import("@/stores/keybindings-store").then(({ useKeybindingsStore }) => {
-      useKeybindingsStore.getState().loadFromServer();
-    });
   }, [fetchServerInfo]);
 
   // Auth check on mount
@@ -101,6 +98,14 @@ export function App() {
 
   // Health check — detects server crash/restart
   useHealthCheck();
+
+  // Load keybindings after auth confirmed (must not call ApiClient before auth)
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    import("@/stores/keybindings-store").then(({ useKeybindingsStore }) => {
+      useKeybindingsStore.getState().loadFromServer();
+    });
+  }, [authState]);
 
   // Fetch projects after auth, then restore from URL if applicable
   useEffect(() => {
