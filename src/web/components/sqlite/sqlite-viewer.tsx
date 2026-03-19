@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Database, Loader2, AlertCircle } from "lucide-react";
 import { useSqlite } from "./use-sqlite";
 import { SqliteTableList } from "./sqlite-table-list";
@@ -24,9 +24,11 @@ export function SqliteViewer({ metadata }: SqliteViewerProps) {
         projectName=""
         dbPath=""
         connectionId={connectionId}
+        connectionName={metadata?.connectionName as string | undefined}
         initialTable={initialTable}
         queryPanelOpen={queryPanelOpen}
         onToggleQueryPanel={() => setQueryPanelOpen((v) => !v)}
+        hideTableList
       />
     );
   }
@@ -50,19 +52,21 @@ export function SqliteViewer({ metadata }: SqliteViewerProps) {
 }
 
 function SqliteViewerInner({
-  projectName, dbPath, connectionId, initialTable, queryPanelOpen, onToggleQueryPanel,
+  projectName, dbPath, connectionId, connectionName, initialTable, queryPanelOpen, onToggleQueryPanel, hideTableList,
 }: {
-  projectName: string; dbPath: string; connectionId?: number; initialTable?: string;
-  queryPanelOpen: boolean; onToggleQueryPanel: () => void;
+  projectName: string; dbPath: string; connectionId?: number; connectionName?: string; initialTable?: string;
+  queryPanelOpen: boolean; onToggleQueryPanel: () => void; hideTableList?: boolean;
 }) {
   const sqlite = useSqlite(projectName, dbPath, connectionId);
 
   // Jump to initial table from sidebar click
-  const [didInit, setDidInit] = useState(false);
-  if (initialTable && !didInit && sqlite.tables.length > 0 && sqlite.selectedTable !== initialTable) {
-    setDidInit(true);
-    sqlite.selectTable(initialTable);
-  }
+  const didInit = useRef(false);
+  useEffect(() => {
+    if (initialTable && !didInit.current && sqlite.tables.length > 0) {
+      didInit.current = true;
+      sqlite.selectTable(initialTable);
+    }
+  }, [initialTable, sqlite.tables]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (sqlite.error && sqlite.tables.length === 0) {
     return (
@@ -84,20 +88,22 @@ function SqliteViewerInner({
 
   return (
     <div className="flex h-full w-full overflow-hidden">
-      {/* Left sidebar — table list */}
-      <SqliteTableList
-        tables={sqlite.tables}
-        selectedTable={sqlite.selectedTable}
-        onSelect={sqlite.selectTable}
-        onRefresh={sqlite.refreshTables}
-      />
+      {/* Left sidebar — table list (hidden when opened from database sidebar) */}
+      {!hideTableList && (
+        <SqliteTableList
+          tables={sqlite.tables}
+          selectedTable={sqlite.selectedTable}
+          onSelect={sqlite.selectTable}
+          onRefresh={sqlite.refreshTables}
+        />
+      )}
 
       {/* Main content area */}
-      <div className="flex-1 flex flex-col overflow-hidden border-l border-border">
+      <div className={`flex-1 flex flex-col overflow-hidden ${!hideTableList ? "border-l border-border" : ""}`}>
         {/* Toolbar */}
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-background shrink-0">
           <Database className="size-3.5 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground truncate">{dbPath}</span>
+          <span className="text-xs text-muted-foreground truncate">{connectionName ?? dbPath}</span>
           <span className="text-xs text-muted-foreground">
             {sqlite.selectedTable && `/ ${sqlite.selectedTable}`}
           </span>

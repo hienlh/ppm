@@ -11,23 +11,13 @@ export function DatabaseSidebar() {
   const [addOpen, setAddOpen] = useState(false);
   const [editConn, setEditConn] = useState<Connection | null>(null);
 
-  const handleOpenConnection = (conn: Connection) => {
-    openTab({
-      type: conn.type === "postgres" ? "postgres" : "sqlite",
-      title: conn.name,
-      projectId: null,
-      closable: true,
-      metadata: { connectionId: conn.id, connectionColor: conn.color },
-    });
-  };
-
   const handleOpenTable = (conn: Connection, tableName: string, schemaName: string) => {
     openTab({
-      type: conn.type === "postgres" ? "postgres" : "sqlite",
+      type: "database",
       title: `${conn.name} · ${tableName}`,
       projectId: null,
       closable: true,
-      metadata: { connectionId: conn.id, tableName, schemaName, connectionColor: conn.color },
+      metadata: { connectionId: conn.id, connectionName: conn.name, dbType: conn.type, tableName, schemaName, connectionColor: conn.color },
     });
   };
 
@@ -68,7 +58,6 @@ export function DatabaseSidebar() {
           <ConnectionList
             connections={connections}
             cachedTables={cachedTables}
-            onOpenConnection={handleOpenConnection}
             onOpenTable={handleOpenTable}
             onRefreshTables={refreshTables}
             onEdit={setEditConn}

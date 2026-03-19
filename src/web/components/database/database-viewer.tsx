@@ -1,97 +1,41 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { Database, Loader2, AlertCircle, Play, ChevronLeft, ChevronRight, Table, RefreshCw } from "lucide-react";
+import { Database, Loader2, Play, ChevronLeft, ChevronRight } from "lucide-react";
 import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
 import CodeMirror from "@uiw/react-codemirror";
-import { sql, PostgreSQL } from "@codemirror/lang-sql";
-import { usePostgres, type PgColumnInfo, type PgQueryResult } from "./use-postgres";
+import { sql, PostgreSQL, SQLite } from "@codemirror/lang-sql";
+import { useDatabase, type DbColumnInfo, type DbQueryResult } from "./use-database";
+
+const SQL_DIALECTS: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, sqlite: SQLite };
 
 interface Props { metadata?: Record<string, unknown>; tabId?: string }
 
-export function PostgresViewer({ metadata }: Props) {
-  const initialConn = (metadata?.connectionString as string) ?? "";
-  const connectionId = metadata?.connectionId as number | undefined;
-  const pg = usePostgres(connectionId);
+/** Generic database viewer — works for any DB type via unified API */
+export function DatabaseViewer({ metadata }: Props) {
+  const connectionId = metadata?.connectionId as number;
+  const connectionName = metadata?.connectionName as string | undefined;
+  const dbType = (metadata?.dbType as string) ?? "postgres";
+  const initialTable = metadata?.tableName as string | undefined;
+  const initialSchema = (metadata?.schemaName as string) ?? "public";
 
-  // When connectionId present, the hook auto-connects — skip connection form
-  if (!pg.connected) return <ConnectionForm initialValue={initialConn} onConnect={pg.connect} loading={pg.loading} error={pg.error} />;
-
-  return <ConnectedView pg={pg} initialTable={metadata?.tableName as string | undefined} hideTableList={!!connectionId} connectionName={metadata?.connectionName as string | undefined} />;
-}
-
-/* ---------- Connection Form ---------- */
-function ConnectionForm({ initialValue, onConnect, loading, error }: {
-  initialValue: string; onConnect: (s: string) => void; loading: boolean; error: string | null;
-}) {
-  const [value, setValue] = useState(initialValue);
-  return (
-    <div className="flex items-center justify-center h-full">
-      <div className="flex flex-col gap-3 w-full max-w-lg px-4">
-        <div className="flex items-center gap-2 text-sm font-medium"><Database className="size-4" /> Connect to PostgreSQL</div>
-        <input
-          className="w-full px-3 py-2 rounded border border-border bg-background text-sm font-mono outline-none focus:border-primary"
-          placeholder="postgresql://user:pass@host:5432/db"
-          value={value} onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && value.trim()) onConnect(value.trim()); }}
-        />
-        {error && <p className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="size-3" />{error}</p>}
-        <button type="button" disabled={loading || !value.trim()} onClick={() => onConnect(value.trim())}
-          className="px-4 py-2 rounded bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50 transition-colors">
-          {loading ? <Loader2 className="size-4 animate-spin mx-auto" /> : "Connect"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ---------- Connected View ---------- */
-function ConnectedView({ pg, initialTable, hideTableList, connectionName }: { pg: ReturnType<typeof usePostgres>; initialTable?: string; hideTableList?: boolean; connectionName?: string }) {
+  const db = useDatabase(connectionId);
   const [queryPanelOpen, setQueryPanelOpen] = useState(false);
 
-  // Jump to initial table — when hideTableList, go direct (skip table list fetch)
+  // Jump to initial table
   const didInit = useRef(false);
   useEffect(() => {
     if (!initialTable || didInit.current) return;
-    if (hideTableList && pg.connected) {
-      didInit.current = true;
-      pg.selectTable(initialTable);
-    } else if (pg.tables.length > 0) {
-      const t = pg.tables.find((t) => t.name === initialTable);
-      if (t) { didInit.current = true; pg.selectTable(t.name, t.schema); }
-    }
-  }, [initialTable, pg.connected, pg.tables]); // eslint-disable-line react-hooks/exhaustive-deps
+    didInit.current = true;
+    db.selectTable(initialTable, initialSchema);
+  }, [initialTable, initialSchema]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full w-full overflow-hidden">
-      {/* Table sidebar — hidden when opened from database sidebar */}
-      {!hideTableList && (
-        <div className="w-48 shrink-0 flex flex-col bg-background overflow-hidden">
-          <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Tables</span>
-            <button type="button" onClick={pg.refreshTables} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh">
-              <RefreshCw className="size-3" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {pg.tables.map((t) => (
-              <button key={`${t.schema}.${t.name}`} type="button" onClick={() => pg.selectTable(t.name, t.schema)}
-                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors ${
-                  pg.selectedTable === t.name ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"}`}>
-                <Table className="size-3 shrink-0" />
-                <span className="truncate flex-1">{t.schema !== "public" ? `${t.schema}.` : ""}{t.name}</span>
-                <span className="text-[10px] opacity-60">{t.rowCount}</span>
-              </button>
-            ))}
-            {pg.tables.length === 0 && <p className="px-3 py-4 text-xs text-muted-foreground text-center">No tables found</p>}
-          </div>
-        </div>
-      )}
-
-      {/* Main area */}
-      <div className={`flex-1 flex flex-col overflow-hidden ${!hideTableList ? "border-l border-border" : ""}`}>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Toolbar */}
         <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-background shrink-0">
           <Database className="size-3.5 text-muted-foreground" />
-          <span className="text-xs text-muted-foreground truncate">{connectionName ?? "PostgreSQL"}</span>
-          {pg.selectedTable && <span className="text-xs text-muted-foreground">/ {pg.selectedTable}</span>}
+          <span className="text-xs text-muted-foreground truncate">{connectionName ?? "Database"}</span>
+          {db.selectedTable && <span className="text-xs text-muted-foreground">/ {db.selectedTable}</span>}
           <div className="ml-auto">
             <button type="button" onClick={() => setQueryPanelOpen((v) => !v)}
               className={`px-2 py-1 rounded text-xs transition-colors ${queryPanelOpen ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
@@ -100,14 +44,17 @@ function ConnectedView({ pg, initialTable, hideTableList, connectionName }: { pg
           </div>
         </div>
 
+        {/* Data grid */}
         <div className={`flex-1 overflow-hidden ${queryPanelOpen ? "max-h-[60%]" : ""}`}>
-          <PgDataGrid tableData={pg.tableData} schema={pg.schema} loading={pg.loading}
-            page={pg.page} onPageChange={pg.setPage} onCellUpdate={pg.updateCell} />
+          <DataGrid tableData={db.tableData} schema={db.schema} loading={db.loading}
+            page={db.page} onPageChange={db.setPage} onCellUpdate={db.updateCell} />
         </div>
 
+        {/* Query editor */}
         {queryPanelOpen && (
           <div className="border-t border-border h-[40%] shrink-0">
-            <PgQueryEditor onExecute={pg.executeQuery} result={pg.queryResult} error={pg.queryError} loading={pg.queryLoading} />
+            <QueryEditor dialect={SQL_DIALECTS[dbType] ?? PostgreSQL}
+              onExecute={db.executeQuery} result={db.queryResult} error={db.queryError} loading={db.queryLoading} />
           </div>
         )}
       </div>
@@ -116,9 +63,9 @@ function ConnectedView({ pg, initialTable, hideTableList, connectionName }: { pg
 }
 
 /* ---------- Data Grid ---------- */
-function PgDataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate }: {
+function DataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate }: {
   tableData: { columns: string[]; rows: Record<string, unknown>[]; total: number; limit: number } | null;
-  schema: PgColumnInfo[]; loading: boolean; page: number;
+  schema: DbColumnInfo[]; loading: boolean; page: number;
   onPageChange: (p: number) => void;
   onCellUpdate: (pkCol: string, pkVal: unknown, col: string, val: unknown) => void;
 }) {
@@ -230,8 +177,8 @@ function PgDataGrid({ tableData, schema, loading, page, onPageChange, onCellUpda
 }
 
 /* ---------- Query Editor ---------- */
-function PgQueryEditor({ onExecute, result, error, loading }: {
-  onExecute: (sql: string) => void; result: PgQueryResult | null; error: string | null; loading: boolean;
+function QueryEditor({ dialect, onExecute, result, error, loading }: {
+  dialect: typeof PostgreSQL; onExecute: (sql: string) => void; result: DbQueryResult | null; error: string | null; loading: boolean;
 }) {
   const [query, setQuery] = useState("SELECT * FROM ");
 
@@ -244,7 +191,7 @@ function PgQueryEditor({ onExecute, result, error, loading }: {
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-start gap-1 border-b border-border bg-background" onKeyDown={handleKeyDown}>
         <div className="flex-1 max-h-[120px] overflow-auto">
-          <CodeMirror value={query} onChange={setQuery} extensions={[sql({ dialect: PostgreSQL })]}
+          <CodeMirror value={query} onChange={setQuery} extensions={[sql({ dialect })]}
             basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: false }}
             className="text-xs [&_.cm-editor]:!outline-none [&_.cm-scroller]:!overflow-auto" />
         </div>

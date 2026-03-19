@@ -4,7 +4,7 @@ import {
   type ConnectionConfig, type ConnectionRow,
 } from "../../services/db.service.ts";
 import { getAdapter } from "../../services/database/adapter-registry.ts";
-import { syncTables, searchTables } from "../../services/table-cache.service.ts";
+import { syncTables, searchTables, getTablesFromCache } from "../../services/table-cache.service.ts";
 import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
 import { ok, err } from "../../types/api.ts";
 import type { DbConnectionConfig } from "../../types/database.ts";
@@ -138,12 +138,14 @@ databaseRoutes.post("/connections/:id/test", async (c) => {
   }
 });
 
-/** GET /api/db/connections/:id/tables — live fetch + sync cache */
+/** GET /api/db/connections/:id/tables — ?cached=1 reads from cache, otherwise live sync */
 databaseRoutes.get("/connections/:id/tables", async (c) => {
   try {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
-    const tables = await syncTables(conn.id);
+    const useCached = c.req.query("cached") === "1";
+    const result = useCached ? getTablesFromCache(conn.id) : await syncTables(conn.id);
+    const tables = result.map((t) => ({ name: t.tableName, schema: t.schemaName, rowCount: t.rowCount }));
     return c.json(ok(tables));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

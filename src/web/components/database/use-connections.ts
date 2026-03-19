@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { api } from "../../lib/api-client";
 
 export interface Connection {
   id: number;
@@ -36,13 +37,6 @@ export interface UpdateConnectionData {
   readonly?: number;
 }
 
-async function apiFetch<T>(url: string, opts?: RequestInit): Promise<T> {
-  const res = await fetch(url, opts);
-  const json = await res.json() as { ok: boolean; data?: T; error?: string };
-  if (!json.ok) throw new Error(json.error ?? "Request failed");
-  return json.data as T;
-}
-
 export function useConnections() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +44,7 @@ export function useConnections() {
 
   const fetchConnections = useCallback(async () => {
     try {
-      const data = await apiFetch<Connection[]>("/api/db/connections");
+      const data = await api.get<Connection[]>("/api/db/connections");
       setConnections(data);
     } catch {
       // ignore — server may not be ready
@@ -62,36 +56,35 @@ export function useConnections() {
   useEffect(() => { fetchConnections(); }, [fetchConnections]);
 
   const createConnection = useCallback(async (data: CreateConnectionData): Promise<Connection> => {
-    const conn = await apiFetch<Connection>("/api/db/connections", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
+    const conn = await api.post<Connection>("/api/db/connections", data);
     setConnections((prev) => [...prev, conn]);
     return conn;
   }, []);
 
   const updateConnection = useCallback(async (id: number, data: UpdateConnectionData): Promise<void> => {
-    const updated = await apiFetch<Connection>(`/api/db/connections/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    });
+    const updated = await api.put<Connection>(`/api/db/connections/${id}`, data);
     setConnections((prev) => prev.map((c) => (c.id === id ? updated : c)));
   }, []);
 
   const deleteConnection = useCallback(async (id: number): Promise<void> => {
-    await apiFetch(`/api/db/connections/${id}`, { method: "DELETE" });
+    await api.del(`/api/db/connections/${id}`);
     setConnections((prev) => prev.filter((c) => c.id !== id));
     setCachedTables((prev) => { const m = new Map(prev); m.delete(id); return m; });
   }, []);
 
   const testConnection = useCallback(async (id: number): Promise<{ ok: boolean; error?: string }> => {
-    return apiFetch(`/api/db/connections/${id}/test`, { method: "POST" });
+    return api.post(`/api/db/connections/${id}/test`);
   }, []);
 
   const refreshTables = useCallback(async (id: number): Promise<void> => {
-    const tables = await apiFetch<CachedTable[]>(`/api/db/connections/${id}/tables`);
+    const raw = await api.get<{ name: string; schema: string; rowCount: number }[]>(`/api/db/connections/${id}/tables`);
+    const tables: CachedTable[] = raw.map((t) => ({
+      connectionId: id,
+      tableName: t.name,
+      schemaName: t.schema,
+      rowCount: t.rowCount,
+      cachedAt: new Date().toISOString(),
+    }));
     setCachedTables((prev) => new Map(prev).set(id, tables));
   }, []);
 
