@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.7] - 2026-03-19
+
+### Added
+- **QuestionCard component**: extracted standalone question UI with tabs, keyboard navigation (arrow keys, 1-9 quick select, Enter submit), custom "Other" input, proper light/dark mode contrast using primary color tokens
+- **File browser picker**: consolidated `/api/fs/*` endpoints for command palette filesystem browsing
+
+### Fixed
+- **Project restore on reload**: URL project was ignored because effects overwrote the URL before `parseUrlState()` ran; now captures URL in a ref on mount
+- **Command palette default order**: AI Chat option moved to top when no query entered
+- **Light mode contrast**: QuestionCard replaced `accent` tokens (near-white in light mode) with `primary` for visible borders, selected states, and buttons
+
 ## [0.6.6] - 2026-03-19
 
 ### Added
