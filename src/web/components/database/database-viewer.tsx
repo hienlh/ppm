@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { Database, Loader2, Play, ChevronLeft, ChevronRight } from "lucide-react";
+import { Database, Loader2, Play, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
 import CodeMirror from "@uiw/react-codemirror";
 import { sql, PostgreSQL, SQLite } from "@codemirror/lang-sql";
@@ -36,7 +36,11 @@ export function DatabaseViewer({ metadata }: Props) {
           <Database className="size-3.5 text-muted-foreground" />
           <span className="text-xs text-muted-foreground truncate">{connectionName ?? "Database"}</span>
           {db.selectedTable && <span className="text-xs text-muted-foreground">/ {db.selectedTable}</span>}
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-1">
+            <button type="button" onClick={() => db.refreshData()} title="Reload data"
+              className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors">
+              <RefreshCw className={`size-3 ${db.loading ? "animate-spin" : ""}`} />
+            </button>
             <button type="button" onClick={() => setQueryPanelOpen((v) => !v)}
               className={`px-2 py-1 rounded text-xs transition-colors ${queryPanelOpen ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
               SQL
