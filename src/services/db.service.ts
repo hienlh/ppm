@@ -1,10 +1,10 @@
-import { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 3;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -119,6 +119,52 @@ function runMigrations(database: Database): void {
       CREATE INDEX IF NOT EXISTS idx_projects_sort ON projects(sort_order);
 
       PRAGMA user_version = 1;
+    `);
+  }
+
+  if (current < 2) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS connections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL CHECK(type IN ('sqlite', 'postgres')),
+        name TEXT NOT NULL UNIQUE,
+        connection_config TEXT NOT NULL,
+        group_name TEXT,
+        color TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_connections_type ON connections(type);
+      CREATE INDEX IF NOT EXISTS idx_connections_group ON connections(group_name);
+
+      PRAGMA user_version = 2;
+    `);
+  }
+
+  if (current < 3) {
+    // Add readonly column (safe-by-default: 1 = block writes, UI-only toggle)
+    try {
+      database.exec(`ALTER TABLE connections ADD COLUMN readonly INTEGER NOT NULL DEFAULT 1`);
+    } catch {
+      // Column may already exist (fresh DB created in this session)
+    }
+
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS connection_table_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+        table_name TEXT NOT NULL,
+        schema_name TEXT NOT NULL DEFAULT 'public',
+        row_count INTEGER NOT NULL DEFAULT 0,
+        cached_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(connection_id, schema_name, table_name)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_table_cache_conn ON connection_table_cache(connection_id);
+
+      PRAGMA user_version = 3;
     `);
   }
 }
@@ -297,6 +343,131 @@ export function getUsageSince(since: string): UsageRow[] {
 
 export function getDbFilePath(): string {
   return getDbPath();
+}
+
+// ---------------------------------------------------------------------------
+// Connection helpers
+// ---------------------------------------------------------------------------
+
+export interface ConnectionRow {
+  id: number;
+  type: "sqlite" | "postgres";
+  name: string;
+  connection_config: string;
+  group_name: string | null;
+  color: string | null;
+  /** 1 = readonly (default), 0 = writable. UI-only toggle — CLI cannot change this. */
+  readonly: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Parsed config stored in connection_config JSON */
+export type ConnectionConfig =
+  | { type: "sqlite"; path: string }
+  | { type: "postgres"; connectionString: string };
+
+export function getConnections(): ConnectionRow[] {
+  return getDb().query(
+    "SELECT * FROM connections ORDER BY sort_order, id",
+  ).all() as ConnectionRow[];
+}
+
+export function getConnectionById(id: number): ConnectionRow | null {
+  return getDb().query("SELECT * FROM connections WHERE id = ?").get(id) as ConnectionRow | null;
+}
+
+export function getConnectionByName(name: string): ConnectionRow | null {
+  return getDb().query("SELECT * FROM connections WHERE name = ?").get(name) as ConnectionRow | null;
+}
+
+/** Resolve a connection by name or numeric ID */
+export function resolveConnection(nameOrId: string): ConnectionRow | null {
+  const asNum = Number(nameOrId);
+  if (!Number.isNaN(asNum) && Number.isInteger(asNum)) {
+    return getConnectionById(asNum) ?? getConnectionByName(nameOrId);
+  }
+  return getConnectionByName(nameOrId);
+}
+
+export function insertConnection(
+  type: "sqlite" | "postgres", name: string, config: ConnectionConfig,
+  groupName?: string | null, color?: string | null,
+): ConnectionRow {
+  const maxOrder = (getDb().query("SELECT COALESCE(MAX(sort_order), -1) as m FROM connections").get() as { m: number }).m;
+  getDb().query(
+    "INSERT INTO connections (type, name, connection_config, group_name, color, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(type, name, JSON.stringify(config), groupName ?? null, color ?? null, maxOrder + 1);
+  return getConnectionByName(name)!;
+}
+
+export function deleteConnection(nameOrId: string): boolean {
+  const conn = resolveConnection(nameOrId);
+  if (!conn) return false;
+  getDb().query("DELETE FROM connections WHERE id = ?").run(conn.id);
+  return true;
+}
+
+export function updateConnection(
+  id: number, updates: { name?: string; config?: ConnectionConfig; groupName?: string | null; color?: string | null; readonly?: number },
+): void {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (updates.name !== undefined) { sets.push("name = ?"); vals.push(updates.name); }
+  if (updates.config !== undefined) { sets.push("connection_config = ?"); vals.push(JSON.stringify(updates.config)); }
+  if (updates.groupName !== undefined) { sets.push("group_name = ?"); vals.push(updates.groupName); }
+  if (updates.color !== undefined) { sets.push("color = ?"); vals.push(updates.color); }
+  if (updates.readonly !== undefined) { sets.push("readonly = ?"); vals.push(updates.readonly); }
+  if (sets.length === 0) return;
+  sets.push("updated_at = datetime('now')");
+  vals.push(id);
+  getDb().query(`UPDATE connections SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as SQLQueryBindings[]));
+}
+
+// ---------------------------------------------------------------------------
+// Table cache helpers
+// ---------------------------------------------------------------------------
+
+export interface TableCacheRow {
+  id: number;
+  connection_id: number;
+  table_name: string;
+  schema_name: string;
+  row_count: number;
+  cached_at: string;
+}
+
+export function getCachedTables(connectionId: number): TableCacheRow[] {
+  return getDb().query(
+    "SELECT * FROM connection_table_cache WHERE connection_id = ? ORDER BY schema_name, table_name",
+  ).all(connectionId) as TableCacheRow[];
+}
+
+export function upsertTableCache(connectionId: number, tableName: string, schemaName: string, rowCount: number): void {
+  getDb().query(
+    `INSERT INTO connection_table_cache (connection_id, table_name, schema_name, row_count, cached_at)
+     VALUES (?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(connection_id, schema_name, table_name)
+     DO UPDATE SET row_count = excluded.row_count, cached_at = excluded.cached_at`,
+  ).run(connectionId, tableName, schemaName, rowCount);
+}
+
+export function deleteTableCache(connectionId: number): void {
+  getDb().query("DELETE FROM connection_table_cache WHERE connection_id = ?").run(connectionId);
+}
+
+export function searchTableCache(query: string): Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }> {
+  // Escape LIKE wildcards so user input is treated as literal text
+  const escaped = query.replace(/[%_\\]/g, "\\$&");
+  return getDb().query(
+    `SELECT tc.*, c.name as connection_name, c.type as connection_type, c.color as connection_color
+     FROM connection_table_cache tc
+     JOIN connections c ON tc.connection_id = c.id
+     WHERE tc.table_name LIKE ? ESCAPE '\\'
+     ORDER BY tc.table_name, c.name
+     LIMIT 50`,
+  ).all(`%${escaped}%`) as Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }>;
 }
 
 // Auto-close on process exit

@@ -142,7 +142,31 @@ Multi-project, project-scoped API refactor with improved UX, Monaco Editor, auto
 
 ---
 
-### Phase 9: PWA & Build ✅ Complete
+### Phase 9: Database Management ✅ Complete (260319)
+
+**Features:**
+- Unified database viewer for SQLite & PostgreSQL
+- DatabaseAdapter extensible pattern
+- Connection CRUD (create, edit, delete, color-code)
+- Query execution with readonly safety
+- Table browser with pagination & schema inspection
+- CLI support (ppm db commands)
+- Credentials stored securely in SQLite (never exposed in API)
+- readonly=true by default (safe-by-default)
+
+**Latest Work (260319):**
+- SQLiteAdapter & PostgresAdapter implementations
+- /api/db routes with connection sanitization
+- Database sidebar UI with connection form, color picker
+- TableCacheService for metadata caching & search
+- isReadOnlyQuery() CTE-safe safety checks
+- CLI db-cmd for database management
+
+**Status:** Complete, fully integrated with v0.6.3
+
+---
+
+### Phase 10: PWA & Build ✅ Complete
 - Vite build configuration
 - Service worker (vite-plugin-pwa)
 - Offline support (cached assets)
@@ -153,7 +177,7 @@ Multi-project, project-scoped API refactor with improved UX, Monaco Editor, auto
 
 ---
 
-### Phase 10: Testing ✅ In Progress (65%)
+### Phase 11: Testing ✅ In Progress (65%)
 
 #### Unit Tests (50% complete)
 - [x] Mock provider tests
@@ -229,17 +253,18 @@ Multi-project, project-scoped API refactor with improved UX, Monaco Editor, auto
 - [x] URL sync for bookmarking/sharing
 - [x] Project Switcher Bar (52px sidebar, avatars, colors, reordering) (260317)
 - [x] Keep-alive workspace switching (preserve xterm DOM) (260317)
-- [x] Sidebar tab system (Explorer/Git/History) (260317)
+- [x] Sidebar tab system (Explorer/Git/History/Database tabs) (260317, 260319)
 - [x] Monaco Editor migration (CodeMirror → Monaco, fully removed) (260317-260319)
 - [x] Project color customization (12-color palette + custom hex) (260317)
 - [x] Auto-generate chat session titles from SDK summary (260319)
 - [x] Inline session rename UI (260319)
-- [x] SQLite migration (db.service.ts, backward YAML compat) (in progress)
+- [x] Database Management (SQLite/PostgreSQL, adapters, UI, CLI) (260319)
+- [x] SQLite migration (db.service.ts, backward YAML compat, connection tables v3) (260319)
 - [ ] Complete test coverage (65% complete)
 - [x] Documentation updates (260319)
 - [ ] Security audit (planned)
 
-**Release Status:** v0.5.21 released, v2.0 essentially complete
+**Release Status:** v0.6.3 released, v2.0 + database management complete
 
 ---
 
@@ -366,7 +391,7 @@ Multi-project, project-scoped API refactor with improved UX, Monaco Editor, auto
 | Version | Status | Features | Target Date |
 |---------|--------|----------|-------------|
 | **v1.0** | Released | Single project, basic chat, terminal | Feb 28, 2025 |
-| **v2.0** | Complete (v0.5.21) | Multi-project, project-scoped API, improved UX, Monaco Editor, auto-title | Mar 19, 2026 |
+| **v2.0** | Complete (v0.6.3) | Multi-project, project-scoped API, improved UX, Monaco Editor, auto-title, database management | Mar 19, 2026 |
 | **v2.1** | Planned | Complete test coverage, SQLite finalization, bug fixes | Apr 15, 2026 |
 | **v3.0** | Planned | Collaborative editing, custom tools, plugins | Jun 30, 2026 |
 | **v4.0** | Planned | Cloud sync, advanced git, profiling UI | Sep 30, 2026 |

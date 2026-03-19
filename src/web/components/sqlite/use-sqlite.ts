@@ -6,7 +6,7 @@ export interface ColumnInfo { cid: number; name: string; type: string; notnull: 
 export interface QueryResult { columns: string[]; rows: Record<string, unknown>[]; rowsAffected: number; changeType: "select" | "modify" }
 interface TableData { columns: string[]; rows: Record<string, unknown>[]; total: number; page: number; limit: number }
 
-export function useSqlite(projectName: string, dbPath: string) {
+export function useSqlite(projectName: string, dbPath: string, connectionId?: number) {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [tableData, setTableData] = useState<TableData | null>(null);
@@ -18,15 +18,18 @@ export function useSqlite(projectName: string, dbPath: string) {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
 
-  const base = `${projectUrl(projectName)}/sqlite`;
-  const qs = `path=${encodeURIComponent(dbPath)}`;
+  // When connectionId present, use unified API; otherwise use project-scoped API
+  const unifiedBase = connectionId ? `/api/db/connections/${connectionId}` : null;
+  const base = unifiedBase ?? `${projectUrl(projectName)}/sqlite`;
+  const qs = unifiedBase ? "" : `path=${encodeURIComponent(dbPath)}`;
 
   // Fetch tables on mount
   const fetchTables = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get<TableInfo[]>(`${base}/tables?${qs}`);
+      const qsPart = qs ? `?${qs}` : "";
+      const data = await api.get<TableInfo[]>(`${base}/tables${qsPart}`);
       setTables(data);
       if (data.length > 0 && !selectedTable) setSelectedTable(data[0]!.name);
     } catch (e) {
@@ -43,9 +46,10 @@ export function useSqlite(projectName: string, dbPath: string) {
     if (!selectedTable) return;
     setLoading(true);
     try {
+      const qsPrefix = qs ? `${qs}&` : "";
       const [data, cols] = await Promise.all([
-        api.get<TableData>(`${base}/data?${qs}&table=${encodeURIComponent(selectedTable)}&page=${page}&limit=100`),
-        api.get<ColumnInfo[]>(`${base}/schema?${qs}&table=${encodeURIComponent(selectedTable)}`),
+        api.get<TableData>(`${base}/data?${qsPrefix}table=${encodeURIComponent(selectedTable)}&page=${page}&limit=100`),
+        api.get<ColumnInfo[]>(`${base}/schema?${qsPrefix}table=${encodeURIComponent(selectedTable)}`),
       ]);
       setTableData(data);
       setSchema(cols);
@@ -68,25 +72,30 @@ export function useSqlite(projectName: string, dbPath: string) {
     setQueryLoading(true);
     setQueryError(null);
     try {
-      const result = await api.post<QueryResult>(`${base}/query`, { path: dbPath, sql });
+      const body = unifiedBase ? { sql } : { path: dbPath, sql };
+      const result = await api.post<QueryResult>(`${base}/query`, body);
       setQueryResult(result);
-      if (result.changeType === "modify") fetchTableData(); // Refresh table after modification
+      if (result.changeType === "modify") fetchTableData();
     } catch (e) {
       setQueryError((e as Error).message);
     } finally {
       setQueryLoading(false);
     }
-  }, [base, dbPath, fetchTableData]);
+  }, [base, unifiedBase, dbPath, fetchTableData]);
 
   const updateCell = useCallback(async (rowid: number, column: string, value: unknown) => {
     if (!selectedTable) return;
     try {
-      await api.put(`${base}/cell`, { path: dbPath, table: selectedTable, rowid, column, value });
-      fetchTableData(); // Refresh
+      if (unifiedBase) {
+        await api.put(`${base}/cell`, { table: selectedTable, pkColumn: "rowid", pkValue: rowid, column, value });
+      } else {
+        await api.put(`${base}/cell`, { path: dbPath, table: selectedTable, rowid, column, value });
+      }
+      fetchTableData();
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [base, dbPath, selectedTable, fetchTableData]);
+  }, [base, unifiedBase, dbPath, selectedTable, fetchTableData]);
 
   return {
     tables, selectedTable, selectTable, tableData, schema,

@@ -25,7 +25,17 @@ interface CommandItem {
   icon: React.ElementType;
   action: () => void;
   keywords?: string;
-  group: "action" | "file" | "fs";
+  group: "action" | "file" | "fs" | "db";
+  connectionColor?: string | null;
+}
+
+interface DbSearchResult {
+  connectionId: number;
+  connectionName: string;
+  connectionType: string;
+  connectionColor: string | null;
+  tableName: string;
+  schemaName: string;
 }
 
 /** Recursively flatten file tree into file-only list */
@@ -65,6 +75,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [fsFiles, setFsFiles] = useState<string[]>([]);
   const [fsLoading, setFsLoading] = useState(false);
+  const [dbResults, setDbResults] = useState<DbSearchResult[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -102,6 +113,19 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     const dir = extractDir(query);
     fetchFsFiles(dir);
   }, [query, fetchFsFiles]);
+
+  // Debounced DB table search
+  useEffect(() => {
+    if (isPathQuery(query) || query.trim().length < 2) { setDbResults([]); return; }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/db/search?q=${encodeURIComponent(query.trim())}`);
+        const json = await res.json() as { ok: boolean; data?: DbSearchResult[] };
+        setDbResults(json.ok ? (json.data ?? []) : []);
+      } catch { setDbResults([]); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   // Action commands
   const actionCommands = useMemo<CommandItem[]>(() => {
@@ -186,6 +210,25 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     });
   }, [fsFiles, activeProject, openTab, onClose]);
 
+  const dbCommands = useMemo<CommandItem[]>(() => dbResults.map((r) => ({
+    id: `db:${r.connectionId}:${r.schemaName}.${r.tableName}`,
+    label: r.tableName,
+    hint: `${r.connectionName} (${r.connectionType === "postgres" ? "PG" : "SQLite"})`,
+    icon: Database,
+    group: "db" as const,
+    connectionColor: r.connectionColor,
+    action: () => {
+      openTab({
+        type: r.connectionType === "postgres" ? "postgres" : "sqlite",
+        title: `${r.connectionName} · ${r.tableName}`,
+        projectId: null,
+        closable: true,
+        metadata: { connectionId: r.connectionId, tableName: r.tableName, schemaName: r.schemaName, connectionColor: r.connectionColor },
+      });
+      onClose();
+    },
+  })), [dbResults, openTab, onClose]);
+
   const allCommands = useMemo(
     () => [...actionCommands, ...fileCommands],
     [actionCommands, fileCommands],
@@ -194,10 +237,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const filtered = useMemo(() => {
     // Path mode — search filesystem results using filename portion only
     if (isPathQuery(query)) {
-      // Extract the part after the last / as the filename filter
       const lastSlash = query.lastIndexOf("/");
       const fileFilter = lastSlash >= 0 ? query.slice(lastSlash + 1).toLowerCase() : "";
-      if (!fileFilter) return fsCommands.slice(0, 50); // show all if query ends with /
+      if (!fileFilter) return fsCommands.slice(0, 50);
       return fsCommands.filter((c) => {
         const name = c.label.toLowerCase();
         const path = (c.keywords ?? "").toLowerCase();
@@ -217,10 +259,12 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       }
       return true;
     };
-    return allCommands.filter(
+    const matched = allCommands.filter(
       (c) => matchesFuzzy(c.label.toLowerCase()) || (c.keywords && matchesFuzzy(c.keywords.toLowerCase())),
     );
-  }, [allCommands, actionCommands, fsCommands, query]);
+    // Prepend DB results (already filtered server-side) when query is 2+ chars
+    return query.trim().length >= 2 ? [...dbCommands, ...matched] : matched;
+  }, [allCommands, actionCommands, fsCommands, dbCommands, query]);
 
   // Reset state when opening
   useEffect(() => {
@@ -228,6 +272,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       setQuery(initialQuery || "");
       setSelectedIdx(0);
       setFsFiles([]);
+      setDbResults([]);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
@@ -353,7 +398,13 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
                   <Icon className="size-4 shrink-0" />
                   <span className="truncate">{cmd.label}</span>
                   {cmd.hint && (
-                    <span className="ml-auto text-xs text-text-subtle truncate max-w-[200px]">
+                    <span className="ml-auto flex items-center gap-1.5 text-xs text-text-subtle truncate max-w-[200px]">
+                      {cmd.connectionColor && (
+                        <span
+                          className="shrink-0 size-2 rounded-full"
+                          style={{ backgroundColor: cmd.connectionColor }}
+                        />
+                      )}
                       {cmd.hint}
                     </span>
                   )}

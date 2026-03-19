@@ -18,16 +18,18 @@
 │  │              Hono HTTP Framework (Port 8080)                   │   │
 │  ├────────────────────────────────────────────────────────────────┤   │
 │  │  Routes (src/server/routes/)                                   │   │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────┐  │   │
-│  │  │ /api/projects    │  │ /api/project/:n/ │  │ /api/health │  │   │
-│  │  │ (CRUD projects)  │  │ (scoped routes)  │  │   (status)  │  │   │
-│  │  └──────────────────┘  └──────────────────┘  └─────────────┘  │   │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │   │
+│  │  │ /api/projects    │  │ /api/project/:n/ │  │ /api/db/*    │  │   │
+│  │  │ (CRUD projects)  │  │ (scoped routes)  │  │ (connections)│  │   │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────┘  │   │
 │  ├────────────────────────────────────────────────────────────────┤   │
 │  │  Services (src/services/)                                      │   │
 │  │  ┌───────────────────────────────────────────────────────────┐│   │
 │  │  │ ChatService │ GitService │ FileService │ TerminalService ││   │
 │  │  │ (streaming  │ (simple-   │ (read/write │ (PTY/shell)     ││   │
 │  │  │  messages)  │  git)      │  files)     │ (Bun.spawn)     ││   │
+│  │  │ TableCache  │ DbService  │ DatabaseAdapterRegistry         ││   │
+│  │  │ (metadata)  │ (SQLite)   │ (SQLite, PostgreSQL adapters)   ││   │
 │  │  └───────────────────────────────────────────────────────────┘│   │
 │  ├────────────────────────────────────────────────────────────────┤   │
 │  │  Providers (src/providers/)                                    │   │
@@ -45,8 +47,10 @@
 │  │ SQLite DB        │  │ Git Repos        │  │ Session Storage │    │
 │  │ (config, projs)  │  │ (local disk)     │  │ (SQLite + SDK)  │    │
 │  │ (session map)    │  │                  │  │ (session_map,   │    │
-│  │ (push subs,      │  │                  │  │  session_logs,  │    │
-│  │  usage, logs)    │  │                  │  │  usage_history) │    │
+│  │ (push subs,      │  │ Connections:     │  │  session_logs,  │    │
+│  │  usage, logs)    │  │ • SQLite files   │  │  usage_history) │    │
+│  │ (connections)    │  │ • PostgreSQL svr │  │  (connections)  │    │
+│  │ (table metadata) │  │   via connStr    │  │                 │    │
 │  └──────────────────┘  └──────────────────┘  └─────────────────┘    │
 └──────────────────────────────────────────────────────────────────────┘
         ↓↑
@@ -119,6 +123,15 @@ POST   /api/project/:name/git/commit              → Commit
 GET    /api/project/:name/files/tree              → Directory tree
 GET    /api/project/:name/files/raw               → File content
 PUT    /api/project/:name/files/write             → Write file
+GET    /api/db/connections                        → List all connections
+POST   /api/db/connections                        → Create connection (SQLite/PostgreSQL)
+GET    /api/db/connections/:id                    → Get connection (sanitized)
+PUT    /api/db/connections/:id                    → Update connection (toggle readonly, UI-only)
+DELETE /api/db/connections/:id                    → Delete connection
+GET    /api/db/connections/:id/tables             → List tables (with sync)
+GET    /api/db/connections/:id/tables/:table      → Get table schema + data
+POST   /api/db/connections/:id/query              → Execute query (readonly checked)
+PATCH  /api/db/connections/:id/cell               → Update cell value (single)
 WS     /ws/project/:name/chat/:sessionId          → Chat streaming
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
 ```
@@ -140,7 +153,8 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 |---------|---------|-------------|
 | **ChatService** | Session management, message streaming | createSession, streamMessage, getHistory |
 | **ConfigService** | Config loading (YAML→SQLite migration) | load, save, getToken |
-| **DbService** | SQLite persistence (6 tables, WAL) | getDb, openTestDb, schema migrations |
+| **DbService** | SQLite persistence (8 tables, WAL, connections CRUD) | getDb, openTestDb, getConnections, insertConnection, updateConnection, deleteConnection, getTableCache |
+| **TableCacheService** | Cache table metadata, search tables | syncTables, searchTables, invalidateCache |
 | **GitService** | Git command execution | status, diff, commit, stage, branch |
 | **FileService** | File operations with validation | read, write, tree, delete, mkdir |
 | **TerminalService** | PTY lifecycle, shell spawning | spawn, write, kill |
@@ -151,6 +165,9 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 | **ProviderRegistry** | AI provider routing | getDefault, send (delegates) |
 | **CloudflaredService** | Download cloudflared binary | ensureCloudflared, getCloudflaredPath |
 | **TunnelService** | Cloudflare Quick Tunnel lifecycle | startTunnel, stopTunnel, getTunnelUrl |
+| **DatabaseAdapterRegistry** | Register/retrieve DB adapters (extensible) | registerAdapter, getAdapter |
+| **SQLiteAdapter** | SQLite connection, query execution, readonly checks | testConnection, getTables, getTableSchema, getTableData, executeQuery, updateCell |
+| **PostgresAdapter** | PostgreSQL connection, query execution, readonly checks | testConnection, getTables, getTableSchema, getTableData, executeQuery, updateCell |
 
 **Key Files:** `src/services/*.service.ts`
 
@@ -541,6 +558,204 @@ GitService.status() returns:
     ↓
 UI updates: "src/index.ts" moves from "Unstaged" to "Staged"
 ```
+
+---
+
+## Database Management (v2.0+)
+
+### Architecture Overview
+
+PPM now supports managing external databases (SQLite & PostgreSQL) through a unified adapter pattern:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Web UI (React)                               │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Database Sidebar                                         │   │
+│  │ • Connection List (with color badges)                    │   │
+│  │ • Create/Edit Connection Form                            │   │
+│  │ • Color Picker (WCAG contrast-aware)                     │   │
+│  │ • Query Execution UI                                     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────┬───────────────────────────────────────────────┘
+                  │ HTTP REST / WebSocket
+┌─────────────────┴───────────────────────────────────────────────┐
+│                    PPM Server (Hono)                            │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ /api/db Routes                                           │   │
+│  │ • GET  /connections        → List all connections        │   │
+│  │ • POST /connections        → Create connection           │   │
+│  │ • GET  /connections/:id    → Get connection (sanitized)  │   │
+│  │ • PUT  /connections/:id    → Update (readonly toggle)    │   │
+│  │ • DELETE /connections/:id  → Remove connection           │   │
+│  │ • GET  /connections/:id/tables      → List + sync tables │   │
+│  │ • GET  /connections/:id/tables/:tbl → Schema + data      │   │
+│  │ • POST /connections/:id/query       → Execute query      │   │
+│  │ • PATCH /connections/:id/cell       → Update cell        │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Service Layer                                            │   │
+│  │ • DbService (connection CRUD, caching)                   │   │
+│  │ • TableCacheService (metadata cache, search)             │   │
+│  │ • DatabaseAdapterRegistry (extensible)                   │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ Adapters (Pluggable Pattern)                             │   │
+│  │ • SQLiteAdapter → Uses `bun:sqlite` for local files      │   │
+│  │ • PostgresAdapter → Uses postgres driver for servers     │   │
+│  │ • isReadOnlyQuery() → Safety check (CTE-safe regex)      │   │
+│  │ • readonly=1 by default (safe-by-default)               │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
+        ↓↑
+   ┌────────────────────────────────────────────┐
+   │  External Databases                         │
+   │  • SQLite files (path: /path/to/db.db)      │
+   │  • PostgreSQL servers (connStr: postgres://)│
+   └────────────────────────────────────────────┘
+```
+
+### DatabaseAdapter Pattern (Extensible)
+
+**Interface** (`src/types/database.ts`):
+```typescript
+interface DatabaseAdapter {
+  testConnection(config: DbConnectionConfig): Promise<{ ok: boolean; error?: string }>;
+  getTables(config: DbConnectionConfig): Promise<DbTableInfo[]>;
+  getTableSchema(config: DbConnectionConfig, table: string, schema?: string): Promise<DbColumnInfo[]>;
+  getTableData(config: DbConnectionConfig, table: string, opts: {...}): Promise<DbPagedData>;
+  executeQuery(config: DbConnectionConfig, sql: string): Promise<DbQueryResult>;
+  updateCell(config: DbConnectionConfig, table: string, opts: {...}): Promise<void>;
+}
+```
+
+**Implementations:**
+1. **SQLiteAdapter** — Local file-based SQLite via `bun:sqlite`
+   - testConnection: Opens file, runs pragma check
+   - Supports: SELECT, INSERT, UPDATE, DELETE (if writable), CREATE TABLE
+
+2. **PostgresAdapter** — Remote PostgreSQL servers via postgres driver
+   - testConnection: Attempts connection with credentials
+   - Supports: Full SQL except DDL on readonly connections
+
+**Registry Pattern** (`src/services/database/adapter-registry.ts`):
+```typescript
+registerAdapter("sqlite", new SQLiteAdapter());
+registerAdapter("postgres", new PostgresAdapter());
+// Can be extended: registerAdapter("mysql", new MysqlAdapter());
+```
+
+### Security Design
+
+**Readonly by Default:**
+- All connections created with `readonly = true` in database
+- Default: read-only query execution (safe-by-default)
+- Web UI toggle: Switch to writable (admin decision only)
+- CLI: Cannot disable readonly via command-line (browser only)
+
+**Readonly Query Detection:**
+```typescript
+// isReadOnlyQuery() in src/services/database/readonly-check.ts
+// Checks for: SELECT, PRAGMA, EXPLAIN, WITH (CTE)
+// Rejects: INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, etc.
+// CTE-safe: Handles "WITH AS SELECT" (wraps CTE result check)
+```
+
+**Credential Handling:**
+- Connection credentials stored in SQLite `connections` table as `connection_config` JSON
+- **NEVER** returned in API responses (stripped by `sanitizeConn()` in routes)
+- Only used internally by adapters when executing queries
+- Frontend never sees passwords/connection strings
+
+**API Security:**
+- All `/api/db` requests require valid auth token (middleware checked)
+- Connection IDs are numeric (no enumeration risk)
+- Connection color is user-specific (cosmetic only, not sensitive)
+
+### Data Flow: Query Execution
+
+```
+User opens Database tab
+    ↓
+DatabaseSidebar fetches: GET /api/db/connections
+    ↓
+ConnectionList displays (sanitized, no credentials)
+    ↓
+User clicks connection → GET /api/db/connections/:id/tables
+    ↓
+DbService.getConnections() reads from SQLite
+    ↓
+TableCacheService.syncTables() calls adapter.getTables()
+    ↓
+SQLiteAdapter/PostgresAdapter queries database
+    ↓
+Results cached in table_metadata table
+    ↓
+UI displays table list + schema
+    ↓
+User selects table → GET /api/db/connections/:id/tables/:table
+    ↓
+Adapter.getTableData() executes paginated query
+    ↓
+Results returned: { columns, rows, total, page, limit }
+    ↓
+UI renders table grid with pagination
+    ↓
+User executes custom query → POST /api/db/connections/:id/query
+    ↓
+isReadOnlyQuery() checks SQL (rejects writes if readonly=true)
+    ↓
+Adapter.executeQuery() runs SQL
+    ↓
+Results returned: { columns, rows, rowsAffected, changeType }
+    ↓
+UI displays results (read-only highlight if mutation was blocked)
+```
+
+### Connection Storage
+
+**SQLite Schema** (in `~/.ppm/ppm.db`):
+```sql
+CREATE TABLE connections (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  type TEXT NOT NULL, -- 'sqlite' | 'postgres'
+  name TEXT NOT NULL,
+  connection_config TEXT NOT NULL, -- JSON: { path, connectionString, ... }
+  readonly INTEGER DEFAULT 1, -- 1 = readonly, 0 = writable (UI-only toggle)
+  group_name TEXT,
+  color TEXT, -- Optional hex color (#3b82f6)
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE table_metadata (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+  table_name TEXT NOT NULL,
+  schema_name TEXT DEFAULT 'public',
+  row_count INTEGER,
+  last_synced TEXT,
+  UNIQUE(connection_id, table_name, schema_name)
+);
+```
+
+### CLI Support (ppm db)
+
+**Commands** (`src/cli/commands/db-cmd.ts`):
+```bash
+ppm db connections           # List all connections
+ppm db connect               # Add new connection (interactive)
+ppm db remove <name>         # Delete connection
+ppm db query <name> <sql>    # Execute query (respects readonly)
+ppm db tables <name>         # List tables
+ppm db schema <name> <table> # Show table schema
+ppm db data <name> <table>   # Show table data (paginated)
+```
+
+**CLI Safety:**
+- Always respects readonly flag (cannot override via CLI)
+- Uses same adapter/validation as web UI
+- Table formatting for terminal output
 
 ---
 

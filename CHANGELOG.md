@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.4] - 2026-03-19
+
+### Fixed
+- **Login infinite reload**: keybindings API call fired before auth check, causing 401 → token removal → reload loop after SQLite migration
+- **ApiClient reload guard**: added sessionStorage-based guard to prevent infinite reload loops from any pre-auth 401 response
+
 ## [0.6.3] - 2026-03-19
 
 ### Added
