@@ -88,7 +88,7 @@ export function FilePicker({
   useEffect(() => {
     if (!visible) return;
     const handler = (e: globalThis.KeyboardEvent) => {
-      handleKeyDown(e);
+      if (handleKeyDown(e)) e.stopPropagation();
     };
     document.addEventListener("keydown", handler, true);
     return () => document.removeEventListener("keydown", handler, true);
