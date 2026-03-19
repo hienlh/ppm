@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.1] - 2026-03-19
+
+### Added
+- **SQLite viewer**: open `.db`/`.sqlite`/`.sqlite3` files in dedicated viewer with table sidebar, TanStack Table data grid (double-click to edit cells), CodeMirror SQL editor, and paginated results
+- **SQLite backend API**: `bun:sqlite`-powered endpoints for tables, schema, data, query execution, and cell updates with connection caching and auto-close
+- **Tab auto-redirect**: editor tabs for SQLite files automatically switch to the SQLite viewer
+
+### Fixed
+- **SQLite viewer**: support absolute file paths (e.g. `~/.ppm/ppm.db`) in addition to project-relative paths
+
+## [0.6.0] - 2026-03-19
+
+### Added
+- **Storage migration**: migrated all file-based storage (config, sessions, usage) to SQLite
+
 ## [0.5.21] - 2026-03-18
 
 ### Added
