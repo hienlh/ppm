@@ -3,6 +3,7 @@ import { Loader2, FolderOpen } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
+import { BrowseButton } from "@/components/ui/browse-button";
 
 interface SuggestedDir {
   path: string;
@@ -83,19 +84,29 @@ export function AddProjectForm({ onSuccess, onCancel, footerClassName }: AddProj
       {/* Path input with suggestions */}
       <div ref={wrapperRef} className="relative">
         <label className="block text-xs font-medium text-foreground mb-1">Project path</label>
-        <div className="relative flex items-center">
-          <FolderOpen className="absolute left-2.5 size-3.5 text-text-subtle pointer-events-none" />
-          <input
-            type="text"
-            value={path}
-            onChange={(e) => { setPath(e.target.value); setError(""); }}
-            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-            placeholder="/path/to/project"
-            className="w-full pl-8 pr-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-            autoFocus
-            autoComplete="off"
+        <div className="flex gap-1.5 items-center">
+          <div className="relative flex items-center flex-1">
+            <FolderOpen className="absolute left-2.5 size-3.5 text-text-subtle pointer-events-none" />
+            <input
+              type="text"
+              value={path}
+              onChange={(e) => { setPath(e.target.value); setError(""); }}
+              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+              placeholder="/path/to/project"
+              className="w-full pl-8 pr-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+              autoFocus
+              autoComplete="off"
+            />
+            {loading && <Loader2 className="absolute right-2.5 size-3.5 text-text-subtle animate-spin" />}
+          </div>
+          <BrowseButton
+            mode="folder"
+            onSelect={(selectedPath) => {
+              setPath(selectedPath);
+              if (!name) setName(selectedPath.split("/").pop() ?? "");
+              setError("");
+            }}
           />
-          {loading && <Loader2 className="absolute right-2.5 size-3.5 text-text-subtle animate-spin" />}
         </div>
 
         {/* Suggestions dropdown */}

@@ -3,6 +3,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { BrowseButton } from "@/components/ui/browse-button";
 import { ConnectionColorPicker } from "./connection-color-picker";
 import type { Connection, CreateConnectionData, UpdateConnectionData } from "./use-connections";
 
@@ -161,12 +162,20 @@ export function ConnectionFormDialog({
           ) : (
             <div>
               <label className="text-xs font-medium text-text-secondary mb-1 block">File Path *</label>
-              <input
-                value={form.path}
-                onChange={(e) => set("path", e.target.value)}
-                placeholder="/path/to/database.db"
-                className="w-full h-8 text-sm px-2.5 rounded-md border border-border bg-background focus:outline-none focus:border-primary font-mono"
-              />
+              <div className="flex gap-1.5 items-center">
+                <input
+                  value={form.path}
+                  onChange={(e) => set("path", e.target.value)}
+                  placeholder="/path/to/database.db"
+                  className="flex-1 h-8 text-sm px-2.5 rounded-md border border-border bg-background focus:outline-none focus:border-primary font-mono"
+                />
+                <BrowseButton
+                  mode="file"
+                  accept={[".db", ".sqlite", ".sqlite3"]}
+                  title="Browse for SQLite database"
+                  onSelect={(path) => set("path", path)}
+                />
+              </div>
             </div>
           )}
 
