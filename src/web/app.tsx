@@ -58,8 +58,13 @@ export function App() {
     }
   }, [theme]);
 
-  // Fetch server info on mount (before auth — shown on login screen)
-  useEffect(() => { fetchServerInfo(); }, [fetchServerInfo]);
+  // Fetch server info + keybindings on mount (before auth — shown on login screen)
+  useEffect(() => {
+    fetchServerInfo();
+    import("@/stores/keybindings-store").then(({ useKeybindingsStore }) => {
+      useKeybindingsStore.getState().loadFromServer();
+    });
+  }, [fetchServerInfo]);
 
   // Auth check on mount
   useEffect(() => {
