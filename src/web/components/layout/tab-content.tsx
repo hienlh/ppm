@@ -23,6 +23,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.SqliteViewer,
     })),
   ),
+  postgres: lazy(() =>
+    import("@/components/postgres/postgres-viewer").then((m) => ({
+      default: m.PostgresViewer,
+    })),
+  ),
   "git-graph": lazy(() =>
     import("@/components/git/git-graph").then((m) => ({
       default: m.GitGraph,

@@ -9,6 +9,7 @@ import { pushRoutes } from "./routes/push.ts";
 import { tunnelRoutes } from "./routes/tunnel.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
+import { postgresRoutes } from "./routes/postgres.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
 import { ok, err } from "../types/api.ts";
@@ -183,6 +184,7 @@ app.route("/api/tunnel", tunnelRoutes);
 app.route("/api/push", pushRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
+app.route("/api/postgres", postgresRoutes);
 
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);

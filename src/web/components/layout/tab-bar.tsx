@@ -23,6 +23,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   chat: MessageSquare,
   editor: FileCode,
   sqlite: Database,
+  postgres: Database,
   "git-graph": GitBranch,
   "git-diff": FileDiff,
   settings: Settings,
