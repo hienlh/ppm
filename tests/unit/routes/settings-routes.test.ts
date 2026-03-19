@@ -78,24 +78,27 @@ describe("PUT /settings/ai", () => {
     expect(res.status).toBe(400);
   });
 
-  it("updates default_provider to existing provider", async () => {
-    // First add a second provider, then switch default to it
+  it("updates default_provider to existing valid provider", async () => {
+    // "claude" is the only valid provider — verify it can be explicitly set
     const app = createApp();
-    await app.request("/settings/ai", {
+    const res = await app.request("/settings/ai", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        providers: { mock: { type: "mock" } },
-      }),
+      body: JSON.stringify({ default_provider: "claude" }),
     });
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.data.default_provider).toBe("claude");
+  });
+
+  it("rejects default_provider not in VALID_PROVIDERS", async () => {
+    const app = createApp();
     const res = await app.request("/settings/ai", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ default_provider: "mock" }),
     });
-    const json = await res.json();
-    expect(json.ok).toBe(true);
-    expect(json.data.default_provider).toBe("mock");
+    expect(res.status).toBe(400);
   });
 
   it("rejects default_provider referencing nonexistent provider", async () => {
