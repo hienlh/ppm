@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.2] - 2026-03-19
+
+### Added
+- **PostgreSQL viewer**: connect to any PostgreSQL database via connection string, browse tables, edit cells (double-click), run SQL queries with CodeMirror (PostgreSQL dialect), paginated results
+- **Command palette**: "PostgreSQL" action to open a new database viewer tab
+
 ## [0.6.1] - 2026-03-19
 
 ### Added
