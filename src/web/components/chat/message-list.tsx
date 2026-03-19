@@ -21,6 +21,8 @@ import {
   RotateCcw,
   TerminalSquare,
 } from "lucide-react";
+import { QuestionCard } from "./question-card";
+import type { Question } from "./question-card";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -575,113 +577,14 @@ function AskUserQuestionCard({
   approval: { requestId: string; tool: string; input: unknown };
   onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
 }) {
-  const input = approval.input as {
-    questions?: Array<{
-      question: string;
-      header?: string;
-      options: Array<{ label: string; description?: string }>;
-      multiSelect?: boolean;
-    }>;
-  };
+  const input = approval.input as { questions?: Question[] };
   const questions = input.questions ?? [];
 
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  // Track which questions have "Other" active
-  const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
-
-  const handleSelect = (question: string, label: string, multiSelect?: boolean) => {
-    // Deactivate "Other" when selecting a predefined option
-    setOtherActive((prev) => ({ ...prev, [question]: false }));
-    setAnswers((prev) => {
-      if (!multiSelect) return { ...prev, [question]: label };
-      const current = prev[question] ?? "";
-      const labels = current ? current.split(", ") : [];
-      const idx = labels.indexOf(label);
-      if (idx >= 0) labels.splice(idx, 1);
-      else labels.push(label);
-      return { ...prev, [question]: labels.join(", ") };
-    });
-  };
-
-  const handleOtherToggle = (question: string) => {
-    setOtherActive((prev) => ({ ...prev, [question]: true }));
-    setAnswers((prev) => ({ ...prev, [question]: "" }));
-  };
-
-  const handleOtherText = (question: string, text: string) => {
-    setAnswers((prev) => ({ ...prev, [question]: text }));
-  };
-
-  const allAnswered = questions.every((q) => answers[q.question]?.trim());
-
   return (
-    <div className="rounded-lg border-2 border-accent/40 bg-accent/5 p-3 space-y-3">
-      {questions.map((q, qi) => (
-        <div key={qi} className="space-y-1.5">
-          <p className="text-sm text-text-primary font-medium">
-            {q.header ? `${q.header}: ` : ""}{q.question}
-          </p>
-          {q.multiSelect && (
-            <p className="text-xs text-text-subtle">Select multiple</p>
-          )}
-          <div className="flex flex-col gap-1">
-            {q.options.map((opt, oi) => {
-              const isOther = otherActive[q.question];
-              const selected = !isOther && (answers[q.question] ?? "").split(", ").includes(opt.label);
-              return (
-                <button
-                  key={oi}
-                  onClick={() => handleSelect(q.question, opt.label, q.multiSelect)}
-                  className={`text-left rounded px-2.5 py-1.5 text-xs border transition-colors ${
-                    selected
-                      ? "border-accent bg-accent/20 text-text-primary"
-                      : "border-border bg-background text-text-secondary hover:bg-surface-elevated"
-                  }`}
-                >
-                  <span className="font-medium">{opt.label}</span>
-                  {opt.description && (
-                    <span className="text-text-subtle ml-1.5">— {opt.description}</span>
-                  )}
-                </button>
-              );
-            })}
-            {/* Other option */}
-            {otherActive[q.question] ? (
-              <input
-                type="text"
-                autoFocus
-                placeholder="Type your answer..."
-                value={answers[q.question] ?? ""}
-                onChange={(e) => handleOtherText(q.question, e.target.value)}
-                className="rounded px-2.5 py-1.5 text-xs border border-accent bg-accent/10 text-text-primary outline-none placeholder:text-text-subtle"
-              />
-            ) : (
-              <button
-                onClick={() => handleOtherToggle(q.question)}
-                className="text-left rounded px-2.5 py-1.5 text-xs border border-dashed border-border text-text-subtle hover:bg-surface-elevated transition-colors"
-              >
-                Other — type your own answer
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
-
-      <div className="flex gap-2 pt-1">
-        <button
-          onClick={() => onRespond(approval.requestId, true, answers)}
-          disabled={!allAnswered}
-          className="px-4 py-1.5 rounded bg-accent text-white text-xs font-medium hover:bg-accent/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Submit
-        </button>
-        <button
-          onClick={() => onRespond(approval.requestId, false)}
-          className="px-4 py-1.5 rounded bg-surface-elevated text-text-secondary text-xs hover:bg-surface transition-colors"
-        >
-          Skip
-        </button>
-      </div>
-    </div>
+    <QuestionCard
+      questions={questions}
+      onSubmit={(answers) => onRespond(approval.requestId, true, answers)}
+      onSkip={() => onRespond(approval.requestId, false)}
+    />
   );
 }
