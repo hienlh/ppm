@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.7] - 2026-03-20
+
+### Fixed
+- **Diff viewer loading forever**: `ResizeObserver` effect had empty deps `[]`, so it ran once at mount while the loading spinner was showing — `containerRef` was null, effect returned early, and Monaco never measured its container height after the API call completed; fixed by adding `loading`/`error` to the effect deps
+
 ## [0.7.6] - 2026-03-20
 
 ### Fixed
