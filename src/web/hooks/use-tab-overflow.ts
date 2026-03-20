@@ -71,6 +71,8 @@ export function getHiddenUnreadDirection(
   let rightType: string | null = null;
   let rightPri = -1;
 
+  const scrollRect = scrollEl.getBoundingClientRect();
+
   for (const tab of tabs) {
     if (tab.type !== "chat") continue;
     const sessionId = tab.metadata?.sessionId as string;
@@ -78,11 +80,15 @@ export function getHiddenUnreadDirection(
     if (!entry || entry.count === 0) continue;
     const tabEl = tabRefs.get(tab.id);
     if (!tabEl) continue;
+    // Compute tab position relative to the scrollable content area
+    const tabRect = tabEl.getBoundingClientRect();
+    const tabLeft = tabRect.left - scrollRect.left + scrollEl.scrollLeft;
+    const tabRight = tabLeft + tabRect.width;
     const pri = TYPE_PRIORITY[entry.type] ?? 0;
-    if (tabEl.offsetLeft + tabEl.offsetWidth < viewLeft && pri > leftPri) {
+    if (tabRight <= viewLeft && pri > leftPri) {
       leftPri = pri; leftType = entry.type;
     }
-    if (tabEl.offsetLeft > viewRight && pri > rightPri) {
+    if (tabLeft >= viewRight && pri > rightPri) {
       rightPri = pri; rightType = entry.type;
     }
   }

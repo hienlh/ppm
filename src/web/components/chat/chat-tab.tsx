@@ -5,6 +5,8 @@ import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { usePanelStore } from "@/stores/panel-store";
+import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { MessageList } from "./message-list";
 import { MessageInput, type ChatAttachment } from "./message-input";
@@ -78,6 +80,27 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     refetchMessages,
     isConnected,
   } = useChat(sessionId, providerId, projectName);
+
+  // Auto-clear notification badge when this tab is active and document is visible.
+  // Handles the case where notification arrived while browser tab was hidden.
+  useEffect(() => {
+    if (!sessionId || !tabId) return;
+    const maybeClear = () => {
+      if (document.hidden) return;
+      const { panels, focusedPanelId } = usePanelStore.getState();
+      const panel = panels[focusedPanelId];
+      if (panel?.activeTabId === tabId) {
+        useNotificationStore.getState().clearForSession(sessionId);
+      }
+    };
+    maybeClear();
+    document.addEventListener("visibilitychange", maybeClear);
+    const unsub = usePanelStore.subscribe(maybeClear);
+    return () => {
+      document.removeEventListener("visibilitychange", maybeClear);
+      unsub();
+    };
+  }, [sessionId, tabId]);
 
   // Update tab title when SDK summary arrives
   useEffect(() => {

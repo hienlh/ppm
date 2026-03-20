@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
+import { useNotificationStore } from "@/stores/notification-store";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { UsageDetailPanel } from "./usage-badge";
 import type { SessionInfo } from "../../../types/chat";
@@ -54,6 +55,8 @@ export function ChatHistoryBar({
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const hasUnread = useNotificationStore((s) => sessionId ? s.notifications.has(sessionId) : false);
+  const clearForSession = useNotificationStore((s) => s.clearForSession);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -177,6 +180,17 @@ export function ChatHistoryBar({
 
         {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Mark as read */}
+        {hasUnread && sessionId && (
+          <button
+            onClick={() => clearForSession(sessionId)}
+            className="p-1 rounded text-amber-500 hover:text-amber-400 hover:bg-surface-elevated transition-colors"
+            title="Mark as read"
+          >
+            <BellOff className="size-3" />
+          </button>
+        )}
 
         {/* Connection indicator */}
         {onReconnect && (
