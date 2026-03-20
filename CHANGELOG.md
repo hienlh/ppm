@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.8] - 2026-03-20
+
+### Fixed
+- **AskUserQuestion answer text**: changed `text-accent` to `text-foreground` so the selected answer is clearly visible instead of muted
+
 ## [0.7.7] - 2026-03-20
 
 ### Fixed

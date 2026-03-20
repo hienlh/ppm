@@ -285,7 +285,7 @@ function ToolDetails({
                 })}
               </div>
               {answers[q.question] && (
-                <p className="text-accent text-xs">Answer: {answers[q.question]}</p>
+                <p className="text-foreground text-xs">Answer: {answers[q.question]}</p>
               )}
             </div>
           ))}
