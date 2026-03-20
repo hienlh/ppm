@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { getAuthToken } from "../../lib/api-client";
 import {
   getAccounts,
   getActiveAccount,
@@ -146,28 +147,39 @@ export function AccountsSettingsSection() {
   }
 
   async function handleExport() {
-    window.location.href = "/api/accounts/export";
+    try {
+      const headers: HeadersInit = {};
+      const token = getAuthToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/api/accounts/export", { headers });
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ppm-accounts-backup.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setMessage({ type: "error", text: (e as Error).message });
+    }
   }
 
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const text = await file.text();
     try {
-      const res = await fetch("/api/accounts/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: text,
-      });
+      const text = await file.text();
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      const token = getAuthToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/api/accounts/import", { method: "POST", headers, body: text });
       const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
-      if (json.ok) {
-        setMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s).` });
-        refresh();
-      } else {
-        setMessage({ type: "error", text: json.error ?? "Import failed" });
-      }
-    } catch {
-      setMessage({ type: "error", text: "Import failed" });
+      if (!json.ok) throw new Error(json.error ?? "Import failed");
+      setMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s).` });
+      refresh();
+    } catch (e) {
+      setMessage({ type: "error", text: (e as Error).message || "Import failed" });
     }
     e.target.value = "";
   }
