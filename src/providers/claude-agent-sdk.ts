@@ -261,7 +261,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         const meta: Session = {
           id: sessionId,
           providerId: this.id,
-          title: found.summary ?? "Resumed Chat",
+          title: found.customTitle ?? found.summary ?? "Resumed Chat",
           createdAt: new Date(found.lastModified).toISOString(),
         };
         this.activeSessions.set(sessionId, meta);
@@ -295,7 +295,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       return sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: s.summary ?? s.firstPrompt ?? "Chat",
+        title: s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
