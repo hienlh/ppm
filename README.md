@@ -9,6 +9,8 @@ A mobile-first web IDE with AI chat, terminal, git, database tools, and file exp
 ```bash
 # 1. Install Bun (if you don't have it)
 curl -fsSL https://bun.sh/install | bash
+# or via npm
+npm install -g bun
 
 # 2. Run directly (no install needed)
 bunx @hienlh/ppm start

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.3] - 2026-03-20
+
+### Added
+- **Mark as read**: `BellOff` button in chat toolbar clears notification badge for current session
+
+### Fixed
+- **Tab title badge timing**: Document title now updates immediately in background tabs using direct Zustand subscription instead of `useEffect` (which is throttled by browser when tab is hidden)
+- **Tab title format**: Title now shows `{project} - {device} - PPM` pattern
+- **Auto-clear on tab focus**: Notification badge clears automatically when switching back to browser or navigating to the active chat tab — no need to click the tab again
+- **Left/right overflow badge direction**: Fixed incorrect badge side using `getBoundingClientRect()` instead of `offsetLeft` (which was relative to offsetParent, not scroll container)
+
 ## [0.7.2] - 2026-03-20
 
 ### Fixed
