@@ -53,6 +53,7 @@
     "commander": "^14.0.3",
     "diff2html": "^3.4.56",
     "hono": "^4.12.8",
+    "ignore": "^7.0.5",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.4",

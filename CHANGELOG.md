@@ -2,6 +2,10 @@
 
 ## [0.7.14] - 2026-03-21
 
+### Added
+- **Explorer gitignore dimming**: files/folders matched by `.gitignore` display at reduced opacity in the file tree
+- **Multi-account E2E tests**: real AI call tests for SDK and CLI using token from `.env.test`; covers default auth, platform detection (macOS/Windows), and decrypt error handling
+
 ### Fixed
 - **Explorer .env access**: removed hardcoded `.env` block from file tree, directory browser, and file read/write — `.env` files are now visible and editable like any other file
 
