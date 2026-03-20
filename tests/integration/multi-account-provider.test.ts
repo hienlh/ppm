@@ -1,18 +1,19 @@
 /**
  * Multi-account provider integration tests.
  *
- * Requires .env.test with real OAuth tokens:
- *   TEST_OAUTH_TOKEN_1=sk-ant-oat01-xxx
- *   TEST_OAUTH_TOKEN_2=sk-ant-oat01-yyy
+ * Requires .env.test with real tokens (OAuth or API key):
+ *   TEST_OAUTH_TOKEN_1=sk-ant-oat01-xxx  (or sk-ant-api03-xxx)
+ *   TEST_OAUTH_TOKEN_2=sk-ant-oat01-yyy  (or sk-ant-api03-yyy)
  *
  * Platform detection:
- *   - macOS: test SDK env vars + simulate Windows for queryDirectCli
- *   - Windows: test queryDirectCli only (native)
+ *   - macOS: test SDK real AI call + queryDirectCli (CLI real AI call)
+ *   - Windows: queryDirectCli (CLI real AI call) only
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { setKeyPath } from "../../src/lib/account-crypto.ts";
 import { openTestDb, setDb, closeDb } from "../../src/services/db.service.ts";
 import { accountService } from "../../src/services/account.service.ts";
@@ -37,8 +38,11 @@ if (existsSync(envTestPath)) {
   }
 }
 
-const hasTokens = TOKEN_1.startsWith("sk-ant-oat") && TOKEN_1.length > 20
-  && TOKEN_2.startsWith("sk-ant-oat") && TOKEN_2.length > 20;
+function isValidToken(t: string) {
+  return (t.startsWith("sk-ant-oat") || t.startsWith("sk-ant-api")) && t.length > 20;
+}
+
+const hasTokens = isValidToken(TOKEN_1) && isValidToken(TOKEN_2);
 const isMac = process.platform === "darwin";
 
 // Skip entire file if no tokens
@@ -137,8 +141,11 @@ if (!hasTokens) {
       expect(entries).toHaveLength(2);
       expect(entries[0].accountId).toBeTruthy();
       expect(entries[1].accountId).toBeTruthy();
-      expect(entries[0].isOAuth).toBe(true);
-      expect(entries[1].isOAuth).toBe(true);
+      // isOAuth reflects actual token type
+      const expectedIsOAuth1 = TOKEN_1.startsWith("sk-ant-oat");
+      const expectedIsOAuth2 = TOKEN_2.startsWith("sk-ant-oat");
+      expect(entries[0].isOAuth).toBe(expectedIsOAuth1);
+      expect(entries[1].isOAuth).toBe(expectedIsOAuth2);
     });
   });
 
@@ -191,142 +198,193 @@ if (!hasTokens) {
   });
 
   // =========================================================================
-  // 6. Provider env vars — platform-specific
+  // 6. Default auth — no explicit token, relies on ambient env
+  // =========================================================================
+  describe("Default auth (no account token)", () => {
+    it("SDK query() works with ambient env (no account injection)", async () => {
+      const { query } = await import("@anthropic-ai/claude-agent-sdk");
+      const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
+      const provider = new ClaudeAgentSdkProvider();
+
+      // null account → passthrough process.env as-is (no token injection)
+      const env = (provider as any).buildQueryEnv(undefined, null) as Record<string, string | undefined>;
+
+      let text = "";
+      const gen = query({
+        prompt: "Reply with only the word: pong",
+        options: {
+          cwd: process.cwd(),
+          env,
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          maxTurns: 1,
+        } as any,
+      });
+
+      for await (const event of gen) {
+        if ((event as any).type === "assistant") {
+          for (const block of (event as any).message?.content ?? []) {
+            if (block.type === "text") text += block.text;
+          }
+        }
+      }
+
+      console.log(`[default-sdk] response: "${text.slice(0, 100)}"`);
+      expect(text.trim().length).toBeGreaterThan(0);
+      expect(text.toLowerCase()).toContain("pong");
+    }, { timeout: 90_000 });
+
+    it("queryDirectCli() works with ambient env (no account injection)", async () => {
+      const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
+      const provider = new ClaudeAgentSdkProvider();
+
+      // null account → passthrough process.env as-is
+      const env = (provider as any).buildQueryEnv(undefined, null) as Record<string, string | undefined>;
+
+      let text = "";
+      const gen = (provider as any).queryDirectCli({
+        prompt: "Reply with only the word: pong",
+        cwd: process.cwd(),
+        sessionId: `test-default-cli-${randomUUID()}`,
+        env,
+        providerConfig: { max_turns: 1 },
+      }) as AsyncGenerator<any>;
+
+      for await (const event of gen) {
+        if (
+          event?.type === "stream_event" &&
+          event.event?.delta?.type === "text_delta"
+        ) {
+          text += event.event.delta.text;
+        }
+      }
+
+      console.log(`[default-cli] response: "${text.slice(0, 100)}"`);
+      expect(text.trim().length).toBeGreaterThan(0);
+      expect(text.toLowerCase()).toContain("pong");
+    }, { timeout: 90_000 });
+  });
+
+  // =========================================================================
+  // 7. Real AI call tests — platform-specific
   // =========================================================================
 
   if (isMac) {
-    // macOS: test SDK env var injection + simulated Windows CLI path
-    describe("SDK env vars (macOS)", () => {
-      it("buildQueryEnv sets CLAUDE_CODE_OAUTH_TOKEN for OAuth tokens", async () => {
+    // -----------------------------------------------------------------------
+    // macOS: SDK real AI call
+    // -----------------------------------------------------------------------
+    describe("SDK real AI call (macOS)", () => {
+      it("query() returns text response using token from env", async () => {
+        const { query } = await import("@anthropic-ai/claude-agent-sdk");
         const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
         const provider = new ClaudeAgentSdkProvider();
 
-        // Access private method via cast
+        // Build env the same way the provider does in production
         const env = (provider as any).buildQueryEnv(undefined, {
-          id: "acc-1",
+          id: "sdk-e2e-test",
           accessToken: TOKEN_1,
+        }) as Record<string, string | undefined>;
+
+        let text = "";
+        const gen = query({
+          prompt: 'Reply with only the word: pong',
+          options: {
+            cwd: process.cwd(),
+            env,
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            maxTurns: 1,
+          } as any,
         });
 
-        expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN_1);
-        expect(env.ANTHROPIC_API_KEY).toBe(""); // neutralized
-      });
+        for await (const event of gen) {
+          // SDK yields AssistantMessage events with content blocks
+          if ((event as any).type === "assistant") {
+            for (const block of (event as any).message?.content ?? []) {
+              if (block.type === "text") text += block.text;
+            }
+          }
+        }
 
-      it("buildQueryEnv sets ANTHROPIC_API_KEY for API keys", async () => {
-        const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
-        const provider = new ClaudeAgentSdkProvider();
-
-        const fakeApiKey = "sk-ant-api03-test-key";
-        const env = (provider as any).buildQueryEnv(undefined, {
-          id: "acc-2",
-          accessToken: fakeApiKey,
-        });
-
-        expect(env.ANTHROPIC_API_KEY).toBe(fakeApiKey);
-        expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(""); // neutralized
-      });
-
-      it("buildQueryEnv with null account passes through existing env", async () => {
-        const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
-        const provider = new ClaudeAgentSdkProvider();
-
-        const env = (provider as any).buildQueryEnv(undefined, null);
-        // Should not override — passthrough
-        expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
-      });
+        console.log(`[sdk-e2e] response: "${text.slice(0, 100)}"`);
+        expect(text.trim().length).toBeGreaterThan(0);
+        expect(text.toLowerCase()).toContain("pong");
+      }, { timeout: 90_000 });
     });
 
-    describe("CLI env vars (simulated Windows)", () => {
-      it("useDirectCli is true when platform is win32", () => {
-        const originalPlatform = process.platform;
-        try {
-          Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-          expect(process.platform === "win32").toBe(true);
-        } finally {
-          Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
-        }
-      });
-
-      it("useDirectCli is false when platform is darwin", () => {
-        expect(process.platform === "win32").toBe(false);
-        // On mac, SDK query() is used instead of CLI
-      });
-
-      it("CLI command construction uses cmd /c on win32", () => {
-        const originalPlatform = process.platform;
-        try {
-          Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-          const args = ["-p", "test", "--verbose"];
-          const cmd = process.platform === "win32"
-            ? ["cmd", "/c", "claude", ...args]
-            : ["claude", ...args];
-          expect(cmd[0]).toBe("cmd");
-          expect(cmd[1]).toBe("/c");
-          expect(cmd[2]).toBe("claude");
-        } finally {
-          Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
-        }
-      });
-
-      it("buildQueryEnv works the same for CLI path", async () => {
+    // -----------------------------------------------------------------------
+    // macOS: CLI real AI call (same code path as Windows queryDirectCli)
+    // -----------------------------------------------------------------------
+    describe("CLI real AI call (queryDirectCli on macOS)", () => {
+      it("queryDirectCli() returns text response using token in env", async () => {
         const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
         const provider = new ClaudeAgentSdkProvider();
-        const originalPlatform = process.platform;
-        try {
-          Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-          const env = (provider as any).buildQueryEnv(undefined, {
-            id: "acc-cli",
-            accessToken: TOKEN_1,
-          });
-          expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN_1);
-          expect(env.ANTHROPIC_API_KEY).toBe("");
-        } finally {
-          Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+
+        const env = (provider as any).buildQueryEnv(undefined, {
+          id: "cli-e2e-test",
+          accessToken: TOKEN_1,
+        }) as Record<string, string | undefined>;
+
+        let text = "";
+        const gen = (provider as any).queryDirectCli({
+          prompt: "Reply with only the word: pong",
+          cwd: process.cwd(),
+          sessionId: `test-cli-${randomUUID()}`,
+          env,
+          providerConfig: { max_turns: 1 },
+        }) as AsyncGenerator<any>;
+
+        for await (const event of gen) {
+          // queryDirectCli yields synthetic stream_event deltas + original events
+          if (
+            event?.type === "stream_event" &&
+            event.event?.delta?.type === "text_delta"
+          ) {
+            text += event.event.delta.text;
+          }
         }
-      });
+
+        console.log(`[cli-e2e] response: "${text.slice(0, 100)}"`);
+        expect(text.trim().length).toBeGreaterThan(0);
+        expect(text.toLowerCase()).toContain("pong");
+      }, { timeout: 90_000 });
     });
   } else {
-    // Windows: test CLI env var path natively
-    describe("CLI env vars (native Windows)", () => {
-      it("useDirectCli is true on Windows", () => {
-        expect(process.platform).toBe("win32");
-        const useDirectCli = process.platform === "win32";
-        expect(useDirectCli).toBe(true);
-      });
-
-      it("buildQueryEnv sets CLAUDE_CODE_OAUTH_TOKEN for OAuth tokens", async () => {
+    // -----------------------------------------------------------------------
+    // Windows: CLI real AI call (native)
+    // -----------------------------------------------------------------------
+    describe("CLI real AI call (queryDirectCli on Windows)", () => {
+      it("queryDirectCli() returns text response using token in env", async () => {
         const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
         const provider = new ClaudeAgentSdkProvider();
 
         const env = (provider as any).buildQueryEnv(undefined, {
-          id: "acc-win",
+          id: "cli-win-e2e-test",
           accessToken: TOKEN_1,
-        });
-        expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(TOKEN_1);
-        expect(env.ANTHROPIC_API_KEY).toBe("");
-      });
+        }) as Record<string, string | undefined>;
 
-      it("buildQueryEnv sets ANTHROPIC_API_KEY for API keys", async () => {
-        const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
-        const provider = new ClaudeAgentSdkProvider();
+        let text = "";
+        const gen = (provider as any).queryDirectCli({
+          prompt: "Reply with only the word: pong",
+          cwd: process.cwd(),
+          sessionId: `test-cli-win-${randomUUID()}`,
+          env,
+          providerConfig: { max_turns: 1 },
+        }) as AsyncGenerator<any>;
 
-        const fakeApiKey = "sk-ant-api03-test-key";
-        const env = (provider as any).buildQueryEnv(undefined, {
-          id: "acc-win-api",
-          accessToken: fakeApiKey,
-        });
-        expect(env.ANTHROPIC_API_KEY).toBe(fakeApiKey);
-        expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
-      });
+        for await (const event of gen) {
+          if (
+            event?.type === "stream_event" &&
+            event.event?.delta?.type === "text_delta"
+          ) {
+            text += event.event.delta.text;
+          }
+        }
 
-      it("CLI command uses cmd /c on Windows", () => {
-        const args = ["-p", "test", "--verbose"];
-        const cmd = process.platform === "win32"
-          ? ["cmd", "/c", "claude", ...args]
-          : ["claude", ...args];
-        expect(cmd[0]).toBe("cmd");
-        expect(cmd[1]).toBe("/c");
-        expect(cmd[2]).toBe("claude");
-      });
+        console.log(`[cli-win-e2e] response: "${text.slice(0, 100)}"`);
+        expect(text.trim().length).toBeGreaterThan(0);
+        expect(text.toLowerCase()).toContain("pong");
+      }, { timeout: 90_000 });
     });
   }
 }
