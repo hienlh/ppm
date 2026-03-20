@@ -211,6 +211,14 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 5;
     `);
   }
+
+  if (current < 6) {
+    database.exec(`
+      ALTER TABLE claude_limit_snapshots ADD COLUMN account_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_limit_snapshots_account ON claude_limit_snapshots(account_id);
+      PRAGMA user_version = 6;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +403,7 @@ export function getDbFilePath(): string {
 
 export interface LimitSnapshotRow {
   id: number;
+  account_id: string | null;
   five_hour_util: number | null;
   five_hour_resets_at: string | null;
   weekly_util: number | null;
@@ -409,10 +418,11 @@ export interface LimitSnapshotRow {
 export function insertLimitSnapshot(data: Omit<LimitSnapshotRow, "id" | "recorded_at">): void {
   getDb().query(
     `INSERT INTO claude_limit_snapshots
-      (five_hour_util, five_hour_resets_at, weekly_util, weekly_resets_at,
+      (account_id, five_hour_util, five_hour_resets_at, weekly_util, weekly_resets_at,
        weekly_opus_util, weekly_opus_resets_at, weekly_sonnet_util, weekly_sonnet_resets_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
+    data.account_id ?? null,
     data.five_hour_util ?? null, data.five_hour_resets_at ?? null,
     data.weekly_util ?? null, data.weekly_resets_at ?? null,
     data.weekly_opus_util ?? null, data.weekly_opus_resets_at ?? null,
@@ -424,6 +434,23 @@ export function getLatestLimitSnapshot(): LimitSnapshotRow | null {
   return getDb().query(
     "SELECT * FROM claude_limit_snapshots ORDER BY recorded_at DESC LIMIT 1",
   ).get() as LimitSnapshotRow | null;
+}
+
+export function getLatestSnapshotForAccount(accountId: string): LimitSnapshotRow | null {
+  return getDb().query(
+    "SELECT * FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC LIMIT 1",
+  ).get(accountId) as LimitSnapshotRow | null;
+}
+
+export function getAllLatestSnapshots(): LimitSnapshotRow[] {
+  return getDb().query(
+    `SELECT s.* FROM claude_limit_snapshots s
+     INNER JOIN (
+       SELECT account_id, MAX(recorded_at) as max_recorded
+       FROM claude_limit_snapshots WHERE account_id IS NOT NULL
+       GROUP BY account_id
+     ) latest ON s.account_id = latest.account_id AND s.recorded_at = latest.max_recorded`,
+  ).all() as LimitSnapshotRow[];
 }
 
 export function cleanupOldLimitSnapshots(): void {

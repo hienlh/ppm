@@ -4,9 +4,14 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   insertLimitSnapshot,
   getLatestLimitSnapshot,
+  getLatestSnapshotForAccount,
+  getAllLatestSnapshots,
   cleanupOldLimitSnapshots,
   type LimitSnapshotRow,
 } from "./db.service.ts";
+import { accountService } from "./account.service.ts";
+import { decrypt } from "../lib/account-crypto.ts";
+import { accountSelector } from "./account-selector.service.ts";
 
 export interface LimitBucket {
   utilization: number;
@@ -17,104 +22,48 @@ export interface LimitBucket {
 }
 
 export interface ClaudeUsage {
-  /** ISO timestamp of last successful fetch */
   lastFetchedAt?: string;
   session?: LimitBucket;
   weekly?: LimitBucket;
   weeklyOpus?: LimitBucket;
   weeklySonnet?: LimitBucket;
-  /** Cumulative cost from SDK result events */
   totalCostUsd?: number;
+}
+
+export interface AccountUsageEntry {
+  accountId: string;
+  accountLabel: string | null;
+  accountStatus: string;
+  isOAuth: boolean;
+  usage: ClaudeUsage;
 }
 
 const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const API_BETA = "oauth-2025-04-20";
 const USER_AGENT = "claude-code/1.0";
-const FETCH_TIMEOUT = 10_000; // 10s
-const POLL_INTERVAL = 300_000; // auto-fetch every 5min
-const RETRY_DELAY = 5_000; // 5s between retries
-const MAX_RETRIES = 3;
+const FETCH_TIMEOUT = 10_000;
+const POLL_INTERVAL = 300_000; // 5min
+const ACCOUNT_STAGGER_MS = 1_000; // 1s between accounts
 
-/** In-memory accumulator for cost from SDK result events */
 let inMemoryCostUsd = 0;
-
-/** Cached OAuth token (read once from Keychain/file) */
-let tokenCache: { token: string; timestamp: number } | null = null;
-const TOKEN_TTL = 300_000; // re-read token every 5min
-
-/** Auto-poll timer */
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-/**
- * Read OAuth access token from macOS Keychain, fallback to credentials file.
- */
-function getAccessToken(): string {
-  if (tokenCache && Date.now() - tokenCache.timestamp < TOKEN_TTL) {
-    return tokenCache.token;
-  }
+// Per-token cooldown map: token prefix → earliest allowed fetch time
+const tokenCooldowns = new Map<string, number>();
 
-  let creds: Record<string, any> | null = null;
+// Legacy: Keychain token cache for users without accounts in DB
+let tokenCache: { token: string; timestamp: number } | null = null;
+const TOKEN_TTL = 300_000;
 
-  // macOS Keychain
-  if (process.platform === "darwin") {
-    try {
-      const proc = Bun.spawnSync(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"]);
-      if (proc.exitCode === 0) {
-        creds = JSON.parse(proc.stdout.toString().trim());
-      }
-    } catch { /* fallback to file */ }
-  }
+// ---------------------------------------------------------------------------
+// Parsing helpers
+// ---------------------------------------------------------------------------
 
-  // Fallback: ~/.claude/.credentials.json
-  if (!creds) {
-    const credPath = resolve(homedir(), ".claude", ".credentials.json");
-    if (existsSync(credPath)) {
-      creds = JSON.parse(readFileSync(credPath, "utf-8"));
-    }
-  }
-
-  const token = creds?.claudeAiOauth?.accessToken;
-  if (!token) throw new Error("No Claude OAuth token found");
-
-  tokenCache = { token, timestamp: Date.now() };
-  return token;
-}
-
-/** Fetch usage from Anthropic OAuth API */
-async function fetchUsageFromApi(): Promise<ClaudeUsage> {
-  const token = getAccessToken();
-  const res = await fetch(API_URL, {
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${token}`,
-      "anthropic-beta": API_BETA,
-      "User-Agent": USER_AGENT,
-    },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Usage API returned ${res.status}`);
-  }
-
-  const raw = (await res.json()) as Record<string, any>;
-  const data: ClaudeUsage = { lastFetchedAt: new Date().toISOString() };
-
-  if (raw.five_hour) data.session = parseApiBucket(raw.five_hour, 5);
-  if (raw.seven_day) data.weekly = parseApiBucket(raw.seven_day, 168);
-  if (raw.seven_day_opus) data.weeklyOpus = parseApiBucket(raw.seven_day_opus, 168);
-  if (raw.seven_day_sonnet) data.weeklySonnet = parseApiBucket(raw.seven_day_sonnet, 168);
-
-  return data;
-}
-
-/** Parse an API bucket (utilization is 0-100 from API, normalize to 0-1) */
 function parseApiBucket(raw: Record<string, any>, windowHours: number): LimitBucket {
   const utilization = (raw.utilization ?? 0) / 100;
   const resetsAt = raw.resets_at ?? "";
   const diff = resetsAt ? new Date(resetsAt).getTime() - Date.now() : 0;
   const totalMins = diff > 0 ? Math.ceil(diff / 60_000) : 0;
-
   return {
     utilization,
     resetsAt,
@@ -124,7 +73,6 @@ function parseApiBucket(raw: Record<string, any>, windowHours: number): LimitBuc
   };
 }
 
-/** Convert DB snapshot row fields back to a LimitBucket (recomputes time-relative fields) */
 function dbBucketToLimitBucket(util: number, resetsAt: string, windowHours: number): LimitBucket {
   const diff = resetsAt ? new Date(resetsAt).getTime() - Date.now() : 0;
   const totalMins = diff > 0 ? Math.ceil(diff / 60_000) : 0;
@@ -137,13 +85,8 @@ function dbBucketToLimitBucket(util: number, resetsAt: string, windowHours: numb
   };
 }
 
-/** Return ClaudeUsage from the latest DB snapshot + in-memory cost */
-export function getCachedUsage(): ClaudeUsage {
-  const row = getLatestLimitSnapshot();
-  const result: ClaudeUsage = {};
-  if (inMemoryCostUsd > 0) result.totalCostUsd = inMemoryCostUsd;
-  if (!row) return result;
-  result.lastFetchedAt = row.recorded_at;
+function snapshotToUsage(row: LimitSnapshotRow): ClaudeUsage {
+  const result: ClaudeUsage = { lastFetchedAt: row.recorded_at };
   if (row.five_hour_util != null) result.session = dbBucketToLimitBucket(row.five_hour_util, row.five_hour_resets_at ?? "", 5);
   if (row.weekly_util != null) result.weekly = dbBucketToLimitBucket(row.weekly_util, row.weekly_resets_at ?? "", 168);
   if (row.weekly_opus_util != null) result.weeklyOpus = dbBucketToLimitBucket(row.weekly_opus_util, row.weekly_opus_resets_at ?? "", 168);
@@ -151,24 +94,56 @@ export function getCachedUsage(): ClaudeUsage {
   return result;
 }
 
-/** Check if new API data differs from the last DB snapshot enough to warrant a new row */
+// ---------------------------------------------------------------------------
+// Fetch usage for a single token
+// ---------------------------------------------------------------------------
+
+async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
+  const res = await fetch(API_URL, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "anthropic-beta": API_BETA,
+      "User-Agent": USER_AGENT,
+    },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT),
+  });
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
+    const cooldownKey = token.substring(0, 20);
+    tokenCooldowns.set(cooldownKey, Date.now() + retryAfter * 1000);
+    throw new Error(`Usage API 429 — cooldown ${retryAfter}s`);
+  }
+  if (!res.ok) throw new Error(`Usage API returned ${res.status}`);
+  const raw = (await res.json()) as Record<string, any>;
+  const data: ClaudeUsage = { lastFetchedAt: new Date().toISOString() };
+  if (raw.five_hour) data.session = parseApiBucket(raw.five_hour, 5);
+  if (raw.seven_day) data.weekly = parseApiBucket(raw.seven_day, 168);
+  if (raw.seven_day_opus) data.weeklyOpus = parseApiBucket(raw.seven_day_opus, 168);
+  if (raw.seven_day_sonnet) data.weeklySonnet = parseApiBucket(raw.seven_day_sonnet, 168);
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+
 function hasChanged(data: ClaudeUsage, last: LimitSnapshotRow | null): boolean {
   if (!last) return true;
-  const diff = (a: number | null | undefined, b: number | null) =>
+  const d = (a: number | null | undefined, b: number | null) =>
     a != null && (b == null || Math.abs(a - b) > 0.001);
-  if (diff(data.session?.utilization, last.five_hour_util)) return true;
-  if (diff(data.weekly?.utilization, last.weekly_util)) return true;
-  // Detect window reset (resetsAt changed)
+  if (d(data.session?.utilization, last.five_hour_util)) return true;
+  if (d(data.weekly?.utilization, last.weekly_util)) return true;
   if (data.session?.resetsAt && data.session.resetsAt !== (last.five_hour_resets_at ?? "")) return true;
   if (data.weekly?.resetsAt && data.weekly.resetsAt !== (last.weekly_resets_at ?? "")) return true;
   return false;
 }
 
-/** Persist API data to DB if changed, then cleanup old rows */
-function persistIfChanged(data: ClaudeUsage): void {
-  const last = getLatestLimitSnapshot();
+function persistIfChanged(data: ClaudeUsage, accountId: string | null): void {
+  const last = accountId ? getLatestSnapshotForAccount(accountId) : getLatestLimitSnapshot();
   if (!hasChanged(data, last)) return;
   insertLimitSnapshot({
+    account_id: accountId,
     five_hour_util: data.session?.utilization ?? null,
     five_hour_resets_at: data.session?.resetsAt ?? null,
     weekly_util: data.weekly?.utilization ?? null,
@@ -181,54 +156,148 @@ function persistIfChanged(data: ClaudeUsage): void {
   cleanupOldLimitSnapshots();
 }
 
-/** Fetch with retry logic, persist to DB if changed */
-async function fetchWithRetry(): Promise<void> {
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const data = await fetchUsageFromApi();
-      persistIfChanged(data);
-      return;
-    } catch (e) {
-      const msg = (e as Error).message ?? "";
-      // Don't retry on 429 — just use stale cache
-      if (msg.includes("429")) return;
-      if (attempt < MAX_RETRIES) {
-        await new Promise((r) => setTimeout(r, RETRY_DELAY));
-      }
+// ---------------------------------------------------------------------------
+// Multi-account polling
+// ---------------------------------------------------------------------------
+
+async function fetchAllAccountUsages(): Promise<void> {
+  const accounts = accountService.list();
+  for (const acc of accounts) {
+    if (acc.status === "disabled") continue;
+    const withTokens = accountService.getWithTokens(acc.id);
+    if (!withTokens) continue;
+    const token = withTokens.accessToken;
+    // Only OAuth tokens have usage endpoint
+    if (!token.startsWith("sk-ant-oat")) continue;
+    // Check cooldown from previous 429
+    const cooldownKey = token.substring(0, 20);
+    const cooldownUntil = tokenCooldowns.get(cooldownKey);
+    if (cooldownUntil && Date.now() < cooldownUntil) {
+      const secs = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      console.log(`[usage] ${acc.label ?? acc.id}: rate-limited, ${secs}s remaining`);
+      continue;
     }
+    try {
+      const data = await fetchUsageForToken(token);
+      tokenCooldowns.delete(cooldownKey); // clear cooldown on success
+      persistIfChanged(data, acc.id);
+    } catch (e) {
+      console.error(`[usage] ${acc.label ?? acc.id}:`, (e as Error).message);
+    }
+    if (accounts.length > 1) await new Promise(r => setTimeout(r, ACCOUNT_STAGGER_MS));
   }
 }
 
-/** Start background auto-polling (called once on server start) */
-export function startUsagePolling(): void {
-  if (pollTimer) return;
-  // Initial fetch
-  fetchWithRetry();
-  // Poll every POLL_INTERVAL
-  pollTimer = setInterval(() => fetchWithRetry(), POLL_INTERVAL);
+// Legacy: Keychain-based single-token fetch (no accounts in DB)
+function getLegacyAccessToken(): string | null {
+  if (tokenCache && Date.now() - tokenCache.timestamp < TOKEN_TTL) return tokenCache.token;
+  let creds: Record<string, any> | null = null;
+  if (process.platform === "darwin") {
+    try {
+      const proc = Bun.spawnSync(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"]);
+      if (proc.exitCode === 0) creds = JSON.parse(proc.stdout.toString().trim());
+    } catch {}
+  }
+  if (!creds) {
+    const credPath = resolve(homedir(), ".claude", ".credentials.json");
+    if (existsSync(credPath)) creds = JSON.parse(readFileSync(credPath, "utf-8"));
+  }
+  const token = creds?.claudeAiOauth?.accessToken;
+  if (!token) return null;
+  tokenCache = { token, timestamp: Date.now() };
+  return token;
 }
 
-/** Stop background polling */
+async function fetchLegacySingleAccount(): Promise<void> {
+  const token = getLegacyAccessToken();
+  if (!token) return;
+  try {
+    const data = await fetchUsageForToken(token);
+    persistIfChanged(data, null);
+  } catch {}
+}
+
+async function pollOnce(): Promise<void> {
+  const hasAccounts = accountService.list().length > 0;
+  if (hasAccounts) {
+    await fetchAllAccountUsages();
+  } else {
+    await fetchLegacySingleAccount();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/** Get usage for specific account */
+export function getUsageForAccount(accountId: string): ClaudeUsage {
+  const row = getLatestSnapshotForAccount(accountId);
+  return row ? snapshotToUsage(row) : {};
+}
+
+/** Get usage for all accounts */
+export function getAllAccountUsages(): AccountUsageEntry[] {
+  const accounts = accountService.list();
+  const snapshots = getAllLatestSnapshots();
+  const snapshotMap = new Map(snapshots.map(s => [s.account_id, s]));
+  // Legacy fallback: if no per-account snapshots exist, use the latest global snapshot
+  const legacyRow = snapshots.length === 0 ? getLatestLimitSnapshot() : null;
+  const activeId = accountSelector.lastPickedId;
+  return accounts.map(acc => {
+    const withTokens = accountService.getWithTokens(acc.id);
+    const isOAuth = withTokens?.accessToken.startsWith("sk-ant-oat") ?? false;
+    const row = snapshotMap.get(acc.id);
+    // Use per-account data if available; legacy fallback only for active account
+    const usage = row
+      ? snapshotToUsage(row)
+      : (legacyRow && activeId && acc.id === activeId) ? snapshotToUsage(legacyRow) : {};
+    return {
+      accountId: acc.id,
+      accountLabel: acc.label,
+      accountStatus: acc.status,
+      isOAuth,
+      usage,
+    };
+  });
+}
+
+/** Get cached usage for active account (used by chat header) */
+export function getCachedUsage(): ClaudeUsage & { activeAccountId?: string; activeAccountLabel?: string } {
+  const activeId = accountSelector.lastPickedId;
+  if (activeId) {
+    const usage = getUsageForAccount(activeId);
+    const acc = accountService.list().find(a => a.id === activeId);
+    return {
+      ...usage,
+      totalCostUsd: inMemoryCostUsd > 0 ? inMemoryCostUsd : undefined,
+      activeAccountId: activeId,
+      activeAccountLabel: acc?.label ?? undefined,
+    };
+  }
+  // Legacy fallback
+  const row = getLatestLimitSnapshot();
+  const result: ClaudeUsage = {};
+  if (inMemoryCostUsd > 0) result.totalCostUsd = inMemoryCostUsd;
+  if (!row) return result;
+  return snapshotToUsage(row);
+}
+
+export function startUsagePolling(): void {
+  if (pollTimer) return;
+  pollOnce();
+  pollTimer = setInterval(() => pollOnce(), POLL_INTERVAL);
+}
+
 export function stopUsagePolling(): void {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
-/**
- * Merge SDK result cost events into in-memory accumulator.
- * Rate limit utilization from SDK events is ignored — API polling is authoritative.
- */
-export function updateFromSdkEvent(
-  _rateLimitType?: string,
-  _utilization?: number,
-  costUsd?: number,
-): void {
-  if (costUsd != null) {
-    inMemoryCostUsd += costUsd;
-  }
+export function updateFromSdkEvent(_rateLimitType?: string, _utilization?: number, costUsd?: number): void {
+  if (costUsd != null) inMemoryCostUsd += costUsd;
 }
 
-/** Force immediate refresh from Anthropic API, persist to DB, return latest */
-export async function refreshUsageNow(): Promise<ClaudeUsage> {
-  await fetchWithRetry();
+export async function refreshUsageNow(): Promise<ClaudeUsage & { activeAccountId?: string; activeAccountLabel?: string }> {
+  await pollOnce();
   return getCachedUsage();
 }

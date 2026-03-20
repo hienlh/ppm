@@ -23,6 +23,14 @@ export function getAccounts(): Promise<AccountInfo[]> {
   return api.get<AccountInfo[]>("/api/accounts");
 }
 
+export function getActiveAccount(): Promise<AccountInfo | null> {
+  return api.get<AccountInfo | null>("/api/accounts/active");
+}
+
+export function addAccount(params: { apiKey: string; label?: string }): Promise<AccountInfo> {
+  return api.post<AccountInfo>("/api/accounts", params);
+}
+
 export function deleteAccount(id: string): Promise<void> {
   return api.del(`/api/accounts/${id}`);
 }
@@ -37,6 +45,24 @@ export function getAccountSettings(): Promise<AccountSettings> {
 
 export function updateAccountSettings(s: Partial<Omit<AccountSettings, "activeCount">>): Promise<AccountSettings> {
   return api.put<AccountSettings>("/api/accounts/settings", s);
+}
+
+export interface AccountUsageEntry {
+  accountId: string;
+  accountLabel: string | null;
+  accountStatus: string;
+  isOAuth: boolean;
+  usage: {
+    lastFetchedAt?: string;
+    session?: import("../../types/chat").LimitBucket;
+    weekly?: import("../../types/chat").LimitBucket;
+    weeklyOpus?: import("../../types/chat").LimitBucket;
+    weeklySonnet?: import("../../types/chat").LimitBucket;
+  };
+}
+
+export function getAllAccountUsages(): Promise<AccountUsageEntry[]> {
+  return api.get<AccountUsageEntry[]>("/api/accounts/usage");
 }
 
 export interface AIProviderSettings {

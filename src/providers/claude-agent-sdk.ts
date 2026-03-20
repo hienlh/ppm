@@ -72,7 +72,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   /**
    * Build env for SDK query.
-   * If account mode: inject ANTHROPIC_AUTH_TOKEN, neutralize ANTHROPIC_API_KEY.
+   * If account mode: detect token type and inject the correct env var.
+   *   - OAuth tokens (sk-ant-oat*) → CLAUDE_CODE_OAUTH_TOKEN (SDK reads this for subscription auth)
+   *   - API keys (sk-ant-api* or other) → ANTHROPIC_API_KEY
    * Otherwise: pass through existing env (backward compatible).
    */
   private buildQueryEnv(
@@ -81,10 +83,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   ): Record<string, string | undefined> {
     const base = { ...process.env, ...this.getProjectEnvOverrides(projectPath) };
     if (!account) return base;
+    const isOAuthToken = account.accessToken.startsWith("sk-ant-oat");
+    if (isOAuthToken) {
+      return {
+        ...base,
+        CLAUDE_CODE_OAUTH_TOKEN: account.accessToken,
+        ANTHROPIC_API_KEY: "", // neutralize — OAuth token takes precedence
+      };
+    }
     return {
       ...base,
-      ANTHROPIC_AUTH_TOKEN: account.accessToken,
-      ANTHROPIC_API_KEY: "", // neutralize — OAuth token takes precedence
+      ANTHROPIC_API_KEY: account.accessToken,
+      CLAUDE_CODE_OAUTH_TOKEN: "", // neutralize — API key takes precedence
     };
   }
 

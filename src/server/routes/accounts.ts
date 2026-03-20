@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { accountService } from "../../services/account.service.ts";
 import { accountSelector } from "../../services/account-selector.service.ts";
+import { getAllAccountUsages, getUsageForAccount } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 export const accountsRoutes = new Hono();
@@ -19,6 +20,19 @@ function getUiBase(c: Context): string {
 /** GET /api/accounts */
 accountsRoutes.get("/", (c) => {
   return c.json(ok(accountService.list()));
+});
+
+/** GET /api/accounts/active — which account will be used next */
+accountsRoutes.get("/active", (c) => {
+  const lastId = accountSelector.lastPickedId;
+  if (!lastId) {
+    // No account picked yet — peek at what next() would return without consuming it
+    const accounts = accountService.list().filter((a) => a.status === "active");
+    if (accounts.length === 0) return c.json(ok(null));
+    return c.json(ok(accounts[0]));
+  }
+  const account = accountService.list().find((a) => a.id === lastId) ?? null;
+  return c.json(ok(account));
 });
 
 /** GET /api/accounts/settings */
@@ -50,6 +64,23 @@ accountsRoutes.put("/settings", async (c) => {
     maxRetry: accountSelector.getMaxRetry(),
     activeCount: accountSelector.activeCount(),
   }));
+});
+
+/** POST /api/accounts — add account manually with API key */
+accountsRoutes.post("/", async (c) => {
+  const body = await c.req.json<{ apiKey: string; label?: string }>();
+  if (!body.apiKey || typeof body.apiKey !== "string") {
+    return c.json(err("apiKey is required"), 400);
+  }
+  try {
+    const account = await accountService.addManual({
+      apiKey: body.apiKey.trim(),
+      label: body.label?.trim() || null,
+    });
+    return c.json(ok(account));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
 });
 
 /** GET /api/accounts/oauth/start → redirect to Claude OAuth */
@@ -102,6 +133,17 @@ accountsRoutes.post("/import", async (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
+});
+
+/** GET /api/accounts/usage — all accounts usage batch */
+accountsRoutes.get("/usage", (c) => {
+  return c.json(ok(getAllAccountUsages()));
+});
+
+/** GET /api/accounts/:id/usage — single account usage */
+accountsRoutes.get("/:id/usage", (c) => {
+  const { id } = c.req.param();
+  return c.json(ok(getUsageForAccount(id)));
 });
 
 /** DELETE /api/accounts/:id */

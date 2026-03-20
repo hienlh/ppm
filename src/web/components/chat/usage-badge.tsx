@@ -1,5 +1,7 @@
-import { Activity, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Activity, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
 import type { UsageInfo, LimitBucket } from "../../../types/chat";
+import { getAllAccountUsages, type AccountUsageEntry } from "../../lib/api-settings";
 
 interface UsageBadgeProps {
   usage: UsageInfo;
@@ -56,7 +58,6 @@ interface UsageDetailPanelProps {
 
 function formatResetTime(bucket?: LimitBucket): string | null {
   if (!bucket) return null;
-  // Compute total minutes from whichever field is available
   let totalMins: number | null = null;
   if (bucket.resetsInMinutes != null) {
     totalMins = bucket.resetsInMinutes;
@@ -113,14 +114,91 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${mins}m ago`;
 }
 
+function AccountUsageSection({ entry, isActive, defaultExpanded }: {
+  entry: AccountUsageEntry;
+  isActive: boolean;
+  defaultExpanded: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const { usage } = entry;
+  const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
+
+  // Summary: worst utilization for collapsed view
+  const worstPct = Math.max(
+    usage.session ? Math.round(usage.session.utilization * 100) : 0,
+    usage.weekly ? Math.round(usage.weekly.utilization * 100) : 0,
+  );
+
+  return (
+    <div className={`rounded-md border ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left"
+      >
+        {expanded ? <ChevronDown className="size-3 text-text-subtle shrink-0" /> : <ChevronRight className="size-3 text-text-subtle shrink-0" />}
+        <span className="text-xs font-medium truncate flex-1">
+          {entry.accountLabel ?? entry.accountId.slice(0, 8)}
+        </span>
+        {isActive && (
+          <span className="text-[9px] px-1 py-0 rounded bg-primary/20 text-primary font-medium shrink-0">In use</span>
+        )}
+        {!entry.isOAuth && (
+          <span className="text-[9px] text-text-subtle shrink-0">API key</span>
+        )}
+        {!expanded && hasBuckets && (
+          <span className={`text-[10px] font-medium tabular-nums shrink-0 ${pctColor(worstPct)}`}>
+            {worstPct}%
+          </span>
+        )}
+        {entry.accountStatus === "disabled" && (
+          <span className="text-[9px] text-text-subtle shrink-0">disabled</span>
+        )}
+      </button>
+      {expanded && (
+        <div className="px-2 pb-2 space-y-2">
+          {hasBuckets ? (
+            <>
+              <BucketRow label="5-Hour Session" bucket={usage.session} />
+              <BucketRow label="Weekly" bucket={usage.weekly} />
+              <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
+              <BucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
+            </>
+          ) : (
+            <p className="text-[10px] text-text-subtle">
+              {entry.isOAuth ? "No usage data yet" : "Usage tracking not available for API keys"}
+            </p>
+          )}
+          {usage.lastFetchedAt && (
+            <p className="text-[9px] text-text-subtle">
+              Updated: {formatLastUpdated(new Date(usage.lastFetchedAt).getTime())}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, lastFetchedAt }: UsageDetailPanelProps) {
+  const [allUsages, setAllUsages] = useState<AccountUsageEntry[]>([]);
+  const [loadingAll, setLoadingAll] = useState(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    setLoadingAll(true);
+    getAllAccountUsages()
+      .then(setAllUsages)
+      .catch(() => {})
+      .finally(() => setLoadingAll(false));
+  }, [visible]);
+
   if (!visible) return null;
 
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
-  const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
+  const hasMultipleAccounts = allUsages.length > 0;
 
   return (
-    <div className="border-b border-border bg-surface px-3 py-2.5 space-y-2.5">
+    <div className="border-b border-border bg-surface px-3 py-2.5 space-y-2.5 max-h-[350px] overflow-y-auto">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary">Usage Limits</span>
@@ -148,17 +226,35 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         </div>
       </div>
 
-      {hasBuckets ? (
-        <div className="space-y-2.5">
-          <BucketRow label="5-Hour Session" bucket={usage.session} />
-          <BucketRow label="Weekly" bucket={usage.weekly} />
-          <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
-          <BucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
+      {hasMultipleAccounts ? (
+        <div className="space-y-1.5">
+          {loadingAll ? (
+            <p className="text-[10px] text-text-subtle">Loading accounts...</p>
+          ) : (
+            allUsages.map((entry) => (
+              <AccountUsageSection
+                key={entry.accountId}
+                entry={entry}
+                isActive={entry.accountId === usage.activeAccountId}
+                defaultExpanded={entry.accountId === usage.activeAccountId}
+              />
+            ))
+          )}
         </div>
       ) : (
-        <p className="text-xs text-text-subtle">
-          No data — run <code className="bg-surface-elevated px-1 rounded">bun install</code>
-        </p>
+        // Fallback: single-account view (legacy or no accounts configured)
+        <>
+          {usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet ? (
+            <div className="space-y-2.5">
+              <BucketRow label="5-Hour Session" bucket={usage.session} />
+              <BucketRow label="Weekly" bucket={usage.weekly} />
+              <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
+              <BucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
+            </div>
+          ) : (
+            <p className="text-xs text-text-subtle">No usage data available</p>
+          )}
+        </>
       )}
 
       {hasCost && (

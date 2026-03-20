@@ -93,6 +93,100 @@ class AccountService {
     return this.toAccount(getAccountById(id)!);
   }
 
+  async verifyToken(token: string): Promise<{
+    valid: boolean;
+    email?: string;
+    orgName?: string;
+    subscriptionType?: string;
+    authMethod?: string;
+  }> {
+    const isOAuth = token.startsWith("sk-ant-oat");
+
+    if (isOAuth) {
+      // Verify via usage API — 200/429 = valid, 401/403 = invalid
+      try {
+        const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": "ppm/1.0",
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        // 200 = valid, 429 = rate limited but valid token
+        if (res.status === 200 || res.status === 429) {
+          return { valid: true, authMethod: "oauth_token" };
+        }
+        return { valid: false };
+      } catch {
+        return { valid: false };
+      }
+    }
+
+    // API key: verify via claude auth status
+    try {
+      const proc = Bun.spawn(["claude", "auth", "status"], {
+        env: { ...process.env, ANTHROPIC_API_KEY: token, CLAUDE_CODE_OAUTH_TOKEN: "" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdout = await new Response(proc.stdout).text();
+      await proc.exited;
+      const info = JSON.parse(stdout) as {
+        loggedIn?: boolean;
+        email?: string;
+        orgName?: string;
+        subscriptionType?: string;
+        authMethod?: string;
+      };
+      if (!info.loggedIn) return { valid: false };
+      return {
+        valid: true,
+        email: info.email,
+        orgName: info.orgName,
+        subscriptionType: info.subscriptionType,
+        authMethod: info.authMethod ?? "api_key",
+      };
+    } catch {
+      return { valid: false };
+    }
+  }
+
+  async addManual(params: { apiKey: string; label: string | null }): Promise<Account> {
+    const info = await this.verifyToken(params.apiKey);
+    if (!info.valid) throw new Error("Invalid token — could not authenticate");
+    const id = randomUUID();
+    const email = info.email ?? null;
+    // Auto-generate label: orgName (subscription) > authMethod-based > user-provided > fallback
+    let label = params.label;
+    if (!label) {
+      if (info.orgName) {
+        label = `${info.orgName}${info.subscriptionType ? ` (${info.subscriptionType})` : ""}`;
+      } else if (info.authMethod === "oauth_token") {
+        label = `Claude Pro/Max`;
+      } else if (info.authMethod === "api_key" || params.apiKey.startsWith("sk-ant-api")) {
+        label = "API Key";
+      } else {
+        label = `Account ${this.list().length + 1}`;
+      }
+    }
+    insertAccount({
+      id,
+      label,
+      email,
+      access_token: encrypt(params.apiKey),
+      refresh_token: encrypt(""),
+      expires_at: null,
+      status: "active",
+      cooldown_until: null,
+      priority: 0,
+      total_requests: 0,
+      last_used_at: null,
+    });
+    return this.toAccount(getAccountById(id)!);
+  }
+
   updateTokens(id: string, accessToken: string, refreshToken: string, expiresAt: number): void {
     updateAccount(id, {
       access_token: encrypt(accessToken),
