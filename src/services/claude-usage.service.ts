@@ -1,6 +1,12 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
+import {
+  insertLimitSnapshot,
+  getLatestLimitSnapshot,
+  cleanupOldLimitSnapshots,
+  type LimitSnapshotRow,
+} from "./db.service.ts";
 
 export interface LimitBucket {
   utilization: number;
@@ -25,12 +31,12 @@ const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const API_BETA = "oauth-2025-04-20";
 const USER_AGENT = "claude-code/1.0";
 const FETCH_TIMEOUT = 10_000; // 10s
-const POLL_INTERVAL = 60_000; // auto-fetch every 60s
+const POLL_INTERVAL = 120_000; // auto-fetch every 2min
 const RETRY_DELAY = 5_000; // 5s between retries
 const MAX_RETRIES = 3;
 
-/** Cached usage data */
-let cache: ClaudeUsage = {};
+/** In-memory accumulator for cost from SDK result events */
+let inMemoryCostUsd = 0;
 
 /** Cached OAuth token (read once from Keychain/file) */
 let tokenCache: { token: string; timestamp: number } | null = null;
@@ -118,12 +124,69 @@ function parseApiBucket(raw: Record<string, any>, windowHours: number): LimitBuc
   };
 }
 
-/** Fetch with retry logic */
+/** Convert DB snapshot row fields back to a LimitBucket (recomputes time-relative fields) */
+function dbBucketToLimitBucket(util: number, resetsAt: string, windowHours: number): LimitBucket {
+  const diff = resetsAt ? new Date(resetsAt).getTime() - Date.now() : 0;
+  const totalMins = diff > 0 ? Math.ceil(diff / 60_000) : 0;
+  return {
+    utilization: util,
+    resetsAt,
+    resetsInMinutes: windowHours <= 5 ? totalMins : null,
+    resetsInHours: windowHours > 5 ? Math.round((totalMins / 60) * 100) / 100 : null,
+    windowHours,
+  };
+}
+
+/** Return ClaudeUsage from the latest DB snapshot + in-memory cost */
+export function getCachedUsage(): ClaudeUsage {
+  const row = getLatestLimitSnapshot();
+  const result: ClaudeUsage = {};
+  if (inMemoryCostUsd > 0) result.totalCostUsd = inMemoryCostUsd;
+  if (!row) return result;
+  result.lastFetchedAt = row.recorded_at;
+  if (row.five_hour_util != null) result.session = dbBucketToLimitBucket(row.five_hour_util, row.five_hour_resets_at ?? "", 5);
+  if (row.weekly_util != null) result.weekly = dbBucketToLimitBucket(row.weekly_util, row.weekly_resets_at ?? "", 168);
+  if (row.weekly_opus_util != null) result.weeklyOpus = dbBucketToLimitBucket(row.weekly_opus_util, row.weekly_opus_resets_at ?? "", 168);
+  if (row.weekly_sonnet_util != null) result.weeklySonnet = dbBucketToLimitBucket(row.weekly_sonnet_util, row.weekly_sonnet_resets_at ?? "", 168);
+  return result;
+}
+
+/** Check if new API data differs from the last DB snapshot enough to warrant a new row */
+function hasChanged(data: ClaudeUsage, last: LimitSnapshotRow | null): boolean {
+  if (!last) return true;
+  const diff = (a: number | null | undefined, b: number | null) =>
+    a != null && (b == null || Math.abs(a - b) > 0.001);
+  if (diff(data.session?.utilization, last.five_hour_util)) return true;
+  if (diff(data.weekly?.utilization, last.weekly_util)) return true;
+  // Detect window reset (resetsAt changed)
+  if (data.session?.resetsAt && data.session.resetsAt !== (last.five_hour_resets_at ?? "")) return true;
+  if (data.weekly?.resetsAt && data.weekly.resetsAt !== (last.weekly_resets_at ?? "")) return true;
+  return false;
+}
+
+/** Persist API data to DB if changed, then cleanup old rows */
+function persistIfChanged(data: ClaudeUsage): void {
+  const last = getLatestLimitSnapshot();
+  if (!hasChanged(data, last)) return;
+  insertLimitSnapshot({
+    five_hour_util: data.session?.utilization ?? null,
+    five_hour_resets_at: data.session?.resetsAt ?? null,
+    weekly_util: data.weekly?.utilization ?? null,
+    weekly_resets_at: data.weekly?.resetsAt ?? null,
+    weekly_opus_util: data.weeklyOpus?.utilization ?? null,
+    weekly_opus_resets_at: data.weeklyOpus?.resetsAt ?? null,
+    weekly_sonnet_util: data.weeklySonnet?.utilization ?? null,
+    weekly_sonnet_resets_at: data.weeklySonnet?.resetsAt ?? null,
+  });
+  cleanupOldLimitSnapshots();
+}
+
+/** Fetch with retry logic, persist to DB if changed */
 async function fetchWithRetry(): Promise<void> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const data = await fetchUsageFromApi();
-      cache = data;
+      persistIfChanged(data);
       return;
     } catch (e) {
       const msg = (e as Error).message ?? "";
@@ -150,45 +213,22 @@ export function stopUsagePolling(): void {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
-/** Get cached usage (fast, synchronous read — FE just reads this) */
-export function getCachedUsage(): ClaudeUsage {
-  return cache;
-}
-
 /**
- * Merge SDK rate-limit / cost events into the cache so the REST endpoint
- * always returns the freshest data — even when the OAuth Usage API is unreachable.
+ * Merge SDK result cost events into in-memory accumulator.
+ * Rate limit utilization from SDK events is ignored — API polling is authoritative.
  */
 export function updateFromSdkEvent(
-  rateLimitType?: string,
-  utilization?: number,
+  _rateLimitType?: string,
+  _utilization?: number,
   costUsd?: number,
 ): void {
-  if (rateLimitType && utilization != null) {
-    if (rateLimitType === "five_hour") {
-      cache.session = {
-        ...(cache.session ?? { resetsAt: "", resetsInMinutes: null, resetsInHours: null, windowHours: 5 }),
-        utilization,
-      };
-    } else if (rateLimitType.startsWith("seven_day")) {
-      const key: keyof ClaudeUsage =
-        rateLimitType === "seven_day_opus" ? "weeklyOpus"
-          : rateLimitType === "seven_day_sonnet" ? "weeklySonnet"
-          : "weekly";
-      cache[key] = {
-        ...(cache[key] as LimitBucket ?? { resetsAt: "", resetsInMinutes: null, resetsInHours: null, windowHours: 168 }),
-        utilization,
-      };
-    }
-    if (!cache.lastFetchedAt) cache.lastFetchedAt = new Date().toISOString();
-  }
   if (costUsd != null) {
-    cache.totalCostUsd = (cache.totalCostUsd ?? 0) + costUsd;
+    inMemoryCostUsd += costUsd;
   }
 }
 
-/** Force immediate refresh (e.g. after a chat completes) */
+/** Force immediate refresh from Anthropic API, persist to DB, return latest */
 export async function refreshUsageNow(): Promise<ClaudeUsage> {
   await fetchWithRetry();
-  return cache;
+  return getCachedUsage();
 }

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -165,6 +165,27 @@ function runMigrations(database: Database): void {
       CREATE INDEX IF NOT EXISTS idx_table_cache_conn ON connection_table_cache(connection_id);
 
       PRAGMA user_version = 3;
+    `);
+  }
+
+  if (current < 4) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS claude_limit_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        five_hour_util REAL,
+        five_hour_resets_at TEXT,
+        weekly_util REAL,
+        weekly_resets_at TEXT,
+        weekly_opus_util REAL,
+        weekly_opus_resets_at TEXT,
+        weekly_sonnet_util REAL,
+        weekly_sonnet_resets_at TEXT,
+        recorded_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_limit_snapshots_recorded ON claude_limit_snapshots(recorded_at);
+
+      PRAGMA user_version = 4;
     `);
   }
 }
@@ -343,6 +364,49 @@ export function getUsageSince(since: string): UsageRow[] {
 
 export function getDbFilePath(): string {
   return getDbPath();
+}
+
+// ---------------------------------------------------------------------------
+// Claude limit snapshot helpers
+// ---------------------------------------------------------------------------
+
+export interface LimitSnapshotRow {
+  id: number;
+  five_hour_util: number | null;
+  five_hour_resets_at: string | null;
+  weekly_util: number | null;
+  weekly_resets_at: string | null;
+  weekly_opus_util: number | null;
+  weekly_opus_resets_at: string | null;
+  weekly_sonnet_util: number | null;
+  weekly_sonnet_resets_at: string | null;
+  recorded_at: string;
+}
+
+export function insertLimitSnapshot(data: Omit<LimitSnapshotRow, "id" | "recorded_at">): void {
+  getDb().query(
+    `INSERT INTO claude_limit_snapshots
+      (five_hour_util, five_hour_resets_at, weekly_util, weekly_resets_at,
+       weekly_opus_util, weekly_opus_resets_at, weekly_sonnet_util, weekly_sonnet_resets_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    data.five_hour_util ?? null, data.five_hour_resets_at ?? null,
+    data.weekly_util ?? null, data.weekly_resets_at ?? null,
+    data.weekly_opus_util ?? null, data.weekly_opus_resets_at ?? null,
+    data.weekly_sonnet_util ?? null, data.weekly_sonnet_resets_at ?? null,
+  );
+}
+
+export function getLatestLimitSnapshot(): LimitSnapshotRow | null {
+  return getDb().query(
+    "SELECT * FROM claude_limit_snapshots ORDER BY recorded_at DESC LIMIT 1",
+  ).get() as LimitSnapshotRow | null;
+}
+
+export function cleanupOldLimitSnapshots(): void {
+  getDb().query(
+    "DELETE FROM claude_limit_snapshots WHERE recorded_at < datetime('now', '-7 days')",
+  ).run();
 }
 
 // ---------------------------------------------------------------------------

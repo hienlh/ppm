@@ -44,11 +44,11 @@ describe("db.service", () => {
       expect(tables).toContain("usage_history");
     });
 
-    it("sets user_version to 3 after all migrations", () => {
+    it("sets user_version to 4 after all migrations", () => {
       const { openTestDb: open } = require("../../../src/services/db.service.ts");
       const db = open();
       const row = db.query("PRAGMA user_version").get() as { user_version: number };
-      expect(row.user_version).toBe(3);
+      expect(row.user_version).toBe(4);
       db.close();
     });
 
