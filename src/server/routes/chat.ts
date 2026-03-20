@@ -8,6 +8,7 @@ import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sd
 import { listSlashItems } from "../../services/slash-items.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
+import { getSessionMapping } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -114,8 +115,11 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const body = await c.req.json<{ title?: string }>();
     if (!body.title?.trim()) return c.json(err("title is required"), 400);
     const title = body.title.trim();
+    // Resolve PPM UUID → SDK session ID if mapped
+    const sdkId = getSessionMapping(id) ?? id;
+    const projectPath = c.get("projectPath");
     // Persist to SDK so Claude Code CLI also sees the custom title
-    await sdkRenameSession(id, title);
+    await sdkRenameSession(sdkId, title, { dir: projectPath });
     // Also update in-memory session
     const session = chatService.getSession(id);
     if (session) session.title = title;

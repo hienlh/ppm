@@ -160,11 +160,12 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         // Fire-and-forget: fetch updated session title from SDK summary
         sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
           const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
-          if (found?.summary) {
-            safeSend(sessionId, { type: "title_updated", title: found.summary });
+          const title = found?.customTitle ?? found?.summary;
+          if (title) {
+            safeSend(sessionId, { type: "title_updated", title });
             // Also update in-memory session title
             const session = chatService.getSession(sessionId);
-            if (session) session.title = found.summary;
+            if (session) session.title = title;
           }
         }).catch(() => {});
         // Fire-and-forget notification broadcast (push + telegram)
@@ -298,9 +299,10 @@ export const chatWebSocket = {
       if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
         sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
           const found = sessions.find((s) => s.sessionId === sessionId);
-          if (found?.summary) {
-            safeSend(sessionId, { type: "title_updated", title: found.summary });
-            if (session) session.title = found.summary;
+          const title = found?.customTitle ?? found?.summary;
+          if (title) {
+            safeSend(sessionId, { type: "title_updated", title });
+            if (session) session.title = title;
           }
         }).catch(() => {});
       }
@@ -330,9 +332,10 @@ export const chatWebSocket = {
     if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
       sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
         const found = sessions.find((s) => s.sessionId === sessionId);
-        if (found?.summary) {
-          safeSend(sessionId, { type: "title_updated", title: found.summary });
-          if (session) session.title = found.summary;
+        const title = found?.customTitle ?? found?.summary;
+        if (title) {
+          safeSend(sessionId, { type: "title_updated", title });
+          if (session) session.title = title;
         }
       }).catch(() => {});
     }
