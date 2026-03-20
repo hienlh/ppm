@@ -1,8 +1,12 @@
 import type { Subprocess } from "bun";
+import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { existsSync, unlinkSync } from "node:fs";
 import { ensureCloudflared } from "./cloudflared.service.ts";
 
 const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 const decoder = new TextDecoder();
+const RESTARTING_FLAG = resolve(homedir(), ".ppm", ".restarting");
 
 /** Extract tunnel URL from cloudflared stderr output */
 export function extractTunnelUrl(text: string): string | null {
@@ -12,6 +16,7 @@ export function extractTunnelUrl(text: string): string | null {
 
 class TunnelService {
   private childProcess: Subprocess | null = null;
+  private externalPid: number | null = null;
   private url: string | null = null;
   private cleanupHandler: (() => void) | null = null;
 
@@ -79,7 +84,7 @@ class TunnelService {
     return url;
   }
 
-  /** Kill the cloudflared child process */
+  /** Kill the cloudflared child process (skipped during restart) */
   stopTunnel(): void {
     if (this.cleanupHandler) {
       process.off("SIGINT", this.cleanupHandler);
@@ -87,9 +92,20 @@ class TunnelService {
       process.off("exit", this.cleanupHandler);
       this.cleanupHandler = null;
     }
+    // If server is restarting, keep tunnel alive
+    if (existsSync(RESTARTING_FLAG)) {
+      this.childProcess = null;
+      this.externalPid = null;
+      this.url = null;
+      return;
+    }
     if (this.childProcess) {
       try { this.childProcess.kill(); } catch {}
       this.childProcess = null;
+    }
+    if (this.externalPid) {
+      try { process.kill(this.externalPid); } catch {}
+      this.externalPid = null;
     }
     this.url = null;
   }
@@ -99,9 +115,19 @@ class TunnelService {
     return this.url;
   }
 
+  /** Get cloudflared PID (child process or external) */
+  getTunnelPid(): number | null {
+    return this.childProcess?.pid ?? this.externalPid;
+  }
+
   /** Inject an externally-started tunnel URL (e.g. from daemon --share) */
   setExternalUrl(url: string): void {
     this.url = url;
+  }
+
+  /** Adopt an externally-started tunnel by PID (for stop management after restart) */
+  setExternalPid(pid: number): void {
+    this.externalPid = pid;
   }
 }
 
