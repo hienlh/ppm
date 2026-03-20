@@ -241,23 +241,16 @@ export function getAllAccountUsages(): AccountUsageEntry[] {
   const accounts = accountService.list();
   const snapshots = getAllLatestSnapshots();
   const snapshotMap = new Map(snapshots.map(s => [s.account_id, s]));
-  // Legacy fallback: if no per-account snapshots exist, use the latest global snapshot
-  const legacyRow = snapshots.length === 0 ? getLatestLimitSnapshot() : null;
-  const activeId = accountSelector.lastPickedId;
   return accounts.map(acc => {
     const withTokens = accountService.getWithTokens(acc.id);
     const isOAuth = withTokens?.accessToken.startsWith("sk-ant-oat") ?? false;
     const row = snapshotMap.get(acc.id);
-    // Use per-account data if available; legacy fallback only for active account
-    const usage = row
-      ? snapshotToUsage(row)
-      : (legacyRow && activeId && acc.id === activeId) ? snapshotToUsage(legacyRow) : {};
     return {
       accountId: acc.id,
       accountLabel: acc.label,
       accountStatus: acc.status,
       isOAuth,
-      usage,
+      usage: row ? snapshotToUsage(row) : {},
     };
   });
 }

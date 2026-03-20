@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Activity, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
+import { Activity, RefreshCw } from "lucide-react";
 import type { UsageInfo, LimitBucket } from "../../../types/chat";
 import { getAllAccountUsages, type AccountUsageEntry } from "../../lib/api-settings";
 
@@ -114,29 +114,17 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${mins}m ago`;
 }
 
-function AccountUsageSection({ entry, isActive, defaultExpanded }: {
+function AccountUsageCard({ entry, isActive }: {
   entry: AccountUsageEntry;
   isActive: boolean;
-  defaultExpanded: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
 
-  // Summary: worst utilization for collapsed view
-  const worstPct = Math.max(
-    usage.session ? Math.round(usage.session.utilization * 100) : 0,
-    usage.weekly ? Math.round(usage.weekly.utilization * 100) : 0,
-  );
-
   return (
-    <div className={`rounded-md border ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-left"
-      >
-        {expanded ? <ChevronDown className="size-3 text-text-subtle shrink-0" /> : <ChevronRight className="size-3 text-text-subtle shrink-0" />}
-        <span className="text-xs font-medium truncate flex-1">
+    <div className={`rounded-md border p-2 space-y-1.5 ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs font-medium truncate flex-1 min-w-0">
           {entry.accountLabel ?? entry.accountId.slice(0, 8)}
         </span>
         {isActive && (
@@ -145,35 +133,26 @@ function AccountUsageSection({ entry, isActive, defaultExpanded }: {
         {!entry.isOAuth && (
           <span className="text-[9px] text-text-subtle shrink-0">API key</span>
         )}
-        {!expanded && hasBuckets && (
-          <span className={`text-[10px] font-medium tabular-nums shrink-0 ${pctColor(worstPct)}`}>
-            {worstPct}%
-          </span>
-        )}
         {entry.accountStatus === "disabled" && (
           <span className="text-[9px] text-text-subtle shrink-0">disabled</span>
         )}
-      </button>
-      {expanded && (
-        <div className="px-2 pb-2 space-y-2">
-          {hasBuckets ? (
-            <>
-              <BucketRow label="5-Hour Session" bucket={usage.session} />
-              <BucketRow label="Weekly" bucket={usage.weekly} />
-              <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
-              <BucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
-            </>
-          ) : (
-            <p className="text-[10px] text-text-subtle">
-              {entry.isOAuth ? "No usage data yet" : "Usage tracking not available for API keys"}
-            </p>
-          )}
-          {usage.lastFetchedAt && (
-            <p className="text-[9px] text-text-subtle">
-              Updated: {formatLastUpdated(new Date(usage.lastFetchedAt).getTime())}
-            </p>
-          )}
+      </div>
+      {hasBuckets ? (
+        <div className="space-y-1.5">
+          <BucketRow label="5-Hour Session" bucket={usage.session} />
+          <BucketRow label="Weekly" bucket={usage.weekly} />
+          <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
+          <BucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
         </div>
+      ) : (
+        <p className="text-[10px] text-text-subtle">
+          {entry.isOAuth ? "No usage data yet" : "Usage tracking not available for API keys"}
+        </p>
+      )}
+      {usage.lastFetchedAt && (
+        <p className="text-[9px] text-text-subtle">
+          Updated: {formatLastUpdated(new Date(usage.lastFetchedAt).getTime())}
+        </p>
       )}
     </div>
   );
@@ -227,16 +206,15 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       </div>
 
       {hasMultipleAccounts ? (
-        <div className="space-y-1.5">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-1.5">
           {loadingAll ? (
             <p className="text-[10px] text-text-subtle">Loading accounts...</p>
           ) : (
             allUsages.map((entry) => (
-              <AccountUsageSection
+              <AccountUsageCard
                 key={entry.accountId}
                 entry={entry}
                 isActive={entry.accountId === usage.activeAccountId}
-                defaultExpanded={entry.accountId === usage.activeAccountId}
               />
             ))
           )}

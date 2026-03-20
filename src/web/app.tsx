@@ -17,7 +17,6 @@ import {
 import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
-import { useHealthCheck } from "@/hooks/use-health-check";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
@@ -99,9 +98,6 @@ export function App() {
 
   // Global keyboard shortcuts (Shift+Shift → command palette, Alt+[/] → cycle tabs)
   const { paletteOpen, paletteInitialQuery, closePalette } = useGlobalKeybindings();
-
-  // Health check — detects server crash/restart
-  useHealthCheck();
 
   // Notification badge — syncs document.title + favicon with unread count
   useNotificationBadge();
