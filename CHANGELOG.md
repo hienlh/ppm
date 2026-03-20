@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.11] - 2026-03-20
+
+### Fixed
+- **Account export/import**: pass auth token in API calls (was using raw `fetch` without `Authorization` header)
+
 ## [0.7.10] - 2026-03-20
 
 ### Changed
