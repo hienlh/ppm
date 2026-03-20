@@ -7,6 +7,9 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 
 const STATUS_FILE = resolve(homedir(), ".ppm", "status.json");
 const PID_FILE = resolve(homedir(), ".ppm", "ppm.pid");
+// Isolated DB profile for this test — uses ~/.ppm/ppm.daemon-test.db, never touches ppm.db
+const TEST_PROFILE = "daemon-test";
+const TEST_DB = resolve(homedir(), ".ppm", `ppm.${TEST_PROFILE}.db`);
 const PORT = 9876; // Use uncommon port to avoid conflicts
 const CLI = resolve(import.meta.dir, "../../src/index.ts");
 
@@ -46,12 +49,16 @@ function cleanupAll() {
   if (existsSync(PID_FILE)) try { unlinkSync(PID_FILE); } catch {}
 }
 
-afterAll(() => cleanupAll());
+afterAll(() => {
+  cleanupAll();
+  // Clean up isolated test DB
+  if (existsSync(TEST_DB)) try { unlinkSync(TEST_DB); } catch {}
+});
 
 describe("Daemon + Tunnel lifecycle", () => {
   it("ppm start creates status.json with pid", async () => {
     cleanupAll();
-    await ppm(`start -p ${PORT}`);
+    await ppm(`start -p ${PORT} --profile ${TEST_PROFILE}`);
 
     expect(existsSync(STATUS_FILE)).toBe(true);
     const status = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
@@ -100,7 +107,7 @@ describe("Tunnel survives server crash", () => {
       return;
     }
     cleanupAll();
-    const out = await ppm(`start --share -p ${PORT}`, 60_000);
+    const out = await ppm(`start --share -p ${PORT} --profile ${TEST_PROFILE}`, 60_000);
 
     expect(existsSync(STATUS_FILE)).toBe(true);
     const status = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
@@ -128,7 +135,7 @@ describe("Tunnel survives server crash", () => {
   it("ppm start --share reuses existing tunnel with same domain", async () => {
     if (!cloudflaredAvailable || !tunnelPid) return;
     // Restart server with --share — should detect tunnel alive
-    const out = await ppm(`start --share -p ${PORT}`, 60_000);
+    const out = await ppm(`start --share -p ${PORT} --profile ${TEST_PROFILE}`, 60_000);
 
     const status = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
     const newServerPid = status.pid;
