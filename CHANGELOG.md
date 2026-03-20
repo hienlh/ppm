@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.13] - 2026-03-20
+
+### Fixed
+- **Account decrypt crash on different machine**: `getWithTokens` now catches decrypt errors (mismatched `account.key`) and returns `null` instead of crashing the API
+
 ## [0.7.12] - 2026-03-20
 
 ### Fixed
