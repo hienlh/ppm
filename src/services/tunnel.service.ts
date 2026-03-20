@@ -98,6 +98,11 @@ class TunnelService {
   getTunnelUrl(): string | null {
     return this.url;
   }
+
+  /** Inject an externally-started tunnel URL (e.g. from daemon --share) */
+  setExternalUrl(url: string): void {
+    this.url = url;
+  }
 }
 
 /** Singleton tunnel service */

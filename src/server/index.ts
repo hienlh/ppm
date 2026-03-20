@@ -448,6 +448,20 @@ if (process.argv.includes("__serve__")) {
   configService.load(configPath);
   await setupLogFile();
 
+  // Sync externally-started tunnel URL (from `ppm start --share`) into tunnelService
+  // so GET /api/tunnel reflects the correct state and Share button doesn't start a duplicate.
+  try {
+    const { resolve: r } = await import("node:path");
+    const { homedir: h } = await import("node:os");
+    const { readFileSync: rf } = await import("node:fs");
+    const statusFile = r(h(), ".ppm", "status.json");
+    const status = JSON.parse(rf(statusFile, "utf-8"));
+    if (status.shareUrl) {
+      const { tunnelService } = await import("../services/tunnel.service.ts");
+      tunnelService.setExternalUrl(status.shareUrl);
+    }
+  } catch { /* status.json missing or no shareUrl — normal */ }
+
   Bun.serve({
     port,
     hostname: host,
