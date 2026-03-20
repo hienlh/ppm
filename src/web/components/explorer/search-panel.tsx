@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Search, CaseSensitive, ChevronRight, ChevronDown, FileText, X, Loader2, WholeWord, Regex } from "lucide-react";
+import { Search, CaseSensitive, ChevronRight, ChevronDown, FileText, X, Loader2, WholeWord, Regex, ReplaceAll } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
-import { projectUrl } from "@/lib/api-client";
+import { projectUrl, api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 
 interface SearchMatch {
@@ -70,6 +70,10 @@ export function SearchPanel() {
   const [wholeWord, setWholeWord] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
   const [regexError, setRegexError] = useState(false);
+  const [filesFilter, setFilesFilter] = useState("");
+  const [replace, setReplace] = useState("");
+  const [replacing, setReplacing] = useState(false);
+  const [replaceCount, setReplaceCount] = useState<number | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -77,26 +81,25 @@ export function SearchPanel() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const doSearch = useCallback(async (q: string, cs: boolean, ww: boolean, rx: boolean) => {
+  const doSearch = useCallback(async (q: string, cs: boolean, ww: boolean, rx: boolean, ff: string) => {
     setRegexError(false);
     if (!activeProject || (!rx && q.length < 2) || (rx && q.length < 1)) {
       setResults([]);
       setTotal(0);
       return;
     }
-    // Validate regex before sending
     if (rx) {
       try { new RegExp(q); } catch { setRegexError(true); setResults([]); return; }
     }
     setLoading(true);
     try {
       const params = new URLSearchParams({ q, caseSensitive: String(cs), wholeWord: String(ww), regex: String(rx) });
-      const res = await fetch(`${projectUrl(activeProject.name)}/files/search?${params}`);
-      const json = await res.json();
-      if (json.ok) {
-        setResults(json.data.results);
-        setTotal(json.data.total);
-      }
+      if (ff) params.set("include", ff);
+      const data = await api.get<{ results: SearchResult[]; total: number }>(
+        `${projectUrl(activeProject.name)}/files/search?${params}`
+      );
+      setResults(data.results);
+      setTotal(data.total);
     } catch {
       setResults([]);
     } finally {
@@ -106,9 +109,9 @@ export function SearchPanel() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doSearch(query, caseSensitive, wholeWord, useRegex), 300);
+    debounceRef.current = setTimeout(() => doSearch(query, caseSensitive, wholeWord, useRegex, filesFilter), 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, caseSensitive, wholeWord, useRegex, doSearch]);
+  }, [query, caseSensitive, wholeWord, useRegex, filesFilter, doSearch]);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -134,17 +137,47 @@ export function SearchPanel() {
     });
   }
 
+  async function doReplaceAll() {
+    if (!activeProject || !query || results.length === 0 || replacing) return;
+    setReplacing(true);
+    setReplaceCount(null);
+    let count = 0;
+    try {
+      for (const r of results) {
+        const fileData = await api.get<{ content: string }>(
+          `${projectUrl(activeProject.name)}/files/read?path=${encodeURIComponent(r.file)}`
+        );
+        const re = buildHighlightRegex(query, caseSensitive, wholeWord, useRegex);
+        if (!re) continue;
+        re.lastIndex = 0;
+        const matches = fileData.content.match(re) ?? [];
+        if (!matches.length) continue;
+        count += matches.length;
+        re.lastIndex = 0;
+        const newContent = fileData.content.replace(re, replace);
+        await api.put(`${projectUrl(activeProject.name)}/files/write`, { path: r.file, content: newContent });
+      }
+      setReplaceCount(count);
+      doSearch(query, caseSensitive, wholeWord, useRegex, filesFilter);
+    } catch {
+      // ignore
+    } finally {
+      setReplacing(false);
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Search input + options */}
       <div className="p-2 border-b border-border space-y-1.5">
+        {/* Search row */}
         <div className="relative flex items-center gap-1">
           <div className="relative flex-1">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-text-subtle pointer-events-none" />
             <input
               ref={inputRef}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setReplaceCount(null); }}
               placeholder={activeProject ? "Search files…" : "Select a project first"}
               disabled={!activeProject}
               className={cn(
@@ -154,7 +187,7 @@ export function SearchPanel() {
             />
             {query && (
               <button
-                onClick={() => { setQuery(""); setResults([]); setTotal(0); setRegexError(false); }}
+                onClick={() => { setQuery(""); setResults([]); setTotal(0); setRegexError(false); setReplaceCount(null); }}
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-subtle hover:text-foreground"
               >
                 <X className="size-3" />
@@ -177,11 +210,63 @@ export function SearchPanel() {
           {regexError && <span className="text-[10px] text-destructive ml-1">Invalid regex</span>}
         </div>
 
+        {/* Replace row */}
+        <div className="flex items-center gap-1">
+          <div className="relative flex-1">
+            <input
+              value={replace}
+              onChange={(e) => setReplace(e.target.value)}
+              placeholder="Replace…"
+              disabled={!activeProject}
+              className="w-full pl-2 pr-6 py-1 text-xs bg-input border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
+            />
+            {replace && (
+              <button onClick={() => setReplace("")} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-subtle hover:text-foreground">
+                <X className="size-3" />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={doReplaceAll}
+            disabled={!query || results.length === 0 || replacing}
+            title="Replace All"
+            className="flex items-center justify-center w-6 h-6 rounded border border-border text-text-subtle hover:text-foreground hover:border-border/80 disabled:opacity-40 shrink-0"
+          >
+            {replacing ? <Loader2 className="size-3.5 animate-spin" /> : <ReplaceAll className="size-3.5" />}
+          </button>
+        </div>
+
+        {/* Files filter row */}
+        <div className="relative">
+          <input
+            value={filesFilter}
+            onChange={(e) => setFilesFilter(e.target.value)}
+            placeholder="Files to include (e.g. *.ts, src/**)"
+            disabled={!activeProject}
+            className="w-full pl-2 pr-6 py-1 text-xs bg-input border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
+          />
+          {filesFilter && (
+            <button onClick={() => setFilesFilter("")} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-subtle hover:text-foreground">
+              <X className="size-3" />
+            </button>
+          )}
+        </div>
+
         {/* Status line */}
         <div className="text-[10px] text-text-subtle h-3">
-          {loading && <span className="flex items-center gap-1"><Loader2 className="size-2.5 animate-spin" /> Searching…</span>}
-          {!loading && !regexError && query.length >= 2 && results.length === 0 && <span>No results</span>}
-          {!loading && total > 0 && <span>{total} result{total !== 1 ? "s" : ""} in {results.length} file{results.length !== 1 ? "s" : ""}</span>}
+          {(loading || replacing) && (
+            <span className="flex items-center gap-1">
+              <Loader2 className="size-2.5 animate-spin" />
+              {replacing ? "Replacing…" : "Searching…"}
+            </span>
+          )}
+          {!loading && !replacing && replaceCount !== null && (
+            <span className="text-green-500">{replaceCount} replacement{replaceCount !== 1 ? "s" : ""} made</span>
+          )}
+          {!loading && !replacing && replaceCount === null && !regexError && query.length >= 2 && results.length === 0 && <span>No results</span>}
+          {!loading && !replacing && replaceCount === null && total > 0 && (
+            <span>{total} result{total !== 1 ? "s" : ""} in {results.length} file{results.length !== 1 ? "s" : ""}</span>
+          )}
         </div>
       </div>
 

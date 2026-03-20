@@ -152,17 +152,39 @@ fileRoutes.post("/rename", async (c) => {
   }
 });
 
+/** Convert glob pattern (VSCode-style) to RegExp for path filtering.
+ *  - `*.ts`       → matches any .ts file in any directory
+ *  - `src/**`     → matches any file under src/
+ *  - `src/**\/*.ts` → matches .ts files under src/
+ */
+function globToPathRegex(glob: string): RegExp {
+  const escaped = glob
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars
+    .replace(/\*\*/g, "\x00") // temp placeholder for **
+    .replace(/\*/g, "[^/]*") // * = within one segment
+    .replace(/\x00/g, ".*") // ** = across segments
+    .replace(/\?/g, "[^/]"); // ? = single non-slash char
+  // No slash in pattern → match at any depth (like **/<pattern>)
+  const re = glob.includes("/") ? `^${escaped}($|/)` : `(^|/)${escaped}($|/)`;
+  return new RegExp(re);
+}
+
 /** GET /files/search?q=...&caseSensitive=false — search file content with grep */
 fileRoutes.get("/search", async (c) => {
   const projectPath = c.get("projectPath");
   const q = (c.req.query("q") ?? "").trim();
   const caseSensitive = c.req.query("caseSensitive") === "true";
-
   const wholeWord = c.req.query("wholeWord") === "true";
   const useRegex = c.req.query("regex") === "true";
+  const include = (c.req.query("include") ?? "").trim();
 
   if (!useRegex && q.length < 2) return c.json(ok({ results: [], total: 0 }));
   if (useRegex && q.length < 1) return c.json(ok({ results: [], total: 0 }));
+
+  // Build include path filter regexes (post-filter, supports paths + globs)
+  const includeFilters = include
+    ? include.split(",").map((s) => s.trim()).filter(Boolean).map(globToPathRegex)
+    : [];
 
   // Build the grep pattern
   let pattern = useRegex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -197,6 +219,8 @@ fileRoutes.get("/search", async (c) => {
       const lineNum = parseInt(rel.slice(firstColon + 1, secondColon), 10);
       const content = rel.slice(secondColon + 1).trimEnd();
       if (!filePath || isNaN(lineNum)) continue;
+      // Apply include path filter if specified
+      if (includeFilters.length > 0 && !includeFilters.some((re) => re.test(filePath))) continue;
       if (!fileMap.has(filePath)) fileMap.set(filePath, []);
       fileMap.get(filePath)!.push({ lineNum, content });
     }
