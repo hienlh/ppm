@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
-export type SidebarActiveTab = "explorer" | "git" | "settings" | "database";
+export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search";
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -78,7 +78,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   wordWrap: _initial.wordWrap ?? false,
-  sidebarActiveTab: (["git", "settings", "database"] as SidebarActiveTab[]).includes(_initial.sidebarActiveTab as SidebarActiveTab) ? _initial.sidebarActiveTab! : "explorer",
+  sidebarActiveTab: (["git", "settings", "database", "search"] as SidebarActiveTab[]).includes(_initial.sidebarActiveTab as SidebarActiveTab) ? _initial.sidebarActiveTab! : "explorer",
   deviceName: null,
   version: null,
 

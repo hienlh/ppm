@@ -152,6 +152,55 @@ fileRoutes.post("/rename", async (c) => {
   }
 });
 
+/** GET /files/search?q=...&caseSensitive=false — search file content with grep */
+fileRoutes.get("/search", async (c) => {
+  const projectPath = c.get("projectPath");
+  const q = (c.req.query("q") ?? "").trim();
+  const caseSensitive = c.req.query("caseSensitive") === "true";
+
+  if (q.length < 2) return c.json(ok({ results: [], total: 0 }));
+
+  try {
+    const EXCLUDE_DIRS = ["node_modules", ".git", "dist", ".next", "build", ".turbo", "coverage", "__pycache__"];
+    const excludeDirArgs = EXCLUDE_DIRS.flatMap((d) => ["--exclude-dir", d]);
+    const excludeArgs = ["--exclude=*.min.js", "--exclude=*.map", "--exclude=*.lock", "--exclude=bun.lock"];
+    const flags = ["-rn", "--max-count=5", "-I", ...(caseSensitive ? [] : ["-i"])];
+
+    const proc = Bun.spawnSync({
+      cmd: ["grep", ...flags, ...excludeDirArgs, ...excludeArgs, "--", q, projectPath],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const raw = proc.stdout.toString();
+    if (!raw.trim()) return c.json(ok({ results: [], total: 0 }));
+
+    // Parse grep output: /abs/path/file.ts:42:content
+    const fileMap = new Map<string, { lineNum: number; content: string }[]>();
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      // Strip projectPath prefix, then split on first two colons
+      const rel = line.startsWith(projectPath) ? line.slice(projectPath.length + 1) : line;
+      const firstColon = rel.indexOf(":");
+      if (firstColon < 0) continue;
+      const secondColon = rel.indexOf(":", firstColon + 1);
+      if (secondColon < 0) continue;
+      const filePath = rel.slice(0, firstColon);
+      const lineNum = parseInt(rel.slice(firstColon + 1, secondColon), 10);
+      const content = rel.slice(secondColon + 1).trimEnd();
+      if (!filePath || isNaN(lineNum)) continue;
+      if (!fileMap.has(filePath)) fileMap.set(filePath, []);
+      fileMap.get(filePath)!.push({ lineNum, content });
+    }
+
+    const results = Array.from(fileMap.entries()).map(([file, matches]) => ({ file, matches }));
+    const total = results.reduce((sum, r) => sum + r.matches.length, 0);
+    return c.json(ok({ results, total }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** POST /files/move — body: { source, destination } */
 fileRoutes.post("/move", async (c) => {
   try {
