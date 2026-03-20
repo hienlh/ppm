@@ -80,6 +80,36 @@ ppm init                   # Re-run setup wizard
 ppm report                 # File bug report on GitHub
 ```
 
+## Non-Interactive / AI Agent Setup
+
+For scripts, CI environments, or AI agents that cannot interact with prompts:
+
+```bash
+# Step 1: Init without any prompts (uses defaults, auto-generates password)
+bunx @hienlh/ppm init -y
+
+# Step 2: Start with Cloudflare tunnel in foreground
+bunx @hienlh/ppm start -f --share
+```
+
+The `-y` flag skips all prompts and applies these defaults:
+- Port: `3210`
+- Scan directory: `$HOME`
+- Auth: enabled, password auto-generated (printed at end of `init` output)
+- AI model: `claude-sonnet-4-6`
+
+Override any default with flags:
+
+```bash
+bunx @hienlh/ppm init -y \
+  --port 3210 \
+  --password "your-password" \
+  --scan /path/to/projects \
+  --share
+```
+
+Once running, the Cloudflare public URL is printed to stdout — parse it to share with users.
+
 ## Requirements
 
 - **Bun** v1.3.6+ ([install](https://bun.sh))
