@@ -3,6 +3,7 @@ dist/
 .vite/
 *.log
 .env
+.env.test
 ppm.yaml
 .ppm/
 *.pid
