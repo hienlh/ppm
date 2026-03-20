@@ -806,7 +806,65 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       console.error(`[sdk] error: ${msg}`);
-      if (!msg.includes("abort") && !msg.includes("closed")) {
+      if (msg.includes("abort") || msg.includes("closed")) {
+        // User-initiated abort or WS closed — nothing to report
+      } else if (!isFirstMessage && msg.includes("exited with code")) {
+        // SDK subprocess crashed during session resume — retry as fresh session
+        console.warn(`[sdk] session resume failed, retrying as fresh session`);
+        try {
+          const providerConfig = this.getProviderConfig();
+          const effectiveCwd = meta.projectPath || homedir();
+          const queryEnv = { ...process.env, ...this.getProjectEnvOverrides(meta.projectPath) };
+          const retryQuery = query({
+            prompt: message,
+            options: {
+              cwd: effectiveCwd,
+              systemPrompt: { type: "preset", preset: "claude_code" },
+              settingSources: ["user", "project"],
+              env: queryEnv,
+              settings: { permissions: { allow: [], deny: [] } },
+              allowedTools: [
+                "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+                "WebSearch", "WebFetch", "AskUserQuestion",
+                "Agent", "Skill", "TodoWrite", "ToolSearch",
+              ],
+              permissionMode: "bypassPermissions",
+              allowDangerouslySkipPermissions: true,
+              ...(providerConfig.model && { model: providerConfig.model }),
+              maxTurns: providerConfig.max_turns ?? 100,
+              canUseTool,
+              includePartialMessages: true,
+            } as any,
+          });
+          this.activeQueries.set(sessionId, retryQuery);
+          for await (const retryMsg of retryQuery) {
+            if (retryMsg.type === "system") continue;
+            if (retryMsg.type === "result") {
+              const r = retryMsg as any;
+              if (r.subtype && r.subtype !== "success") {
+                yield { type: "error", message: r.error ?? `Agent stopped: ${r.subtype}` };
+              }
+              resultSubtype = r.subtype;
+              resultNumTurns = r.num_turns;
+              break;
+            }
+            if ((retryMsg as any).type === "assistant") {
+              const content = (retryMsg as any).message?.content;
+              if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (block.type === "text" && typeof block.text === "string") {
+                    yield { type: "text", content: block.text };
+                  }
+                }
+              }
+            }
+          }
+        } catch (retryErr) {
+          const retryMsg = (retryErr as Error).message ?? String(retryErr);
+          console.error(`[sdk] retry also failed: ${retryMsg}`);
+          yield { type: "error", message: `SDK error: ${msg}` };
+        }
+      } else {
         yield { type: "error", message: `SDK error: ${msg}` };
       }
     } finally {
