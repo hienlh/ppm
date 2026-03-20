@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.2] - 2026-03-20
+
+### Fixed
+- **Tunnel URL sync**: `ppm start --share` tunnel URL now synced into `tunnelService` on daemon startup — Share button in web UI shows correct URL instead of treating tunnel as inactive and starting a duplicate
+
 ## [0.7.1] - 2026-03-20
 
 ### Fixed
