@@ -66,7 +66,13 @@ class AccountService {
 
   getWithTokens(id: string): AccountWithTokens | null {
     const row = getAccountById(id);
-    return row ? this.toAccountWithTokens(row) : null;
+    if (!row) return null;
+    try {
+      return this.toAccountWithTokens(row);
+    } catch (e) {
+      console.error(`[accounts] Failed to decrypt tokens for ${row.label ?? id}:`, (e as Error).message);
+      return null;
+    }
   }
 
   add(params: {
