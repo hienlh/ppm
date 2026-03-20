@@ -3,6 +3,7 @@
 .github/
 .vite/
 .env
+.env.test
 .DS_Store
 .playwright-mcp
 .cursor/
