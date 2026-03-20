@@ -13,7 +13,7 @@ import { resolve, relative, basename, dirname, join, normalize } from "node:path
 import type { FileNode } from "../types/project.ts";
 
 /** Directories/files excluded from tree listing */
-const EXCLUDED_NAMES = new Set([".git", "node_modules", ".env"]);
+const EXCLUDED_NAMES = new Set([".git", "node_modules"]);
 
 /** Max buffer size for binary detection (first 8KB) */
 const BINARY_CHECK_BYTES = 8192;
@@ -64,8 +64,6 @@ class FileService {
 
     for (const entry of entries) {
       if (this.isExcluded(entry.name)) continue;
-      // Skip hidden files at root level (like .env.local etc.)
-      if (entry.name.startsWith(".env")) continue;
 
       const fullPath = join(dirPath, entry.name);
       const relPath = relative(rootPath, fullPath);
@@ -219,7 +217,7 @@ class FileService {
     this.renameFile(projectPath, source, destination);
   }
 
-  /** Block access to sensitive paths (.git/, .env*) */
+  /** Block access to sensitive paths (.git/) */
   private blockSensitive(filePath: string): void {
     const normalized = normalize(filePath);
     const parts = normalized.split("/");
@@ -227,11 +225,6 @@ class FileService {
       if (part === ".git" || part === "node_modules") {
         throw new SecurityError(`Access denied: ${filePath}`);
       }
-    }
-    // Block .env files
-    const file = basename(normalized);
-    if (file.startsWith(".env")) {
-      throw new SecurityError(`Access denied: ${filePath}`);
     }
   }
 }
