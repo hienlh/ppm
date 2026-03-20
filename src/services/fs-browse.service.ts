@@ -88,7 +88,6 @@ export function browse(
 
   for (const entry of raw) {
     if (!options?.showHidden && entry.name.startsWith(".")) continue;
-    if (entry.name.startsWith(".env")) continue; // always hide .env*
 
     const fullPath = resolve(resolved, entry.name);
     try {
