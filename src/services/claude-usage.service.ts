@@ -31,7 +31,7 @@ const API_URL = "https://api.anthropic.com/api/oauth/usage";
 const API_BETA = "oauth-2025-04-20";
 const USER_AGENT = "claude-code/1.0";
 const FETCH_TIMEOUT = 10_000; // 10s
-const POLL_INTERVAL = 120_000; // auto-fetch every 2min
+const POLL_INTERVAL = 300_000; // auto-fetch every 5min
 const RETRY_DELAY = 5_000; // 5s between retries
 const MAX_RETRIES = 3;
 
