@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -186,6 +186,29 @@ function runMigrations(database: Database): void {
       CREATE INDEX IF NOT EXISTS idx_limit_snapshots_recorded ON claude_limit_snapshots(recorded_at);
 
       PRAGMA user_version = 4;
+    `);
+  }
+
+  if (current < 5) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS accounts (
+        id TEXT PRIMARY KEY,
+        label TEXT,
+        email TEXT,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT NOT NULL,
+        expires_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'active',
+        cooldown_until INTEGER,
+        priority INTEGER NOT NULL DEFAULT 0,
+        total_requests INTEGER NOT NULL DEFAULT 0,
+        last_used_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
+
+      PRAGMA user_version = 5;
     `);
   }
 }
@@ -532,6 +555,70 @@ export function searchTableCache(query: string): Array<TableCacheRow & { connect
      ORDER BY tc.table_name, c.name
      LIMIT 50`,
   ).all(`%${escaped}%`) as Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }>;
+}
+
+// ---------------------------------------------------------------------------
+// Account helpers
+// ---------------------------------------------------------------------------
+
+export interface AccountRow {
+  id: string;
+  label: string | null;
+  email: string | null;
+  access_token: string;
+  refresh_token: string;
+  expires_at: number | null;
+  status: "active" | "cooldown" | "disabled";
+  cooldown_until: number | null;
+  priority: number;
+  total_requests: number;
+  last_used_at: number | null;
+  created_at: number;
+}
+
+export function getAccounts(): AccountRow[] {
+  return getDb().query("SELECT * FROM accounts ORDER BY priority DESC, created_at ASC").all() as AccountRow[];
+}
+
+export function getAccountById(id: string): AccountRow | null {
+  return getDb().query("SELECT * FROM accounts WHERE id = ?").get(id) as AccountRow | null;
+}
+
+export function insertAccount(row: Omit<AccountRow, "created_at">): void {
+  getDb().query(
+    `INSERT INTO accounts (id, label, email, access_token, refresh_token, expires_at, status, cooldown_until, priority, total_requests, last_used_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.id, row.label, row.email, row.access_token, row.refresh_token,
+    row.expires_at, row.status, row.cooldown_until, row.priority,
+    row.total_requests, row.last_used_at,
+  );
+}
+
+export function updateAccount(id: string, updates: Partial<Omit<AccountRow, "id" | "created_at">>): void {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (updates.label !== undefined) { sets.push("label = ?"); vals.push(updates.label); }
+  if (updates.email !== undefined) { sets.push("email = ?"); vals.push(updates.email); }
+  if (updates.access_token !== undefined) { sets.push("access_token = ?"); vals.push(updates.access_token); }
+  if (updates.refresh_token !== undefined) { sets.push("refresh_token = ?"); vals.push(updates.refresh_token); }
+  if (updates.expires_at !== undefined) { sets.push("expires_at = ?"); vals.push(updates.expires_at); }
+  if (updates.status !== undefined) { sets.push("status = ?"); vals.push(updates.status); }
+  if (updates.cooldown_until !== undefined) { sets.push("cooldown_until = ?"); vals.push(updates.cooldown_until); }
+  if (updates.priority !== undefined) { sets.push("priority = ?"); vals.push(updates.priority); }
+  if (updates.total_requests !== undefined) { sets.push("total_requests = ?"); vals.push(updates.total_requests); }
+  if (updates.last_used_at !== undefined) { sets.push("last_used_at = ?"); vals.push(updates.last_used_at); }
+  if (sets.length === 0) return;
+  vals.push(id);
+  getDb().query(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as SQLQueryBindings[]));
+}
+
+export function deleteAccount(id: string): void {
+  getDb().query("DELETE FROM accounts WHERE id = ?").run(id);
+}
+
+export function incrementAccountRequests(id: string): void {
+  getDb().query("UPDATE accounts SET total_requests = total_requests + 1 WHERE id = ?").run(id);
 }
 
 // Auto-close on process exit

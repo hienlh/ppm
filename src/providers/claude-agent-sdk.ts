@@ -14,6 +14,8 @@ import type {
 import { configService } from "../services/config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionMapping, setSessionMapping } from "../services/db.service.ts";
+import { accountSelector } from "../services/account-selector.service.ts";
+import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { readFileSync, existsSync } from "node:fs";
@@ -66,6 +68,39 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       return overrides;
     } catch { return {}; }
+  }
+
+  /**
+   * Build env for SDK query.
+   * If account mode: inject ANTHROPIC_AUTH_TOKEN, neutralize ANTHROPIC_API_KEY.
+   * Otherwise: pass through existing env (backward compatible).
+   */
+  private buildQueryEnv(
+    projectPath: string | undefined,
+    account: { id: string; accessToken: string } | null,
+  ): Record<string, string | undefined> {
+    const base = { ...process.env, ...this.getProjectEnvOverrides(projectPath) };
+    if (!account) return base;
+    return {
+      ...base,
+      ANTHROPIC_AUTH_TOKEN: account.accessToken,
+      ANTHROPIC_API_KEY: "", // neutralize — OAuth token takes precedence
+    };
+  }
+
+  /**
+   * Parse SDK result event to detect 429 or 401.
+   * Only detects pre-stream errors (result event on first response).
+   */
+  private detectResultErrorCode(event: unknown): 429 | 401 | null {
+    if (!event || typeof event !== "object") return null;
+    const e = event as Record<string, unknown>;
+    if (e.type === "result" && e.subtype === "error_during_execution") {
+      const msg = String(e.error ?? e.error_message ?? e.message ?? "");
+      if (msg.includes("429") || msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("overloaded")) return 429;
+      if (msg.includes("401") || msg.toLowerCase().includes("unauthorized") || msg.toLowerCase().includes("invalid api key")) return 401;
+    }
+    return null;
   }
 
   /**
@@ -432,8 +467,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Fallback cwd: SDK needs a valid working directory even when no project is selected.
       // On Windows daemons, undefined cwd can cause the subprocess to fail silently.
       const effectiveCwd = meta.projectPath || homedir();
-      const queryEnv = { ...process.env, ...this.getProjectEnvOverrides(meta.projectPath) };
-      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform}`);
+
+      // Account-based auth injection (multi-account mode)
+      // Fallback to existing env (ANTHROPIC_API_KEY) when no accounts configured.
+      const account = accountSelector.isEnabled() ? accountSelector.next() : null;
+      if (account) {
+        console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"})`);
+      }
+      const queryEnv = this.buildQueryEnv(meta.projectPath, account);
+      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account}`);
 
       // TODO: Remove when TS SDK fixes Windows stdin pipe buffering (see queryDirectCli() JSDoc for tracking issues)
       // On Windows, SDK query() hangs because Bun subprocess stdin pipe never flushes to child process.
@@ -719,6 +761,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         }
 
         if (msg.type === "result") {
+          // Account error detection — only act on pre-stream 429/401
+          if (account) {
+            const errCode = this.detectResultErrorCode(msg);
+            if (errCode === 429) {
+              accountSelector.onRateLimit(account.id);
+              // Post-stream 429 already has content — surface error to user
+              yield { type: "error", message: "Rate limited. This account is now on cooldown. Please retry." };
+              break;
+            } else if (errCode === 401) {
+              // Try refresh once
+              try {
+                await accountService.refreshAccessToken(account.id);
+                console.log(`[sdk] 401 on account ${account.id} — token refreshed`);
+              } catch {
+                accountSelector.onAuthError(account.id);
+              }
+            } else {
+              accountSelector.onSuccess(account.id);
+            }
+          }
+
           // Flush any remaining pending tool_results before finishing
           if (pendingToolCount > 0) {
             try {
@@ -814,7 +877,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         try {
           const providerConfig = this.getProviderConfig();
           const effectiveCwd = meta.projectPath || homedir();
-          const queryEnv = { ...process.env, ...this.getProjectEnvOverrides(meta.projectPath) };
+          const retryAccount = accountSelector.isEnabled() ? accountSelector.next() : null;
+          const queryEnv = this.buildQueryEnv(meta.projectPath, retryAccount);
           const retryQuery = query({
             prompt: message,
             options: {

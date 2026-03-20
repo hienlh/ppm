@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { TelegramSettingsSection } from "./telegram-settings-section";
+import { AccountsSettingsSection } from "./accounts-settings-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
@@ -134,6 +135,16 @@ export function SettingsTab() {
             </AccordionTrigger>
             <AccordionContent className="pb-2">
               <TelegramSettingsSection />
+            </AccordionContent>
+          </AccordionItem>
+
+          {/* Accounts */}
+          <AccordionItem value="accounts">
+            <AccordionTrigger className="py-2 text-xs font-medium text-text-secondary hover:no-underline">
+              Accounts
+            </AccordionTrigger>
+            <AccordionContent className="pb-2">
+              <AccountsSettingsSection />
             </AccordionContent>
           </AccordionItem>
 

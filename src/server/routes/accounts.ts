@@ -1,0 +1,123 @@
+import { Hono } from "hono";
+import type { Context } from "hono";
+import { accountService } from "../../services/account.service.ts";
+import { accountSelector } from "../../services/account-selector.service.ts";
+import { ok, err } from "../../types/api.ts";
+
+export const accountsRoutes = new Hono();
+
+function getCallbackUrl(c: Context): string {
+  const url = new URL(c.req.url);
+  return `${url.protocol}//${url.host}/api/accounts/oauth/callback`;
+}
+
+function getUiBase(c: Context): string {
+  const url = new URL(c.req.url);
+  return `${url.protocol}//${url.host}`;
+}
+
+/** GET /api/accounts */
+accountsRoutes.get("/", (c) => {
+  return c.json(ok(accountService.list()));
+});
+
+/** GET /api/accounts/settings */
+accountsRoutes.get("/settings", (c) => {
+  return c.json(ok({
+    strategy: accountSelector.getStrategy(),
+    maxRetry: accountSelector.getMaxRetry(),
+    activeCount: accountSelector.activeCount(),
+  }));
+});
+
+/** PUT /api/accounts/settings */
+accountsRoutes.put("/settings", async (c) => {
+  const body = await c.req.json<{ strategy?: string; maxRetry?: number }>();
+  if (body.strategy !== undefined) {
+    if (!["round-robin", "fill-first"].includes(body.strategy)) {
+      return c.json(err("strategy must be round-robin or fill-first"), 400);
+    }
+    accountSelector.setStrategy(body.strategy as "round-robin" | "fill-first");
+  }
+  if (body.maxRetry !== undefined) {
+    if (!Number.isInteger(body.maxRetry) || body.maxRetry < 0) {
+      return c.json(err("maxRetry must be a non-negative integer"), 400);
+    }
+    accountSelector.setMaxRetry(body.maxRetry);
+  }
+  return c.json(ok({
+    strategy: accountSelector.getStrategy(),
+    maxRetry: accountSelector.getMaxRetry(),
+    activeCount: accountSelector.activeCount(),
+  }));
+});
+
+/** GET /api/accounts/oauth/start → redirect to Claude OAuth */
+accountsRoutes.get("/oauth/start", (c) => {
+  const url = accountService.startOAuthFlow(getCallbackUrl(c));
+  return c.redirect(url);
+});
+
+/** GET /api/accounts/oauth/callback — exchange code for tokens */
+accountsRoutes.get("/oauth/callback", async (c) => {
+  const { code, state, error } = c.req.query();
+  const successRedirect = `${getUiBase(c)}/#/settings/accounts`;
+
+  if (error || !code || !state) {
+    return c.redirect(`${successRedirect}?error=${encodeURIComponent(error ?? "missing_params")}`);
+  }
+  try {
+    await accountService.completeOAuthFlow(code, state, getCallbackUrl(c));
+    return c.redirect(`${successRedirect}?success=1`);
+  } catch (e) {
+    return c.redirect(`${successRedirect}?error=${encodeURIComponent((e as Error).message)}`);
+  }
+});
+
+/** POST /api/accounts/oauth/refresh/:id */
+accountsRoutes.post("/oauth/refresh/:id", async (c) => {
+  const { id } = c.req.param();
+  try {
+    await accountService.refreshAccessToken(id);
+    return c.json(ok({ refreshed: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** GET /api/accounts/export — download encrypted accounts backup */
+accountsRoutes.get("/export", (c) => {
+  const blob = accountService.exportEncrypted();
+  c.header("Content-Disposition", "attachment; filename=ppm-accounts-backup.json");
+  c.header("Content-Type", "application/json");
+  return c.body(blob);
+});
+
+/** POST /api/accounts/import — restore accounts from backup */
+accountsRoutes.post("/import", async (c) => {
+  try {
+    const body = await c.req.text();
+    const count = accountService.importEncrypted(body);
+    return c.json(ok({ imported: count }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** DELETE /api/accounts/:id */
+accountsRoutes.delete("/:id", (c) => {
+  const { id } = c.req.param();
+  accountService.remove(id);
+  return c.json(ok({ deleted: true }));
+});
+
+/** PATCH /api/accounts/:id — { status: "active" | "disabled" } */
+accountsRoutes.patch("/:id", async (c) => {
+  const { id } = c.req.param();
+  const body = await c.req.json<{ status?: string }>();
+  if (body.status === "disabled") accountService.setDisabled(id);
+  else if (body.status === "active") accountService.setEnabled(id);
+  else return c.json(err("status must be active or disabled"), 400);
+  const account = accountService.list().find((a) => a.id === id) ?? null;
+  return c.json(ok(account));
+});

@@ -12,6 +12,7 @@ import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { postgresRoutes } from "./routes/postgres.ts";
 import { databaseRoutes } from "./routes/database.ts";
 import { fsBrowseRoutes } from "./routes/fs-browse.ts";
+import { accountsRoutes } from "./routes/accounts.ts";
 import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
@@ -115,6 +116,7 @@ app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);
 app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
+app.route("/api/accounts", accountsRoutes);
 
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);
@@ -378,6 +380,9 @@ export async function startServer(options: {
   // Start background usage polling
   import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
 
+  // Start background account token refresh
+  import("../services/account.service.ts").then(({ accountService }) => accountService.startAutoRefresh()).catch(() => {});
+
   console.log(`\n  PPM ready\n`);
   console.log(`  ➜  Local:   http://localhost:${server.port}/`);
 
@@ -518,6 +523,9 @@ if (process.argv.includes("__serve__")) {
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
+
+  // Start background account token refresh in daemon child
+  import("../services/account.service.ts").then(({ accountService }) => accountService.startAutoRefresh()).catch(() => {});
 
   console.log(`Server child ready on port ${port}`);
 }

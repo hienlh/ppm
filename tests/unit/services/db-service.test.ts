@@ -34,7 +34,7 @@ describe("db.service", () => {
   });
 
   describe("schema", () => {
-    it("creates all 6 tables", () => {
+    it("creates all tables", () => {
       const tables = getAllTables();
       expect(tables).toContain("config");
       expect(tables).toContain("projects");
@@ -42,13 +42,14 @@ describe("db.service", () => {
       expect(tables).toContain("push_subscriptions");
       expect(tables).toContain("session_logs");
       expect(tables).toContain("usage_history");
+      expect(tables).toContain("accounts");
     });
 
-    it("sets user_version to 4 after all migrations", () => {
+    it("sets user_version to 5 after all migrations", () => {
       const { openTestDb: open } = require("../../../src/services/db.service.ts");
       const db = open();
       const row = db.query("PRAGMA user_version").get() as { user_version: number };
-      expect(row.user_version).toBe(4);
+      expect(row.user_version).toBe(5);
       db.close();
     });
 
