@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Search, CaseSensitive, ChevronRight, ChevronDown, FileText, X, Loader2 } from "lucide-react";
+import { Search, CaseSensitive, ChevronRight, ChevronDown, FileText, X, Loader2, WholeWord, Regex } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { projectUrl } from "@/lib/api-client";
@@ -15,22 +15,50 @@ interface SearchResult {
   matches: SearchMatch[];
 }
 
-/** Highlight matched text in a line */
-function HighlightMatch({ text, query, caseSensitive }: { text: string; query: string; caseSensitive: boolean }) {
-  if (!query) return <span>{text}</span>;
+/** Build highlight regex from query + options */
+function buildHighlightRegex(query: string, caseSensitive: boolean, wholeWord: boolean, useRegex: boolean): RegExp | null {
+  if (!query) return null;
   try {
-    const re = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, caseSensitive ? "g" : "gi");
+    let pattern = useRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (wholeWord) pattern = `\\b${pattern}\\b`;
+    return new RegExp(`(${pattern})`, caseSensitive ? "g" : "gi");
+  } catch {
+    return null;
+  }
+}
+
+function HighlightMatch({ text, re }: { text: string; re: RegExp | null }) {
+  if (!re) return <span>{text}</span>;
+  try {
+    re.lastIndex = 0;
     const parts = text.split(re);
+    re.lastIndex = 0;
     return (
       <span>
-        {parts.map((p, i) =>
-          re.test(p) ? <mark key={i} className="bg-yellow-300/40 text-foreground rounded-sm">{p}</mark> : p
-        )}
+        {parts.map((p, i) => {
+          re.lastIndex = 0;
+          return re.test(p) ? <mark key={i} className="bg-yellow-300/40 text-foreground rounded-sm">{p}</mark> : p;
+        })}
       </span>
     );
   } catch {
     return <span>{text}</span>;
   }
+}
+
+function OptionButton({ active, onClick, title, children }: { active: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={cn(
+        "flex items-center justify-center w-6 h-6 rounded border shrink-0",
+        active ? "border-primary text-primary bg-primary/10" : "border-border text-text-subtle hover:text-foreground hover:border-border/80"
+      )}
+    >
+      {children}
+    </button>
+  );
 }
 
 export function SearchPanel() {
@@ -39,6 +67,9 @@ export function SearchPanel() {
 
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
+  const [regexError, setRegexError] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -46,16 +77,21 @@ export function SearchPanel() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const doSearch = useCallback(async (q: string, cs: boolean) => {
-    if (!activeProject || q.length < 2) {
+  const doSearch = useCallback(async (q: string, cs: boolean, ww: boolean, rx: boolean) => {
+    setRegexError(false);
+    if (!activeProject || (!rx && q.length < 2) || (rx && q.length < 1)) {
       setResults([]);
       setTotal(0);
       return;
     }
+    // Validate regex before sending
+    if (rx) {
+      try { new RegExp(q); } catch { setRegexError(true); setResults([]); return; }
+    }
     setLoading(true);
     try {
-      const url = `${projectUrl(activeProject.name)}/files/search?q=${encodeURIComponent(q)}&caseSensitive=${cs}`;
-      const res = await fetch(url);
+      const params = new URLSearchParams({ q, caseSensitive: String(cs), wholeWord: String(ww), regex: String(rx) });
+      const res = await fetch(`${projectUrl(activeProject.name)}/files/search?${params}`);
       const json = await res.json();
       if (json.ok) {
         setResults(json.data.results);
@@ -70,12 +106,13 @@ export function SearchPanel() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => doSearch(query, caseSensitive), 300);
+    debounceRef.current = setTimeout(() => doSearch(query, caseSensitive, wholeWord, useRegex), 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, caseSensitive, doSearch]);
+  }, [query, caseSensitive, wholeWord, useRegex, doSearch]);
 
-  // Auto-focus input when panel mounts
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const highlightRe = buildHighlightRegex(query, caseSensitive, wholeWord, useRegex);
 
   function openFile(file: string, lineNum?: number) {
     if (!activeProject) return;
@@ -99,7 +136,7 @@ export function SearchPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Search input */}
+      {/* Search input + options */}
       <div className="p-2 border-b border-border space-y-1.5">
         <div className="relative flex items-center gap-1">
           <div className="relative flex-1">
@@ -110,27 +147,40 @@ export function SearchPanel() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder={activeProject ? "Search files…" : "Select a project first"}
               disabled={!activeProject}
-              className="w-full pl-7 pr-6 py-1 text-xs bg-input border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
+              className={cn(
+                "w-full pl-7 pr-6 py-1 text-xs bg-input border rounded focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50",
+                regexError ? "border-destructive" : "border-border"
+              )}
             />
             {query && (
-              <button onClick={() => { setQuery(""); setResults([]); setTotal(0); }} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-subtle hover:text-foreground">
+              <button
+                onClick={() => { setQuery(""); setResults([]); setTotal(0); setRegexError(false); }}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-text-subtle hover:text-foreground"
+              >
                 <X className="size-3" />
               </button>
             )}
           </div>
-          <button
-            onClick={() => setCaseSensitive((v) => !v)}
-            title="Case sensitive"
-            className={cn("flex items-center justify-center w-6 h-6 rounded text-xs border shrink-0", caseSensitive ? "border-primary text-primary bg-primary/10" : "border-border text-text-subtle hover:text-foreground")}
-          >
+        </div>
+
+        {/* Option toggles */}
+        <div className="flex items-center gap-1">
+          <OptionButton active={caseSensitive} onClick={() => setCaseSensitive((v) => !v)} title="Match Case (Alt+C)">
             <CaseSensitive className="size-3.5" />
-          </button>
+          </OptionButton>
+          <OptionButton active={wholeWord} onClick={() => { setWholeWord((v) => !v); if (useRegex) setUseRegex(false); }} title="Match Whole Word (Alt+W)">
+            <WholeWord className="size-3.5" />
+          </OptionButton>
+          <OptionButton active={useRegex} onClick={() => { setUseRegex((v) => !v); if (wholeWord) setWholeWord(false); }} title="Use Regular Expression (Alt+R)">
+            <Regex className="size-3.5" />
+          </OptionButton>
+          {regexError && <span className="text-[10px] text-destructive ml-1">Invalid regex</span>}
         </div>
 
         {/* Status line */}
         <div className="text-[10px] text-text-subtle h-3">
           {loading && <span className="flex items-center gap-1"><Loader2 className="size-2.5 animate-spin" /> Searching…</span>}
-          {!loading && query.length >= 2 && results.length === 0 && <span>No results</span>}
+          {!loading && !regexError && query.length >= 2 && results.length === 0 && <span>No results</span>}
           {!loading && total > 0 && <span>{total} result{total !== 1 ? "s" : ""} in {results.length} file{results.length !== 1 ? "s" : ""}</span>}
         </div>
       </div>
@@ -143,7 +193,6 @@ export function SearchPanel() {
           const dirPath = r.file.includes("/") ? r.file.slice(0, r.file.lastIndexOf("/")) : "";
           return (
             <div key={r.file}>
-              {/* File header */}
               <button
                 onClick={() => toggleCollapse(r.file)}
                 className="w-full flex items-center gap-1 px-2 py-1 hover:bg-muted/50 text-left"
@@ -151,20 +200,19 @@ export function SearchPanel() {
                 {isCollapsed ? <ChevronRight className="size-3 shrink-0 text-text-subtle" /> : <ChevronDown className="size-3 shrink-0 text-text-subtle" />}
                 <FileText className="size-3 shrink-0 text-text-subtle" />
                 <span className="text-xs font-medium text-foreground truncate">{fileName}</span>
-                <span className="text-[10px] text-text-subtle truncate flex-1 min-w-0">{dirPath}</span>
+                <span className="text-[10px] text-text-subtle truncate flex-1 min-w-0 ml-1">{dirPath}</span>
                 <span className="text-[10px] text-text-subtle shrink-0 ml-1 bg-muted px-1 rounded">{r.matches.length}</span>
               </button>
 
-              {/* Matches */}
               {!isCollapsed && r.matches.map((m) => (
                 <button
                   key={`${r.file}-${m.lineNum}`}
                   onClick={() => openFile(r.file, m.lineNum)}
-                  className="w-full flex items-start gap-2 pl-7 pr-2 py-0.5 hover:bg-primary/10 text-left group"
+                  className="w-full flex items-start gap-2 pl-7 pr-2 py-0.5 hover:bg-primary/10 text-left"
                 >
                   <span className="text-[10px] text-text-subtle shrink-0 w-7 text-right pt-px">{m.lineNum}</span>
                   <span className="text-xs text-text-secondary truncate font-mono leading-4">
-                    <HighlightMatch text={m.content.trimStart()} query={query} caseSensitive={caseSensitive} />
+                    <HighlightMatch text={m.content.trimStart()} re={highlightRe} />
                   </span>
                 </button>
               ))}
