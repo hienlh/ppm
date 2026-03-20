@@ -2,6 +2,8 @@
   "name": "@hienlh/ppm",
   "version": "0.7.8",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
+  "author": "hienlh",
+  "license": "MIT",
   "module": "src/index.ts",
   "type": "module",
   "bin": {
