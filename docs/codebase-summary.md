@@ -1,6 +1,6 @@
 # PPM Codebase Summary
 
-Generated from codebase analysis of 133 TypeScript files, ~22K LOC.
+Generated from codebase analysis of 135+ TypeScript files, ~22.5K LOC (including multi-account feature).
 
 ## Directory Structure
 
@@ -32,6 +32,7 @@ ppm/
 │   │   ├── routes/
 │   │   │   ├── settings.ts          # GET/PUT /api/settings/ai (AI provider config)
 │   │   │   ├── projects.ts          # GET/POST /api/projects, DELETE /:name
+│   │   │   ├── accounts.ts          # GET/POST/PUT/DELETE /api/accounts, POST activate
 │   │   │   ├── project-scoped.ts    # Mount chat, git, files under /api/project/:name/*
 │   │   │   ├── chat.ts              # GET/POST/DELETE sessions, GET messages, usage, slash-items
 │   │   │   ├── git.ts               # GET status, diff, log, graph; POST commit, stage, discard
@@ -48,10 +49,12 @@ ppm/
 │   │   ├── claude-agent-sdk.ts      # Primary: SDK integration, tool approval, Windows CLI fallback, .env poisoning mitigation
 │   │   ├── mock-provider.ts         # Test provider (ignores config)
 │   │   └── registry.ts              # ProviderRegistry (singleton, router to active provider)
-│   ├── services/                    # Business logic (18 files, 3100 LOC)
+│   ├── services/                    # Business logic (20 files, 3300+ LOC)
 │   │   ├── chat.service.ts          # Session lifecycle, message streaming
 │   │   ├── config.service.ts        # Config loading (YAML→SQLite migration)
-│   │   ├── db.service.ts            # SQLite persistence (schema v3, WAL mode, 8 tables, connection CRUD)
+│   │   ├── db.service.ts            # SQLite persistence (schema v5, WAL mode, 9 tables, connection/account CRUD)
+│   │   ├── account.service.ts       # Account CRUD, token encryption/decryption, active selection
+│   │   ├── account-selector.service.ts # Select active account based on config
 │   │   ├── project.service.ts       # Project CRUD, scanning, resolution
 │   │   ├── file.service.ts          # File ops with path validation
 │   │   ├── git.service.ts           # Git operations (status, diff, log, graph)
@@ -70,6 +73,9 @@ ppm/
 │   │       ├── postgres-adapter.ts  # PostgreSQL connection, query execution
 │   │       ├── init-adapters.ts     # Initialize adapters at server start
 │   │       └── readonly-check.ts    # isReadOnlyQuery() safety regex (CTE-safe)
+│   ├── lib/                         # Shared utilities (2 files)
+│   │   ├── account-crypto.ts        # AES-256 encryption/decryption for API keys
+│   │   └── network-utils.ts         # Network utility helpers
 │   ├── types/                       # TypeScript interfaces (7 files, 450 LOC)
 │   │   ├── api.ts                   # ApiResponse envelope, WebSocket message types
 │   │   ├── chat.ts                  # Session, Message, ChatEvent types
@@ -157,7 +163,10 @@ ppm/
 │           │   ├── connection-color-picker.tsx # WCAG contrast-aware color picker
 │           │   └── use-connections.ts # Hook for connection CRUD operations
 │           ├── projects/            # Project management (339 LOC, 2 files)
-│           ├── settings/            # Settings panel (theme + AI provider config UI)
+│           ├── settings/            # Settings panel (theme + AI provider + accounts config UI)
+│           │   ├── settings-tab.tsx # Main settings panel with tabs
+│           │   ├── ai-settings-section.tsx # AI provider configuration
+│           │   └── accounts-settings-section.tsx # Multi-account management (add, edit, delete, activate)
 │           ├── terminal/            # xterm.js wrapper (143 LOC, 2 files)
 │           ├── shared/              # Shared components (2 files)
 │           │   ├── markdown-renderer.tsx # Render Markdown with syntax highlighting
@@ -228,7 +237,9 @@ ppm/
 - **Services:**
   - **ChatService** — Session lifecycle, message queueing, streaming
   - **ConfigService** — Config loading (YAML→SQLite migration)
-  - **DbService** — SQLite persistence (8 tables, WAL mode, schema v3, connection CRUD, table cache)
+  - **DbService** — SQLite persistence (9 tables, WAL mode, schema v5, connection/account CRUD, table cache)
+  - **AccountService** — Multi-account management, token encryption/decryption
+  - **AccountSelectorService** — Select active account based on config
   - **GitService** — Git commands via simple-git
   - **FileService** — File ops with path validation
   - **ProjectService** — Project CRUD, scanning, resolution

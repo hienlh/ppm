@@ -107,6 +107,12 @@ GET    /api/health              → Health check
 GET    /api/auth/check          → Verify auth token
 GET    /api/settings/ai         → Get AI provider settings
 PUT    /api/settings/ai         → Update AI provider settings
+GET    /api/accounts            → List all accounts (sanitized)
+POST   /api/accounts            → Create account (encrypt & store token)
+GET    /api/accounts/:id        → Get account (sanitized, no token)
+PUT    /api/accounts/:id        → Update account (name, priority)
+DELETE /api/accounts/:id        → Delete account
+POST   /api/accounts/:id/activate → Set as active account
 POST   /api/projects            → Create project
 GET    /api/projects            → List projects
 DELETE /api/projects/:name      → Delete project
@@ -153,7 +159,7 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 |---------|---------|-------------|
 | **ChatService** | Session management, message streaming | createSession, streamMessage, getHistory |
 | **ConfigService** | Config loading (YAML→SQLite migration) | load, save, getToken |
-| **DbService** | SQLite persistence (8 tables, WAL, connections CRUD) | getDb, openTestDb, getConnections, insertConnection, updateConnection, deleteConnection, getTableCache |
+| **DbService** | SQLite persistence (9 tables, WAL, connections/accounts CRUD) | getDb, openTestDb, getConnections, insertConnection, deleteConnection, getTableCache |
 | **TableCacheService** | Cache table metadata, search tables | syncTables, searchTables, invalidateCache |
 | **GitService** | Git command execution | status, diff, commit, stage, branch |
 | **FileService** | File operations with validation | read, write, tree, delete, mkdir |
@@ -168,6 +174,8 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 | **DatabaseAdapterRegistry** | Register/retrieve DB adapters (extensible) | registerAdapter, getAdapter |
 | **SQLiteAdapter** | SQLite connection, query execution, readonly checks | testConnection, getTables, getTableSchema, getTableData, executeQuery, updateCell |
 | **PostgresAdapter** | PostgreSQL connection, query execution, readonly checks | testConnection, getTables, getTableSchema, getTableData, executeQuery, updateCell |
+| **AccountService** | Account CRUD, token encryption/decryption | getAccounts, createAccount, updateAccount, deleteAccount |
+| **AccountSelectorService** | Select active account based on config | getActiveAccount, setActiveAccount, selectByProject |
 
 **Key Files:** `src/services/*.service.ts`
 
@@ -192,7 +200,7 @@ interface AIProvider {
 ```
 
 **Implementations:**
-- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use. Reads model/effort/maxTurns/budget/thinking from config. Settings refreshed per query. Windows CLI fallback for Bun subprocess pipe issues. .env poisoning mitigation.
+- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use. Reads model/effort/maxTurns/budget/thinking from config. Settings refreshed per query. Windows CLI fallback for Bun subprocess pipe issues. .env poisoning mitigation. **Multi-account support:** Injects account API token from AccountService instead of relying on ANTHROPIC_API_KEY env var when accounts configured.
 - **mock-provider** (Testing) — Returns canned responses
 - **Note:** CLI provider removed (v2); agent SDK is sole AI provider with Windows CLI fallback
 
@@ -716,6 +724,16 @@ UI displays results (read-only highlight if mutation was blocked)
 
 **SQLite Schema** (in `~/.ppm/ppm.db`):
 ```sql
+CREATE TABLE accounts (
+  id TEXT PRIMARY KEY,
+  account_name TEXT NOT NULL,
+  encrypted_api_key TEXT NOT NULL,
+  priority INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 0, -- 1 = active, 0 = inactive
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE connections (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL, -- 'sqlite' | 'postgres'

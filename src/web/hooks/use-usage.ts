@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { getAuthToken, projectUrl } from "@/lib/api-client";
 import type { UsageInfo } from "../../types/chat";
 
-const POLL_INTERVAL = 30_000; // read cache every 30s
+const POLL_INTERVAL = 120_000; // read cache every 2min
 
 interface UseUsageReturn {
   usageInfo: UsageInfo;
