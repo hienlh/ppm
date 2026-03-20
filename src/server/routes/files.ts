@@ -158,16 +158,24 @@ fileRoutes.get("/search", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
   const caseSensitive = c.req.query("caseSensitive") === "true";
 
-  if (q.length < 2) return c.json(ok({ results: [], total: 0 }));
+  const wholeWord = c.req.query("wholeWord") === "true";
+  const useRegex = c.req.query("regex") === "true";
+
+  if (!useRegex && q.length < 2) return c.json(ok({ results: [], total: 0 }));
+  if (useRegex && q.length < 1) return c.json(ok({ results: [], total: 0 }));
+
+  // Build the grep pattern
+  let pattern = useRegex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (wholeWord) pattern = `\\b${pattern}\\b`;
 
   try {
     const EXCLUDE_DIRS = ["node_modules", ".git", "dist", ".next", "build", ".turbo", "coverage", "__pycache__"];
     const excludeDirArgs = EXCLUDE_DIRS.flatMap((d) => ["--exclude-dir", d]);
     const excludeArgs = ["--exclude=*.min.js", "--exclude=*.map", "--exclude=*.lock", "--exclude=bun.lock"];
-    const flags = ["-rn", "--max-count=5", "-I", ...(caseSensitive ? [] : ["-i"])];
+    const flags = ["-rn", "--max-count=5", "-I", "-E", ...(caseSensitive ? [] : ["-i"])];
 
     const proc = Bun.spawnSync({
-      cmd: ["grep", ...flags, ...excludeDirArgs, ...excludeArgs, "--", q, projectPath],
+      cmd: ["grep", ...flags, ...excludeDirArgs, ...excludeArgs, "--", pattern, projectPath],
       stdout: "pipe",
       stderr: "pipe",
     });
