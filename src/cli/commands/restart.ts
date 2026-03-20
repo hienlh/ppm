@@ -1,9 +1,11 @@
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, writeFileSync, existsSync, openSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync } from "node:fs";
 
-const STATUS_FILE = resolve(homedir(), ".ppm", "status.json");
-const PID_FILE = resolve(homedir(), ".ppm", "ppm.pid");
+const PPM_DIR = resolve(homedir(), ".ppm");
+const STATUS_FILE = resolve(PPM_DIR, "status.json");
+const PID_FILE = resolve(PPM_DIR, "ppm.pid");
+const RESTARTING_FLAG = resolve(PPM_DIR, ".restarting");
 
 /** Restart only the server process, keeping the tunnel alive */
 export async function restartServer(options: { config?: string }) {
@@ -25,6 +27,9 @@ export async function restartServer(options: { config?: string }) {
     console.log("No server PID found. Use 'ppm stop && ppm start' instead.");
     process.exit(1);
   }
+
+  // Write restarting flag so tunnel cleanup handler skips killing cloudflared
+  writeFileSync(RESTARTING_FLAG, "");
 
   // Kill old server process
   try {
@@ -68,6 +73,9 @@ export async function restartServer(options: { config?: string }) {
   status.pid = child.pid;
   writeFileSync(STATUS_FILE, JSON.stringify(status));
   writeFileSync(PID_FILE, String(child.pid));
+
+  // Remove restarting flag
+  try { unlinkSync(RESTARTING_FLAG); } catch {}
 
   const { VERSION } = await import("../../version.ts");
   console.log(`\n  PPM v${VERSION} restarted (PID: ${child.pid})\n`);

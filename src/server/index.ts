@@ -453,7 +453,7 @@ if (process.argv.includes("__serve__")) {
   configService.load(configPath);
   await setupLogFile();
 
-  // Sync externally-started tunnel URL (from `ppm start --share`) into tunnelService
+  // Sync externally-started tunnel URL + PID into tunnelService
   // so GET /api/tunnel reflects the correct state and Share button doesn't start a duplicate.
   try {
     const { resolve: r } = await import("node:path");
@@ -464,6 +464,7 @@ if (process.argv.includes("__serve__")) {
     if (status.shareUrl) {
       const { tunnelService } = await import("../services/tunnel.service.ts");
       tunnelService.setExternalUrl(status.shareUrl);
+      if (status.tunnelPid) tunnelService.setExternalPid(status.tunnelPid);
     }
   } catch { /* status.json missing or no shareUrl — normal */ }
 

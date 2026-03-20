@@ -7,13 +7,15 @@ import { configService } from "../../services/config.service.ts";
 import { getLocalIp } from "../../lib/network-utils.ts";
 import { ok, err } from "../../types/api.ts";
 
-/** Patch shareUrl in status.json so `ppm status` reflects web-started tunnels */
+/** Patch shareUrl + tunnelPid in status.json so `ppm status` reflects web-started tunnels */
 function patchStatusFile(shareUrl: string | null): void {
   const path = resolve(homedir(), ".ppm", "status.json");
   if (!existsSync(path)) return;
   try {
     const data = JSON.parse(readFileSync(path, "utf-8"));
-    writeFileSync(path, JSON.stringify({ ...data, shareUrl }));
+    data.shareUrl = shareUrl;
+    data.tunnelPid = shareUrl ? tunnelService.getTunnelPid() : null;
+    writeFileSync(path, JSON.stringify(data));
   } catch { /* ignore — status.json may be absent in dev */ }
 }
 
