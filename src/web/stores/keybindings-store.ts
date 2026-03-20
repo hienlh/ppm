@@ -35,6 +35,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
   { id: "open-git-graph", label: "Git Graph", category: "tabs", defaultKey: "Mod+Shift+G" },
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
+  { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
   // Projects — Mod+1..9
   ...Array.from({ length: 9 }, (_, i) => ({
     id: `switch-project-${i + 1}`,

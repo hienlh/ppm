@@ -116,6 +116,15 @@ export function useGlobalKeybindings() {
         return;
       }
 
+      // Open search (sidebar)
+      if (match(e, "open-search")) {
+        e.preventDefault();
+        const settings = useSettingsStore.getState();
+        if (settings.sidebarCollapsed) settings.toggleSidebar();
+        settings.setSidebarActiveTab("search");
+        return;
+      }
+
       // Switch project 1-9
       for (let i = 1; i <= 9; i++) {
         if (match(e, `switch-project-${i}`)) {

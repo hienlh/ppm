@@ -130,8 +130,18 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     saveTimerRef.current = setTimeout(() => saveFile(latestContentRef.current), 1000);
   }
 
+  // Jump to line when metadata.lineNumber is set (e.g. from search panel)
+  const lineNumber = metadata?.lineNumber as number | undefined;
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
+    if (lineNumber && lineNumber > 0) {
+      // Defer until content is rendered
+      setTimeout(() => {
+        editor.revealLineInCenter(lineNumber);
+        editor.setPosition({ lineNumber, column: 1 });
+        editor.focus();
+      }, 100);
+    }
     // Alt+Z → toggle word wrap
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
