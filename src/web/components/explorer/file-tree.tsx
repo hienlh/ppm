@@ -62,6 +62,7 @@ function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodePr
   const isExpanded = expandedPaths.has(node.path);
   const isDir = node.type === "directory";
   const isSelected = selectedFiles.includes(node.path);
+  const isIgnored = node.ignored === true;
 
   function handleClick(e: React.MouseEvent) {
     if (isDir) {
@@ -108,6 +109,7 @@ function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodePr
               "flex items-center w-full gap-1.5 px-2 py-1 rounded-sm text-sm",
               "min-h-[32px] hover:bg-surface-elevated transition-colors text-left",
               "select-none",
+              isIgnored && "opacity-40",
               isSelected && "bg-primary/15 ring-1 ring-primary/40",
             )}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}

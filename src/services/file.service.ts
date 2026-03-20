@@ -10,10 +10,26 @@ import {
   renameSync,
 } from "node:fs";
 import { resolve, relative, basename, dirname, join, normalize } from "node:path";
+import ignore, { type Ignore } from "ignore";
 import type { FileNode } from "../types/project.ts";
 
 /** Directories/files excluded from tree listing */
 const EXCLUDED_NAMES = new Set([".git", "node_modules"]);
+
+/** Load and compile gitignore rules from a project root */
+function loadGitignore(projectPath: string): Ignore {
+  const ig = ignore();
+  const gitignorePath = join(projectPath, ".gitignore");
+  if (existsSync(gitignorePath)) {
+    try {
+      const content = readFileSync(gitignorePath, "utf-8");
+      ig.add(content);
+    } catch {
+      // Unreadable — skip
+    }
+  }
+  return ig;
+}
 
 /** Max buffer size for binary detection (first 8KB) */
 const BINARY_CHECK_BYTES = 8192;
@@ -47,7 +63,8 @@ class FileService {
 
   /** Build a recursive file tree for a project directory */
   getTree(projectPath: string, depth = 3): FileNode[] {
-    return this.buildTree(projectPath, projectPath, 0, depth);
+    const ig = loadGitignore(projectPath);
+    return this.buildTree(projectPath, projectPath, 0, depth, ig);
   }
 
   private buildTree(
@@ -55,6 +72,7 @@ class FileService {
     dirPath: string,
     currentDepth: number,
     maxDepth: number,
+    ig: Ignore,
   ): FileNode[] {
     if (currentDepth > maxDepth) return [];
     if (!existsSync(dirPath)) return [];
@@ -68,6 +86,11 @@ class FileService {
       const fullPath = join(dirPath, entry.name);
       const relPath = relative(rootPath, fullPath);
 
+      // Check gitignore — `ignore` requires forward slashes, no leading slash
+      const relPosix = relPath.split("\\").join("/");
+      const checkPath = entry.isDirectory() ? `${relPosix}/` : relPosix;
+      const isIgnored = ig.ignores(checkPath) || ig.ignores(relPosix);
+
       try {
         const stat = statSync(fullPath);
         const node: FileNode = {
@@ -76,6 +99,7 @@ class FileService {
           type: entry.isDirectory() ? "directory" : "file",
           size: entry.isFile() ? stat.size : undefined,
           modified: stat.mtime.toISOString(),
+          ignored: isIgnored || undefined,
         };
 
         if (entry.isDirectory()) {
@@ -84,6 +108,7 @@ class FileService {
             fullPath,
             currentDepth + 1,
             maxDepth,
+            ig,
           );
         }
 
