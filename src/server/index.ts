@@ -127,6 +127,7 @@ export async function startServer(options: {
   daemon?: boolean; // compat, ignored (daemon is now default)
   share?: boolean;
   config?: string;
+  profile?: string;
 }) {
   // Load config
   configService.load(options.config);
@@ -238,7 +239,8 @@ export async function startServer(options: {
     const logFd = openSync(logFile, "a");
     const { resolve: resolvePath } = await import("node:path");
     const script = resolvePath(import.meta.dir, "index.ts");
-    const args = ["__serve__", String(port), host, options.config ?? ""].filter(Boolean);
+    // Keep positional order: port, host, config, profile (empty strings kept as placeholders)
+    const args = ["__serve__", String(port), host, options.config ?? "", options.profile ?? ""];
 
     let childPid: number;
 
@@ -443,10 +445,13 @@ if (process.argv.includes("__serve__")) {
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
   const configPath = process.argv[idx + 3] || undefined;
+  const profileArg = process.argv[idx + 4] || undefined;
 
-  // Set DB profile for daemon child (detect "dev" from config path)
+  // Set DB profile for daemon child — explicit --profile takes priority over config-path detection
   const { setDbProfile } = await import("../services/db.service.ts");
-  if (configPath && /dev/i.test(configPath)) {
+  if (profileArg) {
+    setDbProfile(profileArg);
+  } else if (configPath && /dev/i.test(configPath)) {
     setDbProfile("dev");
   }
 
