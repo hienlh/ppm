@@ -133,50 +133,51 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     );
   }
 
-  if (!isInline && !isFileCompare && (!diffText || diffText.trim() === "") && !original && !modified) {
+  // Catch diffs with metadata-only changes (mode, rename) where parseDiff returns empty
+  if (!isInline && !isFileCompare && !original && !modified) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
         <FileCode className="size-8" />
-        <p className="text-sm">No changes detected</p>
+        <p className="text-sm">No content changes</p>
         {filePath && <p className="text-xs font-mono">{filePath}</p>}
       </div>
     );
   }
 
-  const expandToggle = (
-    <div className="flex items-center gap-0.5 shrink-0">
-      <button type="button"
-        onClick={() => setExpandMode(expandMode === "left" ? "both" : "left")}
-        className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "left" ? "bg-muted text-foreground" : ""}`}
-        title="Expand original"
-      >
-        <PanelLeftOpen className="size-3.5" />
-      </button>
-      <button type="button"
-        onClick={() => setExpandMode("both")}
-        className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "both" ? "bg-muted text-foreground" : ""}`}
-        title="Side by side"
-      >
-        <Columns2 className="size-3.5" />
-      </button>
-      <button type="button"
-        onClick={() => setExpandMode(expandMode === "right" ? "both" : "right")}
-        className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "right" ? "bg-muted text-foreground" : ""}`}
-        title="Expand modified"
-      >
-        <PanelRightOpen className="size-3.5" />
-      </button>
-      <div className="w-px h-3.5 bg-border mx-0.5 shrink-0" />
-      <button type="button" onClick={toggleWordWrap} title="Toggle word wrap"
-        className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
-      >
-        <WrapText className="size-3.5" />
-      </button>
-    </div>
-  );
-
   return (
     <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      {!isMobile && (
+        <div className="flex items-center justify-end gap-0.5 px-2 py-0.5 border-b border-border shrink-0">
+          <button type="button"
+            onClick={() => setExpandMode(expandMode === "left" ? "both" : "left")}
+            className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "left" ? "bg-muted text-foreground" : ""}`}
+            title="Expand original"
+          >
+            <PanelLeftOpen className="size-3.5" />
+          </button>
+          <button type="button"
+            onClick={() => setExpandMode("both")}
+            className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "both" ? "bg-muted text-foreground" : ""}`}
+            title="Side by side"
+          >
+            <Columns2 className="size-3.5" />
+          </button>
+          <button type="button"
+            onClick={() => setExpandMode(expandMode === "right" ? "both" : "right")}
+            className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "right" ? "bg-muted text-foreground" : ""}`}
+            title="Expand modified"
+          >
+            <PanelRightOpen className="size-3.5" />
+          </button>
+          <div className="w-px h-3.5 bg-border mx-0.5 shrink-0" />
+          <button type="button" onClick={toggleWordWrap} title="Toggle word wrap"
+            className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
+          >
+            <WrapText className="size-3.5" />
+          </button>
+        </div>
+      )}
       {/* Monaco DiffEditor */}
       <div ref={containerRef} className="flex-1 overflow-hidden">
         {containerHeight && containerHeight > 0 ? (
@@ -195,11 +196,11 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
               automaticLayout: true,
               scrollBeyondLastLine: false,
             }}
-            loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
+            loading={<Loader2 className="size-5 animate-spin text-muted-foreground" />}
           />
         ) : (
           <div className="flex items-center justify-center h-full">
-            <Loader2 className="size-5 animate-spin text-text-subtle" />
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
         )}
       </div>

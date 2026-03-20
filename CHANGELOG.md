@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.6] - 2026-03-20
+
+### Fixed
+- **Diff viewer toolbar**: moved expand/word-wrap buttons into a fixed header bar (hidden on mobile); fixes toolbar being rendered outside the scroll container
+- **Diff viewer empty state**: handles metadata-only diffs (file mode change, rename) where `parseDiff` returns no hunks — shows "No content changes" instead of blank screen
+
 ## [0.7.5] - 2026-03-20
 
 ### Added
