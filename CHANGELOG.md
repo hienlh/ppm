@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.10] - 2026-03-20
+
+### Changed
+- **Usage panel layout**: responsive grid (1–4 columns) replaces collapsible list for account usage cards
+- **Usage data**: removed legacy fallback — each account shows only its own per-account data
+
+### Removed
+- **Health check polling**: removed `useHealthCheck` hook (5s `/api/health` ping + crash toast)
+
 ## [0.7.9] - 2026-03-20
 
 ### Added
