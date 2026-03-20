@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.4] - 2026-03-20
+
+### Added
+- **Search: files to include filter** — filter search results by file/folder glob patterns (e.g. `*.ts`, `src/**`, `*.ts, *.tsx`); uses path-aware glob matching that supports `**` and path prefixes (unlike grep's `--include` which only matches filenames)
+- **Search: replace input** — find & replace across files with "Replace All" button; applies the same case/word/regex options as the search query and shows replacement count on completion
+
 ## [0.7.3] - 2026-03-20
 
 ### Added
