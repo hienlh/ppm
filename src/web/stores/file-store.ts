@@ -8,6 +8,7 @@ export interface FileNode {
   children?: FileNode[];
   size?: number;
   modified?: string;
+  ignored?: boolean;
 }
 
 interface FileStore {

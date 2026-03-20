@@ -16,4 +16,6 @@ export interface FileNode {
   children?: FileNode[];
   size?: number;
   modified?: string;
+  /** True if this path is matched by a .gitignore rule */
+  ignored?: boolean;
 }
