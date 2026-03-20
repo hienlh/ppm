@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.12] - 2026-03-20
+
+### Fixed
+- **Account list not loading**: use `Promise.allSettled` so one failing API call doesn't prevent accounts from showing
+
 ## [0.7.11] - 2026-03-20
 
 ### Fixed
