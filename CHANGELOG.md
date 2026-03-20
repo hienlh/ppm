@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1] - 2026-03-20
+
+### Fixed
+- **Session rename persistence**: Use SDK `customTitle` field instead of volatile `summary` when listing/resuming sessions, so custom titles survive reloads
+- **Session rename ID resolution**: Resolve PPM UUID → SDK session ID and pass project dir when renaming, ensuring SDK finds the correct session file
+- **SDK crash recovery**: When SDK subprocess exits with code 1 during session resume, automatically retry as a fresh session instead of showing a cryptic error
+
 ## [0.7.0] - 2026-03-20
 
 ### Added
