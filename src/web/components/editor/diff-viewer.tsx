@@ -55,7 +55,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [loading, error]);
 
   useEffect(() => {
     if (isInline) return;
