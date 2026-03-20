@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.9] - 2026-03-20
+
+### Added
+- **Manual token input**: add Claude accounts via dialog — supports OAuth tokens (`claude setup-token`) and API keys with auto-detection
+- **Per-account usage limits**: Usage Limits panel shows collapsible per-account sections with 5hr/weekly bars
+- **Active account indicator**: chat header badge shows `[account label]`, account cards show "In use" badge and ring highlight
+- **Inline usage bars**: compact 5h/Wk mini-bars on each account card in settings
+- **API endpoints**: `GET /api/accounts/active`, `GET /api/accounts/usage`, `GET /api/accounts/:id/usage`, `POST /api/accounts`
+- **DB migration v6**: `account_id` column on `claude_limit_snapshots` for per-account tracking
+
+### Changed
+- **Usage polling**: rewritten for multi-account with per-token 429 cooldown (respects `retry-after` header)
+- **SDK env vars**: auto-detect token type — OAuth → `CLAUDE_CODE_OAUTH_TOKEN`, API key → `ANTHROPIC_API_KEY`
+
 ## [0.7.8] - 2026-03-20
 
 ### Fixed
