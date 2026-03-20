@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.15] - 2026-03-21
+
+### Fixed
+- **npm package**: exclude `.env.test` from published tarball
+
 ## [0.7.14] - 2026-03-21
 
 ### Added
