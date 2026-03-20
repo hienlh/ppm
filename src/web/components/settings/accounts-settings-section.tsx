@@ -2,36 +2,76 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
   getAccounts,
+  getActiveAccount,
+  addAccount,
   deleteAccount,
   patchAccount,
   getAccountSettings,
   updateAccountSettings,
+  getAllAccountUsages,
   type AccountInfo,
   type AccountSettings,
+  type AccountUsageEntry,
 } from "../../lib/api-settings";
+
+function detectTokenType(token: string): string {
+  if (token.startsWith("sk-ant-oat")) return "OAuth token (Claude Max/Pro)";
+  if (token.startsWith("sk-ant-api")) return "API key";
+  return "Unknown format";
+}
+
+function miniBarColor(pct: number): string {
+  if (pct >= 90) return "bg-red-500";
+  if (pct >= 70) return "bg-amber-500";
+  return "bg-green-500";
+}
+
+function miniPctColor(pct: number): string {
+  if (pct >= 90) return "text-red-500";
+  if (pct >= 70) return "text-amber-500";
+  return "text-green-500";
+}
+
+function MiniBar({ label, value }: { label: string; value: number }) {
+  const pct = Math.round(value * 100);
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[9px] text-muted-foreground w-5 shrink-0">{label}</span>
+      <div className="w-12 h-1.5 rounded-full bg-border overflow-hidden">
+        <div className={`h-full rounded-full ${miniBarColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+      </div>
+      <span className={`text-[9px] tabular-nums w-7 ${miniPctColor(pct)}`}>{pct}%</span>
+    </div>
+  );
+}
+
+function CompactUsageBars({ usage }: { usage: AccountUsageEntry["usage"] }) {
+  if (!usage.session && !usage.weekly) return null;
+  return (
+    <div className="flex flex-col gap-0.5 mt-1">
+      {usage.session && <MiniBar label="5h" value={usage.session.utilization} />}
+      {usage.weekly && <MiniBar label="Wk" value={usage.weekly.utilization} />}
+    </div>
+  );
+}
 
 export function AccountsSettingsSection() {
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
+  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AccountSettings | null>(null);
+  const [usageMap, setUsageMap] = useState<Map<string, AccountUsageEntry["usage"]>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [oauthMessage, setOauthMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-
-  // Detect OAuth callback result from URL hash params
-  useEffect(() => {
-    const hash = window.location.hash;
-    const qIndex = hash.indexOf("?");
-    if (qIndex === -1) return;
-    const params = new URLSearchParams(hash.slice(qIndex + 1));
-    if (params.get("success")) {
-      setOauthMessage({ type: "success", text: "Account connected successfully!" });
-      window.history.replaceState(null, "", window.location.pathname + hash.slice(0, qIndex));
-    } else if (params.get("error")) {
-      setOauthMessage({ type: "error", text: `OAuth failed: ${params.get("error")}` });
-    }
-  }, []);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [newToken, setNewToken] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     refresh();
@@ -40,17 +80,33 @@ export function AccountsSettingsSection() {
   async function refresh() {
     setLoading(true);
     try {
-      const [accs, cfg] = await Promise.all([getAccounts(), getAccountSettings()]);
+      const [accs, cfg, active, usages] = await Promise.all([
+        getAccounts(), getAccountSettings(), getActiveAccount(), getAllAccountUsages(),
+      ]);
       setAccounts(accs);
       setSettings(cfg);
+      setActiveAccountId(active?.id ?? null);
+      setUsageMap(new Map(usages.map((u) => [u.accountId, u.usage])));
     } catch {
       // ignore
     }
     setLoading(false);
   }
 
-  function handleAddAccount() {
-    window.location.href = "/api/accounts/oauth/start";
+  async function handleAddAccount() {
+    if (!newToken.trim()) return;
+    setAdding(true);
+    try {
+      await addAccount({ apiKey: newToken.trim(), label: newLabel.trim() || undefined });
+      setMessage({ type: "success", text: "Account added successfully!" });
+      setShowAddDialog(false);
+      setNewToken("");
+      setNewLabel("");
+      refresh();
+    } catch (e) {
+      setMessage({ type: "error", text: (e as Error).message });
+    }
+    setAdding(false);
   }
 
   async function handleToggle(id: string, currentStatus: string) {
@@ -105,27 +161,29 @@ export function AccountsSettingsSection() {
       });
       const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
       if (json.ok) {
-        setOauthMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s).` });
+        setMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s).` });
         refresh();
       } else {
-        setOauthMessage({ type: "error", text: json.error ?? "Import failed" });
+        setMessage({ type: "error", text: json.error ?? "Import failed" });
       }
     } catch {
-      setOauthMessage({ type: "error", text: "Import failed" });
+      setMessage({ type: "error", text: "Import failed" });
     }
     e.target.value = "";
   }
+
+  const tokenHint = newToken.trim() ? detectTokenType(newToken.trim()) : "";
 
   return (
     <div className="space-y-4">
       <div>
         <p className="text-[11px] text-muted-foreground mb-3">
-          Connect multiple Claude Pro/Max accounts. PPM rotates between them automatically to avoid rate limits.
+          Connect multiple Claude accounts. PPM rotates between them automatically to avoid rate limits.
         </p>
 
-        {oauthMessage && (
-          <div className={`text-[11px] mb-3 p-2 rounded ${oauthMessage.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
-            {oauthMessage.text}
+        {message && (
+          <div className={`text-[11px] mb-3 p-2 rounded ${message.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
+            {message.text}
           </div>
         )}
 
@@ -135,16 +193,19 @@ export function AccountsSettingsSection() {
             <p className="text-[11px] text-muted-foreground">No accounts connected.</p>
           )}
           {accounts.map((acc) => (
-            <div key={acc.id} className="flex items-center justify-between p-2.5 rounded-lg border bg-card gap-2">
+            <div key={acc.id} className={`flex items-center justify-between p-2.5 rounded-lg border bg-card gap-2 ${acc.id === activeAccountId ? "ring-1 ring-primary/50 border-primary/30" : ""}`}>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs font-medium truncate">{acc.email ?? acc.id.slice(0, 8)}</span>
+                  <span className="text-xs font-medium truncate">{acc.label ?? acc.email ?? acc.id.slice(0, 8)}</span>
                   {statusBadge(acc)}
+                  {acc.id === activeAccountId && <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/40 text-primary">In use</Badge>}
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5 flex gap-2">
+                <div className="text-[11px] text-muted-foreground mt-0.5 flex gap-2 flex-wrap">
+                  {acc.email && acc.label && <span>{acc.email}</span>}
                   <span>{acc.totalRequests} reqs</span>
                   <span>Last: {formatLastUsed(acc.lastUsedAt)}</span>
                 </div>
+                {usageMap.get(acc.id) && <CompactUsageBars usage={usageMap.get(acc.id)!} />}
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                 <Switch
@@ -167,7 +228,7 @@ export function AccountsSettingsSection() {
         </div>
 
         <div className="flex gap-1.5 flex-wrap">
-          <Button size="sm" className="h-7 text-xs" onClick={handleAddAccount}>
+          <Button size="sm" className="h-7 text-xs" onClick={() => setShowAddDialog(true)}>
             + Add Account
           </Button>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport}>
@@ -225,6 +286,73 @@ export function AccountsSettingsSection() {
           </p>
         </div>
       )}
+
+      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Add Claude Account</DialogTitle>
+            <DialogDescription className="text-xs leading-relaxed">
+              Supports both Claude Max/Pro session tokens and API keys. Token is encrypted and stored locally.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="token" className="text-xs">Token</Label>
+              <Input
+                id="token"
+                type="password"
+                placeholder="sk-ant-..."
+                value={newToken}
+                onChange={(e) => setNewToken(e.target.value)}
+                className="text-xs h-8 font-mono"
+              />
+              {tokenHint && (
+                <p className="text-[10px] text-muted-foreground">
+                  Detected: {tokenHint}
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="label" className="text-xs">Label (optional)</Label>
+              <Input
+                id="label"
+                placeholder="e.g. Personal, Work"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                className="text-xs h-8"
+              />
+            </div>
+            <div className="rounded-md bg-muted/50 p-2.5 space-y-1.5">
+              <p className="text-[10px] font-medium text-muted-foreground">How to get your token:</p>
+              <div className="text-[10px] text-muted-foreground space-y-1">
+                <p><span className="font-medium">Claude Max/Pro:</span> Run in terminal:</p>
+                <code className="block bg-background rounded px-1.5 py-1 text-[10px] font-mono select-all">
+                  claude setup-token
+                </code>
+                <p className="text-[9px]">Follow the prompts to generate a long-lived token (valid for 1 year).</p>
+                <p className="mt-1"><span className="font-medium">API key:</span>{" "}
+                  <a
+                    href="https://console.anthropic.com/settings/keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline hover:no-underline"
+                  >
+                    console.anthropic.com/settings/keys
+                  </a>
+                </p>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowAddDialog(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" className="text-xs h-7" onClick={handleAddAccount} disabled={!newToken.trim() || adding}>
+              {adding ? "Adding..." : "Add Account"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

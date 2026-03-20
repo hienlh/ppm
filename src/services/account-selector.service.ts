@@ -12,6 +12,12 @@ const BACKOFF_MAX_MS = 30 * 60_000;
 class AccountSelectorService {
   private cursor = 0;
   private retryCounts = new Map<string, number>();
+  private _lastPickedId: string | null = null;
+
+  /** ID of the last account returned by next() */
+  get lastPickedId(): string | null {
+    return this._lastPickedId;
+  }
 
   getStrategy(): AccountStrategy {
     return (getConfigValue(STRATEGY_CONFIG_KEY) as AccountStrategy) ?? "round-robin";
@@ -49,16 +55,18 @@ class AccountSelectorService {
     const active = accountService.list().filter((a) => a.status === "active");
     if (active.length === 0) return null;
 
+    let pickedId: string;
     if (this.getStrategy() === "fill-first") {
       const sorted = [...active].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
-      return accountService.getWithTokens(sorted[0].id);
+      pickedId = sorted[0].id;
+    } else {
+      // Round-robin
+      this.cursor = this.cursor % active.length;
+      pickedId = active[this.cursor].id;
+      this.cursor = (this.cursor + 1) % active.length;
     }
-
-    // Round-robin
-    this.cursor = this.cursor % active.length;
-    const picked = active[this.cursor];
-    this.cursor = (this.cursor + 1) % active.length;
-    return accountService.getWithTokens(picked.id);
+    this._lastPickedId = pickedId;
+    return accountService.getWithTokens(pickedId);
   }
 
   /** Called when account receives 429 — apply exponential backoff */

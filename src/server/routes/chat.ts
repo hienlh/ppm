@@ -43,6 +43,8 @@ chatRoutes.get("/usage", async (c) => {
     weeklyOpus: usage.weeklyOpus,
     weeklySonnet: usage.weeklySonnet,
     totalCostUsd: usage.totalCostUsd,
+    activeAccountId: usage.activeAccountId,
+    activeAccountLabel: usage.activeAccountLabel,
   }));
 });
 

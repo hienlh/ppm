@@ -65,6 +65,8 @@ export interface UsageInfo {
   weekly?: LimitBucket;
   weeklyOpus?: LimitBucket;
   weeklySonnet?: LimitBucket;
+  activeAccountId?: string;
+  activeAccountLabel?: string;
 }
 
 /** Result subtype from SDK ResultMessage */

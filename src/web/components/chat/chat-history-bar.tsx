@@ -167,6 +167,9 @@ export function ChatHistoryBar({
           title="Usage limits"
         >
           <Activity className="size-3" />
+          {usageInfo.activeAccountLabel && (
+            <span className="text-text-secondary font-normal truncate max-w-[60px]">[{usageInfo.activeAccountLabel}]</span>
+          )}
           <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
           <span className="text-text-subtle">·</span>
           <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
