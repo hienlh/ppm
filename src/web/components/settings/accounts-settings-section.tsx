@@ -80,17 +80,13 @@ export function AccountsSettingsSection() {
 
   async function refresh() {
     setLoading(true);
-    try {
-      const [accs, cfg, active, usages] = await Promise.all([
-        getAccounts(), getAccountSettings(), getActiveAccount(), getAllAccountUsages(),
-      ]);
-      setAccounts(accs);
-      setSettings(cfg);
-      setActiveAccountId(active?.id ?? null);
-      setUsageMap(new Map(usages.map((u) => [u.accountId, u.usage])));
-    } catch {
-      // ignore
-    }
+    const [accs, cfg, active, usages] = await Promise.allSettled([
+      getAccounts(), getAccountSettings(), getActiveAccount(), getAllAccountUsages(),
+    ]);
+    if (accs.status === "fulfilled") setAccounts(accs.value);
+    if (cfg.status === "fulfilled") setSettings(cfg.value);
+    if (active.status === "fulfilled") setActiveAccountId(active.value?.id ?? null);
+    if (usages.status === "fulfilled") setUsageMap(new Map(usages.value.map((u) => [u.accountId, u.usage])));
     setLoading(false);
   }
 
