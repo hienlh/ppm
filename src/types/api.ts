@@ -34,4 +34,5 @@ export type ChatWsServerMessage =
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "done"; sessionId: string; contextWindowPct?: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "account_info"; accountId: string; accountLabel: string };

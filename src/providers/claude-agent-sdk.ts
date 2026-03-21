@@ -483,6 +483,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const account = accountSelector.isEnabled() ? accountSelector.next() : null;
       if (account) {
         console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"})`);
+        yield { type: "account_info" as const, accountId: account.id, accountLabel: account.label ?? account.email ?? "Unknown" };
       }
       const queryEnv = this.buildQueryEnv(meta.projectPath, account);
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account}`);
