@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.7.17] - 2026-03-22
+
+### Changed
+- **Merged usage & accounts panels**: combined the separate Accounts and Usage panels above chat input into a single "Usage & Accounts" panel with account controls (toggle, verify, profile) inline on each usage card
+- **Consolidated action buttons**: Copy/Paste/Export/Import buttons in settings grouped into a "More" dropdown menu
+- **Delete button**: replaced emoji `✕` with Lucide `X` icon
+- **Touch targets**: increased icon button sizes for better mobile usability
+- **Auto-dismiss toasts**: success/error messages in settings now auto-clear after 4 seconds
+- **ON/OFF text → Switch**: quick panel account toggles now use consistent Switch component
+
+### Fixed
+- **Usage timestamp timezone**: SQLite `datetime('now')` returns UTC without `Z` suffix causing 7h offset in non-UTC timezones — now appends `Z` for correct parsing
+- **Stale "last fetched" time**: usage refresh no longer shows old timestamp when data hasn't changed — `recorded_at` is touched on every successful fetch
+- **Cascade delete**: deleting an account now removes its usage history snapshots from `claude_limit_snapshots`
+
 ## [0.7.16] - 2026-03-21
 
 ### Added
