@@ -1,5 +1,32 @@
 import { api } from "./api-client";
 
+export interface OAuthProfileData {
+  account?: {
+    uuid?: string;
+    full_name?: string;
+    display_name?: string;
+    email?: string;
+    has_claude_max?: boolean;
+    has_claude_pro?: boolean;
+    created_at?: string;
+  };
+  organization?: {
+    uuid?: string;
+    name?: string;
+    organization_type?: string;
+    billing_type?: string;
+    rate_limit_tier?: string;
+    has_extra_usage_enabled?: boolean;
+    subscription_status?: string;
+    subscription_created_at?: string;
+  };
+  application?: {
+    uuid?: string;
+    name?: string;
+    slug?: string;
+  };
+}
+
 export interface AccountInfo {
   id: string;
   label: string | null;
@@ -10,7 +37,17 @@ export interface AccountInfo {
   priority: number;
   totalRequests: number;
   lastUsedAt: number | null;
+  profileData: OAuthProfileData | null;
   createdAt: number;
+}
+
+export interface VerifyResult {
+  valid: boolean;
+  email?: string;
+  orgName?: string;
+  subscriptionType?: string;
+  authMethod?: string;
+  profileData?: OAuthProfileData;
 }
 
 export interface AccountSettings {
@@ -59,6 +96,18 @@ export interface AccountUsageEntry {
     weeklyOpus?: import("../../types/chat").LimitBucket;
     weeklySonnet?: import("../../types/chat").LimitBucket;
   };
+}
+
+export function verifyAccount(id: string): Promise<VerifyResult> {
+  return api.post<VerifyResult>(`/api/accounts/${id}/verify`);
+}
+
+export function getOAuthUrl(): Promise<{ url: string; state: string }> {
+  return api.get<{ url: string; state: string }>("/api/accounts/oauth/url");
+}
+
+export function exchangeOAuthCode(code: string, state: string): Promise<AccountInfo> {
+  return api.post<AccountInfo>("/api/accounts/oauth/exchange", { code, state });
 }
 
 export function getAllAccountUsages(): Promise<AccountUsageEntry[]> {
