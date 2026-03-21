@@ -18,6 +18,7 @@ import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
+import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { cn } from "@/lib/utils";
@@ -101,6 +102,9 @@ export function App() {
 
   // Notification badge — syncs document.title + favicon with unread count
   useNotificationBadge();
+
+  // Auto-reload when server restarts (clears SW cache first)
+  useServerReload();
 
   // Warn before closing browser tab (prevents accidental Ctrl+W)
   useEffect(() => {

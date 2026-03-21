@@ -141,8 +141,10 @@ function MessageBubble({ message, isStreaming, projectName, onFork }: { message:
               <MarkdownContent content={message.content} projectName={projectName} />
             </div>
           )}
-      {message.accountLabel && (
-        <p className="text-[11px] text-text-tertiary/60 select-none">via {message.accountLabel}</p>
+      {!isStreaming && message.accountLabel && (
+        <p className="text-[10px] select-none" style={{ color: "var(--color-text-subtle)" }}>
+          via {message.accountLabel}
+        </p>
       )}
     </div>
   );
