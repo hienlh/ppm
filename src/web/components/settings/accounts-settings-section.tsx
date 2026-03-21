@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Eye, Loader2, Copy, ClipboardPaste } from "lucide-react";
+import { Eye, Loader2, Copy, ClipboardPaste, X, MoreHorizontal, Download, Upload } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getAuthToken } from "../../lib/api-client";
 import {
   getAccounts,
@@ -123,6 +124,13 @@ export function AccountsSettingsSection() {
   const [usageMap, setUsageMap] = useState<Map<string, AccountUsageEntry["usage"]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const msgTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  function showMessage(msg: { type: "success" | "error"; text: string }) {
+    if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
+    setMessage(msg);
+    msgTimerRef.current = setTimeout(() => setMessage(null), 4000);
+  }
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -156,7 +164,7 @@ export function AccountsSettingsSection() {
     setAddError(null);
     try {
       await addAccount({ apiKey: newToken.trim(), label: newLabel.trim() || undefined });
-      setMessage({ type: "success", text: "Account added successfully!" });
+      showMessage({ type: "success", text: "Account added successfully!" });
       setShowAddDialog(false);
       setNewToken("");
       setNewLabel("");
@@ -191,7 +199,7 @@ export function AccountsSettingsSection() {
       let code = oauthCode.trim();
       if (code.includes("#")) code = code.split("#")[0];
       await exchangeOAuthCode(code, oauthState);
-      setMessage({ type: "success", text: "Account connected via OAuth!" });
+      showMessage({ type: "success", text: "Account connected via OAuth!" });
       setShowAddDialog(false);
       resetOAuthState();
       refresh();
@@ -259,7 +267,7 @@ export function AccountsSettingsSection() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setMessage({ type: "error", text: (e as Error).message });
+      showMessage({ type: "error", text: (e as Error).message });
     }
   }
 
@@ -274,10 +282,10 @@ export function AccountsSettingsSection() {
       const res = await fetch("/api/accounts/import", { method: "POST", headers, body: text });
       const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Import failed");
-      setMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s).` });
+      showMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s).` });
       refresh();
     } catch (e) {
-      setMessage({ type: "error", text: (e as Error).message || "Import failed" });
+      showMessage({ type: "error", text: (e as Error).message || "Import failed" });
     }
     e.target.value = "";
   }
@@ -291,9 +299,9 @@ export function AccountsSettingsSection() {
       if (!res.ok) throw new Error(`Export failed: ${res.status}`);
       const text = await res.text();
       await navigator.clipboard.writeText(text);
-      setMessage({ type: "success", text: "Accounts copied to clipboard!" });
+      showMessage({ type: "success", text: "Accounts copied to clipboard!" });
     } catch (e) {
-      setMessage({ type: "error", text: (e as Error).message });
+      showMessage({ type: "error", text: (e as Error).message });
     }
   }
 
@@ -308,10 +316,10 @@ export function AccountsSettingsSection() {
       const res = await fetch("/api/accounts/import", { method: "POST", headers, body: text });
       const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Import failed");
-      setMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s) from clipboard.` });
+      showMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s) from clipboard.` });
       refresh();
     } catch (e) {
-      setMessage({ type: "error", text: (e as Error).message || "Import from clipboard failed" });
+      showMessage({ type: "error", text: (e as Error).message || "Import from clipboard failed" });
     }
   }
 
@@ -356,9 +364,9 @@ export function AccountsSettingsSection() {
               <div className="flex items-center gap-1 shrink-0">
                 {acc.profileData && (
                   <Button
-                    size="sm"
+                    size="icon"
                     variant="ghost"
-                    className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                    className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
                     onClick={() => setProfileView(acc.profileData)}
                     title="View profile"
                   >
@@ -369,40 +377,50 @@ export function AccountsSettingsSection() {
                   checked={acc.status !== "disabled"}
                   onCheckedChange={() => handleToggle(acc.id, acc.status)}
                   disabled={acc.status === "cooldown"}
-                  className="scale-75"
+                  className="scale-75 cursor-pointer"
                 />
                 <Button
-                  size="sm"
+                  size="icon"
                   variant="ghost"
-                  className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                  className="size-8 cursor-pointer text-muted-foreground hover:text-destructive"
                   onClick={() => handleDelete(acc.id, acc.email)}
+                  title="Remove account"
                 >
-                  ✕
+                  <X className="size-3.5" />
                 </Button>
               </div>
             </div>
           ))}
         </div>
 
-        <div className="flex gap-1.5 flex-wrap">
-          <Button size="sm" className="h-7 text-xs" onClick={() => setShowAddDialog(true)}>
+        <div className="flex gap-1.5">
+          <Button size="sm" className="h-8 text-xs cursor-pointer" onClick={() => setShowAddDialog(true)}>
             + Add Account
           </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExportClipboard} title="Copy accounts to clipboard">
-            <Copy className="size-3 mr-1" /> Copy
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleImportClipboard} title="Import accounts from clipboard">
-            <ClipboardPaste className="size-3 mr-1" /> Paste
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport} title="Download as file">
-            Export
-          </Button>
-          <label>
-            <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
-              <span>Import</span>
-            </Button>
-            <input type="file" accept=".json" className="hidden" onChange={handleImport} />
-          </label>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer">
+                <MoreHorizontal className="size-3.5 mr-1" /> More
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem className="text-xs cursor-pointer" onClick={handleExportClipboard}>
+                <Copy className="size-3.5 mr-2" /> Copy to clipboard
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-xs cursor-pointer" onClick={handleImportClipboard}>
+                <ClipboardPaste className="size-3.5 mr-2" /> Paste from clipboard
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-xs cursor-pointer" onClick={handleExport}>
+                <Download className="size-3.5 mr-2" /> Export as file
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-xs cursor-pointer" asChild>
+                <label className="flex items-center">
+                  <Upload className="size-3.5 mr-2" /> Import from file
+                  <input type="file" accept=".json" className="hidden" onChange={handleImport} />
+                </label>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
