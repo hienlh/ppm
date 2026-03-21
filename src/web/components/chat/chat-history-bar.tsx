@@ -1,15 +1,23 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Users, Eye, ShieldCheck } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { UsageDetailPanel } from "./usage-badge";
+import {
+  getAccounts,
+  getActiveAccount,
+  patchAccount,
+  verifyAccount,
+  type AccountInfo,
+  type OAuthProfileData,
+} from "@/lib/api-settings";
 import type { SessionInfo } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
 
-type PanelType = "history" | "config" | "usage" | null;
+type PanelType = "history" | "config" | "usage" | "accounts" | null;
 
 interface ChatHistoryBarProps {
   projectName: string;
@@ -156,6 +164,18 @@ export function ChatHistoryBar({
           title="AI Settings"
         >
           <Settings2 className="size-3" />
+        </button>
+
+        {/* Accounts */}
+        <button
+          onClick={() => togglePanel("accounts")}
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
+            activePanel === "accounts" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
+          }`}
+          title="Manage accounts"
+        >
+          <Users className="size-3" />
+          <span className="hidden sm:inline">Accounts</span>
         </button>
 
         {/* Usage badge */}
@@ -313,6 +333,130 @@ export function ChatHistoryBar({
           loading={usageLoading}
           lastFetchedAt={lastFetchedAt}
         />
+      )}
+
+      {/* Accounts quick panel */}
+      {activePanel === "accounts" && (
+        <AccountsQuickPanel onClose={() => setActivePanel(null)} />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Accounts Quick Panel (inline, above chat input)
+// ---------------------------------------------------------------------------
+
+function AccountsQuickPanel({ onClose }: { onClose: () => void }) {
+  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+  const [profileView, setProfileView] = useState<OAuthProfileData | null>(null);
+
+  useEffect(() => { refresh(); }, []);
+
+  async function refresh() {
+    setLoading(true);
+    const [accs, active] = await Promise.allSettled([getAccounts(), getActiveAccount()]);
+    if (accs.status === "fulfilled") setAccounts(accs.value);
+    if (active.status === "fulfilled") setActiveId(active.value?.id ?? null);
+    setLoading(false);
+  }
+
+  async function handleToggle(id: string, status: string) {
+    await patchAccount(id, { status: status === "disabled" ? "active" : "disabled" });
+    refresh();
+  }
+
+  async function handleVerify(id: string) {
+    setVerifyingId(id);
+    try { await verifyAccount(id); refresh(); } catch { /* silent */ }
+    setVerifyingId(null);
+  }
+
+  function statusDot(status: string) {
+    if (status === "active") return "bg-green-500";
+    if (status === "cooldown") return "bg-amber-500 animate-pulse";
+    return "bg-zinc-400";
+  }
+
+  return (
+    <div className="border-t border-border/30 bg-surface">
+      <div className="max-h-[200px] overflow-y-auto">
+        {loading ? (
+          <div className="flex items-center justify-center py-3">
+            <Loader2 className="size-3.5 animate-spin text-text-subtle" />
+          </div>
+        ) : accounts.length === 0 ? (
+          <div className="text-[11px] text-text-subtle text-center py-3">No accounts</div>
+        ) : (
+          accounts.map((acc) => (
+            <div
+              key={acc.id}
+              className={`flex items-center gap-2 px-3 py-1.5 hover:bg-surface-elevated transition-colors group ${acc.id === activeId ? "bg-primary/5" : ""}`}
+            >
+              <span className={`size-2 rounded-full shrink-0 ${statusDot(acc.status)}`} />
+              <div className="flex-1 min-w-0">
+                <span className="text-[11px] truncate block">
+                  {acc.label ?? acc.email ?? acc.id.slice(0, 8)}
+                </span>
+                {acc.profileData?.organization?.name && (
+                  <span className="text-[10px] text-text-subtle truncate block">{acc.profileData.organization.name}</span>
+                )}
+              </div>
+              {acc.id === activeId && (
+                <span className="text-[9px] text-primary font-medium shrink-0">IN USE</span>
+              )}
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                {acc.profileData && (
+                  <button
+                    className="p-0.5 rounded text-text-subtle hover:text-foreground"
+                    onClick={() => setProfileView(acc.profileData)}
+                    title="View profile"
+                  >
+                    <Eye className="size-3" />
+                  </button>
+                )}
+                <button
+                  className="p-0.5 rounded text-text-subtle hover:text-green-600"
+                  onClick={() => handleVerify(acc.id)}
+                  disabled={verifyingId === acc.id}
+                  title="Test token"
+                >
+                  {verifyingId === acc.id ? <Loader2 className="size-3 animate-spin" /> : <ShieldCheck className="size-3" />}
+                </button>
+                <button
+                  className={`p-0.5 rounded text-[9px] font-medium ${acc.status === "disabled" ? "text-green-600 hover:text-green-500" : "text-text-subtle hover:text-red-500"}`}
+                  onClick={() => handleToggle(acc.id, acc.status)}
+                  title={acc.status === "disabled" ? "Enable" : "Disable"}
+                >
+                  {acc.status === "disabled" ? "ON" : "OFF"}
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Profile popup (simple inline) */}
+      {profileView && (
+        <div className="border-t border-border/30 px-3 py-2 bg-surface-elevated">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-medium text-muted-foreground">Profile</span>
+            <button className="text-text-subtle hover:text-foreground" onClick={() => setProfileView(null)}>
+              <X className="size-3" />
+            </button>
+          </div>
+          <div className="grid grid-cols-[70px_1fr] gap-x-2 gap-y-0.5 text-[10px]">
+            {profileView.account?.display_name && <><span className="text-muted-foreground">Name</span><span>{profileView.account.display_name}</span></>}
+            {profileView.account?.email && <><span className="text-muted-foreground">Email</span><span>{profileView.account.email}</span></>}
+            {profileView.organization?.name && <><span className="text-muted-foreground">Org</span><span>{profileView.organization.name}</span></>}
+            {profileView.organization?.organization_type && <><span className="text-muted-foreground">Type</span><span>{profileView.organization.organization_type}</span></>}
+            {profileView.organization?.rate_limit_tier && <><span className="text-muted-foreground">Tier</span><span>{profileView.organization.rate_limit_tier}</span></>}
+            {profileView.organization?.subscription_status && <><span className="text-muted-foreground">Status</span><span>{profileView.organization.subscription_status}</span></>}
+          </div>
+        </div>
       )}
     </div>
   );
