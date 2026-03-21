@@ -7,6 +7,7 @@ import {
   getLatestSnapshotForAccount,
   getAllLatestSnapshots,
   cleanupOldLimitSnapshots,
+  touchSnapshotTimestamp,
   type LimitSnapshotRow,
 } from "./db.service.ts";
 import { accountService } from "./account.service.ts";
@@ -86,7 +87,9 @@ function dbBucketToLimitBucket(util: number, resetsAt: string, windowHours: numb
 }
 
 function snapshotToUsage(row: LimitSnapshotRow): ClaudeUsage {
-  const result: ClaudeUsage = { lastFetchedAt: row.recorded_at };
+  // SQLite datetime('now') returns UTC without Z suffix — JS would parse as local time
+  const utcTimestamp = row.recorded_at.endsWith("Z") ? row.recorded_at : row.recorded_at.replace(" ", "T") + "Z";
+  const result: ClaudeUsage = { lastFetchedAt: utcTimestamp };
   if (row.five_hour_util != null) result.session = dbBucketToLimitBucket(row.five_hour_util, row.five_hour_resets_at ?? "", 5);
   if (row.weekly_util != null) result.weekly = dbBucketToLimitBucket(row.weekly_util, row.weekly_resets_at ?? "", 168);
   if (row.weekly_opus_util != null) result.weeklyOpus = dbBucketToLimitBucket(row.weekly_opus_util, row.weekly_opus_resets_at ?? "", 168);
@@ -141,7 +144,11 @@ function hasChanged(data: ClaudeUsage, last: LimitSnapshotRow | null): boolean {
 
 function persistIfChanged(data: ClaudeUsage, accountId: string | null): void {
   const last = accountId ? getLatestSnapshotForAccount(accountId) : getLatestLimitSnapshot();
-  if (!hasChanged(data, last)) return;
+  if (!hasChanged(data, last)) {
+    // Data unchanged but still update timestamp so "last fetched" is accurate
+    if (accountId) touchSnapshotTimestamp(accountId);
+    return;
+  }
   insertLimitSnapshot({
     account_id: accountId,
     five_hour_util: data.session?.utilization ?? null,

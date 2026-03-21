@@ -462,6 +462,17 @@ export function getAllLatestSnapshots(): LimitSnapshotRow[] {
   ).all() as LimitSnapshotRow[];
 }
 
+export function touchSnapshotTimestamp(accountId: string): void {
+  getDb().query(
+    `UPDATE claude_limit_snapshots SET recorded_at = datetime('now')
+     WHERE id = (SELECT id FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC LIMIT 1)`,
+  ).run(accountId);
+}
+
+export function deleteSnapshotsForAccount(accountId: string): void {
+  getDb().query("DELETE FROM claude_limit_snapshots WHERE account_id = ?").run(accountId);
+}
+
 export function cleanupOldLimitSnapshots(): void {
   getDb().query(
     "DELETE FROM claude_limit_snapshots WHERE recorded_at < datetime('now', '-7 days')",

@@ -6,6 +6,7 @@ import {
   insertAccount,
   updateAccount,
   deleteAccount,
+  deleteSnapshotsForAccount,
   incrementAccountRequests,
   type AccountRow,
 } from "./db.service.ts";
@@ -311,6 +312,7 @@ class AccountService {
   }
 
   remove(id: string): void {
+    deleteSnapshotsForAccount(id);
     deleteAccount(id);
   }
 

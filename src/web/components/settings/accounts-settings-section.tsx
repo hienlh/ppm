@@ -197,7 +197,7 @@ export function AccountsSettingsSection() {
     try {
       // Parse code — platform returns "CODE#STATE" or just the code
       let code = oauthCode.trim();
-      if (code.includes("#")) code = code.split("#")[0];
+      if (code.includes("#")) code = code.split("#")[0] ?? code;
       await exchangeOAuthCode(code, oauthState);
       showMessage({ type: "success", text: "Account connected via OAuth!" });
       setShowAddDialog(false);
