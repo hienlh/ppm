@@ -126,6 +126,13 @@
   outline: none;
 }
 
+/* Prevent iOS Safari auto-zoom on focus (requires font-size >= 16px) */
+@media screen and (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
 /* Prevent overscroll bounce on iOS */
 html,
 body {
