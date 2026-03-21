@@ -61,6 +61,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [isConnected, setIsConnected] = useState(false);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
+  const streamingAccountRef = useRef<{ accountId: string; accountLabel: string } | null>(null);
   const isStreamingRef = useRef(false);
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
@@ -164,10 +165,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     const syncMessages = () => {
       const content = streamingContentRef.current;
       const events = [...streamingEventsRef.current];
+      const account = streamingAccountRef.current;
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant" && !last.id.startsWith("final-")) {
-          return [...prev.slice(0, -1), { ...last, content, events }];
+          return [...prev.slice(0, -1), { ...last, content, events, ...account }];
         }
         return [...prev, {
           id: `streaming-${Date.now()}`,
@@ -175,11 +177,17 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           content,
           events,
           timestamp: new Date().toISOString(),
+          ...account,
         }];
       });
     };
 
     switch (data.type) {
+      case "account_info": {
+        streamingAccountRef.current = { accountId: (data as any).accountId, accountLabel: (data as any).accountLabel };
+        break;
+      }
+
       case "text": {
         const pid = (data as any).parentToolUseId as string | undefined;
         if (pid && routeToParent(data, pid)) {
@@ -302,6 +310,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         });
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
+        streamingAccountRef.current = null;
         isStreamingRef.current = false;
         setIsStreaming(false);
         setStreamingStatus("idle");

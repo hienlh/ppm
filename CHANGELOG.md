@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.16] - 2026-03-21
+
+### Added
+- **Account indicator on messages**: assistant messages now show `via <account label>` below the response when multi-account mode is active
+
 ## [0.7.15] - 2026-03-21
 
 ### Fixed
