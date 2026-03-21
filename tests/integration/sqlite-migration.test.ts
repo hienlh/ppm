@@ -227,9 +227,9 @@ describe("YAML → SQLite migration", () => {
     const testDb = openTestDb();
 
     const row = testDb.query("PRAGMA user_version").get() as { user_version: number };
-    expect(row.user_version).toBe(6);
+    expect(row.user_version).toBe(7);
 
-    // All tables should exist (v1–v6 migrations)
+    // All tables should exist (v1–v7 migrations)
     const tables = testDb.query(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
     ).all() as { name: string }[];
