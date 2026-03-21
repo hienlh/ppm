@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Eye, Loader2, Copy, ClipboardPaste } from "lucide-react";
 import { getAuthToken } from "../../lib/api-client";
 import {
   getAccounts,
@@ -13,12 +14,15 @@ import {
   addAccount,
   deleteAccount,
   patchAccount,
+  getOAuthUrl,
+  exchangeOAuthCode,
   getAccountSettings,
   updateAccountSettings,
   getAllAccountUsages,
   type AccountInfo,
   type AccountSettings,
   type AccountUsageEntry,
+  type OAuthProfileData,
 } from "../../lib/api-settings";
 
 function detectTokenType(token: string): string {
@@ -62,6 +66,56 @@ function CompactUsageBars({ usage }: { usage: AccountUsageEntry["usage"] }) {
   );
 }
 
+function subscriptionLabel(profile: OAuthProfileData): string {
+  const org = profile.organization;
+  if (!org) return "";
+  const type = org.organization_type?.replace(/_/g, " ") ?? "";
+  const tier = org.rate_limit_tier?.replace(/^default_/, "").replace(/_/g, " ") ?? "";
+  return [type, tier].filter(Boolean).join(" / ");
+}
+
+function ProfileDetailDialog({ profile, open, onClose }: { profile: OAuthProfileData; open: boolean; onClose: () => void }) {
+  const acc = profile.account;
+  const org = profile.organization;
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Account Profile</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-xs">
+          {acc && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">User</p>
+              <div className="grid grid-cols-[80px_1fr] gap-1 text-xs">
+                {acc.display_name && <><span className="text-muted-foreground">Name</span><span>{acc.display_name}</span></>}
+                {acc.email && <><span className="text-muted-foreground">Email</span><span>{acc.email}</span></>}
+                {acc.uuid && <><span className="text-muted-foreground">UUID</span><span className="font-mono text-[10px] break-all">{acc.uuid}</span></>}
+              </div>
+            </div>
+          )}
+          {org && (
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-muted-foreground">Organization</p>
+              <div className="grid grid-cols-[80px_1fr] gap-1 text-xs">
+                {org.name && <><span className="text-muted-foreground">Name</span><span>{org.name}</span></>}
+                {org.organization_type && <><span className="text-muted-foreground">Type</span><span>{org.organization_type}</span></>}
+                {org.rate_limit_tier && <><span className="text-muted-foreground">Tier</span><span>{org.rate_limit_tier}</span></>}
+                {org.subscription_status && <><span className="text-muted-foreground">Status</span><span>{org.subscription_status}</span></>}
+                {org.has_extra_usage_enabled !== undefined && <><span className="text-muted-foreground">Extra usage</span><span>{org.has_extra_usage_enabled ? "Enabled" : "Disabled"}</span></>}
+              </div>
+            </div>
+          )}
+          {!acc && !org && <p className="text-muted-foreground">No profile data available.</p>}
+        </div>
+        <DialogFooter>
+          <Button size="sm" variant="outline" className="text-xs h-7" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function AccountsSettingsSection() {
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
@@ -73,6 +127,12 @@ export function AccountsSettingsSection() {
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [profileView, setProfileView] = useState<OAuthProfileData | null>(null);
+  const [oauthState, setOauthState] = useState<string | null>(null);
+  const [oauthCode, setOauthCode] = useState("");
+  const [oauthLoading, setOauthLoading] = useState(false);
+  const [oauthStep, setOauthStep] = useState<"idle" | "waiting">("idle");
 
   useEffect(() => {
     refresh();
@@ -93,17 +153,59 @@ export function AccountsSettingsSection() {
   async function handleAddAccount() {
     if (!newToken.trim()) return;
     setAdding(true);
+    setAddError(null);
     try {
       await addAccount({ apiKey: newToken.trim(), label: newLabel.trim() || undefined });
       setMessage({ type: "success", text: "Account added successfully!" });
       setShowAddDialog(false);
       setNewToken("");
       setNewLabel("");
+      setAddError(null);
       refresh();
     } catch (e) {
-      setMessage({ type: "error", text: (e as Error).message });
+      setAddError((e as Error).message);
     }
     setAdding(false);
+  }
+
+  async function handleOAuthLogin() {
+    setOauthLoading(true);
+    setAddError(null);
+    try {
+      const { url, state } = await getOAuthUrl();
+      setOauthState(state);
+      setOauthStep("waiting");
+      window.open(url, "_blank");
+    } catch (e) {
+      setAddError((e as Error).message);
+    }
+    setOauthLoading(false);
+  }
+
+  async function handleOAuthExchange() {
+    if (!oauthCode.trim() || !oauthState) return;
+    setOauthLoading(true);
+    setAddError(null);
+    try {
+      // Parse code — platform returns "CODE#STATE" or just the code
+      let code = oauthCode.trim();
+      if (code.includes("#")) code = code.split("#")[0];
+      await exchangeOAuthCode(code, oauthState);
+      setMessage({ type: "success", text: "Account connected via OAuth!" });
+      setShowAddDialog(false);
+      resetOAuthState();
+      refresh();
+    } catch (e) {
+      setAddError((e as Error).message);
+    }
+    setOauthLoading(false);
+  }
+
+  function resetOAuthState() {
+    setOauthState(null);
+    setOauthCode("");
+    setOauthStep("idle");
+    setAddError(null);
   }
 
   async function handleToggle(id: string, currentStatus: string) {
@@ -180,6 +282,39 @@ export function AccountsSettingsSection() {
     e.target.value = "";
   }
 
+  async function handleExportClipboard() {
+    try {
+      const headers: HeadersInit = {};
+      const token = getAuthToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/api/accounts/export", { headers });
+      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      const text = await res.text();
+      await navigator.clipboard.writeText(text);
+      setMessage({ type: "success", text: "Accounts copied to clipboard!" });
+    } catch (e) {
+      setMessage({ type: "error", text: (e as Error).message });
+    }
+  }
+
+  async function handleImportClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text.trim()) throw new Error("Clipboard is empty");
+      JSON.parse(text); // validate JSON
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      const token = getAuthToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/api/accounts/import", { method: "POST", headers, body: text });
+      const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
+      if (!json.ok) throw new Error(json.error ?? "Import failed");
+      setMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s) from clipboard.` });
+      refresh();
+    } catch (e) {
+      setMessage({ type: "error", text: (e as Error).message || "Import from clipboard failed" });
+    }
+  }
+
   const tokenHint = newToken.trim() ? detectTokenType(newToken.trim()) : "";
 
   return (
@@ -210,12 +345,26 @@ export function AccountsSettingsSection() {
                 </div>
                 <div className="text-[11px] text-muted-foreground mt-0.5 flex gap-2 flex-wrap">
                   {acc.email && acc.label && <span>{acc.email}</span>}
+                  {acc.profileData?.organization?.name && (
+                    <span>{subscriptionLabel(acc.profileData)}</span>
+                  )}
                   <span>{acc.totalRequests} reqs</span>
                   <span>Last: {formatLastUsed(acc.lastUsedAt)}</span>
                 </div>
                 {usageMap.get(acc.id) && <CompactUsageBars usage={usageMap.get(acc.id)!} />}
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
+                {acc.profileData && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => setProfileView(acc.profileData)}
+                    title="View profile"
+                  >
+                    <Eye className="size-3.5" />
+                  </Button>
+                )}
                 <Switch
                   checked={acc.status !== "disabled"}
                   onCheckedChange={() => handleToggle(acc.id, acc.status)}
@@ -239,7 +388,13 @@ export function AccountsSettingsSection() {
           <Button size="sm" className="h-7 text-xs" onClick={() => setShowAddDialog(true)}>
             + Add Account
           </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport}>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExportClipboard} title="Copy accounts to clipboard">
+            <Copy className="size-3 mr-1" /> Copy
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleImportClipboard} title="Import accounts from clipboard">
+            <ClipboardPaste className="size-3 mr-1" /> Paste
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport} title="Download as file">
             Export
           </Button>
           <label>
@@ -295,15 +450,75 @@ export function AccountsSettingsSection() {
         </div>
       )}
 
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      {/* Profile detail dialog */}
+      {profileView && (
+        <ProfileDetailDialog
+          profile={profileView}
+          open={!!profileView}
+          onClose={() => setProfileView(null)}
+        />
+      )}
+
+      <Dialog open={showAddDialog} onOpenChange={(v) => { setShowAddDialog(v); if (!v) resetOAuthState(); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm">Add Claude Account</DialogTitle>
             <DialogDescription className="text-xs leading-relaxed">
-              Supports both Claude Max/Pro session tokens and API keys. Token is encrypted and stored locally.
+              Connect your Claude account via OAuth (recommended) or paste a token manually.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            {/* OAuth login — recommended */}
+            <div className="rounded-md border p-3 space-y-2">
+              <p className="text-[11px] font-medium">Recommended: Login with Claude</p>
+              <p className="text-[10px] text-muted-foreground">
+                Fetches your profile, enables auto-refresh, and uses the correct permissions.
+              </p>
+              {oauthStep === "idle" ? (
+                <Button
+                  size="sm"
+                  className="w-full h-8 text-xs"
+                  onClick={handleOAuthLogin}
+                  disabled={oauthLoading}
+                >
+                  {oauthLoading ? <><Loader2 className="size-3 animate-spin mr-1" /> Opening...</> : "Login with Claude"}
+                </Button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[10px] text-muted-foreground">
+                    Authorize in the opened tab, then paste the code shown on the page:
+                  </p>
+                  <Input
+                    placeholder="Paste code here..."
+                    value={oauthCode}
+                    onChange={(e) => setOauthCode(e.target.value)}
+                    className="text-xs h-8 font-mono"
+                    autoFocus
+                  />
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="flex-1 h-7 text-xs"
+                      onClick={handleOAuthExchange}
+                      disabled={!oauthCode.trim() || oauthLoading}
+                    >
+                      {oauthLoading ? <><Loader2 className="size-3 animate-spin mr-1" /> Connecting...</> : "Connect Account"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={resetOAuthState}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex-1 border-t" />
+              <span className="text-[10px] text-muted-foreground">or paste token manually</span>
+              <div className="flex-1 border-t" />
+            </div>
+
+            {/* Manual token input */}
             <div className="space-y-1.5">
               <Label htmlFor="token" className="text-xs">Token</Label>
               <Input
@@ -331,14 +546,11 @@ export function AccountsSettingsSection() {
               />
             </div>
             <div className="rounded-md bg-muted/50 p-2.5 space-y-1.5">
-              <p className="text-[10px] font-medium text-muted-foreground">How to get your token:</p>
+              <p className="text-[10px] font-medium text-muted-foreground">How to get a token manually:</p>
               <div className="text-[10px] text-muted-foreground space-y-1">
-                <p><span className="font-medium">Claude Max/Pro:</span> Run in terminal:</p>
-                <code className="block bg-background rounded px-1.5 py-1 text-[10px] font-mono select-all">
-                  claude setup-token
-                </code>
-                <p className="text-[9px]">Follow the prompts to generate a long-lived token (valid for 1 year).</p>
-                <p className="mt-1"><span className="font-medium">API key:</span>{" "}
+                <p><span className="font-medium">Claude Max/Pro:</span> Run <code className="bg-background rounded px-1 font-mono">claude setup-token</code></p>
+                <p className="text-[9px]">Valid 1 year but no auto-refresh, may lack profile data.</p>
+                <p><span className="font-medium">API key:</span>{" "}
                   <a
                     href="https://console.anthropic.com/settings/keys"
                     target="_blank"
@@ -351,12 +563,17 @@ export function AccountsSettingsSection() {
               </div>
             </div>
           </div>
+          {addError && (
+            <div className="text-[11px] p-2 rounded bg-red-500/10 text-red-600">
+              {addError}
+            </div>
+          )}
           <DialogFooter>
-            <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => setShowAddDialog(false)}>
+            <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => { setShowAddDialog(false); resetOAuthState(); }}>
               Cancel
             </Button>
             <Button size="sm" className="text-xs h-7" onClick={handleAddAccount} disabled={!newToken.trim() || adding}>
-              {adding ? "Adding..." : "Add Account"}
+              {adding ? "Adding..." : "Add Token"}
             </Button>
           </DialogFooter>
         </DialogContent>
