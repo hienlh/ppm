@@ -219,6 +219,15 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 6;
     `);
   }
+
+  if (current < 7) {
+    try {
+      database.exec(`ALTER TABLE accounts ADD COLUMN profile_json TEXT`);
+    } catch {
+      // Column may already exist
+    }
+    database.exec(`PRAGMA user_version = 7`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -600,6 +609,7 @@ export interface AccountRow {
   priority: number;
   total_requests: number;
   last_used_at: number | null;
+  profile_json: string | null;
   created_at: number;
 }
 
@@ -613,12 +623,12 @@ export function getAccountById(id: string): AccountRow | null {
 
 export function insertAccount(row: Omit<AccountRow, "created_at">): void {
   getDb().query(
-    `INSERT INTO accounts (id, label, email, access_token, refresh_token, expires_at, status, cooldown_until, priority, total_requests, last_used_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO accounts (id, label, email, access_token, refresh_token, expires_at, status, cooldown_until, priority, total_requests, last_used_at, profile_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id, row.label, row.email, row.access_token, row.refresh_token,
     row.expires_at, row.status, row.cooldown_until, row.priority,
-    row.total_requests, row.last_used_at,
+    row.total_requests, row.last_used_at, row.profile_json,
   );
 }
 
@@ -635,6 +645,7 @@ export function updateAccount(id: string, updates: Partial<Omit<AccountRow, "id"
   if (updates.priority !== undefined) { sets.push("priority = ?"); vals.push(updates.priority); }
   if (updates.total_requests !== undefined) { sets.push("total_requests = ?"); vals.push(updates.total_requests); }
   if (updates.last_used_at !== undefined) { sets.push("last_used_at = ?"); vals.push(updates.last_used_at); }
+  if (updates.profile_json !== undefined) { sets.push("profile_json = ?"); vals.push(updates.profile_json); }
   if (sets.length === 0) return;
   vals.push(id);
   getDb().query(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as SQLQueryBindings[]));

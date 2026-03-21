@@ -20,6 +20,7 @@ export interface Account {
   priority: number;
   totalRequests: number;
   lastUsedAt: number | null;
+  profileData: OAuthProfileData | null;
   createdAt: number;
 }
 
@@ -28,16 +29,48 @@ export interface AccountWithTokens extends Account {
   refreshToken: string;
 }
 
+export interface OAuthProfileData {
+  account?: {
+    uuid?: string;
+    full_name?: string;
+    display_name?: string;
+    email?: string;
+    has_claude_max?: boolean;
+    has_claude_pro?: boolean;
+    created_at?: string;
+  };
+  organization?: {
+    uuid?: string;
+    name?: string;
+    organization_type?: string;
+    billing_type?: string;
+    rate_limit_tier?: string;
+    has_extra_usage_enabled?: boolean;
+    subscription_status?: string;
+    subscription_created_at?: string;
+  };
+  application?: {
+    uuid?: string;
+    name?: string;
+    slug?: string;
+  };
+}
+
 const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const OAUTH_AUTH_URL = "https://claude.ai/oauth/authorize";
 const OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
 const OAUTH_SCOPE = "org:create_api_key user:profile user:inference";
+const OAUTH_PLATFORM_REDIRECT = "https://platform.claude.com/oauth/code/callback";
 
 class AccountService {
   private pendingStates = new Map<string, { verifier: string; createdAt: number }>();
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   private toAccount(row: AccountRow): Account {
+    let profileData: OAuthProfileData | null = null;
+    if (row.profile_json) {
+      try { profileData = JSON.parse(row.profile_json); } catch { /* ignore */ }
+    }
     return {
       id: row.id,
       label: row.label,
@@ -48,6 +81,7 @@ class AccountService {
       priority: row.priority,
       totalRequests: row.total_requests,
       lastUsedAt: row.last_used_at,
+      profileData,
       createdAt: row.created_at,
     };
   }
@@ -75,13 +109,43 @@ class AccountService {
     }
   }
 
+  /** Find existing account by email or profile UUID */
+  private findDuplicate(email?: string | null, profileData?: OAuthProfileData | null): Account | null {
+    if (!email && !profileData?.account?.uuid) return null;
+    const existing = this.list();
+    for (const acc of existing) {
+      // Match by account UUID (most reliable)
+      if (profileData?.account?.uuid && acc.profileData?.account?.uuid === profileData.account.uuid) {
+        return acc;
+      }
+      // Match by email
+      if (email && acc.email && acc.email === email) {
+        return acc;
+      }
+    }
+    return null;
+  }
+
   add(params: {
     email: string;
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
     label?: string;
+    profileData?: OAuthProfileData;
   }): Account {
+    // Check for duplicate — update existing account tokens instead of creating new
+    const dup = this.findDuplicate(params.email, params.profileData);
+    if (dup) {
+      this.updateTokens(dup.id, params.accessToken, params.refreshToken, params.expiresAt);
+      if (params.profileData) {
+        updateAccount(dup.id, { profile_json: JSON.stringify(params.profileData) });
+      }
+      if (params.label) updateAccount(dup.id, { label: params.label });
+      if (params.email) updateAccount(dup.id, { email: params.email });
+      return this.toAccount(getAccountById(dup.id)!);
+    }
+
     const id = randomUUID();
     insertAccount({
       id,
@@ -95,6 +159,7 @@ class AccountService {
       priority: 0,
       total_requests: 0,
       last_used_at: null,
+      profile_json: params.profileData ? JSON.stringify(params.profileData) : null,
     });
     return this.toAccount(getAccountById(id)!);
   }
@@ -105,13 +170,14 @@ class AccountService {
     orgName?: string;
     subscriptionType?: string;
     authMethod?: string;
+    profileData?: OAuthProfileData;
   }> {
     const isOAuth = token.startsWith("sk-ant-oat");
 
     if (isOAuth) {
-      // Verify via usage API — 200/429 = valid, 401/403 = invalid
+      // Verify via profile API — returns email, org, subscription info
       try {
-        const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+        const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
           headers: {
             Accept: "application/json",
             Authorization: `Bearer ${token}`,
@@ -120,8 +186,19 @@ class AccountService {
           },
           signal: AbortSignal.timeout(10_000),
         });
-        // 200 = valid, 429 = rate limited but valid token
-        if (res.status === 200 || res.status === 429) {
+        if (res.status === 200) {
+          const data = await res.json() as OAuthProfileData;
+          return {
+            valid: true,
+            authMethod: "oauth_token",
+            email: data.account?.email,
+            orgName: data.organization?.name,
+            subscriptionType: data.organization?.organization_type,
+            profileData: data,
+          };
+        }
+        // 429 = rate limited but valid token (no profile data available)
+        if (res.status === 429) {
           return { valid: true, authMethod: "oauth_token" };
         }
         return { valid: false };
@@ -162,12 +239,26 @@ class AccountService {
   async addManual(params: { apiKey: string; label: string | null }): Promise<Account> {
     const info = await this.verifyToken(params.apiKey);
     if (!info.valid) throw new Error("Invalid token — could not authenticate");
-    const id = randomUUID();
+
     const email = info.email ?? null;
-    // Auto-generate label: orgName (subscription) > authMethod-based > user-provided > fallback
+    // Check for duplicate — update tokens on existing account
+    const dup = this.findDuplicate(email, info.profileData);
+    if (dup) {
+      updateAccount(dup.id, { access_token: encrypt(params.apiKey), status: "active", cooldown_until: null });
+      if (info.profileData) updateAccount(dup.id, { profile_json: JSON.stringify(info.profileData) });
+      if (email) updateAccount(dup.id, { email });
+      return this.toAccount(getAccountById(dup.id)!);
+    }
+
+    const id = randomUUID();
+    // Auto-generate label: display_name > orgName (subscription) > authMethod-based > user-provided > fallback
     let label = params.label;
     if (!label) {
-      if (info.orgName) {
+      const displayName = info.profileData?.account?.display_name || info.profileData?.account?.full_name;
+      if (displayName) {
+        const orgName = info.profileData?.organization?.name;
+        label = orgName ? `${displayName} (${orgName})` : displayName;
+      } else if (info.orgName) {
         label = `${info.orgName}${info.subscriptionType ? ` (${info.subscriptionType})` : ""}`;
       } else if (info.authMethod === "oauth_token") {
         label = `Claude Pro/Max`;
@@ -189,6 +280,7 @@ class AccountService {
       priority: 0,
       total_requests: 0,
       last_used_at: null,
+      profile_json: info.profileData ? JSON.stringify(info.profileData) : null,
     });
     return this.toAccount(getAccountById(id)!);
   }
@@ -228,11 +320,33 @@ class AccountService {
   }
 
   // ---------------------------------------------------------------------------
+  // OAuth profile
+  // ---------------------------------------------------------------------------
+
+  async fetchOAuthProfile(token: string): Promise<OAuthProfileData | undefined> {
+    try {
+      const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+          "anthropic-beta": "oauth-2025-04-20",
+          "User-Agent": "ppm/1.0",
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.status === 200) return await res.json() as OAuthProfileData;
+    } catch {
+      // Profile fetch is best-effort
+    }
+    return undefined;
+  }
+
+  // ---------------------------------------------------------------------------
   // OAuth PKCE helpers
   // ---------------------------------------------------------------------------
 
   private generatePkce(): { verifier: string; challenge: string } {
-    const verifier = randomBytes(32).toString("base64url");
+    const verifier = randomBytes(96).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     return { verifier, challenge };
   }
@@ -262,36 +376,82 @@ class AccountService {
     return `${OAUTH_AUTH_URL}?${params}`;
   }
 
+  /** Generate OAuth URL using platform.claude.com callback (user copies code manually) */
+  startOAuthCodeFlow(): { url: string; state: string } {
+    this.cleanExpiredStates();
+    const { verifier, challenge } = this.generatePkce();
+    const state = randomBytes(16).toString("hex");
+    this.pendingStates.set(state, { verifier, createdAt: Date.now() });
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: OAUTH_CLIENT_ID,
+      redirect_uri: OAUTH_PLATFORM_REDIRECT,
+      scope: OAUTH_SCOPE,
+      state,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      code: "true",
+    });
+    return { url: `${OAUTH_AUTH_URL}?${params}`, state };
+  }
+
+  /** Exchange code from platform.claude.com callback */
+  async completeOAuthCodeFlow(code: string, state: string): Promise<Account> {
+    const pending = this.pendingStates.get(state);
+    if (!pending) throw new Error("Invalid or expired OAuth state");
+    this.pendingStates.delete(state);
+
+    const tokens = await this.exchangeCode(code, pending.verifier, OAUTH_PLATFORM_REDIRECT, state);
+    const profileData = await this.fetchOAuthProfile(tokens.accessToken);
+    const displayName = profileData?.account?.display_name || profileData?.account?.full_name;
+    const orgName = profileData?.organization?.name;
+    const label = displayName ? (orgName ? `${displayName} (${orgName})` : displayName) : undefined;
+    return this.add({
+      email: profileData?.account?.email ?? tokens.email,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt: tokens.expiresAt,
+      label,
+      profileData,
+    });
+  }
+
   async completeOAuthFlow(code: string, state: string, redirectUri: string): Promise<Account> {
     const pending = this.pendingStates.get(state);
     if (!pending) throw new Error("Invalid or expired OAuth state");
     this.pendingStates.delete(state);
 
     const tokens = await this.exchangeCode(code, pending.verifier, redirectUri);
+    // Fetch profile data with the new token
+    const profileData = await this.fetchOAuthProfile(tokens.accessToken);
     return this.add({
-      email: tokens.email,
+      email: profileData?.account?.email ?? tokens.email,
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
       expiresAt: tokens.expiresAt,
+      profileData,
     });
   }
 
-  async exchangeCode(code: string, verifier: string, redirectUri: string): Promise<{
+  async exchangeCode(code: string, verifier: string, redirectUri: string, state?: string): Promise<{
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
     email: string;
   }> {
+    const body: Record<string, string> = {
+      grant_type: "authorization_code",
+      client_id: OAUTH_CLIENT_ID,
+      code,
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+    };
+    if (state) body.state = state;
     const res = await fetch(OAUTH_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "authorization_code",
-        client_id: OAUTH_CLIENT_ID,
-        code,
-        redirect_uri: redirectUri,
-        code_verifier: verifier,
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const text = await res.text();
@@ -370,6 +530,7 @@ class AccountService {
         priority: row.priority ?? 0,
         total_requests: row.total_requests ?? 0,
         last_used_at: row.last_used_at,
+        profile_json: row.profile_json ?? null,
       });
       count++;
     }
