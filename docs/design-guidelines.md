@@ -14,6 +14,85 @@
 
 ---
 
+## Mobile-First UI Rules (MANDATORY)
+
+These rules MUST be followed when creating or modifying any UI component. PPM is primarily used on phones and tablets.
+
+### 1. Dialogs → Bottom Sheet on Mobile
+- **NEVER** use `<Dialog>` alone. All dialogs MUST render as bottom sheets on mobile (`md:` breakpoint).
+- Desktop (`md:` and above): centered dialog is fine
+- Mobile (below `md:`): full-width bottom sheet, slides up from bottom, max-height 85vh, rounded top corners
+- Pattern: use `hidden md:block` for desktop dialog, `md:hidden` for mobile bottom sheet, or a responsive wrapper
+
+### 2. No Hover States on Mobile
+- **NEVER** rely on `hover:` for essential interactions or information disclosure
+- Hover states are acceptable for desktop enhancement but must have a touch alternative
+- Use `active:` or `pressed` states for touch feedback instead
+- Action buttons hidden behind `hover:` MUST be always-visible on mobile (use `md:opacity-0 md:group-hover:opacity-100`)
+
+### 3. Touch Targets
+- Minimum touch target: **44×44px** (Apple HIG)
+- Minimum spacing between interactive elements: **8px**
+- Prefer `py-3 px-4` over `py-1 px-2` for buttons on mobile
+- Icon-only buttons: minimum `size-10` (40px) with padding
+
+### 4. Context Menus → Long-Press or Inline Actions
+- **NEVER** use right-click context menus as the only way to access actions on mobile
+- Use long-press (400ms) with `select-none` to prevent text selection
+- Or show inline action buttons that are always visible on mobile
+- Pattern: `useLongPress` hook for touch, `onContextMenu` for desktop
+
+### 5. Scrolling & Overflow
+- Lists MUST scroll independently, not the whole page
+- Use `overflow-y-auto` on scroll containers, not on body
+- Avoid horizontal scroll unless explicitly needed (tab bars)
+- Test that touch scrolling doesn't accidentally trigger tap actions
+
+### 6. Text & Spacing
+- Body text: minimum `text-sm` (14px) on mobile, `text-xs` (12px) only for metadata/labels
+- Line spacing: `leading-relaxed` for readability on small screens
+- Padding: `p-4` minimum for content areas on mobile, `p-2` acceptable for compact lists
+
+### 7. Layout Patterns
+- Mobile: single-column layout, full-width components
+- Desktop: multi-column, sidebars, split views
+- Use `flex-col md:flex-row` for responsive layouts
+- Sidebar content → drawer/bottom sheet on mobile
+
+### 8. Forms
+- Input fields: full width on mobile (`w-full`)
+- Labels above inputs, not beside (saves horizontal space)
+- Use native `<select>` or bottom sheet pickers on mobile, not custom dropdowns
+- Auto-focus first input on dialog/sheet open
+
+### 9. Thumb Zone — One-Handed Reachability
+- Primary actions (submit, confirm, navigate) MUST be in the **bottom 1/3** of the screen on mobile
+- Navigation bars → bottom, not top
+- Destructive/secondary actions can be in upper areas (harder to reach = harder to accidentally tap)
+- FABs (floating action buttons) → bottom-right corner
+- Avoid placing frequently-used buttons in top corners — unreachable with one thumb
+```
+┌─────────────────────┐
+│  ❌ Hard to reach    │  ← Secondary/rare actions only
+│                     │
+├─────────────────────┤
+│  ⚠️ Stretch zone    │  ← Content, read-only info
+│                     │
+├─────────────────────┤
+│  ✅ Thumb zone       │  ← Primary actions, navigation,
+│  Submit, confirm,   │     inputs, frequently-used buttons
+│  tab bar, FAB       │
+└─────────────────────┘
+```
+
+### 10. Existing Patterns to Follow
+- `MobileDrawer` (`src/web/components/layout/mobile-drawer.tsx`) — slide-in drawer for sidebar
+- `ProjectBottomSheet` (`src/web/components/layout/project-bottom-sheet.tsx`) — bottom sheet pattern
+- `useLongPress` in `git-status-panel.tsx` — long-press for context menus
+- `hidden md:block` / `md:hidden` — responsive show/hide pattern
+
+---
+
 ## UI Framework Stack
 
 ### Tailwind CSS 4.2
