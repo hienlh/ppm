@@ -56,8 +56,8 @@ interface EncryptedExport {
 export function encryptWithPassword(plaintext: string, password: string): string {
   const salt = randomBytes(32);
   const iv = randomBytes(12);
-  // scrypt N=32768: ~100ms on modern hardware, sufficient for interactive use
-  const key = scryptSync(password, salt, 32, { N: 32768, r: 8, p: 1 });
+  // scrypt N=16384 (r=8, p=1) → 16MB mem, ~50ms — secure & within Node/Bun default limits
+  const key = scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
   const cipher = createCipheriv(ALGO, key, iv);
   const enc = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
   const envelope: EncryptedExport = {
@@ -80,7 +80,7 @@ export function decryptWithPassword(blob: string, password: string): string {
   const iv = Buffer.from(envelope.iv, "hex");
   const authTag = Buffer.from(envelope.authTag, "hex");
   const ciphertext = Buffer.from(envelope.ciphertext, "base64");
-  const key = scryptSync(password, salt, 32, { N: 32768, r: 8, p: 1 });
+  const key = scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
   const decipher = createDecipheriv(ALGO, key, iv);
   decipher.setAuthTag(authTag);
   try {

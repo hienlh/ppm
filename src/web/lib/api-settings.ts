@@ -114,6 +114,10 @@ export function getAllAccountUsages(): Promise<AccountUsageEntry[]> {
   return api.get<AccountUsageEntry[]>("/api/accounts/usage");
 }
 
+export function importAccounts(params: { data: string; password: string }): Promise<{ imported: number }> {
+  return api.post<{ imported: number }>("/api/accounts/import", params);
+}
+
 export interface AIProviderSettings {
   type?: string;
   api_key_env?: string;

@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  closeDb();
+  setDb(openTestDb()); // keep db as in-memory, never null (closeDb → null → getDb opens prod DB)
   if (existsSync(testKeyPath)) unlinkSync(testKeyPath);
 });
 
@@ -93,26 +93,48 @@ describe("AccountService", () => {
     expect(withTokens.status).toBe("active");
   });
 
-  it("exportEncrypted() / importEncrypted() round-trips accounts", () => {
+  it("exportEncrypted() / importEncrypted() round-trips accounts with password", () => {
     accountService.add({ email: "export@test.com", accessToken: "tok-a", refreshToken: "tok-r", expiresAt: 9999 });
-    const blob = accountService.exportEncrypted();
-    expect(blob).toContain("export@test.com");
+    const blob = accountService.exportEncrypted("test-password-123");
+    // Blob is an encrypted JSON envelope — not readable plaintext
+    expect(blob).not.toContain("export@test.com");
+    expect(blob).not.toContain("tok-a");
+    const parsed = JSON.parse(blob);
+    expect(parsed.version).toBe(1);
+    expect(parsed.kdf).toBe("scrypt");
 
     // Remove and restore
     accountService.remove(accountService.list()[0].id);
     expect(accountService.list()).toHaveLength(0);
 
-    const count = accountService.importEncrypted(blob);
+    const count = accountService.importEncrypted(blob, "test-password-123");
     expect(count).toBe(1);
     const restored = accountService.getWithTokens(accountService.list()[0].id)!;
     expect(restored.email).toBe("export@test.com");
     expect(restored.accessToken).toBe("tok-a");
   });
 
+  it("importEncrypted() throws on wrong password", () => {
+    accountService.add({ email: "pw@test.com", accessToken: "tok", refreshToken: "r", expiresAt: 0 });
+    const blob = accountService.exportEncrypted("correct-password");
+    expect(() => accountService.importEncrypted(blob, "wrong-password")).toThrow("Wrong password");
+  });
+
+  it("exportEncrypted() with accountIds only exports selected accounts", () => {
+    const a1 = accountService.add({ email: "a1@test.com", accessToken: "t1", refreshToken: "r1", expiresAt: 0 });
+    accountService.add({ email: "a2@test.com", accessToken: "t2", refreshToken: "r2", expiresAt: 0 });
+    const blob = accountService.exportEncrypted("pass", [a1.id]);
+    // Decrypt and verify only a1 is included
+    const { decryptWithPassword } = require("../../../src/lib/account-crypto.ts");
+    const plain = JSON.parse(decryptWithPassword(blob, "pass"));
+    expect(plain).toHaveLength(1);
+    expect(plain[0].email).toBe("a1@test.com");
+  });
+
   it("importEncrypted() skips duplicate accounts", () => {
     const acc = accountService.add({ email: "dup@test.com", accessToken: "tok", refreshToken: "r", expiresAt: 0 });
-    const blob = accountService.exportEncrypted();
-    const count = accountService.importEncrypted(blob);
+    const blob = accountService.exportEncrypted("pass");
+    const count = accountService.importEncrypted(blob, "pass");
     expect(count).toBe(0); // already exists
     expect(accountService.list()).toHaveLength(1);
     expect(accountService.list()[0].id).toBe(acc.id);

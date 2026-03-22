@@ -179,23 +179,65 @@ describe("GET /api/accounts/oauth/callback", () => {
   });
 });
 
-describe("GET /api/accounts/export", () => {
-  it("returns JSON download with no accounts", async () => {
-    const res = await req("/api/accounts/export");
+describe("POST /api/accounts/export + POST /api/accounts/import", () => {
+  it("export requires password", async () => {
+    const res = await req("/api/accounts/export", { method: "POST", body: JSON.stringify({}) });
+    expect(res.status).toBe(400);
+  });
+
+  it("export returns encrypted blob (tokens not visible)", async () => {
+    accountService.add({ email: "exp@test.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999 });
+    const res = await req("/api/accounts/export", {
+      method: "POST",
+      body: JSON.stringify({ password: "test-pass" }),
+    });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     const body = await res.text();
-    expect(JSON.parse(body)).toEqual([]);
+    // Must NOT contain plaintext tokens
+    expect(body).not.toContain("tok");
+    expect(body).not.toContain("exp@test.com");
+    const parsed = JSON.parse(body);
+    expect(parsed.version).toBe(1);
+    expect(parsed.kdf).toBe("scrypt");
   });
 
-  it("exports accounts as portable plaintext JSON", async () => {
-    accountService.add({ email: "exp@test.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999 });
-    const res = await req("/api/accounts/export");
-    const rows = await res.json() as any[];
-    expect(rows).toHaveLength(1);
-    expect(rows[0].email).toBe("exp@test.com");
-    // Tokens are decrypted for cross-machine portability
-    expect(rows[0].access_token).toBe("tok");
-    expect(rows[0].refresh_token).toBe("ref");
+  it("export → import round-trip restores accounts", async () => {
+    accountService.add({ email: "rt@test.com", accessToken: "tok-rt", refreshToken: "ref-rt", expiresAt: 9999 });
+    const exportRes = await req("/api/accounts/export", {
+      method: "POST",
+      body: JSON.stringify({ password: "round-trip-pass" }),
+    });
+    const blob = await exportRes.text();
+
+    // Clear accounts
+    setDb(openTestDb());
+    expect(accountService.list()).toHaveLength(0);
+
+    const importRes = await req("/api/accounts/import", {
+      method: "POST",
+      body: JSON.stringify({ data: blob, password: "round-trip-pass" }),
+    });
+    const json = await importRes.json() as any;
+    expect(json.ok).toBe(true);
+    expect(json.data.imported).toBe(1);
+    const restored = accountService.getWithTokens(accountService.list()[0].id)!;
+    expect(restored.accessToken).toBe("tok-rt");
+  });
+
+  it("import with wrong password returns 400", async () => {
+    accountService.add({ email: "pw@test.com", accessToken: "tok", refreshToken: "r", expiresAt: 0 });
+    const exportRes = await req("/api/accounts/export", {
+      method: "POST",
+      body: JSON.stringify({ password: "correct" }),
+    });
+    const blob = await exportRes.text();
+    setDb(openTestDb());
+
+    const importRes = await req("/api/accounts/import", {
+      method: "POST",
+      body: JSON.stringify({ data: blob, password: "wrong" }),
+    });
+    expect(importRes.status).toBe(400);
   });
 });

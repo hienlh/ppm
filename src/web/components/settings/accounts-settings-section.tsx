@@ -6,8 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Eye, Loader2, Copy, ClipboardPaste, X, MoreHorizontal, Download, Upload } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Eye, Loader2, Copy, X, Download, Upload, Lock } from "lucide-react";
 import { getAuthToken } from "../../lib/api-client";
 import {
   getAccounts,
@@ -20,6 +19,7 @@ import {
   getAccountSettings,
   updateAccountSettings,
   getAllAccountUsages,
+  importAccounts,
   type AccountInfo,
   type AccountSettings,
   type AccountUsageEntry,
@@ -141,8 +141,18 @@ export function AccountsSettingsSection() {
   const [oauthCode, setOauthCode] = useState("");
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthStep, setOauthStep] = useState<"idle" | "waiting">("idle");
-  const [showPasteDialog, setShowPasteDialog] = useState(false);
-  const [pasteText, setPasteText] = useState("");
+  // Export dialog
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportPassword, setExportPassword] = useState("");
+  const [exportConfirm, setExportConfirm] = useState("");
+  const [exportSelected, setExportSelected] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
+
+  // Import dialog
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importPassword, setImportPassword] = useState("");
+  const [importData, setImportData] = useState("");
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     refresh();
@@ -254,98 +264,77 @@ export function AccountsSettingsSection() {
     return <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Cooldown{cd ? ` (${cd})` : ""}</Badge>;
   }
 
-  async function handleExport() {
-    try {
-      const headers: HeadersInit = {};
-      const token = getAuthToken();
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("/api/accounts/export", { headers });
-      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "ppm-accounts-backup.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      showMessage({ type: "error", text: (e as Error).message });
-    }
+  function openExportDialog() {
+    setExportPassword("");
+    setExportConfirm("");
+    setExportSelected(new Set(accounts.map((a) => a.id)));
+    setShowExportDialog(true);
   }
 
-  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function openImportDialog(prefillData?: string) {
+    setImportPassword("");
+    setImportData(prefillData ?? "");
+    setShowImportDialog(true);
+  }
+
+  async function doExport(toClipboard: boolean) {
+    if (exportPassword.length < 4) return;
+    if (exportPassword !== exportConfirm) return;
+    setExporting(true);
     try {
-      const text = await file.text();
       const headers: HeadersInit = { "Content-Type": "application/json" };
       const token = getAuthToken();
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("/api/accounts/import", { method: "POST", headers, body: text });
-      const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Import failed");
-      showMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s).` });
-      refresh();
-    } catch (e) {
-      showMessage({ type: "error", text: (e as Error).message || "Import failed" });
-    }
-    e.target.value = "";
-  }
-
-  async function handleExportClipboard() {
-    try {
-      const headers: HeadersInit = {};
-      const token = getAuthToken();
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("/api/accounts/export", { headers });
-      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      const res = await fetch("/api/accounts/export", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ password: exportPassword, accountIds: [...exportSelected] }),
+      });
+      if (!res.ok) { const j = await res.json() as any; throw new Error(j.error ?? `Export failed: ${res.status}`); }
       const text = await res.text();
-      try {
-        await navigator.clipboard.writeText(text);
-        showMessage({ type: "success", text: "Accounts copied to clipboard!" });
-      } catch {
-        // Clipboard API not available (mobile Safari) — fallback to file download
+      if (toClipboard) {
+        try {
+          await navigator.clipboard.writeText(text);
+          showMessage({ type: "success", text: "Backup copied to clipboard!" });
+        } catch {
+          const blob = new Blob([text], { type: "application/json" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "ppm-accounts-backup.json";
+          a.click();
+          URL.revokeObjectURL(a.href);
+          showMessage({ type: "success", text: "Clipboard unavailable — downloaded as file." });
+        }
+      } else {
         const blob = new Blob([text], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = "ppm-accounts.json";
+        a.download = "ppm-accounts-backup.json";
         a.click();
         URL.revokeObjectURL(a.href);
-        showMessage({ type: "success", text: "Clipboard unavailable — downloaded as file." });
+        showMessage({ type: "success", text: "Backup downloaded." });
       }
+      setShowExportDialog(false);
     } catch (e) {
       showMessage({ type: "error", text: (e as Error).message });
     }
+    setExporting(false);
   }
 
-  async function handleImportClipboard() {
-    let text: string;
+  async function doImport() {
+    if (!importData.trim() || !importPassword) return;
+    setImporting(true);
     try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      // Clipboard API not available (mobile Safari) — show paste dialog
-      setShowPasteDialog(true);
-      return;
-    }
-    await doImportText(text, "clipboard");
-  }
-
-  async function doImportText(text: string, source: string) {
-    try {
-      if (!text.trim()) throw new Error("Input is empty");
-      JSON.parse(text); // validate JSON
-      const headers: HeadersInit = { "Content-Type": "application/json" };
-      const token = getAuthToken();
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("/api/accounts/import", { method: "POST", headers, body: text });
-      const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
-      if (!json.ok) throw new Error(json.error ?? "Import failed");
-      showMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s) from ${source}.` });
+      const result = await importAccounts({ data: importData.trim(), password: importPassword });
+      showMessage({ type: "success", text: `Imported ${result.imported} account(s).` });
+      setShowImportDialog(false);
       refresh();
     } catch (e) {
       showMessage({ type: "error", text: (e as Error).message || "Import failed" });
     }
+    setImporting(false);
   }
+
 
   const tokenHint = newToken.trim() ? detectTokenType(newToken.trim()) : "";
 
@@ -417,34 +406,16 @@ export function AccountsSettingsSection() {
           ))}
         </div>
 
-        <div className="flex gap-1.5">
-          <Button size="sm" className="h-8 text-xs cursor-pointer" onClick={() => setShowAddDialog(true)}>
+        <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" className="h-8 text-xs cursor-pointer flex-1 min-w-[100px] sm:flex-none" onClick={() => setShowAddDialog(true)}>
             + Add Account
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer">
-                <MoreHorizontal className="size-3.5 mr-1" /> More
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem className="text-xs cursor-pointer" onClick={handleExportClipboard}>
-                <Copy className="size-3.5 mr-2" /> Copy to clipboard
-              </DropdownMenuItem>
-              <DropdownMenuItem className="text-xs cursor-pointer" onClick={handleImportClipboard}>
-                <ClipboardPaste className="size-3.5 mr-2" /> Paste from clipboard
-              </DropdownMenuItem>
-              <DropdownMenuItem className="text-xs cursor-pointer" onClick={handleExport}>
-                <Download className="size-3.5 mr-2" /> Export as file
-              </DropdownMenuItem>
-              <DropdownMenuItem className="text-xs cursor-pointer" asChild>
-                <label className="flex items-center">
-                  <Upload className="size-3.5 mr-2" /> Import from file
-                  <input type="file" accept=".json" className="hidden" onChange={handleImport} />
-                </label>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer flex-1 min-w-[80px] sm:flex-none" onClick={() => openExportDialog()}>
+            <Download className="size-3.5 mr-1" /> Export
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer flex-1 min-w-[80px] sm:flex-none" onClick={() => openImportDialog()}>
+            <Upload className="size-3.5 mr-1" /> Import
+          </Button>
         </div>
       </div>
 
@@ -621,37 +592,141 @@ export function AccountsSettingsSection() {
         </DialogContent>
       </Dialog>
 
-      {/* Paste dialog — fallback when Clipboard API is unavailable (mobile Safari) */}
-      <Dialog open={showPasteDialog} onOpenChange={(v) => { if (!v) { setShowPasteDialog(false); setPasteText(""); } }}>
+      {/* Export dialog — account selection + password */}
+      <Dialog open={showExportDialog} onOpenChange={(v) => { if (!v) setShowExportDialog(false); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-sm">Paste Account Data</DialogTitle>
-            <DialogDescription className="text-xs">
-              Paste the exported JSON data below.
-            </DialogDescription>
+            <DialogTitle className="text-sm flex items-center gap-1.5"><Lock className="size-3.5" /> Export Accounts</DialogTitle>
+            <DialogDescription className="text-xs">Select accounts and set a password to protect the backup.</DialogDescription>
           </DialogHeader>
-          <textarea
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            placeholder='{"accounts": [...]}'
-            rows={6}
-            className="w-full text-xs p-2 rounded border border-border bg-background font-mono resize-none focus:outline-none focus:ring-1 focus:ring-primary"
-          />
-          <DialogFooter>
-            <Button variant="outline" size="sm" className="text-xs cursor-pointer" onClick={() => { setShowPasteDialog(false); setPasteText(""); }}>
+          <div className="space-y-3">
+            {/* Account selection */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[11px] font-medium text-muted-foreground">Accounts to export</p>
+                <button
+                  className="text-[10px] text-primary hover:underline cursor-pointer"
+                  onClick={() => setExportSelected(
+                    exportSelected.size === accounts.length ? new Set() : new Set(accounts.map((a) => a.id))
+                  )}
+                >
+                  {exportSelected.size === accounts.length ? "Deselect all" : "Select all"}
+                </button>
+              </div>
+              <div className="max-h-36 overflow-y-auto space-y-1 border rounded p-2">
+                {accounts.map((acc) => (
+                  <div key={acc.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id={`exp-${acc.id}`}
+                      checked={exportSelected.has(acc.id)}
+                      onChange={(e) => {
+                        const s = new Set(exportSelected);
+                        e.target.checked ? s.add(acc.id) : s.delete(acc.id);
+                        setExportSelected(s);
+                      }}
+                      className="size-3.5 accent-primary cursor-pointer"
+                    />
+                    <label htmlFor={`exp-${acc.id}`} className="text-xs cursor-pointer truncate">
+                      {acc.label ?? acc.email ?? acc.id.slice(0, 8)}
+                      {acc.email && acc.label && <span className="text-muted-foreground ml-1 text-[10px]">({acc.email})</span>}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Password */}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Password</Label>
+              <Input
+                type="password"
+                placeholder="Min 4 characters"
+                value={exportPassword}
+                onChange={(e) => setExportPassword(e.target.value)}
+                className="text-xs h-8"
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Confirm password</Label>
+              <Input
+                type="password"
+                placeholder="Re-enter password"
+                value={exportConfirm}
+                onChange={(e) => setExportConfirm(e.target.value)}
+                className="text-xs h-8"
+                autoComplete="new-password"
+              />
+              {exportConfirm && exportPassword !== exportConfirm && (
+                <p className="text-[10px] text-red-500">Passwords do not match</p>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Encrypted with AES-256-GCM + scrypt. Keep the password safe — it cannot be recovered.
+            </p>
+          </div>
+          <DialogFooter className="gap-1.5 flex-col sm:flex-row">
+            <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={() => setShowExportDialog(false)}>
               Cancel
             </Button>
             <Button
-              size="sm"
-              className="text-xs cursor-pointer"
-              disabled={!pasteText.trim()}
-              onClick={async () => {
-                await doImportText(pasteText, "paste");
-                setShowPasteDialog(false);
-                setPasteText("");
-              }}
+              size="sm" variant="outline" className="text-xs h-7 cursor-pointer"
+              disabled={exportPassword.length < 4 || exportPassword !== exportConfirm || exportSelected.size === 0 || exporting}
+              onClick={() => doExport(true)}
             >
-              Import
+              <Copy className="size-3 mr-1" /> Copy to clipboard
+            </Button>
+            <Button
+              size="sm" className="text-xs h-7 cursor-pointer"
+              disabled={exportPassword.length < 4 || exportPassword !== exportConfirm || exportSelected.size === 0 || exporting}
+              onClick={() => doExport(false)}
+            >
+              {exporting ? <><Loader2 className="size-3 animate-spin mr-1" /> Exporting...</> : <><Download className="size-3 mr-1" /> Download</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import dialog — paste/file data + password */}
+      <Dialog open={showImportDialog} onOpenChange={(v) => { if (!v) setShowImportDialog(false); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-1.5"><Lock className="size-3.5" /> Import Accounts</DialogTitle>
+            <DialogDescription className="text-xs">Paste or load the backup data, then enter the password used during export.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Backup data</Label>
+              <textarea
+                value={importData}
+                onChange={(e) => setImportData(e.target.value)}
+                placeholder="Paste backup JSON here..."
+                rows={4}
+                className="w-full text-xs p-2 rounded border border-border bg-background font-mono resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Password</Label>
+              <Input
+                type="password"
+                placeholder="Password used during export"
+                value={importPassword}
+                onChange={(e) => setImportPassword(e.target.value)}
+                className="text-xs h-8"
+                autoComplete="current-password"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={() => setShowImportDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm" className="text-xs h-7 cursor-pointer"
+              disabled={!importData.trim() || !importPassword || importing}
+              onClick={doImport}
+            >
+              {importing ? <><Loader2 className="size-3 animate-spin mr-1" /> Importing...</> : "Import"}
             </Button>
           </DialogFooter>
         </DialogContent>

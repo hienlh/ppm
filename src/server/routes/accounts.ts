@@ -153,19 +153,27 @@ accountsRoutes.post("/oauth/refresh/:id", async (c) => {
   }
 });
 
-/** GET /api/accounts/export — download encrypted accounts backup */
-accountsRoutes.get("/export", (c) => {
-  const blob = accountService.exportEncrypted();
-  c.header("Content-Disposition", "attachment; filename=ppm-accounts-backup.json");
-  c.header("Content-Type", "application/json");
-  return c.body(blob);
+/** POST /api/accounts/export — download password-encrypted accounts backup */
+accountsRoutes.post("/export", async (c) => {
+  try {
+    const { password, accountIds } = await c.req.json() as { password: string; accountIds?: string[] };
+    if (!password) return c.json(err("Password required"), 400);
+    const blob = accountService.exportEncrypted(password, accountIds);
+    c.header("Content-Disposition", "attachment; filename=ppm-accounts-backup.json");
+    c.header("Content-Type", "application/json");
+    return c.body(blob);
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
 });
 
-/** POST /api/accounts/import — restore accounts from backup */
+/** POST /api/accounts/import — restore accounts from password-encrypted backup */
 accountsRoutes.post("/import", async (c) => {
   try {
-    const body = await c.req.text();
-    const count = accountService.importEncrypted(body);
+    const { data, password } = await c.req.json() as { data: string; password: string };
+    if (!data) return c.json(err("Backup data required"), 400);
+    if (!password) return c.json(err("Password required"), 400);
+    const count = accountService.importEncrypted(data, password);
     return c.json(ok({ imported: count }));
   } catch (e) {
     return c.json(err((e as Error).message), 400);

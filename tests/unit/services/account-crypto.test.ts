@@ -10,12 +10,16 @@ const testKeyPath = resolve(tmpdir(), `ppm-test-account-${Date.now()}.key`);
 let encrypt: (s: string) => string;
 let decrypt: (s: string) => string;
 let setKeyPath: (p: string) => void;
+let encryptWithPassword: (s: string, pw: string) => string;
+let decryptWithPassword: (s: string, pw: string) => string;
 
 beforeAll(async () => {
   const mod = await import("../../../src/lib/account-crypto.ts");
   setKeyPath = mod.setKeyPath;
   encrypt = mod.encrypt;
   decrypt = mod.decrypt;
+  encryptWithPassword = mod.encryptWithPassword;
+  decryptWithPassword = mod.decryptWithPassword;
   setKeyPath(testKeyPath);
 });
 
@@ -54,5 +58,33 @@ describe("account-crypto", () => {
   it("handles long token strings", () => {
     const long = "a".repeat(1000);
     expect(decrypt(encrypt(long))).toBe(long);
+  });
+});
+
+describe("account-crypto (password-based)", () => {
+  it("encryptWithPassword / decryptWithPassword round-trips", () => {
+    const payload = JSON.stringify([{ id: "abc", access_token: "sk-ant-oat-xxx" }]);
+    const blob = encryptWithPassword(payload, "my-password");
+    const parsed = JSON.parse(blob);
+    expect(parsed.version).toBe(1);
+    expect(parsed.kdf).toBe("scrypt");
+    expect(parsed.ciphertext).not.toContain("sk-ant-oat-xxx");
+    expect(decryptWithPassword(blob, "my-password")).toBe(payload);
+  });
+
+  it("wrong password throws 'Wrong password'", () => {
+    const blob = encryptWithPassword("secret", "correct");
+    expect(() => decryptWithPassword(blob, "wrong")).toThrow("Wrong password");
+  });
+
+  it("different calls produce different ciphertexts (random salt+iv)", () => {
+    const blob1 = encryptWithPassword("same", "pass");
+    const blob2 = encryptWithPassword("same", "pass");
+    expect(JSON.parse(blob1).salt).not.toBe(JSON.parse(blob2).salt);
+  });
+
+  it("invalid format throws", () => {
+    expect(() => decryptWithPassword("not-json", "pass")).toThrow();
+    expect(() => decryptWithPassword(JSON.stringify({ version: 2, kdf: "scrypt" }), "pass")).toThrow("Unsupported backup version");
   });
 });
