@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.34] - 2026-03-23
+
+### Added
+- **Device code login**: `ppm cloud login --device-code` for remote terminals (PPM terminal, SSH, headless). Enter 6-char code at ppm.hienle.tech/verify from any browser.
+- **Auto-detection**: CLI auto-picks browser flow on desktop, device code flow on remote sessions. Falls back to device code if browser fails.
+
 ## [0.7.33] - 2026-03-23
 
 ### Fixed
