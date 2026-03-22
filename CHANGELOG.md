@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.22] - 2026-03-22
+
+### Fixed
+- **Mobile nav horizontal scroll**: tabs now scroll horizontally when many are open — added `min-w-0` to flex containers so `overflow-x-auto` works correctly
+
 ## [0.7.21] - 2026-03-22
 
 ### Improved
