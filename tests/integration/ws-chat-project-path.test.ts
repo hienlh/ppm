@@ -15,7 +15,8 @@ describe("WS chat handler — projectPath backfill on resumed sessions", () => {
   const TEST_PROJECT_PATH = "/tmp/ppm-test-project";
 
   beforeAll(() => {
-    configService.set("projects", [{ name: "test", path: TEST_PROJECT_PATH }]);
+    // Direct mutation — no DB write (configService.set() persists to DB and corrupts prod)
+    (configService as any).config.projects = [{ name: "test", path: TEST_PROJECT_PATH }];
   });
 
   it("ensureProjectPath works AFTER resumeSession (fixed flow)", async () => {
