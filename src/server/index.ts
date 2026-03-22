@@ -293,8 +293,8 @@ export async function startServer(options: {
       process.exit(1);
     }
 
-    // Write status file with both PIDs
-    const status = { pid: childPid, port, host, shareUrl, tunnelPid };
+    // Write status file with both PIDs + server script path for restart
+    const status = { pid: childPid, port, host, shareUrl, tunnelPid, serverScript: script };
     writeFileSync(statusFile, JSON.stringify(status));
     writeFileSync(pidFile, String(childPid));
 
