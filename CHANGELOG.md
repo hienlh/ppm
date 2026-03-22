@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.32] - 2026-03-23
+
+### Added
+- **PPM Cloud CLI**: `ppm cloud login/logout/link/unlink/status/devices` — connect PPM instances to PPM Cloud for device registry + tunnel URL sync
+- **Auto-sync heartbeat**: `ppm start --share` automatically syncs tunnel URL to cloud every 5 minutes if device is linked
+- **Cloud URL config**: `ppm config set cloud_url <url>` to use custom cloud instance
+
+### Security
+- Cloud auth files (`cloud-auth.json`, `cloud-device.json`) restricted to owner-only (chmod 0o600)
+- XSS prevention in OAuth callback HTML
+- Heartbeat interval cleanup prevents duplicate timers on restart
+
 ## [0.7.31] - 2026-03-23
 
 ### Improved
