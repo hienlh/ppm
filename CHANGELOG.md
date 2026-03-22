@@ -1,11 +1,12 @@
 # Changelog
 
-## [0.7.19] - 2026-03-22
+## [0.7.20] - 2026-03-22
 
 ### Fixed
 - **Usage panel initial flash**: panel no longer briefly shows single-account view before loading multi-account cards
 - **Usage panel reload**: clicking refresh now correctly re-fetches all account usages after server finishes polling Anthropic API, fixing race condition where stale DB snapshots were read before refresh completed
 - **Clipboard API fallback**: export/import account data now works on mobile Safari — export falls back to file download, import shows a paste dialog when clipboard is unavailable
+- **Duplicate account import**: import now skips accounts with matching email, not just matching ID — prevents duplicates when importing across devices
 
 ## [0.7.17] - 2026-03-22
 

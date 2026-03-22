@@ -518,8 +518,9 @@ class AccountService {
     let count = 0;
     for (const row of rows) {
       if (!row.id || !row.access_token || !row.refresh_token) continue;
-      // Skip if account already exists
+      // Skip if account already exists (by id or email)
       if (getAccountById(row.id)) continue;
+      if (row.email && this.list().some((a) => a.email === row.email)) continue;
       insertAccount({
         id: row.id,
         label: row.label,
