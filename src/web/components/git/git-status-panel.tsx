@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   Plus,
   Minus,
@@ -643,6 +643,44 @@ function FileSection({
 }
 
 /* ------------------------------------------------------------------ */
+/*  useLongPress — tap vs long-press on mobile                         */
+/* ------------------------------------------------------------------ */
+
+function useLongPress(onLongPress: () => void, onTap: () => void, delay = 400) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const movedRef = useRef(false);
+  const firedRef = useRef(false);
+
+  const clear = useCallback(() => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+  }, []);
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    movedRef.current = false;
+    firedRef.current = false;
+    timerRef.current = setTimeout(() => {
+      firedRef.current = true;
+      onLongPress();
+    }, delay);
+  }, [onLongPress, delay]);
+
+  const onTouchMove = useCallback(() => {
+    movedRef.current = true;
+    clear();
+  }, [clear]);
+
+  const onTouchEnd = useCallback((e: React.TouchEvent) => {
+    clear();
+    if (!movedRef.current && !firedRef.current) {
+      e.preventDefault();
+      onTap();
+    }
+  }, [clear, onTap]);
+
+  return { onTouchStart, onTouchMove, onTouchEnd };
+}
+
+/* ------------------------------------------------------------------ */
 /*  FileRow                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -669,6 +707,13 @@ function FileRow({
   onRevert?: (f: GitFileChange) => void;
   displayName?: string;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const longPressHandlers = useLongPress(
+    useCallback(() => setMenuOpen(true), []),
+    useCallback(() => onClickFile(file), [onClickFile, file]),
+  );
+
   const row = (
     <div className="group relative flex items-center gap-1 hover:bg-muted/50 rounded pl-1 py-px w-full min-w-0">
       <span
@@ -685,8 +730,8 @@ function FileRow({
       >
         {displayName ?? file.path}
       </button>
-      {/* Mobile: plain text (tap handled by DropdownMenu trigger) */}
-      <span className="md:hidden flex-1 text-left text-xs font-mono truncate min-w-0">
+      {/* Mobile: plain text (long-press opens menu, tap opens diff) */}
+      <span className="md:hidden flex-1 text-left text-xs font-mono truncate min-w-0 select-none">
         {displayName ?? file.path}
       </span>
       <ActionButtons
@@ -701,14 +746,13 @@ function FileRow({
     </div>
   );
 
-  // Mobile: wrap in dropdown menu
   return (
     <>
       {/* Desktop — just the row */}
       <div className="hidden md:block">{row}</div>
-      {/* Mobile — dropdown trigger */}
-      <div className="md:hidden">
-        <DropdownMenu>
+      {/* Mobile — tap opens diff, long-press opens menu */}
+      <div className="md:hidden select-none" {...longPressHandlers}>
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>{row}</DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="min-w-40">
             <DropdownMenuItem onClick={() => onClickFile(file)}>
