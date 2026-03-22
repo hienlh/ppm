@@ -10,6 +10,9 @@ const RESTART_RESULT = resolve(PPM_DIR, ".restart-result");
 
 /** Restart only the server process, keeping the tunnel alive */
 export async function restartServer(options: { config?: string }) {
+  // Ignore SIGHUP so this process survives when PPM terminal dies
+  process.on("SIGHUP", () => {});
+
   if (!existsSync(STATUS_FILE)) {
     console.log("No PPM daemon running. Use 'ppm start' instead.");
     process.exit(1);
@@ -51,7 +54,8 @@ export async function restartServer(options: { config?: string }) {
   console.log("  If you're using PPM terminal, wait a few seconds then reload the page.\n");
 
   // Generate a self-contained restart worker script.
-  // Runs as a detached process so it survives when the PPM server (and its terminals) die.
+  // Worker ignores SIGHUP so it survives when killing the server causes the
+  // terminal (and its process group) to receive SIGHUP.
   const params = JSON.stringify({
     serverPid, port, host, serverScript,
     config: options.config ?? "",
@@ -66,6 +70,11 @@ export async function restartServer(options: { config?: string }) {
   writeFileSync(workerPath, `
 import { readFileSync, writeFileSync, openSync, unlinkSync, appendFileSync } from "node:fs";
 import { createServer } from "node:net";
+
+// Ignore SIGHUP — when we kill the old server, the terminal PTY dies and
+// SIGHUP is sent to the entire process group. Without this, the worker
+// would be killed before it can spawn the new server.
+process.on("SIGHUP", () => {});
 
 const P = ${params};
 
@@ -163,7 +172,8 @@ main();
 `);
 
   // Spawn worker as a fully detached process
-  const logFd = openSync(resolve(PPM_DIR, "ppm.log"), "a");
+  const logFile = resolve(PPM_DIR, "ppm.log");
+  const logFd = openSync(logFile, "a");
   const worker = Bun.spawn({
     cmd: [process.execPath, "run", workerPath],
     stdio: ["ignore", logFd, logFd],
@@ -171,9 +181,8 @@ main();
   });
   worker.unref();
 
-  // Poll for result — if running from external terminal, we'll see the result.
-  // If running from PPM terminal, this process dies when server is killed — that's fine,
-  // the user already saw the pre-restart message above.
+  // Poll for result — works from both PPM terminal (SIGHUP-immune) and external terminal.
+  // Output may not be visible if PPM terminal PTY is dead, but process stays alive.
   const pollStart = Date.now();
   while (Date.now() - pollStart < 20000) {
     await Bun.sleep(500);
