@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.30] - 2026-03-23
+
+### Fixed
+- **Restart from PPM terminal**: worker and restart command now ignore SIGHUP — killing the old server destroys the terminal PTY which sends SIGHUP to the process group, previously killing the worker before it could spawn the new server
+
 ## [0.7.29] - 2026-03-22
 
 ### Added
