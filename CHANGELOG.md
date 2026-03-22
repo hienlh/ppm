@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.35] - 2026-03-23
+
+### Improved
+- **Cloud link auto-sync**: `ppm cloud link` detects active tunnel and sends heartbeat immediately — device shows online on cloud dashboard without restart
+
 ## [0.7.34] - 2026-03-23
 
 ### Added
