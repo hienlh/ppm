@@ -69,7 +69,7 @@ if (!hasTokens) {
   });
 
   afterAll(() => {
-    closeDb();
+    setDb(openTestDb()); // keep db as in-memory, never null (closeDb → null → getDb opens prod DB)
     if (existsSync(testKeyPath)) unlinkSync(testKeyPath);
   });
 
@@ -156,13 +156,13 @@ if (!hasTokens) {
     it("round-trips accounts with real tokens", () => {
       accountService.add({ email: "exp1@test.com", accessToken: TOKEN_1, refreshToken: "r1", expiresAt: 9999 });
       accountService.add({ email: "exp2@test.com", accessToken: TOKEN_2, refreshToken: "r2", expiresAt: 9999 });
-      const blob = accountService.exportEncrypted();
+      const blob = accountService.exportEncrypted("test-pass");
 
       // Clear and reimport
       for (const acc of accountService.list()) accountService.remove(acc.id);
       expect(accountService.list()).toHaveLength(0);
 
-      const count = accountService.importEncrypted(blob);
+      const count = accountService.importEncrypted(blob, "test-pass");
       expect(count).toBe(2);
 
       const list = accountService.list();

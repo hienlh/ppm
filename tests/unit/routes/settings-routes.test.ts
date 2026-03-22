@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Hono } from "hono";
+import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { settingsRoutes } from "../../../src/server/routes/settings.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
@@ -8,9 +9,10 @@ function createApp() {
   return new Hono().route("/settings", settingsRoutes);
 }
 
-/** Set config to known defaults (avoids reading user's yaml from disk) */
+/** Set config to known defaults — uses in-memory DB to avoid corrupting prod */
 function resetConfig() {
-  configService.set("ai", structuredClone(DEFAULT_CONFIG.ai));
+  setDb(openTestDb());
+  (configService as any).config.ai = structuredClone(DEFAULT_CONFIG.ai);
 }
 
 describe("GET /settings/ai", () => {

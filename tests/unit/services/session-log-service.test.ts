@@ -14,7 +14,7 @@ describe("session-log.service (SQLite-backed)", () => {
   });
 
   afterEach(() => {
-    closeDb();
+    setDb(openTestDb()); // keep db as in-memory, never null (closeDb → null → getDb opens prod DB)
   });
 
   describe("logSessionEvent()", () => {
