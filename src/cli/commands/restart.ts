@@ -51,7 +51,7 @@ export async function restartServer(options: { config?: string }) {
 
   // Pre-restart message — user sees this before terminal dies (if running inside PPM)
   console.log("\n  Restarting PPM server...");
-  console.log("  If you're using PPM terminal, wait a few seconds then reload the page.\n");
+  console.log("  If you're using PPM terminal, wait a few seconds for auto-reconnect.\n");
 
   // Generate a self-contained restart worker script.
   // Worker ignores SIGHUP so it survives when killing the server causes the
