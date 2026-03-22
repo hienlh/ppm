@@ -48,7 +48,8 @@ function safeSend(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
   if (!entry?.ws) {
     const evType = (event as any)?.type ?? "unknown";
-    if (evType !== "streaming_status" && evType !== "ping") {
+    // Log ALL dropped events (including streaming_status) for debugging first-message issues
+    if (evType !== "ping") {
       console.warn(`[chat] session=${sessionId} safeSend: ws=null, dropping ${evType}`);
     }
     return;
@@ -79,7 +80,12 @@ function startCleanupTimer(sessionId: string): void {
  */
 async function runStreamLoop(sessionId: string, providerId: string, content: string): Promise<void> {
   const entry = activeSessions.get(sessionId);
-  if (!entry) return;
+  if (!entry) {
+    console.error(`[chat] session=${sessionId} runStreamLoop: no entry — aborting`);
+    return;
+  }
+  const streamStartMs = Date.now();
+  console.log(`[chat] session=${sessionId} runStreamLoop started (ws=${entry.ws ? "connected" : "null"})`);
 
   const abortController = new AbortController();
   entry.abort = abortController;
@@ -141,6 +147,9 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       // First event received — stop heartbeat, switch to streaming status
       if (!firstEventReceived) {
         firstEventReceived = true;
+        const waitMs = Date.now() - startTime;
+        console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType}`);
+        logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType})`);
         if (heartbeat) clearInterval(heartbeat);
         safeSend(sessionId, { type: "streaming_status", status: "streaming" });
       }
@@ -381,10 +390,20 @@ export const chatWebSocket = {
     }
 
     if (parsed.type === "message") {
-      // Resume session in provider first
+      // Send immediate feedback BEFORE any async work — prevents "stuck thinking"
+      // when resumeSession is slow (e.g. sdkListSessions spawns subprocess on first call)
+      safeSend(sessionId, { type: "streaming_status", status: "connecting", elapsed: 0 });
+
+      // Resume session in provider (can be slow on first call — sdkListSessions)
       const provider = providerRegistry.get(providerId);
       if (provider && "resumeSession" in provider) {
+        const t0 = Date.now();
         await (provider as any).resumeSession(sessionId);
+        const elapsed = Date.now() - t0;
+        if (elapsed > 500) {
+          console.warn(`[chat] session=${sessionId} resumeSession took ${elapsed}ms`);
+          logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
+        }
       }
       if (entry?.projectPath && provider && "ensureProjectPath" in provider) {
         (provider as any).ensureProjectPath(sessionId, entry.projectPath);
@@ -409,6 +428,7 @@ export const chatWebSocket = {
           }, 0);
         });
       } else {
+        console.warn(`[chat] session=${sessionId} no entry when starting stream loop — message may have arrived before open()`);
         setTimeout(() => runStreamLoop(sessionId, providerId, parsed.content), 0);
       }
     } else if (parsed.type === "cancel") {

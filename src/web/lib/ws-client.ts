@@ -10,6 +10,8 @@ export class WsClient {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionalClose = false;
+  /** Messages queued while WS is still CONNECTING — flushed on open */
+  private pendingMessages: (string | ArrayBuffer)[] = [];
 
   constructor(url: string) {
     this.url = url;
@@ -33,6 +35,14 @@ export class WsClient {
       // arrive because the end-to-end data path isn't fully established yet.
       // This roundtrip ensures the path is working before status is sent.
       try { this.ws?.send(JSON.stringify({ type: "ready" })); } catch {}
+      // Flush any messages queued while WS was CONNECTING
+      if (this.pendingMessages.length > 0) {
+        console.log(`[ws] flushing ${this.pendingMessages.length} queued message(s)`);
+        for (const msg of this.pendingMessages) {
+          try { this.ws?.send(msg); } catch {}
+        }
+        this.pendingMessages = [];
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -54,6 +64,7 @@ export class WsClient {
 
   disconnect(): void {
     this.intentionalClose = true;
+    this.pendingMessages = [];
     this.cleanup();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -64,6 +75,11 @@ export class WsClient {
   send(data: string | ArrayBuffer): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(data);
+    } else if (this.ws?.readyState === WebSocket.CONNECTING) {
+      console.warn("[ws] WS still CONNECTING — queuing message");
+      this.pendingMessages.push(data);
+    } else {
+      console.warn(`[ws] message dropped — readyState=${this.ws?.readyState ?? "no-ws"}`);
     }
   }
 

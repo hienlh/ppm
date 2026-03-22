@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.26] - 2026-03-22
+
+### Fixed
+- **First message stuck on "thinking"**: send `streaming_status` immediately before `resumeSession` so FE gets heartbeat feedback even when SDK session lookup is slow
+- **WS message silently dropped**: queue messages sent while WebSocket is still CONNECTING, flush on open instead of dropping
+
+### Improved
+- Added timing logs for `resumeSession`, `runStreamLoop` start, first SDK event delay, and all dropped `safeSend` events for easier debugging
+
 ## [0.7.25] - 2026-03-22
 
 ### Fixed
