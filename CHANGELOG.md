@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.27] - 2026-03-22
+
+### Fixed
+- **Restart from PPM terminal**: restart spawns a detached worker process so it completes even when the server (and its terminals) are killed mid-restart
+- **Restart result visibility**: restart command now polls for the worker's result and displays it inline; pre-restart message warns PPM terminal users to wait and reload
+- **Restart server script path**: saved in `status.json` during `ppm start` to avoid ephemeral `bunx` cache path issues
+
 ## [0.7.26] - 2026-03-22
 
 ### Fixed
