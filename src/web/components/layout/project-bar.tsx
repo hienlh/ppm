@@ -415,7 +415,9 @@ export function ProjectBar() {
                 <div className="space-y-1">
                   <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Public (Cloudflare)</span>
                   <div className="flex justify-center">
-                    <QRCodeSVG value={shareUrl} size={160} />
+                    <div className="bg-white p-2 rounded">
+                      <QRCodeSVG value={shareUrl} size={160} bgColor="#ffffff" fgColor="#000000" />
+                    </div>
                   </div>
                   <div className="flex items-center gap-1">
                     <input
