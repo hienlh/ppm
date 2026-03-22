@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.29] - 2026-03-22
+
+### Added
+- **Auto-start on boot**: `ppm autostart enable/disable/status` registers PPM to start automatically via OS-native mechanisms — macOS launchd, Linux systemd, Windows Registry Run key
+- **Cross-platform support**: auto-detects compiled binary vs bun runtime, resolves paths correctly on all platforms
+- **VBScript hidden wrapper**: Windows auto-start runs PPM without visible console window
+- **GitHub Actions CI**: test matrix for macOS, Linux, and Windows with unit + integration tests
+
+### Technical
+- 2-layer architecture: generator (pure functions, testable) + register (OS interaction)
+- 40 unit tests + 20 integration tests (platform-specific with `describe.if`)
+- KeepAlive/Restart-on-failure for crash recovery on all platforms
+
 ## [0.7.28] - 2026-03-22
 
 ### Added
