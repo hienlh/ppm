@@ -3,10 +3,14 @@ dist/
 .vite/
 *.log
 .env
-.env.test
+.env.*
 ppm.yaml
 .ppm/
 *.pid
 .DS_Store
 .playwright-mcp
 .cursor/
+repomix-output.xml
+test-claude-oauth*.mjs
+test-verify-oat.mjs
+plans/
