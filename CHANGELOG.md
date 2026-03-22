@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.28] - 2026-03-22
+
+### Added
+- **Secure account export/import**: password-encrypted backup (scrypt + AES-256-GCM), selective account export, auto-refresh tokens before export
+- **Import dialog**: inline error display for wrong password or corrupted backup
+
+### Improved
+- **Account cards**: compact 2-row layout, usage % inline, singular/plural "req(s)"
+- **Test isolation**: bunfig.toml preload ensures all tests use in-memory DB (no more production DB writes)
+
+### Fixed
+- **Cross-machine account import**: tokens now properly re-encrypted with local machine key
+- **Usage refresh spinner stuck**: refresh button no longer hangs when token decrypt fails
+
 ## [0.7.27] - 2026-03-22
 
 ### Fixed
