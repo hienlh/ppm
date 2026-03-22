@@ -1,9 +1,8 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Settings, Pencil, Trash2, Palette, Bug, Share2, Loader2, Copy, Check, X } from "lucide-react";
-import { QRCodeSVG } from "qrcode.react";
+import { Plus, Settings, Pencil, Trash2, Palette, Bug, Cloud, X } from "lucide-react";
+import { CloudSharePopover } from "./cloud-share-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
-import { api } from "@/lib/api-client";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -155,59 +154,16 @@ export function ProjectBar() {
     setAddOpen(true);
   }
 
-  // Share tunnel
-  const [shareOpen, setShareOpen] = useState(false);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [localUrl, setLocalUrl] = useState<string | null>(null);
-  const [shareLoading, setShareLoading] = useState(false);
-  const [shareChecking, setShareChecking] = useState(false);
-  const [shareError, setShareError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
-  const shareBtnRef = useRef<HTMLButtonElement>(null);
+  // Cloud + Share popover
+  const [cloudOpen, setCloudOpen] = useState(false);
+  const cloudBtnRef = useRef<HTMLButtonElement>(null);
   const [popoverPos, setPopoverPos] = useState<{ left: number; bottom: number } | null>(null);
 
-  // Position popover relative to button
   useEffect(() => {
-    if (!shareOpen || !shareBtnRef.current) { setPopoverPos(null); return; }
-    const rect = shareBtnRef.current.getBoundingClientRect();
+    if (!cloudOpen || !cloudBtnRef.current) { setPopoverPos(null); return; }
+    const rect = cloudBtnRef.current.getBoundingClientRect();
     setPopoverPos({ left: rect.right + 6, bottom: window.innerHeight - rect.bottom });
-  }, [shareOpen]);
-
-  const handleShare = useCallback(async () => {
-    if (shareOpen) { setShareOpen(false); return; }
-    setShareOpen(true);
-    setShareError(null);
-    setShareUrl(null);
-    setLocalUrl(null);
-    setShareChecking(true);
-
-    // Check existing tunnel + get local IP
-    try {
-      const status = await api.get<{ active: boolean; url: string | null; localUrl: string | null }>("/api/tunnel");
-      if (status.active && status.url) setShareUrl(status.url);
-      if (status.localUrl) setLocalUrl(status.localUrl);
-    } catch { /* no existing tunnel */ }
-    setShareChecking(false);
-  }, [shareOpen]);
-
-  const handleStartTunnel = useCallback(async () => {
-    setShareLoading(true);
-    setShareError(null);
-    try {
-      const result = await api.post<{ url: string }>("/api/tunnel/start", {});
-      setShareUrl(result.url);
-    } catch (e) {
-      setShareError(e instanceof Error ? e.message : "Failed to start tunnel");
-    } finally {
-      setShareLoading(false);
-    }
-  }, []);
-
-  const handleCopyUrl = useCallback((url: string) => {
-    navigator.clipboard.writeText(url);
-    setCopied(url);
-    setTimeout(() => setCopied(null), 2000);
-  }, []);
+  }, [cloudOpen]);
 
   function handleSettings() {
     const { sidebarCollapsed, toggleSidebar, setSidebarActiveTab } = useSettingsStore.getState();
@@ -300,142 +256,33 @@ export function ProjectBar() {
         </Tooltip>
       </div>
 
-      {/* Footer: share + report bug + settings */}
+      {/* Footer: cloud + report bug + settings */}
       <div className="shrink-0 flex flex-col items-center gap-1 py-2 border-t border-border">
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              ref={shareBtnRef}
-              onClick={handleShare}
+              ref={cloudBtnRef}
+              onClick={() => setCloudOpen(!cloudOpen)}
               className={cn(
                 "flex items-center justify-center size-8 rounded-md transition-colors",
-                shareOpen ? "text-primary bg-primary/10" : "text-text-subtle hover:text-foreground hover:bg-surface-elevated",
+                cloudOpen ? "text-primary bg-primary/10" : "text-text-subtle hover:text-foreground hover:bg-surface-elevated",
               )}
             >
-              <Share2 className="size-4" />
+              <Cloud className="size-4" />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right">Share</TooltipContent>
+          <TooltipContent side="right">Cloud & Share</TooltipContent>
         </Tooltip>
 
-        {/* Share popover — rendered via portal to escape overflow-hidden */}
-        {shareOpen && popoverPos && createPortal(
+        {/* Cloud popover — rendered via portal to escape overflow-hidden */}
+        {cloudOpen && popoverPos && createPortal(
           <>
-            {/* Backdrop to close popover */}
-            <div className="fixed inset-0 z-40" onClick={() => setShareOpen(false)} />
+            <div className="fixed inset-0 z-40" onClick={() => setCloudOpen(false)} />
             <div
-              className="fixed z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 space-y-3"
+              className="fixed z-50"
               style={{ left: popoverPos.left, bottom: popoverPos.bottom }}
             >
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-foreground">Share</span>
-                <button onClick={() => setShareOpen(false)} className="text-text-subtle hover:text-foreground">
-                  <X className="size-3.5" />
-                </button>
-              </div>
-
-              {/* Checking existing tunnel */}
-              {shareChecking && (
-                <div className="flex items-center gap-2 text-muted-foreground text-xs">
-                  <Loader2 className="size-4 animate-spin" />
-                  <span>Checking...</span>
-                </div>
-              )}
-
-              {/* Local network URL — always show when available */}
-              {!shareChecking && localUrl && (
-                <div className="space-y-1">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Local Network</span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      readOnly
-                      value={localUrl}
-                      className="flex-1 text-xs font-mono text-foreground bg-muted px-2 py-1.5 rounded border border-border truncate"
-                      onClick={(e) => (e.target as HTMLInputElement).select()}
-                    />
-                    <button
-                      onClick={() => handleCopyUrl(localUrl)}
-                      className="flex items-center justify-center size-7 rounded border border-border text-muted-foreground bg-muted hover:bg-accent hover:text-foreground transition-colors shrink-0"
-                      title="Copy URL"
-                    >
-                      {copied === localUrl ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* No tunnel yet — show start button */}
-              {!shareChecking && !shareUrl && !shareLoading && !shareError && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    Create a public link so others can access this PPM instance from anywhere.
-                  </p>
-                  <button
-                    onClick={handleStartTunnel}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-                  >
-                    <Share2 className="size-3.5" />
-                    Start Sharing
-                  </button>
-                </div>
-              )}
-
-              {/* Starting tunnel */}
-              {shareLoading && (
-                <div className="flex flex-col items-center gap-2 py-2">
-                  <Loader2 className="size-5 animate-spin text-primary" />
-                  <span className="text-xs text-muted-foreground">Starting tunnel... this may take a moment</span>
-                </div>
-              )}
-
-              {/* Error */}
-              {shareError && (
-                <div className="space-y-2">
-                  <p className="text-xs text-destructive">{shareError}</p>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={handleStartTunnel}
-                      className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border hover:bg-muted transition-colors"
-                    >
-                      Retry
-                    </button>
-                    <button
-                      onClick={() => { setShareOpen(false); handleReportBug(); }}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border border-border text-destructive hover:bg-destructive/10 transition-colors"
-                    >
-                      <Bug className="size-3" />
-                      Report
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Tunnel active — show QR + public URL */}
-              {shareUrl && (
-                <div className="space-y-1">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Public (Cloudflare)</span>
-                  <div className="flex justify-center">
-                    <div className="bg-white p-2 rounded">
-                      <QRCodeSVG value={shareUrl} size={160} bgColor="#ffffff" fgColor="#000000" />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <input
-                      readOnly
-                      value={shareUrl}
-                      className="flex-1 text-xs font-mono text-foreground bg-muted px-2 py-1.5 rounded border border-border truncate"
-                      onClick={(e) => (e.target as HTMLInputElement).select()}
-                    />
-                    <button
-                      onClick={() => handleCopyUrl(shareUrl)}
-                      className="flex items-center justify-center size-7 rounded border border-border text-muted-foreground bg-muted hover:bg-accent hover:text-foreground transition-colors shrink-0"
-                      title="Copy URL"
-                    >
-                      {copied === shareUrl ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              )}
+              <CloudSharePopover onClose={() => setCloudOpen(false)} />
             </div>
           </>,
           document.body,

@@ -118,6 +118,10 @@ app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
 
+// Cloud device registry
+import { cloudRoutes } from "./routes/cloud.ts";
+app.route("/api/cloud", cloudRoutes);
+
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);
 
