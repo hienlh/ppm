@@ -128,6 +128,7 @@ export function CloudSharePopover({ onClose }: Props) {
   }, [tunnel]);
 
   const handleUnlink = useCallback(async () => {
+    if (!confirm("Unlink this device from PPM Cloud? It will no longer appear on your cloud dashboard.")) return;
     setUnlinking(true);
     try {
       await api.post("/api/cloud/unlink", {});
@@ -138,9 +139,16 @@ export function CloudSharePopover({ onClose }: Props) {
   }, []);
 
   const handleLogout = useCallback(async () => {
+    const msg = cloud?.linked
+      ? "Sign out from PPM Cloud? This will also unlink your device."
+      : "Sign out from PPM Cloud?";
+    if (!confirm(msg)) return;
+    if (cloud?.linked) {
+      try { await api.post("/api/cloud/unlink", {}); } catch {}
+    }
     await api.post("/api/cloud/logout", {});
     setCloud((prev) => prev ? { ...prev, logged_in: false, email: null, linked: false, device_name: null, device_id: null } : null);
-  }, []);
+  }, [cloud?.linked]);
 
   const shareUrl = tunnel?.url || cloud?.tunnel_url;
 
