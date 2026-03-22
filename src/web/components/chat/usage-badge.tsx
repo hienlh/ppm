@@ -149,9 +149,6 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onVerify, ve
         <span className="text-xs font-medium truncate flex-1 min-w-0">
           {entry.accountLabel ?? entry.accountId.slice(0, 8)}
         </span>
-        {isActive && (
-          <span className="text-[9px] px-1 py-0 rounded bg-primary/20 text-primary font-medium shrink-0">In use</span>
-        )}
         {!entry.isOAuth && (
           <span className="text-[9px] text-text-subtle shrink-0">API key</span>
         )}

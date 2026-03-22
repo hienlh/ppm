@@ -109,7 +109,7 @@ function ScrollToBottomButton() {
   return (
     <button
       onClick={() => scrollToBottom()}
-      className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1 rounded-full bg-surface-elevated border border-border text-xs text-text-secondary hover:text-foreground shadow-lg transition-all"
+      className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 px-3 py-1 rounded-full bg-surface-elevated border border-border text-xs text-text-secondary hover:text-foreground shadow-lg transition-all"
     >
       <ChevronDown className="size-3" />
       Scroll to bottom
