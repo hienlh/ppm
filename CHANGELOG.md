@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.18] - 2026-03-22
+
+### Fixed
+- **Usage panel initial flash**: panel no longer briefly shows single-account view before loading multi-account cards
+- **Usage panel reload**: clicking refresh now correctly re-fetches all account usages after server finishes polling Anthropic API, fixing race condition where stale DB snapshots were read before refresh completed
+
 ## [0.7.17] - 2026-03-22
 
 ### Changed
