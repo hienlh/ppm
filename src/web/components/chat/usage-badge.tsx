@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Activity, RefreshCw, Eye, ShieldCheck, Loader2, X } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { UsageInfo, LimitBucket } from "../../../types/chat";
@@ -129,7 +129,7 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${days}d ago`;
 }
 
-function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onVerify, verifyingId, onViewProfile }: {
+function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onVerify, verifyingId, onViewProfile, flash }: {
   entry: AccountUsageEntry;
   isActive: boolean;
   accountInfo?: AccountInfo;
@@ -137,13 +137,14 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onVerify, ve
   onVerify?: (id: string) => void;
   verifyingId?: string | null;
   onViewProfile?: (profile: OAuthProfileData) => void;
+  flash?: boolean;
 }) {
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
   const status = accountInfo?.status ?? entry.accountStatus;
 
   return (
-    <div className={`rounded-md border p-2 space-y-1.5 ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
+    <div className={`rounded-md border p-2 space-y-1.5 transition-colors duration-500 ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
       <div className="flex items-center gap-1.5">
         <span className="text-xs font-medium truncate flex-1 min-w-0">
           {entry.accountLabel ?? entry.accountId.slice(0, 8)}
@@ -210,19 +211,50 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [allUsages, setAllUsages] = useState<AccountUsageEntry[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
-  const [loadingAll, setLoadingAll] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [profileView, setProfileView] = useState<OAuthProfileData | null>(null);
+  const prevUsagesRef = useRef<AccountUsageEntry[]>([]);
 
   async function loadAll() {
-    setLoadingAll(true);
+    const isRefresh = allUsages.length > 0;
+    if (isRefresh) setRefreshing(true); else setInitialLoading(true);
+
     const [usages, accs, active] = await Promise.allSettled([
       getAllAccountUsages(), getAccounts(), getActiveAccount(),
     ]);
-    if (usages.status === "fulfilled") setAllUsages(usages.value);
+
+    if (usages.status === "fulfilled") {
+      const newUsages = usages.value;
+      // Detect which accounts changed usage values
+      if (isRefresh && prevUsagesRef.current.length > 0) {
+        const changed = new Set<string>();
+        const prevMap = new Map(prevUsagesRef.current.map(u => [u.accountId, u]));
+        for (const nu of newUsages) {
+          const prev = prevMap.get(nu.accountId);
+          if (!prev) { changed.add(nu.accountId); continue; }
+          const pu = prev.usage, cu = nu.usage;
+          if (pu.session?.utilization !== cu.session?.utilization
+            || pu.weekly?.utilization !== cu.weekly?.utilization
+            || pu.weeklyOpus?.utilization !== cu.weeklyOpus?.utilization
+            || pu.weeklySonnet?.utilization !== cu.weeklySonnet?.utilization) {
+            changed.add(nu.accountId);
+          }
+        }
+        if (changed.size > 0) {
+          setFlashIds(changed);
+          setTimeout(() => setFlashIds(new Set()), 1500);
+        }
+      }
+      prevUsagesRef.current = newUsages;
+      setAllUsages(newUsages);
+    }
     if (accs.status === "fulfilled") setAccounts(accs.value);
     if (active.status === "fulfilled") setActiveAccountId(active.value?.id ?? null);
-    setLoadingAll(false);
+    setInitialLoading(false);
+    setRefreshing(false);
   }
 
   useEffect(() => {
@@ -266,12 +298,12 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         <div className="flex items-center gap-1">
           {onReload && (
             <button
-              onClick={() => { setLoadingAll(true); onReload(); }}
-              disabled={loading || loadingAll}
+              onClick={() => { setRefreshing(true); onReload(); }}
+              disabled={loading || refreshing}
               className="text-xs text-text-subtle hover:text-text-primary px-1 disabled:opacity-50 cursor-pointer"
               title="Refresh"
             >
-              <RefreshCw className={`size-3 ${(loading || loadingAll) ? "animate-spin" : ""}`} />
+              <RefreshCw className={`size-3 ${(loading || refreshing) ? "animate-spin" : ""}`} />
             </button>
           )}
           <button
@@ -283,9 +315,9 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         </div>
       </div>
 
-      {(hasMultipleAccounts || loadingAll) ? (
+      {(hasMultipleAccounts || initialLoading) ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-1.5">
-          {loadingAll ? (
+          {initialLoading ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
           ) : (
             allUsages.map((entry) => (
@@ -298,6 +330,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
                 onVerify={handleVerify}
                 verifyingId={verifyingId}
                 onViewProfile={setProfileView}
+                flash={flashIds.has(entry.accountId)}
               />
             ))
           )}
