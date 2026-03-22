@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.21] - 2026-03-22
+
+### Improved
+- **Usage refresh UX**: account cards stay visible during refresh instead of hiding behind "Loading..." text; changed accounts flash with a highlight animation for 1.5s so users can easily spot updated values
+
 ## [0.7.20] - 2026-03-22
 
 ### Fixed
