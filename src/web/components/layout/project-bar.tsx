@@ -328,7 +328,7 @@ export function ProjectBar() {
               style={{ left: popoverPos.left, bottom: popoverPos.bottom }}
             >
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Share</span>
+                <span className="text-sm font-medium text-foreground">Share</span>
                 <button onClick={() => setShareOpen(false)} className="text-text-subtle hover:text-foreground">
                   <X className="size-3.5" />
                 </button>
