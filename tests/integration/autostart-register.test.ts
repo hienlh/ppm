@@ -16,6 +16,9 @@ import {
 } from "../../src/services/autostart-register.ts";
 import { getPlistPath, getServicePath, getVbsPath } from "../../src/services/autostart-generator.ts";
 
+// Increase timeout for OS operations (systemctl can be slow)
+const TEST_TIMEOUT = 15_000;
+
 const TEST_CONFIG = {
   port: 19999, // Use high port to avoid conflicts
   host: "127.0.0.1",
@@ -63,10 +66,11 @@ describe.if(isMac)("macOS autostart (launchd)", () => {
 
   test("enable is idempotent (can re-enable)", async () => {
     await enableAutoStart(TEST_CONFIG);
-    // Re-enable should not throw
+    await disableAutoStart();
+    // Re-enable with different config should not throw
     const servicePath = await enableAutoStart({ ...TEST_CONFIG, port: 29999 });
     expect(existsSync(servicePath)).toBe(true);
-  });
+  }, TEST_TIMEOUT);
 
   test("disable is idempotent (can re-disable)", async () => {
     // Disable without prior enable should not throw
@@ -108,9 +112,11 @@ describe.if(isLinux)("Linux autostart (systemd)", () => {
 
   test("enable is idempotent", async () => {
     await enableAutoStart(TEST_CONFIG);
+    await disableAutoStart();
+    // Re-enable with different config should not throw
     const servicePath = await enableAutoStart({ ...TEST_CONFIG, port: 29999 });
     expect(existsSync(servicePath)).toBe(true);
-  });
+  }, TEST_TIMEOUT);
 
   test("disable is idempotent", async () => {
     await disableAutoStart();
@@ -150,9 +156,11 @@ describe.if(isWindows)("Windows autostart (Task Scheduler)", () => {
 
   test("enable is idempotent", async () => {
     await enableAutoStart(TEST_CONFIG);
+    await disableAutoStart();
+    // Re-enable with different config should not throw
     const servicePath = await enableAutoStart({ ...TEST_CONFIG, port: 29999 });
     expect(existsSync(servicePath)).toBe(true);
-  });
+  }, TEST_TIMEOUT);
 
   test("disable is idempotent", async () => {
     await disableAutoStart();
@@ -184,5 +192,5 @@ describe("cross-platform autostart", () => {
     await disableAutoStart();
     const afterDisable = getAutoStartStatus();
     expect(afterDisable.enabled).toBe(false);
-  });
+  }, TEST_TIMEOUT);
 });
