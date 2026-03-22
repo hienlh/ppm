@@ -1,0 +1,347 @@
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import {
+  type AutoStartConfig,
+  PLIST_LABEL,
+  TASK_NAME,
+  generatePlist,
+  getPlistPath,
+  generateSystemdService,
+  getServicePath,
+  generateVbsWrapper,
+  getVbsPath,
+  buildSchtasksCommand,
+  buildSchtasksDeleteCommand,
+  buildSchtasksQueryCommand,
+} from "./autostart-generator.ts";
+
+export interface AutoStartStatus {
+  enabled: boolean;
+  running: boolean;
+  platform: string;
+  servicePath: string | null;
+  details: string;
+}
+
+const METADATA_FILE = resolve(homedir(), ".ppm", "autostart.json");
+
+interface AutoStartMetadata {
+  enabled: boolean;
+  platform: string;
+  servicePath: string;
+  createdAt: string;
+  config: AutoStartConfig;
+}
+
+/** Save autostart metadata to ~/.ppm/autostart.json */
+function saveMetadata(meta: AutoStartMetadata): void {
+  const dir = dirname(METADATA_FILE);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(METADATA_FILE, JSON.stringify(meta, null, 2));
+}
+
+/** Load autostart metadata */
+function loadMetadata(): AutoStartMetadata | null {
+  try {
+    if (!existsSync(METADATA_FILE)) return null;
+    return JSON.parse(readFileSync(METADATA_FILE, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Remove autostart metadata file */
+function removeMetadata(): void {
+  try {
+    if (existsSync(METADATA_FILE)) unlinkSync(METADATA_FILE);
+  } catch {}
+}
+
+// ─── macOS ──────────────────────────────────────────────────────────────
+
+async function enableMacOS(config: AutoStartConfig): Promise<string> {
+  const plistPath = getPlistPath();
+  const plistDir = dirname(plistPath);
+
+  if (!existsSync(plistDir)) mkdirSync(plistDir, { recursive: true });
+  writeFileSync(plistPath, generatePlist(config));
+
+  // Unload first if already loaded (ignore errors)
+  Bun.spawnSync({
+    cmd: ["launchctl", "bootout", `gui/${process.getuid!()}`, plistPath],
+    stdout: "ignore", stderr: "ignore",
+  });
+
+  // Load the agent
+  const result = Bun.spawnSync({
+    cmd: ["launchctl", "bootstrap", `gui/${process.getuid!()}`, plistPath],
+    stdout: "pipe", stderr: "pipe",
+  });
+
+  if (result.exitCode !== 0) {
+    // Fallback to legacy syntax
+    const legacy = Bun.spawnSync({
+      cmd: ["launchctl", "load", plistPath],
+      stdout: "pipe", stderr: "pipe",
+    });
+    if (legacy.exitCode !== 0) {
+      const err = legacy.stderr.toString().trim();
+      throw new Error(`launchctl load failed: ${err}`);
+    }
+  }
+
+  saveMetadata({
+    enabled: true,
+    platform: "darwin",
+    servicePath: plistPath,
+    createdAt: new Date().toISOString(),
+    config,
+  });
+
+  return plistPath;
+}
+
+async function disableMacOS(): Promise<void> {
+  const plistPath = getPlistPath();
+
+  // Unload
+  Bun.spawnSync({
+    cmd: ["launchctl", "bootout", `gui/${process.getuid!()}`, plistPath],
+    stdout: "ignore", stderr: "ignore",
+  });
+  // Legacy fallback
+  Bun.spawnSync({
+    cmd: ["launchctl", "unload", plistPath],
+    stdout: "ignore", stderr: "ignore",
+  });
+
+  // Remove plist file
+  try { if (existsSync(plistPath)) unlinkSync(plistPath); } catch {}
+  removeMetadata();
+}
+
+function statusMacOS(): AutoStartStatus {
+  const plistPath = getPlistPath();
+  const fileExists = existsSync(plistPath);
+
+  // Check if loaded
+  const result = Bun.spawnSync({
+    cmd: ["launchctl", "list"],
+    stdout: "pipe", stderr: "ignore",
+  });
+  const output = result.stdout.toString();
+  const isLoaded = output.includes(PLIST_LABEL);
+
+  return {
+    enabled: fileExists && isLoaded,
+    running: isLoaded,
+    platform: "darwin (launchd)",
+    servicePath: fileExists ? plistPath : null,
+    details: fileExists
+      ? isLoaded ? "Loaded and enabled" : "Plist exists but not loaded"
+      : "Not configured",
+  };
+}
+
+// ─── Linux ──────────────────────────────────────────────────────────────
+
+async function enableLinux(config: AutoStartConfig): Promise<string> {
+  const servicePath = getServicePath();
+  const serviceDir = dirname(servicePath);
+
+  if (!existsSync(serviceDir)) mkdirSync(serviceDir, { recursive: true });
+  writeFileSync(servicePath, generateSystemdService(config));
+
+  // Reload daemon
+  const reload = Bun.spawnSync({
+    cmd: ["systemctl", "--user", "daemon-reload"],
+    stdout: "ignore", stderr: "pipe",
+  });
+  if (reload.exitCode !== 0) {
+    throw new Error(`systemctl daemon-reload failed: ${reload.stderr.toString().trim()}`);
+  }
+
+  // Enable
+  const enable = Bun.spawnSync({
+    cmd: ["systemctl", "--user", "enable", "ppm.service"],
+    stdout: "pipe", stderr: "pipe",
+  });
+  if (enable.exitCode !== 0) {
+    throw new Error(`systemctl enable failed: ${enable.stderr.toString().trim()}`);
+  }
+
+  // Start
+  Bun.spawnSync({
+    cmd: ["systemctl", "--user", "start", "ppm.service"],
+    stdout: "ignore", stderr: "ignore",
+  });
+
+  // Enable lingering so service runs at boot without login
+  Bun.spawnSync({
+    cmd: ["loginctl", "enable-linger", process.env.USER || ""],
+    stdout: "ignore", stderr: "ignore",
+  });
+
+  saveMetadata({
+    enabled: true,
+    platform: "linux",
+    servicePath,
+    createdAt: new Date().toISOString(),
+    config,
+  });
+
+  return servicePath;
+}
+
+async function disableLinux(): Promise<void> {
+  // Stop + disable
+  Bun.spawnSync({
+    cmd: ["systemctl", "--user", "stop", "ppm.service"],
+    stdout: "ignore", stderr: "ignore",
+  });
+  Bun.spawnSync({
+    cmd: ["systemctl", "--user", "disable", "ppm.service"],
+    stdout: "ignore", stderr: "ignore",
+  });
+
+  // Remove service file
+  const servicePath = getServicePath();
+  try { if (existsSync(servicePath)) unlinkSync(servicePath); } catch {}
+
+  // Reload
+  Bun.spawnSync({
+    cmd: ["systemctl", "--user", "daemon-reload"],
+    stdout: "ignore", stderr: "ignore",
+  });
+
+  removeMetadata();
+}
+
+function statusLinux(): AutoStartStatus {
+  const servicePath = getServicePath();
+  const fileExists = existsSync(servicePath);
+
+  // Check enabled
+  const enabled = Bun.spawnSync({
+    cmd: ["systemctl", "--user", "is-enabled", "ppm.service"],
+    stdout: "pipe", stderr: "ignore",
+  });
+  const isEnabled = enabled.stdout.toString().trim() === "enabled";
+
+  // Check active
+  const active = Bun.spawnSync({
+    cmd: ["systemctl", "--user", "is-active", "ppm.service"],
+    stdout: "pipe", stderr: "ignore",
+  });
+  const isActive = active.stdout.toString().trim() === "active";
+
+  return {
+    enabled: isEnabled,
+    running: isActive,
+    platform: "linux (systemd)",
+    servicePath: fileExists ? servicePath : null,
+    details: !fileExists
+      ? "Not configured"
+      : isEnabled && isActive ? "Enabled and running"
+      : isEnabled ? "Enabled but not running"
+      : "Service file exists but not enabled",
+  };
+}
+
+// ─── Windows ────────────────────────────────────────────────────────────
+
+async function enableWindows(config: AutoStartConfig): Promise<string> {
+  const vbsPath = getVbsPath();
+  const vbsDir = dirname(vbsPath);
+
+  if (!existsSync(vbsDir)) mkdirSync(vbsDir, { recursive: true });
+  writeFileSync(vbsPath, generateVbsWrapper(config));
+
+  const cmd = buildSchtasksCommand(vbsPath);
+  const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
+
+  if (result.exitCode !== 0) {
+    const err = result.stderr.toString().trim();
+    throw new Error(`schtasks create failed: ${err}`);
+  }
+
+  saveMetadata({
+    enabled: true,
+    platform: "win32",
+    servicePath: vbsPath,
+    createdAt: new Date().toISOString(),
+    config,
+  });
+
+  return vbsPath;
+}
+
+async function disableWindows(): Promise<void> {
+  // Delete scheduled task
+  const cmd = buildSchtasksDeleteCommand();
+  Bun.spawnSync({ cmd, stdout: "ignore", stderr: "ignore" });
+
+  // Remove VBS wrapper
+  const vbsPath = getVbsPath();
+  try { if (existsSync(vbsPath)) unlinkSync(vbsPath); } catch {}
+
+  removeMetadata();
+}
+
+function statusWindows(): AutoStartStatus {
+  const vbsPath = getVbsPath();
+  const fileExists = existsSync(vbsPath);
+
+  const cmd = buildSchtasksQueryCommand();
+  const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
+  const output = result.stdout.toString();
+  const taskExists = output.includes(TASK_NAME) && result.exitCode === 0;
+
+  return {
+    enabled: taskExists,
+    running: taskExists && output.includes("Running"),
+    platform: "windows (Task Scheduler)",
+    servicePath: fileExists ? vbsPath : null,
+    details: taskExists
+      ? output.includes("Running") ? "Scheduled and running" : "Scheduled (will run at next logon)"
+      : "Not configured",
+  };
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────
+
+/** Enable auto-start for the current platform */
+export async function enableAutoStart(config: AutoStartConfig): Promise<string> {
+  const platform = process.platform;
+  if (platform === "darwin") return enableMacOS(config);
+  if (platform === "linux") return enableLinux(config);
+  if (platform === "win32") return enableWindows(config);
+  throw new Error(`Auto-start not supported on ${platform}`);
+}
+
+/** Disable auto-start for the current platform */
+export async function disableAutoStart(): Promise<void> {
+  const platform = process.platform;
+  if (platform === "darwin") return disableMacOS();
+  if (platform === "linux") return disableLinux();
+  if (platform === "win32") return disableWindows();
+  throw new Error(`Auto-start not supported on ${platform}`);
+}
+
+/** Get auto-start status for the current platform */
+export function getAutoStartStatus(): AutoStartStatus {
+  const platform = process.platform;
+  if (platform === "darwin") return statusMacOS();
+  if (platform === "linux") return statusLinux();
+  if (platform === "win32") return statusWindows();
+  return {
+    enabled: false,
+    running: false,
+    platform: `${platform} (unsupported)`,
+    servicePath: null,
+    details: `Auto-start not supported on ${platform}`,
+  };
+}
+
+export { loadMetadata, METADATA_FILE };

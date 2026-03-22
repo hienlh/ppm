@@ -121,4 +121,7 @@ registerGitCommands(program);
 const { registerChatCommands } = await import("./cli/commands/chat-cmd.ts");
 registerChatCommands(program);
 
+const { registerAutoStartCommands } = await import("./cli/commands/autostart.ts");
+registerAutoStartCommands(program);
+
 program.parse();

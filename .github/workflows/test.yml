@@ -1,0 +1,80 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+      - run: bun test tests/unit/
+
+  autostart-integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS (launchd)
+          - os: ubuntu-latest
+            name: Linux (systemd)
+          - os: windows-latest
+            name: Windows (Task Scheduler)
+    runs-on: ${{ matrix.os }}
+    name: autostart — ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run unit tests (autostart generator)
+        run: bun test tests/unit/services/autostart-generator.test.ts
+
+      - name: Run integration tests (autostart register)
+        run: bun test tests/integration/autostart-register.test.ts
+
+      - name: CLI smoke test — enable + status + disable
+        shell: bash
+        run: |
+          bun run src/index.ts autostart enable --port 19999
+          bun run src/index.ts autostart status
+          bun run src/index.ts autostart status --json
+          bun run src/index.ts autostart disable
+          bun run src/index.ts autostart status
+
+      - name: Verify cleanup (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [ -f ~/Library/LaunchAgents/com.hienlh.ppm.plist ]; then
+            echo "ERROR: plist not cleaned up"
+            exit 1
+          fi
+          echo "OK: plist cleaned up"
+
+      - name: Verify cleanup (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          if [ -f ~/.config/systemd/user/ppm.service ]; then
+            echo "ERROR: service file not cleaned up"
+            exit 1
+          fi
+          echo "OK: service file cleaned up"
+
+      - name: Verify cleanup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $task = Get-ScheduledTask -TaskName "PPM" -ErrorAction SilentlyContinue
+          if ($task) {
+            Write-Error "ERROR: scheduled task not cleaned up"
+            exit 1
+          }
+          Write-Output "OK: scheduled task cleaned up"
