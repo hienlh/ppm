@@ -7,11 +7,13 @@ export function registerCloudCommands(program: Command): void {
 
   cmd
     .command("login")
-    .description("Sign in with Google (opens browser)")
+    .description("Sign in with Google")
     .option("--url <url>", "Cloud URL override")
+    .option("--device-code", "Force device code flow (for remote terminals)")
     .action(async (options) => {
       const {
         startLoginServer,
+        startDeviceCodeLogin,
         getCloudAuth,
         DEFAULT_CLOUD_URL,
       } = await import("../../services/cloud.service.ts");
@@ -31,8 +33,25 @@ export function registerCloudCommands(program: Command): void {
       }
 
       try {
-        const auth = await startLoginServer(cloudUrl);
-        console.log(`  ✓  Logged in as ${auth.email}\n`);
+        let auth;
+
+        // Use device code flow if: forced by flag, running in SSH/PPM terminal, or no display
+        const useDeviceCode = options.deviceCode || !process.env.DISPLAY && process.platform === "linux"
+          || process.env.PPM_TERMINAL === "1";
+
+        if (useDeviceCode) {
+          auth = await startDeviceCodeLogin(cloudUrl);
+        } else {
+          // Try browser flow, fall back to device code on failure
+          try {
+            auth = await startLoginServer(cloudUrl);
+          } catch {
+            console.log("  Browser login failed, switching to device code flow...\n");
+            auth = await startDeviceCodeLogin(cloudUrl);
+          }
+        }
+
+        console.log(`\n  ✓  Logged in as ${auth.email}\n`);
         console.log(`  Next: run 'ppm cloud link' to register this machine.\n`);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);

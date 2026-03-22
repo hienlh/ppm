@@ -200,6 +200,82 @@ export async function startLoginServer(cloudUrl: string): Promise<CloudAuth> {
   });
 }
 
+/**
+ * Device code login flow (RFC 8628).
+ * Works from PPM terminal, SSH, or any remote session.
+ * User enters a short code on ppm.hienle.tech/verify from any browser.
+ */
+export async function startDeviceCodeLogin(cloudUrl: string): Promise<CloudAuth> {
+  // 1. Request device code
+  const res = await fetch(`${cloudUrl}/auth/device-code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (!res.ok) throw new Error(`Failed to initiate device code: ${res.status}`);
+
+  const data = await res.json() as {
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    expires_in: number;
+    interval: number;
+  };
+
+  // 2. Display code to user
+  console.log(`\n  ┌──────────────────────────────────────────┐`);
+  console.log(`  │  Visit: ${data.verification_uri}`);
+  console.log(`  │  Enter code: ${data.user_code}`);
+  console.log(`  └──────────────────────────────────────────┘\n`);
+
+  // 3. Poll until approved or expired
+  const pollInterval = (data.interval || 5) * 1000;
+  const deadline = Date.now() + data.expires_in * 1000;
+
+  while (Date.now() < deadline) {
+    await Bun.sleep(pollInterval);
+
+    try {
+      const pollRes = await fetch(`${cloudUrl}/auth/device-code/poll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_code: data.device_code }),
+      });
+
+      if (!pollRes.ok) {
+        if (pollRes.status === 410) throw new Error("Code expired. Try again.");
+        continue;
+      }
+
+      const result = await pollRes.json() as {
+        status: string;
+        access_token?: string;
+        email?: string;
+      };
+
+      if (result.status === "approved" && result.access_token && result.email) {
+        const auth: CloudAuth = {
+          access_token: result.access_token,
+          refresh_token: "",
+          email: result.email,
+          cloud_url: cloudUrl,
+          saved_at: new Date().toISOString(),
+        };
+        saveCloudAuth(auth);
+        return auth;
+      }
+
+      // Still pending — show dots
+      process.stdout.write(".");
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("expired")) throw err;
+      // Network error — keep polling
+    }
+  }
+
+  throw new Error("Login timed out. Try again.");
+}
+
 // ─── Device Registration ────────────────────────────────────────────────
 
 /** Register or re-register this machine with cloud */
