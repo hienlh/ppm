@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.36] - 2026-03-23
+
+### Added
+- **Cloud & Share popover**: New unified popover in project bar replacing old Share button — sign in to PPM Cloud, link device, share tunnel, view QR code, open cloud dashboard — all in one place
+- **Cloud server API**: `/api/cloud/status`, `/api/cloud/login`, `/api/cloud/link`, `/api/cloud/unlink` endpoints for web UI integration
+- **Auto-share on link**: Linking device auto-starts tunnel if not already sharing
+
+### Improved
+- **Project bar cleanup**: Extracted 180+ lines of share logic into dedicated `cloud-share-popover.tsx` component
+
 ## [0.7.35] - 2026-03-23
 
 ### Improved
