@@ -210,7 +210,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [allUsages, setAllUsages] = useState<AccountUsageEntry[]>([]);
   const [accounts, setAccounts] = useState<AccountInfo[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
-  const [loadingAll, setLoadingAll] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(true);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [profileView, setProfileView] = useState<OAuthProfileData | null>(null);
 
@@ -229,6 +229,12 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
     if (!visible) return;
     loadAll();
   }, [visible]);
+
+  // Re-fetch account usages after parent refreshes from Anthropic API
+  useEffect(() => {
+    if (!visible || !lastFetchedAt) return;
+    loadAll();
+  }, [lastFetchedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!visible) return null;
 
@@ -260,12 +266,12 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         <div className="flex items-center gap-1">
           {onReload && (
             <button
-              onClick={() => { onReload(); loadAll(); }}
-              disabled={loading}
+              onClick={() => { setLoadingAll(true); onReload(); }}
+              disabled={loading || loadingAll}
               className="text-xs text-text-subtle hover:text-text-primary px-1 disabled:opacity-50 cursor-pointer"
               title="Refresh"
             >
-              <RefreshCw className={`size-3 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`size-3 ${(loading || loadingAll) ? "animate-spin" : ""}`} />
             </button>
           )}
           <button
@@ -277,7 +283,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         </div>
       </div>
 
-      {hasMultipleAccounts ? (
+      {(hasMultipleAccounts || loadingAll) ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-1.5">
           {loadingAll ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
