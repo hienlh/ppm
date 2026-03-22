@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.33] - 2026-03-23
+
+### Fixed
+- **Cloud sync from UI**: Share button in web UI now triggers cloud heartbeat sync (previously only CLI `--share` flag worked)
+- **Heartbeat cleanup**: Stopping tunnel from UI properly cleans up cloud heartbeat interval
+
 ## [0.7.32] - 2026-03-23
 
 ### Added
