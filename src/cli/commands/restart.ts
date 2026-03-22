@@ -1,11 +1,12 @@
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, writeFileSync, existsSync, openSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync } from "node:fs";
 
 const PPM_DIR = resolve(homedir(), ".ppm");
 const STATUS_FILE = resolve(PPM_DIR, "status.json");
 const PID_FILE = resolve(PPM_DIR, "ppm.pid");
 const RESTARTING_FLAG = resolve(PPM_DIR, ".restarting");
+const RESTART_RESULT = resolve(PPM_DIR, ".restart-result");
 
 /** Restart only the server process, keeping the tunnel alive */
 export async function restartServer(options: { config?: string }) {
@@ -42,21 +43,28 @@ export async function restartServer(options: { config?: string }) {
   // Write restarting flag so tunnel cleanup handler skips killing cloudflared
   writeFileSync(RESTARTING_FLAG, "");
 
+  // Clear previous result
+  try { unlinkSync(RESTART_RESULT); } catch {}
+
+  // Pre-restart message — user sees this before terminal dies (if running inside PPM)
+  console.log("\n  Restarting PPM server...");
+  console.log("  If you're using PPM terminal, wait a few seconds then reload the page.\n");
+
   // Generate a self-contained restart worker script.
-  // This runs as a detached process so it survives even if the current process
-  // (and the PPM server hosting its terminal) is killed.
+  // Runs as a detached process so it survives when the PPM server (and its terminals) die.
   const params = JSON.stringify({
     serverPid, port, host, serverScript,
     config: options.config ?? "",
     statusFile: STATUS_FILE,
     pidFile: PID_FILE,
     restartingFlag: RESTARTING_FLAG,
+    resultFile: RESTART_RESULT,
     ppmDir: PPM_DIR,
   });
 
   const workerPath = resolve(PPM_DIR, ".restart-worker.ts");
   writeFileSync(workerPath, `
-import { readFileSync, writeFileSync, openSync, unlinkSync, appendFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, openSync, unlinkSync, appendFileSync } from "node:fs";
 import { createServer } from "node:net";
 
 const P = ${params};
@@ -65,6 +73,9 @@ async function main() {
   const log = (level: string, msg: string) => {
     const ts = new Date().toISOString();
     try { appendFileSync(P.ppmDir + "/ppm.log", "[" + ts + "] [" + level + "] " + msg + "\\n"); } catch {}
+  };
+  const writeResult = (ok: boolean, msg: string) => {
+    try { writeFileSync(P.resultFile, JSON.stringify({ ok, message: msg })); } catch {}
   };
 
   // Kill old server
@@ -115,12 +126,32 @@ async function main() {
     await Bun.sleep(300);
   }
 
+  // Check tunnel
+  let tunnelAlive = false;
+  let tunnelPid: number | undefined;
+  let shareUrl: string | undefined;
+  try {
+    const st = JSON.parse(readFileSync(P.statusFile, "utf-8"));
+    tunnelPid = st.tunnelPid;
+    shareUrl = st.shareUrl;
+    if (tunnelPid) { process.kill(tunnelPid, 0); tunnelAlive = true; }
+  } catch {}
+
   if (ready) {
-    log("INFO", "Restart complete — new server PID " + child.pid);
+    let msg = "Restart complete (PID: " + child.pid + ", port: " + P.port + ")";
+    if (shareUrl && tunnelPid) {
+      msg += tunnelAlive ? " — tunnel alive" : " — tunnel dead, run 'ppm stop && ppm start --share'";
+    }
+    log("INFO", msg);
+    writeResult(true, msg);
   } else {
     let alive = false;
     try { process.kill(child.pid, 0); alive = true; } catch {}
-    log("ERROR", "Restart failed — server " + (alive ? "not responding on port " + P.port : "crashed on startup"));
+    const msg = alive
+      ? "Server started but not responding on port " + P.port + ". Check: ppm logs"
+      : "Server crashed on startup. Check: ppm logs";
+    log("ERROR", msg);
+    writeResult(false, msg);
   }
 
   // Cleanup worker file
@@ -140,9 +171,27 @@ main();
   });
   worker.unref();
 
-  const { VERSION } = await import("../../version.ts");
-  console.log(`\n  PPM v${VERSION} restarting... (worker PID: ${worker.pid})`);
-  console.log(`  Server will restart in background. Check: ppm status\n`);
+  // Poll for result — if running from external terminal, we'll see the result.
+  // If running from PPM terminal, this process dies when server is killed — that's fine,
+  // the user already saw the pre-restart message above.
+  const pollStart = Date.now();
+  while (Date.now() - pollStart < 20000) {
+    await Bun.sleep(500);
+    if (existsSync(RESTART_RESULT)) {
+      try {
+        const result = JSON.parse(readFileSync(RESTART_RESULT, "utf-8"));
+        if (result.ok) {
+          console.log(`  ✓  ${result.message}`);
+        } else {
+          console.error(`  ✗  ${result.message}`);
+        }
+        unlinkSync(RESTART_RESULT);
+      } catch {}
+      process.exit(0);
+    }
+  }
 
-  process.exit(0);
+  // Timeout — worker might still be running
+  console.error("  ⚠  Restart timed out. Check: ppm logs");
+  process.exit(1);
 }
