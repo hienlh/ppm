@@ -141,6 +141,8 @@ export function AccountsSettingsSection() {
   const [oauthCode, setOauthCode] = useState("");
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthStep, setOauthStep] = useState<"idle" | "waiting">("idle");
+  const [showPasteDialog, setShowPasteDialog] = useState(false);
+  const [pasteText, setPasteText] = useState("");
 
   useEffect(() => {
     refresh();
@@ -298,17 +300,39 @@ export function AccountsSettingsSection() {
       const res = await fetch("/api/accounts/export", { headers });
       if (!res.ok) throw new Error(`Export failed: ${res.status}`);
       const text = await res.text();
-      await navigator.clipboard.writeText(text);
-      showMessage({ type: "success", text: "Accounts copied to clipboard!" });
+      try {
+        await navigator.clipboard.writeText(text);
+        showMessage({ type: "success", text: "Accounts copied to clipboard!" });
+      } catch {
+        // Clipboard API not available (mobile Safari) — fallback to file download
+        const blob = new Blob([text], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "ppm-accounts.json";
+        a.click();
+        URL.revokeObjectURL(a.href);
+        showMessage({ type: "success", text: "Clipboard unavailable — downloaded as file." });
+      }
     } catch (e) {
       showMessage({ type: "error", text: (e as Error).message });
     }
   }
 
   async function handleImportClipboard() {
+    let text: string;
     try {
-      const text = await navigator.clipboard.readText();
-      if (!text.trim()) throw new Error("Clipboard is empty");
+      text = await navigator.clipboard.readText();
+    } catch {
+      // Clipboard API not available (mobile Safari) — show paste dialog
+      setShowPasteDialog(true);
+      return;
+    }
+    await doImportText(text, "clipboard");
+  }
+
+  async function doImportText(text: string, source: string) {
+    try {
+      if (!text.trim()) throw new Error("Input is empty");
       JSON.parse(text); // validate JSON
       const headers: HeadersInit = { "Content-Type": "application/json" };
       const token = getAuthToken();
@@ -316,10 +340,10 @@ export function AccountsSettingsSection() {
       const res = await fetch("/api/accounts/import", { method: "POST", headers, body: text });
       const json = await res.json() as { ok: boolean; data?: { imported: number }; error?: string };
       if (!json.ok) throw new Error(json.error ?? "Import failed");
-      showMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s) from clipboard.` });
+      showMessage({ type: "success", text: `Imported ${json.data?.imported ?? 0} account(s) from ${source}.` });
       refresh();
     } catch (e) {
-      showMessage({ type: "error", text: (e as Error).message || "Import from clipboard failed" });
+      showMessage({ type: "error", text: (e as Error).message || "Import failed" });
     }
   }
 
@@ -592,6 +616,42 @@ export function AccountsSettingsSection() {
             </Button>
             <Button size="sm" className="text-xs h-7" onClick={handleAddAccount} disabled={!newToken.trim() || adding}>
               {adding ? "Adding..." : "Add Token"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Paste dialog — fallback when Clipboard API is unavailable (mobile Safari) */}
+      <Dialog open={showPasteDialog} onOpenChange={(v) => { if (!v) { setShowPasteDialog(false); setPasteText(""); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Paste Account Data</DialogTitle>
+            <DialogDescription className="text-xs">
+              Paste the exported JSON data below.
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder='{"accounts": [...]}'
+            rows={6}
+            className="w-full text-xs p-2 rounded border border-border bg-background font-mono resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <DialogFooter>
+            <Button variant="outline" size="sm" className="text-xs cursor-pointer" onClick={() => { setShowPasteDialog(false); setPasteText(""); }}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="text-xs cursor-pointer"
+              disabled={!pasteText.trim()}
+              onClick={async () => {
+                await doImportText(pasteText, "paste");
+                setShowPasteDialog(false);
+                setPasteText("");
+              }}
+            >
+              Import
             </Button>
           </DialogFooter>
         </DialogContent>
