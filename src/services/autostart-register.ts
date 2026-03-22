@@ -11,9 +11,9 @@ import {
   getServicePath,
   generateVbsWrapper,
   getVbsPath,
-  buildSchtasksCommand,
-  buildSchtasksDeleteCommand,
-  buildSchtasksQueryCommand,
+  buildRegAddCommand,
+  buildRegDeleteCommand,
+  buildRegQueryCommand,
 } from "./autostart-generator.ts";
 
 export interface AutoStartStatus {
@@ -258,12 +258,13 @@ async function enableWindows(config: AutoStartConfig): Promise<string> {
   if (!existsSync(vbsDir)) mkdirSync(vbsDir, { recursive: true });
   writeFileSync(vbsPath, generateVbsWrapper(config));
 
-  const cmd = buildSchtasksCommand(vbsPath);
+  // Add to HKCU Run key (no admin required)
+  const cmd = buildRegAddCommand(vbsPath);
   const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
 
   if (result.exitCode !== 0) {
     const err = result.stderr.toString().trim();
-    throw new Error(`schtasks create failed: ${err}`);
+    throw new Error(`Registry add failed: ${err}`);
   }
 
   saveMetadata({
@@ -278,8 +279,8 @@ async function enableWindows(config: AutoStartConfig): Promise<string> {
 }
 
 async function disableWindows(): Promise<void> {
-  // Delete scheduled task
-  const cmd = buildSchtasksDeleteCommand();
+  // Remove from registry
+  const cmd = buildRegDeleteCommand();
   Bun.spawnSync({ cmd, stdout: "ignore", stderr: "ignore" });
 
   // Remove VBS wrapper
@@ -293,18 +294,18 @@ function statusWindows(): AutoStartStatus {
   const vbsPath = getVbsPath();
   const fileExists = existsSync(vbsPath);
 
-  const cmd = buildSchtasksQueryCommand();
+  // Check if registry entry exists
+  const cmd = buildRegQueryCommand();
   const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
-  const output = result.stdout.toString();
-  const taskExists = output.includes(TASK_NAME) && result.exitCode === 0;
+  const regExists = result.exitCode === 0 && result.stdout.toString().includes(TASK_NAME);
 
   return {
-    enabled: taskExists,
-    running: taskExists && output.includes("Running"),
-    platform: "windows (Task Scheduler)",
+    enabled: regExists,
+    running: false, // Can't detect running state from registry
+    platform: "windows (Registry Run)",
     servicePath: fileExists ? vbsPath : null,
-    details: taskExists
-      ? output.includes("Running") ? "Scheduled and running" : "Scheduled (will run at next logon)"
+    details: regExists
+      ? "Registered (will run at next logon)"
       : "Not configured",
   };
 }

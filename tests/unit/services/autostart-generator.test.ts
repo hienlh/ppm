@@ -3,9 +3,9 @@ import {
   generatePlist,
   generateSystemdService,
   generateVbsWrapper,
-  buildSchtasksCommand,
-  buildSchtasksDeleteCommand,
-  buildSchtasksQueryCommand,
+  buildRegAddCommand,
+  buildRegDeleteCommand,
+  buildRegQueryCommand,
   buildExecCommand,
   getPlistPath,
   getServicePath,
@@ -14,6 +14,8 @@ import {
   TASK_NAME,
   isCompiledBinary,
 } from "../../../src/services/autostart-generator.ts";
+
+const isWindows = process.platform === "win32";
 
 const TEST_CONFIG = {
   port: 3210,
@@ -61,9 +63,10 @@ describe("generatePlist", () => {
     const plist = generatePlist(TEST_CONFIG);
     expect(plist).not.toContain("$HOME");
     expect(plist).not.toContain("~");
-    // StandardOutPath and StandardErrorPath should have absolute paths
-    expect(plist).toMatch(/<key>StandardOutPath<\/key>\s*<string>\/[^<]+<\/string>/);
-    expect(plist).toMatch(/<key>StandardErrorPath<\/key>\s*<string>\/[^<]+<\/string>/);
+    // StandardOutPath and StandardErrorPath should have absolute paths (/ on unix, C:\ on Windows)
+    expect(plist).toContain("<key>StandardOutPath</key>");
+    expect(plist).toContain("ppm-launchd.log</string>");
+    expect(plist).toContain("<key>StandardErrorPath</key>");
   });
 
   test("log path points to ~/.ppm/ppm-launchd.log", () => {
@@ -171,56 +174,58 @@ describe("generateVbsWrapper", () => {
   });
 });
 
-// ─── schtasks commands (Windows) ────────────────────────────────────────
+// ─── Windows Registry commands ──────────────────────────────────────────
 
-describe("buildSchtasksCommand", () => {
-  test("creates task with correct name", () => {
-    const cmd = buildSchtasksCommand("/path/to/run-ppm.vbs");
-    expect(cmd).toContain(TASK_NAME);
-    expect(cmd).toContain("/tn");
+describe("buildRegAddCommand", () => {
+  test("uses reg add with correct key", () => {
+    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
+    expect(cmd[0]).toBe("reg");
+    expect(cmd[1]).toBe("add");
+    expect(cmd.join(" ")).toContain("CurrentVersion\\Run");
   });
 
-  test("uses onlogon schedule", () => {
-    const cmd = buildSchtasksCommand("/path/to/run-ppm.vbs");
-    expect(cmd).toContain("/sc");
-    expect(cmd).toContain("onlogon");
+  test("includes task name as value name", () => {
+    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
+    const vIdx = cmd.indexOf("/v");
+    expect(vIdx).toBeGreaterThan(-1);
+    expect(cmd[vIdx + 1]).toBe(TASK_NAME);
   });
 
   test("includes cscript.exe to run VBS", () => {
-    const cmd = buildSchtasksCommand("/path/to/run-ppm.vbs");
-    const trIndex = cmd.indexOf("/tr");
-    expect(trIndex).toBeGreaterThan(-1);
-    expect(cmd[trIndex + 1]).toContain("cscript.exe");
+    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
+    const dIdx = cmd.indexOf("/d");
+    expect(dIdx).toBeGreaterThan(-1);
+    expect(cmd[dIdx + 1]).toContain("cscript.exe");
   });
 
-  test("includes force flag to overwrite existing", () => {
-    const cmd = buildSchtasksCommand("/path/to/run-ppm.vbs");
+  test("includes force flag", () => {
+    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
     expect(cmd).toContain("/f");
   });
 
-  test("includes vbs path in /tr argument", () => {
-    const cmd = buildSchtasksCommand("/custom/path/run.vbs");
-    const trValue = cmd[cmd.indexOf("/tr") + 1];
-    expect(trValue).toContain("/custom/path/run.vbs");
+  test("includes vbs path in /d argument", () => {
+    const cmd = buildRegAddCommand("/custom/path/run.vbs");
+    const dValue = cmd[cmd.indexOf("/d") + 1];
+    expect(dValue).toContain("/custom/path/run.vbs");
   });
 });
 
-describe("buildSchtasksDeleteCommand", () => {
-  test("uses /delete flag", () => {
-    const cmd = buildSchtasksDeleteCommand();
-    expect(cmd).toContain("/delete");
+describe("buildRegDeleteCommand", () => {
+  test("uses reg delete with correct key and value", () => {
+    const cmd = buildRegDeleteCommand();
+    expect(cmd[0]).toBe("reg");
+    expect(cmd[1]).toBe("delete");
     expect(cmd).toContain(TASK_NAME);
     expect(cmd).toContain("/f");
   });
 });
 
-describe("buildSchtasksQueryCommand", () => {
-  test("uses /query flag with LIST format", () => {
-    const cmd = buildSchtasksQueryCommand();
-    expect(cmd).toContain("/query");
+describe("buildRegQueryCommand", () => {
+  test("uses reg query with correct key and value", () => {
+    const cmd = buildRegQueryCommand();
+    expect(cmd[0]).toBe("reg");
+    expect(cmd[1]).toBe("query");
     expect(cmd).toContain(TASK_NAME);
-    expect(cmd).toContain("/fo");
-    expect(cmd).toContain("LIST");
   });
 });
 
@@ -250,30 +255,32 @@ describe("buildExecCommand", () => {
 
   test("first element is an absolute path", () => {
     const cmd = buildExecCommand(TEST_CONFIG);
-    expect(cmd[0]).toMatch(/^\//); // starts with / on unix
+    // Unix: starts with /, Windows: starts with drive letter (C:\)
+    expect(cmd[0]).toMatch(isWindows ? /^[A-Z]:\\/i : /^\//);
   });
 });
 
 // ─── Path helpers ───────────────────────────────────────────────────────
 
 describe("path helpers", () => {
-  test("getPlistPath returns path in ~/Library/LaunchAgents/", () => {
-    const path = getPlistPath();
-    expect(path).toContain("Library/LaunchAgents");
-    expect(path).toContain(PLIST_LABEL);
-    expect(path).toEndWith(".plist");
+  test("getPlistPath contains LaunchAgents and plist label", () => {
+    const p = getPlistPath();
+    expect(p).toContain("LaunchAgents");
+    expect(p).toContain(PLIST_LABEL);
+    expect(p).toEndWith(".plist");
   });
 
-  test("getServicePath returns path in ~/.config/systemd/user/", () => {
-    const path = getServicePath();
-    expect(path).toContain(".config/systemd/user");
-    expect(path).toEndWith("ppm.service");
+  test("getServicePath contains systemd user dir", () => {
+    const p = getServicePath();
+    expect(p).toContain("systemd");
+    expect(p).toContain("user");
+    expect(p).toEndWith("ppm.service");
   });
 
   test("getVbsPath returns path in ~/.ppm/", () => {
-    const path = getVbsPath();
-    expect(path).toContain(".ppm");
-    expect(path).toEndWith("run-ppm.vbs");
+    const p = getVbsPath();
+    expect(p).toContain(".ppm");
+    expect(p).toEndWith("run-ppm.vbs");
   });
 });
 

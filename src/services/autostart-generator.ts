@@ -143,9 +143,11 @@ WantedBy=default.target
 `;
 }
 
-// ─── Windows Task Scheduler ─────────────────────────────────────────────
+// ─── Windows Registry Run key ───────────────────────────────────────────
+// Uses HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run — no admin needed
 
 const TASK_NAME = "PPM";
+const WIN_REG_KEY = "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 /** Generate Windows VBScript wrapper content to run PPM hidden */
 export function generateVbsWrapper(config: AutoStartConfig): string {
@@ -162,27 +164,32 @@ export function getVbsPath(): string {
   return resolve(homedir(), ".ppm", "run-ppm.vbs");
 }
 
-/** Build schtasks command to register PPM at logon */
-export function buildSchtasksCommand(vbsPath: string): string[] {
-  const username = process.env.USERNAME || process.env.USER || "CURRENT_USER";
+/** Build reg command to add PPM to Windows startup (no admin) */
+export function buildRegAddCommand(vbsPath: string): string[] {
   return [
-    "schtasks", "/create",
-    "/tn", TASK_NAME,
-    "/tr", `cscript.exe "${vbsPath}"`,
-    "/sc", "onlogon",
-    "/ru", username,
+    "reg", "add", WIN_REG_KEY,
+    "/v", TASK_NAME,
+    "/t", "REG_SZ",
+    "/d", `cscript.exe "${vbsPath}"`,
     "/f",
   ];
 }
 
-/** Build schtasks command to remove PPM task */
-export function buildSchtasksDeleteCommand(): string[] {
-  return ["schtasks", "/delete", "/tn", TASK_NAME, "/f"];
+/** Build reg command to remove PPM from Windows startup */
+export function buildRegDeleteCommand(): string[] {
+  return [
+    "reg", "delete", WIN_REG_KEY,
+    "/v", TASK_NAME,
+    "/f",
+  ];
 }
 
-/** Build schtasks command to query PPM task */
-export function buildSchtasksQueryCommand(): string[] {
-  return ["schtasks", "/query", "/tn", TASK_NAME, "/fo", "LIST"];
+/** Build reg command to query PPM startup entry */
+export function buildRegQueryCommand(): string[] {
+  return [
+    "reg", "query", WIN_REG_KEY,
+    "/v", TASK_NAME,
+  ];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
