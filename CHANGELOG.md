@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.23] - 2026-03-22
+
+### Fixed
+- **Restart from PPM terminal**: restart command now spawns a detached worker process so it survives when the old server (and its terminals) are killed — previously running `ppm restart` inside a PPM terminal would kill the restart process itself before the new server could be spawned, causing persistent 502
+- **Restart server script path**: save server entry script path in `status.json` during `ppm start` so restart always uses the stable installed location instead of a potentially ephemeral `bunx` cache path
+
 ## [0.7.22] - 2026-03-22
 
 ### Fixed
