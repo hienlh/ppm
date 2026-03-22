@@ -41,6 +41,14 @@ tunnelRoutes.post("/start", async (c) => {
     const port = configService.get("port") ?? 8080;
     const url = await tunnelService.startTunnel(port);
     patchStatusFile(url);
+
+    // Sync tunnel URL to PPM Cloud (if linked)
+    import("../../services/cloud.service.ts")
+      .then(({ startHeartbeat, getCloudDevice }) => {
+        if (getCloudDevice()) startHeartbeat(url);
+      })
+      .catch(() => {});
+
     return c.json(ok({ url }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -51,5 +59,11 @@ tunnelRoutes.post("/start", async (c) => {
 tunnelRoutes.post("/stop", (c) => {
   tunnelService.stopTunnel();
   patchStatusFile(null);
+
+  // Stop cloud heartbeat
+  import("../../services/cloud.service.ts")
+    .then(({ stopHeartbeat }) => stopHeartbeat())
+    .catch(() => {});
+
   return c.json(ok({ stopped: true }));
 });
