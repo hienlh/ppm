@@ -188,13 +188,14 @@ describe("GET /api/accounts/export", () => {
     expect(JSON.parse(body)).toEqual([]);
   });
 
-  it("exports accounts as encrypted JSON", async () => {
+  it("exports accounts as portable plaintext JSON", async () => {
     accountService.add({ email: "exp@test.com", accessToken: "tok", refreshToken: "ref", expiresAt: 9999 });
     const res = await req("/api/accounts/export");
     const rows = await res.json() as any[];
     expect(rows).toHaveLength(1);
     expect(rows[0].email).toBe("exp@test.com");
-    // Tokens are stored encrypted — not plaintext
-    expect(rows[0].access_token).not.toBe("tok");
+    // Tokens are decrypted for cross-machine portability
+    expect(rows[0].access_token).toBe("tok");
+    expect(rows[0].refresh_token).toBe("ref");
   });
 });

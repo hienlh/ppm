@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
@@ -37,6 +37,57 @@ export function encrypt(plaintext: string): string {
   const enc = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `${iv.toString("hex")}:${tag.toString("hex")}:${enc.toString("hex")}`;
+}
+
+// ---------------------------------------------------------------------------
+// Password-based encryption for portable export (cross-machine)
+// ---------------------------------------------------------------------------
+
+interface EncryptedExport {
+  version: 1;
+  kdf: "scrypt";
+  salt: string;    // hex, 32 bytes
+  iv: string;      // hex, 12 bytes
+  authTag: string; // hex, 16 bytes
+  ciphertext: string; // base64
+}
+
+/** Encrypt payload with user password → portable encrypted JSON blob */
+export function encryptWithPassword(plaintext: string, password: string): string {
+  const salt = randomBytes(32);
+  const iv = randomBytes(12);
+  // scrypt N=32768: ~100ms on modern hardware, sufficient for interactive use
+  const key = scryptSync(password, salt, 32, { N: 32768, r: 8, p: 1 });
+  const cipher = createCipheriv(ALGO, key, iv);
+  const enc = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()]);
+  const envelope: EncryptedExport = {
+    version: 1,
+    kdf: "scrypt",
+    salt: salt.toString("hex"),
+    iv: iv.toString("hex"),
+    authTag: cipher.getAuthTag().toString("hex"),
+    ciphertext: enc.toString("base64"),
+  };
+  return JSON.stringify(envelope);
+}
+
+/** Decrypt portable encrypted JSON blob with user password → plaintext */
+export function decryptWithPassword(blob: string, password: string): string {
+  let envelope: EncryptedExport;
+  try { envelope = JSON.parse(blob); } catch { throw new Error("Invalid backup format"); }
+  if (envelope.version !== 1 || envelope.kdf !== "scrypt") throw new Error("Unsupported backup version");
+  const salt = Buffer.from(envelope.salt, "hex");
+  const iv = Buffer.from(envelope.iv, "hex");
+  const authTag = Buffer.from(envelope.authTag, "hex");
+  const ciphertext = Buffer.from(envelope.ciphertext, "base64");
+  const key = scryptSync(password, salt, 32, { N: 32768, r: 8, p: 1 });
+  const decipher = createDecipheriv(ALGO, key, iv);
+  decipher.setAuthTag(authTag);
+  try {
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf-8");
+  } catch {
+    throw new Error("Wrong password or corrupted backup");
+  }
 }
 
 /** Decrypt "iv:authTag:ciphertext" → plaintext */

@@ -1,5 +1,5 @@
 import { randomUUID, createHash, randomBytes } from "node:crypto";
-import { encrypt, decrypt } from "../lib/account-crypto.ts";
+import { encrypt, decrypt, encryptWithPassword, decryptWithPassword } from "../lib/account-crypto.ts";
 import {
   getAccounts,
   getAccountById,
@@ -55,6 +55,12 @@ export interface OAuthProfileData {
     name?: string;
     slug?: string;
   };
+}
+
+/** Check if a token string looks like our encrypted format "iv:authTag:ciphertext" (all hex) */
+function looksEncrypted(value: string): boolean {
+  const parts = value.split(":");
+  return parts.length === 3 && parts.every((p) => /^[0-9a-f]+$/i.test(p));
 }
 
 const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -506,14 +512,24 @@ class AccountService {
   // Export / Import encrypted backup
   // ---------------------------------------------------------------------------
 
-  exportEncrypted(): string {
-    // Export raw DB rows (tokens are already encrypted) as JSON
-    const rows = getAccounts();
-    return JSON.stringify(rows, null, 2);
+  exportEncrypted(password: string, accountIds?: string[]): string {
+    // Fetch requested accounts (or all), decrypt tokens, encrypt whole payload with user password
+    const rows = accountIds?.length
+      ? accountIds.map((id) => getAccountById(id)).filter(Boolean) as AccountRow[]
+      : getAccounts();
+    const portable = rows.map((row) => {
+      let accessToken = row.access_token;
+      let refreshToken = row.refresh_token;
+      try { accessToken = decrypt(accessToken); } catch { /* already plaintext or corrupt */ }
+      try { refreshToken = decrypt(refreshToken); } catch { /* already plaintext or corrupt */ }
+      return { ...row, access_token: accessToken, refresh_token: refreshToken };
+    });
+    return encryptWithPassword(JSON.stringify(portable), password);
   }
 
-  importEncrypted(json: string): number {
-    const rows = JSON.parse(json) as AccountRow[];
+  importEncrypted(blob: string, password: string): number {
+    const plaintext = decryptWithPassword(blob, password);
+    const rows = JSON.parse(plaintext) as AccountRow[];
     if (!Array.isArray(rows)) throw new Error("Invalid backup format");
     let count = 0;
     for (const row of rows) {
@@ -521,12 +537,17 @@ class AccountService {
       // Skip if account already exists (by id or email)
       if (getAccountById(row.id)) continue;
       if (row.email && this.list().some((a) => a.email === row.email)) continue;
+      // Re-encrypt with this machine's key
+      let accessToken = row.access_token;
+      let refreshToken = row.refresh_token;
+      if (!looksEncrypted(accessToken)) accessToken = encrypt(accessToken);
+      if (!looksEncrypted(refreshToken)) refreshToken = encrypt(refreshToken);
       insertAccount({
         id: row.id,
         label: row.label,
         email: row.email,
-        access_token: row.access_token,
-        refresh_token: row.refresh_token,
+        access_token: accessToken,
+        refresh_token: refreshToken,
         expires_at: row.expires_at,
         status: row.status ?? "active",
         cooldown_until: row.cooldown_until,
