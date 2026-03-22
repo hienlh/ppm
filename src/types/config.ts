@@ -21,6 +21,7 @@ export interface PpmConfig {
   ai: AIConfig;
   push?: PushConfig;
   telegram?: TelegramConfig;
+  cloud_url?: string;
 }
 
 export interface AuthConfig {

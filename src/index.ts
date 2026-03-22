@@ -124,4 +124,7 @@ registerChatCommands(program);
 const { registerAutoStartCommands } = await import("./cli/commands/autostart.ts");
 registerAutoStartCommands(program);
 
+const { registerCloudCommands } = await import("./cli/commands/cloud.ts");
+registerCloudCommands(program);
+
 program.parse();

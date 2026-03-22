@@ -412,6 +412,13 @@ export async function startServer(options: {
       const qr = await import("qrcode-terminal");
       console.log();
       qr.generate(shareUrl, { small: true });
+
+      // Auto-sync tunnel URL to PPM Cloud (if linked)
+      import("../services/cloud.service.ts")
+        .then(({ startHeartbeat, getCloudDevice }) => {
+          if (getCloudDevice()) startHeartbeat(shareUrl);
+        })
+        .catch(() => {});
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`  ✗  Share failed: ${msg}`);
@@ -470,6 +477,13 @@ if (process.argv.includes("__serve__")) {
       const { tunnelService } = await import("../services/tunnel.service.ts");
       tunnelService.setExternalUrl(status.shareUrl);
       if (status.tunnelPid) tunnelService.setExternalPid(status.tunnelPid);
+
+      // Auto-sync tunnel URL to PPM Cloud (daemon mode)
+      import("../services/cloud.service.ts")
+        .then(({ startHeartbeat, getCloudDevice }) => {
+          if (getCloudDevice()) startHeartbeat(status.shareUrl);
+        })
+        .catch(() => {});
     }
   } catch { /* status.json missing or no shareUrl — normal */ }
 
