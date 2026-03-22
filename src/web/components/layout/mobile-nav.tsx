@@ -117,7 +117,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           <Menu className="size-5" />
         </button>
 
-        <div className="flex-1 relative flex items-center h-12">
+        <div className="flex-1 min-w-0 relative flex items-center h-12">
           {/* Left scroll arrow */}
           {canScrollLeft && (
             <button onClick={doScrollLeft} className="absolute left-0 z-10 flex items-center justify-center size-8 bg-gradient-to-r from-background via-background to-transparent">
@@ -127,7 +127,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
               </span>
             </button>
           )}
-          <div ref={mobileScrollRef} className="flex-1 flex items-center h-12 overflow-x-auto scrollbar-none">
+          <div ref={mobileScrollRef} className="flex-1 min-w-0 flex items-center h-12 overflow-x-auto scrollbar-none">
           {tabs.map((tab) => {
             const Icon = TAB_ICONS[tab.type];
             const isActive = tab.id === activeTabId;
