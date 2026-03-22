@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.31] - 2026-03-23
+
+### Improved
+- **Restart message**: updated PPM terminal hint to "wait for auto-reconnect" instead of "reload the page" since web client reconnects automatically
+
 ## [0.7.30] - 2026-03-23
 
 ### Fixed
