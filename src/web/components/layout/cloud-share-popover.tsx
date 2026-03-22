@@ -33,6 +33,8 @@ export function CloudSharePopover({ onClose }: Props) {
   const [unlinking, setUnlinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [deviceCode, setDeviceCode] = useState<{ userCode: string; verifyUrl: string } | null>(null);
+  const [loginPolling, setLoginPolling] = useState(false);
 
   // Load status on mount
   useEffect(() => {
@@ -72,39 +74,68 @@ export function CloudSharePopover({ onClose }: Props) {
   }, [tunnel]);
 
   const handleCloudLogin = useCallback(async () => {
+    setError(null);
     try {
-      const { url, cloud_url } = await api.get<{ url: string; cloud_url: string }>("/api/cloud/login-url");
-      // Open popup for OAuth
-      const popup = window.open(url, "ppm-cloud-login", "width=500,height=600,menubar=no,toolbar=no");
+      const { cloud_url } = await api.get<{ url: string; cloud_url: string }>("/api/cloud/login-url");
 
-      // Poll for completion — user will be redirected to /dashboard on cloud
-      // We check cloud status periodically until logged_in becomes true
+      // Step 1: Request device code from cloud
+      const res = await fetch(`${cloud_url}/auth/device-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error("Failed to get device code");
+
+      const data = await res.json() as {
+        device_code: string;
+        user_code: string;
+        verification_uri: string;
+        expires_in: number;
+        interval: number;
+      };
+
+      setDeviceCode({ userCode: data.user_code, verifyUrl: data.verification_uri });
+      setLoginPolling(true);
+
+      // Step 2: Poll until user completes verification
+      const pollInterval = (data.interval || 5) * 1000;
+      const deadline = Date.now() + data.expires_in * 1000;
+
       const poll = setInterval(async () => {
+        if (Date.now() > deadline) {
+          clearInterval(poll);
+          setLoginPolling(false);
+          setDeviceCode(null);
+          setError("Login expired. Try again.");
+          return;
+        }
         try {
-          // Check if cloud set cookies/session
-          const res = await fetch(`${cloud_url}/auth/session`, { credentials: "include" });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.user?.email) {
-              clearInterval(poll);
-              popup?.close();
-              // Save auth to PPM server
-              await api.post("/api/cloud/login", {
-                access_token: "web-session", // web uses cookie-based auth
-                email: data.user.email,
-                cloud_url,
-              });
-              const cs = await api.get<CloudStatus>("/api/cloud/status");
-              setCloud(cs);
-            }
+          const pollRes = await fetch(`${cloud_url}/auth/device-code/poll`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ device_code: data.device_code }),
+          });
+          if (!pollRes.ok) return;
+          const result = await pollRes.json() as { status: string; access_token?: string; email?: string };
+
+          if (result.status === "approved" && result.access_token && result.email) {
+            clearInterval(poll);
+            setLoginPolling(false);
+            setDeviceCode(null);
+            // Save auth to PPM server
+            await api.post("/api/cloud/login", {
+              access_token: result.access_token,
+              email: result.email,
+              cloud_url,
+            });
+            const cs = await api.get<CloudStatus>("/api/cloud/status");
+            setCloud(cs);
           }
         } catch { /* keep polling */ }
-      }, 2000);
-
-      // Stop polling after 2 minutes
-      setTimeout(() => clearInterval(poll), 120_000);
+      }, pollInterval);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to get login URL");
+      setError(e instanceof Error ? e.message : "Failed to start login");
+      setLoginPolling(false);
+      setDeviceCode(null);
     }
   }, []);
 
@@ -189,6 +220,25 @@ export function CloudSharePopover({ onClose }: Props) {
                 >
                   <LogOut className="size-3" />
                 </button>
+              </div>
+            ) : deviceCode ? (
+              <div className="space-y-2 text-center">
+                <p className="text-xs text-muted-foreground">Open the link below and enter the code:</p>
+                <div className="font-mono text-2xl font-bold tracking-[0.3em] text-primary">{deviceCode.userCode}</div>
+                <a
+                  href={deviceCode.verifyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary hover:underline"
+                >
+                  {deviceCode.verifyUrl}
+                </a>
+                {loginPolling && (
+                  <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" />
+                    <span>Waiting for verification...</span>
+                  </div>
+                )}
               </div>
             ) : (
               <button
