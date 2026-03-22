@@ -260,8 +260,8 @@ export function CloudSharePopover({ onClose }: Props) {
             <div className="space-y-1.5">
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Public URL</span>
               <div className="flex justify-center">
-                <div className="p-3 rounded-lg" style={{ backgroundColor: "#ffffff" }}>
-                  <QRCodeSVG value={shareUrl} size={180} bgColor="#ffffff" fgColor="#000000" level="L" />
+                <div className="p-3 rounded-lg" style={{ backgroundColor: "#ffffff", colorScheme: "light" }}>
+                  <QRCodeSVG value={shareUrl} size={180} bgColor="#ffffff" fgColor="#000000" level="L" style={{ display: "block" }} />
                 </div>
               </div>
               <UrlRow url={shareUrl} copied={copied} onCopy={handleCopy} />
