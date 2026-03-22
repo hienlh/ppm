@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.25] - 2026-03-22
+
+### Fixed
+- **Git status mobile scroll**: file rows no longer accidentally open context menu while scrolling — tap opens diff, long-press (~400ms) opens action menu, with `select-none` to prevent text selection
+
 ## [0.7.24] - 2026-03-22
 
 ### Fixed
