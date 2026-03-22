@@ -512,6 +512,22 @@ class AccountService {
   // Export / Import encrypted backup
   // ---------------------------------------------------------------------------
 
+  /** Refresh all OAuth tokens before export so they're fresh on the target machine */
+  async refreshBeforeExport(accountIds?: string[]): Promise<void> {
+    const accounts = accountIds?.length
+      ? accountIds.map((id) => this.getWithTokens(id)).filter(Boolean) as AccountWithTokens[]
+      : this.list().map((a) => this.getWithTokens(a.id)).filter(Boolean) as AccountWithTokens[];
+    for (const acc of accounts) {
+      if (!acc.accessToken.startsWith("sk-ant-oat")) continue; // only OAuth tokens
+      if (!acc.expiresAt) continue;
+      try {
+        await this.refreshAccessToken(acc.id);
+      } catch {
+        // Best-effort — skip accounts whose refresh token is already invalid
+      }
+    }
+  }
+
   exportEncrypted(password: string, accountIds?: string[]): string {
     // Fetch requested accounts (or all), decrypt tokens, encrypt whole payload with user password
     const rows = accountIds?.length

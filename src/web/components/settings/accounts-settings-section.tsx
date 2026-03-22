@@ -153,6 +153,7 @@ export function AccountsSettingsSection() {
   const [importPassword, setImportPassword] = useState("");
   const [importData, setImportData] = useState("");
   const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
 
   useEffect(() => {
     refresh();
@@ -274,6 +275,7 @@ export function AccountsSettingsSection() {
   function openImportDialog(prefillData?: string) {
     setImportPassword("");
     setImportData(prefillData ?? "");
+    setImportError(null);
     setShowImportDialog(true);
   }
 
@@ -324,13 +326,14 @@ export function AccountsSettingsSection() {
   async function doImport() {
     if (!importData.trim() || !importPassword) return;
     setImporting(true);
+    setImportError(null);
     try {
       const result = await importAccounts({ data: importData.trim(), password: importPassword });
       showMessage({ type: "success", text: `Imported ${result.imported} account(s).` });
       setShowImportDialog(false);
       refresh();
     } catch (e) {
-      showMessage({ type: "error", text: (e as Error).message || "Import failed" });
+      setImportError((e as Error).message || "Import failed");
     }
     setImporting(false);
   }
@@ -356,64 +359,55 @@ export function AccountsSettingsSection() {
           {!loading && accounts.length === 0 && (
             <p className="text-[11px] text-muted-foreground">No accounts connected.</p>
           )}
-          {accounts.map((acc) => (
-            <div key={acc.id} className={`flex items-center justify-between p-2.5 rounded-lg border bg-card gap-2 ${acc.id === activeAccountId ? "ring-1 ring-primary/50 border-primary/30" : ""}`}>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-xs font-medium truncate">{acc.label ?? acc.email ?? acc.id.slice(0, 8)}</span>
-                  {statusBadge(acc)}
-                  {acc.id === activeAccountId && <Badge variant="outline" className="text-[9px] px-1 py-0 border-primary/40 text-primary">In use</Badge>}
+          {accounts.map((acc) => {
+            const usage = usageMap.get(acc.id);
+            return (
+              <div key={acc.id} className="p-2.5 rounded-lg border bg-card space-y-1.5">
+                {/* Row 1: name + badges + actions */}
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <span className="text-xs font-medium truncate">{acc.label ?? acc.email ?? acc.id.slice(0, 8)}</span>
+                    {statusBadge(acc)}
+                  </div>
+                  <div className="flex items-center shrink-0">
+                    {acc.profileData && (
+                      <Button size="icon" variant="ghost" className="size-7 cursor-pointer text-muted-foreground hover:text-foreground" onClick={() => setProfileView(acc.profileData)} title="View profile">
+                        <Eye className="size-3" />
+                      </Button>
+                    )}
+                    <Switch checked={acc.status !== "disabled"} onCheckedChange={() => handleToggle(acc.id, acc.status)} disabled={acc.status === "cooldown"} className="scale-[0.65] cursor-pointer" />
+                    <Button size="icon" variant="ghost" className="size-7 cursor-pointer text-muted-foreground hover:text-destructive" onClick={() => handleDelete(acc.id, acc.email)} title="Remove">
+                      <X className="size-3" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="text-[11px] text-muted-foreground mt-0.5 flex gap-2 flex-wrap">
-                  {acc.email && acc.label && <span>{acc.email}</span>}
-                  {acc.profileData?.organization?.name && (
-                    <span>{subscriptionLabel(acc.profileData)}</span>
+                {/* Row 2: meta + usage inline */}
+                <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                  <div className="flex gap-1.5 items-center min-w-0 truncate">
+                    {acc.email && acc.label && <span className="truncate">{acc.email}</span>}
+                    <span>{acc.totalRequests} req{acc.totalRequests !== 1 ? "s" : ""}</span>
+                    <span>· {formatLastUsed(acc.lastUsedAt)}</span>
+                  </div>
+                  {usage && (usage.session || usage.weekly) && (
+                    <div className="flex gap-2 shrink-0 tabular-nums">
+                      {usage.session && <span className={miniPctColor(Math.round(usage.session.utilization * 100))}>5h {Math.round(usage.session.utilization * 100)}%</span>}
+                      {usage.weekly && <span className={miniPctColor(Math.round(usage.weekly.utilization * 100))}>Wk {Math.round(usage.weekly.utilization * 100)}%</span>}
+                    </div>
                   )}
-                  <span>{acc.totalRequests} reqs</span>
-                  <span>Last: {formatLastUsed(acc.lastUsedAt)}</span>
                 </div>
-                {usageMap.get(acc.id) && <CompactUsageBars usage={usageMap.get(acc.id)!} />}
               </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {acc.profileData && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
-                    onClick={() => setProfileView(acc.profileData)}
-                    title="View profile"
-                  >
-                    <Eye className="size-3.5" />
-                  </Button>
-                )}
-                <Switch
-                  checked={acc.status !== "disabled"}
-                  onCheckedChange={() => handleToggle(acc.id, acc.status)}
-                  disabled={acc.status === "cooldown"}
-                  className="scale-75 cursor-pointer"
-                />
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 cursor-pointer text-muted-foreground hover:text-destructive"
-                  onClick={() => handleDelete(acc.id, acc.email)}
-                  title="Remove account"
-                >
-                  <X className="size-3.5" />
-                </Button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          <Button size="sm" className="h-8 text-xs cursor-pointer flex-1 min-w-[100px] sm:flex-none" onClick={() => setShowAddDialog(true)}>
-            + Add Account
+        <div className="grid grid-cols-3 gap-1.5">
+          <Button size="sm" className="h-8 text-xs cursor-pointer" onClick={() => setShowAddDialog(true)}>
+            + Add
           </Button>
-          <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer flex-1 min-w-[80px] sm:flex-none" onClick={() => openExportDialog()}>
+          <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer" onClick={() => openExportDialog()}>
             <Download className="size-3.5 mr-1" /> Export
           </Button>
-          <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer flex-1 min-w-[80px] sm:flex-none" onClick={() => openImportDialog()}>
+          <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer" onClick={() => openImportDialog()}>
             <Upload className="size-3.5 mr-1" /> Import
           </Button>
         </div>
@@ -717,6 +711,9 @@ export function AccountsSettingsSection() {
               />
             </div>
           </div>
+          {importError && (
+            <div className="text-[11px] p-2 rounded bg-red-500/10 text-red-600">{importError}</div>
+          )}
           <DialogFooter>
             <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={() => setShowImportDialog(false)}>
               Cancel

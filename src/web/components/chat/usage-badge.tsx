@@ -295,7 +295,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         <div className="flex items-center gap-1">
           {onReload && (
             <button
-              onClick={() => { setRefreshing(true); onReload(); }}
+              onClick={() => { onReload(); loadAll(); }}
               disabled={loading || refreshing}
               className="text-xs text-text-subtle hover:text-text-primary px-1 disabled:opacity-50 cursor-pointer"
               title="Refresh"

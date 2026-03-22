@@ -158,6 +158,7 @@ accountsRoutes.post("/export", async (c) => {
   try {
     const { password, accountIds } = await c.req.json() as { password: string; accountIds?: string[] };
     if (!password) return c.json(err("Password required"), 400);
+    await accountService.refreshBeforeExport(accountIds);
     const blob = accountService.exportEncrypted(password, accountIds);
     c.header("Content-Disposition", "attachment; filename=ppm-accounts-backup.json");
     c.header("Content-Type", "application/json");
