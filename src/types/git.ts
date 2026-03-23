@@ -17,6 +17,8 @@ export interface GitBranch {
   commitHash: string;
   ahead: number;
   behind: number;
+  /** Remote names that track this local branch (e.g. ["origin", "upstream"]) */
+  remotes: string[];
 }
 
 export interface GitStatus {
@@ -35,6 +37,8 @@ export interface GitFileChange {
 export interface GitGraphData {
   commits: GitCommit[];
   branches: GitBranch[];
+  /** Full hash of the currently checked-out commit (HEAD) */
+  head: string;
 }
 
 export interface GitDiffResult {

@@ -57,12 +57,13 @@ gitRoutes.get("/file-diff", async (c) => {
   }
 });
 
-/** GET /git/graph?max=200 */
+/** GET /git/graph?max=200&skip=0 */
 gitRoutes.get("/graph", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const max = parseInt(c.req.query("max") ?? "200", 10);
-    const data = await gitService.graphData(projectPath, max);
+    const skip = parseInt(c.req.query("skip") ?? "0", 10);
+    const data = await gitService.graphData(projectPath, max, skip);
     return c.json(ok(data));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -88,6 +89,19 @@ gitRoutes.get("/pr-url", async (c) => {
     if (!branch) return c.json(err("Missing query: branch"), 400);
     const url = await gitService.getCreatePrUrl(projectPath, branch);
     return c.json(ok({ url }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/fetch { remote? } */
+gitRoutes.post("/fetch", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const body = await c.req.json<{ remote?: string }>().catch(() => ({ remote: undefined }));
+    const { remote } = body;
+    await gitService.fetch(projectPath, remote);
+    return c.json(ok({ fetched: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

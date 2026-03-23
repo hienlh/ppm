@@ -199,6 +199,7 @@ class GitService {
       commitHash: info.commit,
       ahead: 0,
       behind: 0,
+      remotes: [],
     }));
   }
 
@@ -232,11 +233,14 @@ class GitService {
   async graphData(
     projectPath: string,
     maxCount = 200,
+    skip = 0,
   ): Promise<GitGraphData> {
     const git = this.git(projectPath);
 
-    // Use simple-git built-in log
-    const log = await git.log({ "--all": null, maxCount });
+    // Use simple-git built-in log with skip support
+    const logOpts: Record<string, unknown> = { "--all": null, maxCount };
+    if (skip > 0) (logOpts as Record<string, unknown>)["--skip"] = skip;
+    const log = await git.log(logOpts);
 
     const commits: GitCommit[] = log.all.map((c) => ({
       hash: c.hash,
@@ -252,10 +256,12 @@ class GitService {
 
     // Get parent hashes via raw format
     try {
+      const skipArgs = skip > 0 ? [`--skip=${skip}`] : [];
       const parentLog = await git.raw([
         "log",
         "--all",
         `--max-count=${maxCount}`,
+        ...skipArgs,
         "--format=%H %P",
       ]);
       const parentMap = new Map<string, string[]>();
@@ -273,13 +279,13 @@ class GitService {
 
     const branchSummary = await git.branch(["-a", "--no-color"]);
 
-    // simple-git branch().commit returns abbreviated hash — map to full hash
+    // simple-git branch().commit returns abbreviated hash of varying lengths — index all common lengths
     const abbrToFull = new Map<string, string>();
     for (const c of commits) {
-      abbrToFull.set(c.abbreviatedHash, c.hash);
-      // Also index with longer prefixes for safety
-      abbrToFull.set(c.hash.slice(0, 8), c.hash);
-      abbrToFull.set(c.hash.slice(0, 10), c.hash);
+      abbrToFull.set(c.hash, c.hash);
+      for (const len of [7, 8, 9, 10, 11, 12]) {
+        abbrToFull.set(c.hash.slice(0, len), c.hash);
+      }
     }
 
     const branches: GitBranch[] = Object.entries(branchSummary.branches).map(
@@ -290,10 +296,41 @@ class GitService {
         commitHash: abbrToFull.get(info.commit) ?? info.commit,
         ahead: 0,
         behind: 0,
+        remotes: [] as string[],
       }),
     );
 
-    return { commits, branches };
+    // Compute remote tracking: for each local branch, find remotes that have it
+    const localBranches = branches.filter((b) => !b.remote);
+    const remoteBranches = branches.filter((b) => b.remote);
+    for (const local of localBranches) {
+      for (const remote of remoteBranches) {
+        // remotes/origin/main → remote="origin", branch="main"
+        const stripped = remote.name.replace(/^remotes\//, "");
+        const slashIdx = stripped.indexOf("/");
+        if (slashIdx < 0) continue;
+        const remoteName = stripped.slice(0, slashIdx);
+        const remoteBranchName = stripped.slice(slashIdx + 1);
+        if (remoteBranchName === local.name) {
+          local.remotes.push(remoteName);
+        }
+      }
+    }
+
+    // Get HEAD commit hash
+    let head = "";
+    try {
+      head = (await git.revparse(["HEAD"])).trim();
+    } catch {
+      // empty repo
+    }
+
+    return { commits, branches, head };
+  }
+
+  async fetch(projectPath: string, remote?: string): Promise<void> {
+    const args = remote ? [remote] : ["--all"];
+    await this.git(projectPath).fetch(args);
   }
 
   async discardChanges(projectPath: string, files: string[]): Promise<void> {
