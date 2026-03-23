@@ -130,9 +130,14 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         clearInterval(heartbeat);
         console.error(`[chat] session=${sessionId} SDK connection timeout after ${elapsed}s`);
         logSessionEvent(sessionId, "ERROR", `SDK connection timeout after ${elapsed}s — subprocess may have failed to start`);
+        const projectPath = entry?.projectPath ?? "";
+        const isWSL = projectPath.startsWith("/home/") || projectPath.startsWith("/mnt/");
+        const wslHint = isWSL
+          ? "\n\nWSL detected — this is likely a network issue. Try from your WSL terminal:\n  curl -s https://api.anthropic.com\nIf that fails, check WSL DNS settings (/etc/resolv.conf) or proxy configuration."
+          : "";
         safeSend(sessionId, {
           type: "error",
-          message: `Claude SDK failed to respond after ${elapsed}s. Check that "claude" CLI works in your terminal, or try: ppm start -f`,
+          message: `Claude SDK failed to respond after ${elapsed}s. The API may be unreachable from this machine.${wslHint}\n\nGeneral troubleshooting:\n• Check internet connectivity\n• Run \`claude\` in your terminal to verify it works\n• Try: ppm start -f`,
         });
         abortController.abort();
         return;

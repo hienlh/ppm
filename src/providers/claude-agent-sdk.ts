@@ -553,6 +553,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         yield { type: "account_info" as const, accountId: account.id, accountLabel: account.label ?? account.email ?? "Unknown" };
       }
       const queryEnv = this.buildQueryEnv(meta.projectPath, account);
+
+      // Pre-flight: warn if no credentials at all (avoids 2-minute silent timeout)
+      if (!account) {
+        const hasApiKey = !!(queryEnv.ANTHROPIC_API_KEY || queryEnv.CLAUDE_CODE_OAUTH_TOKEN);
+        if (!hasApiKey) {
+          console.warn(`[sdk] session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
+        }
+      }
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
       // TODO: Remove when TS SDK fixes Windows stdin pipe buffering (see queryDirectCli() JSDoc for tracking issues)
