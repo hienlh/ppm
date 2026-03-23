@@ -70,6 +70,7 @@ export async function restartServer(options: { config?: string }) {
   writeFileSync(workerPath, `
 import { readFileSync, writeFileSync, openSync, unlinkSync, appendFileSync } from "node:fs";
 import { createServer } from "node:net";
+import { spawnSync } from "node:child_process";
 
 // Ignore SIGHUP — when we kill the old server, the terminal PTY dies and
 // SIGHUP is sent to the entire process group. Without this, the worker
@@ -103,22 +104,47 @@ async function main() {
     await Bun.sleep(200);
   }
 
-  // Spawn new server
-  const logFd = openSync(P.ppmDir + "/ppm.log", "a");
-  const child = Bun.spawn({
-    cmd: [process.execPath, "run", P.serverScript, "__serve__", String(P.port), P.host, P.config],
-    stdio: ["ignore", logFd, logFd],
-    env: process.env,
-  });
-  child.unref();
+  // Spawn new server — on Windows use PowerShell Start-Process for true detach
+  // (Bun.spawn + unref on Windows keeps child in same job object → dies when worker exits)
+  let childPid: number;
+  const serverArgs = ["run", P.serverScript, "__serve__", String(P.port), P.host, P.config].filter(Boolean);
+
+  if (process.platform === "win32") {
+    const bunExe = process.execPath.replace(/\\\\/g, "\\\\\\\\");
+    const logPath = (P.ppmDir + "/ppm.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
+    const errPath = (P.ppmDir + "/ppm.err.log").replace(/\\//g, "\\\\").replace(/\\\\/g, "\\\\\\\\");
+    const argStr = serverArgs.map((a: string) => "'" + (a || "_") + "'").join(",");
+    const psCmd = "$p = Start-Process -PassThru -WindowStyle Hidden"
+      + " -FilePath '" + bunExe + "'"
+      + " -ArgumentList " + argStr
+      + " -RedirectStandardOutput '" + logPath + "'"
+      + " -RedirectStandardError '" + errPath + "'"
+      + "; Write-Output $p.Id";
+    const r = spawnSync("powershell", ["-NoProfile", "-Command", psCmd], { stdio: ["ignore", "pipe", "pipe"] });
+    childPid = parseInt(String(r.stdout).trim(), 10);
+    if (isNaN(childPid)) {
+      log("ERROR", "Failed to start server via PowerShell: " + String(r.stderr).trim());
+      writeResult(false, "Failed to start server on Windows");
+      process.exit(1);
+    }
+  } else {
+    const logFd = openSync(P.ppmDir + "/ppm.log", "a");
+    const child = Bun.spawn({
+      cmd: [process.execPath, ...serverArgs],
+      stdio: ["ignore", logFd, logFd],
+      env: process.env,
+    });
+    child.unref();
+    childPid = child.pid;
+  }
 
   // Update status.json with new PID, keep tunnel info
   try {
     const status = JSON.parse(readFileSync(P.statusFile, "utf-8"));
-    status.pid = child.pid;
+    status.pid = childPid;
     status.serverScript = P.serverScript;
     writeFileSync(P.statusFile, JSON.stringify(status));
-    writeFileSync(P.pidFile, String(child.pid));
+    writeFileSync(P.pidFile, String(childPid));
   } catch {}
 
   // Remove restarting flag
@@ -147,7 +173,7 @@ async function main() {
   } catch {}
 
   if (ready) {
-    let msg = "Restart complete (PID: " + child.pid + ", port: " + P.port + ")";
+    let msg = "Restart complete (PID: " + childPid + ", port: " + P.port + ")";
     if (shareUrl && tunnelPid) {
       msg += tunnelAlive ? " — tunnel alive" : " — tunnel dead, run 'ppm stop && ppm start --share'";
     }
@@ -155,7 +181,7 @@ async function main() {
     writeResult(true, msg);
   } else {
     let alive = false;
-    try { process.kill(child.pid, 0); alive = true; } catch {}
+    try { process.kill(childPid, 0); alive = true; } catch {}
     const msg = alive
       ? "Server started but not responding on port " + P.port + ". Check: ppm logs"
       : "Server crashed on startup. Check: ppm logs";
