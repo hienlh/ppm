@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.5] - 2026-03-23
+
+### Fixed
+- **Diagnostic error messages for project-specific failures**: When SDK returns `assistant error: unknown`, error now includes project path and exact `claude` CLI command to run for diagnosis
+- **Full SDK event dump on error**: Log complete assistant message JSON for debugging (visible in server logs)
+- **Removed broken session retry**: Retry-as-fresh-session didn't help since fresh sessions also fail for the same project — removed to avoid masking the real error
+
 ## [0.8.4] - 2026-03-23
 
 ### Fixed

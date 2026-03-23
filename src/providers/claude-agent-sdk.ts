@@ -799,47 +799,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
           const assistantError = (msg as any).error as string | undefined;
           if (assistantError) {
-            console.error(`[sdk] session=${sessionId} assistant error: ${assistantError} (isFirst=${isFirstMessage})`);
-            // If resuming an existing session and it errors → retry as fresh session
-            if (!isFirstMessage && retryCount < MAX_RETRIES) {
-              retryCount++;
-              console.warn(`[sdk] session=${sessionId} resume failed with assistant error "${assistantError}" — retrying as fresh session`);
-              yield { type: "text" as const, content: `Session resume failed (${assistantError}). Retrying with a fresh session...` };
-              // Re-create query without resume
-              const freshQ = query({
-                prompt: message,
-                options: {
-                  cwd: effectiveCwd,
-                  systemPrompt: systemPromptOpt,
-                  settingSources: ["user", "project"],
-                  env: queryEnv,
-                  settings: { permissions: { allow: [], deny: [] } },
-                  allowedTools,
-                  permissionMode,
-                  allowDangerouslySkipPermissions: isBypass,
-                  ...(permissionHooks && { hooks: permissionHooks }),
-                  ...(providerConfig.model && { model: providerConfig.model }),
-                  ...(providerConfig.effort && { effort: providerConfig.effort }),
-                  maxTurns: providerConfig.max_turns ?? 100,
-                  ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-                  ...(providerConfig.thinking_budget_tokens != null && {
-                    thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
-                  }),
-                  canUseTool,
-                  includePartialMessages: true,
-                } as any,
-              });
-              this.activeQueries.set(sessionId, freshQ);
-              eventSource = freshQ;
-              continue retryLoop;
-            }
+            // Dump full SDK message for debugging
+            console.error(`[sdk] session=${sessionId} cwd=${effectiveCwd} assistant error: ${assistantError} (isFirst=${isFirstMessage} retry=${retryCount})`);
+            console.error(`[sdk] assistant message dump: ${JSON.stringify(msg).slice(0, 2000)}`);
             const errorHints: Record<string, string> = {
               authentication_failed: "API authentication failed. Check your account credentials in Settings → Accounts.",
               billing_error: "Billing error on this account. Check your subscription status.",
               rate_limit: "Rate limited by the API. Please wait and try again.",
               invalid_request: "Invalid request sent to the API.",
               server_error: "Anthropic API server error. Try again shortly.",
-              unknown: "API connection failed. Possible causes: network unreachable, expired OAuth token, or API outage. Try: 1) Check connectivity (`curl -s https://api.anthropic.com`), 2) Re-add account in Settings, 3) Create a new chat session.",
+              unknown: `API error in project "${effectiveCwd}". Debug: run \`cd ${effectiveCwd} && claude -p "hi"\` in your terminal. If that also fails, the issue is Claude CLI auth or project config (.claude/ folder). Try: 1) \`claude login\`, 2) Remove .claude/settings.local.json, 3) Create a new chat session.`,
             };
             const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
             yield { type: "error", message: hint };
@@ -1020,7 +989,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       } // end retryLoop
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
-      console.error(`[sdk] error: ${msg}`);
+      console.error(`[sdk] session=${sessionId} cwd=${meta.projectPath} error: ${msg}`);
       if (msg.includes("abort") || msg.includes("closed")) {
         // User-initiated abort or WS closed — nothing to report
       } else if (!isFirstMessage && msg.includes("exited with code")) {
