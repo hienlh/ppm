@@ -231,6 +231,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 }
               }
             }
+            // Log error/result events for diagnostics
+            if (event.type === "error") {
+              console.error(`[sdk-cli] error event: ${JSON.stringify(event).slice(0, 1000)}`);
+            } else if (event.type === "result" && event.is_error) {
+              console.error(`[sdk-cli] result error: ${JSON.stringify(event).slice(0, 1000)}`);
+            }
             // Always yield the original event too (for init, result, rate_limit, etc.)
             yield event;
           } catch {
@@ -248,22 +254,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const exitCode = await proc.exited;
       console.log(`[sdk-cli] process exited: code=${exitCode}`);
 
-      // Read all stderr and surface error to frontend
-      if (exitCode !== 0) {
-        try {
-          const errReader = proc.stderr.getReader();
-          const stderrDecoder = new TextDecoder();
-          const errParts: string[] = [];
-          while (true) {
-            const { done, value } = await errReader.read();
-            if (done) break;
-            if (value) errParts.push(stderrDecoder.decode(value, { stream: true }));
-          }
-          const fullStderr = errParts.join("").trim();
-          if (fullStderr) {
-            // Actual error is at the END (minified source dump comes first)
-            console.error(`[sdk-cli] stderr (last 1500): ${fullStderr.slice(-1500)}`);
-            // Extract meaningful error line (e.g. "Error: ...", "TypeError: ...")
+      // Always read stderr for diagnostics (errors can occur even with exit code 0)
+      try {
+        const errReader = proc.stderr.getReader();
+        const stderrDecoder = new TextDecoder();
+        const errParts: string[] = [];
+        while (true) {
+          const { done, value } = await errReader.read();
+          if (done) break;
+          if (value) errParts.push(stderrDecoder.decode(value, { stream: true }));
+        }
+        const fullStderr = errParts.join("").trim();
+        if (fullStderr) {
+          console.error(`[sdk-cli] stderr (last 1500): ${fullStderr.slice(-1500)}`);
+          if (exitCode !== 0) {
             const errMatch = fullStderr.match(/\b(?:Error|TypeError|SyntaxError|ReferenceError|RangeError):\s*.+/);
             const errorMsg = errMatch ? errMatch[0].slice(0, 500) : fullStderr.slice(-300);
             yield {
@@ -272,8 +276,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               error: `CLI exited with code ${exitCode}: ${errorMsg}`,
             };
           }
-        } catch {}
-      }
+        }
+      } catch {}
     } finally {
       this.activeQueries.delete(opts.sessionId);
       try { proc.kill(); } catch {}

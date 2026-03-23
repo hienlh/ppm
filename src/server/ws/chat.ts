@@ -174,7 +174,9 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       } else if (evType === "tool_result") {
         logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
       } else if (evType === "error") {
-        logSessionEvent(sessionId, "ERROR", ev.message ?? JSON.stringify(ev).slice(0, 300));
+        const errorDetail = ev.message ?? JSON.stringify(ev).slice(0, 500);
+        console.error(`[chat] session=${sessionId} error: ${errorDetail}`);
+        logSessionEvent(sessionId, "ERROR", errorDetail);
       } else if (evType === "done") {
         logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
