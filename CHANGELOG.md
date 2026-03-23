@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.13] - 2026-03-24
+
+### Added
+- **Device name setting**: Editable device name in Settings UI — updates page title and syncs to PPM Cloud
+
 ## [0.8.12] - 2026-03-23
 
 ### Added
