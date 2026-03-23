@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
+import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
 import { ArrowUp, Square, Paperclip } from "lucide-react";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
@@ -44,7 +44,7 @@ interface MessageInputProps {
   onModeChange?: (mode: string) => void;
 }
 
-export function MessageInput({
+export const MessageInput = memo(function MessageInput({
   onSend,
   isStreaming,
   onCancel,
@@ -326,13 +326,9 @@ export function MessageInput({
   );
 
   const handleChange = useCallback(
-    (text: string) => {
+    (text: string, cursorPos: number) => {
       setValue(text);
-      // Use setTimeout to read cursor position after React processes the change
-      setTimeout(() => {
-        const cursorPos = textareaRef.current?.selectionStart ?? text.length;
-        updatePickerState(text, cursorPos);
-      }, 0);
+      updatePickerState(text, cursorPos);
     },
     [updatePickerState],
   );
@@ -402,7 +398,16 @@ export function MessageInput({
       {/* Rounded input container */}
       <div
         className="border border-border rounded-xl md:rounded-2xl bg-surface shadow-sm cursor-text"
-        onClick={() => !disabled && (mobileTextareaRef.current ?? textareaRef.current)?.focus()}
+        onClick={(e) => {
+          if (disabled) return;
+          // Only focus when clicking outside the textarea (e.g. padding area)
+          if (e.target instanceof HTMLTextAreaElement) return;
+          // Pick the visible textarea based on viewport width
+          const ta = window.matchMedia("(min-width: 768px)").matches
+            ? textareaRef.current
+            : mobileTextareaRef.current;
+          ta?.focus();
+        }}
       >
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
@@ -433,7 +438,7 @@ export function MessageInput({
           <textarea
             ref={mobileTextareaRef}
             value={value}
-            onChange={(e) => { handleChange(e.target.value); handleInput(e); }}
+            onChange={(e) => { handleChange(e.target.value, e.target.selectionStart); handleInput(e); }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onDrop={handleDrop}
@@ -468,7 +473,7 @@ export function MessageInput({
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => { handleChange(e.target.value); handleInput(e); }}
+            onChange={(e) => { handleChange(e.target.value, e.target.selectionStart); handleInput(e); }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onDrop={handleDrop}
@@ -530,7 +535,7 @@ export function MessageInput({
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
     </div>
   );
-}
+});
 
 /** Small chip showing current permission mode */
 function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {

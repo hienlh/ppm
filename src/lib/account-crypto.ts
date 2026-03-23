@@ -94,7 +94,7 @@ export function decryptWithPassword(blob: string, password: string): string {
 export function decrypt(encoded: string): string {
   const parts = encoded.split(":");
   if (parts.length !== 3) throw new Error("Invalid encrypted format");
-  const [ivHex, tagHex, ctHex] = parts;
+  const [ivHex, tagHex, ctHex] = parts as [string, string, string];
   const decipher = createDecipheriv(ALGO, getKey(), Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));
   return Buffer.concat([

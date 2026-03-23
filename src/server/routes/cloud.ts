@@ -68,7 +68,7 @@ cloudRoutes.post("/logout", (_c) => {
 
 /** POST /api/cloud/link — register device with cloud */
 cloudRoutes.post("/link", async (c) => {
-  const body = await c.req.json<{ name?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ name?: string }>().catch(() => ({} as { name?: string }));
 
   try {
     const device = await linkDevice(body.name);

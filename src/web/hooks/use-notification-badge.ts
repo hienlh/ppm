@@ -19,7 +19,7 @@ export function useNotificationBadge(): void {
   useEffect(() => {
     const update = () => {
       const unread = selectTotalUnread(useNotificationStore.getState());
-      document.title = buildTitle(unread, activeProject?.name, deviceName);
+      document.title = buildTitle(unread, activeProject?.name, deviceName ?? undefined);
       setFavicon(unread > 0);
     };
 

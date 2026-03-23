@@ -53,7 +53,7 @@ export interface AIProviderConfig {
   base_url?: string;
   // Agent SDK-specific settings (ignored by mock provider)
   model?: string;
-  effort?: "low" | "medium" | "high";
+  effort?: "low" | "medium" | "high" | "max";
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;

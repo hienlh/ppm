@@ -70,11 +70,11 @@ class AccountSelectorService {
     let pickedId: string;
     if (this.getStrategy() === "fill-first") {
       const sorted = [...active].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
-      pickedId = sorted[0].id;
+      pickedId = sorted[0]!.id;
     } else {
       // Round-robin
       this.cursor = this.cursor % active.length;
-      pickedId = active[this.cursor].id;
+      pickedId = active[this.cursor]!.id;
       this.cursor = (this.cursor + 1) % active.length;
     }
     this._lastPickedId = pickedId;

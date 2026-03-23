@@ -25,7 +25,8 @@ export type TerminalWsMessage =
 export type ChatWsClientMessage =
   | { type: "message"; content: string; permissionMode?: string }
   | { type: "cancel" }
-  | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown };
+  | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
+  | { type: "ready" };
 
 export type ChatWsServerMessage =
   | { type: "text"; content: string; parentToolUseId?: string }
