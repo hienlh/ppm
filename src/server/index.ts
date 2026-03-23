@@ -245,6 +245,8 @@ export async function startServer(options: {
     const script = resolvePath(import.meta.dir, "index.ts");
     // Keep positional order: port, host, config, profile (empty strings kept as placeholders)
     const args = ["__serve__", String(port), host, options.config ?? "", options.profile ?? ""];
+    // Windows PowerShell: strip trailing empty args to avoid ArgumentList validation error
+    while (args.length > 0 && args[args.length - 1] === "") args.pop();
 
     let childPid: number;
 
@@ -254,7 +256,8 @@ export async function startServer(options: {
       const bunExe = process.execPath.replace(/\\/g, "\\\\");
       const logEscaped = logFile.replace(/\\/g, "\\\\");
       const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
-      const argStr = ["run", script, ...args].map((a) => `'${a}'`).join(",");
+      // Use "_" placeholder for empty args — PowerShell rejects empty strings in ArgumentList
+      const argStr = ["run", script, ...args].map((a) => `'${a || "_"}'`).join(",");
       const psCmd = [
         `$p = Start-Process -PassThru -WindowStyle Hidden`,
         `-FilePath '${bunExe}'`,
@@ -455,8 +458,8 @@ if (process.argv.includes("__serve__")) {
   const idx = process.argv.indexOf("__serve__");
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
-  const configPath = process.argv[idx + 3] || undefined;
-  const profileArg = process.argv[idx + 4] || undefined;
+  const configPath = process.argv[idx + 3] && process.argv[idx + 3] !== "_" ? process.argv[idx + 3] : undefined;
+  const profileArg = process.argv[idx + 4] && process.argv[idx + 4] !== "_" ? process.argv[idx + 4] : undefined;
 
   // Set DB profile for daemon child — explicit --profile takes priority over config-path detection
   const { setDbProfile } = await import("../services/db.service.ts");
