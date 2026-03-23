@@ -18,7 +18,7 @@
     "start": "bun run src/index.ts start",
     "typecheck": "bunx tsc --noEmit",
     "prepublishOnly": "bun run build:web",
-    "postinstall": "echo 'postinstall done'"
+    "postinstall": "node scripts/patch-sdk.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",
