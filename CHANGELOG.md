@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.2] - 2026-03-23
+
+### Fixed
+- **Heartbeat during SDK connection**: Keep "Connecting... (Xs)" indicator alive until real content arrives — previously stopped by `account_info` event, causing misleading "thinking" state during 3-minute SDK failures
+- **Unknown API error hint**: "API error: unknown" now shows actionable guidance (check connectivity, re-add account, new session)
+
 ## [0.8.1] - 2026-03-23
 
 ### Fixed
