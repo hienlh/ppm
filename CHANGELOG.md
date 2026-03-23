@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0] - 2026-03-23
+
+### Added
+- **Permission mode selector**: 4 Claude Code modes (default/acceptEdits/plan/bypassPermissions) — per-session sticky mode with Shift+Tab cycling
+- **System prompt customization**: Global "Additional Instructions" textarea in AI Settings, threaded to SDK
+- **PreToolUse hook for permissions**: In-process hook handles tool approval for non-bypass modes — surfaces approval requests to frontend via WebSocket
+- **Git graph overhaul**: Modular components, infinite scroll, and lane recycling for improved performance
+
+### Improved
+- **Permission mode defaults**: Global default permission mode configurable in AI Settings
+- **Config validation**: System prompt max 10K chars, invalid permission_mode auto-sanitized
+- **Windows CLI fallback**: `--append-system-prompt` flag support
+
+### Fixed
+- **Mode selector dropdown**: Click-outside handler no longer closes dropdown before selection registers
+- **QR code dark theme**: White background with color-scheme:light to prevent dark mode inversion
+- **Cloud sign-in from UI**: Device code flow for web-based cloud login
+- **Cloud unlink/logout**: Confirm dialogs to prevent accidental disconnection
+
 ## [0.7.36] - 2026-03-23
 
 ### Added
