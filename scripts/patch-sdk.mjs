@@ -2,10 +2,13 @@
 /**
  * Postinstall patch for @anthropic-ai/claude-agent-sdk
  *
- * Fixes Windows stdin pipe buffering issue by adding drain() handling
- * to ProcessTransport.write(). Without this, stdin.write() can return
- * false (buffer full) but the SDK never waits for the drain event,
- * causing the CLI subprocess to hang on Windows + Bun.
+ * Fixes Windows stdin pipe buffering issue by:
+ * 1. Adding drain() handling to ProcessTransport.write()
+ * 2. Awaiting the initial prompt write in query() entry point
+ *
+ * Without these fixes, stdin.write() can return false (buffer full) but
+ * the SDK never waits for the drain event, causing the CLI subprocess to
+ * hang on Windows + Bun.
  *
  * Tracking issues:
  *   - TS SDK #44: https://github.com/anthropics/claude-agent-sdk-typescript/issues/44
@@ -31,107 +34,119 @@ if (!existsSync(sdkPath)) {
   process.exit(0);
 }
 
-const content = readFileSync(sdkPath, "utf8");
+let content = readFileSync(sdkPath, "utf8");
+let patches = 0;
 
-// Already patched?
+// ── Patch 1: ProcessTransport.write() — add drain handling ──
+
 if (content.includes("waiting for drain")) {
-  console.log("[patch-sdk] Already patched, skipping");
-  process.exit(0);
-}
-
-// Match the write() method using regex to handle different minified variable names.
-// Pattern anchors on stable string literals that won't change between builds:
-//   "Operation aborted", "ProcessTransport is not ready for writing",
-//   "Cannot write to terminated process", "Write buffer full, data queued"
-const writePattern = new RegExp(
-  // method signature: write(V){
-  "write\\(([A-Za-z_$][A-Za-z0-9_$]*)\\)\\{" +
-  // body up to and including the processStdin.write(V) backpressure check
-  "(?:(?!\\bwrite\\s*\\().)+" +       // non-greedy body (no nested write( method)
-  'if\\(!this\\.processStdin\\.write\\(\\1\\)\\)' +  // stdin.write(V) returns false
-  '([A-Za-z_$][A-Za-z0-9_$]*)\\(' +   // logger call: fn(
-  '"\\[ProcessTransport\\] Write buffer full, data queued"\\)' +
-  // rest of the catch block
-  "\\}catch\\(([A-Za-z_$][A-Za-z0-9_$]*)\\)\\{" +
-  "throw this\\.ready=!1," +
-  "Error\\(`Failed to write to process stdin: \\$\\{\\3\\.message\\}`\\)" +
-  "\\}\\}"
-);
-
-const match = content.match(writePattern);
-
-if (!match) {
-  // Fallback: try finding just the critical line and patch it surgically
-  const simplePattern =
+  console.log("[patch-sdk] Patch 1 (drain): already applied");
+} else {
+  // Surgical approach: find the backpressure line and patch it
+  const drainPattern =
     /if\(!this\.processStdin\.write\(([A-Za-z_$][A-Za-z0-9_$]*)\)\)([A-Za-z_$][A-Za-z0-9_$]*)\("\[ProcessTransport\] Write buffer full, data queued"\)/;
-  const simpleMatch = content.match(simplePattern);
+  const drainMatch = content.match(drainPattern);
 
-  if (!simpleMatch) {
-    console.warn(
-      "[patch-sdk] WARNING: Could not find write() pattern to patch — SDK version may have changed",
-    );
-    process.exit(0);
-  }
+  if (!drainMatch) {
+    console.warn("[patch-sdk] Patch 1 (drain): pattern not found, skipping");
+  } else {
+    const oldLine = drainMatch[0];
+    const arg = drainMatch[1];
+    const logger = drainMatch[2];
 
-  // Surgical patch: replace just the backpressure line
-  // Old: if(!this.processStdin.write(V))logger("...buffer full, data queued")
-  // New: if(!this.processStdin.write(V)){logger("...waiting for drain");await new Promise(_r=>this.processStdin.once("drain",_r))}
-  const oldLine = simpleMatch[0];
-  const arg = simpleMatch[1];
-  const logger = simpleMatch[2];
-  const newLine =
-    `if(!this.processStdin.write(${arg})){` +
-    `${logger}("[ProcessTransport] Write buffer full, waiting for drain");` +
-    `await new Promise(_r=>this.processStdin.once("drain",_r))}`;
+    // Replace backpressure line: await drain instead of just logging
+    const newLine =
+      `if(!this.processStdin.write(${arg})){` +
+      `${logger}("[ProcessTransport] Write buffer full, waiting for drain");` +
+      `await new Promise(_dr=>this.processStdin.once("drain",_dr))}`;
 
-  let patched = content.replace(oldLine, newLine);
+    content = content.replace(oldLine, newLine);
 
-  // Also make the method async — find "write(V){" just before this location
-  const writeIdx = content.indexOf(oldLine);
-  // Search backwards for the method declaration: write(X){
-  const before = content.substring(Math.max(0, writeIdx - 2000), writeIdx);
-  const methodDeclPattern = new RegExp(
-    `write\\(${arg}\\)\\{(?!.*write\\(${arg}\\)\\{)`,
-  );
-  const methodMatch = before.match(methodDeclPattern);
-
-  if (methodMatch) {
+    // Make the method async
+    const writeIdx = content.indexOf(newLine);
     const oldDecl = `write(${arg}){`;
-    const newDecl = `async write(${arg}){`;
-    // Replace only the first occurrence near the backpressure code
-    const declAbsIdx = content.lastIndexOf(oldDecl, writeIdx);
-    if (declAbsIdx >= 0) {
-      patched =
-        patched.substring(0, declAbsIdx) +
-        newDecl +
-        patched.substring(declAbsIdx + oldDecl.length);
+    const declIdx = content.lastIndexOf(oldDecl, writeIdx);
+    if (declIdx >= 0) {
+      content =
+        content.substring(0, declIdx) +
+        `async write(${arg}){` +
+        content.substring(declIdx + oldDecl.length);
     }
-  }
 
-  writeFileSync(sdkPath, patched, "utf8");
-  console.log(
-    "[patch-sdk] Patched ProcessTransport.write() with drain handling (surgical)",
-  );
-  process.exit(0);
+    patches++;
+    console.log("[patch-sdk] Patch 1 (drain): applied");
+  }
 }
 
-// Full pattern matched — replace the entire write() method
-const oldMethod = match[0];
-const arg = match[1];
-const logger = match[2];
-const catchVar = match[3];
+// ── Patch 2: Await initial prompt write in query() entry point ──
+// The query() function writes the user prompt to transport.write() without
+// awaiting. Since write() is now async (returns Promise on backpressure),
+// the prompt data can be lost on Windows where pipe buffers are small.
+//
+// Pattern (minified):
+//   if(typeof Q==="string")TRANSPORT.write(SERIALIZE({type:"user",...})+"\n");
+//   else QUERY.streamInput(Q);
+//
+// We need to await the write and make the surrounding context async-compatible.
+// Since write is fire-and-forget here (the Promise is dropped), we wrap it.
 
-const newMethod = oldMethod
-  // Make async
-  .replace(`write(${arg}){`, `async write(${arg}){`)
-  // Replace the backpressure line: log + await drain instead of just log
-  .replace(
-    `if(!this.processStdin.write(${arg}))${logger}("[ProcessTransport] Write buffer full, data queued")`,
-    `if(!this.processStdin.write(${arg})){${logger}("[ProcessTransport] Write buffer full, waiting for drain");await new Promise(_r=>this.processStdin.once("drain",_r))}`,
-  );
+if (content.includes("__ppm_await_write__")) {
+  console.log("[patch-sdk] Patch 2 (await prompt): already applied");
+} else {
+  // Match: TRANSPORT.write(SERIALIZE({type:"user",...})+`\n`);
+  // The newline delimiter can be either `\n` (template literal) or "\n" (string).
+  // Anchor on stable string literals: type:"user",session_id:"",message:{role:"user"
+  const promptWritePattern =
+    /([A-Za-z_$][A-Za-z0-9_$]*)\.write\(([A-Za-z_$][A-Za-z0-9_$]*)\(\{type:"user",session_id:"",message:\{role:"user",content:\[\{type:"text",text:([A-Za-z_$][A-Za-z0-9_$]*)\}\]\},parent_tool_use_id:null\}\)\+(?:`\n`|"\\n")\)/;
+  const promptMatch = content.match(promptWritePattern);
 
-const patched = content.replace(oldMethod, newMethod);
-writeFileSync(sdkPath, patched, "utf8");
-console.log(
-  "[patch-sdk] Patched ProcessTransport.write() with drain handling",
-);
+  if (!promptMatch) {
+    console.warn(
+      "[patch-sdk] Patch 2 (await prompt): pattern not found, skipping",
+    );
+  } else {
+    const oldPromptWrite = promptMatch[0];
+    // Wrap in an async IIFE to await the (now async) write
+    // Add marker __ppm_await_write__ for idempotency detection
+    const newPromptWrite =
+      `/*__ppm_await_write__*/await ${oldPromptWrite.replace(".write(", ".write(")}`;
+
+    content = content.replace(oldPromptWrite, newPromptWrite);
+
+    // The containing function must be async. Find the function that contains this code.
+    // It's typically: function FUNCNAME(Q,...){...if(typeof Q==="string")TRANSPORT.write...}
+    // We need to find "function" before this write and make it "async function"
+    const promptIdx = content.indexOf(newPromptWrite);
+    // Search backwards for the function declaration
+    const beforePrompt = content.substring(
+      Math.max(0, promptIdx - 5000),
+      promptIdx,
+    );
+    // Find last "function " that starts a function declaration (not inside another call)
+    const funcMatches = [...beforePrompt.matchAll(/\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)];
+    if (funcMatches.length > 0) {
+      const lastFunc = funcMatches[funcMatches.length - 1];
+      const funcStart = beforePrompt.lastIndexOf(lastFunc[0]);
+      const absIdx = Math.max(0, promptIdx - 5000) + funcStart;
+
+      // Only add async if not already async
+      const prefix = content.substring(Math.max(0, absIdx - 10), absIdx);
+      if (!prefix.includes("async")) {
+        content =
+          content.substring(0, absIdx) +
+          "async " +
+          content.substring(absIdx);
+      }
+    }
+
+    patches++;
+    console.log("[patch-sdk] Patch 2 (await prompt): applied");
+  }
+}
+
+if (patches > 0) {
+  writeFileSync(sdkPath, content, "utf8");
+  console.log(`[patch-sdk] Done — ${patches} patch(es) written`);
+} else {
+  console.log("[patch-sdk] No patches needed");
+}
