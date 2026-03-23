@@ -102,6 +102,22 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
         </div>
 
         <div className={fieldGap}>
+          <Label htmlFor="ai-base-url" className={compact ? labelSize : undefined}>Base URL</Label>
+          <Input
+            key={`baseurl-${revision}`}
+            id="ai-base-url"
+            type="url"
+            defaultValue={config?.base_url ?? ""}
+            placeholder="https://api.anthropic.com (default)"
+            className={compact ? "h-7 text-[11px]" : undefined}
+            onBlur={(e) => {
+              const val = e.target.value.trim();
+              handleSave("base_url", val || undefined);
+            }}
+          />
+        </div>
+
+        <div className={fieldGap}>
           <Label htmlFor="ai-effort" className={compact ? labelSize : undefined}>Effort</Label>
           <Select
             value={config?.effort ?? "high"}

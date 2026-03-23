@@ -46,6 +46,7 @@ export type PermissionMode = typeof VALID_PERMISSION_MODES[number];
 export interface AIProviderConfig {
   type: "agent-sdk" | "mock";
   api_key_env?: string;
+  base_url?: string;
   // Agent SDK-specific settings (ignored by mock provider)
   model?: string;
   effort?: "low" | "medium" | "high";
@@ -108,6 +109,13 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
   }
   if (config.permission_mode != null && !VALID_PERMISSION_MODES.includes(config.permission_mode as any)) {
     errors.push(`permission_mode must be one of: ${VALID_PERMISSION_MODES.join(", ")}`);
+  }
+  if (config.base_url != null) {
+    if (typeof config.base_url !== "string") {
+      errors.push("base_url must be a string");
+    } else if (config.base_url && !/^https?:\/\/.+/.test(config.base_url)) {
+      errors.push("base_url must be a valid HTTP(S) URL");
+    }
   }
   if (config.system_prompt != null) {
     if (typeof config.system_prompt !== "string") {

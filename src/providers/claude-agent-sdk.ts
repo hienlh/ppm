@@ -18,7 +18,6 @@ import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, existsSync } from "node:fs";
 
 function getSdkSessionId(ppmId: string): string {
   return getSessionMapping(ppmId) ?? ppmId;
@@ -50,58 +49,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   /** Fork source: ppmSessionId → sourceSessionId (used on first message to fork) */
   private forkSources = new Map<string, string>();
 
-  /** Auth-related env keys — priority: account > project .env > shell env */
+  /** Auth-related env keys for diagnostic logging */
   private readonly AUTH_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
 
   /**
-   * Parse project .env file and extract auth-related values.
-   * Returns actual values (not neutralized) so they can override shell env.
-   */
-  private parseProjectEnv(projectPath?: string): Record<string, string> {
-    if (!projectPath) return {};
-    try {
-      const envPath = resolve(projectPath, ".env");
-      if (!existsSync(envPath)) return {};
-      const content = readFileSync(envPath, "utf-8");
-      const parsed: Record<string, string> = {};
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) continue;
-        const eqIdx = trimmed.indexOf("=");
-        if (eqIdx < 0) continue;
-        const key = trimmed.slice(0, eqIdx).trim();
-        if (!this.AUTH_ENV_KEYS.includes(key)) continue;
-        // Strip surrounding quotes
-        let val = trimmed.slice(eqIdx + 1).trim();
-        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-          val = val.slice(1, -1);
-        }
-        parsed[key] = val;
-      }
-      return parsed;
-    } catch { return {}; }
-  }
-
-  /**
    * Build env for SDK query.
-   * Priority: PPM accounts > project .env > shell env.
-   *   - Account mode: inject account token, neutralize conflicting vars.
-   *     TODO: support base_url from PPM AI settings.
-   *   - No account: project .env overrides shell env for auth vars.
+   * Priority: PPM settings (accounts + base_url) > shell env.
+   * Project .env is intentionally NOT read — projects using Claude API
+   * have their own ANTHROPIC_API_KEY which would conflict with PPM's SDK auth.
    */
   private buildQueryEnv(
-    projectPath: string | undefined,
+    _projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
   ): Record<string, string | undefined> {
-    const projectEnv = this.parseProjectEnv(projectPath);
-    // Merge: shell env ← project .env (project wins)
-    const base = { ...process.env, ...projectEnv };
+    const base: Record<string, string | undefined> = { ...process.env };
+
+    // Settings base_url overrides shell env
+    const providerConfig = this.getProviderConfig();
+    if (providerConfig.base_url) {
+      base.ANTHROPIC_BASE_URL = providerConfig.base_url;
+      console.log(`[sdk] ANTHROPIC_BASE_URL from settings: ${providerConfig.base_url}`);
+    }
 
     // Log auth source for diagnostics
     for (const key of this.AUTH_ENV_KEYS) {
-      if (projectEnv[key]) {
-        console.log(`[sdk] ${key} from project .env (length=${projectEnv[key].length})`);
-      } else if (process.env[key]) {
+      if (key === "ANTHROPIC_BASE_URL" && providerConfig.base_url) continue;
+      if (process.env[key]) {
         console.log(`[sdk] ${key} from shell env (length=${process.env[key]!.length})`);
       }
     }
@@ -110,7 +83,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // Account mode: account token takes highest priority
     const isOAuthToken = account.accessToken.startsWith("sk-ant-oat");
-    // TODO: support base_url from PPM AI provider settings
     if (isOAuthToken) {
       return {
         ...base,

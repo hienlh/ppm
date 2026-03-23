@@ -121,6 +121,7 @@ export function importAccounts(params: { data: string; password: string }): Prom
 export interface AIProviderSettings {
   type?: string;
   api_key_env?: string;
+  base_url?: string;
   model?: string;
   effort?: string;
   max_turns?: number;

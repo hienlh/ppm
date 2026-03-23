@@ -2,10 +2,13 @@
 
 ## [0.8.7] - 2026-03-23
 
+### Added
+- **Base URL setting**: Configurable `ANTHROPIC_BASE_URL` in Settings → AI Provider. Highest priority — overrides project `.env` and shell env.
+
 ### Fixed
-- **Auth env priority chain**: Properly resolve auth env vars with priority: PPM accounts > project `.env` > shell env. Previously project `.env` vars were neutralized (set empty) instead of parsed and used as overrides.
-- **Env var diagnostics in timeout/error messages**: When SDK hangs or returns `unknown` error, error message guides user to check `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` env vars with exact debug commands
-- **Auth source logging**: Log which source each auth var comes from (project .env vs shell env) — helps diagnose SDK hangs
+- **Auth env priority chain**: Priority: PPM settings > PPM accounts > project `.env` > shell env. Project `.env` now properly parsed and used as override instead of being neutralized.
+- **Env var diagnostics**: Timeout and error messages guide users to check `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` env vars with exact debug commands
+- **Auth source logging**: Log which source each auth var comes from — helps diagnose SDK hangs
 
 ## [0.8.6] - 2026-03-23
 
