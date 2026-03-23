@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.1] - 2026-03-23
+
+### Fixed
+- **Silent timeout on account decrypt failure**: When all account tokens fail decryption (e.g. different machine key in WSL), now shows actionable error instead of 120s silent timeout
+- **SDK error extraction**: Use `errors: string[]` array per SDK spec instead of non-existent singular `error` field — previously swallowed error details
+- **Assistant message error detection**: Handle `SDKAssistantMessage.error` field for `authentication_failed`, `billing_error`, `rate_limit`, `server_error` per SDK spec
+- **Empty success detection**: Detect SDK returning `success` with 0 turns and no content as silent failure, surface guidance to user
+- **Network error hints**: Add WSL-specific hints for ConnectionRefused, auth failures, and connectivity issues
+
 ## [0.8.0] - 2026-03-23
 
 ### Added
