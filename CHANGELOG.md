@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.12] - 2026-03-23
+
+### Added
+- **Execution mode setting**: Configurable `execution_mode` (sdk/cli) in Settings → AI Provider — replaces hardcoded Windows platform check
+
+### Changed
+- **claude-agent-sdk**: Bump from 0.2.76 to 0.2.81
+
 ## [0.8.11] - 2026-03-23
 
 ### Fixed
