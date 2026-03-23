@@ -688,6 +688,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           yield approvalEvents.shift()!;
         }
 
+        // Log all system events for debugging SDK lifecycle
+        if (msg.type === "system") {
+          console.log(`[sdk] session=${sessionId} system: subtype=${(msg as any).subtype ?? "none"} ${JSON.stringify(msg).slice(0, 500)}`);
+        }
+
         // Capture SDK session metadata from init message
         if (msg.type === "system" && (msg as any).subtype === "init") {
           const initMsg = msg as any;

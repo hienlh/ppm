@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.6] - 2026-03-23
+
+### Fixed
+- **Actionable timeout error**: Timeout error now shows project path, exact `claude -p "hi"` debug command, and steps to check hooks/MCP/settings
+- **SDK lifecycle logging**: All SDK `system` events (hook_started, init, etc.) now logged with full JSON — helps diagnose where SDK hangs
+
 ## [0.8.5] - 2026-03-23
 
 ### Fixed

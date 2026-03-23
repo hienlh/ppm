@@ -135,9 +135,10 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         const wslHint = isWSL
           ? "\n\nWSL detected — this is likely a network issue. Try from your WSL terminal:\n  curl -s https://api.anthropic.com\nIf that fails, check WSL DNS settings (/etc/resolv.conf) or proxy configuration."
           : "";
+        const debugCmd = projectPath ? `cd ${projectPath} && claude -p "hi"` : `claude -p "hi"`;
         safeSend(sessionId, {
           type: "error",
-          message: `Claude SDK failed to respond after ${elapsed}s. The API may be unreachable from this machine.${wslHint}\n\nGeneral troubleshooting:\n• Check internet connectivity\n• Run \`claude\` in your terminal to verify it works\n• Try: ppm start -f`,
+          message: `Claude SDK timed out after ${elapsed}s for project "${projectPath || "(no project)"}".${wslHint}\n\nDebug steps:\n1. Run in your terminal: \`${debugCmd}\`\n2. Check for hanging hooks/MCP servers: \`cat ${projectPath}/.claude/settings.local.json\`\n3. Try removing project Claude config: \`mv ${projectPath}/.claude ${projectPath}/.claude.bak\`\n4. If none of the above helps, try: \`claude login\` to refresh auth`,
         });
         abortController.abort();
         return;
