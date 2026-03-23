@@ -371,29 +371,44 @@ export const chatWebSocket = {
       entry0.ws = ws;
     }
 
-    const entry = activeSessions.get(sessionId);
-    const providerId = entry?.providerId ?? providerRegistry.getDefault().id;
+    let entry = activeSessions.get(sessionId);
+
+    // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
+    if (!entry) {
+      const { projectName: pn } = ws.data;
+      const session = chatService.getSession(sessionId);
+      const pid = session?.providerId ?? providerRegistry.getDefault().id;
+      let pp: string | undefined;
+      if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
+      const pi = setInterval(() => {
+        try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* ws may be closed */ }
+      }, PING_INTERVAL_MS);
+      activeSessions.set(sessionId, {
+        providerId: pid, ws, projectPath: pp, projectName: pn,
+        pingInterval: pi, isStreaming: false, needsCatchUp: false, catchUpText: "",
+      });
+      entry = activeSessions.get(sessionId)!;
+      console.log(`[chat] session=${sessionId} auto-created entry in message handler`);
+    }
+
+    const providerId = entry.providerId ?? providerRegistry.getDefault().id;
 
     // Client-initiated handshake — FE sends "ready" after onopen.
     // Re-send status so tunnel connections (Cloudflare) that missed the
     // open-handler message still get connected/status confirmation.
     if (parsed.type === "ready") {
-      if (entry) {
-        ws.send(JSON.stringify({
-          type: "status",
-          sessionId,
-          isStreaming: entry.isStreaming,
-          pendingApproval: entry.pendingApprovalEvent ?? null,
-        }));
-      } else {
-        ws.send(JSON.stringify({ type: "connected", sessionId }));
-      }
+      ws.send(JSON.stringify({
+        type: "status",
+        sessionId,
+        isStreaming: entry.isStreaming,
+        pendingApproval: entry.pendingApprovalEvent ?? null,
+      }));
       return;
     }
 
     if (parsed.type === "message") {
       // Store permission mode — sticky for this session
-      if (parsed.permissionMode && entry) {
+      if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
       }
 
@@ -412,12 +427,12 @@ export const chatWebSocket = {
           logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
         }
       }
-      if (entry?.projectPath && provider && "ensureProjectPath" in provider) {
+      if (entry.projectPath && provider && "ensureProjectPath" in provider) {
         (provider as any).ensureProjectPath(sessionId, entry.projectPath);
       }
 
       // If already streaming, abort current query first and wait for cleanup
-      if (entry?.isStreaming && entry.abort) {
+      if (entry.isStreaming && entry.abort) {
         console.log(`[chat] session=${sessionId} aborting current query for new message`);
         entry.abort.abort();
         // Wait for stream loop to finish cleanup
@@ -428,16 +443,11 @@ export const chatWebSocket = {
 
       // Store promise reference on entry to prevent GC from collecting the async operation.
       // Use setTimeout(0) to detach from WS handler's async scope.
-      if (entry) {
-        entry.streamPromise = new Promise<void>((resolve) => {
-          setTimeout(() => {
-            runStreamLoop(sessionId, providerId, parsed.content, entry.permissionMode).then(resolve, resolve);
-          }, 0);
-        });
-      } else {
-        console.warn(`[chat] session=${sessionId} no entry when starting stream loop — message may have arrived before open()`);
-        setTimeout(() => runStreamLoop(sessionId, providerId, parsed.content), 0);
-      }
+      entry.streamPromise = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          runStreamLoop(sessionId, providerId, parsed.content, entry.permissionMode).then(resolve, resolve);
+        }, 0);
+      });
     } else if (parsed.type === "cancel") {
       const provider = providerRegistry.get(providerId);
       if (provider && "abortQuery" in provider && typeof (provider as any).abortQuery === "function") {

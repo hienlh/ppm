@@ -427,36 +427,51 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ? { type: "custom" as const, value: providerConfig.system_prompt }
       : { type: "preset" as const, preset: "claude_code" as const };
 
+    // Build allowedTools based on permission mode.
+    // SDK auto-approves everything in allowedTools (skips canUseTool callback).
+    // In non-bypass modes, only pre-approve read-only tools so write/execute tools
+    // go through the permission evaluation chain → canUseTool callback.
+    const readOnlyTools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
+    const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
+    const allowedTools = isBypass
+      ? [...readOnlyTools, ...writeTools]
+      : readOnlyTools;
+
     /**
      * Approval events to yield from the generator.
-     * canUseTool pushes events here; the main loop yields them.
+     * PreToolUse hook pushes events here; the main loop yields them.
      */
     const approvalEvents: ChatEvent[] = [];
     let approvalNotify: (() => void) | undefined;
 
     /**
-     * canUseTool: handles tool approval based on permission mode.
-     * AskUserQuestion always surfaces to FE. Other tools: auto-approve in bypass, else ask FE.
+     * Helper: send approval request to FE and wait for response.
+     */
+    const waitForApproval = (toolName: string, input: unknown): Promise<{ approved: boolean; data?: unknown }> => {
+      const requestId = crypto.randomUUID();
+      const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+      const promise = new Promise<{ approved: boolean; data?: unknown }>((resolve) => {
+        this.pendingApprovals.set(requestId, { resolve });
+        setTimeout(() => {
+          if (this.pendingApprovals.has(requestId)) {
+            this.pendingApprovals.delete(requestId);
+            resolve({ approved: false });
+          }
+        }, APPROVAL_TIMEOUT_MS);
+      });
+      approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
+      approvalNotify?.();
+      return promise;
+    };
+
+    /**
+     * canUseTool: handles AskUserQuestion (always surfaces to FE regardless of mode).
+     * Tool permission for Write/Edit/Bash is handled by the PreToolUse hook below.
      */
     const canUseTool = async (toolName: string, input: unknown) => {
-      // AskUserQuestion: always show to user regardless of mode
+      console.log(`[sdk] canUseTool called: tool=${toolName} permissionMode=${permissionMode}`);
       if (toolName === "AskUserQuestion") {
-        const requestId = crypto.randomUUID();
-        const APPROVAL_TIMEOUT_MS = 5 * 60_000;
-        const approvalPromise = new Promise<{ approved: boolean; data?: unknown }>(
-          (resolve) => {
-            this.pendingApprovals.set(requestId, { resolve });
-            setTimeout(() => {
-              if (this.pendingApprovals.has(requestId)) {
-                this.pendingApprovals.delete(requestId);
-                resolve({ approved: false });
-              }
-            }, APPROVAL_TIMEOUT_MS);
-          },
-        );
-        approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
-        approvalNotify?.();
-        const result = await approvalPromise;
+        const result = await waitForApproval(toolName, input);
         if (result.approved && result.data) {
           return {
             behavior: "allow" as const,
@@ -465,32 +480,43 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         }
         return { behavior: "deny" as const, message: "User skipped the question" };
       }
+      return { behavior: "allow" as const, updatedInput: input };
+    };
 
-      // Bypass mode: auto-approve everything
-      if (isBypass) {
-        return { behavior: "allow" as const, updatedInput: input };
+    /**
+     * PreToolUse hook: runs FIRST in SDK evaluation order (Hooks → Deny → PermMode → Allow → canUseTool).
+     * User settings hooks (scout-block, etc.) return exit 0 → SDK treats as "allow", preventing canUseTool.
+     * This in-process hook handles permission mode decisions before external hooks auto-approve.
+     */
+    const preToolUseHook = async (hookInput: any) => {
+      const toolName = hookInput?.tool_name as string | undefined;
+      if (!toolName) return {};
+      console.log(`[sdk] preToolUseHook: tool=${toolName} permissionMode=${permissionMode} isBypass=${isBypass}`);
+
+      // Bypass mode: allow everything
+      if (isBypass) return {};
+
+      // Read-only tools: always allow
+      if (readOnlyTools.includes(toolName)) return {};
+
+      // AskUserQuestion: handled by canUseTool callback
+      if (toolName === "AskUserQuestion") return {};
+
+      // Non-bypass mode: ask FE for approval on write/execute tools
+      const result = await waitForApproval(toolName, hookInput?.tool_input);
+      if (result.approved) {
+        return { hookSpecificOutput: { permissionDecision: "allow" } };
       }
+      return { hookSpecificOutput: { permissionDecision: "deny", message: "User denied tool execution" } };
+    };
 
-      // Non-bypass modes: surface approval request to FE
-      const requestId = crypto.randomUUID();
-      const APPROVAL_TIMEOUT_MS = 5 * 60_000;
-      const approvalPromise = new Promise<{ approved: boolean; data?: unknown }>(
-        (resolve) => {
-          this.pendingApprovals.set(requestId, { resolve });
-          setTimeout(() => {
-            if (this.pendingApprovals.has(requestId)) {
-              this.pendingApprovals.delete(requestId);
-              resolve({ approved: false });
-            }
-          }, APPROVAL_TIMEOUT_MS);
-        },
-      );
-      approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
-      approvalNotify?.();
-      const result = await approvalPromise;
-      return result.approved
-        ? { behavior: "allow" as const, updatedInput: input }
-        : { behavior: "deny" as const, message: "User denied tool execution" };
+    // Hooks config: add our permission hook for non-bypass modes
+    const permissionHooks = isBypass ? undefined : {
+      PreToolUse: [{
+        matcher: ".*",  // Match all tools — our hook checks internally
+        hooks: [preToolUseHook],
+        timeout: 300,  // 5min for user approval
+      }],
     };
 
     let assistantContent = "";
@@ -513,7 +539,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         yield { type: "account_info" as const, accountId: account.id, accountLabel: account.label ?? account.email ?? "Unknown" };
       }
       const queryEnv = this.buildQueryEnv(meta.projectPath, account);
-      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account}`);
+      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
       // TODO: Remove when TS SDK fixes Windows stdin pipe buffering (see queryDirectCli() JSDoc for tracking issues)
       // On Windows, SDK query() hangs because Bun subprocess stdin pipe never flushes to child process.
@@ -559,13 +585,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             settingSources: ["user", "project"],
             env: queryEnv,
             settings: { permissions: { allow: [], deny: [] } },
-            allowedTools: [
-              "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-              "WebSearch", "WebFetch", "AskUserQuestion",
-              "Agent", "Skill", "TodoWrite", "ToolSearch",
-            ],
+            allowedTools,
             permissionMode,
             allowDangerouslySkipPermissions: isBypass,
+            ...(permissionHooks && { hooks: permissionHooks }),
             ...(providerConfig.model && { model: providerConfig.model }),
             ...(providerConfig.effort && { effort: providerConfig.effort }),
             maxTurns: providerConfig.max_turns ?? 100,
@@ -614,13 +637,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   settingSources: ["user", "project"],
                   env: queryEnv,
                   settings: { permissions: { allow: [], deny: [] } },
-                  allowedTools: [
-                    "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-                    "WebSearch", "WebFetch", "AskUserQuestion",
-                    "Agent", "Skill", "TodoWrite", "ToolSearch",
-                  ],
+                  allowedTools,
                   permissionMode,
                   allowDangerouslySkipPermissions: isBypass,
+                  ...(permissionHooks && { hooks: permissionHooks }),
                   ...(providerConfig.model && { model: providerConfig.model }),
                   ...(providerConfig.effort && { effort: providerConfig.effort }),
                   maxTurns: providerConfig.max_turns ?? 100,
@@ -925,13 +945,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               settingSources: ["user", "project"],
               env: queryEnv,
               settings: { permissions: { allow: [], deny: [] } },
-              allowedTools: [
-                "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-                "WebSearch", "WebFetch", "AskUserQuestion",
-                "Agent", "Skill", "TodoWrite", "ToolSearch",
-              ],
+              allowedTools,
               permissionMode,
               allowDangerouslySkipPermissions: isBypass,
+              ...(permissionHooks && { hooks: permissionHooks }),
               ...(providerConfig.model && { model: providerConfig.model }),
               maxTurns: providerConfig.max_turns ?? 100,
               canUseTool,
