@@ -799,6 +799,40 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
           const assistantError = (msg as any).error as string | undefined;
           if (assistantError) {
+            console.error(`[sdk] session=${sessionId} assistant error: ${assistantError} (isFirst=${isFirstMessage})`);
+            // If resuming an existing session and it errors → retry as fresh session
+            if (!isFirstMessage && retryCount < MAX_RETRIES) {
+              retryCount++;
+              console.warn(`[sdk] session=${sessionId} resume failed with assistant error "${assistantError}" — retrying as fresh session`);
+              yield { type: "text" as const, content: `Session resume failed (${assistantError}). Retrying with a fresh session...` };
+              // Re-create query without resume
+              const freshQ = query({
+                prompt: message,
+                options: {
+                  cwd: effectiveCwd,
+                  systemPrompt: systemPromptOpt,
+                  settingSources: ["user", "project"],
+                  env: queryEnv,
+                  settings: { permissions: { allow: [], deny: [] } },
+                  allowedTools,
+                  permissionMode,
+                  allowDangerouslySkipPermissions: isBypass,
+                  ...(permissionHooks && { hooks: permissionHooks }),
+                  ...(providerConfig.model && { model: providerConfig.model }),
+                  ...(providerConfig.effort && { effort: providerConfig.effort }),
+                  maxTurns: providerConfig.max_turns ?? 100,
+                  ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
+                  ...(providerConfig.thinking_budget_tokens != null && {
+                    thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
+                  }),
+                  canUseTool,
+                  includePartialMessages: true,
+                } as any,
+              });
+              this.activeQueries.set(sessionId, freshQ);
+              eventSource = freshQ;
+              continue retryLoop;
+            }
             const errorHints: Record<string, string> = {
               authentication_failed: "API authentication failed. Check your account credentials in Settings → Accounts.",
               billing_error: "Billing error on this account. Check your subscription status.",
@@ -808,7 +842,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               unknown: "API connection failed. Possible causes: network unreachable, expired OAuth token, or API outage. Try: 1) Check connectivity (`curl -s https://api.anthropic.com`), 2) Re-add account in Settings, 3) Create a new chat session.",
             };
             const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
-            console.error(`[sdk] session=${sessionId} assistant error: ${assistantError}`);
             yield { type: "error", message: hint };
           }
           const content = (msg as any).message?.content;

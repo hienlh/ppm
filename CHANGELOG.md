@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.4] - 2026-03-23
+
+### Fixed
+- **Poisoned session auto-recovery**: When resuming an existing SDK session fails with an assistant error (e.g. `unknown`), automatically retry as a fresh session instead of hanging for minutes — fixes projects stuck on a bad session
+
 ## [0.8.3] - 2026-03-23
 
 ### Fixed
