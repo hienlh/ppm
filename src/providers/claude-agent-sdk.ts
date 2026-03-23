@@ -106,7 +106,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     if (!event || typeof event !== "object") return null;
     const e = event as Record<string, unknown>;
     if (e.type === "result" && e.subtype === "error_during_execution") {
-      const msg = String(e.error ?? e.error_message ?? e.message ?? "");
+      // SDK uses `errors: string[]` array for error details
+      const errorsArr = Array.isArray(e.errors) ? (e.errors as string[]).join(" ") : "";
+      const msg = errorsArr || String(e.error ?? "");
       if (msg.includes("429") || msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("overloaded")) return 429;
       if (msg.includes("401") || msg.toLowerCase().includes("unauthorized") || msg.toLowerCase().includes("invalid api key")) return 401;
     }
@@ -533,7 +535,19 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // Account-based auth injection (multi-account mode)
       // Fallback to existing env (ANTHROPIC_API_KEY) when no accounts configured.
-      const account = accountSelector.isEnabled() ? accountSelector.next() : null;
+      const accountsEnabled = accountSelector.isEnabled();
+      const account = accountsEnabled ? accountSelector.next() : null;
+      if (accountsEnabled && !account) {
+        // All accounts in DB but none usable
+        const reason = accountSelector.lastFailReason;
+        const hint = reason === "all_decrypt_failed"
+          ? "Account tokens were encrypted with a different machine key. Re-add your accounts in Settings, or copy ~/.ppm/account.key from the original machine."
+          : "All accounts are disabled or in cooldown. Check Settings → Accounts.";
+        console.error(`[sdk] session=${sessionId} account auth failed (${reason}): ${hint}`);
+        yield { type: "error" as const, message: `Authentication failed: ${hint}` };
+        yield { type: "done" as const, sessionId, resultSubtype: "error_auth" };
+        return;
+      }
       if (account) {
         console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"})`);
         yield { type: "account_info" as const, accountId: account.id, accountLabel: account.label ?? account.email ?? "Unknown" };
@@ -774,6 +788,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
         // Full assistant message
         if (msg.type === "assistant") {
+          // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
+          const assistantError = (msg as any).error as string | undefined;
+          if (assistantError) {
+            const errorHints: Record<string, string> = {
+              authentication_failed: "API authentication failed. Check your account credentials in Settings → Accounts.",
+              billing_error: "Billing error on this account. Check your subscription status.",
+              rate_limit: "Rate limited by the API. Please wait and try again.",
+              invalid_request: "Invalid request sent to the API.",
+              server_error: "Anthropic API server error. Try again shortly.",
+            };
+            const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
+            console.error(`[sdk] session=${sessionId} assistant error: ${assistantError}`);
+            yield { type: "error", message: hint };
+          }
           const content = (msg as any).message?.content;
           if (Array.isArray(content)) {
             for (const block of content) {
@@ -875,9 +903,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
           // Surface non-success subtypes as errors so FE can display them
           if (subtype && subtype !== "success") {
-            // Extract error detail from SDK result — check multiple possible fields
-            const sdkError = result.error ?? result.error_message ?? result.message ?? result.reason ?? "";
-            const sdkDetail = typeof sdkError === "string" ? sdkError : JSON.stringify(sdkError);
+            // SDK error results use `errors: string[]` array (not singular `error`)
+            const errorsArr = Array.isArray(result.errors) ? result.errors : [];
+            const sdkDetail = errorsArr.length > 0
+              ? errorsArr.join("\n")
+              : (typeof result.error === "string" ? result.error : "");
             // Log full result for debugging (truncated at 2000 chars)
             console.error(`[sdk] result error: subtype=${subtype} turns=${result.num_turns ?? 0} detail=${sdkDetail || "(none)"}`);
             console.error(`[sdk] result full dump: ${JSON.stringify(result).slice(0, 2000)}`);
@@ -887,11 +917,33 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               error_during_execution: "Agent encountered an error during execution.",
             };
             const baseMsg = errorMessages[subtype] ?? `Agent stopped: ${subtype}`;
-            const fullMsg = sdkDetail ? `${baseMsg}\n${sdkDetail}` : baseMsg;
+            // Add specific hints for common network/auth errors
+            const detailLower = sdkDetail.toLowerCase();
+            let hint = "";
+            if (detailLower.includes("connectionrefused") || detailLower.includes("connection refused") || detailLower.includes("econnrefused")) {
+              hint = "\n\nHint: Cannot reach Anthropic API. If running in WSL, check DNS/proxy settings (e.g. `curl -s https://api.anthropic.com` from WSL terminal).";
+            } else if (detailLower.includes("unable to connect")) {
+              hint = "\n\nHint: Network connectivity issue. Check your internet connection and firewall/proxy settings.";
+            } else if (detailLower.includes("401") || detailLower.includes("unauthorized") || detailLower.includes("invalid api key")) {
+              hint = "\n\nHint: Authentication failed. Try re-adding your account in Settings → Accounts.";
+            }
+            const fullMsg = sdkDetail ? `${baseMsg}\n${sdkDetail}${hint}` : baseMsg;
             yield {
               type: "error",
               message: fullMsg,
             };
+          }
+
+          // Detect empty/suspicious success — SDK returned "success" but no real assistant content
+          if ((!subtype || subtype === "success") && (result.num_turns ?? 0) === 0 && !assistantContent) {
+            // SDK success result has `result: string` containing final text
+            const resultText = typeof result.result === "string" ? result.result : "";
+            console.warn(`[sdk] session=${sessionId} result success but 0 turns, no assistant content, result="${resultText.slice(0, 200)}"`);
+            console.warn(`[sdk] result dump: ${JSON.stringify(result).slice(0, 2000)}`);
+            const hint = resultText
+              ? `Claude returned: "${resultText}"\nThis may indicate a session or connection issue. Try creating a new chat session.`
+              : "Claude returned no response (0 turns). This usually means the API connection failed silently. Check that `claude` CLI works in your terminal, or try creating a new chat session.";
+            yield { type: "error", message: hint };
           }
 
           // Store subtype and numTurns for the done event
@@ -961,7 +1013,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (retryMsg.type === "result") {
               const r = retryMsg as any;
               if (r.subtype && r.subtype !== "success") {
-                yield { type: "error", message: r.error ?? `Agent stopped: ${r.subtype}` };
+                const retryErrors = Array.isArray(r.errors) ? r.errors.join("\n") : "";
+                yield { type: "error", message: retryErrors || `Agent stopped: ${r.subtype}` };
               }
               resultSubtype = r.subtype;
               resultNumTurns = r.num_turns;

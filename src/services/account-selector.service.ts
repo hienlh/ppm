@@ -36,11 +36,20 @@ class AccountSelectorService {
     setConfigValue(MAX_RETRY_CONFIG_KEY, String(n));
   }
 
+  /** Reason for the last null return from next() */
+  private _lastFailReason: "none" | "no_active" | "all_decrypt_failed" = "none";
+
+  /** Why the last next() call returned null */
+  get lastFailReason(): "none" | "no_active" | "all_decrypt_failed" {
+    return this._lastFailReason;
+  }
+
   /**
    * Pick next available account (skips cooldown/disabled).
    * Returns null if no active accounts available.
    */
   next(): AccountWithTokens | null {
+    this._lastFailReason = "none";
     const now = Math.floor(Date.now() / 1000);
     const allAccounts = accountService.list();
 
@@ -53,7 +62,10 @@ class AccountSelectorService {
     }
 
     const active = accountService.list().filter((a) => a.status === "active");
-    if (active.length === 0) return null;
+    if (active.length === 0) {
+      this._lastFailReason = "no_active";
+      return null;
+    }
 
     let pickedId: string;
     if (this.getStrategy() === "fill-first") {
@@ -66,7 +78,11 @@ class AccountSelectorService {
       this.cursor = (this.cursor + 1) % active.length;
     }
     this._lastPickedId = pickedId;
-    return accountService.getWithTokens(pickedId);
+    const result = accountService.getWithTokens(pickedId);
+    if (!result) {
+      this._lastFailReason = "all_decrypt_failed";
+    }
+    return result;
   }
 
   /** Called when account receives 429 — apply exponential backoff */

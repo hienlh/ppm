@@ -79,7 +79,8 @@ export type ResultSubtype =
   | "success"
   | "error_max_turns"
   | "error_max_budget_usd"
-  | "error_during_execution";
+  | "error_during_execution"
+  | "error_auth";
 
 export type ChatEvent =
   | { type: "text"; content: string; parentToolUseId?: string }
