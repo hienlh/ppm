@@ -43,8 +43,12 @@ export interface AIConfig {
 const VALID_PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
 export type PermissionMode = typeof VALID_PERMISSION_MODES[number];
 
+const VALID_EXECUTION_MODES = ["sdk", "cli"] as const;
+export type ExecutionMode = typeof VALID_EXECUTION_MODES[number];
+
 export interface AIProviderConfig {
   type: "agent-sdk" | "mock";
+  execution_mode?: ExecutionMode;
   api_key_env?: string;
   base_url?: string;
   // Agent SDK-specific settings (ignored by mock provider)
@@ -69,6 +73,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
     providers: {
       claude: {
         type: "agent-sdk",
+        execution_mode: "sdk",
         api_key_env: "ANTHROPIC_API_KEY",
         model: "claude-sonnet-4-6",
         effort: "high",
@@ -91,6 +96,9 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
   const errors: string[] = [];
   if (config.type != null && !VALID_TYPES.includes(config.type as any)) {
     errors.push(`type must be one of: ${VALID_TYPES.join(", ")}`);
+  }
+  if (config.execution_mode != null && !VALID_EXECUTION_MODES.includes(config.execution_mode as any)) {
+    errors.push(`execution_mode must be one of: ${VALID_EXECUTION_MODES.join(", ")}`);
   }
   if (config.model != null && !VALID_MODELS.includes(config.model as any)) {
     errors.push(`model must be one of: ${VALID_MODELS.join(", ")}`);

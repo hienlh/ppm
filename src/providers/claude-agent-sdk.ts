@@ -565,9 +565,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
-      // TODO: Remove when TS SDK fixes Windows stdin pipe buffering (see queryDirectCli() JSDoc for tracking issues)
-      // On Windows, SDK query() hangs because Bun subprocess stdin pipe never flushes to child process.
-      const useDirectCli = process.platform === "win32";
+      // Use execution_mode from config (default: "sdk"). CLI mode spawns `claude` binary directly.
+      const executionMode = providerConfig.execution_mode ?? "sdk";
+      const useDirectCli = executionMode === "cli";
       let eventSource: AsyncIterable<any>;
 
       if (useDirectCli) {
