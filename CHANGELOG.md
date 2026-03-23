@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.19] - 2026-03-24
+
+### Fixed
+- **SDK patch for bunx**: Apply SDK patches (drain, await prompt, readline) at runtime before server start — `bunx` skips `postinstall` hooks so patches were never applied
+
+### Changed
+- **Settings UI**: Redesign from accordion to tabbed navigation (General, AI, Notifs, Accounts, Keys) with scroll areas and About section showing version
+
 ## [0.8.18] - 2026-03-24
 
 ### Fixed
