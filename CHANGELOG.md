@@ -3,8 +3,9 @@
 ## [0.8.7] - 2026-03-23
 
 ### Fixed
-- **Env var diagnostics in timeout/error messages**: When SDK hangs or returns `unknown` error, error message now guides user to check `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` env vars (stale/invalid keys cause silent hang) with exact debug commands
-- **Shell env logging**: Log when shell environment has `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` set — helps diagnose SDK hangs in server logs
+- **Auth env priority chain**: Properly resolve auth env vars with priority: PPM accounts > project `.env` > shell env. Previously project `.env` vars were neutralized (set empty) instead of parsed and used as overrides.
+- **Env var diagnostics in timeout/error messages**: When SDK hangs or returns `unknown` error, error message guides user to check `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` env vars with exact debug commands
+- **Auth source logging**: Log which source each auth var comes from (project .env vs shell env) — helps diagnose SDK hangs
 
 ## [0.8.6] - 2026-03-23
 

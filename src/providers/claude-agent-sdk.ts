@@ -50,46 +50,67 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   /** Fork source: ppmSessionId → sourceSessionId (used on first message to fork) */
   private forkSources = new Map<string, string>();
 
-  /** Env vars to neutralize — only if project .env contains them (prevents .env poisoning) */
-  private readonly SENSITIVE_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
+  /** Auth-related env keys — priority: account > project .env > shell env */
+  private readonly AUTH_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
 
-  private getProjectEnvOverrides(projectPath?: string): Record<string, string> {
+  /**
+   * Parse project .env file and extract auth-related values.
+   * Returns actual values (not neutralized) so they can override shell env.
+   */
+  private parseProjectEnv(projectPath?: string): Record<string, string> {
     if (!projectPath) return {};
     try {
       const envPath = resolve(projectPath, ".env");
       if (!existsSync(envPath)) return {};
       const content = readFileSync(envPath, "utf-8");
-      const overrides: Record<string, string> = {};
-      for (const key of this.SENSITIVE_ENV_KEYS) {
-        if (content.includes(key)) {
-          overrides[key] = "";
-          console.log(`[sdk] Neutralizing ${key} from project .env (prevents poisoning)`);
+      const parsed: Record<string, string> = {};
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx < 0) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        if (!this.AUTH_ENV_KEYS.includes(key)) continue;
+        // Strip surrounding quotes
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
         }
+        parsed[key] = val;
       }
-      return overrides;
+      return parsed;
     } catch { return {}; }
   }
 
   /**
    * Build env for SDK query.
-   * If account mode: detect token type and inject the correct env var.
-   *   - OAuth tokens (sk-ant-oat*) → CLAUDE_CODE_OAUTH_TOKEN (SDK reads this for subscription auth)
-   *   - API keys (sk-ant-api* or other) → ANTHROPIC_API_KEY
-   * Otherwise: pass through existing env (backward compatible).
+   * Priority: PPM accounts > project .env > shell env.
+   *   - Account mode: inject account token, neutralize conflicting vars.
+   *     TODO: support base_url from PPM AI settings.
+   *   - No account: project .env overrides shell env for auth vars.
    */
   private buildQueryEnv(
     projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
   ): Record<string, string | undefined> {
-    const base = { ...process.env, ...this.getProjectEnvOverrides(projectPath) };
-    // Log if shell env has Anthropic vars — helps diagnose hanging SDK
-    for (const key of this.SENSITIVE_ENV_KEYS) {
-      if (process.env[key]) {
-        console.log(`[sdk] Shell env has ${key} set (length=${process.env[key]!.length})`);
+    const projectEnv = this.parseProjectEnv(projectPath);
+    // Merge: shell env ← project .env (project wins)
+    const base = { ...process.env, ...projectEnv };
+
+    // Log auth source for diagnostics
+    for (const key of this.AUTH_ENV_KEYS) {
+      if (projectEnv[key]) {
+        console.log(`[sdk] ${key} from project .env (length=${projectEnv[key].length})`);
+      } else if (process.env[key]) {
+        console.log(`[sdk] ${key} from shell env (length=${process.env[key]!.length})`);
       }
     }
+
     if (!account) return base;
+
+    // Account mode: account token takes highest priority
     const isOAuthToken = account.accessToken.startsWith("sk-ant-oat");
+    // TODO: support base_url from PPM AI provider settings
     if (isOAuthToken) {
       return {
         ...base,
