@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.14] - 2026-03-24
+
+### Fixed
+- **CLI error logging**: Always read stderr (even on exit code 0), log error event content to server logs for Windows CLI debugging
+
 ## [0.8.13] - 2026-03-24
 
 ### Added
