@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.20] - 2026-03-24
+
+### Fixed
+- **SDK patch resolution**: Use `fileURLToPath` instead of `new URL().pathname` for cross-platform SDK path resolution; add debug logging for bunx SDK resolution
+
 ## [0.8.19] - 2026-03-24
 
 ### Fixed
