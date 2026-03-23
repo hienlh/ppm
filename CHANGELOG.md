@@ -1,12 +1,14 @@
 # Changelog
 
-## [0.8.7] - 2026-03-23
+## [0.8.9] - 2026-03-23
 
 ### Added
-- **Base URL setting**: Configurable `ANTHROPIC_BASE_URL` in Settings → AI Provider. Highest priority — overrides project `.env` and shell env.
+- **Base URL setting**: Configurable `base_url` in Settings → AI Provider, injected as `ANTHROPIC_BASE_URL`. Overrides shell env.
+
+### Changed
+- **Auth env priority**: PPM settings (accounts + base_url) > shell env. Project `.env` no longer read — prevents conflict with projects that use Claude API directly.
 
 ### Fixed
-- **Auth env priority chain**: Priority: PPM settings > PPM accounts > project `.env` > shell env. Project `.env` now properly parsed and used as override instead of being neutralized.
 - **Env var diagnostics**: Timeout and error messages guide users to check `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` env vars with exact debug commands
 - **Auth source logging**: Log which source each auth var comes from — helps diagnose SDK hangs
 
