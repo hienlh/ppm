@@ -9,7 +9,7 @@ import {
   rmSync,
   renameSync,
 } from "node:fs";
-import { resolve, relative, basename, dirname, join, normalize } from "node:path";
+import { resolve, relative, basename, dirname, join, normalize, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
 import type { FileNode } from "../types/project.ts";
 
@@ -43,7 +43,7 @@ class FileService {
     const normalizedTarget = normalize(resolve(projectPath, targetPath));
     const normalizedProject = normalize(projectPath);
     if (
-      !normalizedTarget.startsWith(normalizedProject + "/") &&
+      !normalizedTarget.startsWith(normalizedProject + sep) &&
       normalizedTarget !== normalizedProject
     ) {
       throw new SecurityError("Path traversal not allowed");
