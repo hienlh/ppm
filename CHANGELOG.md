@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.11] - 2026-03-23
+
+### Fixed
+- **Windows dev workflow**: Replace shell `&` with `concurrently` for cross-platform dev script, run dev:server in foreground, use `--profile dev` for SQLite-based config
+- **PowerShell daemon**: Fix `ArgumentList` rejecting empty strings by stripping trailing empties and using `_` placeholder
+
 ## [0.8.10] - 2026-03-23
 
 ### Fixed
