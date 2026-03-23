@@ -1,9 +1,10 @@
+import { tmpdir } from "node:os";
 import { ClaudeAgentSdkProvider } from "./src/providers/claude-agent-sdk.ts";
 
 // Remove CLAUDECODE to avoid nested session error
 delete process.env.CLAUDECODE;
 
-const projectPath = process.argv[2] || "/tmp";
+const projectPath = process.argv[2] || tmpdir();
 const prompt = process.argv[3] || "Run bash: echo TOOL_TEST_OK";
 
 console.log(`Testing tools with projectPath: ${projectPath}`);

@@ -17,6 +17,7 @@ import { getSessionMapping, setSessionMapping } from "../services/db.service.ts"
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 function getSdkSessionId(ppmId: string): string {
@@ -537,7 +538,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const sdkId = shouldFork ? getSdkSessionId(forkSourceId!) : getSdkSessionId(sessionId);
       // Fallback cwd: SDK needs a valid working directory even when no project is selected.
       // On Windows daemons, undefined cwd can cause the subprocess to fail silently.
-      const effectiveCwd = meta.projectPath || homedir();
+      // Resolve path and validate existence — invalid cwd causes spawn to hang on Windows.
+      const rawCwd = meta.projectPath || homedir();
+      const effectiveCwd = existsSync(rawCwd) ? rawCwd : homedir();
 
       // Account-based auth injection (multi-account mode)
       // Fallback to existing env (ANTHROPIC_API_KEY) when no accounts configured.

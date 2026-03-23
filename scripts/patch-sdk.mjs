@@ -94,7 +94,6 @@ if (content.includes("__ppm_await_write__")) {
   console.log("[patch-sdk] Patch 2 (await prompt): already applied");
 } else {
   // Match: TRANSPORT.write(SERIALIZE({type:"user",...})+`\n`);
-  // The newline delimiter can be either `\n` (template literal) or "\n" (string).
   // Anchor on stable string literals: type:"user",session_id:"",message:{role:"user"
   const promptWritePattern =
     /([A-Za-z_$][A-Za-z0-9_$]*)\.write\(([A-Za-z_$][A-Za-z0-9_$]*)\(\{type:"user",session_id:"",message:\{role:"user",content:\[\{type:"text",text:([A-Za-z_$][A-Za-z0-9_$]*)\}\]\},parent_tool_use_id:null\}\)\+(?:`\n`|"\\n")\)/;
@@ -106,39 +105,11 @@ if (content.includes("__ppm_await_write__")) {
     );
   } else {
     const oldPromptWrite = promptMatch[0];
-    // Wrap in an async IIFE to await the (now async) write
-    // Add marker __ppm_await_write__ for idempotency detection
+    // Wrap in async IIFE — keeps query() sync so callers don't need `await query()`
     const newPromptWrite =
-      `/*__ppm_await_write__*/await ${oldPromptWrite.replace(".write(", ".write(")}`;
+      `/*__ppm_await_write__*/(async()=>{await ${oldPromptWrite}})()`;
 
     content = content.replace(oldPromptWrite, newPromptWrite);
-
-    // The containing function must be async. Find the function that contains this code.
-    // It's typically: function FUNCNAME(Q,...){...if(typeof Q==="string")TRANSPORT.write...}
-    // We need to find "function" before this write and make it "async function"
-    const promptIdx = content.indexOf(newPromptWrite);
-    // Search backwards for the function declaration
-    const beforePrompt = content.substring(
-      Math.max(0, promptIdx - 5000),
-      promptIdx,
-    );
-    // Find last "function " that starts a function declaration (not inside another call)
-    const funcMatches = [...beforePrompt.matchAll(/\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)];
-    if (funcMatches.length > 0) {
-      const lastFunc = funcMatches[funcMatches.length - 1];
-      const funcStart = beforePrompt.lastIndexOf(lastFunc[0]);
-      const absIdx = Math.max(0, promptIdx - 5000) + funcStart;
-
-      // Only add async if not already async
-      const prefix = content.substring(Math.max(0, absIdx - 10), absIdx);
-      if (!prefix.includes("async")) {
-        content =
-          content.substring(0, absIdx) +
-          "async " +
-          content.substring(absIdx);
-      }
-    }
-
     patches++;
     console.log("[patch-sdk] Patch 2 (await prompt): applied");
   }
