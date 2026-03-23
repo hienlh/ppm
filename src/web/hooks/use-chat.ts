@@ -28,7 +28,7 @@ interface UseChatReturn {
   contextWindowPct: number | null;
   /** Updated session title from SDK summary (set after stream completes) */
   sessionTitle: string | null;
-  sendMessage: (content: string) => void;
+  sendMessage: (content: string, opts?: { permissionMode?: string }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -373,7 +373,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   }, [sessionId, providerId, projectName]);
 
   const sendMessage = useCallback(
-    (content: string) => {
+    (content: string, opts?: { permissionMode?: string }) => {
       if (!content.trim()) return;
 
       // If streaming, cancel current stream first then send immediately
@@ -415,7 +415,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       setStreamingStatus("connecting");
       setPendingApproval(null);
 
-      send(JSON.stringify({ type: "message", content }));
+      send(JSON.stringify({ type: "message", content, permissionMode: opts?.permissionMode }));
     },
     [send],
   );

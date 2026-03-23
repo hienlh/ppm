@@ -151,7 +151,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     if (opts.providerConfig.effort) args.push("--effort", opts.providerConfig.effort);
 
     // Permission mode
-    args.push("--permission-mode", "bypassPermissions", "--dangerously-skip-permissions");
+    args.push("--permission-mode", opts.providerConfig.permission_mode ?? "bypassPermissions");
+    if ((opts.providerConfig.permission_mode ?? "bypassPermissions") === "bypassPermissions") {
+      args.push("--dangerously-skip-permissions");
+    }
+
+    // System prompt — CLI uses --append-system-prompt flag
+    if (opts.providerConfig.system_prompt) {
+      args.push("--append-system-prompt", opts.providerConfig.system_prompt);
+    }
 
     // On Windows, `claude` is a .cmd wrapper (npm global) — Bun.spawn can't resolve .cmd
     // files directly. Use `cmd /c` to let the Windows shell find it via PATH.
@@ -391,7 +399,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   async *sendMessage(
     sessionId: string,
     message: string,
-    opts?: { forkSession?: boolean },
+    opts?: import("./provider.interface.ts").SendMessageOpts & { forkSession?: boolean },
   ): AsyncIterable<ChatEvent> {
     if (!this.activeSessions.has(sessionId)) {
       await this.resumeSession(sessionId);
@@ -411,6 +419,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const shouldFork = !!forkSourceId && isFirstMessage;
     if (forkSourceId) this.forkSources.delete(sessionId);
 
+    // Resolve permission mode early — canUseTool needs isBypass
+    const providerConfig = this.getProviderConfig();
+    const permissionMode = opts?.permissionMode || providerConfig.permission_mode || "bypassPermissions";
+    const isBypass = permissionMode === "bypassPermissions";
+    const systemPromptOpt = providerConfig.system_prompt
+      ? { type: "custom" as const, value: providerConfig.system_prompt }
+      : { type: "preset" as const, preset: "claude_code" as const };
+
     /**
      * Approval events to yield from the generator.
      * canUseTool pushes events here; the main loop yields them.
@@ -419,22 +435,48 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let approvalNotify: (() => void) | undefined;
 
     /**
-     * canUseTool: only fires for AskUserQuestion (bypassPermissions auto-approves other tools).
-     * Pauses SDK execution, yields approval_request to FE, waits for user response.
+     * canUseTool: handles tool approval based on permission mode.
+     * AskUserQuestion always surfaces to FE. Other tools: auto-approve in bypass, else ask FE.
      */
     const canUseTool = async (toolName: string, input: unknown) => {
-      // Non-AskUserQuestion tools: auto-approve (shouldn't reach here with bypassPermissions)
-      if (toolName !== "AskUserQuestion") {
+      // AskUserQuestion: always show to user regardless of mode
+      if (toolName === "AskUserQuestion") {
+        const requestId = crypto.randomUUID();
+        const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+        const approvalPromise = new Promise<{ approved: boolean; data?: unknown }>(
+          (resolve) => {
+            this.pendingApprovals.set(requestId, { resolve });
+            setTimeout(() => {
+              if (this.pendingApprovals.has(requestId)) {
+                this.pendingApprovals.delete(requestId);
+                resolve({ approved: false });
+              }
+            }, APPROVAL_TIMEOUT_MS);
+          },
+        );
+        approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
+        approvalNotify?.();
+        const result = await approvalPromise;
+        if (result.approved && result.data) {
+          return {
+            behavior: "allow" as const,
+            updatedInput: { ...(input as Record<string, unknown>), answers: result.data },
+          };
+        }
+        return { behavior: "deny" as const, message: "User skipped the question" };
+      }
+
+      // Bypass mode: auto-approve everything
+      if (isBypass) {
         return { behavior: "allow" as const, updatedInput: input };
       }
 
+      // Non-bypass modes: surface approval request to FE
       const requestId = crypto.randomUUID();
-
-      const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5min — extended for FE reconnect
+      const APPROVAL_TIMEOUT_MS = 5 * 60_000;
       const approvalPromise = new Promise<{ approved: boolean; data?: unknown }>(
         (resolve) => {
           this.pendingApprovals.set(requestId, { resolve });
-          // Auto-deny after timeout if FE doesn't respond
           setTimeout(() => {
             if (this.pendingApprovals.has(requestId)) {
               this.pendingApprovals.delete(requestId);
@@ -443,26 +485,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }, APPROVAL_TIMEOUT_MS);
         },
       );
-
-      // Queue event for the generator to yield to FE
-      approvalEvents.push({
-        type: "approval_request",
-        requestId,
-        tool: toolName,
-        input,
-      });
+      approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
       approvalNotify?.();
-
-      // Wait for FE to send back answers (or timeout)
       const result = await approvalPromise;
-
-      if (result.approved && result.data) {
-        return {
-          behavior: "allow" as const,
-          updatedInput: { ...(input as Record<string, unknown>), answers: result.data },
-        };
-      }
-      return { behavior: "deny" as const, message: "User skipped the question" };
+      return result.approved
+        ? { behavior: "allow" as const, updatedInput: input }
+        : { behavior: "deny" as const, message: "User denied tool execution" };
     };
 
     let assistantContent = "";
@@ -470,7 +498,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
     try {
-      const providerConfig = this.getProviderConfig();
       // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
       // For fork: use the source session's SDK id
       const sdkId = shouldFork ? getSdkSessionId(forkSourceId!) : getSdkSessionId(sessionId);
@@ -528,7 +555,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
             ...(shouldFork && { forkSession: true }),
             cwd: effectiveCwd,
-            systemPrompt: { type: "preset", preset: "claude_code" },
+            systemPrompt: systemPromptOpt,
             settingSources: ["user", "project"],
             env: queryEnv,
             settings: { permissions: { allow: [], deny: [] } },
@@ -537,8 +564,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               "WebSearch", "WebFetch", "AskUserQuestion",
               "Agent", "Skill", "TodoWrite", "ToolSearch",
             ],
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
+            permissionMode,
+            allowDangerouslySkipPermissions: isBypass,
             ...(providerConfig.model && { model: providerConfig.model }),
             ...(providerConfig.effort && { effort: providerConfig.effort }),
             maxTurns: providerConfig.max_turns ?? 100,
@@ -583,7 +610,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   resume: undefined,
                   ...(shouldFork && { forkSession: true }),
                   cwd: effectiveCwd,
-                  systemPrompt: { type: "preset", preset: "claude_code" },
+                  systemPrompt: systemPromptOpt,
                   settingSources: ["user", "project"],
                   env: queryEnv,
                   settings: { permissions: { allow: [], deny: [] } },
@@ -592,8 +619,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     "WebSearch", "WebFetch", "AskUserQuestion",
                     "Agent", "Skill", "TodoWrite", "ToolSearch",
                   ],
-                  permissionMode: "bypassPermissions",
-                  allowDangerouslySkipPermissions: true,
+                  permissionMode,
+                  allowDangerouslySkipPermissions: isBypass,
                   ...(providerConfig.model && { model: providerConfig.model }),
                   ...(providerConfig.effort && { effort: providerConfig.effort }),
                   maxTurns: providerConfig.max_turns ?? 100,
@@ -894,7 +921,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             prompt: message,
             options: {
               cwd: effectiveCwd,
-              systemPrompt: { type: "preset", preset: "claude_code" },
+              systemPrompt: systemPromptOpt,
               settingSources: ["user", "project"],
               env: queryEnv,
               settings: { permissions: { allow: [], deny: [] } },
@@ -903,8 +930,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 "WebSearch", "WebFetch", "AskUserQuestion",
                 "Agent", "Skill", "TodoWrite", "ToolSearch",
               ],
-              permissionMode: "bypassPermissions",
-              allowDangerouslySkipPermissions: true,
+              permissionMode,
+              allowDangerouslySkipPermissions: isBypass,
               ...(providerConfig.model && { model: providerConfig.model }),
               maxTurns: providerConfig.max_turns ?? 100,
               canUseTool,

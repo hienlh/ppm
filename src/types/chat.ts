@@ -1,3 +1,7 @@
+export interface SendMessageOpts {
+  permissionMode?: import("./config").PermissionMode | string;
+}
+
 export interface AIProvider {
   id: string;
   name: string;
@@ -8,6 +12,7 @@ export interface AIProvider {
   sendMessage(
     sessionId: string,
     message: string,
+    opts?: SendMessageOpts,
   ): AsyncIterable<ChatEvent>;
   /** Resolve a pending tool/question approval by requestId */
   resolveApproval?(requestId: string, approved: boolean, data?: unknown): void;

@@ -30,6 +30,8 @@ interface SessionEntry {
   catchUpText: string;
   /** Reference to the running stream promise — prevents GC */
   streamPromise?: Promise<void>;
+  /** Sticky permission mode for this session */
+  permissionMode?: string;
 }
 
 /** Tracks active sessions — persists even when FE disconnects */
@@ -78,7 +80,7 @@ function startCleanupTimer(sessionId: string): void {
  * Standalone streaming loop — decoupled from WS message handler.
  * Runs independently so WS close does NOT kill the Claude query.
  */
-async function runStreamLoop(sessionId: string, providerId: string, content: string): Promise<void> {
+async function runStreamLoop(sessionId: string, providerId: string, content: string, permissionMode?: string): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     console.error(`[chat] session=${sessionId} runStreamLoop: no entry — aborting`);
@@ -138,7 +140,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       safeSend(sessionId, { type: "streaming_status", status: "connecting", elapsed });
     }, 5_000);
 
-    for await (const event of chatService.sendMessage(providerId, sessionId, content)) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode })) {
       if (abortController.signal.aborted) break;
       eventCount++;
       const ev = event as any;
@@ -390,6 +392,11 @@ export const chatWebSocket = {
     }
 
     if (parsed.type === "message") {
+      // Store permission mode — sticky for this session
+      if (parsed.permissionMode && entry) {
+        entry.permissionMode = parsed.permissionMode;
+      }
+
       // Send immediate feedback BEFORE any async work — prevents "stuck thinking"
       // when resumeSession is slow (e.g. sdkListSessions spawns subprocess on first call)
       safeSend(sessionId, { type: "streaming_status", status: "connecting", elapsed: 0 });
@@ -424,7 +431,7 @@ export const chatWebSocket = {
       if (entry) {
         entry.streamPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
-            runStreamLoop(sessionId, providerId, parsed.content).then(resolve, resolve);
+            runStreamLoop(sessionId, providerId, parsed.content, entry.permissionMode).then(resolve, resolve);
           }, 0);
         });
       } else {

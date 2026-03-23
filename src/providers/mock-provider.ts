@@ -66,6 +66,7 @@ export class MockProvider implements AIProvider {
   async *sendMessage(
     sessionId: string,
     message: string,
+    _opts?: import("./provider.interface.ts").SendMessageOpts,
   ): AsyncIterable<ChatEvent> {
     const session = this.sessions.get(sessionId);
     if (!session) {

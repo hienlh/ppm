@@ -153,6 +153,11 @@ function MessageBubble({ message, isStreaming, projectName, onFork }: { message:
 /** Image extensions that can be previewed inline */
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
+/** Strip system-injected XML tags (e.g. <system-reminder>, <available-deferred-tools>) from message content */
+function stripSystemTags(text: string): string {
+  return text.replace(/<(system-reminder|available-deferred-tools|antml:[\w-]+|fast_mode_info|claudeMd|gitStatus|currentDate)[\s\S]*?<\/\1>/g, "").trim();
+}
+
 /** Parse user message content, extracting attached file paths and the actual text */
 function parseUserAttachments(content: string): { files: string[]; text: string } {
   // Match: [Attached file: /path] or [Attached files:\n/path1\n/path2\n]
@@ -190,7 +195,10 @@ function isPdfPath(path: string): boolean {
 
 /** User message bubble with attachment rendering */
 function UserBubble({ content, projectName, onFork }: { content: string; projectName?: string; onFork?: () => void }) {
-  const { files, text } = useMemo(() => parseUserAttachments(content), [content]);
+  const { files, text } = useMemo(() => {
+    const parsed = parseUserAttachments(content);
+    return { files: parsed.files, text: stripSystemTags(parsed.text) };
+  }, [content]);
 
   return (
     <div className="flex justify-end group/user">

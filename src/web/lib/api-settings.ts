@@ -126,6 +126,8 @@ export interface AIProviderSettings {
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
+  permission_mode?: string;
+  system_prompt?: string;
 }
 
 export interface AISettings {

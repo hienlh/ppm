@@ -4,6 +4,7 @@ import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
 import { isSupportedFile, isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
+import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
 import { flattenFileTree } from "./file-picker";
@@ -37,6 +38,10 @@ interface MessageInputProps {
   externalFiles?: File[] | null;
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
+  /** Current permission mode */
+  permissionMode?: string;
+  /** Permission mode change handler */
+  onModeChange?: (mode: string) => void;
 }
 
 export function MessageInput({
@@ -53,9 +58,12 @@ export function MessageInput({
   fileSelected,
   externalFiles,
   initialValue,
+  permissionMode,
+  onModeChange,
 }: MessageInputProps) {
   const [value, setValue] = useState(initialValue ?? "");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -276,9 +284,18 @@ export function MessageInput({
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSend();
+        return;
+      }
+      // Shift+Tab: cycle permission mode
+      if (e.shiftKey && e.key === "Tab") {
+        e.preventDefault();
+        const modeIds = ["default", "acceptEdits", "plan", "bypassPermissions"];
+        const idx = modeIds.indexOf(permissionMode ?? "bypassPermissions");
+        const next = modeIds[(idx + 1) % modeIds.length]!;
+        onModeChange?.(next);
       }
     },
-    [handleSend],
+    [handleSend, permissionMode, onModeChange],
   );
 
   const updatePickerState = useCallback(
@@ -389,6 +406,19 @@ export function MessageInput({
       >
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+        {/* Mobile: mode chip row */}
+        <div className="flex items-center gap-1 px-2 pt-2 md:hidden relative">
+          <ModeChip
+            mode={permissionMode ?? "bypassPermissions"}
+            onClick={() => setModeSelectorOpen((v) => !v)}
+          />
+          <ModeSelector
+            value={permissionMode ?? "bypassPermissions"}
+            onChange={(m) => onModeChange?.(m)}
+            open={modeSelectorOpen}
+            onOpenChange={setModeSelectorOpen}
+          />
+        </div>
         {/* Mobile: single row — attach + textarea + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
           <button
@@ -459,6 +489,19 @@ export function MessageInput({
               >
                 <Paperclip className="size-4" />
               </button>
+              {/* Mode indicator chip */}
+              <div className="relative">
+                <ModeChip
+                  mode={permissionMode ?? "bypassPermissions"}
+                  onClick={() => setModeSelectorOpen((v) => !v)}
+                />
+                <ModeSelector
+                  value={permissionMode ?? "bypassPermissions"}
+                  onChange={(m) => onModeChange?.(m)}
+                  open={modeSelectorOpen}
+                  onOpenChange={setModeSelectorOpen}
+                />
+              </div>
             </div>
             <div className="flex items-center gap-1">
               {showCancel ? (
@@ -486,5 +529,22 @@ export function MessageInput({
 
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileInputChange} />
     </div>
+  );
+}
+
+/** Small chip showing current permission mode */
+function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
+  const Icon = getModeIcon(mode);
+  const label = getModeLabel(mode);
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors border border-transparent hover:border-border"
+      aria-label={`Permission mode: ${label}`}
+    >
+      <Icon className="size-3" />
+      <span className="max-w-[100px] truncate">{label}</span>
+    </button>
   );
 }

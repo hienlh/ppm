@@ -22,6 +22,13 @@ const EFFORT_OPTIONS = [
   { value: "high", label: "High" },
 ];
 
+const PERMISSION_MODE_OPTIONS = [
+  { value: "bypassPermissions", label: "Bypass permissions (default)" },
+  { value: "default", label: "Ask before edits" },
+  { value: "acceptEdits", label: "Edit automatically" },
+  { value: "plan", label: "Plan mode" },
+];
+
 export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
   const [settings, setSettings] = useState<AISettings | null>(null);
   const [saving, setSaving] = useState(false);
@@ -162,6 +169,41 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
             onBlur={(e) => {
               const val = parseInt(e.target.value);
               handleSave("thinking_budget_tokens", isNaN(val) ? undefined : val);
+            }}
+          />
+        </div>
+
+        <div className={fieldGap}>
+          <Label htmlFor="ai-permission-mode" className={compact ? labelSize : undefined}>Default Permission Mode</Label>
+          <Select
+            value={config?.permission_mode ?? "bypassPermissions"}
+            onValueChange={(v) => handleSave("permission_mode", v)}
+          >
+            <SelectTrigger id="ai-permission-mode" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PERMISSION_MODE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className={fieldGap}>
+          <Label htmlFor="ai-system-prompt" className={compact ? labelSize : undefined}>Additional Instructions</Label>
+          <textarea
+            key={`sysprompt-${revision}`}
+            id="ai-system-prompt"
+            rows={4}
+            defaultValue={config?.system_prompt ?? ""}
+            placeholder="Enter additional instructions for Claude..."
+            className={`w-full rounded-md border border-input bg-background px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${compact ? "text-[11px]" : "text-sm"}`}
+            onBlur={(e) => {
+              const val = e.target.value.trim();
+              handleSave("system_prompt", val || undefined);
             }}
           />
         </div>

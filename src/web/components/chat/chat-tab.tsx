@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, type DragEvent } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Upload, X } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
@@ -8,11 +8,13 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
+import { getAISettings } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
 import { MessageInput, type ChatAttachment } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
+import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
 
@@ -41,6 +43,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [fileFilter, setFileFilter] = useState("");
   const [fileSelected, setFileSelected] = useState<FileNode | null>(null);
 
+  // Permission mode — per-session sticky, falls back to global default
+  const [permissionMode, setPermissionMode] = useState<string | undefined>(
+    (metadata?.permissionMode as string) ?? undefined,
+  );
+
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
   const [externalFiles, setExternalFiles] = useState<File[] | null>(null);
@@ -55,13 +62,22 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const { usageInfo, usageLoading, lastFetchedAt, refreshUsage } =
     useUsage(projectName, providerId);
 
-  // Persist sessionId and providerId to tab metadata so reload restores the session
+  // Load global default permission mode on mount (if no per-session override)
+  useEffect(() => {
+    if (permissionMode) return;
+    getAISettings().then((s) => {
+      const provider = s.providers[s.default_provider ?? "claude"];
+      setPermissionMode(provider?.permission_mode ?? "bypassPermissions");
+    }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist sessionId, providerId, and permissionMode to tab metadata
   useEffect(() => {
     if (!tabId || !sessionId) return;
     updateTab(tabId, {
-      metadata: { ...metadata, sessionId, providerId },
+      metadata: { ...metadata, sessionId, providerId, permissionMode },
     });
-  }, [sessionId, providerId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sessionId, providerId, permissionMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
     messages,
@@ -116,7 +132,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       const msg = pendingForkMsgRef.current;
       pendingForkMsgRef.current = undefined;
       if (tabId) updateTab(tabId, { metadata: { ...metadata, pendingMessage: undefined } });
-      setTimeout(() => sendMessage(msg), 100);
+      setTimeout(() => sendMessage(msg, { permissionMode }), 100);
     }
   }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -194,7 +210,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           setSessionId(session.id);
           setProviderId(session.providerId);
           setTimeout(() => {
-            sendMessage(fullContent);
+            sendMessage(fullContent, { permissionMode });
           }, 500);
           return;
         } catch (e) {
@@ -202,9 +218,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           return;
         }
       }
-      sendMessage(fullContent);
+      sendMessage(fullContent, { permissionMode });
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode],
   );
 
   // --- Slash picker handlers ---
@@ -358,6 +374,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onFileItemsLoaded={setFileItems}
           fileSelected={fileSelected}
           externalFiles={externalFiles}
+          permissionMode={permissionMode}
+          onModeChange={setPermissionMode}
         />
       </div>
 

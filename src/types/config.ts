@@ -40,6 +40,9 @@ export interface AIConfig {
   providers: Record<string, AIProviderConfig>;
 }
 
+const VALID_PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
+export type PermissionMode = typeof VALID_PERMISSION_MODES[number];
+
 export interface AIProviderConfig {
   type: "agent-sdk" | "mock";
   api_key_env?: string;
@@ -49,6 +52,8 @@ export interface AIProviderConfig {
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
+  permission_mode?: PermissionMode;
+  system_prompt?: string;
 }
 
 export const DEFAULT_CONFIG: PpmConfig = {
@@ -67,6 +72,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
         model: "claude-sonnet-4-6",
         effort: "high",
         max_turns: 100,
+        permission_mode: "bypassPermissions",
       },
     },
   },
@@ -99,6 +105,16 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
   }
   if (config.thinking_budget_tokens != null && (!Number.isInteger(config.thinking_budget_tokens) || config.thinking_budget_tokens < 0)) {
     errors.push("thinking_budget_tokens must be integer >= 0");
+  }
+  if (config.permission_mode != null && !VALID_PERMISSION_MODES.includes(config.permission_mode as any)) {
+    errors.push(`permission_mode must be one of: ${VALID_PERMISSION_MODES.join(", ")}`);
+  }
+  if (config.system_prompt != null) {
+    if (typeof config.system_prompt !== "string") {
+      errors.push("system_prompt must be a string");
+    } else if (config.system_prompt.length > 10000) {
+      errors.push("system_prompt must be 10000 characters or less");
+    }
   }
   return errors;
 }
@@ -141,6 +157,11 @@ export function sanitizeConfig(config: PpmConfig): boolean {
   for (const provider of Object.values(config.ai.providers)) {
     if ((provider as any).effort === "max") {
       provider.effort = "high";
+      dirty = true;
+    }
+    // Fix invalid permission_mode
+    if (provider.permission_mode != null && !["default", "acceptEdits", "plan", "bypassPermissions"].includes(provider.permission_mode)) {
+      provider.permission_mode = "bypassPermissions";
       dirty = true;
     }
   }

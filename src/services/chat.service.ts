@@ -5,6 +5,7 @@ import type {
   SessionInfo,
   ChatEvent,
   ChatMessage,
+  SendMessageOpts,
 } from "../providers/provider.interface.ts";
 import { MockProvider } from "../providers/mock-provider.ts";
 
@@ -70,13 +71,14 @@ class ChatService {
     providerId: string,
     sessionId: string,
     message: string,
+    opts?: SendMessageOpts,
   ): AsyncIterable<ChatEvent> {
     const provider = providerRegistry.get(providerId);
     if (!provider) {
       yield { type: "error", message: `Provider "${providerId}" not found` };
       return;
     }
-    yield* provider.sendMessage(sessionId, message);
+    yield* provider.sendMessage(sessionId, message, opts);
   }
 
   /** Look up a session across all providers (for WS handler) */
