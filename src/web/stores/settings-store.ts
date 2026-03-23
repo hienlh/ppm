@@ -16,6 +16,7 @@ interface SettingsState {
   deviceName: string | null;
   version: string | null;
   setTheme: (theme: Theme) => void;
+  setDeviceName: (name: string) => Promise<void>;
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
@@ -92,6 +93,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ theme }),
     }).catch(() => {});
+  },
+
+  setDeviceName: async (name) => {
+    const trimmed = name.trim();
+    set({ deviceName: trimmed || null });
+    if (trimmed) {
+      document.title = `PPM — ${trimmed}`;
+    } else {
+      document.title = "PPM";
+    }
+    try {
+      const { updateDeviceName } = await import("@/lib/api-settings");
+      await updateDeviceName(trimmed);
+    } catch {}
   },
 
   toggleSidebar: () => {

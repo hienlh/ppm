@@ -22,6 +22,46 @@ function stripSensitiveFields(ai: { providers: Record<string, unknown> }) {
   return clone;
 }
 
+// ── Device Name ──────────────────────────────────────────────────────
+
+/** PUT /settings/device-name */
+settingsRoutes.put("/device-name", async (c) => {
+  try {
+    const { device_name } = await c.req.json<{ device_name: string }>();
+    if (typeof device_name !== "string") {
+      return c.json(err("device_name must be a string"), 400);
+    }
+    const trimmed = device_name.trim();
+    if (trimmed.length > 100) {
+      return c.json(err("device_name must be 100 characters or less"), 400);
+    }
+
+    // Save to config
+    configService.set("device_name", trimmed);
+    configService.save();
+
+    // Update cloud device name if linked
+    try {
+      const { getCloudDevice, saveCloudDevice, linkDevice } = await import("../../services/cloud.service.ts");
+      const device = getCloudDevice();
+      if (device && trimmed) {
+        // Re-link with new name (cloud upserts by machine_id)
+        const updated = await linkDevice(trimmed);
+        // Also update local cloud-device.json name
+        if (updated) {
+          saveCloudDevice({ ...updated, name: trimmed });
+        }
+      }
+    } catch {
+      // Cloud update is best-effort
+    }
+
+    return c.json(ok({ device_name: trimmed }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
 // ── Theme ─────────────────────────────────────────────────────────────
 
 /** GET /settings/theme */

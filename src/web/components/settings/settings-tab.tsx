@@ -1,5 +1,7 @@
-import { Moon, Sun, Monitor, Bell, BellOff } from "lucide-react";
+import { useState, useCallback, useRef } from "react";
+import { Moon, Sun, Monitor, Bell, BellOff, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useSettingsStore, type Theme } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
@@ -20,15 +22,64 @@ const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
   !window.matchMedia("(display-mode: standalone)").matches;
 
 export function SettingsTab() {
-  const { theme, setTheme } = useSettingsStore();
+  const { theme, setTheme, deviceName, setDeviceName } = useSettingsStore();
   const { permission, isSubscribed, loading, error: pushError, subscribe, unsubscribe } = usePushNotification();
+  const [nameInput, setNameInput] = useState(deviceName ?? "");
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameSaved, setNameSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const nameChanged = nameInput.trim() !== (deviceName ?? "");
+
+  const handleSaveName = useCallback(async () => {
+    if (!nameChanged) return;
+    setNameSaving(true);
+    try {
+      await setDeviceName(nameInput);
+      setNameSaved(true);
+      clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setNameSaved(false), 2000);
+    } finally {
+      setNameSaving(false);
+    }
+  }, [nameInput, nameChanged, setDeviceName]);
 
   return (
     <div className="h-full w-full overflow-auto">
       <div className="p-3 space-y-2">
         <h2 className="text-sm font-semibold">Settings</h2>
 
-        <Accordion type="multiple" defaultValue={["notifications"]}>
+        <Accordion type="multiple" defaultValue={["device", "notifications"]}>
+          {/* Device Name */}
+          <AccordionItem value="device">
+            <AccordionTrigger className="py-2 text-xs font-medium text-text-secondary hover:no-underline">
+              Device Name
+            </AccordionTrigger>
+            <AccordionContent className="pb-2">
+              <div className="flex gap-1.5">
+                <Input
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSaveName(); }}
+                  placeholder="My Device"
+                  className="h-8 text-xs flex-1"
+                  maxLength={100}
+                />
+                <Button
+                  variant={nameSaved ? "default" : "outline"}
+                  size="sm"
+                  className="h-8 text-xs px-3"
+                  disabled={!nameChanged || nameSaving}
+                  onClick={handleSaveName}
+                >
+                  {nameSaving ? "..." : nameSaved ? <Check className="size-3.5" /> : "Save"}
+                </Button>
+              </div>
+              <p className="text-[11px] text-text-subtle mt-1">
+                Shown in page title and synced to PPM Cloud.
+              </p>
+            </AccordionContent>
+          </AccordionItem>
+
           {/* Theme */}
           <AccordionItem value="theme">
             <AccordionTrigger className="py-2 text-xs font-medium text-text-secondary hover:no-underline">

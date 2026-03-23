@@ -137,6 +137,10 @@ export interface AISettings {
   providers: Record<string, AIProviderSettings>;
 }
 
+export function updateDeviceName(device_name: string): Promise<{ device_name: string }> {
+  return api.put<{ device_name: string }>("/api/settings/device-name", { device_name });
+}
+
 export function getAISettings(): Promise<AISettings> {
   return api.get<AISettings>("/api/settings/ai");
 }
