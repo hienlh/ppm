@@ -1,4 +1,4 @@
-import type { Subprocess, Terminal } from "bun";
+import type { Subprocess, Terminal as BunTerminal } from "bun";
 
 /** Max output buffer size per session (10KB) */
 const MAX_BUFFER_SIZE = 10 * 1024;
@@ -9,10 +9,105 @@ const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 /** Reconnect grace period after WS disconnect */
 const RECONNECT_GRACE_MS = 30 * 1000;
 
+const isWindows = process.platform === "win32";
+
+// ── Unified PTY handle ──
+// Abstracts Bun native PTY (macOS/Linux) and bun-pty (Windows) behind one interface.
+
+interface PtyHandle {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  readonly closed: boolean;
+}
+
+/** Bun native PTY wrapper (macOS/Linux) */
+function spawnBunNative(
+  shell: string,
+  projectPath: string,
+  cols: number,
+  rows: number,
+  onData: (text: string) => void,
+  onExit: () => void,
+): PtyHandle {
+  const decoder = new TextDecoder();
+  const proc: Subprocess = Bun.spawn([shell, "-l"], {
+    cwd: projectPath,
+    env: { ...process.env, TERM: "xterm-256color" },
+    terminal: {
+      cols,
+      rows,
+      data: (_terminal: BunTerminal, data: Uint8Array) => {
+        onData(decoder.decode(data));
+      },
+    },
+  });
+  const terminal = proc.terminal!;
+  proc.exited.then(onExit);
+
+  let _closed = false;
+  return {
+    write: (data) => terminal.write(data),
+    resize: (c, r) => terminal.resize(c, r),
+    kill() {
+      if (_closed) return;
+      _closed = true;
+      try { terminal.close(); } catch { /* already closed */ }
+      try { proc.kill(); } catch { /* already dead */ }
+    },
+    get closed() {
+      return _closed || terminal.closed;
+    },
+  };
+}
+
+/** bun-pty wrapper (Windows) — uses ConPTY via FFI */
+function spawnBunPty(
+  shell: string,
+  projectPath: string,
+  cols: number,
+  rows: number,
+  onData: (text: string) => void,
+  onExit: () => void,
+): PtyHandle {
+  // Dynamic import to avoid loading native binaries on non-Windows
+  const { spawn } = require("@skitee3000/bun-pty");
+  const pty = spawn(shell, [], {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd: projectPath,
+    env: process.env as Record<string, string>,
+  });
+
+  pty.onData(onData);
+  pty.onExit(onExit);
+
+  let _closed = false;
+  return {
+    write: (data) => pty.write(data),
+    resize: (c, r) => pty.resize(c, r),
+    kill() {
+      if (_closed) return;
+      _closed = true;
+      try { pty.kill(); } catch { /* already dead */ }
+    },
+    get closed() { return _closed; },
+  };
+}
+
+function getDefaultShell(): string {
+  if (isWindows) {
+    // bun-pty's FFI spawn fails with full paths (e.g. C:\WINDOWS\system32\cmd.exe)
+    // Use short executable name — Windows resolves via PATH
+    return "cmd.exe";
+  }
+  return process.env.SHELL || "/bin/zsh";
+}
+
 export interface TerminalSession {
   id: string;
-  proc: Subprocess;
-  terminal: Terminal;
+  pty: PtyHandle;
   projectPath: string;
   createdAt: Date;
   /** Connected WebSocket (if any) */
@@ -37,36 +132,28 @@ class TerminalService {
   private outputBuffers = new Map<string, string>();
   private outputListeners = new Map<string, OutputCallback>();
 
-  /** Create a new terminal session using Bun's native PTY */
+  /** Create a new terminal session — auto-selects Bun native or bun-pty */
   create(projectPath: string, cols = 80, rows = 24): string {
     const id = crypto.randomUUID();
-    const shellCmd = process.env.SHELL || "/bin/zsh";
-    const decoder = new TextDecoder();
+    const shell = getDefaultShell();
 
-    const proc = Bun.spawn([shellCmd, "-l"], {
-      cwd: projectPath,
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-      },
-      terminal: {
-        cols,
-        rows,
-        data: (_terminal: Terminal, data: Uint8Array) => {
-          const text = decoder.decode(data);
-          this.appendBuffer(id, text);
-          const listener = this.outputListeners.get(id);
-          if (listener) listener(id, text);
-        },
-      },
-    });
+    const onData = (text: string) => {
+      this.appendBuffer(id, text);
+      const listener = this.outputListeners.get(id);
+      if (listener) listener(id, text);
+    };
+    const onExit = () => {
+      const listener = this.outputListeners.get(id);
+      if (listener) listener(id, "\r\n[Process exited]\r\n");
+    };
 
-    const terminal = proc.terminal!;
+    const pty = isWindows
+      ? spawnBunPty(shell, projectPath, cols, rows, onData, onExit)
+      : spawnBunNative(shell, projectPath, cols, rows, onData, onExit);
 
     const session: TerminalSession = {
       id,
-      proc,
-      terminal,
+      pty,
       projectPath,
       createdAt: new Date(),
       ws: null,
@@ -76,30 +163,22 @@ class TerminalService {
 
     this.sessions.set(id, session);
     this.outputBuffers.set(id, "");
-
-    // When process exits, notify
-    proc.exited.then(() => {
-      const listener = this.outputListeners.get(id);
-      if (listener) listener(id, "\r\n[Process exited]\r\n");
-    });
-
     return id;
   }
 
   /** Write data to terminal via PTY */
   write(id: string, data: string): void {
     const session = this.sessions.get(id);
-    if (!session || session.terminal.closed) return;
-
+    if (!session || session.pty.closed) return;
     this.resetIdleTimer(id);
-    session.terminal.write(data);
+    session.pty.write(data);
   }
 
   /** Resize terminal PTY */
   resize(id: string, cols: number, rows: number): void {
     const session = this.sessions.get(id);
-    if (!session || session.terminal.closed) return;
-    session.terminal.resize(cols, rows);
+    if (!session || session.pty.closed) return;
+    session.pty.resize(cols, rows);
   }
 
   /** Kill a terminal session */
@@ -109,17 +188,7 @@ class TerminalService {
 
     if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
     clearTimeout(session.idleTimer);
-
-    try {
-      if (!session.terminal.closed) session.terminal.close();
-    } catch {
-      // Already closed
-    }
-    try {
-      session.proc.kill();
-    } catch {
-      // Already dead
-    }
+    session.pty.kill();
 
     this.sessions.delete(id);
     this.outputBuffers.delete(id);

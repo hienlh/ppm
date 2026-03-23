@@ -44,6 +44,7 @@
     "@inquirer/prompts": "^8.3.0",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-switch": "^1.2.6",
+    "@skitee3000/bun-pty": "^0.3.3",
     "@tanstack/react-table": "^8.21.3",
     "@uiw/react-codemirror": "^4.25.8",
     "@xterm/addon-fit": "^0.11.0",
