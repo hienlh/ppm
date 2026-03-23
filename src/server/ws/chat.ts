@@ -146,8 +146,12 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       const ev = event as any;
       const evType = ev.type ?? "unknown";
 
-      // First event received — stop heartbeat, switch to streaming status
-      if (!firstEventReceived) {
+      // First content event — stop heartbeat, switch to streaming status.
+      // Skip metadata events (account_info, streaming_status) that arrive before
+      // the SDK subprocess actually produces output — keeps heartbeat + "connecting"
+      // indicator alive until real content flows.
+      const isMetadataEvent = evType === "account_info" || evType === "streaming_status";
+      if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const waitMs = Date.now() - startTime;
         console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType}`);

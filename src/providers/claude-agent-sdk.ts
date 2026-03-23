@@ -797,6 +797,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               rate_limit: "Rate limited by the API. Please wait and try again.",
               invalid_request: "Invalid request sent to the API.",
               server_error: "Anthropic API server error. Try again shortly.",
+              unknown: "API connection failed. Possible causes: network unreachable, expired OAuth token, or API outage. Try: 1) Check connectivity (`curl -s https://api.anthropic.com`), 2) Re-add account in Settings, 3) Create a new chat session.",
             };
             const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
             console.error(`[sdk] session=${sessionId} assistant error: ${assistantError}`);
