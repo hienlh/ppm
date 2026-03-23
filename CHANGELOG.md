@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.7] - 2026-03-23
+
+### Fixed
+- **Env var diagnostics in timeout/error messages**: When SDK hangs or returns `unknown` error, error message now guides user to check `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` env vars (stale/invalid keys cause silent hang) with exact debug commands
+- **Shell env logging**: Log when shell environment has `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` set — helps diagnose SDK hangs in server logs
+
 ## [0.8.6] - 2026-03-23
 
 ### Fixed

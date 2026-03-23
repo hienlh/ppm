@@ -82,6 +82,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     account: { id: string; accessToken: string } | null,
   ): Record<string, string | undefined> {
     const base = { ...process.env, ...this.getProjectEnvOverrides(projectPath) };
+    // Log if shell env has Anthropic vars — helps diagnose hanging SDK
+    for (const key of this.SENSITIVE_ENV_KEYS) {
+      if (process.env[key]) {
+        console.log(`[sdk] Shell env has ${key} set (length=${process.env[key]!.length})`);
+      }
+    }
     if (!account) return base;
     const isOAuthToken = account.accessToken.startsWith("sk-ant-oat");
     if (isOAuthToken) {
@@ -813,7 +819,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               rate_limit: "Rate limited by the API. Please wait and try again.",
               invalid_request: "Invalid request sent to the API.",
               server_error: "Anthropic API server error. Try again shortly.",
-              unknown: `API error in project "${effectiveCwd}". Debug: run \`cd ${effectiveCwd} && claude -p "hi"\` in your terminal. If that also fails, the issue is Claude CLI auth or project config (.claude/ folder). Try: 1) \`claude login\`, 2) Remove .claude/settings.local.json, 3) Create a new chat session.`,
+              unknown: `API error in project "${effectiveCwd}". Debug:\n1. Run: \`cd ${effectiveCwd} && claude -p "hi"\`\n2. Check env: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause this\n3. Try: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" claude -p "hi"\`\n4. Refresh auth: \`claude login\``,
             };
             const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
             yield { type: "error", message: hint };

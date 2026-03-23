@@ -138,7 +138,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         const debugCmd = projectPath ? `cd ${projectPath} && claude -p "hi"` : `claude -p "hi"`;
         safeSend(sessionId, {
           type: "error",
-          message: `Claude SDK timed out after ${elapsed}s for project "${projectPath || "(no project)"}".${wslHint}\n\nDebug steps:\n1. Run in your terminal: \`${debugCmd}\`\n2. Check for hanging hooks/MCP servers: \`cat ${projectPath}/.claude/settings.local.json\`\n3. Try removing project Claude config: \`mv ${projectPath}/.claude ${projectPath}/.claude.bak\`\n4. If none of the above helps, try: \`claude login\` to refresh auth`,
+          message: `Claude SDK timed out after ${elapsed}s for project "${projectPath || "(no project)"}".${wslHint}\n\nDebug steps:\n1. Run: \`${debugCmd}\` — if it also hangs, the issue is your Claude CLI environment\n2. Check env vars: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause silent hang\n3. Try with env cleared: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" ${debugCmd}\`\n4. Check hooks/MCP: \`cat ${projectPath}/.claude/settings.local.json\`\n5. Refresh auth: \`claude login\``,
         });
         abortController.abort();
         return;
