@@ -259,8 +259,7 @@ export function AccountsSettingsSection() {
   }
 
   function statusBadge(acc: AccountInfo) {
-    if (acc.status === "active") return <Badge variant="default" className="text-[10px] px-1.5 py-0">Active</Badge>;
-    if (acc.status === "disabled") return <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Disabled</Badge>;
+    if (acc.status === "active" || acc.status === "disabled") return null;
     const cd = formatCooldown(acc.cooldownUntil);
     return <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Cooldown{cd ? ` (${cd})` : ""}</Badge>;
   }
