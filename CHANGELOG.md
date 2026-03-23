@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.3] - 2026-03-23
+
+### Fixed
+- **WSL timeout diagnostics**: Connection timeout error now detects WSL environment and suggests specific DNS/proxy troubleshooting steps
+- **No-credentials warning**: Log warning when no account and no API key in env — helps diagnose why SDK subprocess hangs
+
 ## [0.8.2] - 2026-03-23
 
 ### Fixed
