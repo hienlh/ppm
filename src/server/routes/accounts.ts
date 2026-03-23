@@ -58,10 +58,10 @@ accountsRoutes.get("/settings", (c) => {
 accountsRoutes.put("/settings", async (c) => {
   const body = await c.req.json<{ strategy?: string; maxRetry?: number }>();
   if (body.strategy !== undefined) {
-    if (!["round-robin", "fill-first"].includes(body.strategy)) {
-      return c.json(err("strategy must be round-robin or fill-first"), 400);
+    if (!["round-robin", "fill-first", "lowest-usage"].includes(body.strategy)) {
+      return c.json(err("strategy must be round-robin, fill-first, or lowest-usage"), 400);
     }
-    accountSelector.setStrategy(body.strategy as "round-robin" | "fill-first");
+    accountSelector.setStrategy(body.strategy as "round-robin" | "fill-first" | "lowest-usage");
   }
   if (body.maxRetry !== undefined) {
     if (!Number.isInteger(body.maxRetry) || body.maxRetry < 0) {

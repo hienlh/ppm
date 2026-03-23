@@ -5,6 +5,7 @@
 ### Changed
 - **Keyboard shortcuts**: Git Graph default `⌘G` (was `⌘⇧G`), Terminal default `⌘'` (was `` ⌘` ``)
 - **Command palette**: Show keyboard shortcut badges on action commands
+- **Account settings UI**: Add "Lowest usage" option to strategy selector
 
 ## [0.8.15] - 2026-03-24
 

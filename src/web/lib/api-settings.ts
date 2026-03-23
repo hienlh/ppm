@@ -51,7 +51,7 @@ export interface VerifyResult {
 }
 
 export interface AccountSettings {
-  strategy: "round-robin" | "fill-first";
+  strategy: "round-robin" | "fill-first" | "lowest-usage";
   maxRetry: number;
   activeCount: number;
 }

@@ -421,7 +421,7 @@ export function AccountsSettingsSection() {
             <Select
               value={settings.strategy}
               onValueChange={async (v) => {
-                const updated = await updateAccountSettings({ strategy: v as "round-robin" | "fill-first" });
+                const updated = await updateAccountSettings({ strategy: v as "round-robin" | "fill-first" | "lowest-usage" });
                 setSettings(updated);
               }}
             >
@@ -431,6 +431,7 @@ export function AccountsSettingsSection() {
               <SelectContent>
                 <SelectItem value="round-robin">Round-robin</SelectItem>
                 <SelectItem value="fill-first">Fill-first</SelectItem>
+                <SelectItem value="lowest-usage">Lowest usage</SelectItem>
               </SelectContent>
             </Select>
           </div>
