@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.10] - 2026-03-23
+
+### Fixed
+- **Block project .env poisoning**: All auth env vars (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`) are now explicitly set in SDK subprocess env — prevents Claude SDK from falling back to project `.env` which may contain unrelated/invalid keys (root cause of indefinite SDK hang)
+
 ## [0.8.9] - 2026-03-23
 
 ### Added
