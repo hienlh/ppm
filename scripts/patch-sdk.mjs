@@ -20,22 +20,14 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 
-const sdkPath = join(
-  import.meta.dirname,
-  "..",
-  "node_modules",
-  "@anthropic-ai",
-  "claude-agent-sdk",
-  "sdk.mjs",
-);
+export function patchSdk(sdkPath) {
+  if (!existsSync(sdkPath)) {
+    console.log("[patch-sdk] SDK not found, skipping patch");
+    return;
+  }
 
-if (!existsSync(sdkPath)) {
-  console.log("[patch-sdk] SDK not found, skipping patch");
-  process.exit(0);
-}
-
-let content = readFileSync(sdkPath, "utf8");
-let patches = 0;
+  let content = readFileSync(sdkPath, "utf8");
+  let patches = 0;
 
 // ── Patch 1: ProcessTransport.write() — add drain handling ──
 
@@ -194,9 +186,23 @@ if (content.includes("__ppm_manual_readline__")) {
   }
 }
 
-if (patches > 0) {
-  writeFileSync(sdkPath, content, "utf8");
-  console.log(`[patch-sdk] Done — ${patches} patch(es) written`);
-} else {
-  console.log("[patch-sdk] No patches needed");
+  if (patches > 0) {
+    writeFileSync(sdkPath, content, "utf8");
+    console.log(`[patch-sdk] Done — ${patches} patch(es) written`);
+  } else {
+    console.log("[patch-sdk] No patches needed");
+  }
+}
+
+// Auto-run when executed directly (postinstall)
+if (process.argv[1]?.endsWith("patch-sdk.mjs")) {
+  const sdkPath = join(
+    import.meta.dirname,
+    "..",
+    "node_modules",
+    "@anthropic-ai",
+    "claude-agent-sdk",
+    "sdk.mjs",
+  );
+  patchSdk(sdkPath);
 }

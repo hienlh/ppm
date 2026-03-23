@@ -34,6 +34,12 @@ program
     if (!hasConfig()) {
       await initProject();
     }
+    // Ensure SDK patches are applied (bunx skips postinstall hooks)
+    try {
+      const sdkUrl = import.meta.resolve("@anthropic-ai/claude-agent-sdk");
+      const { patchSdk } = await import("../scripts/patch-sdk.mjs");
+      patchSdk(new URL(sdkUrl).pathname);
+    } catch {}
     const { startServer } = await import("./server/index.ts");
     await startServer(options);
   });
