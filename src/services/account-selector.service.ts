@@ -1,7 +1,7 @@
 import { accountService, type AccountWithTokens } from "./account.service.ts";
-import { getConfigValue, setConfigValue } from "./db.service.ts";
+import { getConfigValue, setConfigValue, getLatestSnapshotForAccount } from "./db.service.ts";
 
-export type AccountStrategy = "round-robin" | "fill-first";
+export type AccountStrategy = "round-robin" | "fill-first" | "lowest-usage";
 
 const STRATEGY_CONFIG_KEY = "account_strategy";
 const MAX_RETRY_CONFIG_KEY = "account_max_retry";
@@ -68,7 +68,10 @@ class AccountSelectorService {
     }
 
     let pickedId: string;
-    if (this.getStrategy() === "fill-first") {
+    const strategy = this.getStrategy();
+    if (strategy === "lowest-usage") {
+      pickedId = this.pickLowestUsage(active);
+    } else if (strategy === "fill-first") {
       const sorted = [...active].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
       pickedId = sorted[0]!.id;
     } else {
@@ -83,6 +86,33 @@ class AccountSelectorService {
       this._lastFailReason = "all_decrypt_failed";
     }
     return result;
+  }
+
+  /**
+   * Pick account with lowest 5-hour utilization.
+   * Skips accounts with weekly >= 100% (fully exhausted).
+   * Accounts with no usage data are treated as 0% (preferred).
+   * Falls back to round-robin if all accounts are maxed.
+   */
+  private pickLowestUsage(active: { id: string; createdAt: number }[]): string {
+    const scored = active.map((acc) => {
+      const snap = getLatestSnapshotForAccount(acc.id);
+      const fiveHour = snap?.five_hour_util ?? 0;
+      const weekly = snap?.weekly_util ?? 0;
+      // weekly >= 1.0 means fully exhausted — mark as unavailable
+      const exhausted = weekly >= 1.0 || fiveHour >= 1.0;
+      return { id: acc.id, fiveHour, weekly, exhausted };
+    });
+
+    const available = scored.filter((s) => !s.exhausted);
+    if (available.length > 0) {
+      available.sort((a, b) => a.fiveHour - b.fiveHour || a.weekly - b.weekly);
+      return available[0]!.id;
+    }
+
+    // All exhausted — fallback: pick the one with earliest reset (lowest current util)
+    scored.sort((a, b) => a.fiveHour - b.fiveHour || a.weekly - b.weekly);
+    return scored[0]!.id;
   }
 
   /** Called when account receives 429 — apply exponential backoff */

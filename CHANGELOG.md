@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.15] - 2026-03-24
+
+### Fixed
+- **Usage polling reliability**: Replace `setInterval` with recursive `setTimeout` to prevent overlap and timer death from unhandled async rejections; wrap `pollOnce` in try/catch
+
+### Added
+- **Lowest-usage account strategy**: New `lowest-usage` routing strategy picks account with lowest 5-hour utilization, skips accounts at 100% weekly/5hr, falls back gracefully when all exhausted
+
 ## [0.8.14] - 2026-03-24
 
 ### Fixed

@@ -225,11 +225,15 @@ async function fetchLegacySingleAccount(): Promise<void> {
 }
 
 async function pollOnce(): Promise<void> {
-  const hasAccounts = accountService.list().length > 0;
-  if (hasAccounts) {
-    await fetchAllAccountUsages();
-  } else {
-    await fetchLegacySingleAccount();
+  try {
+    const hasAccounts = accountService.list().length > 0;
+    if (hasAccounts) {
+      await fetchAllAccountUsages();
+    } else {
+      await fetchLegacySingleAccount();
+    }
+  } catch (e) {
+    console.error("[usage] pollOnce error:", (e as Error).message);
   }
 }
 
@@ -285,12 +289,19 @@ export function getCachedUsage(): ClaudeUsage & { activeAccountId?: string; acti
 
 export function startUsagePolling(): void {
   if (pollTimer) return;
-  pollOnce();
-  pollTimer = setInterval(() => pollOnce(), POLL_INTERVAL);
+  // Use recursive setTimeout instead of setInterval to prevent overlap
+  // and ensure polling continues even if a single iteration errors
+  const scheduleNext = () => {
+    pollTimer = setTimeout(async () => {
+      await pollOnce();
+      scheduleNext();
+    }, POLL_INTERVAL);
+  };
+  pollOnce().then(scheduleNext);
 }
 
 export function stopUsagePolling(): void {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
 }
 
 export function updateFromSdkEvent(_rateLimitType?: string, _utilization?: number, costUsd?: number): void {
