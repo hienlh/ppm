@@ -88,8 +88,26 @@ async function main() {
     try { writeFileSync(P.resultFile, JSON.stringify({ ok, message: msg })); } catch {}
   };
 
-  // Kill old server
+  // Kill old server PID
   try { process.kill(P.serverPid); log("INFO", "Restart: killed old server PID " + P.serverPid); } catch {}
+  await Bun.sleep(500);
+
+  // Force-kill any process still holding the port (handles orphan/zombie processes)
+  const killByPort = () => {
+    try {
+      if (process.platform === "win32") {
+        const r = Bun.spawnSync(["cmd", "/c", "netstat -ano | findstr :" + P.port + " | findstr LISTENING"]);
+        const lines = r.stdout.toString().trim().split("\\n");
+        const pids = new Set(lines.map((l: string) => l.trim().split(/\\s+/).pop()).filter(Boolean));
+        for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
+      } else {
+        const r = Bun.spawnSync(["lsof", "-t", "-i", ":" + P.port]);
+        const pids = r.stdout.toString().trim().split("\\n").filter(Boolean);
+        for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
+      }
+    } catch {}
+  };
+  killByPort();
 
   // Wait for port to be free (up to 5s)
   const start = Date.now();
@@ -101,6 +119,7 @@ async function main() {
         .listen(P.port, P.host);
     });
     if (!inUse) break;
+    killByPort();
     await Bun.sleep(200);
   }
 

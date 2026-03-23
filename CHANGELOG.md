@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.18] - 2026-03-24
+
+### Fixed
+- **Restart reliability**: Kill orphan processes holding the port via `lsof`/`netstat` (cross-platform), not just the PID from status.json — fixes restart failures when old server process outlives its PID record
+
 ## [0.8.17] - 2026-03-24
 
 ### Changed
