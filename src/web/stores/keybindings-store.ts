@@ -31,9 +31,9 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "next-tab", label: "Next Tab", category: "tabs", defaultKey: "Alt+]" },
   { id: "prev-tab", label: "Previous Tab", category: "tabs", defaultKey: "Alt+[" },
   { id: "open-chat", label: "Open Chat", category: "tabs", defaultKey: "Mod+Shift+L" },
-  { id: "open-terminal", label: "Open Terminal", category: "tabs", defaultKey: "Mod+`" },
+  { id: "open-terminal", label: "Open Terminal", category: "tabs", defaultKey: "Mod+'" },
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
-  { id: "open-git-graph", label: "Git Graph", category: "tabs", defaultKey: "Mod+Shift+G" },
+  { id: "open-git-graph", label: "Git Graph", category: "tabs", defaultKey: "Mod+G" },
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
   { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
   // Projects — Mod+1..9

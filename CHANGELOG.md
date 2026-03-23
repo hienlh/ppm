@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.16] - 2026-03-24
+
+### Changed
+- **Keyboard shortcuts**: Git Graph default `⌘G` (was `⌘⇧G`), Terminal default `⌘'` (was `` ⌘` ``)
+- **Command palette**: Show keyboard shortcut badges on action commands
+
 ## [0.8.15] - 2026-03-24
 
 ### Fixed

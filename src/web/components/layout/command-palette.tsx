@@ -14,6 +14,7 @@ import {
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
@@ -27,6 +28,20 @@ interface CommandItem {
   keywords?: string;
   group: "action" | "file" | "fs" | "db";
   connectionColor?: string | null;
+  shortcut?: string;
+}
+
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
+
+/** Format a keybinding combo for display (e.g. "Mod+G" → "⌘G" on Mac, "Ctrl+G" on others) */
+function formatShortcut(combo: string): string {
+  if (!combo) return "";
+  return combo
+    .replace(/Mod\+/g, isMac ? "⌘" : "Ctrl+")
+    .replace(/Alt\+/g, isMac ? "⌥" : "Alt+")
+    .replace(/Shift\+/g, isMac ? "⇧" : "Shift+")
+    .replace(/Meta\+/g, "⌘")
+    .replace(/Ctrl\+/g, isMac ? "⌃" : "Ctrl+");
 }
 
 interface DbSearchResult {
@@ -85,6 +100,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
+  const getBinding = useKeybindingsStore((s) => s.getBinding);
 
   // Fetch filesystem files when path query changes directory
   const fetchFsFiles = useCallback(async (dir: string) => {
@@ -137,11 +153,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     };
 
     return [
-      { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action" },
-      { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action" },
-      { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action" },
+      { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action", shortcut: formatShortcut(getBinding("open-chat")) },
+      { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
+      { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action", shortcut: formatShortcut(getBinding("open-git-graph")) },
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },
-      { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action" },
+      { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },
       {
         id: "settings", label: "Settings", icon: Settings,
         action: () => {
@@ -151,9 +167,10 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         },
         keywords: "config preferences theme",
         group: "action",
+        shortcut: formatShortcut(getBinding("open-settings")),
       },
     ];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar]);
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding]);
 
   // File commands — derived from file store tree (project files)
   const fileCommands = useMemo<CommandItem[]>(() => {
@@ -406,6 +423,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
                       )}
                       {cmd.hint}
                     </span>
+                  )}
+                  {cmd.shortcut && (
+                    <kbd className="ml-auto shrink-0 rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] text-text-subtle font-mono">
+                      {cmd.shortcut}
+                    </kbd>
                   )}
                 </button>
               );
