@@ -36,10 +36,14 @@ program
     }
     // Ensure SDK patches are applied (bunx skips postinstall hooks)
     try {
-      const sdkUrl = import.meta.resolve("@anthropic-ai/claude-agent-sdk");
+      const { fileURLToPath } = await import("node:url");
+      const sdkPath = fileURLToPath(import.meta.resolve("@anthropic-ai/claude-agent-sdk"));
+      console.log("[patch-sdk] Resolved SDK at:", sdkPath);
       const { patchSdk } = await import("../scripts/patch-sdk.mjs");
-      patchSdk(new URL(sdkUrl).pathname);
-    } catch {}
+      patchSdk(sdkPath);
+    } catch (e) {
+      console.log("[patch-sdk] Could not resolve SDK:", (e as Error).message);
+    }
     const { startServer } = await import("./server/index.ts");
     await startServer(options);
   });
