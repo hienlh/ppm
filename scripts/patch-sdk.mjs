@@ -2,13 +2,13 @@
 /**
  * Postinstall patch for @anthropic-ai/claude-agent-sdk
  *
- * Fixes Windows stdin pipe buffering issue by:
+ * Fixes Windows + Bun subprocess pipe issues:
  * 1. Adding drain() handling to ProcessTransport.write()
  * 2. Awaiting the initial prompt write in query() entry point
+ * 3. Replacing readline async iterator with manual line reader in readMessages()
  *
- * Without these fixes, stdin.write() can return false (buffer full) but
- * the SDK never waits for the drain event, causing the CLI subprocess to
- * hang on Windows + Bun.
+ * Bun on Windows has broken: stdin pipe backpressure, unawaited async writes,
+ * and readline.createInterface() async iterator (Symbol.asyncIterator).
  *
  * Tracking issues:
  *   - TS SDK #44: https://github.com/anthropics/claude-agent-sdk-typescript/issues/44
@@ -141,6 +141,85 @@ if (content.includes("__ppm_await_write__")) {
 
     patches++;
     console.log("[patch-sdk] Patch 2 (await prompt): applied");
+  }
+}
+
+// ── Patch 3: Replace readline async iterator in readMessages() ──
+// Bun on Windows doesn't implement Symbol.asyncIterator for
+// readline.createInterface(), causing "undefined is not a function"
+// when the SDK does `for await (let X of readlineInterface)`.
+//
+// Replace with a manual line reader using raw stream 'data' events.
+
+if (content.includes("__ppm_manual_readline__")) {
+  console.log("[patch-sdk] Patch 3 (readline): already applied");
+} else {
+  // Match the readMessages method by anchoring on the stable error string
+  const readMsgPattern =
+    /async\s?\*\s?readMessages\(\)\{if\(!this\.processStdout\)throw Error\("ProcessTransport output stream not available"\);let ([A-Za-z_$][A-Za-z0-9_$]*)=([A-Za-z_$][A-Za-z0-9_$]*)\(\{input:this\.processStdout\}\);try\{for await\(let ([A-Za-z_$][A-Za-z0-9_$]*) of \1\)if\(\3\.trim\(\)\)try\{yield ([A-Za-z_$][A-Za-z0-9_$]*)\(\3\)\}catch\(([A-Za-z_$][A-Za-z0-9_$]*)\)\{throw ([A-Za-z_$][A-Za-z0-9_$]*)\(`Non-JSON stdout: \$\{\3\}`\),Error\(`CLI output was not valid JSON\. This may indicate an error during startup\. Output: \$\{\3\.slice\(0,200\)\}\$\{\3\.length>200\?"\.\.\.":""\}`\)\}await this\.waitForExit\(\)\}catch\(\3\)\{throw \3\}finally\{\1\.close\(\)\}\}/;
+  const readMsgMatch = content.match(readMsgPattern);
+
+  if (!readMsgMatch) {
+    console.warn(
+      "[patch-sdk] Patch 3 (readline): pattern not found, skipping",
+    );
+  } else {
+    const oldReadMsg = readMsgMatch[0];
+    const rlVar = readMsgMatch[1];     // Q (readline interface)
+    const createRL = readMsgMatch[2];   // DU (createInterface)
+    const lineVar = readMsgMatch[3];    // X (line variable)
+    const parseJSON = readMsgMatch[4];  // O1 (JSON parser)
+    const errVar = readMsgMatch[5];     // Y (error variable)
+    const logger = readMsgMatch[6];     // i0 (logger)
+
+    // Manual line reader: use stream 'data' events + buffer splitting
+    // This avoids readline's broken async iterator on Bun/Windows
+    const newReadMsg =
+      `/*__ppm_manual_readline__*/async*readMessages(){` +
+      `if(!this.processStdout)throw Error("ProcessTransport output stream not available");` +
+      // Create a manual async line iterator using stream events
+      `let _buf="";` +
+      `const _lines=[];` +
+      `let _done=false;` +
+      `let _err=null;` +
+      `let _resolve=null;` +
+      `const _notify=()=>{if(_resolve){const r=_resolve;_resolve=null;r()}};` +
+      `this.processStdout.setEncoding("utf8");` +
+      `this.processStdout.on("data",(chunk)=>{` +
+        `_buf+=chunk;` +
+        `let nl;` +
+        `while((nl=_buf.indexOf("\\n"))!==-1){` +
+          `_lines.push(_buf.slice(0,nl));` +
+          `_buf=_buf.slice(nl+1)` +
+        `}` +
+        `_notify()` +
+      `});` +
+      `this.processStdout.on("end",()=>{` +
+        `if(_buf.trim())_lines.push(_buf);` +
+        `_buf="";_done=true;_notify()` +
+      `});` +
+      `this.processStdout.on("error",(e)=>{_err=e;_done=true;_notify()});` +
+      `try{` +
+        `while(true){` +
+          `while(_lines.length>0){` +
+            `const ${lineVar}=_lines.shift();` +
+            `if(${lineVar}.trim())` +
+              `try{yield ${parseJSON}(${lineVar})}` +
+              `catch(${errVar}){` +
+                `throw ${logger}(\`Non-JSON stdout: \${${lineVar}}\`),` +
+                `Error(\`CLI output was not valid JSON. This may indicate an error during startup. Output: \${${lineVar}.slice(0,200)}\${${lineVar}.length>200?"...":""}\`)` +
+              `}` +
+          `}` +
+          `if(_err)throw _err;` +
+          `if(_done)break;` +
+          `await new Promise(r=>{_resolve=r})` +
+        `}` +
+        `await this.waitForExit()` +
+      `}catch(${lineVar}){throw ${lineVar}}}`;
+
+    content = content.replace(oldReadMsg, newReadMsg);
+    patches++;
+    console.log("[patch-sdk] Patch 3 (readline): applied");
   }
 }
 
