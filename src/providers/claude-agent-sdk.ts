@@ -545,7 +545,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Account-based auth injection (multi-account mode)
       // Fallback to existing env (ANTHROPIC_API_KEY) when no accounts configured.
       const accountsEnabled = accountSelector.isEnabled();
-      const account = accountsEnabled ? accountSelector.next() : null;
+      let account = accountsEnabled ? accountSelector.next() : null;
       if (accountsEnabled && !account) {
         // All accounts in DB but none usable
         const reason = accountSelector.lastFailReason;
@@ -557,7 +557,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         yield { type: "done" as const, sessionId, resultSubtype: "error_auth" };
         return;
       }
+      // Pre-flight: ensure OAuth token is fresh before sending to SDK
       if (account) {
+        const fresh = await accountService.ensureFreshToken(account.id);
+        if (fresh) {
+          account = fresh;
+        }
         console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"})`);
         yield { type: "account_info" as const, accountId: account.id, accountLabel: account.label ?? account.email ?? "Unknown" };
       }

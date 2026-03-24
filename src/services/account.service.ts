@@ -116,6 +116,29 @@ class AccountService {
     }
   }
 
+  /**
+   * Ensure the access token for an OAuth account is still fresh.
+   * If it's expired or about to expire (within 60s), refresh it proactively.
+   * Returns the refreshed account with fresh tokens, or null if refresh failed.
+   */
+  async ensureFreshToken(id: string): Promise<AccountWithTokens | null> {
+    const acc = this.getWithTokens(id);
+    if (!acc) return null;
+    // Only OAuth tokens need refresh
+    if (!acc.accessToken.startsWith("sk-ant-oat")) return acc;
+    if (!acc.expiresAt) return acc;
+    const nowS = Math.floor(Date.now() / 1000);
+    if (acc.expiresAt - nowS > 60) return acc; // still fresh
+    try {
+      console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s)`);
+      await this.refreshAccessToken(id);
+      return this.getWithTokens(id);
+    } catch (e) {
+      console.error(`[accounts] Pre-flight refresh failed for ${id}:`, e);
+      return null;
+    }
+  }
+
   /** Find existing account by email or profile UUID */
   private findDuplicate(email?: string | null, profileData?: OAuthProfileData | null): Account | null {
     if (!email && !profileData?.account?.uuid) return null;
@@ -586,7 +609,7 @@ class AccountService {
     const CHECK_INTERVAL_MS = 5 * 60_000;
     const REFRESH_BUFFER_S = 5 * 60;
 
-    this.refreshTimer = setInterval(async () => {
+    const refreshExpiring = async () => {
       const accounts = this.list();
       const nowS = Math.floor(Date.now() / 1000);
       for (const acc of accounts) {
@@ -600,7 +623,11 @@ class AccountService {
           console.error(`[accounts] Auto-refresh failed for ${acc.id}:`, e);
         }
       }
-    }, CHECK_INTERVAL_MS);
+    };
+
+    // Run immediately on startup, then every 5 minutes
+    refreshExpiring().catch(() => {});
+    this.refreshTimer = setInterval(refreshExpiring, CHECK_INTERVAL_MS);
 
     if (typeof this.refreshTimer === "object" && this.refreshTimer !== null && "unref" in this.refreshTimer) {
       (this.refreshTimer as NodeJS.Timeout).unref();

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.22] - 2026-03-24
+
+### Fixed
+- **OAuth pre-flight token refresh**: Check token freshness before each SDK query and refresh proactively if expired or expiring within 60s
+- **Auto-refresh on startup**: Run token refresh check immediately on server start instead of waiting 5 minutes for first interval
+- **OAuth auto-refresh on auth failure**: Automatically refresh expired OAuth token and retry when SDK returns `authentication_failed`, instead of just showing error to user
+
 ## [0.8.21] - 2026-03-24
 
 ### Fixed
