@@ -46,11 +46,14 @@ if (content.includes("waiting for drain")) {
     const arg = drainMatch[1];
     const logger = drainMatch[2];
 
-    // Replace backpressure line: await drain instead of just logging
+    // Replace backpressure line:
+    // - Non-Windows: await drain event (pipe buffers are large, drain fires reliably)
+    // - Windows: skip drain — Bun+Windows pipe drain event is unreliable (may never fire
+    //   in PowerShell). OS still buffers data; subprocess reads when ready.
     const newLine =
       `if(!this.processStdin.write(${arg})){` +
-      `${logger}("[ProcessTransport] Write buffer full, waiting for drain");` +
-      `await new Promise(_dr=>this.processStdin.once("drain",_dr))}`;
+      `${logger}("[ProcessTransport] Write buffer full, "+(process.platform==="win32"?"skipping drain (Windows)":"waiting for drain"));` +
+      `if(process.platform!=="win32")await new Promise(_dr=>this.processStdin.once("drain",_dr))}`;
 
     content = content.replace(oldLine, newLine);
 
@@ -162,6 +165,9 @@ if (content.includes("__ppm_manual_readline__")) {
         `_buf="";_done=true;_notify()` +
       `});` +
       `this.processStdout.on("error",(e)=>{_err=e;_done=true;_notify()});` +
+      // Bun on Windows may not auto-switch to flowing mode when "data" listener is added.
+      // Explicit resume() ensures data events fire.
+      `this.processStdout.resume();` +
       `try{` +
         `while(true){` +
           `while(_lines.length>0){` +
