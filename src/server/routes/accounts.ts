@@ -27,9 +27,13 @@ function getUiBase(c: Context): string {
   return getBaseUrl(c);
 }
 
-/** GET /api/accounts */
+/** GET /api/accounts — includes hasRefreshToken flag for UI to distinguish temporary accounts */
 accountsRoutes.get("/", (c) => {
-  return c.json(ok(accountService.list()));
+  const accounts = accountService.list().map((acc) => ({
+    ...acc,
+    hasRefreshToken: accountService.hasRefreshToken(acc.id),
+  }));
+  return c.json(ok(accounts));
 });
 
 /** GET /api/accounts/active — which account will be used next */
@@ -174,8 +178,8 @@ accountsRoutes.post("/import", async (c) => {
     const { data, password } = await c.req.json() as { data: string; password: string };
     if (!data) return c.json(err("Backup data required"), 400);
     if (!password) return c.json(err("Password required"), 400);
-    const result = await accountService.importEncrypted(data, password);
-    return c.json(ok(result));
+    const imported = accountService.importEncrypted(data, password);
+    return c.json(ok({ imported }));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
@@ -220,9 +224,13 @@ accountsRoutes.delete("/:id", (c) => {
 accountsRoutes.patch("/:id", async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json<{ status?: string }>();
-  if (body.status === "disabled") accountService.setDisabled(id);
-  else if (body.status === "active") accountService.setEnabled(id);
-  else return c.json(err("status must be active or disabled"), 400);
+  try {
+    if (body.status === "disabled") accountService.setDisabled(id);
+    else if (body.status === "active") accountService.setEnabled(id);
+    else return c.json(err("status must be active or disabled"), 400);
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
   const account = accountService.list().find((a) => a.id === id) ?? null;
   return c.json(ok(account));
 });

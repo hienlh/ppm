@@ -337,6 +337,14 @@ class AccountService {
   }
 
   setEnabled(id: string): void {
+    // Block re-enabling temporary (no refresh token) or expired-refresh-token accounts
+    if (!this.hasRefreshToken(id)) {
+      const acc = this.list().find((a) => a.id === id);
+      const nowS = Math.floor(Date.now() / 1000);
+      if (acc?.expiresAt && acc.expiresAt < nowS) {
+        throw new Error("Cannot re-enable expired temporary account. Please login again or import a fresh backup.");
+      }
+    }
     updateAccount(id, { status: "active", cooldown_until: null });
   }
 
@@ -545,13 +553,13 @@ class AccountService {
   // Export / Import encrypted backup
   // ---------------------------------------------------------------------------
 
-  /** Refresh all OAuth tokens before export so they're fresh on the target machine */
+  /** Refresh all OAuth tokens before export so the exported access tokens are fresh (~1h). */
   async refreshBeforeExport(accountIds?: string[]): Promise<void> {
     const accounts = accountIds?.length
       ? accountIds.map((id) => this.getWithTokens(id)).filter(Boolean) as AccountWithTokens[]
       : this.list().map((a) => this.getWithTokens(a.id)).filter(Boolean) as AccountWithTokens[];
     for (const acc of accounts) {
-      if (!acc.accessToken.startsWith("sk-ant-oat")) continue; // only OAuth tokens
+      if (!acc.accessToken.startsWith("sk-ant-oat")) continue;
       if (!acc.expiresAt) continue;
       try {
         await this.refreshAccessToken(acc.id);
@@ -561,43 +569,43 @@ class AccountService {
     }
   }
 
+  /**
+   * Export accounts as temporary access-only backup.
+   * Refresh tokens are NEVER exported — imported accounts are temporary (~1h).
+   * This prevents token rotation conflicts between machines.
+   */
   exportEncrypted(password: string, accountIds?: string[]): string {
-    // Fetch requested accounts (or all), decrypt tokens, encrypt whole payload with user password
     const rows = accountIds?.length
       ? accountIds.map((id) => getAccountById(id)).filter(Boolean) as AccountRow[]
       : getAccounts();
     const portable = rows.map((row) => {
       let accessToken = row.access_token;
-      let refreshToken = row.refresh_token;
       try { accessToken = decrypt(accessToken); } catch { /* already plaintext or corrupt */ }
-      try { refreshToken = decrypt(refreshToken); } catch { /* already plaintext or corrupt */ }
-      return { ...row, access_token: accessToken, refresh_token: refreshToken };
+      // Intentionally exclude refresh_token — exported accounts are temporary
+      return { ...row, access_token: accessToken, refresh_token: "" };
     });
     return encryptWithPassword(JSON.stringify(portable), password);
   }
 
   /**
    * Import accounts from encrypted backup.
-   * After import, immediately refreshes OAuth tokens so THIS machine gets fresh
-   * tokens and the source machine's shared tokens become invalidated.
-   * This prevents two machines from holding the same refresh token.
+   * Accounts without refresh_token are imported as temporary (access-only, ~1h lifetime).
    */
-  async importEncrypted(blob: string, password: string): Promise<{ imported: number; refreshed: number }> {
+  importEncrypted(blob: string, password: string): number {
     const plaintext = decryptWithPassword(blob, password);
     const rows = JSON.parse(plaintext) as AccountRow[];
     if (!Array.isArray(rows)) throw new Error("Invalid backup format");
     let imported = 0;
-    const importedIds: string[] = [];
     for (const row of rows) {
-      if (!row.id || !row.access_token || !row.refresh_token) continue;
+      if (!row.id || !row.access_token) continue;
       // Skip if account already exists (by id or email)
       if (getAccountById(row.id)) continue;
       if (row.email && this.list().some((a) => a.email === row.email)) continue;
       // Re-encrypt with this machine's key
       let accessToken = row.access_token;
-      let refreshToken = row.refresh_token;
       if (!looksEncrypted(accessToken)) accessToken = encrypt(accessToken);
-      if (!looksEncrypted(refreshToken)) refreshToken = encrypt(refreshToken);
+      // refresh_token: empty string for temporary accounts
+      const refreshToken = row.refresh_token ? (looksEncrypted(row.refresh_token) ? row.refresh_token : encrypt(row.refresh_token)) : encrypt("");
       insertAccount({
         id: row.id,
         label: row.label,
@@ -613,25 +621,15 @@ class AccountService {
         profile_json: row.profile_json ?? null,
       });
       imported++;
-      importedIds.push(row.id);
     }
+    return imported;
+  }
 
-    // Immediately refresh imported OAuth tokens so this machine owns them.
-    // The source machine's tokens will be invalidated by Anthropic's token rotation.
-    let refreshed = 0;
-    for (const id of importedIds) {
-      const acc = this.getWithTokens(id);
-      if (!acc || !acc.accessToken.startsWith("sk-ant-oat")) continue;
-      try {
-        await this.refreshAccessToken(id, false);
-        refreshed++;
-        console.log(`[accounts] Post-import refresh OK for ${acc.email ?? id}`);
-      } catch (e) {
-        console.warn(`[accounts] Post-import refresh failed for ${acc.email ?? id}:`, e);
-      }
-    }
-
-    return { imported, refreshed };
+  /** Check if an account has a valid refresh token (non-empty). */
+  hasRefreshToken(id: string): boolean {
+    const acc = this.getWithTokens(id);
+    if (!acc) return false;
+    return acc.refreshToken.length > 0 && acc.refreshToken !== "";
   }
 
   // ---------------------------------------------------------------------------
@@ -659,9 +657,30 @@ class AccountService {
       }
     };
 
+    // Cleanup: auto-delete expired temporary accounts (no refresh token) after 7 days
+    const TEMP_EXPIRY_DAYS = 7;
+    const cleanupExpiredTemporary = () => {
+      const nowS = Math.floor(Date.now() / 1000);
+      const accounts = this.list();
+      for (const acc of accounts) {
+        if (!acc.expiresAt) continue;
+        // Only cleanup accounts without refresh token
+        if (this.hasRefreshToken(acc.id)) continue;
+        const expiredForS = nowS - acc.expiresAt;
+        if (expiredForS > TEMP_EXPIRY_DAYS * 86400) {
+          console.log(`[accounts] Auto-deleting expired temporary account ${acc.email ?? acc.id} (expired ${Math.floor(expiredForS / 86400)}d ago)`);
+          this.remove(acc.id);
+        }
+      }
+    };
+
     // Run immediately on startup, then every 5 minutes
     refreshExpiring().catch(() => {});
-    this.refreshTimer = setInterval(refreshExpiring, CHECK_INTERVAL_MS);
+    cleanupExpiredTemporary();
+    this.refreshTimer = setInterval(() => {
+      refreshExpiring().catch(() => {});
+      cleanupExpiredTemporary();
+    }, CHECK_INTERVAL_MS);
 
     if (typeof this.refreshTimer === "object" && this.refreshTimer !== null && "unref" in this.refreshTimer) {
       (this.refreshTimer as NodeJS.Timeout).unref();

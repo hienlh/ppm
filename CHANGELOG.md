@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.25] - 2026-03-24
+
+### Changed
+- **Temporary export/import**: Exported accounts no longer include refresh tokens — imported accounts are temporary (~1h access-only). Prevents token rotation conflicts between machines.
+- **Temporary account UI**: Shows "Temporary" badge for accounts without refresh token, "Expired" badge when expired. Expired temporary accounts cannot be re-enabled.
+- **Auto-cleanup**: Expired temporary accounts (no refresh token) are automatically deleted after 7 days.
+- **Export warning**: Export dialog now explains that exported accounts are temporary and the importing machine should login directly for permanent access.
+
 ## [0.8.24] - 2026-03-24
 
 ### Fixed

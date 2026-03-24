@@ -39,6 +39,7 @@ export interface AccountInfo {
   lastUsedAt: number | null;
   profileData: OAuthProfileData | null;
   createdAt: number;
+  hasRefreshToken: boolean;
 }
 
 export interface VerifyResult {
@@ -114,8 +115,8 @@ export function getAllAccountUsages(): Promise<AccountUsageEntry[]> {
   return api.get<AccountUsageEntry[]>("/api/accounts/usage");
 }
 
-export function importAccounts(params: { data: string; password: string }): Promise<{ imported: number; refreshed: number }> {
-  return api.post<{ imported: number; refreshed: number }>("/api/accounts/import", params);
+export function importAccounts(params: { data: string; password: string }): Promise<{ imported: number }> {
+  return api.post<{ imported: number }>("/api/accounts/import", params);
 }
 
 export interface AIProviderSettings {

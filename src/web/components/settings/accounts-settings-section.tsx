@@ -259,9 +259,21 @@ export function AccountsSettingsSection() {
   }
 
   function statusBadge(acc: AccountInfo) {
-    if (acc.status === "active" || acc.status === "disabled") return null;
-    const cd = formatCooldown(acc.cooldownUntil);
-    return <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Cooldown{cd ? ` (${cd})` : ""}</Badge>;
+    const badges = [];
+    if (!acc.hasRefreshToken) {
+      const nowS = Math.floor(Date.now() / 1000);
+      const expired = acc.expiresAt && acc.expiresAt < nowS;
+      badges.push(
+        <Badge key="temp" variant={expired ? "destructive" : "secondary"} className="text-[10px] px-1.5 py-0">
+          {expired ? "Expired" : "Temporary"}
+        </Badge>
+      );
+    }
+    if (acc.status === "cooldown") {
+      const cd = formatCooldown(acc.cooldownUntil);
+      badges.push(<Badge key="cd" variant="destructive" className="text-[10px] px-1.5 py-0">Cooldown{cd ? ` (${cd})` : ""}</Badge>);
+    }
+    return badges.length > 0 ? <>{badges}</> : null;
   }
 
   function openExportDialog() {
@@ -328,8 +340,7 @@ export function AccountsSettingsSection() {
     setImportError(null);
     try {
       const result = await importAccounts({ data: importData.trim(), password: importPassword });
-      const refreshNote = result.refreshed > 0 ? ` (${result.refreshed} tokens refreshed — source machine will need re-login)` : "";
-      showMessage({ type: "success", text: `Imported ${result.imported} account(s).${refreshNote}` });
+      showMessage({ type: "success", text: `Imported ${result.imported} account(s). Temporary accounts expire in ~1h — login directly for permanent access.` });
       setShowImportDialog(false);
       refresh();
     } catch (e) {
@@ -375,7 +386,13 @@ export function AccountsSettingsSection() {
                         <Eye className="size-3" />
                       </Button>
                     )}
-                    <Switch checked={acc.status !== "disabled"} onCheckedChange={() => handleToggle(acc.id, acc.status)} disabled={acc.status === "cooldown"} className="scale-[0.65] cursor-pointer" />
+                    <Switch
+                      checked={acc.status !== "disabled"}
+                      onCheckedChange={() => handleToggle(acc.id, acc.status)}
+                      disabled={acc.status === "cooldown" || (!acc.hasRefreshToken && !!acc.expiresAt && acc.expiresAt < Math.floor(Date.now() / 1000))}
+                      className="scale-[0.65] cursor-pointer"
+                      title={!acc.hasRefreshToken && !!acc.expiresAt && acc.expiresAt < Math.floor(Date.now() / 1000) ? "Expired temporary account — cannot re-enable" : undefined}
+                    />
                     <Button size="icon" variant="ghost" className="size-7 cursor-pointer text-muted-foreground hover:text-destructive" onClick={() => handleDelete(acc.id, acc.email)} title="Remove">
                       <X className="size-3" />
                     </Button>
@@ -656,6 +673,13 @@ export function AccountsSettingsSection() {
                 <p className="text-[10px] text-red-500">Passwords do not match</p>
               )}
             </div>
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
+              <p className="text-[10px] font-medium text-amber-600">Temporary access only</p>
+              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                Exported accounts are <strong>temporary</strong> — they contain only the access token (~1h validity), not the refresh token.
+                The importing machine must re-login for permanent access. This protects the source machine's tokens from being invalidated.
+              </p>
+            </div>
             <p className="text-[10px] text-muted-foreground">
               Encrypted with AES-256-GCM + scrypt. Keep the password safe — it cannot be recovered.
             </p>
@@ -687,7 +711,7 @@ export function AccountsSettingsSection() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-sm flex items-center gap-1.5"><Lock className="size-3.5" /> Import Accounts</DialogTitle>
-            <DialogDescription className="text-xs">Paste or load the backup data, then enter the password used during export.</DialogDescription>
+            <DialogDescription className="text-xs">Paste backup data and enter the export password. Imported accounts are temporary (~1h).</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
