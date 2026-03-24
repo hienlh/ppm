@@ -1,4 +1,22 @@
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+
+// Windows interactive console: re-exec through Git Bash to bypass Bun pipe bug
+// (Bun's event loop stalls on child stdout data events from interactive PowerShell)
+if (process.platform === "win32" && !process.env.__PPM_VIA_BASH__) {
+  const bash = ["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"]
+    .find((p) => { try { return Bun.file(p).size > 0; } catch { return false; } });
+  if (bash) {
+    const script = process.argv[1].replace(/\\/g, "/");
+    const args = process.argv.slice(2).join(" ");
+    const r = spawnSync(bash, ["-c", `__PPM_VIA_BASH__=1 bun "${script}" ${args}`], {
+      stdio: "inherit",
+      env: { ...process.env, __PPM_VIA_BASH__: "1" },
+    });
+    process.exit(r.status ?? 1);
+  }
+}
+
 import { ClaudeAgentSdkProvider } from "./src/providers/claude-agent-sdk.ts";
 
 // Remove CLAUDECODE to avoid nested session error
