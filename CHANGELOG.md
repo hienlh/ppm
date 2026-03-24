@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.36] - 2026-03-24
+
+### Changed
+- **Install script progress bar**: Show download progress during binary install
+- **npm package size**: Exclude compiled binaries from npm tarball (154MB → ~20MB)
+
 ## [0.8.35] - 2026-03-24
 
 ### Fixed
