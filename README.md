@@ -9,11 +9,24 @@ A mobile-first web IDE with AI chat, terminal, git, database tools, and file exp
 
 ## Quick Start
 
+### Binary (no dependencies)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hienlh/ppm/main/scripts/install.sh | sh
+```
+
+This downloads the latest pre-built binary to `~/.ppm/bin/ppm`. Add it to your PATH:
+
+```bash
+export PATH="$HOME/.ppm/bin:$PATH"
+ppm start
+```
+
+### Via Bun
+
 ```bash
 # 1. Install Bun (if you don't have it)
 curl -fsSL https://bun.sh/install | bash
-# or via npm
-npm install -g bun
 
 # 2. Run directly (no install needed)
 bunx @hienlh/ppm start
@@ -23,7 +36,7 @@ bun add -g @hienlh/ppm
 ppm start
 ```
 
-> **Note:** PPM requires [Bun](https://bun.sh) runtime (uses `bun:sqlite` and native Bun APIs). `npx`/`npm` won't work — use `bunx`/`bun` instead.
+> **Note:** The `bunx`/`bun` method requires [Bun](https://bun.sh) runtime. The binary install method has no dependencies.
 
 On first run, PPM walks you through interactive setup: port, auth password, project scan directory, and AI settings. Config is stored in `~/.ppm/ppm.db` (SQLite).
 
