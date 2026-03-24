@@ -7,6 +7,7 @@
 - **Temporary account UI**: Shows "Temporary" badge for accounts without refresh token, "Expired" badge when expired. Expired temporary accounts cannot be re-enabled.
 - **Auto-cleanup**: Expired temporary accounts (no refresh token) are automatically deleted after 7 days.
 - **Export warning**: Export dialog now explains that exported accounts are temporary and the importing machine should login directly for permanent access.
+- **Invalid refresh token cleanup**: When refresh fails with `invalid_grant`, clears the refresh token so the account becomes temporary (same lifecycle rules apply: can't re-enable when expired, auto-deleted after 7 days)
 
 ## [0.8.24] - 2026-03-24
 

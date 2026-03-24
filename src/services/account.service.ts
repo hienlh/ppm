@@ -530,6 +530,11 @@ class AccountService {
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
       console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
+      // invalid_grant = refresh token permanently dead → clear it so account becomes temporary
+      if (errorBody.includes("invalid_grant")) {
+        console.log(`[accounts] Clearing invalid refresh token for ${account.email ?? accountId} — account is now temporary`);
+        updateAccount(accountId, { refresh_token: encrypt("") });
+      }
       if (disableOnFail) {
         this.setDisabled(accountId);
       }
