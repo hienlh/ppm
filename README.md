@@ -15,12 +15,7 @@ A mobile-first web IDE with AI chat, terminal, git, database tools, and file exp
 curl -fsSL https://raw.githubusercontent.com/hienlh/ppm/main/scripts/install.sh | sh
 ```
 
-This downloads the latest pre-built binary to `~/.ppm/bin/ppm`. Add it to your PATH:
-
-```bash
-export PATH="$HOME/.ppm/bin:$PATH"
-ppm start
-```
+This downloads the latest binary to `~/.ppm/bin/ppm`, adds it to your PATH, and shows next steps. To upgrade, run the same command again.
 
 ### Via Bun
 

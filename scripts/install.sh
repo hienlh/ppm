@@ -91,15 +91,54 @@ else
   echo "Installed ppm v${LATEST} to ${INSTALL_DIR}/ppm"
 fi
 
-# Check if in PATH
+# Add to PATH if not already there
+PATH_LINE="export PATH=\"${INSTALL_DIR}:\$PATH\""
 case ":$PATH:" in
   *":${INSTALL_DIR}:"*) ;;
   *)
-    echo ""
-    echo "Add to your PATH by running:"
-    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-    echo ""
-    echo "Or add it to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-    echo "  echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc"
+    # Detect shell profile
+    PROFILE=""
+    if [ -n "$ZSH_VERSION" ] || [ "$(basename "$SHELL")" = "zsh" ]; then
+      PROFILE="$HOME/.zshrc"
+    elif [ -f "$HOME/.bashrc" ]; then
+      PROFILE="$HOME/.bashrc"
+    elif [ -f "$HOME/.bash_profile" ]; then
+      PROFILE="$HOME/.bash_profile"
+    elif [ -f "$HOME/.profile" ]; then
+      PROFILE="$HOME/.profile"
+    fi
+
+    if [ -n "$PROFILE" ]; then
+      if ! grep -q "${INSTALL_DIR}" "$PROFILE" 2>/dev/null; then
+        echo "" >> "$PROFILE"
+        echo "# PPM" >> "$PROFILE"
+        echo "$PATH_LINE" >> "$PROFILE"
+        echo "Added to PATH in ${PROFILE}"
+        echo "Run 'source ${PROFILE}' or restart your terminal to use ppm."
+      fi
+    else
+      echo ""
+      echo "Could not detect shell profile. Add manually:"
+      echo "  ${PATH_LINE}"
+    fi
     ;;
 esac
+
+# Next steps (fresh install only)
+if [ -z "$CURRENT" ]; then
+  echo ""
+  echo "========== Getting Started =========="
+  echo "1. Open a new terminal (or run: source ${PROFILE:-~/.bashrc})"
+  echo "2. Run the setup wizard:"
+  echo "     ppm init"
+  echo "3. Start the server:"
+  echo "     ppm start"
+  echo "4. Open in browser:"
+  echo "     ppm open"
+  echo ""
+  echo "For remote access (public URL via Cloudflare tunnel):"
+  echo "     ppm start --share"
+  echo ""
+  echo "Docs: https://github.com/${REPO}#readme"
+  echo "====================================="
+fi
