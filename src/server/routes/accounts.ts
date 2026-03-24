@@ -160,10 +160,10 @@ accountsRoutes.post("/oauth/refresh/:id", async (c) => {
 /** POST /api/accounts/export — download password-encrypted accounts backup */
 accountsRoutes.post("/export", async (c) => {
   try {
-    const { password, accountIds } = await c.req.json() as { password: string; accountIds?: string[] };
+    const { password, accountIds, includeRefreshToken } = await c.req.json() as { password: string; accountIds?: string[]; includeRefreshToken?: boolean };
     if (!password) return c.json(err("Password required"), 400);
     await accountService.refreshBeforeExport(accountIds);
-    const blob = accountService.exportEncrypted(password, accountIds);
+    const blob = accountService.exportEncrypted(password, accountIds, includeRefreshToken ?? false);
     c.header("Content-Disposition", "attachment; filename=ppm-accounts-backup.json");
     c.header("Content-Type", "application/json");
     return c.body(blob);

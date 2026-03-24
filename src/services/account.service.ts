@@ -579,18 +579,23 @@ class AccountService {
   }
 
   /**
-   * Export accounts as temporary access-only backup.
-   * Refresh tokens are NEVER exported — imported accounts are temporary (~1h).
-   * This prevents token rotation conflicts between machines.
+   * Export accounts backup.
+   * @param includeRefreshToken - if true, includes refresh tokens (full transfer).
+   *   Source machine's tokens will be invalidated after the target refreshes.
+   *   Default false = temporary export (access-only, ~1h).
    */
-  exportEncrypted(password: string, accountIds?: string[]): string {
+  exportEncrypted(password: string, accountIds?: string[], includeRefreshToken = false): string {
     const rows = accountIds?.length
       ? accountIds.map((id) => getAccountById(id)).filter(Boolean) as AccountRow[]
       : getAccounts();
     const portable = rows.map((row) => {
       let accessToken = row.access_token;
       try { accessToken = decrypt(accessToken); } catch { /* already plaintext or corrupt */ }
-      // Intentionally exclude refresh_token — exported accounts are temporary
+      if (includeRefreshToken) {
+        let refreshToken = row.refresh_token;
+        try { refreshToken = decrypt(refreshToken); } catch { /* already plaintext or corrupt */ }
+        return { ...row, access_token: accessToken, refresh_token: refreshToken };
+      }
       return { ...row, access_token: accessToken, refresh_token: "" };
     });
     return encryptWithPassword(JSON.stringify(portable), password);

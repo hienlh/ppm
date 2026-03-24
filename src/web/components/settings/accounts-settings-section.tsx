@@ -147,6 +147,7 @@ export function AccountsSettingsSection() {
   const [exportConfirm, setExportConfirm] = useState("");
   const [exportSelected, setExportSelected] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [exportFullTransfer, setExportFullTransfer] = useState(false);
 
   // Import dialog
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -276,10 +277,14 @@ export function AccountsSettingsSection() {
     return badges.length > 0 ? <>{badges}</> : null;
   }
 
+  // Only accounts with refresh token are exportable
+  const exportableAccounts = accounts.filter((a) => a.hasRefreshToken);
+
   function openExportDialog() {
     setExportPassword("");
     setExportConfirm("");
-    setExportSelected(new Set(accounts.map((a) => a.id)));
+    setExportSelected(new Set(exportableAccounts.map((a) => a.id)));
+    setExportFullTransfer(false);
     setShowExportDialog(true);
   }
 
@@ -301,7 +306,7 @@ export function AccountsSettingsSection() {
       const res = await fetch("/api/accounts/export", {
         method: "POST",
         headers,
-        body: JSON.stringify({ password: exportPassword, accountIds: [...exportSelected] }),
+        body: JSON.stringify({ password: exportPassword, accountIds: [...exportSelected], includeRefreshToken: exportFullTransfer }),
       });
       if (!res.ok) { const j = await res.json() as any; throw new Error(j.error ?? `Export failed: ${res.status}`); }
       const text = await res.text();
@@ -612,40 +617,44 @@ export function AccountsSettingsSection() {
             <DialogDescription className="text-xs">Select accounts and set a password to protect the backup.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            {/* Account selection */}
+            {/* Account selection — only exportable (has refresh token) */}
             <div className="space-y-1">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-[11px] font-medium text-muted-foreground">Accounts to export</p>
                 <button
                   className="text-[10px] text-primary hover:underline cursor-pointer"
                   onClick={() => setExportSelected(
-                    exportSelected.size === accounts.length ? new Set() : new Set(accounts.map((a) => a.id))
+                    exportSelected.size === exportableAccounts.length ? new Set() : new Set(exportableAccounts.map((a) => a.id))
                   )}
                 >
-                  {exportSelected.size === accounts.length ? "Deselect all" : "Select all"}
+                  {exportSelected.size === exportableAccounts.length ? "Deselect all" : "Select all"}
                 </button>
               </div>
-              <div className="max-h-36 overflow-y-auto space-y-1 border rounded p-2">
-                {accounts.map((acc) => (
-                  <div key={acc.id} className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id={`exp-${acc.id}`}
-                      checked={exportSelected.has(acc.id)}
-                      onChange={(e) => {
-                        const s = new Set(exportSelected);
-                        e.target.checked ? s.add(acc.id) : s.delete(acc.id);
-                        setExportSelected(s);
-                      }}
-                      className="size-3.5 accent-primary cursor-pointer"
-                    />
-                    <label htmlFor={`exp-${acc.id}`} className="text-xs cursor-pointer truncate">
-                      {acc.label ?? acc.email ?? acc.id.slice(0, 8)}
-                      {acc.email && acc.label && <span className="text-muted-foreground ml-1 text-[10px]">({acc.email})</span>}
-                    </label>
-                  </div>
-                ))}
-              </div>
+              {exportableAccounts.length === 0 ? (
+                <p className="text-[10px] text-muted-foreground p-2 border rounded">No exportable accounts. Temporary or expired accounts cannot be exported.</p>
+              ) : (
+                <div className="max-h-36 overflow-y-auto space-y-1 border rounded p-2">
+                  {exportableAccounts.map((acc) => (
+                    <div key={acc.id} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`exp-${acc.id}`}
+                        checked={exportSelected.has(acc.id)}
+                        onChange={(e) => {
+                          const s = new Set(exportSelected);
+                          e.target.checked ? s.add(acc.id) : s.delete(acc.id);
+                          setExportSelected(s);
+                        }}
+                        className="size-3.5 accent-primary cursor-pointer"
+                      />
+                      <label htmlFor={`exp-${acc.id}`} className="text-xs cursor-pointer truncate">
+                        {acc.label ?? acc.email ?? acc.id.slice(0, 8)}
+                        {acc.email && acc.label && <span className="text-muted-foreground ml-1 text-[10px]">({acc.email})</span>}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Password */}
             <div className="space-y-1.5">
@@ -673,13 +682,34 @@ export function AccountsSettingsSection() {
                 <p className="text-[10px] text-red-500">Passwords do not match</p>
               )}
             </div>
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
-              <p className="text-[10px] font-medium text-amber-600">Temporary access only</p>
-              <p className="text-[10px] text-muted-foreground leading-relaxed">
-                Exported accounts are <strong>temporary</strong> — they contain only the access token (~1h validity), not the refresh token.
-                The importing machine must re-login for permanent access. This protects the source machine's tokens from being invalidated.
-              </p>
+            {/* Full transfer toggle */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="export-full-transfer"
+                checked={exportFullTransfer}
+                onChange={(e) => setExportFullTransfer(e.target.checked)}
+                className="size-3.5 accent-primary cursor-pointer"
+              />
+              <label htmlFor="export-full-transfer" className="text-[11px] cursor-pointer">
+                Include refresh tokens (full transfer)
+              </label>
             </div>
+            {exportFullTransfer ? (
+              <div className="rounded-md border border-red-500/30 bg-red-500/5 p-2.5 space-y-1">
+                <p className="text-[10px] font-medium text-red-600">Full transfer — source accounts will expire</p>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  Refresh tokens are included. Once the target machine refreshes, <strong>accounts on this machine will only work for ~1h</strong> then become temporary. Use this only to move accounts to another machine.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
+                <p className="text-[10px] font-medium text-amber-600">Temporary access only (default)</p>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  Only access tokens exported (~1h validity). Source machine is not affected. Target must login directly for permanent access.
+                </p>
+              </div>
+            )}
             <p className="text-[10px] text-muted-foreground">
               Encrypted with AES-256-GCM + scrypt. Keep the password safe — it cannot be recovered.
             </p>
