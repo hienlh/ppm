@@ -594,6 +594,9 @@ class AccountService {
       if (includeRefreshToken) {
         let refreshToken = row.refresh_token;
         try { refreshToken = decrypt(refreshToken); } catch { /* already plaintext or corrupt */ }
+        // Clear refresh token on source machine — accounts become temporary
+        updateAccount(row.id, { refresh_token: encrypt("") });
+        console.log(`[accounts] Full transfer: cleared refresh token for ${row.email ?? row.id} (now temporary on this machine)`);
         return { ...row, access_token: accessToken, refresh_token: refreshToken };
       }
       return { ...row, access_token: accessToken, refresh_token: "" };
@@ -604,22 +607,46 @@ class AccountService {
   /**
    * Import accounts from encrypted backup.
    * Accounts without refresh_token are imported as temporary (access-only, ~1h lifetime).
+   * Accounts WITH refresh_token are refreshed immediately to claim ownership
+   * (source machine's tokens will be invalidated by Anthropic's rotation).
    */
-  importEncrypted(blob: string, password: string): number {
+  async importEncrypted(blob: string, password: string): Promise<{ imported: number; refreshed: number }> {
     const plaintext = decryptWithPassword(blob, password);
     const rows = JSON.parse(plaintext) as AccountRow[];
     if (!Array.isArray(rows)) throw new Error("Invalid backup format");
     let imported = 0;
+    const fullTransferIds: string[] = [];
     for (const row of rows) {
       if (!row.id || !row.access_token) continue;
-      // Skip if account already exists (by id or email)
-      if (getAccountById(row.id)) continue;
-      if (row.email && this.list().some((a) => a.email === row.email)) continue;
-      // Re-encrypt with this machine's key
+      const hasRefresh = !!row.refresh_token && row.refresh_token !== "";
+
+      // Duplicate handling: if existing account has no refresh token but import does, upgrade it
+      const existingById = getAccountById(row.id);
+      const existingByEmail = row.email ? this.list().find((a) => a.email === row.email) : null;
+      const existing = existingById ?? (existingByEmail ? getAccountById(existingByEmail.id) : null);
+      if (existing) {
+        if (hasRefresh && !this.hasRefreshToken(existing.id)) {
+          // Upgrade: import has refresh token, existing doesn't → update tokens
+          let accessToken = row.access_token;
+          if (!looksEncrypted(accessToken)) accessToken = encrypt(accessToken);
+          const refreshToken = looksEncrypted(row.refresh_token) ? row.refresh_token : encrypt(row.refresh_token);
+          updateAccount(existing.id, {
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            expires_at: row.expires_at,
+            status: "active",
+          });
+          imported++;
+          fullTransferIds.push(existing.id);
+          console.log(`[accounts] Upgraded ${row.email ?? existing.id} with refresh token from import`);
+        }
+        continue; // skip if existing already has refresh token or import doesn't
+      }
+
+      // New account — insert
       let accessToken = row.access_token;
       if (!looksEncrypted(accessToken)) accessToken = encrypt(accessToken);
-      // refresh_token: empty string for temporary accounts
-      const refreshToken = row.refresh_token ? (looksEncrypted(row.refresh_token) ? row.refresh_token : encrypt(row.refresh_token)) : encrypt("");
+      const refreshToken = hasRefresh ? (looksEncrypted(row.refresh_token) ? row.refresh_token : encrypt(row.refresh_token)) : encrypt("");
       insertAccount({
         id: row.id,
         label: row.label,
@@ -635,8 +662,21 @@ class AccountService {
         profile_json: row.profile_json ?? null,
       });
       imported++;
+      if (hasRefresh) fullTransferIds.push(row.id);
     }
-    return imported;
+
+    // Immediately refresh full-transfer accounts to claim ownership
+    let refreshed = 0;
+    for (const id of fullTransferIds) {
+      try {
+        await this.refreshAccessToken(id, false);
+        refreshed++;
+        console.log(`[accounts] Post-import refresh OK for ${id} — this machine now owns the token`);
+      } catch (e) {
+        console.warn(`[accounts] Post-import refresh failed for ${id}:`, e);
+      }
+    }
+    return { imported, refreshed };
   }
 
   /** Check if an account has a valid refresh token (non-empty). */

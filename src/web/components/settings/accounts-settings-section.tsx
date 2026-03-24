@@ -264,11 +264,14 @@ export function AccountsSettingsSection() {
     if (!acc.hasRefreshToken) {
       const nowS = Math.floor(Date.now() / 1000);
       const expired = acc.expiresAt && acc.expiresAt < nowS;
-      badges.push(
-        <Badge key="temp" variant={expired ? "destructive" : "secondary"} className="text-[10px] px-1.5 py-0">
-          {expired ? "Expired" : "Temporary"}
-        </Badge>
-      );
+      if (expired) {
+        badges.push(<Badge key="temp" variant="destructive" className="text-[10px] px-1.5 py-0">Expired</Badge>);
+      } else {
+        const remaining = acc.expiresAt ? acc.expiresAt - nowS : 0;
+        const mins = Math.floor(remaining / 60);
+        const timeStr = mins > 0 ? `${mins}m` : `${remaining}s`;
+        badges.push(<Badge key="temp" variant="secondary" className="text-[10px] px-1.5 py-0">Temp · {timeStr}</Badge>);
+      }
     }
     if (acc.status === "cooldown") {
       const cd = formatCooldown(acc.cooldownUntil);
@@ -345,7 +348,8 @@ export function AccountsSettingsSection() {
     setImportError(null);
     try {
       const result = await importAccounts({ data: importData.trim(), password: importPassword });
-      showMessage({ type: "success", text: `Imported ${result.imported} account(s). Temporary accounts expire in ~1h — login directly for permanent access.` });
+      const note = result.refreshed > 0 ? ` ${result.refreshed} claimed (source machine will expire).` : " Temporary accounts expire in ~1h.";
+      showMessage({ type: "success", text: `Imported ${result.imported} account(s).${note}` });
       setShowImportDialog(false);
       refresh();
     } catch (e) {
