@@ -4,6 +4,7 @@ A mobile-first web IDE with AI chat, terminal, git, database tools, and file exp
 
 [![npm version](https://img.shields.io/npm/v/@hienlh/ppm?style=flat-square)](https://www.npmjs.com/package/@hienlh/ppm)
 [![npm downloads](https://img.shields.io/npm/dm/@hienlh/ppm?style=flat-square)](https://www.npmjs.com/package/@hienlh/ppm)
+[![GitHub Downloads](https://img.shields.io/github/downloads/hienlh/ppm/total?style=flat-square&label=binary%20downloads)](https://github.com/hienlh/ppm/releases)
 [![npm license](https://img.shields.io/npm/l/@hienlh/ppm?style=flat-square)](https://www.npmjs.com/package/@hienlh/ppm)
 [![bun](https://img.shields.io/badge/runtime-bun-black?style=flat-square&logo=bun)](https://bun.sh)
 
