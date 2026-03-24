@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.40] - 2026-03-24
+
+### Fixed
+- **Windows SDK hang**: Force `node` executable instead of `bun` for SDK subprocess on Windows to prevent hangs
+- **Windows test-tool**: Re-exec `test-tool.mjs` via Git Bash on Windows
+
+### Removed
+- **SDK patch system**: Remove `patch-sdk.mjs` and runtime patching — no longer needed with upstream SDK fixes
+
 ## [0.8.39] - 2026-03-24
 
 ### Fixed
