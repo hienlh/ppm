@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.24] - 2026-03-24
+
+### Fixed
+- **Import token rotation**: After importing accounts, immediately refresh OAuth tokens so the importing machine owns fresh tokens. Source machine's tokens will be invalidated by Anthropic's rotation — warns user in UI.
+
 ## [0.8.23] - 2026-03-24
 
 ### Fixed

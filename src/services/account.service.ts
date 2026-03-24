@@ -576,11 +576,18 @@ class AccountService {
     return encryptWithPassword(JSON.stringify(portable), password);
   }
 
-  importEncrypted(blob: string, password: string): number {
+  /**
+   * Import accounts from encrypted backup.
+   * After import, immediately refreshes OAuth tokens so THIS machine gets fresh
+   * tokens and the source machine's shared tokens become invalidated.
+   * This prevents two machines from holding the same refresh token.
+   */
+  async importEncrypted(blob: string, password: string): Promise<{ imported: number; refreshed: number }> {
     const plaintext = decryptWithPassword(blob, password);
     const rows = JSON.parse(plaintext) as AccountRow[];
     if (!Array.isArray(rows)) throw new Error("Invalid backup format");
-    let count = 0;
+    let imported = 0;
+    const importedIds: string[] = [];
     for (const row of rows) {
       if (!row.id || !row.access_token || !row.refresh_token) continue;
       // Skip if account already exists (by id or email)
@@ -605,9 +612,26 @@ class AccountService {
         last_used_at: row.last_used_at,
         profile_json: row.profile_json ?? null,
       });
-      count++;
+      imported++;
+      importedIds.push(row.id);
     }
-    return count;
+
+    // Immediately refresh imported OAuth tokens so this machine owns them.
+    // The source machine's tokens will be invalidated by Anthropic's token rotation.
+    let refreshed = 0;
+    for (const id of importedIds) {
+      const acc = this.getWithTokens(id);
+      if (!acc || !acc.accessToken.startsWith("sk-ant-oat")) continue;
+      try {
+        await this.refreshAccessToken(id, false);
+        refreshed++;
+        console.log(`[accounts] Post-import refresh OK for ${acc.email ?? id}`);
+      } catch (e) {
+        console.warn(`[accounts] Post-import refresh failed for ${acc.email ?? id}:`, e);
+      }
+    }
+
+    return { imported, refreshed };
   }
 
   // ---------------------------------------------------------------------------

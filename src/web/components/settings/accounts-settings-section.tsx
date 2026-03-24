@@ -328,7 +328,8 @@ export function AccountsSettingsSection() {
     setImportError(null);
     try {
       const result = await importAccounts({ data: importData.trim(), password: importPassword });
-      showMessage({ type: "success", text: `Imported ${result.imported} account(s).` });
+      const refreshNote = result.refreshed > 0 ? ` (${result.refreshed} tokens refreshed — source machine will need re-login)` : "";
+      showMessage({ type: "success", text: `Imported ${result.imported} account(s).${refreshNote}` });
       setShowImportDialog(false);
       refresh();
     } catch (e) {

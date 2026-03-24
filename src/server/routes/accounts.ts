@@ -174,8 +174,8 @@ accountsRoutes.post("/import", async (c) => {
     const { data, password } = await c.req.json() as { data: string; password: string };
     if (!data) return c.json(err("Backup data required"), 400);
     if (!password) return c.json(err("Password required"), 400);
-    const count = accountService.importEncrypted(data, password);
-    return c.json(ok({ imported: count }));
+    const result = await accountService.importEncrypted(data, password);
+    return c.json(ok(result));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
