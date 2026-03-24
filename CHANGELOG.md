@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.38] - 2026-03-24
+
+### Fixed
+- **Binary daemon crash**: Compiled binary failed to spawn daemon — was passing `run script.ts` args which only work with `bun` runtime. Now detects compiled binary mode and spawns correctly.
+
 ## [0.8.37] - 2026-03-24
 
 ### Fixed

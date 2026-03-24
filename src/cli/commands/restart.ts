@@ -126,7 +126,11 @@ async function main() {
   // Spawn new server — on Windows use PowerShell Start-Process for true detach
   // (Bun.spawn + unref on Windows keeps child in same job object → dies when worker exits)
   let childPid: number;
-  const serverArgs = ["run", P.serverScript, "__serve__", String(P.port), P.host, P.config].filter(Boolean);
+  // Compiled binary: execPath IS the server, no "run script" needed
+  const { isCompiledBinary } = await import("../../services/autostart-generator.ts");
+  const serverArgs = isCompiledBinary()
+    ? ["__serve__", String(P.port), P.host, P.config].filter(Boolean)
+    : ["run", P.serverScript, "__serve__", String(P.port), P.host, P.config].filter(Boolean);
 
   if (process.platform === "win32") {
     const bunExe = process.execPath.replace(/\\\\/g, "\\\\\\\\");

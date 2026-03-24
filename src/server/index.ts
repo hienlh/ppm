@@ -237,8 +237,18 @@ export async function startServer(options: {
       }
     }
 
+    // Write preliminary status.json so child process can read shareUrl on startup
+    // (child reads this before parent has a chance to write PID — fixes race condition)
+    writeFileSync(statusFile, JSON.stringify({
+      port, host,
+      shareUrl: shareUrl ?? null,
+      tunnelPid: tunnelPid ?? null,
+    }));
+
     // Spawn server child process with log file
     const { openSync } = await import("node:fs");
+    const { isCompiledBinary } = await import("../services/autostart-generator.ts");
+    const isCompiledBin = isCompiledBinary();
     const logFile = resolve(ppmDir, "ppm.log");
     const logFd = openSync(logFile, "a");
     const { resolve: resolvePath } = await import("node:path");
@@ -257,7 +267,8 @@ export async function startServer(options: {
       const logEscaped = logFile.replace(/\\/g, "\\\\");
       const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
       // Use "_" placeholder for empty args — PowerShell rejects empty strings in ArgumentList
-      const argStr = ["run", script, ...args].map((a) => `'${a || "_"}'`).join(",");
+      const winArgs = isCompiledBin ? args : ["run", script, ...args];
+      const argStr = winArgs.map((a) => `'${a || "_"}'`).join(",");
       const psCmd = [
         `$p = Start-Process -PassThru -WindowStyle Hidden`,
         `-FilePath '${bunExe}'`,
@@ -280,8 +291,12 @@ export async function startServer(options: {
       }
     } else {
       // macOS/Linux: Bun.spawn + unref works fine
+      // Compiled binary: execPath IS the server, no "run script" needed
+      const cmd = isCompiledBin
+        ? [process.execPath, ...args]
+        : [process.execPath, "run", script, ...args];
       const child = Bun.spawn({
-        cmd: [process.execPath, "run", script, ...args],
+        cmd,
         stdio: ["ignore", logFd, logFd],
         env: process.env,
       });
@@ -300,8 +315,8 @@ export async function startServer(options: {
       process.exit(1);
     }
 
-    // Write status file with both PIDs + server script path for restart
-    const status = { pid: childPid, port, host, shareUrl, tunnelPid, serverScript: script };
+    // Update status file with child PID + server script path for restart
+    const status = { pid: childPid, port, host, shareUrl: shareUrl ?? null, tunnelPid: tunnelPid ?? null, serverScript: script };
     writeFileSync(statusFile, JSON.stringify(status));
     writeFileSync(pidFile, String(childPid));
 
@@ -419,13 +434,6 @@ export async function startServer(options: {
       const qr = await import("qrcode-terminal");
       console.log();
       qr.generate(shareUrl, { small: true });
-
-      // Auto-sync tunnel URL to PPM Cloud (if linked)
-      import("../services/cloud.service.ts")
-        .then(({ startHeartbeat, getCloudDevice }) => {
-          if (getCloudDevice()) startHeartbeat(shareUrl);
-        })
-        .catch(() => {});
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`  ✗  Share failed: ${msg}`);
@@ -484,13 +492,6 @@ if (process.argv.includes("__serve__")) {
       const { tunnelService } = await import("../services/tunnel.service.ts");
       tunnelService.setExternalUrl(status.shareUrl);
       if (status.tunnelPid) tunnelService.setExternalPid(status.tunnelPid);
-
-      // Auto-sync tunnel URL to PPM Cloud (daemon mode)
-      import("../services/cloud.service.ts")
-        .then(({ startHeartbeat, getCloudDevice }) => {
-          if (getCloudDevice()) startHeartbeat(status.shareUrl);
-        })
-        .catch(() => {});
     }
   } catch { /* status.json missing or no shareUrl — normal */ }
 
