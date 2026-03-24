@@ -12,11 +12,17 @@ A mobile-first web IDE with AI chat, terminal, git, database tools, and file exp
 
 ### Binary (no dependencies)
 
+**macOS / Linux:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hienlh/ppm/main/scripts/install.sh | sh
 ```
 
-This downloads the latest binary to `~/.ppm/bin/ppm`, adds it to your PATH, and shows next steps. To upgrade, run the same command again.
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/hienlh/ppm/main/scripts/install.ps1 | iex
+```
+
+Downloads the latest binary, adds to PATH, and shows next steps. To upgrade, run the same command again.
 
 ### Via Bun
 
