@@ -6,8 +6,8 @@
  *   TEST_OAUTH_TOKEN_2=sk-ant-oat01-yyy  (or sk-ant-api03-yyy)
  *
  * Platform detection:
- *   - macOS: test SDK real AI call + queryDirectCli (CLI real AI call)
- *   - Windows: queryDirectCli (CLI real AI call) only
+ *   - macOS: test SDK real AI call
+ *   - Windows: SDK with executable: "node" (bypasses Bun spawn ENOENT)
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "bun:test";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -234,35 +234,6 @@ if (!hasTokens) {
       expect(text.toLowerCase()).toContain("pong");
     }, { timeout: 90_000 });
 
-    it("queryDirectCli() works with ambient env (no account injection)", async () => {
-      const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
-      const provider = new ClaudeAgentSdkProvider();
-
-      // null account → passthrough process.env as-is
-      const env = (provider as any).buildQueryEnv(undefined, null) as Record<string, string | undefined>;
-
-      let text = "";
-      const gen = (provider as any).queryDirectCli({
-        prompt: "Reply with only the word: pong",
-        cwd: process.cwd(),
-        sessionId: `test-default-cli-${randomUUID()}`,
-        env,
-        providerConfig: { max_turns: 1 },
-      }) as AsyncGenerator<any>;
-
-      for await (const event of gen) {
-        if (
-          event?.type === "stream_event" &&
-          event.event?.delta?.type === "text_delta"
-        ) {
-          text += event.event.delta.text;
-        }
-      }
-
-      console.log(`[default-cli] response: "${text.slice(0, 100)}"`);
-      expect(text.trim().length).toBeGreaterThan(0);
-      expect(text.toLowerCase()).toContain("pong");
-    }, { timeout: 90_000 });
   });
 
   // =========================================================================
@@ -312,79 +283,7 @@ if (!hasTokens) {
       }, { timeout: 90_000 });
     });
 
-    // -----------------------------------------------------------------------
-    // macOS: CLI real AI call (same code path as Windows queryDirectCli)
-    // -----------------------------------------------------------------------
-    describe("CLI real AI call (queryDirectCli on macOS)", () => {
-      it("queryDirectCli() returns text response using token in env", async () => {
-        const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
-        const provider = new ClaudeAgentSdkProvider();
-
-        const env = (provider as any).buildQueryEnv(undefined, {
-          id: "cli-e2e-test",
-          accessToken: TOKEN_1,
-        }) as Record<string, string | undefined>;
-
-        let text = "";
-        const gen = (provider as any).queryDirectCli({
-          prompt: "Reply with only the word: pong",
-          cwd: process.cwd(),
-          sessionId: `test-cli-${randomUUID()}`,
-          env,
-          providerConfig: { max_turns: 1 },
-        }) as AsyncGenerator<any>;
-
-        for await (const event of gen) {
-          // queryDirectCli yields synthetic stream_event deltas + original events
-          if (
-            event?.type === "stream_event" &&
-            event.event?.delta?.type === "text_delta"
-          ) {
-            text += event.event.delta.text;
-          }
-        }
-
-        console.log(`[cli-e2e] response: "${text.slice(0, 100)}"`);
-        expect(text.trim().length).toBeGreaterThan(0);
-        expect(text.toLowerCase()).toContain("pong");
-      }, { timeout: 90_000 });
-    });
   } else {
-    // -----------------------------------------------------------------------
-    // Windows: CLI real AI call (native)
-    // -----------------------------------------------------------------------
-    describe("CLI real AI call (queryDirectCli on Windows)", () => {
-      it("queryDirectCli() returns text response using token in env", async () => {
-        const { ClaudeAgentSdkProvider } = await import("../../src/providers/claude-agent-sdk.ts");
-        const provider = new ClaudeAgentSdkProvider();
-
-        const env = (provider as any).buildQueryEnv(undefined, {
-          id: "cli-win-e2e-test",
-          accessToken: TOKEN_1,
-        }) as Record<string, string | undefined>;
-
-        let text = "";
-        const gen = (provider as any).queryDirectCli({
-          prompt: "Reply with only the word: pong",
-          cwd: process.cwd(),
-          sessionId: `test-cli-win-${randomUUID()}`,
-          env,
-          providerConfig: { max_turns: 1 },
-        }) as AsyncGenerator<any>;
-
-        for await (const event of gen) {
-          if (
-            event?.type === "stream_event" &&
-            event.event?.delta?.type === "text_delta"
-          ) {
-            text += event.event.delta.text;
-          }
-        }
-
-        console.log(`[cli-win-e2e] response: "${text.slice(0, 100)}"`);
-        expect(text.trim().length).toBeGreaterThan(0);
-        expect(text.toLowerCase()).toContain("pong");
-      }, { timeout: 90_000 });
-    });
+    // Windows uses executable: "node" in SDK query — same SDK path as macOS
   }
 }

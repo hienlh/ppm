@@ -10,11 +10,6 @@ import {
 } from "@/components/ui/select";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 
-const EXECUTION_MODE_OPTIONS = [
-  { value: "sdk", label: "SDK (native)" },
-  { value: "cli", label: "CLI (claude command)" },
-];
-
 const MODEL_OPTIONS = [
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
@@ -87,25 +82,6 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       <h3 className={`${headingSize} font-medium text-text-secondary`}>AI Provider</h3>
 
       <div className={innerGap}>
-        <div className={fieldGap}>
-          <Label htmlFor="ai-execution-mode" className={compact ? labelSize : undefined}>Execution Mode</Label>
-          <Select
-            value={config?.execution_mode ?? "sdk"}
-            onValueChange={(v) => handleSave("execution_mode", v)}
-          >
-            <SelectTrigger id="ai-execution-mode" className={`w-full ${compact ? "h-7 text-[11px]" : ""}`}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {EXECUTION_MODE_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
         <div className={fieldGap}>
           <Label htmlFor="ai-model" className={compact ? labelSize : undefined}>Model</Label>
           <Select

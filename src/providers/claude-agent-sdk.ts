@@ -118,173 +118,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return null;
   }
 
-  /**
-   * Direct CLI fallback for Windows — spawns `claude -p` with stream-json output.
-   * Workaround for Bun + Windows SDK subprocess pipe buffering issue.
-   * Returns an async generator yielding the same event types as SDK query().
-   *
-   * TODO: Remove this fallback when TypeScript SDK fixes Windows stdin pipe buffering.
-   * Tracking issues:
-   *   - Python SDK #208 (FIXED): https://github.com/anthropics/claude-agent-sdk-python/issues/208
-   *     Fix: stdin drain() after writes — TypeScript SDK lacks equivalent fix.
-   *   - TS SDK #44 (OPEN): https://github.com/anthropics/claude-agent-sdk-typescript/issues/44
-   *     query() yields zero events for 3+ minutes on Windows.
-   *   - TS SDK #64 (OPEN): https://github.com/anthropics/claude-agent-sdk-typescript/issues/64
-   *     Bash tool hangs on empty output — related pipe/EOF handling issue.
-   * When these are resolved, switch back to SDK query() by removing the
-   * `useDirectCli` branch in sendMessage() and deleting this method.
-   */
-  private async *queryDirectCli(opts: {
-    prompt: string;
-    cwd: string;
-    sessionId: string;
-    resumeSessionId?: string;
-    env: Record<string, string | undefined>;
-    providerConfig: Partial<import("../types/config.ts").AIProviderConfig>;
-  }): AsyncGenerator<any> {
-    const args = ["-p", opts.prompt, "--verbose", "--output-format", "stream-json"];
-
-    // Session management — resume if caller confirmed a valid session ID
-    if (opts.resumeSessionId) {
-      args.push("--resume", opts.resumeSessionId);
-    }
-
-    // Config-driven options
-    if (opts.providerConfig.model) args.push("--model", opts.providerConfig.model);
-    const maxTurns = opts.providerConfig.max_turns ?? 100;
-    args.push("--max-turns", String(maxTurns));
-    if (opts.providerConfig.effort) args.push("--effort", opts.providerConfig.effort);
-
-    // Permission mode
-    args.push("--permission-mode", opts.providerConfig.permission_mode ?? "bypassPermissions");
-    if ((opts.providerConfig.permission_mode ?? "bypassPermissions") === "bypassPermissions") {
-      args.push("--dangerously-skip-permissions");
-    }
-
-    // System prompt — CLI uses --append-system-prompt flag
-    if (opts.providerConfig.system_prompt) {
-      args.push("--append-system-prompt", opts.providerConfig.system_prompt);
-    }
-
-    // On Windows, `claude` is a .cmd wrapper (npm global) — Bun.spawn can't resolve .cmd
-    // files directly. Use `cmd /c` to let the Windows shell find it via PATH.
-    const cmd = process.platform === "win32"
-      ? ["cmd", "/c", "claude", ...args]
-      : ["claude", ...args];
-    console.log(`[sdk-cli] spawning: ${cmd.slice(0, 7).join(" ")}... cwd=${opts.cwd}`);
-
-    const proc = Bun.spawn({
-      cmd,
-      cwd: opts.cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: opts.env as Record<string, string>,
-    });
-
-    // Store proc for abort support
-    const abortHandle = { close: () => { try { proc.kill(); } catch {} } };
-    this.activeQueries.set(opts.sessionId, abortHandle as any);
-
-    try {
-      const reader = proc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? ""; // Keep incomplete last line in buffer
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const event = JSON.parse(trimmed);
-            // CLI stream-json doesn't emit per-token stream_event deltas — it sends
-            // complete assistant messages. Synthesize stream_event deltas so the FE
-            // gets a smooth streaming experience (same as SDK with includePartialMessages).
-            if (event.type === "assistant" && event.message?.content) {
-              for (const block of event.message.content) {
-                if (block.type === "text" && block.text) {
-                  // Emit text in ~30-char chunks as synthetic stream_event deltas
-                  const text = block.text as string;
-                  const CHUNK = 30;
-                  for (let i = 0; i < text.length; i += CHUNK) {
-                    yield {
-                      type: "stream_event",
-                      event: {
-                        type: "content_block_delta",
-                        delta: { type: "text_delta", text: text.slice(i, i + CHUNK) },
-                      },
-                    };
-                  }
-                } else if (block.type === "thinking" && block.thinking) {
-                  yield {
-                    type: "stream_event",
-                    event: {
-                      type: "content_block_delta",
-                      delta: { type: "thinking_delta", thinking: block.thinking },
-                    },
-                  };
-                }
-              }
-            }
-            // Log error/result events for diagnostics
-            if (event.type === "error") {
-              console.error(`[sdk-cli] error event: ${JSON.stringify(event).slice(0, 1000)}`);
-            } else if (event.type === "result" && event.is_error) {
-              console.error(`[sdk-cli] result error: ${JSON.stringify(event).slice(0, 1000)}`);
-            }
-            // Always yield the original event too (for init, result, rate_limit, etc.)
-            yield event;
-          } catch {
-            // Skip non-JSON lines (e.g. progress indicators)
-          }
-        }
-      }
-
-      // Process remaining buffer
-      if (buffer.trim()) {
-        try { yield JSON.parse(buffer.trim()); } catch {}
-      }
-
-      // Wait for process to exit
-      const exitCode = await proc.exited;
-      console.log(`[sdk-cli] process exited: code=${exitCode}`);
-
-      // Always read stderr for diagnostics (errors can occur even with exit code 0)
-      try {
-        const errReader = proc.stderr.getReader();
-        const stderrDecoder = new TextDecoder();
-        const errParts: string[] = [];
-        while (true) {
-          const { done, value } = await errReader.read();
-          if (done) break;
-          if (value) errParts.push(stderrDecoder.decode(value, { stream: true }));
-        }
-        const fullStderr = errParts.join("").trim();
-        if (fullStderr) {
-          console.error(`[sdk-cli] stderr (last 1500): ${fullStderr.slice(-1500)}`);
-          if (exitCode !== 0) {
-            const errMatch = fullStderr.match(/\b(?:Error|TypeError|SyntaxError|ReferenceError|RangeError):\s*.+/);
-            const errorMsg = errMatch ? errMatch[0].slice(0, 500) : fullStderr.slice(-300);
-            yield {
-              type: "result",
-              subtype: "error_during_execution",
-              error: `CLI exited with code ${exitCode}: ${errorMsg}`,
-            };
-          }
-        }
-      } catch {}
-    } finally {
-      this.activeQueries.delete(opts.sessionId);
-      try { proc.kill(); } catch {}
-    }
-  }
-
   /** Read current provider config from yaml (fresh each call) */
   private getProviderConfig(): Partial<import("../types/config.ts").AIProviderConfig> {
     const ai = configService.get("ai");
@@ -579,68 +412,40 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
-      // Use execution_mode from config (default: "sdk"). CLI mode spawns `claude` binary directly.
-      const executionMode = providerConfig.execution_mode ?? "sdk";
-      const useDirectCli = executionMode === "cli";
-      let eventSource: AsyncIterable<any>;
+      const queryOptions: Record<string, any> = {
+        // On Windows, child_process.spawn("bun") fails with ENOENT — force node
+        ...(process.platform === "win32" && { executable: "node" }),
+        sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
+        resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
+        ...(shouldFork && { forkSession: true }),
+        cwd: effectiveCwd,
+        systemPrompt: systemPromptOpt,
+        settingSources: ["user", "project"],
+        env: queryEnv,
+        settings: { permissions: { allow: [], deny: [] } },
+        allowedTools,
+        permissionMode,
+        allowDangerouslySkipPermissions: isBypass,
+        ...(providerConfig.model && { model: providerConfig.model }),
+        ...(providerConfig.effort && { effort: providerConfig.effort }),
+        maxTurns: providerConfig.max_turns ?? 100,
+        ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
+        ...(providerConfig.thinking_budget_tokens != null && {
+          thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
+        }),
+        includePartialMessages: true,
+      };
 
-      if (useDirectCli) {
-        // Determine resumeSessionId for CLI --resume flag:
-        // 1. Explicit mapping exists (sdkId !== sessionId) → use mapped SDK ID
-        // 2. No mapping but session has messages on disk → session was created with PPM UUID, resume it
-        // 3. No mapping, no messages → truly new session, don't resume
-        let resumeSessionId: string | undefined;
-        if (sdkId !== sessionId) {
-          resumeSessionId = sdkId;
-        } else if (!isFirstMessage) {
-          try {
-            const existingMsgs = await getSessionMessages(sessionId);
-            if (existingMsgs.length > 0) {
-              resumeSessionId = sessionId;
-              setSessionMapping(sessionId, sessionId);
-              console.log(`[sdk] session ${sessionId} exists on disk (${existingMsgs.length} msgs) — will resume`);
-            }
-          } catch {}
-        }
-        console.log(`[sdk] Windows detected — using direct CLI fallback (resume=${resumeSessionId ?? "none"})`);
-        eventSource = this.queryDirectCli({
-          prompt: message,
-          cwd: effectiveCwd,
-          sessionId,
-          resumeSessionId,
-          env: queryEnv,
-          providerConfig,
-        });
-      } else {
-        const q = query({
-          prompt: message,
-          options: {
-            sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
-            resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
-            ...(shouldFork && { forkSession: true }),
-            cwd: effectiveCwd,
-            systemPrompt: systemPromptOpt,
-            settingSources: ["user", "project"],
-            env: queryEnv,
-            settings: { permissions: { allow: [], deny: [] } },
-            allowedTools,
-            permissionMode,
-            allowDangerouslySkipPermissions: isBypass,
-            ...(permissionHooks && { hooks: permissionHooks }),
-            ...(providerConfig.model && { model: providerConfig.model }),
-            ...(providerConfig.effort && { effort: providerConfig.effort }),
-            maxTurns: providerConfig.max_turns ?? 100,
-            ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-            ...(providerConfig.thinking_budget_tokens != null && {
-              thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
-            }),
-            canUseTool,
-            includePartialMessages: true,
-          } as any,
-        });
-        this.activeQueries.set(sessionId, q);
-        eventSource = q;
-      }
+      const q = query({
+        prompt: message,
+        options: {
+          ...queryOptions,
+          ...(permissionHooks && { hooks: permissionHooks }),
+          canUseTool,
+        } as any,
+      });
+      this.activeQueries.set(sessionId, q);
+      let eventSource: AsyncIterable<any> = q;
 
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
@@ -664,37 +469,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             retryCount++;
             console.warn(`[sdk] transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
             // Re-create query for retry — don't reuse sessionId in case SDK partially created it
-            if (!useDirectCli) {
-              const q = query({
-                prompt: message,
-                options: {
-                  // On retry, let SDK generate a fresh session to avoid conflicts
-                  sessionId: undefined,
-                  resume: undefined,
-                  ...(shouldFork && { forkSession: true }),
-                  cwd: effectiveCwd,
-                  systemPrompt: systemPromptOpt,
-                  settingSources: ["user", "project"],
-                  env: queryEnv,
-                  settings: { permissions: { allow: [], deny: [] } },
-                  allowedTools,
-                  permissionMode,
-                  allowDangerouslySkipPermissions: isBypass,
-                  ...(permissionHooks && { hooks: permissionHooks }),
-                  ...(providerConfig.model && { model: providerConfig.model }),
-                  ...(providerConfig.effort && { effort: providerConfig.effort }),
-                  maxTurns: providerConfig.max_turns ?? 100,
-                  ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-                  ...(providerConfig.thinking_budget_tokens != null && {
-                    thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
-                  }),
-                  canUseTool,
-                  includePartialMessages: true,
-                } as any,
-              });
-              this.activeQueries.set(sessionId, q);
-              eventSource = q;
-            }
+            const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
+            const rq = query({
+              prompt: message,
+              options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+            });
+            this.activeQueries.set(sessionId, rq);
+            eventSource = rq;
             continue retryLoop;
           }
         }
@@ -836,33 +617,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const refreshedAccount = accountService.getWithTokens(account.id);
                 if (refreshedAccount) {
                   const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                  const q = query({
+                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: retryEnv };
+                  const rq = query({
                     prompt: message,
-                    options: {
-                      sessionId: undefined,
-                      resume: undefined,
-                      cwd: effectiveCwd,
-                      systemPrompt: systemPromptOpt,
-                      settingSources: ["user", "project"],
-                      env: retryEnv,
-                      settings: { permissions: { allow: [], deny: [] } },
-                      allowedTools,
-                      permissionMode,
-                      allowDangerouslySkipPermissions: isBypass,
-                      ...(permissionHooks && { hooks: permissionHooks }),
-                      ...(providerConfig.model && { model: providerConfig.model }),
-                      ...(providerConfig.effort && { effort: providerConfig.effort }),
-                      maxTurns: providerConfig.max_turns ?? 100,
-                      ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-                      ...(providerConfig.thinking_budget_tokens != null && {
-                        thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
-                      }),
-                      canUseTool,
-                      includePartialMessages: true,
-                    } as any,
+                    options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
                   });
-                  this.activeQueries.set(sessionId, q);
-                  eventSource = q;
+                  this.activeQueries.set(sessionId, rq);
+                  eventSource = rq;
                   continue retryLoop;
                 }
               } catch (refreshErr) {
@@ -1069,9 +830,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const effectiveCwd = meta.projectPath || homedir();
           const retryAccount = accountSelector.isEnabled() ? accountSelector.next() : null;
           const queryEnv = this.buildQueryEnv(meta.projectPath, retryAccount);
-          const retryQuery = query({
-            prompt: message,
-            options: {
+          const retryOptions = {
+              ...(process.platform === "win32" && { executable: "node" }),
               cwd: effectiveCwd,
               systemPrompt: systemPromptOpt,
               settingSources: ["user", "project"],
@@ -1080,13 +840,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               allowedTools,
               permissionMode,
               allowDangerouslySkipPermissions: isBypass,
-              ...(permissionHooks && { hooks: permissionHooks }),
               ...(providerConfig.model && { model: providerConfig.model }),
               maxTurns: providerConfig.max_turns ?? 100,
-              canUseTool,
               includePartialMessages: true,
-            } as any,
-          });
+            };
+          const retryQuery = query({
+              prompt: message,
+              options: {
+                ...retryOptions,
+                ...(permissionHooks && { hooks: permissionHooks }),
+                canUseTool,
+              } as any,
+            });
           this.activeQueries.set(sessionId, retryQuery);
           for await (const retryMsg of retryQuery) {
             if (retryMsg.type === "system") continue;
