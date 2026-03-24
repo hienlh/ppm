@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.21] - 2026-03-24
+
+### Fixed
+- **OAuth auto-refresh on auth failure**: Automatically refresh expired OAuth token and retry when SDK returns `authentication_failed`, instead of just showing error to user
+
 ## [0.8.20] - 2026-03-24
 
 ### Fixed

@@ -641,8 +641,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // Retry logic: if SDK returns error_during_execution with 0 turns on first event,
       // it's a transient subprocess failure — retry once before surfacing the error.
+      // Also handles authentication_failed by refreshing OAuth token and retrying.
       const MAX_RETRIES = 1;
       let retryCount = 0;
+      let authRetried = false;
 
       retryLoop: while (true) {
       let sdkEventCount = 0;
@@ -816,6 +818,52 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             // Dump full SDK message for debugging
             console.error(`[sdk] session=${sessionId} cwd=${effectiveCwd} assistant error: ${assistantError} (isFirst=${isFirstMessage} retry=${retryCount})`);
             console.error(`[sdk] assistant message dump: ${JSON.stringify(msg).slice(0, 2000)}`);
+
+            // OAuth token expired — refresh and retry once before showing error
+            if (assistantError === "authentication_failed" && account && !authRetried) {
+              authRetried = true;
+              try {
+                await accountService.refreshAccessToken(account.id);
+                console.log(`[sdk] session=${sessionId} OAuth token refreshed for ${account.id} — retrying`);
+                // Re-build env with refreshed token
+                const refreshedAccount = accountService.getWithTokens(account.id);
+                if (refreshedAccount) {
+                  const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
+                  const q = query({
+                    prompt: message,
+                    options: {
+                      sessionId: undefined,
+                      resume: undefined,
+                      cwd: effectiveCwd,
+                      systemPrompt: systemPromptOpt,
+                      settingSources: ["user", "project"],
+                      env: retryEnv,
+                      settings: { permissions: { allow: [], deny: [] } },
+                      allowedTools,
+                      permissionMode,
+                      allowDangerouslySkipPermissions: isBypass,
+                      ...(permissionHooks && { hooks: permissionHooks }),
+                      ...(providerConfig.model && { model: providerConfig.model }),
+                      ...(providerConfig.effort && { effort: providerConfig.effort }),
+                      maxTurns: providerConfig.max_turns ?? 100,
+                      ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
+                      ...(providerConfig.thinking_budget_tokens != null && {
+                        thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
+                      }),
+                      canUseTool,
+                      includePartialMessages: true,
+                    } as any,
+                  });
+                  this.activeQueries.set(sessionId, q);
+                  eventSource = q;
+                  continue retryLoop;
+                }
+              } catch (refreshErr) {
+                console.error(`[sdk] session=${sessionId} OAuth refresh failed:`, refreshErr);
+                accountSelector.onAuthError(account.id);
+              }
+            }
+
             const errorHints: Record<string, string> = {
               authentication_failed: "API authentication failed. Check your account credentials in Settings → Accounts.",
               billing_error: "Billing error on this account. Check your subscription status.",
