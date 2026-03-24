@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.43] - 2026-03-25
+
+### Fixed
+- **Sticky user messages**: Only the last user message sticks to top — prevents multiple messages overlapping
+- **npm package**: Exclude screenshot PNG files from published package
+
 ## [0.8.41] - 2026-03-25
 
 ### Improved
