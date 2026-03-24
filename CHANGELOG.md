@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.34] - 2026-03-24
+
+### Fixed
+- **Remove stale YAML config references**: Update docs, help text, and architecture diagrams to reflect SQLite-based config storage — removes misleading `~/.ppm/config.yaml` references that could confuse users and AI assistants
+
 ## [0.8.33] - 2026-03-24
 
 ### Changed
