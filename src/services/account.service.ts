@@ -518,6 +518,10 @@ class AccountService {
   async refreshAccessToken(accountId: string, disableOnFail = true): Promise<void> {
     const account = this.getWithTokens(accountId);
     if (!account) throw new Error(`Account ${accountId} not found`);
+    // Skip refresh for temporary accounts (no refresh token)
+    if (!account.refreshToken || account.refreshToken === "") {
+      throw new Error(`Account ${accountId} has no refresh token (temporary account)`);
+    }
     const res = await fetch(OAUTH_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -530,8 +534,8 @@ class AccountService {
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
       console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
-      // invalid_grant = refresh token permanently dead → clear it so account becomes temporary
-      if (errorBody.includes("invalid_grant")) {
+      // invalid_grant or invalid_request = refresh token permanently dead → clear it so account becomes temporary
+      if (errorBody.includes("invalid_grant") || errorBody.includes("invalid_request")) {
         console.log(`[accounts] Clearing invalid refresh token for ${account.email ?? accountId} — account is now temporary`);
         updateAccount(accountId, { refresh_token: encrypt("") });
       }
