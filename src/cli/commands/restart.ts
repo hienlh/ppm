@@ -127,8 +127,8 @@ async function main() {
   // (Bun.spawn + unref on Windows keeps child in same job object → dies when worker exits)
   let childPid: number;
   // Compiled binary: execPath IS the server, no "run script" needed
-  const { isCompiledBinary } = await import("../../services/autostart-generator.ts");
-  const serverArgs = isCompiledBinary()
+  const isCompiled = !process.execPath.includes("bun");
+  const serverArgs = isCompiled
     ? ["__serve__", String(P.port), P.host, P.config].filter(Boolean)
     : ["run", P.serverScript, "__serve__", String(P.port), P.host, P.config].filter(Boolean);
 
