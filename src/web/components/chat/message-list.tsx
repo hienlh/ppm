@@ -75,13 +75,15 @@ export function MessageList({
   return (
     <StickToBottom className="flex-1 overflow-y-auto" resize="smooth" initial="instant">
       <StickToBottom.Content className="p-4 space-y-4">
-        {messages
-          .filter((msg) => {
+        {(() => {
+          const visible = messages.filter((msg) => {
             const hasContent = msg.content && msg.content.trim().length > 0;
             const hasEvents = msg.events && msg.events.length > 0;
             return hasContent || hasEvents;
-          })
-          .map((msg) => {
+          });
+          // Find the last user message to make only that one sticky
+          const lastUserIdx = visible.reduce((acc, msg, i) => msg.role === "user" ? i : acc, -1);
+          return visible.map((msg, i) => {
             const bubble = (
               <MessageBubble
                 key={msg.id}
@@ -91,8 +93,8 @@ export function MessageList({
                 onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
               />
             );
-            // User messages stick to top when scrolling
-            if (msg.role === "user") {
+            // Only the last user message sticks to top
+            if (msg.role === "user" && i === lastUserIdx) {
               return (
                 <div key={msg.id} className="sticky top-0 z-10 bg-background py-0.5">
                   {bubble}
@@ -100,7 +102,8 @@ export function MessageList({
               );
             }
             return bubble;
-          })}
+          });
+        })()}
 
         {pendingApproval && (
           pendingApproval.tool === "AskUserQuestion"

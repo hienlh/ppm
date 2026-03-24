@@ -8,6 +8,8 @@
 .playwright-mcp
 .cursor/
 plans/
+*.png
+sdh-uit-edu-vn-screenshot.png
 tests/
 repomix-output.xml
 ppm.yaml
