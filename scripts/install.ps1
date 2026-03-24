@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
-# Speed up Invoke-WebRequest by disabling progress bar UI
 $ProgressPreference = "SilentlyContinue"
+# PowerShell 5.1 defaults to TLS 1.0 — GitHub requires TLS 1.2
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repo = "hienlh/ppm"
 $InstallDir = if ($env:PPM_INSTALL_DIR) { $env:PPM_INSTALL_DIR } else { "$env:USERPROFILE\.ppm\bin" }
