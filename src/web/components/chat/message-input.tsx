@@ -38,6 +38,8 @@ interface MessageInputProps {
   externalFiles?: File[] | null;
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
+  /** Auto-focus textarea on mount */
+  autoFocus?: boolean;
   /** Current permission mode */
   permissionMode?: string;
   /** Permission mode change handler */
@@ -58,6 +60,7 @@ export const MessageInput = memo(function MessageInput({
   fileSelected,
   externalFiles,
   initialValue,
+  autoFocus,
   permissionMode,
   onModeChange,
 }: MessageInputProps) {
@@ -81,6 +84,17 @@ export const MessageInput = memo(function MessageInput({
       }, 50);
     }
   }, [initialValue]);
+
+  // Auto-focus on mount when requested
+  useEffect(() => {
+    if (!autoFocus) return;
+    setTimeout(() => {
+      const ta = window.matchMedia("(min-width: 768px)").matches
+        ? textareaRef.current
+        : mobileTextareaRef.current;
+      ta?.focus();
+    }, 100);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch slash items when projectName changes
   useEffect(() => {

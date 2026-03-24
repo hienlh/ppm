@@ -366,6 +366,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onSend={handleSend}
           isStreaming={isStreaming}
           onCancel={cancelStreaming}
+          autoFocus={!(metadata?.sessionId)}
           projectName={projectName}
           onSlashStateChange={handleSlashStateChange}
           onSlashItemsLoaded={setSlashItems}
