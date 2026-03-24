@@ -38,7 +38,7 @@ $Url = "https://github.com/$Repo/releases/download/$Tag/$Artifact"
 Write-Host "Downloading $Artifact..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 # curl.exe ships with Windows 10+ and handles redirects/progress natively
-& curl.exe -fSL# -o "$InstallDir\ppm.exe" $Url
+& curl.exe -fSL# --ssl-no-revoke -o "$InstallDir\ppm.exe" $Url
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Download failed. Binary may not be available for this version."
     Write-Host "Try installing via: bunx @hienlh/ppm start"
