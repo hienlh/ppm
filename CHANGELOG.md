@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.25] - 2026-03-24
+## [0.8.26] - 2026-03-24
 
 ### Changed
 - **Temporary export/import**: Exported accounts no longer include refresh tokens — imported accounts are temporary (~1h access-only). Prevents token rotation conflicts between machines.
