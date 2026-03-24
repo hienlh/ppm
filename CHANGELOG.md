@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.39] - 2026-03-24
+
+### Fixed
+- **Binary frontend missing**: Compiled binary now ships with `web/` assets in archive (`.tar.gz`/`.zip`). Server looks for `web/` next to binary when running in compiled mode.
+- **Windows install**: Fix TLS 1.2, SSL revocation, and download hang issues in PowerShell installer
+
 ## [0.8.38] - 2026-03-24
 
 ### Fixed

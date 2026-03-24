@@ -33,17 +33,26 @@ if ($Current) {
     Write-Host "Installing: v$Latest"
 }
 
-# Download binary
-$Url = "https://github.com/$Repo/releases/download/$Tag/$Artifact"
-Write-Host "Downloading $Artifact..."
+# Download and extract archive
+$Archive = "ppm-windows-x64"
+$Url = "https://github.com/$Repo/releases/download/$Tag/${Archive}.zip"
+Write-Host "Downloading ${Archive}.zip..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-# curl.exe ships with Windows 10+ and handles redirects/progress natively
-& curl.exe -fSL# --ssl-no-revoke -o "$InstallDir\ppm.exe" $Url
+$TmpZip = "$env:TEMP\ppm-install.zip"
+& curl.exe -fSL# --ssl-no-revoke -o $TmpZip $Url
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Download failed. Binary may not be available for this version."
     Write-Host "Try installing via: bunx @hienlh/ppm start"
     exit 1
 }
+# Extract ppm.exe + web/ into install dir
+$TmpDir = "$env:TEMP\ppm-extract"
+Remove-Item $TmpDir -Recurse -ErrorAction SilentlyContinue
+Expand-Archive -Path $TmpZip -DestinationPath $TmpDir -Force
+# Move contents from nested folder to install dir
+$Nested = Get-ChildItem $TmpDir | Select-Object -First 1
+Copy-Item "$($Nested.FullName)\*" -Destination $InstallDir -Recurse -Force
+Remove-Item $TmpZip, $TmpDir -Recurse -ErrorAction SilentlyContinue
 
 # Show changelog
 Write-Host ""

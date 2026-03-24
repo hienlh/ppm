@@ -36,21 +36,48 @@ for entry in "${TARGETS[@]}"; do
   bun build src/index.ts --compile --target="$target" --outfile="dist/$artifact"
 done
 
-# 3. Create tag if not exists
+# 3. Package binaries with web assets
+echo "[3/5] Packaging..."
+rm -f dist/ppm-*.tar.gz dist/ppm-*.zip
+
+for entry in "${TARGETS[@]}"; do
+  artifact="${entry##*:}"
+  if [[ "$artifact" == *.exe ]]; then
+    # Windows: zip
+    name="${artifact%.exe}"
+    mkdir -p "dist/$name"
+    cp "dist/$artifact" "dist/$name/ppm.exe"
+    cp -r dist/web "dist/$name/web"
+    (cd dist && zip -qr "${name}.zip" "$name")
+    rm -rf "dist/$name"
+    echo "  -> ${name}.zip"
+  else
+    # Unix: tar.gz
+    mkdir -p "dist/$artifact-pkg"
+    cp "dist/$artifact" "dist/$artifact-pkg/ppm"
+    cp -r dist/web "dist/$artifact-pkg/web"
+    tar -czf "dist/${artifact}.tar.gz" -C "dist/$artifact-pkg" .
+    rm -rf "dist/$artifact-pkg"
+    echo "  -> ${artifact}.tar.gz"
+  fi
+done
+
+# 4. Create tag if not exists
 if git rev-parse "$TAG" >/dev/null 2>&1; then
-  echo "[3/4] Tag $TAG already exists, skipping"
+  echo "[4/5] Tag $TAG already exists, skipping"
 else
-  echo "[3/4] Creating tag $TAG..."
+  echo "[4/5] Creating tag $TAG..."
   git tag "$TAG"
   git push origin "$TAG"
 fi
 
-# 4. Create or update release
-echo "[4/4] Uploading to GitHub release..."
+# 5. Create or update release
+echo "[5/5] Uploading to GitHub release..."
+ARCHIVES=(dist/ppm-*.tar.gz dist/ppm-*.zip)
 if gh release view "$TAG" >/dev/null 2>&1; then
-  gh release upload "$TAG" dist/ppm-* --clobber
+  gh release upload "$TAG" ${ARCHIVES[@]} --clobber
 else
-  gh release create "$TAG" dist/ppm-* --title "$TAG" --generate-notes
+  gh release create "$TAG" ${ARCHIVES[@]} --title "$TAG" --generate-notes
 fi
 
 echo "=== Done: https://github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner)/releases/tag/$TAG ==="

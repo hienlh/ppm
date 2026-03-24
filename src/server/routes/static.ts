@@ -1,10 +1,15 @@
 import { Hono } from "hono";
 import { existsSync } from "node:fs";
-import { resolve, join, extname } from "node:path";
+import { resolve, join, extname, dirname } from "node:path";
+import { isCompiledBinary } from "../../services/autostart-generator.ts";
 
 export const staticRoutes = new Hono();
 
-const DIST_DIR = resolve(import.meta.dir, "../../../dist/web");
+// Compiled binary: look for web/ next to the binary itself
+// Dev mode: resolve relative to source file
+const DIST_DIR = isCompiledBinary()
+  ? resolve(dirname(process.execPath), "web")
+  : resolve(import.meta.dir, "../../../dist/web");
 
 /** MIME types for common static assets */
 const MIME_TYPES: Record<string, string> = {
