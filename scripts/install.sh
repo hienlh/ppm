@@ -49,8 +49,16 @@ else
   echo "Installing: v${LATEST}"
 fi
 
-# Download binary
+# Check if binary exists in release
 URL="https://github.com/${REPO}/releases/download/${TAG}/${ARTIFACT}"
+HTTP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" "$URL")
+if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "302" ]; then
+  echo "Binary not available for ${os}/${arch} in ${TAG} (HTTP ${HTTP_CODE})"
+  echo "Try installing via: bunx @hienlh/ppm start"
+  exit 1
+fi
+
+# Download binary
 echo "Downloading ${ARTIFACT}..."
 mkdir -p "$INSTALL_DIR"
 curl -fsSL -o "${INSTALL_DIR}/ppm" "$URL"
@@ -114,7 +122,7 @@ case ":$PATH:" in
         echo "# PPM" >> "$PROFILE"
         echo "$PATH_LINE" >> "$PROFILE"
         echo "Added to PATH in ${PROFILE}"
-        echo "Run 'source ${PROFILE}' or restart your terminal to use ppm."
+        echo "Restart your terminal or run: source ${PROFILE}"
       fi
     else
       echo ""
