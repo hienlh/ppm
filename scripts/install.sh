@@ -61,7 +61,7 @@ fi
 # Download binary
 echo "Downloading ${ARTIFACT}..."
 mkdir -p "$INSTALL_DIR"
-curl -fsSL -o "${INSTALL_DIR}/ppm" "$URL"
+curl -fSL# -o "${INSTALL_DIR}/ppm" "$URL"
 chmod +x "${INSTALL_DIR}/ppm"
 
 # Show changelog
