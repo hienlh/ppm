@@ -5,7 +5,7 @@ import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { StreamingStatus } from "@/hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
-import { basename } from "@/lib/utils";
+import { cn, basename } from "@/lib/utils";
 
 import {
   AlertCircle,
@@ -20,6 +20,8 @@ import {
   Loader2,
   RotateCcw,
   TerminalSquare,
+  ChevronUp,
+  Tag,
 } from "lucide-react";
 import { QuestionCard } from "./question-card";
 import type { Question } from "./question-card";
@@ -79,15 +81,26 @@ export function MessageList({
             const hasEvents = msg.events && msg.events.length > 0;
             return hasContent || hasEvents;
           })
-          .map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              isStreaming={isStreaming && msg.id.startsWith("streaming-")}
-              projectName={projectName}
-              onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
-            />
-          ))}
+          .map((msg) => {
+            const bubble = (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                isStreaming={isStreaming && msg.id.startsWith("streaming-")}
+                projectName={projectName}
+                onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
+              />
+            );
+            // User messages stick to top when scrolling
+            if (msg.role === "user") {
+              return (
+                <div key={msg.id} className="sticky top-0 z-10 bg-background py-0.5">
+                  {bubble}
+                </div>
+              );
+            }
+            return bubble;
+          })}
 
         {pendingApproval && (
           pendingApproval.tool === "AskUserQuestion"
@@ -153,9 +166,36 @@ function MessageBubble({ message, isStreaming, projectName, onFork }: { message:
 /** Image extensions that can be previewed inline */
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
-/** Strip system-injected XML tags (e.g. <system-reminder>, <available-deferred-tools>) from message content */
-function stripSystemTags(text: string): string {
-  return text.replace(/<(system-reminder|available-deferred-tools|antml:[\w-]+|fast_mode_info|claudeMd|gitStatus|currentDate)[\s\S]*?<\/\1>/g, "").trim();
+interface SystemTag {
+  name: string;
+  label: string;
+  content: string;
+}
+
+const TAG_LABELS: Record<string, string> = {
+  "system-reminder": "Context",
+  "claudeMd": "CLAUDE.md",
+  "gitStatus": "Git Status",
+  "currentDate": "Date",
+  "fast_mode_info": "Fast Mode",
+  "available-deferred-tools": "Tools",
+};
+
+/** Extract system-injected XML tags into structured objects + clean text */
+function extractSystemTags(text: string): { cleanText: string; tags: SystemTag[] } {
+  const tags: SystemTag[] = [];
+  const tagPattern = /<(system-reminder|available-deferred-tools|antml:[\w-]+|fast_mode_info|claudeMd|gitStatus|currentDate)[^>]*>([\s\S]*?)<\/\1>/g;
+  let match;
+  while ((match = tagPattern.exec(text)) !== null) {
+    const name = match[1]!;
+    tags.push({
+      name,
+      label: TAG_LABELS[name] ?? name.replace(/^antml:/, "").replace(/-/g, " "),
+      content: match[2]!.trim(),
+    });
+  }
+  const cleanText = text.replace(tagPattern, "").trim();
+  return { cleanText, tags };
 }
 
 /** Parse user message content, extracting attached file paths and the actual text */
@@ -193,59 +233,127 @@ function isPdfPath(path: string): boolean {
   return path.toLowerCase().endsWith(".pdf");
 }
 
-/** User message bubble with attachment rendering */
+/** User message bubble — full width, collapsible, with system tag badges */
 function UserBubble({ content, projectName, onFork }: { content: string; projectName?: string; onFork?: () => void }) {
-  const { files, text } = useMemo(() => {
+  const { files, text, tags } = useMemo(() => {
     const parsed = parseUserAttachments(content);
-    return { files: parsed.files, text: stripSystemTags(parsed.text) };
+    const { cleanText, tags } = extractSystemTags(parsed.text);
+    return { files: parsed.files, text: cleanText, tags };
   }, [content]);
 
+  const [expanded, setExpanded] = useState(false);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    // Compare natural height vs clamped height (5 lines ≈ 5 * 1.25rem)
+    const check = () => setIsOverflowing(el.scrollHeight > el.clientHeight + 2);
+    check();
+    // Re-check on resize
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+
   return (
-    <div className="flex justify-end group/user">
-      <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary max-w-[85%] space-y-2 relative">
-        {/* Attached files */}
+    <div className="group/user relative">
+      <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary space-y-2">
+        {/* System tags as badges */}
+        {tags.length > 0 && <SystemTagBadges tags={tags} />}
+
+        {/* Attached files — compact chips (same style as input area) */}
         {files.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {files.map((filePath, i) =>
-              isImagePath(filePath) ? (
-                <AuthImage
-                  key={i}
-                  src={uploadPreviewUrl(filePath, projectName)}
-                  alt={basename(filePath) || "image"}
-                />
-              ) : isPdfPath(filePath) ? (
-                <AuthFileLink
-                  key={i}
-                  src={uploadPreviewUrl(filePath, projectName)}
-                  filename={basename(filePath) || "document.pdf"}
-                  mimeType="application/pdf"
-                />
-              ) : (
-                <div
-                  key={i}
-                  className="flex items-center gap-1.5 rounded-md border border-border bg-background/50 px-2 py-1 text-xs text-text-secondary"
-                >
-                  <FileText className="size-3.5 shrink-0" />
-                  <span className="truncate max-w-40">{basename(filePath)}</span>
-                </div>
-              ),
-            )}
+          <div className="flex flex-wrap gap-1.5">
+            {files.map((filePath, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary"
+              >
+                {isImagePath(filePath) ? <ImageIcon className="size-3 shrink-0" /> : <FileText className="size-3 shrink-0" />}
+                <span className="truncate max-w-32">{basename(filePath)}</span>
+              </div>
+            ))}
           </div>
         )}
 
-        {/* Text content */}
-        {text && <p className="whitespace-pre-wrap break-words">{text}</p>}
-        {/* Fork/Rewind button — visible on hover */}
-        {onFork && (
-          <button
-            onClick={onFork}
-            title="Retry from this message (fork session)"
-            className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover/user:opacity-100 transition-opacity size-6 flex items-center justify-center rounded bg-surface border border-border text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
-          >
-            <RotateCcw className="size-3" />
-          </button>
+        {/* Text content — 2-line clamp by default, expandable */}
+        {text && (
+          <div>
+            <div
+              ref={contentRef}
+              className={cn(
+                "whitespace-pre-wrap break-words transition-all duration-200",
+                !expanded && "line-clamp-2",
+                expanded && "max-h-[50vh] overflow-y-auto",
+              )}
+            >
+              {text}
+            </div>
+            {(isOverflowing || expanded) && (
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary mt-1 transition-colors"
+              >
+                {expanded ? (
+                  <>
+                    <ChevronUp className="size-3" />
+                    Show less
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="size-3" />
+                    Show more
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         )}
       </div>
+      {/* Fork/Rewind button — visible on hover */}
+      {onFork && (
+        <button
+          onClick={onFork}
+          title="Retry from this message (fork session)"
+          className="absolute -right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover/user:opacity-100 transition-opacity size-6 flex items-center justify-center rounded bg-surface border border-border text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
+        >
+          <RotateCcw className="size-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Render system tags as collapsible badges */
+function SystemTagBadges({ tags }: { tags: SystemTag[] }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {tags.map((tag, i) => (
+        <SystemTagBadge key={i} tag={tag} />
+      ))}
+    </div>
+  );
+}
+
+function SystemTagBadge({ tag }: { tag: SystemTag }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="text-xs">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 rounded-full border border-border/60 bg-surface/50 px-2 py-0.5 text-text-subtle hover:text-text-secondary hover:bg-surface transition-colors"
+      >
+        <Tag className="size-2.5" />
+        <span>{tag.label}</span>
+        <ChevronRight className={cn("size-2.5 transition-transform", open && "rotate-90")} />
+      </button>
+      {open && (
+        <div className="mt-1 rounded border border-border/40 bg-surface/30 px-2 py-1.5 text-[11px] text-text-subtle/80 whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
+          {tag.content}
+        </div>
+      )}
     </div>
   );
 }

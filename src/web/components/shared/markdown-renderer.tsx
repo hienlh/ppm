@@ -3,8 +3,11 @@ import { marked } from "marked";
 import { useTabStore } from "@/stores/tab-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
-import { api, projectUrl } from "@/lib/api-client";
+import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
+
+/** Detect local absolute file paths (Unix or Windows) */
+const LOCAL_PATH_RE = /^(\/|[A-Za-z]:[/\\])/;
 
 // Configure marked globally
 marked.use({ gfm: true, breaks: true });
@@ -171,6 +174,46 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 
     container.addEventListener("click", handleClick);
 
+    // --- Auth-load images with local file paths ---
+    const blobUrls: string[] = [];
+    container.querySelectorAll("img").forEach((img) => {
+      const src = img.getAttribute("src") ?? "";
+      // Only intercept local file paths, not http/data/blob URLs
+      if (!LOCAL_PATH_RE.test(src)) return;
+      // Mark as loading
+      img.style.opacity = "0.3";
+      img.style.minHeight = "48px";
+      img.style.minWidth = "48px";
+      const token = getAuthToken();
+      fetch(`/api/fs/raw?path=${encodeURIComponent(src)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+        .then((r) => {
+          if (!r.ok) throw new Error("Failed to load");
+          return r.blob();
+        })
+        .then((blob) => {
+          const url = URL.createObjectURL(blob);
+          blobUrls.push(url);
+          img.src = url;
+          img.style.opacity = "";
+          img.style.minHeight = "";
+          img.style.minWidth = "";
+          // Style: constrain size, add border like AuthImage
+          img.style.maxHeight = "400px";
+          img.style.maxWidth = "100%";
+          img.style.objectFit = "contain";
+          img.style.borderRadius = "0.375rem";
+          img.style.border = "1px solid var(--color-border)";
+          img.style.cursor = "pointer";
+          img.onclick = () => window.open(url, "_blank");
+        })
+        .catch(() => {
+          img.style.opacity = "0.5";
+          img.alt = `[Image not found: ${basename(src)}]`;
+        });
+    });
+
     // --- Code block copy/run buttons ---
     if (codeActions) {
       container.querySelectorAll("pre").forEach((pre) => {
@@ -216,7 +259,10 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       });
     }
 
-    return () => container.removeEventListener("click", handleClick);
+    return () => {
+      container.removeEventListener("click", handleClick);
+      blobUrls.forEach((u) => URL.revokeObjectURL(u));
+    };
   }, [html, projectName, openTab, codeActions]);
 
   return (

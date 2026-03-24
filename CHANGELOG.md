@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.41] - 2026-03-25
+
+### Improved
+- **User chat bubble**: Full-width layout, 2-line collapse with expand/collapse, compact attachment chips
+- **Sticky user messages**: Most recent user message sticks to top while scrolling through assistant responses
+- **System tag rendering**: Claude system tags (`<system-reminder>`, `<claudeMd>`, etc.) rendered as collapsible badges instead of raw text
+- **Markdown images**: Local file path images in assistant markdown now load via authenticated `/api/fs/raw` endpoint
+- **Raw file endpoint**: New `GET /api/fs/raw?path=` for serving binary files (images, etc.)
+
+### Refactored
+- **Tunnel service**: Moved status file patching into service layer, cleaned up route handler
+
 ## [0.8.40] - 2026-03-24
 
 ### Fixed

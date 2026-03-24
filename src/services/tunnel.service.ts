@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync, readFileSync, writeFileSync } from "node:fs";
 import { ensureCloudflared } from "./cloudflared.service.ts";
 
 const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
@@ -81,6 +81,8 @@ class TunnelService {
     });
 
     this.url = url;
+    this.persistToStatusFile();
+    this.syncToCloud();
     return url;
   }
 
@@ -108,6 +110,8 @@ class TunnelService {
       this.externalPid = null;
     }
     this.url = null;
+    this.persistToStatusFile();
+    this.stopCloudSync();
   }
 
   /** Get current tunnel URL (null if not running) */
@@ -123,11 +127,43 @@ class TunnelService {
   /** Inject an externally-started tunnel URL (e.g. from daemon --share) */
   setExternalUrl(url: string): void {
     this.url = url;
+    this.persistToStatusFile();
+    this.syncToCloud();
   }
 
   /** Adopt an externally-started tunnel by PID (for stop management after restart) */
   setExternalPid(pid: number): void {
     this.externalPid = pid;
+  }
+
+  /** Persist shareUrl + tunnelPid to status.json (central write point) */
+  private persistToStatusFile(): void {
+    const statusFile = resolve(homedir(), ".ppm", "status.json");
+    if (!existsSync(statusFile)) return;
+    try {
+      const data = JSON.parse(readFileSync(statusFile, "utf-8"));
+      data.shareUrl = this.url;
+      data.tunnelPid = this.getTunnelPid() ?? null;
+      writeFileSync(statusFile, JSON.stringify(data));
+    } catch {}
+  }
+
+  /** Start cloud heartbeat if device is linked (non-blocking) */
+  private syncToCloud(): void {
+    if (!this.url) return;
+    const url = this.url;
+    import("./cloud.service.ts")
+      .then(({ startHeartbeat, getCloudDevice }) => {
+        if (getCloudDevice()) startHeartbeat(url);
+      })
+      .catch(() => {});
+  }
+
+  /** Stop cloud heartbeat (non-blocking) */
+  private stopCloudSync(): void {
+    import("./cloud.service.ts")
+      .then(({ stopHeartbeat }) => stopHeartbeat())
+      .catch(() => {});
   }
 }
 

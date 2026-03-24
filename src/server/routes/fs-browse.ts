@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { existsSync } from "fs";
 import {
   browse,
   list,
@@ -47,6 +48,26 @@ fsBrowseRoutes.get("/read", (c) => {
     if (!filePath) return c.json(err("path is required"), 400);
     const result = readSystemFile(filePath);
     return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** GET /api/fs/raw?path=/some/file — serve file as binary (for images in markdown, etc.) */
+fsBrowseRoutes.get("/raw", (c) => {
+  try {
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("path is required"), 400);
+    if (!existsSync(filePath)) return c.json(err("File not found"), 404);
+
+    const file = Bun.file(filePath);
+    return new Response(file.stream(), {
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "Content-Disposition": "inline",
+        "Cache-Control": "private, max-age=3600",
+      },
+    });
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }
