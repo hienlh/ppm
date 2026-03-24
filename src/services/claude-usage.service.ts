@@ -169,8 +169,11 @@ function persistIfChanged(data: ClaudeUsage, accountId: string | null): void {
 
 async function fetchAllAccountUsages(): Promise<void> {
   const accounts = accountService.list();
+  const nowS = Math.floor(Date.now() / 1000);
   for (const acc of accounts) {
     if (acc.status === "disabled") continue;
+    // Skip expired temporary accounts (no refresh token)
+    if (!accountService.hasRefreshToken(acc.id) && acc.expiresAt && acc.expiresAt < nowS) continue;
     const withTokens = accountService.getWithTokens(acc.id);
     if (!withTokens) continue;
     const token = withTokens.accessToken;
@@ -247,9 +250,14 @@ export function getUsageForAccount(accountId: string): ClaudeUsage {
   return row ? snapshotToUsage(row) : {};
 }
 
-/** Get usage for all accounts */
+/** Get usage for all accounts (excludes expired temporary accounts) */
 export function getAllAccountUsages(): AccountUsageEntry[] {
-  const accounts = accountService.list();
+  const nowS = Math.floor(Date.now() / 1000);
+  const accounts = accountService.list().filter(acc => {
+    // Exclude expired accounts without refresh token (temporary/invalid)
+    if (!accountService.hasRefreshToken(acc.id) && acc.expiresAt && acc.expiresAt < nowS) return false;
+    return true;
+  });
   const snapshots = getAllLatestSnapshots();
   const snapshotMap = new Map(snapshots.map(s => [s.account_id, s]));
   return accounts.map(acc => {

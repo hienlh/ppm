@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.8.26] - 2026-03-24
+## [0.8.27] - 2026-03-24
 
 ### Changed
 - **Temporary export/import**: Exported accounts no longer include refresh tokens — imported accounts are temporary (~1h access-only). Prevents token rotation conflicts between machines.
@@ -8,6 +8,7 @@
 - **Auto-cleanup**: Expired temporary accounts (no refresh token) are automatically deleted after 7 days.
 - **Export warning**: Export dialog now explains that exported accounts are temporary and the importing machine should login directly for permanent access.
 - **Invalid refresh token cleanup**: When refresh fails with `invalid_grant`, clears the refresh token so the account becomes temporary (same lifecycle rules apply: can't re-enable when expired, auto-deleted after 7 days)
+- **Skip expired accounts in usage**: Expired temporary accounts are excluded from usage polling and usage panel — no wasted API calls or UI clutter
 
 ## [0.8.24] - 2026-03-24
 
