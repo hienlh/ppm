@@ -1,11 +1,14 @@
 # Changelog
 
-## [0.8.32] - 2026-03-24
+## [0.8.33] - 2026-03-24
 
 ### Changed
 - **Settings redesign**: Replace flat accordion with two-level iOS Settings-style navigation — quick-access settings (Device Name, Theme) at top, category drill-down (AI, Notifications, Accounts, Shortcuts) with back button. Scales infinitely without overflow.
 - **Notifications grouped**: Push notifications and Telegram settings combined under single Notifications category
 - **Open Chat shortcut**: Default changed from Cmd+Shift+L to Cmd+L
+
+### Added
+- **Auto-focus chat input**: Opening a new chat tab automatically focuses the message input
 
 ## [0.8.27] - 2026-03-24
 
