@@ -5,6 +5,7 @@
 ### Fixed
 - **Stop disabling accounts on background refresh failure**: Startup and background auto-refresh no longer disable accounts when refresh fails — only actual query-time failures disable accounts. Prevents all accounts being disabled after server restart.
 - **Better refresh error logging**: Log response body from Anthropic when token refresh fails (was only logging status code)
+- **Token state diagnostic logging**: Log `token_expires_in` before each SDK query for debugging auth issues
 
 ## [0.8.22] - 2026-03-24
 

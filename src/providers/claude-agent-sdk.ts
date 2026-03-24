@@ -559,11 +559,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       // Pre-flight: ensure OAuth token is fresh before sending to SDK
       if (account) {
+        const nowS = Math.floor(Date.now() / 1000);
+        const expiresIn = account.expiresAt ? account.expiresAt - nowS : null;
+        console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"}) token_expires_in=${expiresIn}s`);
         const fresh = await accountService.ensureFreshToken(account.id);
         if (fresh) {
           account = fresh;
         }
-        console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"})`);
         yield { type: "account_info" as const, accountId: account.id, accountLabel: account.label ?? account.email ?? "Unknown" };
       }
       const queryEnv = this.buildQueryEnv(meta.projectPath, account);
