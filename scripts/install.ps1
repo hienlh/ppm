@@ -1,4 +1,6 @@
 $ErrorActionPreference = "Stop"
+# Speed up Invoke-WebRequest by disabling progress bar UI
+$ProgressPreference = "SilentlyContinue"
 
 $Repo = "hienlh/ppm"
 $InstallDir = if ($env:PPM_INSTALL_DIR) { $env:PPM_INSTALL_DIR } else { "$env:USERPROFILE\.ppm\bin" }
@@ -30,20 +32,17 @@ if ($Current) {
     Write-Host "Installing: v$Latest"
 }
 
-# Check binary exists
+# Download binary
 $Url = "https://github.com/$Repo/releases/download/$Tag/$Artifact"
+Write-Host "Downloading $Artifact..."
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 try {
-    $Head = Invoke-WebRequest -Uri $Url -Method Head -MaximumRedirection 5 -ErrorAction Stop
+    Invoke-WebRequest -Uri $Url -OutFile "$InstallDir\ppm.exe" -UseBasicParsing
 } catch {
-    Write-Host "Binary not available for windows/x64 in $Tag"
+    Write-Host "Download failed. Binary may not be available for this version."
     Write-Host "Try installing via: bunx @hienlh/ppm start"
     exit 1
 }
-
-# Download
-Write-Host "Downloading $Artifact..."
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Invoke-WebRequest -Uri $Url -OutFile "$InstallDir\ppm.exe" -UseBasicParsing
 
 # Show changelog
 Write-Host ""
