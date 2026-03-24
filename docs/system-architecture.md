@@ -59,7 +59,7 @@
    │  • Project directories (git repos)             │
    │  • File read/write operations                  │
    │  • SQLite database (~/.ppm/ppm.db)              │
-   │  • Legacy config file (~/.ppm/config.yaml)      │
+   │  • Config database (~/.ppm/ppm.db)                │
    └────────────────────────────────────────────────┘
 ```
 

@@ -19,8 +19,8 @@ The project root has a real `ppm.yaml` with `port: 5555`. `ConfigService.load(mi
 ### Global configService in git routes
 `src/server/routes/git.ts` imports and uses the global `configService` singleton (not injected). Integration tests for git API must mutate `configService.config.projects` directly to register the test repo. Restore to `[]` in `afterEach`.
 
-### ConfigService.load() fallback behavior
-Candidates checked in order: explicit path → PPM_CONFIG env → LOCAL_CONFIG (ppm.yaml) → HOME_CONFIG (~/.ppm/config.yaml). A missing explicit path does NOT stop the fallback chain.
+### ConfigService.load() behavior
+Config is stored in SQLite (`~/.ppm/ppm.db`). If an explicit YAML path is given via `-c` flag, it is imported into SQLite first. Legacy YAML files (`config.yaml`) are auto-migrated to SQLite on first load via `migrateYamlIfNeeded()`.
 
 ### buildTestApp in setup.ts
 Overrides `configService.save = () => {}` (no-op) to prevent tests writing to disk. Injects config directly by mutating private fields via `as unknown as`.

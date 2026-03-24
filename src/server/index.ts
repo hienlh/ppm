@@ -311,7 +311,7 @@ export async function startServer(options: {
       console.log(`  ➜  Share:   ${shareUrl}`);
       if (!configService.get("auth").enabled) {
         console.log(`\n  ⚠  Warning: auth is disabled — your IDE is publicly accessible!`);
-        console.log(`     Enable auth in ~/.ppm/config.yaml or restart without --share.`);
+        console.log(`     Enable auth: run 'ppm config set auth.enabled true' or restart without --share.`);
       }
       const qr = await import("qrcode-terminal");
       console.log();
@@ -414,7 +414,7 @@ export async function startServer(options: {
       console.log(`  ➜  Share:   ${shareUrl}`);
       if (!configService.get("auth").enabled) {
         console.log(`\n  ⚠  Warning: auth is disabled — your IDE is publicly accessible!`);
-        console.log(`     Enable auth in ~/.ppm/config.yaml or restart without --share.`);
+        console.log(`     Enable auth: run 'ppm config set auth.enabled true' or restart without --share.`);
       }
       const qr = await import("qrcode-terminal");
       console.log();

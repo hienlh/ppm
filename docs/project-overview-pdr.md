@@ -111,11 +111,11 @@ ppm start [options]
 ```
 
 **Options:**
-- `-p, --port <port>` — Port to listen on (default: from config.yaml)
+- `-p, --port <port>` — Port to listen on (default: from SQLite config)
 - `-f, --foreground` — Run in foreground (blocking, shows logs). Default: background daemon.
 - `-d, --daemon` — Explicit daemon flag (kept for compatibility, no-op since daemon is default)
 - `-s, --share` — Enable public URL sharing via Cloudflare tunnel
-- `-c, --config <path>` — Path to config file (default: ~/.ppm/config.yaml)
+- `-c, --config <path>` — Path to legacy YAML config to import (migrates to SQLite on load)
 
 **Behavior:**
 - **Background (default):** Process exits immediately. Daemon runs with output to null. Status saved to `~/.ppm/status.json`. Parent polls for status (up to 30s).

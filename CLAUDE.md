@@ -15,7 +15,7 @@ PPM (Project & Process Manager) — a web-based IDE/project manager with AI chat
 ## Commands
 
 ```bash
-bun dev:server    # Start backend dev (port 8081, uses ~/.ppm/config.dev.yaml)
+bun dev:server    # Start backend dev (port 8081, uses ~/.ppm/ppm.dev.db)
 bun dev:web       # Start Vite frontend (port 5173)
 bun test          # Run all tests
 bun test tests/integration/  # Integration tests only
@@ -23,12 +23,12 @@ bun test tests/integration/  # Integration tests only
 
 ## Dev Config
 
-Local dev uses a **separate config file** from production:
+Config is stored in **SQLite** (`~/.ppm/ppm.db`). Dev uses a separate DB:
 
-- **Dev**: `~/.ppm/config.dev.yaml` — port **8081**
-- **Production**: `~/.ppm/config.yaml` — port **8080**
+- **Dev**: `~/.ppm/ppm.dev.db` — port **8081**
+- **Production**: `~/.ppm/ppm.db` — port **8080**
 
-`bun dev:server` automatically passes `-c ~/.ppm/config.dev.yaml`. Create this file on a new machine by copying `ppm.example.yaml` to `~/.ppm/config.dev.yaml` and setting `port: 8081`.
+`bun dev:server` automatically uses the dev database. On a new machine, run `ppm init` to create default config, then `ppm config set port 8081` for dev.
 
 ## Release Process
 
@@ -77,4 +77,4 @@ Before planning or implementing a new feature, read `docs/project-roadmap.md` to
 - `src/providers/claude-agent-sdk.ts` — SDK integration, tool execution, streaming
 - `src/server/ws/chat.ts` — WebSocket chat handler
 - `src/web/hooks/use-chat.ts` — Frontend chat state management
-- `src/services/config.service.ts` — Config from `~/.ppm/config.yaml`
+- `src/services/config.service.ts` — Config from SQLite (`~/.ppm/ppm.db`)

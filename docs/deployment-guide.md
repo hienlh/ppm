@@ -87,33 +87,32 @@ ppm --version
 # Generate config and scan for git repositories
 ppm init
 
-# Output: ~/.ppm/config.yaml
+# Output: ~/.ppm/ppm.db (SQLite database)
 # Auto-generates auth token
 ```
 
 ### Dev vs Production Config
 
-- **Production:** `~/.ppm/config.yaml` — port **8080** (default)
-- **Development:** `~/.ppm/config.dev.yaml` — port **8081**
+Config is stored in **SQLite** databases:
 
-`bun dev:server` automatically passes `-c ~/.ppm/config.dev.yaml`. Create dev config by copying `ppm.example.yaml` and setting `port: 8081`.
+- **Production:** `~/.ppm/ppm.db` — port **8080** (default)
+- **Development:** `~/.ppm/ppm.dev.db` — port **8081**
 
-### Config File Structure (config.yaml)
+`bun dev:server` automatically uses the dev database. On a new machine, run `ppm init` then `ppm config set port 8081` for dev.
 
-```yaml
-port: 8080
-host: 0.0.0.0
-auth:
-  enabled: true
-  token: "auto-generated-random-token"
-projects:
-  - name: project-a
-    path: /path/to/project-a
-  - name: project-b
-    path: /path/to/project-b
-providers:
-  default: claude-agent-sdk  # or mock for testing
+### Config Structure (SQLite)
+
+Config is stored in the `config` table as key-value pairs. Equivalent settings:
+
 ```
+port = 8080
+host = 0.0.0.0
+auth.enabled = true
+auth.token = "auto-generated-random-token"
+providers.default = "claude-agent-sdk"
+```
+
+Projects are stored in a separate `projects` table with `name` and `path` columns.
 
 ### Customize Configuration
 
@@ -225,10 +224,10 @@ ppm stop
 - ~15 MB disk space for cloudflared binary (downloaded once, cached)
 
 **Security Warning:**
-If `auth.enabled` is false in `~/.ppm/config.yaml`, PPM displays warning:
+If `auth.enabled` is false, PPM displays warning:
 ```
 ⚠ Warning: auth is disabled — your IDE is publicly accessible!
-  Enable auth in ~/.ppm/config.yaml or restart without --share.
+  Enable auth: run 'ppm config set auth.enabled true' or restart without --share.
 ```
 
 Recommended: Always enable auth before using `--share`.
@@ -331,7 +330,7 @@ export PPM_PORT=8080
 export PPM_HOST=0.0.0.0
 export PPM_AUTH_TOKEN="my-secure-token"
 export PPM_DEFAULT_PROVIDER="claude-agent-sdk"
-export PPM_CONFIG_PATH="/etc/ppm/config.yaml"  # Custom config location
+export PPM_DB_PATH="/etc/ppm/ppm.db"  # Custom database location
 
 ppm start
 ```
@@ -528,7 +527,7 @@ ppm start
 
 - [ ] Change default auth token: `ppm config set auth.token "$(openssl rand -hex 32)"`
 - [ ] Verify only necessary projects are in `ppm.yaml`
-- [ ] Set appropriate file permissions: `chmod 600 ~/.ppm/config.yaml ~/.ppm/ppm.db`
+- [ ] Set appropriate file permissions: `chmod 600 ~/.ppm/ppm.db`
 - [ ] Keep Bun updated: `bun upgrade`
 - [ ] Keep dependencies updated: `bun update`
 - [ ] Review firewall rules (localhost only recommended)
@@ -574,7 +573,7 @@ Then access via `https://ppm.example.com` with SSL certificate.
 
 ```bash
 # 1. Backup existing config
-cp ~/.ppm/config.yaml ~/.ppm/config.yaml.backup
+cp ~/.ppm/ppm.db ~/.ppm/ppm.db.backup
 
 # 2. Stop running server
 ppm stop
@@ -605,7 +604,7 @@ ppm stop
 # ./ppm-v1 start
 
 # 3. Restore backup if config changed
-# cp ~/.ppm/config.yaml.backup ~/.ppm/config.yaml
+# cp ~/.ppm/ppm.db.backup ~/.ppm/ppm.db
 ```
 
 ---
