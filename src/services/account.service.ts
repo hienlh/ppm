@@ -131,7 +131,7 @@ class AccountService {
     if (acc.expiresAt - nowS > 60) return acc; // still fresh
     try {
       console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s)`);
-      await this.refreshAccessToken(id);
+      await this.refreshAccessToken(id, false);
       return this.getWithTokens(id);
     } catch (e) {
       console.error(`[accounts] Pre-flight refresh failed for ${id}:`, e);
@@ -502,7 +502,12 @@ class AccountService {
     };
   }
 
-  async refreshAccessToken(accountId: string): Promise<void> {
+  /**
+   * Refresh an OAuth access token using the stored refresh token.
+   * @param disableOnFail - if true, disable the account when refresh fails (default: true).
+   *   Background/startup refresh should pass false to avoid disabling accounts prematurely.
+   */
+  async refreshAccessToken(accountId: string, disableOnFail = true): Promise<void> {
     const account = this.getWithTokens(accountId);
     if (!account) throw new Error(`Account ${accountId} not found`);
     const res = await fetch(OAUTH_TOKEN_URL, {
@@ -515,14 +520,19 @@ class AccountService {
       }),
     });
     if (!res.ok) {
-      this.setDisabled(accountId);
-      throw new Error(`Token refresh failed for account ${accountId}: ${res.status}`);
+      const errorBody = await res.text().catch(() => "");
+      console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
+      if (disableOnFail) {
+        this.setDisabled(accountId);
+      }
+      throw new Error(`Token refresh failed for account ${accountId}: ${res.status} ${errorBody}`);
     }
     const data = await res.json() as {
       access_token: string;
       refresh_token?: string;
       expires_in: number;
     };
+    console.log(`[accounts] Token refreshed for ${account.email ?? accountId} (expires_in=${data.expires_in}s, new_refresh=${!!data.refresh_token})`);
     this.updateTokens(
       accountId,
       data.access_token,
@@ -618,7 +628,7 @@ class AccountService {
         if (acc.expiresAt - nowS > REFRESH_BUFFER_S) continue;
         console.log(`[accounts] Auto-refreshing token for ${acc.email ?? acc.id}`);
         try {
-          await this.refreshAccessToken(acc.id);
+          await this.refreshAccessToken(acc.id, false);
         } catch (e) {
           console.error(`[accounts] Auto-refresh failed for ${acc.id}:`, e);
         }

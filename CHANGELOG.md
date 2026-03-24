@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.23] - 2026-03-24
+
+### Fixed
+- **Stop disabling accounts on background refresh failure**: Startup and background auto-refresh no longer disable accounts when refresh fails — only actual query-time failures disable accounts. Prevents all accounts being disabled after server restart.
+- **Better refresh error logging**: Log response body from Anthropic when token refresh fails (was only logging status code)
+
 ## [0.8.22] - 2026-03-24
 
 ### Fixed
