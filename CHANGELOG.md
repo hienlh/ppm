@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.37] - 2026-03-24
+
+### Fixed
+- **Intel Mac AVX crash**: Use baseline x64 builds that work on all Intel CPUs (no AVX requirement)
+- **Linux ARM64**: Add `ppm-linux-arm64` binary for Raspberry Pi / ARM servers
+
 ## [0.8.36] - 2026-03-24
 
 ### Changed

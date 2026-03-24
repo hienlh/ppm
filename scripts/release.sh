@@ -23,9 +23,10 @@ mkdir -p dist
 
 TARGETS=(
   "bun-darwin-arm64:ppm-darwin-arm64"
-  "bun-darwin-x64:ppm-darwin-x64"
-  "bun-linux-x64:ppm-linux-x64"
-  "bun-windows-x64:ppm-windows-x64.exe"
+  "bun-darwin-x64-baseline:ppm-darwin-x64"
+  "bun-linux-x64-baseline:ppm-linux-x64"
+  "bun-linux-arm64:ppm-linux-arm64"
+  "bun-windows-x64-baseline:ppm-windows-x64.exe"
 )
 
 for entry in "${TARGETS[@]}"; do
