@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.35] - 2026-03-24
+
+### Fixed
+- **Binary --version crash**: Fix `ENOENT: /$bunfs/package.json` error when running compiled binary — use static import instead of `readFileSync` so Bun embeds version at compile time
+- **Install script upgrade check**: Check binary availability before downloading; show current vs new version and changelogs on upgrade; auto-add PATH to shell profile
+
 ## [0.8.34] - 2026-03-24
 
 ### Fixed
