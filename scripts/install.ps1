@@ -37,12 +37,14 @@ $Url = "https://github.com/$Repo/releases/download/$Tag/$Artifact"
 Write-Host "Downloading $Artifact..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 try {
-    Invoke-WebRequest -Uri $Url -OutFile "$InstallDir\ppm.exe" -UseBasicParsing
+    # WebClient is much faster than Invoke-WebRequest on Windows PowerShell 5.1
+    (New-Object System.Net.WebClient).DownloadFile($Url, "$InstallDir\ppm.exe")
 } catch {
     Write-Host "Download failed. Binary may not be available for this version."
     Write-Host "Try installing via: bunx @hienlh/ppm start"
     exit 1
 }
+Write-Host "Done."
 
 # Show changelog
 Write-Host ""
