@@ -28,6 +28,9 @@ export type ChatWsClientMessage =
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
   | { type: "ready" };
 
+/** Session phase for the 5-state machine (BE-owned) */
+export type SessionPhase = "initializing" | "connecting" | "thinking" | "streaming" | "idle";
+
 export type ChatWsServerMessage =
   | { type: "text"; content: string; parentToolUseId?: string }
   | { type: "thinking"; content: string; parentToolUseId?: string }
@@ -36,4 +39,9 @@ export type ChatWsServerMessage =
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "done"; sessionId: string; contextWindowPct?: number }
   | { type: "error"; message: string }
-  | { type: "account_info"; accountId: string; accountLabel: string };
+  | { type: "account_info"; accountId: string; accountLabel: string }
+  | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null }
+  | { type: "turn_events"; events: unknown[] }
+  | { type: "title_updated"; title: string }
+  | { type: "ping" };

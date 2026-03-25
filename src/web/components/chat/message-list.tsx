@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
-import type { StreamingStatus } from "@/hooks/use-chat";
+import type { SessionPhase } from "../../../types/api";
 import { ToolCard } from "./tool-cards";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { cn, basename } from "@/lib/utils";
@@ -39,9 +39,8 @@ interface MessageListProps {
   pendingApproval: { requestId: string; tool: string; input: unknown } | null;
   onApprovalResponse: (requestId: string, approved: boolean, data?: unknown) => void;
   isStreaming: boolean;
-  streamingStatus?: StreamingStatus;
+  phase?: SessionPhase;
   connectingElapsed?: number;
-  thinkingWarningThreshold?: number;
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
   onFork?: (userMessage: string) => void;
@@ -53,9 +52,8 @@ export function MessageList({
   pendingApproval,
   onApprovalResponse,
   isStreaming,
-  streamingStatus,
+  phase,
   connectingElapsed,
-  thinkingWarningThreshold,
   projectName,
   onFork,
 }: MessageListProps) {
@@ -108,7 +106,7 @@ export function MessageList({
             : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
         )}
 
-        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} streamingStatus={streamingStatus} elapsed={connectingElapsed} warningThreshold={thinkingWarningThreshold} />}
+        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} />}
       </StickToBottom.Content>
       <ScrollToBottomButton />
     </StickToBottom>
@@ -751,14 +749,13 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
  * - After tool: "Processing..."
  * - Text streaming: hidden
  */
-function ThinkingIndicator({ lastMessage, streamingStatus, elapsed, warningThreshold = 15 }: { lastMessage?: ChatMessage; streamingStatus?: StreamingStatus; elapsed?: number; warningThreshold?: number }) {
-  // Show "Thinking" when:
+function ThinkingIndicator({ lastMessage, phase, elapsed }: { lastMessage?: ChatMessage; phase?: SessionPhase; elapsed?: number }) {
+  // Show indicator when:
   // 1. No assistant message yet (waiting for first response)
-  // 2. Last event is tool_use/tool_result (Claude thinking after tool execution)
+  // 2. Last event is tool_result (Claude thinking after tool execution)
   // Hide when text is actively streaming (text itself is the indicator)
 
   const isWaiting = !lastMessage || lastMessage.role !== "assistant";
-  // Show Thinking only after tool_result (tool finished), not tool_use (tool still running)
   const isAfterTool = (() => {
     if (!lastMessage?.events?.length) return false;
     const last = lastMessage.events[lastMessage.events.length - 1]!;
@@ -767,13 +764,19 @@ function ThinkingIndicator({ lastMessage, streamingStatus, elapsed, warningThres
 
   if (!isWaiting && !isAfterTool) return null;
 
-  const isLong = isWaiting && (elapsed ?? 0) >= warningThreshold;
+  const label = phase === "initializing" ? "Initializing"
+    : phase === "connecting" ? "Connecting"
+    : phase === "thinking" ? "Thinking"
+    : "Processing";
+
+  const isLong = phase === "connecting" && (elapsed ?? 0) >= 30;
+
   return (
     <div className="flex flex-col gap-1 text-sm">
       <div className="flex items-center gap-2 text-text-subtle">
         <Loader2 className="size-3 animate-spin" />
         <span>
-          Thinking
+          {label}
           {isWaiting && (elapsed ?? 0) > 0 && <span className="text-text-subtle/60">... ({elapsed}s)</span>}
         </span>
       </div>

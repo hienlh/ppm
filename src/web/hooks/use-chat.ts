@@ -5,7 +5,7 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
-import type { ChatWsServerMessage } from "../../types/api";
+import type { ChatWsServerMessage, SessionPhase } from "../../types/api";
 
 interface ApprovalRequest {
   requestId: string;
@@ -13,20 +13,15 @@ interface ApprovalRequest {
   input: unknown;
 }
 
-/** Streaming phase: connecting → streaming → idle */
-export type StreamingStatus = "idle" | "connecting" | "streaming";
-
 interface UseChatReturn {
   messages: ChatMessage[];
   messagesLoading: boolean;
   isStreaming: boolean;
-  streamingStatus: StreamingStatus;
+  phase: SessionPhase;
+  isReconnecting: boolean;
   connectingElapsed: number;
-  thinkingWarningThreshold: number;
   pendingApproval: ApprovalRequest | null;
-  /** Context window usage % from last completed query (0–100) */
   contextWindowPct: number | null;
-  /** Updated session title from SDK summary (set after stream completes) */
   sessionTitle: string | null;
   sendMessage: (content: string, opts?: { permissionMode?: string }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
@@ -49,12 +44,9 @@ function isSessionTabActive(sid: string): boolean {
 export function useChat(sessionId: string | null, providerId = "claude", projectName = ""): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingStatus, setStreamingStatus] = useState<StreamingStatus>("idle");
-  /** Elapsed seconds while connecting (sent by BE heartbeat every 5s) */
+  const [phase, setPhase] = useState<SessionPhase>("idle");
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [connectingElapsed, setConnectingElapsed] = useState(0);
-  /** Warning threshold in seconds — higher for deeper thinking modes */
-  const [thinkingWarningThreshold, setThinkingWarningThreshold] = useState(15);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
@@ -62,15 +54,183 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const streamingAccountRef = useRef<{ accountId: string; accountLabel: string } | null>(null);
-  const isStreamingRef = useRef(false);
+  const phaseRef = useRef<SessionPhase>("idle");
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
   const refetchRef = useRef<(() => void) | null>(null);
-  // Refs for notification dispatch inside handleMessage (which has [] deps)
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   const projectNameRef = useRef(projectName);
   projectNameRef.current = projectName;
+
+  // Derived state
+  const isStreaming = phase !== "idle";
+
+  /**
+   * Route a child event to its parent Agent/Task tool_use's children array.
+   * Creates a new parent object to ensure React detects the change on re-render.
+   * Returns true if routed (caller should skip flat append), false if no parent found.
+   */
+  const routeToParent = useCallback((childEvent: ChatEvent, parentToolUseId: string): boolean => {
+    const idx = streamingEventsRef.current.findIndex(
+      (e) => e.type === "tool_use"
+        && (e.tool === "Agent" || e.tool === "Task")
+        && (e as any).toolUseId === parentToolUseId,
+    );
+    if (idx === -1) return false;
+    const parent = streamingEventsRef.current[idx]!;
+    if (parent.type !== "tool_use") return false;
+    const newChildren = [...(parent.children ?? []), childEvent];
+    streamingEventsRef.current[idx] = { ...parent, children: newChildren };
+    return true;
+  }, []);
+
+  /** Trigger re-render with latest events snapshot */
+  const syncMessages = useCallback(() => {
+    const content = streamingContentRef.current;
+    const events = [...streamingEventsRef.current];
+    const account = streamingAccountRef.current;
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === "assistant" && !last.id.startsWith("final-")) {
+        return [...prev.slice(0, -1), { ...last, content, events, ...account }];
+      }
+      return [...prev, {
+        id: `streaming-${Date.now()}`,
+        role: "assistant" as const,
+        content,
+        events,
+        timestamp: new Date().toISOString(),
+        ...account,
+      }];
+    });
+  }, []);
+
+  /** Process a single stream event — reused by live events and turn_events replay */
+  const processStreamEvent = useCallback((data: unknown) => {
+    const ev = data as any;
+    const evType = ev?.type;
+    if (!evType) return;
+
+    switch (evType) {
+      case "account_info": {
+        streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
+        break;
+      }
+
+      case "text": {
+        const pid = ev.parentToolUseId as string | undefined;
+        if (pid && routeToParent(ev as ChatEvent, pid)) {
+          syncMessages();
+          break;
+        }
+        streamingContentRef.current += ev.content;
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
+      case "thinking": {
+        const pid = ev.parentToolUseId as string | undefined;
+        if (pid && routeToParent(ev as ChatEvent, pid)) {
+          syncMessages();
+          break;
+        }
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
+      case "tool_use": {
+        const pid = ev.parentToolUseId as string | undefined;
+        if (pid && routeToParent(ev as ChatEvent, pid)) {
+          syncMessages();
+          break;
+        }
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
+      case "tool_result": {
+        const pid = ev.parentToolUseId as string | undefined;
+        if (pid && routeToParent(ev as ChatEvent, pid)) {
+          syncMessages();
+          break;
+        }
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
+      case "approval_request": {
+        streamingEventsRef.current.push(ev as ChatEvent);
+        setPendingApproval({
+          requestId: ev.requestId,
+          tool: ev.tool,
+          input: ev.input,
+        });
+        if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
+          const nType = ev.tool === "AskUserQuestion" ? "question" : "approval_request";
+          useNotificationStore.getState().addNotification(sessionIdRef.current, nType, projectNameRef.current);
+          playNotificationSound(nType);
+        }
+        break;
+      }
+
+      case "error": {
+        streamingEventsRef.current.push(ev as ChatEvent);
+        const errEvents = [...streamingEventsRef.current];
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            return [...prev.slice(0, -1), { ...last, events: errEvents }];
+          }
+          return [...prev, {
+            id: `error-${Date.now()}`,
+            role: "system" as const,
+            content: ev.message,
+            events: [ev as ChatEvent],
+            timestamp: new Date().toISOString(),
+          }];
+        });
+        // Phase reset comes from BE via phase_changed
+        break;
+      }
+
+      case "done": {
+        // Idempotent: may receive duplicate done (provider + stream loop finally)
+        if (phaseRef.current === "idle") break;
+        if (ev.contextWindowPct != null) {
+          setContextWindowPct(ev.contextWindowPct);
+        }
+        if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
+          useNotificationStore.getState().addNotification(sessionIdRef.current, "done", projectNameRef.current);
+          playNotificationSound("done");
+        }
+        // Finalize the streaming message
+        const finalContent = streamingContentRef.current;
+        const finalEvents = [...streamingEventsRef.current];
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant") {
+            return [...prev.slice(0, -1), {
+              ...last,
+              id: `final-${Date.now()}`,
+              content: finalContent || last.content,
+              events: finalEvents.length > 0 ? finalEvents : last.events,
+            }];
+          }
+          return prev;
+        });
+        streamingContentRef.current = "";
+        streamingEventsRef.current = [];
+        streamingAccountRef.current = null;
+        // Phase transition to idle comes from BE via phase_changed
+        break;
+      }
+    }
+  }, [routeToParent, syncMessages]);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;
@@ -89,235 +249,77 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       return;
     }
 
-    // Handle streaming status updates (connecting → streaming → idle)
-    if ((data as any).type === "streaming_status") {
-      const s = (data as any).status ?? "idle";
-      setStreamingStatus(s);
-      setConnectingElapsed(s === "connecting" ? ((data as any).elapsed ?? 0) : 0);
-      // Compute warning threshold based on effort/thinking budget
-      if (s === "connecting") {
-        const effort = (data as any).effort as string | undefined;
-        const budget = (data as any).thinkingBudget as number | undefined;
-        // Higher thinking = longer acceptable wait time
-        let threshold = 15; // default
-        if (budget && budget > 0) {
-          // Rough: 1k tokens ≈ 2s thinking time
-          threshold = Math.max(15, Math.round(budget / 500));
-        } else if (effort === "high") {
-          threshold = 30;
-        } else if (effort === "low") {
-          threshold = 10;
-        }
-        setThinkingWarningThreshold(threshold);
-      }
+    // Handle phase transitions from BE
+    if ((data as any).type === "phase_changed") {
+      const p = (data as any).phase as SessionPhase;
+      setPhase(p);
+      phaseRef.current = p;
+      setConnectingElapsed(p === "connecting" ? ((data as any).elapsed ?? 0) : 0);
       return;
     }
 
-    // Handle connected event (new session)
-    if ((data as any).type === "connected") {
+    // Handle session state (replaces connected + status)
+    if ((data as any).type === "session_state") {
       setIsConnected(true);
-      if ((data as any).sessionTitle) setSessionTitle((data as any).sessionTitle);
-      return;
-    }
-
-    // Handle status event (FE reconnected to existing session)
-    if ((data as any).type === "status") {
-      setIsConnected(true);
-      const status = data as any;
-      if (status.sessionTitle) setSessionTitle(status.sessionTitle);
-      if (status.isStreaming) {
-        isStreamingRef.current = true;
-        setIsStreaming(true);
-      }
-      if (status.pendingApproval) {
+      const state = data as any;
+      const p = state.phase as SessionPhase;
+      setPhase(p);
+      phaseRef.current = p;
+      if (state.sessionTitle) setSessionTitle(state.sessionTitle);
+      if (state.pendingApproval) {
         setPendingApproval({
-          requestId: status.pendingApproval.requestId,
-          tool: status.pendingApproval.tool,
-          input: status.pendingApproval.input,
+          requestId: state.pendingApproval.requestId,
+          tool: state.pendingApproval.tool,
+          input: state.pendingApproval.input,
         });
       }
-      // Refetch history to catch up on events missed during disconnect
-      refetchRef.current?.();
+      // If idle, refetch history (completed turns) and hide overlay
+      if (p === "idle") {
+        refetchRef.current?.();
+        setIsReconnecting(false);
+      }
+      // If streaming, turn_events message will follow
       return;
     }
 
-    /**
-     * Route a child event to its parent Agent/Task tool_use's children array.
-     * Creates a new parent object to ensure React detects the change on re-render.
-     * Returns true if routed (caller should skip flat append), false if no parent found.
-     */
-    const routeToParent = (childEvent: ChatEvent, parentToolUseId: string): boolean => {
-      const idx = streamingEventsRef.current.findIndex(
-        (e) => e.type === "tool_use"
-          && (e.tool === "Agent" || e.tool === "Task")
-          && (e as any).toolUseId === parentToolUseId,
-      );
-      if (idx === -1) return false;
-      const parent = streamingEventsRef.current[idx]!;
-      if (parent.type !== "tool_use") return false;
-      // Create new object so React detects the change via shallow comparison
-      const newChildren = [...(parent.children ?? []), childEvent];
-      streamingEventsRef.current[idx] = { ...parent, children: newChildren };
-      return true;
-    };
+    // Handle turn_events (reconnect sync with rAF chunking)
+    if ((data as any).type === "turn_events") {
+      const events = (data as any).events as unknown[];
+      if (!events?.length) { setIsReconnecting(false); return; }
 
-    /** Trigger re-render with latest events snapshot */
-    const syncMessages = () => {
-      const content = streamingContentRef.current;
-      const events = [...streamingEventsRef.current];
-      const account = streamingAccountRef.current;
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === "assistant" && !last.id.startsWith("final-")) {
-          return [...prev.slice(0, -1), { ...last, content, events, ...account }];
-        }
-        return [...prev, {
-          id: `streaming-${Date.now()}`,
-          role: "assistant" as const,
-          content,
-          events,
-          timestamp: new Date().toISOString(),
-          ...account,
-        }];
+      // Truncate messages after last user message
+      setMessages(prev => {
+        const lastUserIdx = prev.findLastIndex(m => m.role === "user");
+        return lastUserIdx >= 0 ? prev.slice(0, lastUserIdx + 1) : prev;
       });
-    };
 
-    switch (data.type) {
-      case "account_info": {
-        streamingAccountRef.current = { accountId: (data as any).accountId, accountLabel: (data as any).accountLabel };
-        break;
-      }
+      // Reset streaming refs
+      streamingContentRef.current = "";
+      streamingEventsRef.current = [];
+      streamingAccountRef.current = null;
 
-      case "text": {
-        const pid = (data as any).parentToolUseId as string | undefined;
-        if (pid && routeToParent(data, pid)) {
-          // Child text routed to parent — just re-render
-          syncMessages();
-          break;
+      // Process events in chunks via requestAnimationFrame to avoid blocking main thread
+      const CHUNK_SIZE = 100;
+      let offset = 0;
+      const processChunk = () => {
+        const end = Math.min(offset + CHUNK_SIZE, events.length);
+        for (let i = offset; i < end; i++) {
+          processStreamEvent(events[i]);
         }
-        streamingContentRef.current += data.content;
-        streamingEventsRef.current.push(data);
-        syncMessages();
-        break;
-      }
-
-      case "thinking": {
-        const pid = (data as any).parentToolUseId as string | undefined;
-        if (pid && routeToParent(data, pid)) {
-          syncMessages();
-          break;
+        offset = end;
+        if (offset < events.length) {
+          requestAnimationFrame(processChunk);
+        } else {
+          setIsReconnecting(false);
         }
-        streamingEventsRef.current.push(data);
-        syncMessages();
-        break;
-      }
-
-      case "tool_use": {
-        const pid = (data as any).parentToolUseId as string | undefined;
-        if (pid && routeToParent(data, pid)) {
-          syncMessages();
-          break;
-        }
-        streamingEventsRef.current.push(data);
-        syncMessages();
-        break;
-      }
-
-      case "tool_result": {
-        const pid = (data as any).parentToolUseId as string | undefined;
-        if (pid && routeToParent(data, pid)) {
-          syncMessages();
-          break;
-        }
-        streamingEventsRef.current.push(data);
-        syncMessages();
-        break;
-      }
-
-      case "approval_request": {
-        streamingEventsRef.current.push(data);
-        setPendingApproval({
-          requestId: data.requestId,
-          tool: data.tool,
-          input: data.input,
-        });
-        // Local notification badge — only if this tab is NOT active
-        if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
-          const nType = data.tool === "AskUserQuestion" ? "question" : "approval_request";
-          useNotificationStore.getState().addNotification(sessionIdRef.current, nType, projectNameRef.current);
-          playNotificationSound(nType);
-        }
-        break;
-      }
-
-      case "error": {
-        streamingEventsRef.current.push(data);
-        const errEvents = [...streamingEventsRef.current];
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, events: errEvents },
-            ];
-          }
-          return [
-            ...prev,
-            {
-              id: `error-${Date.now()}`,
-              role: "system" as const,
-              content: data.message,
-              events: [data],
-              timestamp: new Date().toISOString(),
-            },
-          ];
-        });
-        isStreamingRef.current = false;
-        setIsStreaming(false);
-        setStreamingStatus("idle");
-        break;
-      }
-
-      case "done": {
-        // Idempotent: may receive duplicate done (provider + stream loop finally)
-        if (!isStreamingRef.current) break;
-        // Capture context window usage from SDK result
-        if (data.contextWindowPct != null) {
-          setContextWindowPct(data.contextWindowPct);
-        }
-        // Local notification badge — only if this tab is NOT active
-        if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
-          useNotificationStore.getState().addNotification(sessionIdRef.current, "done", projectNameRef.current);
-          playNotificationSound("done");
-        }
-        // Finalize the streaming message — capture refs before clearing
-        const finalContent = streamingContentRef.current;
-        const finalEvents = [...streamingEventsRef.current];
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant") {
-            return [
-              ...prev.slice(0, -1),
-              {
-                ...last,
-                id: `final-${Date.now()}`,
-                content: finalContent || last.content,
-                events: finalEvents.length > 0 ? finalEvents : last.events,
-              },
-            ];
-          }
-          return prev;
-        });
-        streamingContentRef.current = "";
-        streamingEventsRef.current = [];
-        streamingAccountRef.current = null;
-        isStreamingRef.current = false;
-        setIsStreaming(false);
-        setStreamingStatus("idle");
-        break;
-      }
+      };
+      requestAnimationFrame(processChunk);
+      return;
     }
-  }, []);
+
+    // Route content events through processStreamEvent
+    processStreamEvent(data);
+  }, [processStreamEvent]);
 
   const wsUrl = sessionId && projectName
     ? `/ws/project/${encodeURIComponent(projectName)}/chat/${sessionId}`
@@ -336,21 +338,21 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   useEffect(() => {
     let cancelled = false;
 
-    setIsStreaming(false);
+    setPhase("idle");
+    phaseRef.current = "idle";
     setPendingApproval(null);
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     setIsConnected(false);
 
     if (sessionId && projectName) {
-      // Load message history
       setMessagesLoading(true);
       fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
         headers: { Authorization: `Bearer ${getAuthToken()}` },
       })
         .then((r) => r.json())
         .then((json: any) => {
-          if (cancelled || isStreamingRef.current) return;
+          if (cancelled || phaseRef.current !== "idle") return;
           if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
             setMessages(json.data);
           } else {
@@ -358,7 +360,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           }
         })
         .catch(() => {
-          if (!cancelled && !isStreamingRef.current) setMessages([]);
+          if (!cancelled && phaseRef.current === "idle") setMessages([]);
         })
         .finally(() => {
           if (!cancelled) setMessagesLoading(false);
@@ -377,8 +379,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       if (!content.trim()) return;
 
       // If streaming, cancel current stream first then send immediately
-      if (isStreamingRef.current) {
-        // Finalize current streaming message
+      if (phaseRef.current !== "idle") {
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
         setMessages((prev) => {
@@ -391,7 +392,6 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           }
           return prev;
         });
-        // Tell backend to abort current query
         send(JSON.stringify({ type: "cancel" }));
       }
 
@@ -410,9 +410,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       streamingContentRef.current = "";
       streamingEventsRef.current = [];
       pendingMessageRef.current = null;
-      isStreamingRef.current = true;
-      setIsStreaming(true);
-      setStreamingStatus("connecting");
+      setPhase("initializing");
+      phaseRef.current = "initializing";
       setPendingApproval(null);
 
       send(JSON.stringify({ type: "message", content, permissionMode: opts?.permissionMode }));
@@ -441,13 +440,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
             (e as any).tool === "AskUserQuestion",
         );
         if (askEvt) {
-          // Mutate input to include answers — this updates the rendered ToolCard
           const inp = (askEvt as any).input;
           if (inp && typeof inp === "object") {
             (inp as Record<string, unknown>).answers = data;
           }
         }
-        // Force re-render messages
         setMessages((prev) => [...prev]);
       }
 
@@ -457,10 +454,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   );
 
   const cancelStreaming = useCallback(() => {
-    if (!isStreamingRef.current) return;
-    // Tell backend to abort
+    if (phaseRef.current === "idle") return;
     send(JSON.stringify({ type: "cancel" }));
-    // Finalize current message on FE
     const finalContent = streamingContentRef.current;
     const finalEvents = [...streamingEventsRef.current];
     setMessages((prev) => {
@@ -481,16 +476,15 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     pendingMessageRef.current = null;
-    isStreamingRef.current = false;
-    setIsStreaming(false);
+    setPhase("idle");
+    phaseRef.current = "idle";
     setPendingApproval(null);
   }, [send]);
 
   const reconnect = useCallback(() => {
     setIsConnected(false);
+    setIsReconnecting(true);
     wsReconnect();
-    // Refetch history on manual reconnect to catch up on missed events
-    refetchRef.current?.();
   }, [wsReconnect]);
 
   const refetchMessages = useCallback(() => {
@@ -503,7 +497,6 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       .then((json: any) => {
         if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
           setMessages(json.data);
-          // Reset streaming content refs so live tokens append cleanly after history
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
         }
@@ -512,16 +505,16 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       .finally(() => setMessagesLoading(false));
   }, [sessionId, providerId, projectName]);
 
-  // Keep refetchRef in sync so handleMessage (status event) can trigger refetch
+  // Keep refetchRef in sync
   refetchRef.current = refetchMessages;
 
   return {
     messages,
     messagesLoading,
     isStreaming,
-    streamingStatus,
+    phase,
+    isReconnecting,
     connectingElapsed,
-    thinkingWarningThreshold,
     pendingApproval,
     contextWindowPct,
     sessionTitle,
