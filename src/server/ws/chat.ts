@@ -3,10 +3,15 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatWsClientMessage } from "../../types/api.ts";
+import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 
 const PING_INTERVAL_MS = 15_000; // 15s keepalive
 const CLEANUP_TIMEOUT_MS = 5 * 60_000; // 5min after Claude done + no FE
+const MAX_TURN_EVENTS = 10_000; // memory safety cap
+const BUFFERABLE_TYPES = new Set([
+  "text", "thinking", "tool_use", "tool_result",
+  "approval_request", "error", "done", "account_info",
+]);
 
 type ChatWsSocket = {
   data: { type: string; sessionId: string; projectName?: string };
@@ -16,21 +21,16 @@ type ChatWsSocket = {
 
 interface SessionEntry {
   providerId: string;
-  ws: ChatWsSocket | null;
+  clients: Set<ChatWsSocket>;
   abort?: AbortController;
   projectPath?: string;
   projectName?: string;
-  pingInterval?: ReturnType<typeof setInterval>;
-  isStreaming: boolean;
+  pingIntervals: Map<ChatWsSocket, ReturnType<typeof setInterval>>;
+  phase: SessionPhase;
   cleanupTimer?: ReturnType<typeof setTimeout>;
   pendingApprovalEvent?: { type: string; requestId: string; tool: string; input: unknown };
-  /** When true, accumulate text events until next turn boundary, then flush as one message */
-  needsCatchUp: boolean;
-  /** Accumulated text content during catch-up phase */
-  catchUpText: string;
-  /** Reference to the running stream promise — prevents GC */
+  turnEvents: unknown[];
   streamPromise?: Promise<void>;
-  /** Sticky permission mode for this session */
   permissionMode?: string;
 }
 
@@ -40,26 +40,80 @@ const activeSessions = new Map<string, SessionEntry>();
 /** Check if any frontend client is currently connected via WebSocket */
 export function hasActiveClient(): boolean {
   for (const entry of activeSessions.values()) {
-    if (entry.ws) return true;
+    if (entry.clients.size > 0) return true;
   }
   return false;
 }
 
-/** Send event to FE if connected, silently drop otherwise */
-function safeSend(sessionId: string, event: unknown): void {
+/** Remove a client from the session, cleaning up its ping interval */
+function evictClient(entry: SessionEntry, ws: ChatWsSocket): void {
+  clearClientPing(entry, ws);
+  entry.clients.delete(ws);
+}
+
+/** Broadcast event to all connected clients for a session */
+function broadcast(sessionId: string, event: unknown): void {
   const entry = activeSessions.get(sessionId);
-  if (!entry?.ws) {
+  if (!entry || entry.clients.size === 0) {
     const evType = (event as any)?.type ?? "unknown";
-    // Log ALL dropped events (including streaming_status) for debugging first-message issues
-    if (evType !== "ping") {
-      console.warn(`[chat] session=${sessionId} safeSend: ws=null, dropping ${evType}`);
+    if (evType !== "ping" && evType !== "phase_changed") {
+      console.warn(`[chat] session=${sessionId} broadcast: no clients, dropping ${evType}`);
     }
     return;
   }
+  const json = JSON.stringify(event);
+  for (const client of entry.clients) {
+    try { client.send(json); } catch { evictClient(entry, client); }
+  }
+}
+
+/** Buffer event in turnEvents + broadcast to all clients */
+function bufferAndBroadcast(sessionId: string, event: unknown): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry) return;
+  const evType = (event as any)?.type;
+  if (evType && BUFFERABLE_TYPES.has(evType)) {
+    if (entry.turnEvents.length < MAX_TURN_EVENTS) {
+      entry.turnEvents.push({ ...(event as Record<string, unknown>) });
+    }
+  }
+  broadcast(sessionId, event);
+}
+
+/** Transition session phase — guards same-phase, broadcasts phase_changed */
+function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.phase === phase) return;
+  entry.phase = phase;
+  broadcast(sessionId, { type: "phase_changed", phase, ...(elapsed != null ? { elapsed } : {}) });
+  console.log(`[chat] session=${sessionId} phase → ${phase}`);
+}
+
+/** Send buffered turn events to a single client (reconnect sync) */
+function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.turnEvents.length === 0) return;
   try {
-    entry.ws.send(JSON.stringify(event));
+    ws.send(JSON.stringify({ type: "turn_events", events: entry.turnEvents }));
   } catch (e) {
-    console.warn(`[chat] session=${sessionId} safeSend: send failed (${(e as Error).message})`);
+    console.warn(`[chat] session=${sessionId} sendTurnEvents failed: ${(e as Error).message}`);
+  }
+}
+
+/** Set up per-client application-level ping */
+function setupClientPing(entry: SessionEntry, ws: ChatWsSocket): void {
+  const interval = setInterval(() => {
+    try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* ws may be closed */ }
+  }, PING_INTERVAL_MS);
+  entry.pingIntervals.set(ws, interval);
+}
+
+/** Clear per-client ping */
+function clearClientPing(entry: SessionEntry, ws: ChatWsSocket): void {
+  const interval = entry.pingIntervals.get(ws);
+  if (interval) {
+    clearInterval(interval);
+    entry.pingIntervals.delete(ws);
   }
 }
 
@@ -71,7 +125,8 @@ function startCleanupTimer(sessionId: string): void {
   entry.cleanupTimer = setTimeout(() => {
     console.log(`[chat] session=${sessionId} cleanup: no FE reconnected within timeout`);
     logSessionEvent(sessionId, "INFO", "Session cleaned up (no FE reconnected)");
-    if (entry.pingInterval) clearInterval(entry.pingInterval);
+    for (const interval of entry.pingIntervals.values()) clearInterval(interval);
+    entry.pingIntervals.clear();
     activeSessions.delete(sessionId);
   }, CLEANUP_TIMEOUT_MS);
 }
@@ -87,39 +142,29 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
     return;
   }
   const streamStartMs = Date.now();
-  console.log(`[chat] session=${sessionId} runStreamLoop started (ws=${entry.ws ? "connected" : "null"})`);
+  console.log(`[chat] session=${sessionId} runStreamLoop started (clients=${entry.clients.size})`);
 
   const abortController = new AbortController();
   entry.abort = abortController;
-  entry.isStreaming = true;
   entry.pendingApprovalEvent = undefined;
-  entry.needsCatchUp = false;
-  entry.catchUpText = "";
+  entry.turnEvents = [];
+  setPhase(sessionId, "connecting");
 
-  // Heartbeat interval — declared outside try so finally can clear it
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let lastContextWindowPct: number | undefined;
+  let doneEmitted = false;
 
   try {
     const userPreview = content.slice(0, 200);
     logSessionEvent(sessionId, "USER", userPreview);
     console.log(`[chat] session=${sessionId} sending message to provider=${providerId}`);
 
-    // Send "connecting" status with thinking config so FE can set appropriate warning threshold
-    const { configService } = await import("../../services/config.service.ts");
-    const ai = configService.get("ai");
-    const pCfg = ai.providers[ai.default_provider ?? "claude"] ?? {};
-    const effort = (pCfg as Record<string, unknown>).effort as string | undefined;
-    const thinkingBudget = (pCfg as Record<string, unknown>).thinking_budget_tokens as number | undefined;
-    safeSend(sessionId, { type: "streaming_status", status: "connecting", effort, thinkingBudget });
-
     let eventCount = 0;
     let firstEventReceived = false;
     const startTime = Date.now();
 
     // Heartbeat: while waiting for first response, send elapsed time every 5s
-    // so FE can show "Connecting... (15s)" and warn if it takes too long
-    const CONNECTION_TIMEOUT_S = 120; // 2min max wait for first SDK event
+    const CONNECTION_TIMEOUT_S = 120;
     heartbeat = setInterval(() => {
       if (firstEventReceived || abortController.signal.aborted) {
         clearInterval(heartbeat);
@@ -136,14 +181,15 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
           ? "\n\nWSL detected — this is likely a network issue. Try from your WSL terminal:\n  curl -s https://api.anthropic.com\nIf that fails, check WSL DNS settings (/etc/resolv.conf) or proxy configuration."
           : "";
         const debugCmd = projectPath ? `cd ${projectPath} && claude -p "hi"` : `claude -p "hi"`;
-        safeSend(sessionId, {
+        bufferAndBroadcast(sessionId, {
           type: "error",
           message: `Claude SDK timed out after ${elapsed}s for project "${projectPath || "(no project)"}".${wslHint}\n\nDebug steps:\n1. Run: \`${debugCmd}\` — if it also hangs, the issue is your Claude CLI environment\n2. Check env vars: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause silent hang\n3. Try with env cleared: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" ${debugCmd}\`\n4. Check hooks/MCP: \`cat ${projectPath}/.claude/settings.local.json\`\n5. Refresh auth: \`claude login\``,
         });
         abortController.abort();
         return;
       }
-      safeSend(sessionId, { type: "streaming_status", status: "connecting", elapsed });
+      // Heartbeat uses broadcast() directly — NOT setPhase() (same-phase guard would skip elapsed updates)
+      broadcast(sessionId, { type: "phase_changed", phase: "connecting", elapsed });
     }, 5_000);
 
     for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode })) {
@@ -152,10 +198,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       const ev = event as any;
       const evType = ev.type ?? "unknown";
 
-      // First content event — stop heartbeat, switch to streaming status.
-      // Skip metadata events (account_info, streaming_status) that arrive before
-      // the SDK subprocess actually produces output — keeps heartbeat + "connecting"
-      // indicator alive until real content flows.
+      // First content event — stop heartbeat, transition phase
       const isMetadataEvent = evType === "account_info" || evType === "streaming_status";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
@@ -163,7 +206,14 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         console.log(`[chat] session=${sessionId} first SDK event after ${waitMs}ms: type=${evType}`);
         logSessionEvent(sessionId, "PERF", `First SDK event after ${waitMs}ms (type=${evType})`);
         if (heartbeat) clearInterval(heartbeat);
-        safeSend(sessionId, { type: "streaming_status", status: "streaming" });
+        const newPhase = evType === "thinking" ? "thinking" : "streaming";
+        setPhase(sessionId, newPhase);
+      }
+
+      // Dynamic phase transitions between thinking/streaming
+      if (firstEventReceived) {
+        if (evType === "text" && entry.phase === "thinking") setPhase(sessionId, "streaming");
+        if (evType === "thinking" && entry.phase === "streaming") setPhase(sessionId, "thinking");
       }
 
       // Log every event
@@ -178,6 +228,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         console.error(`[chat] session=${sessionId} error: ${errorDetail}`);
         logSessionEvent(sessionId, "ERROR", errorDetail);
       } else if (evType === "done") {
+        doneEmitted = true;
         logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
         // Fire-and-forget: fetch updated session title from SDK summary
@@ -185,8 +236,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
           const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
           const title = found?.customTitle ?? found?.summary;
           if (title) {
-            safeSend(sessionId, { type: "title_updated", title });
-            // Also update in-memory session title
+            broadcast(sessionId, { type: "title_updated", title });
             const session = chatService.getSession(sessionId);
             if (session) session.title = title;
           }
@@ -223,22 +273,8 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         logSessionEvent(sessionId, evType.toUpperCase(), JSON.stringify(ev).slice(0, 200));
       }
 
-      // Catch-up mode: accumulate text, flush on turn boundary
-      if (entry.needsCatchUp) {
-        if (evType === "text") {
-          entry.catchUpText += ev.content ?? "";
-        } else {
-          // Non-text event = turn boundary → flush accumulated text, then send this event
-          if (entry.catchUpText) {
-            safeSend(sessionId, { type: "text", content: entry.catchUpText });
-          }
-          entry.needsCatchUp = false;
-          entry.catchUpText = "";
-          safeSend(sessionId, event);
-        }
-      } else {
-        safeSend(sessionId, event);
-      }
+      // Buffer + broadcast content events
+      bufferAndBroadcast(sessionId, event);
     }
 
     logSessionEvent(sessionId, "INFO", `Stream completed (${eventCount} events)`);
@@ -247,19 +283,22 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
     const errMsg = (e as Error).message;
     logSessionEvent(sessionId, "ERROR", `Exception: ${errMsg}`);
     if (!abortController.signal.aborted) {
-      safeSend(sessionId, { type: "error", message: errMsg });
+      bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
     }
   } finally {
     if (heartbeat) clearInterval(heartbeat);
-    // Always send done — guarantees FE resets isStreaming even if provider didn't yield done
-    safeSend(sessionId, { type: "done", sessionId, contextWindowPct: lastContextWindowPct });
+    // 1. Buffer and broadcast done event (skip if SDK already yielded one)
+    if (!doneEmitted) {
+      bufferAndBroadcast(sessionId, { type: "done", sessionId, contextWindowPct: lastContextWindowPct });
+    }
+    // 2. Clear buffer BEFORE setting phase to idle
+    entry.turnEvents = [];
+    // 3. Transition to idle
+    setPhase(sessionId, "idle");
+    // 4. Cleanup
     entry.abort = undefined;
-    entry.isStreaming = false;
     entry.pendingApprovalEvent = undefined;
-    entry.needsCatchUp = false;
-    entry.catchUpText = "";
-    // Claude is done — if no FE connected, start cleanup timer
-    if (!entry.ws) {
+    if (entry.clients.size === 0) {
       startCleanupTimer(sessionId);
     }
   }
@@ -287,77 +326,75 @@ export const chatWebSocket = {
 
     const existing = activeSessions.get(sessionId);
     if (existing) {
-      // FE reconnecting to existing session — replace ws, clear cleanup timer
+      // FE reconnecting to existing session — clear cleanup timer
       if (existing.cleanupTimer) {
         clearTimeout(existing.cleanupTimer);
         existing.cleanupTimer = undefined;
       }
-      if (existing.pingInterval) clearInterval(existing.pingInterval);
-      // Use application-level pings (JSON messages) instead of protocol-level ws.ping().
-      // Protocol-level pings can be intercepted by Cloudflare tunnels, causing the server
-      // to think the connection is alive when the data path to the client is broken.
-      existing.pingInterval = setInterval(() => {
-        try {
-          ws.send(JSON.stringify({ type: "ping" }));
-        } catch { /* ws may be closed */ }
-      }, PING_INTERVAL_MS);
-      existing.ws = ws;
       if (projectPath) existing.projectPath = projectPath;
       if (projectName) existing.projectName = projectName;
 
-      // If streaming, enter catch-up mode
-      if (existing.isStreaming) {
-        existing.needsCatchUp = true;
-        existing.catchUpText = "";
-      }
-
+      // Send state + turnEvents BEFORE joining clients Set (ordering matters)
       ws.send(JSON.stringify({
-        type: "status",
+        type: "session_state",
         sessionId,
-        isStreaming: existing.isStreaming,
+        phase: existing.phase,
         pendingApproval: existing.pendingApprovalEvent ?? null,
         sessionTitle: session?.title || null,
       }));
+
+      // If actively streaming, send buffered turn events for reconnect sync
+      if (existing.phase !== "idle") {
+        sendTurnEvents(sessionId, ws);
+      }
+
+      // NOW add to clients Set + set up ping
+      existing.clients.add(ws);
+      setupClientPing(existing, ws);
+
       // Async: resolve title from SDK if in-memory title is generic
       if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
         sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
           const found = sessions.find((s) => s.sessionId === sessionId);
           const title = found?.customTitle ?? found?.summary;
           if (title) {
-            safeSend(sessionId, { type: "title_updated", title });
+            broadcast(sessionId, { type: "title_updated", title });
             if (session) session.title = title;
           }
         }).catch(() => {});
       }
-      console.log(`[chat] session=${sessionId} FE reconnected (streaming=${existing.isStreaming}, catchUp=${existing.needsCatchUp})`);
+      console.log(`[chat] session=${sessionId} FE reconnected (phase=${existing.phase}, clients=${existing.clients.size})`);
       return;
     }
 
-    // New session entry — use application-level pings for Cloudflare tunnel compatibility
-    const pingInterval = setInterval(() => {
-      try {
-        ws.send(JSON.stringify({ type: "ping" }));
-      } catch { /* ws may be closed */ }
-    }, PING_INTERVAL_MS);
-
-    activeSessions.set(sessionId, {
+    // New session entry
+    const newEntry: SessionEntry = {
       providerId,
-      ws,
+      clients: new Set([ws]),
       projectPath,
       projectName,
-      pingInterval,
-      isStreaming: false,
-      needsCatchUp: false,
-      catchUpText: "",
-    });
-    ws.send(JSON.stringify({ type: "connected", sessionId, sessionTitle: session?.title || null }));
+      pingIntervals: new Map(),
+      phase: "idle",
+      turnEvents: [],
+    };
+    activeSessions.set(sessionId, newEntry);
+    setupClientPing(newEntry, ws);
+
+    ws.send(JSON.stringify({
+      type: "session_state",
+      sessionId,
+      phase: "idle",
+      pendingApproval: null,
+      sessionTitle: session?.title || null,
+    }));
+
     // Async: resolve title from SDK if in-memory title is generic
     if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
       sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
         const found = sessions.find((s) => s.sessionId === sessionId);
         const title = found?.customTitle ?? found?.summary;
         if (title) {
-          safeSend(sessionId, { type: "title_updated", title });
+          broadcast(sessionId, { type: "title_updated", title });
           if (session) session.title = title;
         }
       }).catch(() => {});
@@ -377,12 +414,6 @@ export const chatWebSocket = {
       return;
     }
 
-    // Ensure entry.ws is current — may be stale if open/close race during reconnect
-    const entry0 = activeSessions.get(sessionId);
-    if (entry0 && entry0.ws !== ws) {
-      entry0.ws = ws;
-    }
-
     let entry = activeSessions.get(sessionId);
 
     // Auto-create entry if missing — handles: message before open (Bun race), or session cleaned up
@@ -392,15 +423,19 @@ export const chatWebSocket = {
       const pid = session?.providerId ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
       if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
-      const pi = setInterval(() => {
-        try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* ws may be closed */ }
-      }, PING_INTERVAL_MS);
-      activeSessions.set(sessionId, {
-        providerId: pid, ws, projectPath: pp, projectName: pn,
-        pingInterval: pi, isStreaming: false, needsCatchUp: false, catchUpText: "",
-      });
-      entry = activeSessions.get(sessionId)!;
+      const newEntry: SessionEntry = {
+        providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
+        pingIntervals: new Map(), phase: "idle", turnEvents: [],
+      };
+      activeSessions.set(sessionId, newEntry);
+      setupClientPing(newEntry, ws);
+      entry = newEntry;
       console.log(`[chat] session=${sessionId} auto-created entry in message handler`);
+    }
+
+    // Ensure ws is in clients set
+    if (!entry.clients.has(ws)) {
+      entry.clients.add(ws);
     }
 
     const providerId = entry.providerId ?? providerRegistry.getDefault().id;
@@ -410,23 +445,27 @@ export const chatWebSocket = {
     // open-handler message still get connected/status confirmation.
     if (parsed.type === "ready") {
       ws.send(JSON.stringify({
-        type: "status",
+        type: "session_state",
         sessionId,
-        isStreaming: entry.isStreaming,
+        phase: entry.phase,
         pendingApproval: entry.pendingApprovalEvent ?? null,
+        sessionTitle: chatService.getSession(sessionId)?.title || null,
       }));
+      if (entry.phase !== "idle") {
+        sendTurnEvents(sessionId, ws);
+      }
       return;
     }
 
     if (parsed.type === "message") {
+      if (typeof parsed.content !== "string" || !parsed.content.trim()) {
+        ws.send(JSON.stringify({ type: "error", message: "Message content is required" }));
+        return;
+      }
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
       }
-
-      // Send immediate feedback BEFORE any async work — prevents "stuck thinking"
-      // when resumeSession is slow (e.g. sdkListSessions spawns subprocess on first call)
-      safeSend(sessionId, { type: "streaming_status", status: "connecting", elapsed: 0 });
 
       // Resume session in provider (can be slow on first call — sdkListSessions)
       const provider = providerRegistry.get(providerId);
@@ -443,15 +482,21 @@ export const chatWebSocket = {
         (provider as any).ensureProjectPath(sessionId, entry.projectPath);
       }
 
-      // If already streaming, abort current query first and wait for cleanup
-      if (entry.isStreaming && entry.abort) {
+      // Abort-and-replace: if already streaming, abort current query and wait for cleanup
+      if (entry.phase !== "idle" && entry.abort) {
         console.log(`[chat] session=${sessionId} aborting current query for new message`);
         entry.abort.abort();
-        // Wait for stream loop to finish cleanup
         if (entry.streamPromise) {
           await entry.streamPromise;
         }
+        // Re-fetch entry after await — may have been mutated during cleanup
+        entry = activeSessions.get(sessionId)!;
+        if (!entry) return;
       }
+
+      // Reset for new query
+      entry.turnEvents = [];
+      setPhase(sessionId, "initializing");
 
       // Store promise reference on entry to prevent GC from collecting the async operation.
       // Use setTimeout(0) to detach from WS handler's async scope.
@@ -470,7 +515,11 @@ export const chatWebSocket = {
       if (provider && typeof provider.resolveApproval === "function") {
         provider.resolveApproval(parsed.requestId, parsed.approved, (parsed as any).data);
       }
-      if (entry) entry.pendingApprovalEvent = undefined;
+      if (entry) {
+        entry.pendingApprovalEvent = undefined;
+        // Broadcast approval cleared to all clients
+        broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
+      }
     }
   },
 
@@ -479,16 +528,11 @@ export const chatWebSocket = {
     const entry = activeSessions.get(sessionId);
     if (!entry) return;
 
-    if (entry.pingInterval) {
-      clearInterval(entry.pingInterval);
-      entry.pingInterval = undefined;
-    }
+    // Remove from clients Set + clear per-client ping
+    evictClient(entry, ws);
+    console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
-    // Detach FE — do NOT abort Claude
-    entry.ws = null;
-    console.log(`[chat] session=${sessionId} FE disconnected (streaming=${entry.isStreaming})`);
-
-    if (!entry.isStreaming) {
+    if (entry.clients.size === 0 && entry.phase === "idle") {
       startCleanupTimer(sessionId);
     }
   },

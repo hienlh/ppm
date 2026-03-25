@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Upload, X } from "lucide-react";
+import { Loader2, Upload, X } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
@@ -83,9 +83,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     messages,
     messagesLoading,
     isStreaming,
-    streamingStatus,
+    phase,
+    isReconnecting,
     connectingElapsed,
-    thinkingWarningThreshold,
     pendingApproval,
     contextWindowPct,
     sessionTitle,
@@ -311,6 +311,16 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         </div>
       )}
 
+      {/* Reconnect overlay */}
+      {isReconnecting && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            <span>Reconnecting...</span>
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <MessageList
         messages={messages}
@@ -318,9 +328,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         pendingApproval={pendingApproval}
         onApprovalResponse={respondToApproval}
         isStreaming={isStreaming}
-        streamingStatus={streamingStatus}
+        phase={phase}
         connectingElapsed={connectingElapsed}
-        thinkingWarningThreshold={thinkingWarningThreshold}
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
       />
