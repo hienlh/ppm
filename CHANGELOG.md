@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.44] - 2026-03-25
+
+### Improved
+- **Sticky user messages**: Rewrite as JS scroll-based pinned header with push-out transition (react-listview-sticky-header style) — CSS sticky didn't work with StickToBottom
+- **Pinned bubble style**: Pinned header matches user bubble appearance (rounded, bordered, shadow, line-clamp-2, expand/collapse)
+- **User bubble cleanup**: Remove wrapper div nesting, fork button now absolute top-right, eliminate extra bottom spacing
+- **Horizontal overflow**: Fix always-visible horizontal scrollbar by moving overflow-x-hidden to StickToBottom wrapper
+
 ## [0.8.43] - 2026-03-25
 
 ### Fixed

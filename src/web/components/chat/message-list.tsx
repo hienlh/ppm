@@ -72,19 +72,73 @@ export function MessageList({
     );
   }
 
+  // Track which user message is pinned (scrolled above viewport) + push-out offset
+  const [pinnedContent, setPinnedContent] = useState<string | null>(null);
+  const [pushOffset, setPushOffset] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => messages.filter((msg) => {
+    const hasContent = msg.content && msg.content.trim().length > 0;
+    const hasEvents = msg.events && msg.events.length > 0;
+    return hasContent || hasEvents;
+  }), [messages]);
+
+  // Observe user message elements to track which one is pinned + push-out transition
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const scrollEl = wrapper.querySelector("[data-stick-to-bottom-scroll]") as HTMLElement
+      ?? wrapper.firstElementChild as HTMLElement;
+    if (!scrollEl || scrollEl.scrollHeight <= scrollEl.clientHeight) return;
+
+    const handleScroll = () => {
+      const userEls = wrapper.querySelectorAll<HTMLElement>("[data-user-content]");
+      const scrollRect = scrollEl.getBoundingClientRect();
+      const pinnedH = pinnedRef.current?.offsetHeight ?? 0;
+
+      let lastAbove: string | null = null;
+      let nextTop = Infinity;
+
+      for (let i = 0; i < userEls.length; i++) {
+        const rect = userEls[i]!.getBoundingClientRect();
+        if (rect.top < scrollRect.top + 4) {
+          lastAbove = userEls[i]!.getAttribute("data-user-content");
+          // Find the next user message after this one
+          const nextEl = userEls[i + 1];
+          nextTop = nextEl ? nextEl.getBoundingClientRect().top - scrollRect.top : Infinity;
+        }
+      }
+
+      setPinnedContent(lastAbove);
+      // Push-out: when next header enters the pinned area, offset upward
+      if (pinnedH > 0 && nextTop < pinnedH) {
+        setPushOffset(nextTop - pinnedH);
+      } else {
+        setPushOffset(0);
+      }
+    };
+
+    scrollEl.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => scrollEl.removeEventListener("scroll", handleScroll);
+  }, [filtered]);
+
   return (
-    <StickToBottom className="flex-1 overflow-y-auto" resize="smooth" initial="instant">
-      <StickToBottom.Content className="p-4 space-y-4">
-        {(() => {
-          const visible = messages.filter((msg) => {
-            const hasContent = msg.content && msg.content.trim().length > 0;
-            const hasEvents = msg.events && msg.events.length > 0;
-            return hasContent || hasEvents;
-          });
-          // Find the last user message to make only that one sticky
-          const lastUserIdx = visible.reduce((acc, msg, i) => msg.role === "user" ? i : acc, -1);
-          return visible.map((msg, i) => {
-            const bubble = (
+    <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
+      {/* Pinned header — overlays scroll content like react-listview-sticky-header */}
+      {pinnedContent && (
+        <div
+          ref={pinnedRef}
+          className="absolute top-0 left-0 right-0 z-20 bg-background"
+          style={pushOffset < 0 ? { transform: `translateY(${pushOffset}px)` } : undefined}
+        >
+          <PinnedUserMessage content={pinnedContent} projectName={projectName} />
+        </div>
+      )}
+      <StickToBottom ref={wrapperRef} className="flex-1 overflow-y-auto overflow-x-hidden" resize="smooth" initial="instant">
+        <StickToBottom.Content className="p-4 space-y-4">
+          {filtered.map((msg) => (
               <MessageBubble
                 key={msg.id}
                 message={msg}
@@ -92,18 +146,7 @@ export function MessageList({
                 projectName={projectName}
                 onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
               />
-            );
-            // Only the last user message sticks to top
-            if (msg.role === "user" && i === lastUserIdx) {
-              return (
-                <div key={msg.id} className="sticky top-0 z-10 bg-background py-0.5">
-                  {bubble}
-                </div>
-              );
-            }
-            return bubble;
-          });
-        })()}
+            ))}
 
         {pendingApproval && (
           pendingApproval.tool === "AskUserQuestion"
@@ -115,6 +158,74 @@ export function MessageList({
       </StickToBottom.Content>
       <ScrollToBottomButton />
     </StickToBottom>
+    </div>
+  );
+}
+
+/** Compact pinned bar showing the current user message at the top of chat */
+function PinnedUserMessage({ content, projectName }: { content: string; projectName?: string }) {
+  const { files, text } = useMemo(() => {
+    const parsed = parseUserAttachments(content);
+    const { cleanText } = extractSystemTags(parsed.text);
+    return { files: parsed.files, text: cleanText };
+  }, [content]);
+
+  const [expanded, setExpanded] = useState(false);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // Reset expanded state when pinned message changes
+  useEffect(() => { setExpanded(false); }, [content]);
+
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const check = () => setIsOverflowing(el.scrollHeight > el.clientHeight + 2);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+
+  if (!text && files.length === 0) return null;
+
+  return (
+    <div className="shrink-0 px-4 pt-3 pb-2">
+      <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary space-y-2 border border-primary/15 shadow-sm">
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {files.map((filePath, i) => (
+              <div key={i} className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary">
+                {isImagePath(filePath) ? <ImageIcon className="size-3 shrink-0" /> : <FileText className="size-3 shrink-0" />}
+                <span className="truncate max-w-32">{basename(filePath)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {text && (
+          <div>
+            <div
+              ref={contentRef}
+              className={cn(
+                "whitespace-pre-wrap break-words transition-all duration-200",
+                !expanded && "line-clamp-2",
+                expanded && "max-h-[40vh] overflow-y-auto",
+              )}
+            >
+              {text}
+            </div>
+            {(isOverflowing || expanded) && (
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary mt-1 transition-colors"
+              >
+                {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -135,7 +246,9 @@ function ScrollToBottomButton() {
 
 function MessageBubble({ message, isStreaming, projectName, onFork }: { message: ChatMessage; isStreaming: boolean; projectName?: string; onFork?: () => void }) {
   if (message.role === "user") {
-    return <UserBubble content={message.content} projectName={projectName} onFork={onFork} />;
+    return (
+      <UserBubble content={message.content} projectName={projectName} onFork={onFork} />
+    );
   }
 
   if (message.role === "system") {
@@ -261,66 +374,62 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
   }, [text]);
 
   return (
-    <div className="group/user relative">
-      <div className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary space-y-2">
-        {/* System tags as badges */}
-        {tags.length > 0 && <SystemTagBadges tags={tags} />}
+    <div data-user-content={content} className="group/user relative rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary border border-primary/15 shadow-sm">
+      {/* System tags as badges */}
+      {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
-        {/* Attached files — compact chips (same style as input area) */}
-        {files.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {files.map((filePath, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary"
-              >
-                {isImagePath(filePath) ? <ImageIcon className="size-3 shrink-0" /> : <FileText className="size-3 shrink-0" />}
-                <span className="truncate max-w-32">{basename(filePath)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Text content — 2-line clamp by default, expandable */}
-        {text && (
-          <div>
+      {/* Attached files — compact chips (same style as input area) */}
+      {files.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {files.map((filePath, i) => (
             <div
-              ref={contentRef}
-              className={cn(
-                "whitespace-pre-wrap break-words transition-all duration-200",
-                !expanded && "line-clamp-2",
-                expanded && "max-h-[50vh] overflow-y-auto",
-              )}
+              key={i}
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary"
             >
-              {text}
+              {isImagePath(filePath) ? <ImageIcon className="size-3 shrink-0" /> : <FileText className="size-3 shrink-0" />}
+              <span className="truncate max-w-32">{basename(filePath)}</span>
             </div>
-            {(isOverflowing || expanded) && (
-              <button
-                onClick={() => setExpanded(!expanded)}
-                className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary mt-1 transition-colors"
-              >
-                {expanded ? (
-                  <>
-                    <ChevronUp className="size-3" />
-                    Show less
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown className="size-3" />
-                    Show more
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-      {/* Fork/Rewind button — visible on hover */}
+          ))}
+        </div>
+      )}
+
+      {/* Text content — 2-line clamp by default, expandable */}
+      {text && (
+        <div
+          ref={contentRef}
+          className={cn(
+            "whitespace-pre-wrap break-words transition-all duration-200",
+            !expanded && "line-clamp-2",
+            expanded && "max-h-[50vh] overflow-y-auto",
+          )}
+        >
+          {text}
+        </div>
+      )}
+      {(isOverflowing || expanded) && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary mt-1 transition-colors"
+        >
+          {expanded ? (
+            <>
+              <ChevronUp className="size-3" />
+              Show less
+            </>
+          ) : (
+            <>
+              <ChevronDown className="size-3" />
+              Show more
+            </>
+          )}
+        </button>
+      )}
+      {/* Fork/Rewind button — absolute top-right, visible on hover */}
       {onFork && (
         <button
           onClick={onFork}
           title="Retry from this message (fork session)"
-          className="absolute -right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover/user:opacity-100 transition-opacity size-6 flex items-center justify-center rounded bg-surface border border-border text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
+          className="absolute top-1.5 right-1.5 opacity-0 group-hover/user:opacity-100 transition-opacity size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
         >
           <RotateCcw className="size-3" />
         </button>
