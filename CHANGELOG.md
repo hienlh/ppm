@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.47] - 2026-03-25
+
+### Fixed
+- **Usage polling**: Use `ensureFreshToken()` in background usage poll — prevents 401 from expired tokens causing auto-fetch to always fail
+- **Temp accounts**: Don't auto-disable temporary accounts (no refresh token) when token expires — they now expire naturally and get cleaned up after 7 days
+- **Account export**: `refreshBeforeExport` no longer disables accounts as a side effect on refresh failure
+
 ## [0.8.46] - 2026-03-25
 
 ### Fixed
