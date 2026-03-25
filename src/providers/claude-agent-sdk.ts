@@ -611,7 +611,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (assistantError === "authentication_failed" && account && !authRetried) {
               authRetried = true;
               try {
-                await accountService.refreshAccessToken(account.id);
+                await accountService.refreshAccessToken(account.id, false);
                 console.log(`[sdk] session=${sessionId} OAuth token refreshed for ${account.id} — retrying`);
                 // Re-build env with refreshed token
                 const refreshedAccount = accountService.getWithTokens(account.id);
@@ -628,10 +628,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 }
               } catch (refreshErr) {
                 console.error(`[sdk] session=${sessionId} OAuth refresh failed:`, refreshErr);
-                // Don't disable temp accounts (no refresh token) — they just expire naturally
-                if (accountService.hasRefreshToken(account.id)) {
-                  accountSelector.onAuthError(account.id);
-                }
+                // Cooldown instead of permanent disable — auth issues can be transient
+                // (subscription lapse, org changes, API hiccups)
+                accountSelector.onRateLimit(account.id);
               }
             }
 
@@ -702,13 +701,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             } else if (errCode === 401) {
               // Try refresh once
               try {
-                await accountService.refreshAccessToken(account.id);
+                await accountService.refreshAccessToken(account.id, false);
                 console.log(`[sdk] 401 on account ${account.id} — token refreshed`);
               } catch {
-                // Don't disable temp accounts (no refresh token) — they just expire naturally
-                if (accountService.hasRefreshToken(account.id)) {
-                  accountSelector.onAuthError(account.id);
-                }
+                // Cooldown instead of permanent disable — auth issues can be transient
+                accountSelector.onRateLimit(account.id);
               }
             } else {
               accountSelector.onSuccess(account.id);
