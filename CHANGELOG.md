@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.49] - 2026-03-25
+
+### Fixed
+- **Auth error backoff**: `onAuthError` now uses 5-minute base cooldown (exponential up to 30min) instead of 1s rate-limit backoff — prevents rapid retry loops on dead/rejected accounts
+- **No permanent disable**: Auth errors never permanently disable accounts — cooldown allows recovery from transient issues (subscription lapse, org changes, API hiccups)
+
 ## [0.8.48] - 2026-03-25
 
 ### Fixed
