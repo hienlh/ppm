@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.59] - 2026-03-26
+
+### Fixed
+- **Usage polling chain breaking permanently**: `startUsagePolling` recursive setTimeout chain now uses `Promise.race` with 60s timeout guard and `try/finally` — if `pollOnce` hangs or rejects, `scheduleNext` still runs
+- **OAuth token refresh hanging forever**: `refreshAccessToken` fetch now has 15s `AbortSignal.timeout` — prevents blocking usage polling and auto-refresh when Anthropic OAuth is slow/unresponsive
+
+### Changed
+- **Account selector sustainability scoring**: Raise cap from 1.0 to 2.0 (scaled /2) so accounts with imminent weekly reset score higher than accounts with more remaining capacity but far-off resets
+
 ## [0.8.58] - 2026-03-26
 
 ### Fixed
