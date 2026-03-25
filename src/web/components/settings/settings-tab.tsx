@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, BellOff, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Users, Keyboard, Globe,
+  Bot, BellRing, Keyboard, Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,6 @@ import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { TelegramSettingsSection } from "./telegram-settings-section";
-import { AccountsSettingsSection } from "./accounts-settings-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
@@ -26,12 +25,11 @@ const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
 const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
   !window.matchMedia("(display-mode: standalone)").matches;
 
-type SettingsCategory = "ai" | "notifications" | "accounts" | "proxy" | "shortcuts";
+type SettingsCategory = "ai" | "notifications" | "proxy" | "shortcuts";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { value: "notifications", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
-  { value: "accounts", label: "Accounts", subtitle: "Claude accounts & rotation", icon: Users },
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
 ];
@@ -84,7 +82,6 @@ export function SettingsTab() {
           <div className="p-3">
             {activeCategory === "ai" && <AISettingsSection compact />}
             {activeCategory === "notifications" && <NotificationsContent isSubscribed={isSubscribed} loading={loading} permission={permission} pushError={pushError} subscribe={subscribe} unsubscribe={unsubscribe} />}
-            {activeCategory === "accounts" && <AccountsSettingsSection />}
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
           </div>

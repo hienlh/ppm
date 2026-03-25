@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Activity, RefreshCw, Eye, ShieldCheck, Loader2, X } from "lucide-react";
+import { Activity, RefreshCw, Eye, Download, Upload, Plus, X } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { UsageInfo, LimitBucket } from "../../../types/chat";
 import {
@@ -7,11 +7,11 @@ import {
   getActiveAccount,
   getAllAccountUsages,
   patchAccount,
-  verifyAccount,
   type AccountInfo,
   type AccountUsageEntry,
   type OAuthProfileData,
 } from "../../lib/api-settings";
+import { AddAccountDialog, ExportAccountsDialog, ImportAccountsDialog } from "./account-dialogs";
 
 interface UsageBadgeProps {
   usage: UsageInfo;
@@ -129,13 +129,12 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${days}d ago`;
 }
 
-function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onVerify, verifyingId, onViewProfile, flash }: {
+function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onExport, onViewProfile, flash }: {
   entry: AccountUsageEntry;
   isActive: boolean;
   accountInfo?: AccountInfo;
   onToggle?: (id: string, status: string) => void;
-  onVerify?: (id: string) => void;
-  verifyingId?: string | null;
+  onExport?: (id: string) => void;
   onViewProfile?: (profile: OAuthProfileData) => void;
   flash?: boolean;
 }) {
@@ -144,7 +143,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onVerify, ve
   const status = accountInfo?.status ?? entry.accountStatus;
 
   return (
-    <div className={`rounded-md border p-2 space-y-1.5 transition-colors duration-500 ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
+    <div className={`rounded-md border p-2 space-y-1.5 transition-colors duration-500 min-w-[200px] shrink-0 snap-start ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
       <div className="flex items-center gap-1.5">
         <span className="text-xs font-medium truncate flex-1 min-w-0">
           {entry.accountLabel ?? entry.accountId.slice(0, 8)}
@@ -163,14 +162,13 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onVerify, ve
               <Eye className="size-3" />
             </button>
           )}
-          {onVerify && (
+          {onExport && entry.isOAuth && (
             <button
-              className="p-1 rounded cursor-pointer text-text-subtle hover:text-green-600 hover:bg-surface-elevated transition-colors"
-              onClick={() => onVerify(entry.accountId)}
-              disabled={verifyingId === entry.accountId}
-              title="Verify token"
+              className="p-1 rounded cursor-pointer text-text-subtle hover:text-blue-500 hover:bg-surface-elevated transition-colors"
+              onClick={() => onExport(entry.accountId)}
+              title="Export this account"
             >
-              {verifyingId === entry.accountId ? <Loader2 className="size-3 animate-spin" /> : <ShieldCheck className="size-3" />}
+              <Download className="size-3" />
             </button>
           )}
           {onToggle && (
@@ -211,9 +209,25 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
-  const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [profileView, setProfileView] = useState<OAuthProfileData | null>(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [exportPreselect, setExportPreselect] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const prevUsagesRef = useRef<AccountUsageEntry[]>([]);
+
+  function showMessage(msg: string) {
+    if (msgTimer.current) clearTimeout(msgTimer.current);
+    setMessage(msg);
+    msgTimer.current = setTimeout(() => setMessage(null), 4000);
+  }
+
+  function handleSuccess(msg?: string) {
+    loadAll();
+    if (msg) showMessage(msg);
+  }
 
   async function loadAll() {
     const isRefresh = allUsages.length > 0;
@@ -277,10 +291,9 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
     onReload?.();
   }
 
-  async function handleVerify(id: string) {
-    setVerifyingId(id);
-    try { await verifyAccount(id); loadAll(); } catch { /* silent */ }
-    setVerifyingId(null);
+  function openExportAll() {
+    setExportPreselect(null);
+    setShowExportDialog(true);
   }
 
   return (
@@ -312,8 +325,14 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
         </div>
       </div>
 
+      {message && (
+        <div className="text-[11px] p-1.5 rounded bg-green-500/10 text-green-600 text-center animate-in fade-in duration-200">
+          {message}
+        </div>
+      )}
+
       {(hasMultipleAccounts || initialLoading) ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-1.5">
+        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 snap-x snap-mandatory scrollbar-thin">
           {initialLoading ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
           ) : (
@@ -324,8 +343,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
                 isActive={entry.accountId === (activeAccountId ?? usage.activeAccountId)}
                 accountInfo={accountMap.get(entry.accountId)}
                 onToggle={handleToggle}
-                onVerify={handleVerify}
-                verifyingId={verifyingId}
+                onExport={(id) => { setExportPreselect(id); setShowExportDialog(true); }}
                 onViewProfile={setProfileView}
                 flash={flashIds.has(entry.accountId)}
               />
@@ -387,6 +405,24 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
           </div>
         </div>
       )}
+
+      {/* Action buttons */}
+      <div className="border-t border-border pt-2 flex gap-1.5">
+        <button onClick={() => setShowAddDialog(true)} className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer">
+          <Plus className="size-3" /> Add
+        </button>
+        <button onClick={openExportAll} className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer">
+          <Download className="size-3" /> Export
+        </button>
+        <button onClick={() => setShowImportDialog(true)} className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer">
+          <Upload className="size-3" /> Import
+        </button>
+      </div>
+
+      {/* Account dialogs */}
+      <AddAccountDialog open={showAddDialog} onOpenChange={setShowAddDialog} onSuccess={handleSuccess} />
+      <ExportAccountsDialog open={showExportDialog} onOpenChange={(v) => { setShowExportDialog(v); if (!v) setExportPreselect(null); }} accounts={accounts} preselectId={exportPreselect} onMessage={showMessage} />
+      <ImportAccountsDialog open={showImportDialog} onOpenChange={setShowImportDialog} onSuccess={handleSuccess} />
     </div>
   );
 }
