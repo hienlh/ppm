@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.53] - 2026-03-25
+
+### Added
+- **Process supervisor**: Long-lived parent process manages server + tunnel children with auto-restart on crash (exponential backoff 1s→60s, resets after 5min stable)
+- **Tunnel resilience**: Auto-respawn cloudflared on death, extract new URL, sync to cloud immediately
+- **Server health watchdog**: GET /api/health every 30s, kills hung server after 3 consecutive failures
+- **Tunnel URL probe**: GET tunnelUrl/api/health every 2min, regenerates tunnel after 2 failures
+- **SIGUSR2 graceful restart**: `ppm restart` signals supervisor to restart server only (tunnel stays alive, no backoff)
+- **Count-based exception exit**: 3+ uncaught exceptions in 1 minute triggers exit for clean supervisor restart
+- **Integration tests**: 8 tests covering supervisor spawn, crash recovery, SIGUSR2 restart, backoff behavior
+
+### Changed
+- **Daemon mode**: `ppm start` now spawns supervisor process instead of server directly
+- **macOS autostart**: KeepAlive changed from conditional (SuccessfulExit=false) to unconditional
+- **Linux autostart**: Restart policy changed from `on-failure` to `always`
+- **`ppm stop`**: Kills supervisor PID first (cascades to children), 2s grace period
+- **`ppm status`**: Shows supervisor PID and alive status
+- **`ppm restart`**: Uses SIGUSR2 to supervisor for server-only restart
+
 ## [0.8.52] - 2026-03-25
 
 ### Fixed
