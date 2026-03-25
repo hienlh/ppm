@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.52] - 2026-03-25
+
+### Fixed
+- **Command palette IME conflict**: Double-Shift no longer falsely triggers command palette while typing with IME (Vietnamese Telex/VNI, Chinese, Japanese, Korean input methods). Tracks `compositionstart`/`compositionend` events and checks `e.isComposing`
+
 ## [0.8.51] - 2026-03-25
 
 ### Added
