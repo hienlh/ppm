@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.54] - 2026-03-25
+
+### Added
+- **Auto-upgrade feature**: Supervisor checks npm registry every 15min for new versions
+- **Upgrade UI banner**: Dismissible banner with one-click upgrade button, dark mode support, 44x44px touch targets
+- **Upgrade API**: `GET /api/upgrade` (status) + `POST /api/upgrade/apply` (install + supervisor self-replace)
+- **`ppm upgrade` CLI**: `--check` flag for version check, auto-detects bun/npm install method
+- **Supervisor self-replace**: After upgrade, spawns new supervisor → waits for PID in status.json → old exits gracefully
+- **Integration tests**: 9 tests for upgrade service (compareSemver, checkForUpdate, API routes)
+- **`PPM_HOME` env var**: Override `~/.ppm` directory for test isolation
+
+### Fixed
+- **Tests killing production PPM**: Test cleanup read shared `~/.ppm/status.json` and killed all PIDs including running prod. Now uses isolated temp dirs
+- **SDK provider tests**: Fixed empty response assertion, missing `/tmp/my-project` dir, success subtype with 0 turns
+- **Account service tests**: `importEncrypted()` made async but tests didn't await — added async/await + updated return type
+- **Push routes test**: VAPID key empty due to DB reset by other tests — added `beforeEach` to reinit
+
+### Changed
+- **Test isolation**: `supervisor-resilience` and `daemon-tunnel-reuse` tests use `PPM_HOME` temp dirs instead of shared `~/.ppm`
+
 ## [0.8.53] - 2026-03-25
 
 ### Added
