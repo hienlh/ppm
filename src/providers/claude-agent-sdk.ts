@@ -995,6 +995,13 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
     textContent = extractText(message);
   }
 
+  // SDK-generated user messages (containing tool_result) carry system text
+  // like <task-notification> XML — not actual user input. Clear it so it
+  // doesn't render as a user bubble. Real user messages never have tool_result blocks.
+  if (role === "user" && events.some((e) => e.type === "tool_result")) {
+    textContent = "";
+  }
+
   return {
     id: msg.uuid,
     role,
