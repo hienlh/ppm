@@ -25,7 +25,7 @@ async function setupLogFile() {
   const { homedir } = await import("node:os");
   const { appendFileSync, mkdirSync, existsSync } = await import("node:fs");
 
-  const ppmDir = resolve(homedir(), ".ppm");
+  const ppmDir = process.env.PPM_HOME || resolve(homedir(), ".ppm");
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
   const logPath = resolve(ppmDir, "ppm.log");
 
@@ -139,6 +139,10 @@ app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
 
+// Upgrade routes (check for updates, apply upgrade)
+import { upgradeRoutes } from "./routes/upgrade.ts";
+app.route("/api/upgrade", upgradeRoutes);
+
 // Cloud device registry
 import { cloudRoutes } from "./routes/cloud.ts";
 app.route("/api/cloud", cloudRoutes);
@@ -188,7 +192,7 @@ export async function startServer(options: {
     const { writeFileSync, readFileSync, mkdirSync, existsSync, openSync } = await import("node:fs");
     const { isCompiledBinary } = await import("../services/autostart-generator.ts");
 
-    const ppmDir = resolve(homedir(), ".ppm");
+    const ppmDir = process.env.PPM_HOME || resolve(homedir(), ".ppm");
     if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
     const pidFile = resolve(ppmDir, "ppm.pid");
     const statusFile = resolve(ppmDir, "status.json");

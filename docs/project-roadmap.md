@@ -42,6 +42,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 |---------|----------|-------------|
 | **PPM Cloud** | Critical | Separate cloud service for device registry + tunnel URL sync. Google OAuth login. CLI `ppm cloud link` syncs tunnel URL. Open cloud dashboard on any device → see machines → tap to connect. NO code/data through cloud — only URLs + metadata. |
 | **Auto-start** | High | PPM starts on boot. macOS launchd, Linux systemd, Windows Task Scheduler. CLI: `ppm autostart enable/disable`. Required for "always accessible" story. |
+| **Auto-upgrade** | High | Supervisor checks npm registry every 15min. UI banner shows when update available. One-click upgrade via API or CLI. Supervisor self-replaces after install (no OS autostart dependency). ✅ **Completed in v0.8.54** |
 | **AI Chat enhancements** | High | Tool allow/deny config per session. Chat modes (plan/code/ask). Model selector (opus/sonnet/haiku). Effort level. Max turns. System prompt customization. Better streaming UX (collapsible tool calls). |
 
 **PPM Cloud — scope guard:**

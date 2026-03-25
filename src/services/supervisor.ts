@@ -22,8 +22,11 @@ const SERVER_HEALTH_FAIL_THRESHOLD = 3;
 const TUNNEL_PROBE_INTERVAL_MS = 120_000;
 const TUNNEL_PROBE_FAIL_THRESHOLD = 2;
 const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+const UPGRADE_CHECK_INTERVAL_MS = 900_000;  // 15min
+const UPGRADE_SKIP_INITIAL_MS = 300_000;    // 5min delay before first check
+const SELF_REPLACE_TIMEOUT_MS = 30_000;     // 30s to wait for new supervisor
 
-const PPM_DIR = resolve(homedir(), ".ppm");
+const PPM_DIR = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"));
 const STATUS_FILE = resolve(PPM_DIR, "status.json");
 const PID_FILE = resolve(PPM_DIR, "ppm.pid");
 const LOG_FILE = resolve(PPM_DIR, "ppm.log");
@@ -47,6 +50,11 @@ let serverRestartRequested = false; // SIGUSR2 flag — skip backoff on next cra
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let tunnelProbeTimer: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let upgradeCheckTimer: ReturnType<typeof setInterval> | null = null;
+let upgradeDelayTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Saved at startup for self-replace
+let originalArgv: string[] = [];
 
 // ─── Logging ───────────────────────────────────────────────────────────
 function log(level: string, msg: string) {
@@ -298,6 +306,62 @@ function startTunnelProbe(port: number) {
   }, TUNNEL_PROBE_INTERVAL_MS);
 }
 
+// ─── Upgrade check ──────────────────────────────────────────────────────
+async function checkAvailableVersion() {
+  try {
+    const { checkForUpdate } = await import("./upgrade.service.ts");
+    const result = await checkForUpdate();
+    if (result.available && result.latest) {
+      updateStatus({ availableVersion: result.latest });
+      log("INFO", `New version available: ${result.latest} (current: ${result.current})`);
+    } else {
+      updateStatus({ availableVersion: null });
+    }
+  } catch (e) {
+    log("WARN", `Upgrade check failed: ${e}`);
+  }
+}
+
+/** Spawn new supervisor from updated code, wait for it to be healthy, then exit */
+async function selfReplace(): Promise<{ success: boolean; error?: string }> {
+  log("INFO", "Starting self-replace for upgrade");
+  const currentSupervisorPid = process.pid;
+
+  try {
+    // Spawn new supervisor using saved argv
+    const cmd = originalArgv.slice();
+    const logFd = openSync(LOG_FILE, "a");
+    const child = Bun.spawn({
+      cmd,
+      stdio: ["ignore", logFd, logFd],
+      env: process.env,
+    });
+    child.unref();
+
+    // Poll status.json for new supervisor PID (up to 30s)
+    const start = Date.now();
+    while (Date.now() - start < SELF_REPLACE_TIMEOUT_MS) {
+      await Bun.sleep(1000);
+      try {
+        const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+        if (data.supervisorPid && data.supervisorPid !== currentSupervisorPid) {
+          log("INFO", `New supervisor detected (PID: ${data.supervisorPid}), old exiting`);
+          shutdown();
+          process.exit(0);
+        }
+      } catch {}
+    }
+
+    // Timeout — new supervisor didn't start
+    log("ERROR", "Self-replace timeout: new supervisor did not start");
+    try { child.kill(); } catch {}
+    return { success: false, error: "New supervisor failed to start within 30s" };
+  } catch (e) {
+    log("ERROR", `Self-replace error: ${e}`);
+    return { success: false, error: (e as Error).message };
+  }
+}
+
 // ─── Shutdown ──────────────────────────────────────────────────────────
 export function shutdown() {
   if (shuttingDown) return;
@@ -307,6 +371,8 @@ export function shutdown() {
   if (healthTimer) clearInterval(healthTimer);
   if (tunnelProbeTimer) clearInterval(tunnelProbeTimer);
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
+  if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
 
   if (serverChild) { try { serverChild.kill(); } catch {} }
   if (tunnelChild) { try { tunnelChild.kill(); } catch {} }
@@ -321,6 +387,9 @@ export async function runSupervisor(opts: {
   share: boolean;
 }) {
   if (!existsSync(PPM_DIR)) mkdirSync(PPM_DIR, { recursive: true });
+
+  // Save original argv for self-replace
+  originalArgv = [...process.argv];
 
   const logFd = openSync(LOG_FILE, "a");
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
@@ -350,8 +419,21 @@ export async function runSupervisor(opts: {
     }
   });
 
+  // SIGUSR1 = self-replace for upgrade
+  process.on("SIGUSR1", async () => {
+    log("INFO", "SIGUSR1 received, starting self-replace for upgrade");
+    const result = await selfReplace();
+    if (!result.success) log("ERROR", `Self-replace failed: ${result.error}`);
+  });
+
   // Start health checks
   startServerHealthCheck(opts.port);
+
+  // Start upgrade check timer (5min initial delay, then every 15min)
+  upgradeDelayTimer = setTimeout(() => {
+    checkAvailableVersion();
+    upgradeCheckTimer = setInterval(checkAvailableVersion, UPGRADE_CHECK_INTERVAL_MS);
+  }, UPGRADE_SKIP_INITIAL_MS);
 
   // Spawn server + tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];

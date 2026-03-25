@@ -138,6 +138,8 @@ GET    /api/db/connections/:id/tables             → List tables (with sync)
 GET    /api/db/connections/:id/tables/:table      → Get table schema + data
 POST   /api/db/connections/:id/query              → Execute query (readonly checked)
 PATCH  /api/db/connections/:id/cell               → Update cell value (single)
+GET    /api/upgrade/status                        → Get current + available versions, install method
+POST   /api/upgrade/apply                         → Install new version, trigger supervisor self-replace
 WS     /ws/project/:name/chat/:sessionId          → Chat streaming
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
 ```
@@ -176,6 +178,7 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 | **PostgresAdapter** | PostgreSQL connection, query execution, readonly checks | testConnection, getTables, getTableSchema, getTableData, executeQuery, updateCell |
 | **AccountService** | Account CRUD, token encryption/decryption | getAccounts, createAccount, updateAccount, deleteAccount |
 | **AccountSelectorService** | Select active account based on config | getActiveAccount, setActiveAccount, selectByProject |
+| **UpgradeService** | Version checking, installation, self-replace signaling | checkForUpdate, applyUpgrade, getInstallMethod, compareSemver |
 
 **Key Files:** `src/services/*.service.ts`
 
@@ -792,8 +795,10 @@ Linux/macOS Host
 ```
 $ ppm start
   → Background process (background by default)
-  → Status saved to ~/.ppm/status.json (with PID, port, host, shareUrl)
+  → Supervisor spawns server + tunnel, monitors health
+  → Status saved to ~/.ppm/status.json (with PID, port, host, shareUrl, supervisorPid, availableVersion)
   → Fallback compat: ppm.pid read/written for backward compatibility
+  → Supervisor checks npm registry every 15min for updates, writes availableVersion to status.json
 
 $ ppm start --foreground
   → Runs in foreground (debugging, CI/CD)
@@ -806,6 +811,13 @@ $ ppm start --share
   → Spawns tunnel process, extracts public URL from stderr
   → URL saved to status.json for parent process
   → Auth warning if auth.enabled is false
+
+$ ppm upgrade
+  → CLI command to check and install updates
+  → Fetches latest version from npm registry
+  → Installs via bun or npm based on install method
+  → Signals supervisor to self-replace (spawn new → wait healthy → exit old)
+  → Works in headless environments (no OS autostart dependency)
 
 $ ppm stop
   → Reads ~/.ppm/status.json first (new format)

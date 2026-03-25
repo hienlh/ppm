@@ -121,6 +121,15 @@ registerGitCommands(program);
 const { registerChatCommands } = await import("./cli/commands/chat-cmd.ts");
 registerChatCommands(program);
 
+program
+  .command("upgrade")
+  .description("Check for and install PPM updates")
+  .option("--check", "Only check for updates, don't install")
+  .action(async (options) => {
+    const { upgradeCmd } = await import("./cli/commands/upgrade.ts");
+    await upgradeCmd(options);
+  });
+
 const { registerAutoStartCommands } = await import("./cli/commands/autostart.ts");
 registerAutoStartCommands(program);
 

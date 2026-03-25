@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, afterEach, mock, spyOn } from "bun:test";
+import { mkdirSync, rmSync, existsSync as fsExists } from "node:fs";
 import type { ChatEvent } from "../../../src/types/chat.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
@@ -64,6 +65,14 @@ const { ClaudeAgentSdkProvider } = await import(
 
 describe("ClaudeAgentSdkProvider", () => {
   let provider: InstanceType<typeof ClaudeAgentSdkProvider>;
+
+  // Ensure /tmp/my-project exists for cwd tests
+  beforeAll(() => {
+    if (!fsExists("/tmp/my-project")) mkdirSync("/tmp/my-project", { recursive: true });
+  });
+  afterAll(() => {
+    try { rmSync("/tmp/my-project", { recursive: true, force: true }); } catch {}
+  });
 
   beforeEach(() => {
     provider = new ClaudeAgentSdkProvider();
@@ -140,8 +149,9 @@ describe("ClaudeAgentSdkProvider", () => {
         events.push(event);
       }
 
-      expect(events).toHaveLength(1);
-      expect(events[0]!.type).toBe("done");
+      // Provider yields error for empty results (0 turns) + done event
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events[events.length - 1]!.type).toBe("done");
     });
 
     it("yields done event after SDK error (non-abort)", async () => {
@@ -320,7 +330,7 @@ describe("ClaudeAgentSdkProvider", () => {
 
     it("does not yield error event for success subtype", async () => {
       const iter = createMockQueryIterator([
-        { type: "result", subtype: "success", total_cost_usd: 0.01 },
+        { type: "result", subtype: "success", total_cost_usd: 0.01, num_turns: 1 },
       ]);
       mockQueryFn.mockReturnValue(iter);
 

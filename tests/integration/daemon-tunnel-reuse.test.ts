@@ -3,13 +3,14 @@ import { describe, it, expect, afterAll, setDefaultTimeout } from "bun:test";
 setDefaultTimeout(60_000); // Tunnel tests need time for cloudflared
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, rmSync } from "node:fs";
 
-const STATUS_FILE = resolve(homedir(), ".ppm", "status.json");
-const PID_FILE = resolve(homedir(), ".ppm", "ppm.pid");
-// Isolated DB profile for this test — uses ~/.ppm/ppm.daemon-test.db, never touches ppm.db
+const PPM_DIR = resolve(require("node:os").tmpdir(), `ppm-test-daemon-${process.pid}`);
+const STATUS_FILE = resolve(PPM_DIR, "status.json");
+const PID_FILE = resolve(PPM_DIR, "ppm.pid");
+// Isolated DB profile for this test — uses isolated PPM_DIR
 const TEST_PROFILE = "daemon-test";
-const TEST_DB = resolve(homedir(), ".ppm", `ppm.${TEST_PROFILE}.db`);
+const TEST_DB = resolve(PPM_DIR, `ppm.${TEST_PROFILE}.db`);
 const PORT = 9876; // Use uncommon port to avoid conflicts
 const CLI = resolve(import.meta.dir, "../../src/index.ts");
 
@@ -18,7 +19,7 @@ async function ppm(args: string, timeout = 40_000): Promise<string> {
   const proc = Bun.spawn(["bun", "run", CLI, ...args.split(" ")], {
     stdout: "pipe", stderr: "pipe",
     stdin: "ignore", // Prevent interactive prompts from blocking
-    env: { ...process.env, NODE_ENV: "test" },
+    env: { ...process.env, NODE_ENV: "test", PPM_HOME: PPM_DIR },
   });
   const timer = setTimeout(() => proc.kill(), timeout);
   const out = await new Response(proc.stdout).text();
@@ -30,9 +31,8 @@ async function ppm(args: string, timeout = 40_000): Promise<string> {
 /** Pre-init the test DB so ppm start doesn't block on interactive setup */
 function ensureTestDb() {
   const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
-  const dir = resolve(homedir(), ".ppm");
-  if (!existsSync(dir)) require("node:fs").mkdirSync(dir, { recursive: true });
-  const dbPath = resolve(dir, `ppm.${TEST_PROFILE}.db`);
+  if (!existsSync(PPM_DIR)) require("node:fs").mkdirSync(PPM_DIR, { recursive: true });
+  const dbPath = resolve(PPM_DIR, `ppm.${TEST_PROFILE}.db`);
   // Remove stale DB to avoid lock issues
   try { if (existsSync(dbPath)) unlinkSync(dbPath); } catch {}
   const db = new Database(dbPath);
@@ -76,8 +76,8 @@ function cleanupAll() {
 
 afterAll(() => {
   cleanupAll();
-  // Clean up isolated test DB
-  if (existsSync(TEST_DB)) try { unlinkSync(TEST_DB); } catch {}
+  // Clean up entire isolated test dir
+  try { rmSync(PPM_DIR, { recursive: true, force: true }); } catch {}
 });
 
 describe("Daemon + Tunnel lifecycle", () => {

@@ -93,7 +93,7 @@ describe("AccountService", () => {
     expect(withTokens.status).toBe("active");
   });
 
-  it("exportEncrypted() / importEncrypted() round-trips accounts with password", () => {
+  it("exportEncrypted() / importEncrypted() round-trips accounts with password", async () => {
     accountService.add({ email: "export@test.com", accessToken: "tok-a", refreshToken: "tok-r", expiresAt: 9999 });
     const blob = accountService.exportEncrypted("test-password-123");
     // Blob is an encrypted JSON envelope — not readable plaintext
@@ -107,8 +107,8 @@ describe("AccountService", () => {
     accountService.remove(accountService.list()[0].id);
     expect(accountService.list()).toHaveLength(0);
 
-    const count = accountService.importEncrypted(blob, "test-password-123");
-    expect(count).toBe(1);
+    const result = await accountService.importEncrypted(blob, "test-password-123");
+    expect(result.imported).toBe(1);
     const restored = accountService.getWithTokens(accountService.list()[0].id)!;
     expect(restored.email).toBe("export@test.com");
     expect(restored.accessToken).toBe("tok-a");
@@ -131,11 +131,11 @@ describe("AccountService", () => {
     expect(plain[0].email).toBe("a1@test.com");
   });
 
-  it("importEncrypted() skips duplicate accounts", () => {
+  it("importEncrypted() skips duplicate accounts", async () => {
     const acc = accountService.add({ email: "dup@test.com", accessToken: "tok", refreshToken: "r", expiresAt: 0 });
     const blob = accountService.exportEncrypted("pass");
-    const count = accountService.importEncrypted(blob, "pass");
-    expect(count).toBe(0); // already exists
+    const result = await accountService.importEncrypted(blob, "pass");
+    expect(result.imported).toBe(0); // already exists
     expect(accountService.list()).toHaveLength(1);
     expect(accountService.list()[0].id).toBe(acc.id);
   });

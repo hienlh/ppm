@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
-const PPM_DIR = resolve(homedir(), ".ppm");
+const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
 const CURRENT_SCHEMA_VERSION = 5;
 
 let db: Database | null = null;

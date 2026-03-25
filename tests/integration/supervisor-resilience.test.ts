@@ -12,12 +12,12 @@
  *
  * Uses a real Bun.spawn to start the supervisor with a high port to avoid conflicts.
  */
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach, afterAll } from "bun:test";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, rmSync } from "node:fs";
 
-const PPM_DIR = resolve(homedir(), ".ppm");
+const PPM_DIR = resolve(require("node:os").tmpdir(), `ppm-test-supervisor-${process.pid}`);
 const STATUS_FILE = resolve(PPM_DIR, "status.json");
 const PID_FILE = resolve(PPM_DIR, "ppm.pid");
 const LOG_FILE = resolve(PPM_DIR, "ppm.log");
@@ -90,7 +90,7 @@ async function spawnTestSupervisor(opts?: { share?: boolean }): Promise<number> 
   const child = Bun.spawn({
     cmd: [process.execPath, "run", supervisorScript, ...args],
     stdio: ["ignore", logFd, logFd],
-    env: { ...process.env, NODE_ENV: "test" },
+    env: { ...process.env, NODE_ENV: "test", PPM_HOME: PPM_DIR },
   });
 
   supervisorPid = child.pid;
@@ -107,6 +107,11 @@ describe("Supervisor Resilience", () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  afterAll(() => {
+    cleanup();
+    try { rmSync(PPM_DIR, { recursive: true, force: true }); } catch {}
   });
 
   test("supervisor starts server child and writes status.json", async () => {

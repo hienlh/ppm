@@ -21,6 +21,7 @@ import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
+import { UpgradeBanner } from "@/components/layout/upgrade-banner";
 import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
@@ -222,6 +223,9 @@ export function App() {
   return (
     <TooltipProvider>
       <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden relative">
+        {/* Upgrade banner — shown when new version available */}
+        <UpgradeBanner />
+
         {/* Mobile device name badge — floating top-left */}
         {deviceName && (
           <div className="md:hidden fixed top-0 left-0 z-50 px-2 py-0.5 bg-primary/80 text-primary-foreground text-[10px] font-medium rounded-br">

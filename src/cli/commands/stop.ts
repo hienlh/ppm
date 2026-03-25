@@ -2,8 +2,9 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { readFileSync, unlinkSync, existsSync } from "node:fs";
 
-const PID_FILE = resolve(homedir(), ".ppm", "ppm.pid");
-const STATUS_FILE = resolve(homedir(), ".ppm", "status.json");
+const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
+const PID_FILE = resolve(PPM_DIR, "ppm.pid");
+const STATUS_FILE = resolve(PPM_DIR, "status.json");
 
 function killPid(pid: number, label: string): boolean {
   try {

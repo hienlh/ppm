@@ -1,7 +1,18 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Hono } from "hono";
+import { openTestDb, setDb } from "../../../src/services/db.service.ts";
+import { configService } from "../../../src/services/config.service.ts";
 import { pushRoutes } from "../../../src/server/routes/push.ts";
 import { pushService } from "../../../src/services/push-notification.service.ts";
+
+// Ensure test DB + config are loaded so VAPID key generation works
+// Use beforeEach since other test files may reset the DB between runs
+beforeEach(() => {
+  setDb(openTestDb());
+  configService.load();
+  // Reset pushService initialized state so it re-generates VAPID keys
+  (pushService as any).initialized = false;
+});
 
 function createApp() {
   return new Hono().route("/push", pushRoutes);
