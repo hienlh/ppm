@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.57] - 2026-03-26
+
+### Fixed
+- **Self-replace port conflict**: Old supervisor's server held port while new supervisor tried to bind it, causing "port in use" crash. Now kills server/tunnel children and waits 500ms before spawning new supervisor.
+
 ## [0.8.56] - 2026-03-26
 
 ### Added
