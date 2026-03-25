@@ -496,6 +496,110 @@ describe("Chat WebSocket — New Protocol", () => {
     c2.close();
   });
 
+  // ─── abort-and-replace from different client ───
+
+  it("client 2 sending message aborts client 1's active stream", async () => {
+    const session = await chatService.createSession("mock", {});
+
+    // Connect client 1, start streaming
+    const c1 = await connectWs(session.id);
+    await c1.waitForType("session_state");
+    c1.ws.send(JSON.stringify({ type: "message", content: "hello from client 1" }));
+
+    // Wait for streaming to start
+    await c1.waitForType("text");
+
+    // Connect client 2
+    const c2 = await connectWs(session.id);
+    await c2.waitForType("session_state");
+
+    // Client 2 sends a new message — should abort client 1's stream (abort-and-replace)
+    c2.ws.send(JSON.stringify({ type: "message", content: "hello from client 2" }));
+
+    // Wait for the second done (first done comes from aborted stream, second from new stream)
+    // Both clients should eventually get done for the new stream
+    await c1.waitForNthType("done", 2, 15000);
+
+    // Client 1 should have received text events from both streams
+    const c1Texts = c1.messages.filter((m) => m.type === "text");
+    expect(c1Texts.length).toBeGreaterThan(0);
+
+    // Client 2 should have received text events from the new stream
+    const c2Texts = c2.messages.filter((m) => m.type === "text");
+    expect(c2Texts.length).toBeGreaterThan(0);
+
+    c1.close();
+    c2.close();
+  });
+
+  // ─── cross-client approval response ───
+
+  it("approval_response from a different client is accepted", async () => {
+    const session = await chatService.createSession("mock", {});
+
+    // Connect client 1, trigger approval_request with "delete"
+    const c1 = await connectWs(session.id);
+    await c1.waitForType("session_state");
+    c1.ws.send(JSON.stringify({ type: "message", content: "delete temp files" }));
+
+    // Wait for approval_request
+    const approval = await c1.waitForType("approval_request");
+    expect(approval.requestId).toBeDefined();
+
+    // Connect client 2 while c1's stream is in progress
+    const c2 = await connectWs(session.id);
+    await c2.waitForType("session_state");
+
+    // Client 2 also should have received the approval_request via turn_events or live broadcast
+    // Send approval_response from client 2
+    c2.ws.send(JSON.stringify({
+      type: "approval_response",
+      requestId: approval.requestId,
+      approved: true,
+    }));
+
+    // Both clients should receive a phase_changed broadcast (approval cleared)
+    await new Promise((r) => setTimeout(r, 300));
+    const c2PhaseChanges = c2.messages.filter((m) => m.type === "phase_changed");
+    expect(c2PhaseChanges.length).toBeGreaterThan(0);
+
+    // Wait for stream to finish
+    await c1.waitForType("done");
+
+    c1.close();
+    c2.close();
+  });
+
+  // ─── race condition: stream finishes between REST and WS connect ───
+
+  it("client connecting right after stream ends gets idle state without stale turn_events", async () => {
+    const session = await chatService.createSession("mock", {});
+
+    // Connect, send message, wait for done
+    const c1 = await connectWs(session.id);
+    await c1.waitForType("session_state");
+    c1.ws.send(JSON.stringify({ type: "message", content: "hello race test" }));
+    await c1.waitForType("done");
+
+    // Wait for idle phase (sent after done in finally block)
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Simulate: client 2 connects right after stream ended
+    // (represents the window between REST history fetch and WS connect)
+    // turnEvents should already be cleared in the finally block
+    const c2 = await connectWs(session.id);
+    const state = await c2.waitForType("session_state");
+    expect(state.phase).toBe("idle");
+
+    // Should NOT get any turn_events (buffer was cleared before idle)
+    await new Promise((r) => setTimeout(r, 300));
+    const turnEvents = c2.messages.filter((m) => m.type === "turn_events");
+    expect(turnEvents).toHaveLength(0);
+
+    c1.close();
+    c2.close();
+  });
+
   // ─── phase goes back to idle after stream completes ───
 
   it("phase returns to idle after stream completes", async () => {
