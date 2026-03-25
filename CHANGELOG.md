@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.51] - 2026-03-25
+
+### Added
+- **API Key / Token field**: New input in AI Settings to set a direct API key — overrides account rotation and env vars. Masked in responses (shows `••••` + last 4 chars)
+- **Anthropic API proxy**: Forward Anthropic Messages API requests through PPM with account token rotation. Endpoints: `POST /proxy/v1/messages`, `POST /proxy/v1/messages/count_tokens`
+- **Proxy settings UI**: Enable/disable proxy, manage auth key, view tunnel URL and request count
+- **Proxy settings API**: `GET/PUT /api/settings/proxy` for proxy configuration
+- **Auth priority**: Settings `api_key` > account token > shell env `ANTHROPIC_API_KEY` > block project .env
+- **Proxy tests**: 18 integration tests for proxy API, 4 unit tests for buildQueryEnv priority, 3 unit tests for api_key masking
+
+### Changed
+- **Message list**: Removed unused pinned message feature
+
 ## [0.8.50] - 2026-03-25
 
 ### Fixed
