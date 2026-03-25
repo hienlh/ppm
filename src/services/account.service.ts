@@ -581,7 +581,7 @@ class AccountService {
   /**
    * Export accounts backup.
    * @param includeRefreshToken - if true, includes refresh tokens (full transfer).
-   *   Source machine's tokens will be invalidated after the target refreshes.
+   *   Source keeps its refresh token; it will be auto-cleared if it becomes invalid.
    *   Default false = temporary export (access-only, ~1h).
    */
   exportEncrypted(password: string, accountIds?: string[], includeRefreshToken = false): string {
@@ -594,9 +594,6 @@ class AccountService {
       if (includeRefreshToken) {
         let refreshToken = row.refresh_token;
         try { refreshToken = decrypt(refreshToken); } catch { /* already plaintext or corrupt */ }
-        // Clear refresh token on source machine — accounts become temporary
-        updateAccount(row.id, { refresh_token: encrypt("") });
-        console.log(`[accounts] Full transfer: cleared refresh token for ${row.email ?? row.id} (now temporary on this machine)`);
         return { ...row, access_token: accessToken, refresh_token: refreshToken };
       }
       return { ...row, access_token: accessToken, refresh_token: "" };

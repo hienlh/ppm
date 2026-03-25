@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.45] - 2026-03-25
+
+### Fixed
+- **Account export**: Keep refresh token on source machine when exporting with full transfer — auto-cleared only when token becomes invalid
+
 ## [0.8.44] - 2026-03-25
 
 ### Improved
