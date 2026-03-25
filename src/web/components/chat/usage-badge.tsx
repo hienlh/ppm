@@ -97,7 +97,7 @@ function BucketRow({ label, bucket }: { label: string; bucket?: LimitBucket }) {
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-text-primary">{label}</span>
         {reset && (
-          <span className="text-[10px] text-text-subtle">↻ {reset}</span>
+          <span className="text-[10px] text-text-subtle" title="Resets in">↻ {reset}</span>
         )}
       </div>
       <div className="flex items-center gap-2">
@@ -113,6 +113,28 @@ function BucketRow({ label, bucket }: { label: string; bucket?: LimitBucket }) {
       </div>
     </div>
   );
+}
+
+function formatExpiry(expiresAt: number): string {
+  const diff = expiresAt - Date.now();
+  if (diff <= 0) return "expired";
+  const mins = Math.ceil(diff / 60_000);
+  const h = Math.floor(mins / 60);
+  const d = Math.floor(h / 24);
+  if (d > 0) return `${d}d ${h % 24}h`;
+  if (h > 0) return `${h}h ${mins % 60}m`;
+  return `${mins}m`;
+}
+
+/** Derive a human-readable token status from account info */
+function tokenStatus(info?: AccountInfo): { label: string; tip: string; color: string } {
+  if (!info) return { label: "unknown", tip: "No account info available", color: "text-text-subtle" };
+  if (!info.expiresAt) return { label: "key", tip: "API key (no expiry)", color: "text-text-subtle" };
+  const expired = info.expiresAt * 1000 < Date.now(); // expiresAt is seconds
+  if (expired && info.hasRefreshToken) return { label: "expired", tip: "Token expired but has refresh token — will auto-renew", color: "text-amber-500" };
+  if (expired) return { label: "expired", tip: "Token expired, no refresh token", color: "text-red-500" };
+  if (info.hasRefreshToken) return { label: "long-lived", tip: "OAuth token with refresh — long-lived", color: "text-green-500" };
+  return { label: "temp", tip: "Temporary token without refresh — will expire", color: "text-amber-500" };
 }
 
 function formatLastUpdated(ts: number | null | undefined): string | null {
@@ -193,11 +215,21 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onExport, on
           {entry.isOAuth ? "No usage data yet" : "Usage tracking not available for API keys"}
         </p>
       )}
-      {usage.lastFetchedAt && (
-        <p className="text-[9px] text-text-subtle">
-          Updated: {formatLastUpdated(new Date(usage.lastFetchedAt).getTime())}
-        </p>
-      )}
+      {/* Footer: updated · expires · type */}
+      {(() => {
+        const ts = tokenStatus(accountInfo);
+        return (
+          <div className="flex items-center gap-1.5 text-[9px] text-text-subtle flex-wrap">
+            {usage.lastFetchedAt && (
+              <span title="Last usage data update">↻ {formatLastUpdated(new Date(usage.lastFetchedAt).getTime())}</span>
+            )}
+            {accountInfo?.expiresAt && accountInfo.expiresAt * 1000 > Date.now() && (
+              <span title="Token expires in">⏱ {formatExpiry(accountInfo.expiresAt * 1000)}</span>
+            )}
+            <span className={ts.color} title={ts.tip}>© {ts.label}</span>
+          </div>
+        );
+      })()}
     </div>
   );
 }
