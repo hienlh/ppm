@@ -90,29 +90,72 @@ class AccountSelectorService {
   }
 
   /**
-   * Pick account with lowest 5-hour utilization.
-   * Skips accounts with weekly >= 100% (fully exhausted).
-   * Accounts with no usage data are treated as 0% (preferred).
-   * Falls back to round-robin if all accounts are maxed.
+   * Peek at which account the current strategy would pick, without consuming it.
+   * Returns null if no active accounts.
+   */
+  peek(): AccountWithTokens | null {
+    const now = Math.floor(Date.now() / 1000);
+    const active = accountService.list().filter(
+      (a) => a.status === "active" || (a.status === "cooldown" && (a.cooldownUntil ?? 0) <= now),
+    );
+    if (active.length === 0) return null;
+
+    const strategy = this.getStrategy();
+    let pickedId: string;
+    if (strategy === "lowest-usage") {
+      pickedId = this.pickLowestUsage(active);
+    } else if (strategy === "fill-first") {
+      const sorted = [...active].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
+      pickedId = sorted[0]!.id;
+    } else {
+      const idx = this.cursor % active.length;
+      pickedId = active[idx]!.id;
+    }
+    return accountService.getWithTokens(pickedId);
+  }
+
+  /**
+   * Weighted sustainability score.
+   * Considers 5-hour utilization, weekly utilization, and time until weekly reset.
+   *
+   * score = 0.35 × (1 - 5hr) + 0.65 × min(weeklyRemaining / resetRatio, 1.0)
+   *
+   * weeklyRemaining / resetRatio normalizes remaining capacity by time until reset:
+   *  - 4% remaining with 34h left  → low sustainability (0.20)
+   *  - 78% remaining with 113h left → high sustainability (1.0, capped)
+   *  - 20% remaining with 6h left   → decent (resets soon, so it's fine)
    */
   private pickLowestUsage(active: { id: string; createdAt: number }[]): string {
     const scored = active.map((acc) => {
       const snap = getLatestSnapshotForAccount(acc.id);
       const fiveHour = snap?.five_hour_util ?? 0;
       const weekly = snap?.weekly_util ?? 0;
-      // weekly >= 1.0 means fully exhausted — mark as unavailable
       const exhausted = weekly >= 1.0 || fiveHour >= 1.0;
-      return { id: acc.id, fiveHour, weekly, exhausted };
+
+      // Compute hours until weekly reset (default 168h = full week if unknown)
+      let weeklyResetHours = 168;
+      if (snap?.weekly_resets_at) {
+        const diff = new Date(snap.weekly_resets_at).getTime() - Date.now();
+        weeklyResetHours = Math.max(diff / 3_600_000, 0.1);
+      }
+
+      const immediate = 1 - fiveHour;
+      const weeklyRemaining = 1 - weekly;
+      const resetRatio = weeklyResetHours / 168;
+      const sustainability = Math.min(weeklyRemaining / Math.max(resetRatio, 0.05), 1.0);
+      const score = 0.35 * immediate + 0.65 * sustainability;
+
+      return { id: acc.id, score, exhausted };
     });
 
     const available = scored.filter((s) => !s.exhausted);
     if (available.length > 0) {
-      available.sort((a, b) => a.fiveHour - b.fiveHour || a.weekly - b.weekly);
+      available.sort((a, b) => b.score - a.score);
       return available[0]!.id;
     }
 
-    // All exhausted — fallback: pick the one with earliest reset (lowest current util)
-    scored.sort((a, b) => a.fiveHour - b.fiveHour || a.weekly - b.weekly);
+    // All exhausted — pick highest score as fallback
+    scored.sort((a, b) => b.score - a.score);
     return scored[0]!.id;
   }
 

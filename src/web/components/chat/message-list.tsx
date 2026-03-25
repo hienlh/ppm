@@ -17,14 +17,21 @@ import {
   Image as ImageIcon,
   Copy,
   Check,
+  CheckCircle2,
   Loader2,
   RotateCcw,
   TerminalSquare,
   ChevronUp,
   Tag,
+  XCircle,
+  ExternalLink,
 } from "lucide-react";
 import { QuestionCard } from "./question-card";
 import type { Question } from "./question-card";
+import { useTabStore } from "@/stores/tab-store";
+import { api } from "@/lib/api-client";
+import { useProjectStore } from "@/stores/project-store";
+import { useImageOverlay } from "@/stores/image-overlay-store";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -75,6 +82,9 @@ export function MessageList({
   const filtered = useMemo(() => messages.filter((msg) => {
     const hasContent = msg.content && msg.content.trim().length > 0;
     const hasEvents = msg.events && msg.events.length > 0;
+    // User bubbles only render text — hide SDK tool-result user messages
+    // that have no text content (their events are merged into assistant)
+    if (msg.role === "user") return hasContent;
     return hasContent || hasEvents;
   }), [messages]);
 
@@ -147,7 +157,7 @@ function MessageBubble({ message, isStreaming, projectName, onFork }: { message:
               <MarkdownContent content={message.content} projectName={projectName} />
             </div>
           )}
-      {!isStreaming && message.accountLabel && (
+      {message.accountLabel && (
         <p className="text-[10px] select-none" style={{ color: "var(--color-text-subtle)" }}>
           via {message.accountLabel}
         </p>
@@ -172,12 +182,14 @@ const TAG_LABELS: Record<string, string> = {
   "currentDate": "Date",
   "fast_mode_info": "Fast Mode",
   "available-deferred-tools": "Tools",
+  "task-notification": "Task Result",
+  "environment_details": "Environment",
 };
 
 /** Extract system-injected XML tags into structured objects + clean text */
 function extractSystemTags(text: string): { cleanText: string; tags: SystemTag[] } {
   const tags: SystemTag[] = [];
-  const tagPattern = /<(system-reminder|available-deferred-tools|antml:[\w-]+|fast_mode_info|claudeMd|gitStatus|currentDate)[^>]*>([\s\S]*?)<\/\1>/g;
+  const tagPattern = /<(system-reminder|available-deferred-tools|antml:[\w-]+|fast_mode_info|claudeMd|gitStatus|currentDate|task-notification|environment_details)[^>]*>([\s\S]*?)<\/\1>/g;
   let match;
   while ((match = tagPattern.exec(text)) !== null) {
     const name = match[1]!;
@@ -226,6 +238,9 @@ function isPdfPath(path: string): boolean {
   return path.toLowerCase().endsWith(".pdf");
 }
 
+/** Detect if tags contain system-injected content (not real user input) */
+const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details"]);
+
 /** User message bubble — full width, collapsible, with system tag badges */
 function UserBubble({ content, projectName, onFork }: { content: string; projectName?: string; onFork?: () => void }) {
   const { files, text, tags } = useMemo(() => {
@@ -234,6 +249,8 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
     return { files: parsed.files, text: cleanText, tags };
   }, [content]);
 
+  const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
+
   const [expanded, setExpanded] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -241,32 +258,39 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
   useEffect(() => {
     const el = contentRef.current;
     if (!el) return;
-    // Compare natural height vs clamped height (5 lines ≈ 5 * 1.25rem)
     const check = () => setIsOverflowing(el.scrollHeight > el.clientHeight + 2);
     check();
-    // Re-check on resize
     const ro = new ResizeObserver(check);
     ro.observe(el);
     return () => ro.disconnect();
   }, [text]);
 
   return (
-    <div className="group/user relative rounded-lg bg-primary/10 px-3 py-2 text-sm text-text-primary border border-primary/15 shadow-sm">
+    <div className={cn(
+      "group/user relative rounded-lg px-3 py-2 text-sm border shadow-sm",
+      isSystemContext
+        ? "bg-surface/40 border-border/40 text-text-secondary"
+        : "bg-primary/10 border-primary/15 text-text-primary",
+    )}>
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
-      {/* Attached files — compact chips (same style as input area) */}
+      {/* Attached files — image thumbnails + file chips */}
       {files.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {files.map((filePath, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary"
-            >
-              {isImagePath(filePath) ? <ImageIcon className="size-3 shrink-0" /> : <FileText className="size-3 shrink-0" />}
-              <span className="truncate max-w-32">{basename(filePath)}</span>
-            </div>
-          ))}
+          {files.map((filePath, i) =>
+            isImagePath(filePath) ? (
+              <AuthImageThumbnail key={i} filePath={filePath} projectName={projectName} />
+            ) : (
+              <div
+                key={i}
+                className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary"
+              >
+                <FileText className="size-3 shrink-0" />
+                <span className="truncate max-w-32">{basename(filePath)}</span>
+              </div>
+            ),
+          )}
         </div>
       )}
 
@@ -280,29 +304,22 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
             expanded && "max-h-[50vh] overflow-y-auto",
           )}
         >
-          {text}
+          {isSystemContext ? <TextWithFilePaths text={text} projectName={projectName} /> : text}
         </div>
       )}
       {(isOverflowing || expanded) && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary mt-1 transition-colors"
-        >
-          {expanded ? (
-            <>
-              <ChevronUp className="size-3" />
-              Show less
-            </>
-          ) : (
-            <>
-              <ChevronDown className="size-3" />
-              Show more
-            </>
+          className={cn(
+            "flex items-center gap-1 text-xs mt-1 transition-colors",
+            isSystemContext ? "text-text-subtle hover:text-text-secondary" : "text-primary/70 hover:text-primary",
           )}
+        >
+          {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
         </button>
       )}
-      {/* Fork/Rewind button — absolute top-right, visible on hover */}
-      {onFork && (
+      {/* Fork/Rewind button — only for real user messages */}
+      {!isSystemContext && onFork && (
         <button
           onClick={onFork}
           title="Retry from this message (fork session)"
@@ -328,6 +345,12 @@ function SystemTagBadges({ tags }: { tags: SystemTag[] }) {
 
 function SystemTagBadge({ tag }: { tag: SystemTag }) {
   const [open, setOpen] = useState(false);
+
+  // Task notification: render formatted instead of raw XML
+  if (tag.name === "task-notification") {
+    return <TaskNotificationBadge content={tag.content} />;
+  }
+
   return (
     <div className="text-xs">
       <button
@@ -347,28 +370,131 @@ function SystemTagBadge({ tag }: { tag: SystemTag }) {
   );
 }
 
-/** Fetches image with auth header, renders as blob URL */
-function AuthImage({ src, alt }: { src: string; alt: string }) {
+/** Extract a sub-tag value from XML-like content */
+function xmlTag(content: string, tag: string): string | undefined {
+  const m = content.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+  return m?.[1]?.trim() || undefined;
+}
+
+/** Formatted badge for <task-notification> — shows status, summary, output file, result */
+function TaskNotificationBadge({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  const status = xmlTag(content, "status");
+  const summary = xmlTag(content, "summary");
+  const outputFile = xmlTag(content, "output-file");
+  const result = xmlTag(content, "result");
+  const isOk = status === "completed";
+
+  return (
+    <div className="text-xs">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 rounded-full border border-border/60 bg-surface/50 px-2 py-0.5 text-text-subtle hover:text-text-secondary hover:bg-surface transition-colors"
+      >
+        {isOk ? <CheckCircle2 className="size-2.5 text-green-500" /> : <XCircle className="size-2.5 text-yellow-500" />}
+        <span className="truncate max-w-80">{summary ?? "Task notification"}</span>
+        <ChevronRight className={cn("size-2.5 transition-transform shrink-0", open && "rotate-90")} />
+      </button>
+      {open && (
+        <div className="mt-1 rounded border border-border/40 bg-surface/30 px-2 py-1.5 space-y-1.5">
+          {/* Full summary (button truncates it) */}
+          {summary && <p className="text-[11px] text-text-secondary">{summary}</p>}
+          {outputFile && <FilePathChip path={outputFile} />}
+          {result && (
+            <div className="text-[11px] text-text-subtle/80 max-h-60 overflow-y-auto leading-relaxed">
+              <MarkdownContent content={result} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Clickable file path chip — opens file in editor tab */
+function FilePathChip({ path, projectName }: { path: string; projectName?: string }) {
+  const handleClick = useCallback(() => {
+    const openTab = useTabStore.getState().openTab;
+    const pName = projectName ?? useProjectStore.getState().activeProject?.name;
+    const fileName = basename(path);
+    const meta: Record<string, unknown> = { filePath: path };
+    if (pName) meta.projectName = pName;
+    // Try to verify file exists, then open; fallback: open directly
+    api.get(`/api/fs/read?path=${encodeURIComponent(path)}`).then(() => {
+      openTab({ type: "editor", title: fileName, metadata: meta, projectId: null, closable: true });
+    }).catch(() => {
+      openTab({ type: "editor", title: fileName, metadata: meta, projectId: null, closable: true });
+    });
+  }, [path, projectName]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className="inline-flex items-center gap-1 rounded border border-border/50 bg-surface/50 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary hover:text-text-primary hover:bg-surface transition-colors cursor-pointer"
+    >
+      <FileText className="size-2.5 shrink-0" />
+      <span className="truncate max-w-60">{basename(path)}</span>
+      <ExternalLink className="size-2 shrink-0 opacity-50" />
+    </button>
+  );
+}
+
+/** Render text with absolute file paths detected and turned into clickable chips */
+function TextWithFilePaths({ text, projectName }: { text: string; projectName?: string }) {
+  const parts = useMemo(() => {
+    // Match absolute file paths (at least 2 segments)
+    const re = /(\/(?:[\w.\-]+\/)+[\w.\-]+)/g;
+    const result: { kind: "text" | "path"; value: string }[] = [];
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) result.push({ kind: "text", value: text.slice(last, m.index) });
+      result.push({ kind: "path", value: m[1]! });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) result.push({ kind: "text", value: text.slice(last) });
+    return result;
+  }, [text]);
+
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.kind === "path"
+          ? <FilePathChip key={i} path={p.value} projectName={projectName} />
+          : <span key={i}>{p.value}</span>,
+      )}
+    </>
+  );
+}
+
+/** Hook: fetch an image via auth header, return blob URL */
+function useAuthBlob(src: string): { blobUrl: string | null; error: boolean } {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    let revoke: string | undefined;
+    let revoked = false;
+    let url: string | undefined;
     const token = getAuthToken();
     fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to load");
-        return r.blob();
-      })
+      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.blob(); })
       .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        revoke = url;
+        if (revoked) return;
+        url = URL.createObjectURL(blob);
         setBlobUrl(url);
       })
-      .catch(() => setError(true));
-
-    return () => { if (revoke) URL.revokeObjectURL(revoke); };
+      .catch(() => { if (!revoked) setError(true); });
+    return () => { revoked = true; if (url) URL.revokeObjectURL(url); };
   }, [src]);
+
+  return { blobUrl, error };
+}
+
+/** Fetches image with auth header, renders as blob URL — click opens lightbox */
+function AuthImage({ src, alt }: { src: string; alt: string }) {
+  const { blobUrl, error } = useAuthBlob(src);
+  const openOverlay = useImageOverlay((s) => s.open);
 
   if (error) {
     return (
@@ -384,13 +510,38 @@ function AuthImage({ src, alt }: { src: string; alt: string }) {
   }
 
   return (
-    <a href={blobUrl} target="_blank" rel="noopener noreferrer" className="block">
+    <button type="button" onClick={() => openOverlay(blobUrl, alt)} className="block text-left">
       <img
         src={blobUrl}
         alt={alt}
-        className="rounded-md max-h-48 max-w-full object-contain border border-border"
+        className="rounded-md max-h-48 max-w-full object-contain border border-border cursor-pointer hover:opacity-90 transition-opacity"
       />
-    </a>
+    </button>
+  );
+}
+
+/** Chip for attached images in user bubble — tiny preview replaces icon, click opens lightbox */
+function AuthImageThumbnail({ filePath, projectName }: { filePath: string; projectName?: string }) {
+  const src = uploadPreviewUrl(filePath, projectName);
+  const { blobUrl, error } = useAuthBlob(src);
+  const openOverlay = useImageOverlay((s) => s.open);
+  const name = basename(filePath);
+
+  return (
+    <button
+      type="button"
+      onClick={() => blobUrl && openOverlay(blobUrl, name)}
+      className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary hover:bg-surface transition-colors cursor-pointer"
+    >
+      {blobUrl ? (
+        <img src={blobUrl} alt={name} className="size-4 rounded-sm object-cover shrink-0" />
+      ) : error ? (
+        <ImageIcon className="size-3 shrink-0" />
+      ) : (
+        <div className="size-4 rounded-sm bg-surface animate-pulse shrink-0" />
+      )}
+      <span className="truncate max-w-32">{name}</span>
+    </button>
   );
 }
 

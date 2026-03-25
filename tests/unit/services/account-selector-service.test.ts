@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
-import { openTestDb, setDb, closeDb, updateAccount } from "../../../src/services/db.service.ts";
+import { openTestDb, setDb, closeDb, updateAccount, insertLimitSnapshot } from "../../../src/services/db.service.ts";
 import { setKeyPath } from "../../../src/lib/account-crypto.ts";
 import { accountService } from "../../../src/services/account.service.ts";
 import { accountSelector } from "../../../src/services/account-selector.service.ts";
@@ -182,5 +182,199 @@ describe("AccountSelectorService", () => {
   it("setMaxRetry() persists via config", () => {
     accountSelector.setMaxRetry(3);
     expect(accountSelector.getMaxRetry()).toBe(3);
+  });
+});
+
+// Helper: insert a usage snapshot for an account
+function insertUsage(accountId: string, opts: {
+  fiveHour: number;
+  weekly: number;
+  weeklyResetsAt?: string;
+}) {
+  insertLimitSnapshot({
+    account_id: accountId,
+    five_hour_util: opts.fiveHour,
+    five_hour_resets_at: null,
+    weekly_util: opts.weekly,
+    weekly_resets_at: opts.weeklyResetsAt ?? null,
+    weekly_opus_util: null,
+    weekly_opus_resets_at: null,
+    weekly_sonnet_util: null,
+    weekly_sonnet_resets_at: null,
+  });
+}
+
+function hoursFromNow(h: number): string {
+  return new Date(Date.now() + h * 3_600_000).toISOString();
+}
+
+describe("lowest-usage weighted sustainability strategy", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+    accountSelector.setStrategy("lowest-usage");
+  });
+
+  afterEach(() => {
+    setDb(openTestDb());
+  });
+
+  it("prefers account with lower 5hr when weekly is similar", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+
+    insertUsage(a.id, { fiveHour: 0.10, weekly: 0.20, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.50, weekly: 0.20, weeklyResetsAt: hoursFromNow(100) });
+
+    const picked = accountSelector.next();
+    expect(picked!.id).toBe(a.id);
+  });
+
+  it("prefers account with more weekly remaining over lower 5hr", () => {
+    // Peter Van: 5hr=23%, weekly=96%, reset 34h
+    const peter = addAccount("peter@test.com");
+    // Jim: 5hr=47%, weekly=22%, reset 113h
+    const jim = addAccount("jim@test.com");
+
+    insertUsage(peter.id, { fiveHour: 0.23, weekly: 0.96, weeklyResetsAt: hoursFromNow(34) });
+    insertUsage(jim.id, { fiveHour: 0.47, weekly: 0.22, weeklyResetsAt: hoursFromNow(113) });
+
+    const picked = accountSelector.next();
+    // Jim should win: high sustainability (78% remaining / large window)
+    expect(picked!.id).toBe(jim.id);
+  });
+
+  it("considers weekly reset proximity — high usage but imminent reset is OK", () => {
+    // Account A: weekly 80%, resets in 6h → decent sustainability (20% for 6h, soon fresh)
+    const a = addAccount("a@test.com");
+    // Account B: weekly 30%, resets in 160h → lots remaining but spread over long time
+    const b = addAccount("b@test.com");
+
+    insertUsage(a.id, { fiveHour: 0.10, weekly: 0.80, weeklyResetsAt: hoursFromNow(6) });
+    insertUsage(b.id, { fiveHour: 0.10, weekly: 0.30, weeklyResetsAt: hoursFromNow(160) });
+
+    // A: sustainability = 0.20 / (6/168) = 0.20/0.036 = 5.6 → capped 1.0
+    //    score = 0.35*0.9 + 0.65*1.0 = 0.965
+    // B: sustainability = 0.70 / (160/168) = 0.70/0.952 = 0.735
+    //    score = 0.35*0.9 + 0.65*0.735 = 0.793
+    const picked = accountSelector.next();
+    expect(picked!.id).toBe(a.id);
+  });
+
+  it("skips exhausted accounts (weekly >= 100%)", () => {
+    const exhausted = addAccount("exhausted@test.com");
+    const fresh = addAccount("fresh@test.com");
+
+    insertUsage(exhausted.id, { fiveHour: 0.10, weekly: 1.0, weeklyResetsAt: hoursFromNow(10) });
+    insertUsage(fresh.id, { fiveHour: 0.50, weekly: 0.50, weeklyResetsAt: hoursFromNow(100) });
+
+    const picked = accountSelector.next();
+    expect(picked!.id).toBe(fresh.id);
+  });
+
+  it("skips exhausted accounts (5hr >= 100%)", () => {
+    const blocked = addAccount("blocked@test.com");
+    const ok = addAccount("ok@test.com");
+
+    insertUsage(blocked.id, { fiveHour: 1.0, weekly: 0.10, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(ok.id, { fiveHour: 0.60, weekly: 0.40, weeklyResetsAt: hoursFromNow(100) });
+
+    const picked = accountSelector.next();
+    expect(picked!.id).toBe(ok.id);
+  });
+
+  it("falls back to highest score when all exhausted", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+
+    // Both exhausted, but a resets sooner → higher sustainability score
+    insertUsage(a.id, { fiveHour: 1.0, weekly: 1.0, weeklyResetsAt: hoursFromNow(2) });
+    insertUsage(b.id, { fiveHour: 1.0, weekly: 1.0, weeklyResetsAt: hoursFromNow(100) });
+
+    const picked = accountSelector.next();
+    // Both have immediate=0, but a has higher sustainability due to imminent reset
+    expect(picked).not.toBeNull();
+  });
+
+  it("treats accounts with no snapshot as 0% usage (preferred)", () => {
+    const noData = addAccount("new@test.com");
+    const used = addAccount("used@test.com");
+
+    // No snapshot for noData → treated as 0% on everything
+    insertUsage(used.id, { fiveHour: 0.30, weekly: 0.30, weeklyResetsAt: hoursFromNow(100) });
+
+    const picked = accountSelector.next();
+    // noData: immediate=1.0, sustainability=1.0/max(168/168,0.05)=1.0 → score=1.0
+    expect(picked!.id).toBe(noData.id);
+  });
+
+  it("real-world scenario from image — 4 accounts", () => {
+    const vincent = addAccount("vincent@test.com");
+    const victor = addAccount("victor@test.com");
+    const peter = addAccount("peter@test.com");
+    const jim = addAccount("jim@test.com");
+
+    // Vincent: 5hr=14%, weekly=100%, reset 1d11h (35h)
+    insertUsage(vincent.id, { fiveHour: 0.14, weekly: 1.0, weeklyResetsAt: hoursFromNow(35) });
+    // Victor: 5hr=100%, weekly=89%, reset 1d10h (34h)
+    insertUsage(victor.id, { fiveHour: 1.0, weekly: 0.89, weeklyResetsAt: hoursFromNow(34) });
+    // Peter Van: 5hr=23%, weekly=96%, reset 1d10h (34h)
+    insertUsage(peter.id, { fiveHour: 0.23, weekly: 0.96, weeklyResetsAt: hoursFromNow(34) });
+    // Jim: 5hr=47%, weekly=22%, reset 4d17h (113h)
+    insertUsage(jim.id, { fiveHour: 0.47, weekly: 0.22, weeklyResetsAt: hoursFromNow(113) });
+
+    const picked = accountSelector.next();
+    // Vincent: EXHAUSTED (weekly=100%)
+    // Victor: EXHAUSTED (5hr=100%)
+    // Peter: score = 0.35*0.77 + 0.65*min(0.04/0.202, 1) = 0.270 + 0.129 = 0.399
+    // Jim: score = 0.35*0.53 + 0.65*min(0.78/0.673, 1) = 0.186 + 0.650 = 0.836
+    expect(picked!.id).toBe(jim.id);
+  });
+});
+
+describe("peek()", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+    accountSelector.setStrategy("lowest-usage");
+  });
+
+  afterEach(() => {
+    setDb(openTestDb());
+  });
+
+  it("returns null when no active accounts", () => {
+    expect(accountSelector.peek()).toBeNull();
+  });
+
+  it("returns the same account that next() would pick", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+
+    insertUsage(a.id, { fiveHour: 0.80, weekly: 0.80, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.10, weekly: 0.10, weeklyResetsAt: hoursFromNow(100) });
+
+    const peeked = accountSelector.peek();
+    const picked = accountSelector.next();
+    expect(peeked!.id).toBe(picked!.id);
+  });
+
+  it("does not consume the pick (non-destructive)", () => {
+    accountSelector.setStrategy("round-robin");
+    addAccount("a@test.com");
+    addAccount("b@test.com");
+
+    const peek1 = accountSelector.peek();
+    const peek2 = accountSelector.peek();
+    // Peeking twice should return same result (cursor not advanced)
+    expect(peek1!.id).toBe(peek2!.id);
+  });
+
+  it("includes expired cooldown accounts", () => {
+    const a = addAccount("a@test.com");
+    // Cooldown already expired
+    accountService.setCooldown(a.id, Date.now() - 1000);
+
+    const peeked = accountSelector.peek();
+    expect(peeked).not.toBeNull();
+    expect(peeked!.id).toBe(a.id);
   });
 });

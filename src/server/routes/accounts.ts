@@ -38,14 +38,9 @@ accountsRoutes.get("/", (c) => {
 
 /** GET /api/accounts/active — which account will be used next */
 accountsRoutes.get("/active", (c) => {
-  const lastId = accountSelector.lastPickedId;
-  if (!lastId) {
-    // No account picked yet — peek at what next() would return without consuming it
-    const accounts = accountService.list().filter((a) => a.status === "active");
-    if (accounts.length === 0) return c.json(ok(null));
-    return c.json(ok(accounts[0]));
-  }
-  const account = accountService.list().find((a) => a.id === lastId) ?? null;
+  const peeked = accountSelector.peek();
+  if (!peeked) return c.json(ok(null));
+  const account = accountService.list().find((a) => a.id === peeked.id) ?? null;
   return c.json(ok(account));
 });
 
