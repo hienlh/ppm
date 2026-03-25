@@ -166,22 +166,28 @@ export async function startServer(options: {
   // Setup log file (both foreground and daemon modes)
   await setupLogFile();
 
-  // Check if port is already in use before starting
-  const portInUse = await new Promise<boolean>((resolve) => {
-    const net = require("node:net") as typeof import("node:net");
-    const tester = net.createServer()
-      .once("error", (err: NodeJS.ErrnoException) => {
-        resolve(err.code === "EADDRINUSE");
-      })
-      .once("listening", () => {
-        tester.close(() => resolve(false));
-      })
-      .listen(port, host);
-  });
-  if (portInUse) {
-    console.error(`\n  ✗  Port ${port} is already in use.`);
-    console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
-    process.exit(1);
+  // Check if port is already in use before starting.
+  // Skip in hot-reload mode — Bun.serve() replaces the previous server on the same port,
+  // but a net.createServer() probe would see it as "in use" and exit prematurely.
+  // globalThis persists across bun --hot reloads, so we use a flag set after first start.
+  const isHotReload = !!(globalThis as any).__PPM_SERVER_STARTED__;
+  if (!isHotReload) {
+    const portInUse = await new Promise<boolean>((resolve) => {
+      const net = require("node:net") as typeof import("node:net");
+      const tester = net.createServer()
+        .once("error", (err: NodeJS.ErrnoException) => {
+          resolve(err.code === "EADDRINUSE");
+        })
+        .once("listening", () => {
+          tester.close(() => resolve(false));
+        })
+        .listen(port, host);
+    });
+    if (portInUse) {
+      console.error(`\n  ✗  Port ${port} is already in use.`);
+      console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
+      process.exit(1);
+    }
   }
 
   const isDaemon = !options.foreground;
@@ -392,6 +398,9 @@ export async function startServer(options: {
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });
+
+  // Mark server as started — survives bun --hot reloads (globalThis persists)
+  (globalThis as any).__PPM_SERVER_STARTED__ = true;
 
   // Start background usage polling
   import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
