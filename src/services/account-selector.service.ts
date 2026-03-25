@@ -8,6 +8,7 @@ const MAX_RETRY_CONFIG_KEY = "account_max_retry";
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
+const AUTH_BACKOFF_BASE_MS = 5 * 60_000; // 5min base for auth errors (longer than rate limits)
 
 class AccountSelectorService {
   private cursor = 0;
@@ -125,11 +126,13 @@ class AccountSelectorService {
     console.log(`[accounts] ${accountId} rate limited — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
   }
 
-  /** Called when 401 Unauthorized — disable account */
+  /** Called when auth error (401 / authentication_failed) — cooldown with longer backoff */
   onAuthError(accountId: string): void {
-    console.log(`[accounts] ${accountId} auth error — disabling account`);
-    accountService.setDisabled(accountId);
-    this.retryCounts.delete(accountId);
+    const retries = (this.retryCounts.get(accountId) ?? 0) + 1;
+    this.retryCounts.set(accountId, retries);
+    const backoffMs = Math.min(AUTH_BACKOFF_BASE_MS * Math.pow(2, retries - 1), BACKOFF_MAX_MS);
+    accountService.setCooldown(accountId, Date.now() + backoffMs);
+    console.log(`[accounts] ${accountId} auth error — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
   }
 
   /** Called on successful request — reset retry count + track usage */

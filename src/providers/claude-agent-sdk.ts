@@ -628,9 +628,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 }
               } catch (refreshErr) {
                 console.error(`[sdk] session=${sessionId} OAuth refresh failed:`, refreshErr);
-                // Cooldown instead of permanent disable — auth issues can be transient
-                // (subscription lapse, org changes, API hiccups)
-                accountSelector.onRateLimit(account.id);
+                accountSelector.onAuthError(account.id);
               }
             }
 
@@ -704,8 +702,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 await accountService.refreshAccessToken(account.id, false);
                 console.log(`[sdk] 401 on account ${account.id} — token refreshed`);
               } catch {
-                // Cooldown instead of permanent disable — auth issues can be transient
-                accountSelector.onRateLimit(account.id);
+                accountSelector.onAuthError(account.id);
               }
             } else {
               accountSelector.onSuccess(account.id);

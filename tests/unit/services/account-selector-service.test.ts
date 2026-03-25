@@ -144,10 +144,10 @@ describe("AccountSelectorService", () => {
     expect(cd2).toBeGreaterThanOrEqual(cd1);
   });
 
-  it("onAuthError() disables account", () => {
+  it("onAuthError() puts account in cooldown", () => {
     const a = addAccount("a@test.com");
     accountSelector.onAuthError(a.id);
-    expect(accountService.list()[0].status).toBe("disabled");
+    expect(accountService.list()[0].status).toBe("cooldown");
   });
 
   it("onSuccess() tracks usage", () => {
