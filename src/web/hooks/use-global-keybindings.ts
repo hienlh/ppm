@@ -23,9 +23,14 @@ export function useGlobalKeybindings() {
     let lastShiftUp = 0;
     const { matchesEvent } = useKeybindingsStore.getState();
 
+    let composing = false;
+    function onCompositionStart() { composing = true; }
+    function onCompositionEnd() { composing = false; }
+
     function handler(e: KeyboardEvent) {
       // Double-Shift detection (on keyup to avoid repeats) — always active
-      if (e.type === "keyup" && e.key === "Shift" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Skip during IME composition (e.g. Vietnamese Telex) to prevent false triggers
+      if (e.type === "keyup" && e.key === "Shift" && !e.ctrlKey && !e.metaKey && !e.altKey && !composing && !e.isComposing) {
         const now = Date.now();
         if (now - lastShiftUp < 400) {
           lastShiftUp = 0;
@@ -38,6 +43,9 @@ export function useGlobalKeybindings() {
       }
 
       if (e.type !== "keydown") return;
+
+      // Skip all shortcuts during IME composition
+      if (composing || e.isComposing) return;
 
       // Re-read matchesEvent on each keydown to pick up live overrides
       const { matchesEvent: match } = useKeybindingsStore.getState();
@@ -149,10 +157,14 @@ export function useGlobalKeybindings() {
 
     window.addEventListener("keydown", handler);
     window.addEventListener("keyup", handler);
+    window.addEventListener("compositionstart", onCompositionStart);
+    window.addEventListener("compositionend", onCompositionEnd);
     window.addEventListener("open-command-palette", handleOpenPalette);
     return () => {
       window.removeEventListener("keydown", handler);
       window.removeEventListener("keyup", handler);
+      window.removeEventListener("compositionstart", onCompositionStart);
+      window.removeEventListener("compositionend", onCompositionEnd);
       window.removeEventListener("open-command-palette", handleOpenPalette);
     };
   }, []);
