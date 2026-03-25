@@ -13,6 +13,8 @@ interface DaemonStatus {
   shareUrl: string | null;
   tunnelPid: number | null;
   tunnelAlive: boolean;
+  supervisorPid: number | null;
+  supervisorAlive: boolean;
 }
 
 function isAlive(pid: number): boolean {
@@ -23,6 +25,7 @@ function getDaemonStatus(): DaemonStatus {
   const dead: DaemonStatus = {
     running: false, pid: null, port: null, host: null,
     shareUrl: null, tunnelPid: null, tunnelAlive: false,
+    supervisorPid: null, supervisorAlive: false,
   };
 
   if (existsSync(STATUS_FILE)) {
@@ -31,6 +34,8 @@ function getDaemonStatus(): DaemonStatus {
       const pid = data.pid as number;
       const tunnelPid = (data.tunnelPid as number) ?? null;
       const tunnelAlive = tunnelPid ? isAlive(tunnelPid) : false;
+      const supervisorPid = (data.supervisorPid as number) ?? null;
+      const supervisorAlive = supervisorPid ? isAlive(supervisorPid) : false;
       return {
         running: isAlive(pid),
         pid,
@@ -39,6 +44,8 @@ function getDaemonStatus(): DaemonStatus {
         shareUrl: data.shareUrl ?? null,
         tunnelPid,
         tunnelAlive,
+        supervisorPid,
+        supervisorAlive,
       };
     } catch { return dead; }
   }
@@ -151,6 +158,9 @@ export async function showStatus(options: { json?: boolean; all?: boolean }) {
   }
 
   console.log(`\n  PPM daemon status\n`);
+  if (status.supervisorPid) {
+    console.log(`  Supervisor: ${status.supervisorAlive ? "running" : "stopped"} (PID: ${status.supervisorPid})`);
+  }
   console.log(`  Server:  ${status.running ? "running" : "stopped"} (PID: ${status.pid})`);
   if (status.port) console.log(`  Local:   http://localhost:${status.port}/`);
   if (status.tunnelPid) {

@@ -52,11 +52,11 @@ describe("generatePlist", () => {
     expect(plist).toContain("<true/>");
   });
 
-  test("includes KeepAlive with SuccessfulExit false", () => {
+  test("includes unconditional KeepAlive true", () => {
     const plist = generatePlist(TEST_CONFIG);
     expect(plist).toContain("<key>KeepAlive</key>");
-    expect(plist).toContain("<key>SuccessfulExit</key>");
-    expect(plist).toContain("<false/>");
+    expect(plist).toContain("<true/>");
+    expect(plist).not.toContain("<key>SuccessfulExit</key>");
   });
 
   test("uses absolute paths for log files (no ~ or $HOME)", () => {
@@ -122,7 +122,7 @@ describe("generateSystemdService", () => {
 
   test("includes restart policy", () => {
     const service = generateSystemdService(TEST_CONFIG);
-    expect(service).toContain("Restart=on-failure");
+    expect(service).toContain("Restart=always");
     expect(service).toContain("RestartSec=5");
   });
 

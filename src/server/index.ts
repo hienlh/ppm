@@ -53,12 +53,29 @@ async function setupLogFile() {
   console.error = (...args: unknown[]) => { origError(...args); writeLog("ERROR", args); };
   console.warn = (...args: unknown[]) => { origWarn(...args); writeLog("WARN", args); };
 
-  // Capture uncaught errors
+  // Capture uncaught errors — count-based exit for supervisor restart
+  let exceptionCount = 0;
+  let lastExceptionTime = 0;
+
+  const handleFatalError = (label: string, detail: string) => {
+    writeLog("FATAL", [`${label}: ${detail}`]);
+    const now = Date.now();
+    if (now - lastExceptionTime < 60_000) exceptionCount++;
+    else exceptionCount = 1;
+    lastExceptionTime = now;
+
+    // 3+ fatal errors in 1 minute → exit and let supervisor restart fresh
+    if (exceptionCount >= 3) {
+      writeLog("FATAL", ["Too many errors in 1 min, exiting for supervisor restart"]);
+      process.exit(1);
+    }
+  };
+
   process.on("uncaughtException", (err) => {
-    writeLog("FATAL", [`Uncaught exception: ${err.stack ?? err.message}`]);
+    handleFatalError("Uncaught exception", err.stack ?? err.message);
   });
   process.on("unhandledRejection", (reason) => {
-    writeLog("FATAL", [`Unhandled rejection: ${reason}`]);
+    handleFatalError("Unhandled rejection", String(reason));
   });
 }
 
@@ -168,110 +185,52 @@ export async function startServer(options: {
   if (isDaemon) {
     const { resolve } = await import("node:path");
     const { homedir } = await import("node:os");
-    const { writeFileSync, readFileSync, mkdirSync, existsSync } = await import("node:fs");
+    const { writeFileSync, readFileSync, mkdirSync, existsSync, openSync } = await import("node:fs");
+    const { isCompiledBinary } = await import("../services/autostart-generator.ts");
 
     const ppmDir = resolve(homedir(), ".ppm");
     if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
     const pidFile = resolve(ppmDir, "ppm.pid");
     const statusFile = resolve(ppmDir, "status.json");
 
-    // If --share, download cloudflared and start tunnel as independent process
-    let shareUrl: string | undefined;
-    let tunnelPid: number | undefined;
-    if (options.share) {
-      const { ensureCloudflared } = await import("../services/cloudflared.service.ts");
-      const bin = await ensureCloudflared();
-
-      // Kill any leftover tunnel from previous run
-      if (existsSync(statusFile)) {
-        try {
-          const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
-          if (prev.tunnelPid) {
-            try { process.kill(prev.tunnelPid); } catch { /* already dead */ }
-          }
-        } catch {}
-      }
-
-      // Spawn new tunnel if no existing one
-      if (!shareUrl) {
-        console.log("  Starting share tunnel...");
-        const { openSync: openFd, writeFileSync: writeFs } = await import("node:fs");
-        const tunnelLog = resolve(ppmDir, "tunnel.log");
-        // Truncate old log so we only match the new tunnel URL
-        writeFs(tunnelLog, "");
-
-        if (process.platform === "win32") {
-          // Windows: use PowerShell for detached tunnel process
-          const psCmd = [
-            `$p = Start-Process -PassThru -WindowStyle Hidden`,
-            `-FilePath '${bin.replace(/\\/g, "\\\\")}'`,
-            `-ArgumentList 'tunnel','--url','http://localhost:${port}'`,
-            `-RedirectStandardError '${tunnelLog.replace(/\\/g, "\\\\")}'`,
-            `; Write-Output $p.Id`,
-          ].join(" ");
-          const result = Bun.spawnSync({
-            cmd: ["powershell", "-NoProfile", "-Command", psCmd],
-            stdout: "pipe", stderr: "pipe",
-          });
-          tunnelPid = parseInt(result.stdout.toString().trim(), 10);
-          if (isNaN(tunnelPid)) tunnelPid = undefined;
-        } else {
-          const tfd = openFd(tunnelLog, "a");
-          const tunnelProc = Bun.spawn({
-            cmd: [bin, "tunnel", "--url", `http://localhost:${port}`],
-            stdio: ["ignore", "ignore", tfd],
-            env: process.env,
-          });
-          tunnelProc.unref();
-          tunnelPid = tunnelProc.pid;
-        }
-
-        // Parse URL from tunnel.log (poll stderr output)
-        const urlRegex = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
-        const pollStart = Date.now();
-        while (Date.now() - pollStart < 30_000) {
-          await Bun.sleep(500);
-          try {
-            const logContent = readFileSync(tunnelLog, "utf-8");
-            const match = logContent.match(urlRegex);
-            if (match) { shareUrl = match[0]; break; }
-          } catch {}
-        }
-        if (!shareUrl) console.warn("  ⚠  Tunnel started but URL not detected.");
-      }
+    // Kill any leftover processes from previous run
+    if (existsSync(statusFile)) {
+      try {
+        const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
+        if (prev.supervisorPid) { try { process.kill(prev.supervisorPid); } catch {} }
+        else if (prev.pid) { try { process.kill(prev.pid); } catch {} }
+        if (prev.tunnelPid) { try { process.kill(prev.tunnelPid); } catch {} }
+      } catch {}
     }
 
-    // Write preliminary status.json so child process can read shareUrl on startup
-    // (child reads this before parent has a chance to write PID — fixes race condition)
-    writeFileSync(statusFile, JSON.stringify({
-      port, host,
-      shareUrl: shareUrl ?? null,
-      tunnelPid: tunnelPid ?? null,
-    }));
+    // Pre-download cloudflared if --share (so supervisor doesn't need to)
+    if (options.share) {
+      console.log("  Ensuring cloudflared is available...");
+      const { ensureCloudflared } = await import("../services/cloudflared.service.ts");
+      await ensureCloudflared();
+    }
 
-    // Spawn server child process with log file
-    const { openSync } = await import("node:fs");
-    const { isCompiledBinary } = await import("../services/autostart-generator.ts");
+    // Spawn supervisor process (manages server + tunnel children)
     const isCompiledBin = isCompiledBinary();
     const logFile = resolve(ppmDir, "ppm.log");
     const logFd = openSync(logFile, "a");
-    const { resolve: resolvePath } = await import("node:path");
-    const script = resolvePath(import.meta.dir, "index.ts");
-    // Keep positional order: port, host, config, profile (empty strings kept as placeholders)
-    const args = ["__serve__", String(port), host, options.config ?? "", options.profile ?? ""];
-    // Windows PowerShell: strip trailing empty args to avoid ArgumentList validation error
-    while (args.length > 0 && args[args.length - 1] === "") args.pop();
+    const supervisorScript = resolve(import.meta.dir, "..", "services", "supervisor.ts");
 
-    let childPid: number;
+    const superviseArgs = [
+      "__supervise__", String(port), host,
+      options.config ?? "", options.profile ?? "",
+    ];
+    if (options.share) superviseArgs.push("--share");
+    // Strip trailing empty args (before --share flag)
+    while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
+
+    let supervisorPid: number;
 
     if (process.platform === "win32") {
-      // Windows: Bun.spawn child may die when parent exits (same job object).
-      // Use PowerShell Start-Process to create a truly detached process.
       const bunExe = process.execPath.replace(/\\/g, "\\\\");
       const logEscaped = logFile.replace(/\\/g, "\\\\");
       const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
-      // Use "_" placeholder for empty args — PowerShell rejects empty strings in ArgumentList
-      const winArgs = isCompiledBin ? args : ["run", script, ...args];
+      const winArgs = isCompiledBin ? superviseArgs : ["run", supervisorScript, ...superviseArgs];
       const argStr = winArgs.map((a) => `'${a || "_"}'`).join(",");
       const psCmd = [
         `$p = Start-Process -PassThru -WindowStyle Hidden`,
@@ -283,48 +242,73 @@ export async function startServer(options: {
       ].join(" ");
       const result = Bun.spawnSync({
         cmd: ["powershell", "-NoProfile", "-Command", psCmd],
-        stdout: "pipe",
-        stderr: "pipe",
+        stdout: "pipe", stderr: "pipe",
       });
-      childPid = parseInt(result.stdout.toString().trim(), 10);
-      if (isNaN(childPid)) {
-        console.error("  ✗  Failed to start daemon on Windows.");
+      supervisorPid = parseInt(result.stdout.toString().trim(), 10);
+      if (isNaN(supervisorPid)) {
+        console.error("  ✗  Failed to start supervisor on Windows.");
         console.error(`     ${result.stderr.toString().trim()}`);
         console.error("     Try: ppm start -f (foreground mode)");
         process.exit(1);
       }
     } else {
-      // macOS/Linux: Bun.spawn + unref works fine
-      // Compiled binary: execPath IS the server, no "run script" needed
       const cmd = isCompiledBin
-        ? [process.execPath, ...args]
-        : [process.execPath, "run", script, ...args];
+        ? [process.execPath, ...superviseArgs]
+        : [process.execPath, "run", supervisorScript, ...superviseArgs];
       const child = Bun.spawn({
         cmd,
         stdio: ["ignore", logFd, logFd],
         env: process.env,
       });
       child.unref();
-      childPid = child.pid;
+      supervisorPid = child.pid;
     }
 
-    // Verify daemon is alive after brief startup
-    await Bun.sleep(500);
-    let alive = false;
-    try { process.kill(childPid, 0); alive = true; } catch {}
-    if (!alive) {
-      console.error("  ✗  Daemon exited immediately after start.");
+    // Wait for supervisor to start server child (poll status.json for pid)
+    const startWait = Date.now();
+    let serverPid: number | null = null;
+    while (Date.now() - startWait < 10_000) {
+      await Bun.sleep(500);
+      // Check supervisor is still alive
+      try { process.kill(supervisorPid, 0); } catch {
+        console.error("  ✗  Supervisor exited immediately after start.");
+        console.error("     Check logs: ppm logs");
+        console.error("     Or try: ppm start -f (foreground mode)");
+        process.exit(1);
+      }
+      // Check if server PID appeared in status.json
+      try {
+        const data = JSON.parse(readFileSync(statusFile, "utf-8"));
+        if (data.pid && data.supervisorPid) {
+          serverPid = data.pid;
+          break;
+        }
+      } catch {}
+    }
+
+    if (!serverPid) {
+      console.error("  ✗  Server did not start within 10 seconds.");
       console.error("     Check logs: ppm logs");
-      console.error("     Or try: ppm start -f (foreground mode)");
+      try { process.kill(supervisorPid); } catch {}
       process.exit(1);
     }
 
-    // Update status file with child PID + server script path for restart
-    const status = { pid: childPid, port, host, shareUrl: shareUrl ?? null, tunnelPid: tunnelPid ?? null, serverScript: script };
-    writeFileSync(statusFile, JSON.stringify(status));
-    writeFileSync(pidFile, String(childPid));
+    // Read final status for share URL
+    let shareUrl: string | null = null;
+    if (options.share) {
+      // Give tunnel a bit more time to establish
+      const tunnelWait = Date.now();
+      while (Date.now() - tunnelWait < 35_000) {
+        await Bun.sleep(500);
+        try {
+          const data = JSON.parse(readFileSync(statusFile, "utf-8"));
+          if (data.shareUrl) { shareUrl = data.shareUrl; break; }
+        } catch {}
+      }
+      if (!shareUrl) console.warn("  ⚠  Tunnel started but URL not detected yet. Check: ppm status");
+    }
 
-    console.log(`  Daemon started (PID: ${childPid})\n`);
+    console.log(`  Supervisor started (PID: ${supervisorPid}, server PID: ${serverPid})\n`);
     console.log(`  ➜  Local:   http://localhost:${port}/`);
     if (shareUrl) {
       console.log(`  ➜  Share:   ${shareUrl}`);

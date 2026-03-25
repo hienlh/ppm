@@ -90,10 +90,7 @@ ${programArgs}
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
+    <true/>
     <key>StandardOutPath</key>
     <string>${escapeXml(logPath)}</string>
     <key>StandardErrorPath</key>
@@ -133,7 +130,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=${execStart}
-Restart=on-failure
+Restart=always
 RestartSec=5
 ${envPath}
 WorkingDirectory=${homedir()}/.ppm

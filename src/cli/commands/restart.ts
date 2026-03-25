@@ -26,6 +26,45 @@ export async function restartServer(options: { config?: string }) {
     process.exit(1);
   }
 
+  // Supervisor-aware restart: send SIGUSR2 → supervisor restarts server child
+  const supervisorPid = status.supervisorPid as number | undefined;
+  if (supervisorPid) {
+    try { process.kill(supervisorPid, 0); } catch {
+      console.log("Supervisor not running. Use 'ppm stop && ppm start' instead.");
+      process.exit(1);
+    }
+
+    const oldServerPid = status.pid as number | undefined;
+    console.log("\n  Restarting PPM server via supervisor...");
+    console.log("  If you're using PPM terminal, wait a few seconds for auto-reconnect.\n");
+
+    try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
+      console.error(`  ✗  Failed to signal supervisor: ${e}`);
+      process.exit(1);
+    }
+
+    // Wait for new server PID to appear in status.json (up to 15s)
+    const start = Date.now();
+    while (Date.now() - start < 15_000) {
+      await Bun.sleep(500);
+      try {
+        const newStatus = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+        const newPid = newStatus.pid as number | undefined;
+        if (newPid && newPid !== oldServerPid) {
+          // Verify it's alive
+          try { process.kill(newPid, 0); } catch { continue; }
+          console.log(`  ✓  Restart complete (new PID: ${newPid})`);
+          if (newStatus.shareUrl) console.log(`  ➜  Share:   ${newStatus.shareUrl}`);
+          process.exit(0);
+        }
+      } catch {}
+    }
+
+    console.error("  ⚠  Restart timed out. Check: ppm logs");
+    process.exit(1);
+  }
+
+  // Legacy path: no supervisor (pre-supervisor daemon)
   const serverPid = status.pid as number | undefined;
   if (!serverPid) {
     console.log("No server PID found. Use 'ppm stop && ppm start' instead.");

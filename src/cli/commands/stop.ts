@@ -54,53 +54,70 @@ export async function stopServer(options?: { all?: boolean }) {
   if (options?.all) {
     console.log("  Stopping all PPM and cloudflared processes...\n");
     const cfKilled = killAllByName("cloudflared");
-    // Kill bun processes listening on PPM ports (from status.json or common ports)
-    let serverKilled = 0;
+    let killed = 0;
     if (existsSync(STATUS_FILE)) {
       try {
         const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
-        if (data.pid) { killPid(data.pid, "server"); serverKilled++; }
+        // Kill supervisor first (cascades to server + tunnel children)
+        if (data.supervisorPid) { killPid(data.supervisorPid, "supervisor"); killed++; }
+        if (data.pid) { killPid(data.pid, "server"); killed++; }
+        if (data.tunnelPid) { killPid(data.tunnelPid, "tunnel"); killed++; }
       } catch {}
     }
     if (existsSync(PID_FILE)) {
       try {
         const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
-        if (!isNaN(pid)) { killPid(pid, "server (pidfile)"); serverKilled++; }
+        if (!isNaN(pid)) { killPid(pid, "supervisor/server (pidfile)"); killed++; }
       } catch {}
     }
     cleanup();
-    console.log(`\n  Done. Killed ${cfKilled} cloudflared + ${serverKilled} server process(es).`);
+    console.log(`\n  Done. Killed ${cfKilled} cloudflared + ${killed} PPM process(es).`);
     return;
   }
 
-  let status: { pid?: number; tunnelPid?: number } | null = null;
+  let status: { pid?: number; tunnelPid?: number; supervisorPid?: number } | null = null;
 
   // Read status.json
   if (existsSync(STATUS_FILE)) {
     try { status = JSON.parse(readFileSync(STATUS_FILE, "utf-8")); } catch {}
   }
 
-  // Fallback to ppm.pid
+  // Fallback to ppm.pid (now stores supervisor PID)
   const pidFromFile = existsSync(PID_FILE)
     ? parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10)
     : NaN;
 
-  const serverPid = status?.pid ?? (isNaN(pidFromFile) ? null : pidFromFile);
+  const supervisorPid = status?.supervisorPid ?? null;
+  const serverPid = status?.pid ?? null;
   const tunnelPid = status?.tunnelPid ?? null;
+  const fallbackPid = isNaN(pidFromFile) ? null : pidFromFile;
 
-  if (!serverPid && !tunnelPid) {
+  if (!supervisorPid && !serverPid && !tunnelPid && !fallbackPid) {
     console.log("No PPM daemon running.");
     cleanup();
     return;
   }
 
-  // Kill server process
-  if (serverPid) killPid(serverPid, "server");
+  // Kill supervisor first — its SIGTERM handler kills server + tunnel children
+  if (supervisorPid) {
+    killPid(supervisorPid, "supervisor");
+    // Give supervisor 2s to gracefully kill children
+    await Bun.sleep(2000);
+  } else if (fallbackPid) {
+    // Legacy: ppm.pid might be server PID (pre-supervisor) or supervisor PID
+    killPid(fallbackPid, "supervisor/server (pidfile)");
+    await Bun.sleep(1000);
+  }
 
-  // Kill tunnel process (independent from server)
-  if (tunnelPid) killPid(tunnelPid, "tunnel");
+  // Kill remaining children if supervisor didn't clean them up
+  if (serverPid) {
+    try { process.kill(serverPid, 0); killPid(serverPid, "server"); } catch {}
+  }
+  if (tunnelPid) {
+    try { process.kill(tunnelPid, 0); killPid(tunnelPid, "tunnel"); } catch {}
+  }
 
-  // Windows fallback: kill orphan cloudflared processes spawned by PPM
+  // Windows fallback: kill orphan cloudflared processes
   if (process.platform === "win32") {
     try {
       Bun.spawnSync(["taskkill", "/F", "/IM", "cloudflared.exe"], { stdout: "ignore", stderr: "ignore" });
