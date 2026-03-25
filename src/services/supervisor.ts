@@ -328,6 +328,16 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
   const currentSupervisorPid = process.pid;
 
   try {
+    // Kill server + tunnel children FIRST to free the port for the new supervisor
+    log("INFO", "Stopping server and tunnel before spawning new supervisor");
+    if (serverChild) { try { serverChild.kill(); } catch {} serverChild = null; }
+    if (tunnelChild) { try { tunnelChild.kill(); } catch {} tunnelChild = null; }
+    // Clear health timers so we don't try to respawn killed children
+    if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+    if (tunnelProbeTimer) { clearInterval(tunnelProbeTimer); tunnelProbeTimer = null; }
+    // Brief wait for port release
+    await Bun.sleep(500);
+
     // Spawn new supervisor using saved argv
     const cmd = originalArgv.slice();
     const logFd = openSync(LOG_FILE, "a");
@@ -346,7 +356,10 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
         const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
         if (data.supervisorPid && data.supervisorPid !== currentSupervisorPid) {
           log("INFO", `New supervisor detected (PID: ${data.supervisorPid}), old exiting`);
-          shutdown();
+          // Children already killed, just clear remaining timers and exit
+          if (heartbeatTimer) clearInterval(heartbeatTimer);
+          if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
+          if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
           process.exit(0);
         }
       } catch {}
