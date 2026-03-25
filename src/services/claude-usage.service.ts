@@ -174,7 +174,8 @@ async function fetchAllAccountUsages(): Promise<void> {
     if (acc.status === "disabled") continue;
     // Skip expired temporary accounts (no refresh token)
     if (!accountService.hasRefreshToken(acc.id) && acc.expiresAt && acc.expiresAt < nowS) continue;
-    const withTokens = accountService.getWithTokens(acc.id);
+    // Ensure token is fresh before calling usage API (prevents 401 from expired tokens)
+    const withTokens = await accountService.ensureFreshToken(acc.id);
     if (!withTokens) continue;
     const token = withTokens.accessToken;
     // Only OAuth tokens have usage endpoint

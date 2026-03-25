@@ -571,7 +571,7 @@ class AccountService {
       if (!acc.accessToken.startsWith("sk-ant-oat")) continue;
       if (!acc.expiresAt) continue;
       try {
-        await this.refreshAccessToken(acc.id);
+        await this.refreshAccessToken(acc.id, false);
       } catch {
         // Best-effort — skip accounts whose refresh token is already invalid
       }

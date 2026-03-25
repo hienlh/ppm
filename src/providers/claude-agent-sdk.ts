@@ -628,7 +628,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 }
               } catch (refreshErr) {
                 console.error(`[sdk] session=${sessionId} OAuth refresh failed:`, refreshErr);
-                accountSelector.onAuthError(account.id);
+                // Don't disable temp accounts (no refresh token) — they just expire naturally
+                if (accountService.hasRefreshToken(account.id)) {
+                  accountSelector.onAuthError(account.id);
+                }
               }
             }
 
@@ -702,7 +705,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 await accountService.refreshAccessToken(account.id);
                 console.log(`[sdk] 401 on account ${account.id} — token refreshed`);
               } catch {
-                accountSelector.onAuthError(account.id);
+                // Don't disable temp accounts (no refresh token) — they just expire naturally
+                if (accountService.hasRefreshToken(account.id)) {
+                  accountSelector.onAuthError(account.id);
+                }
               }
             } else {
               accountSelector.onSuccess(account.id);
