@@ -160,9 +160,11 @@ accountsRoutes.post("/oauth/refresh/:id", async (c) => {
 /** POST /api/accounts/export — download password-encrypted accounts backup */
 accountsRoutes.post("/export", async (c) => {
   try {
-    const { password, accountIds, includeRefreshToken } = await c.req.json() as { password: string; accountIds?: string[]; includeRefreshToken?: boolean };
+    const { password, accountIds, includeRefreshToken, refreshBeforeExport } = await c.req.json() as {
+      password: string; accountIds?: string[]; includeRefreshToken?: boolean; refreshBeforeExport?: boolean;
+    };
     if (!password) return c.json(err("Password required"), 400);
-    await accountService.refreshBeforeExport(accountIds);
+    if (refreshBeforeExport) await accountService.refreshBeforeExport(accountIds);
     const blob = accountService.exportEncrypted(password, accountIds, includeRefreshToken ?? false);
     c.header("Content-Disposition", "attachment; filename=ppm-accounts-backup.json");
     c.header("Content-Type", "application/json");
@@ -211,6 +213,139 @@ accountsRoutes.post("/:id/verify", async (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
+});
+
+/** POST /api/accounts/test-export — simulate export: returns decrypted tokens + current DB tokens for comparison */
+accountsRoutes.post("/test-export", async (c) => {
+  try {
+    const { accountIds, includeRefreshToken } = await c.req.json() as { accountIds: string[]; includeRefreshToken?: boolean };
+    if (!accountIds?.length) return c.json(err("accountIds required"), 400);
+
+    // Snapshot current tokens BEFORE export (export calls refreshBeforeExport which may change tokens)
+    const preExportTokens = accountIds.map((id) => {
+      const acc = accountService.getWithTokens(id);
+      if (!acc) return null;
+      return { id, label: acc.label, email: acc.email, accessToken: acc.accessToken, expiresAt: acc.expiresAt };
+    }).filter(Boolean) as { id: string; label: string | null; email: string | null; accessToken: string; expiresAt: number | null }[];
+
+    // Do export with a temp password, then decrypt to get exported tokens
+    const tmpPwd = "test-export-" + Date.now();
+    await accountService.refreshBeforeExport(accountIds);
+    const blob = accountService.exportEncrypted(tmpPwd, accountIds, includeRefreshToken ?? false);
+
+    // Decrypt to get raw exported tokens
+    const { decryptWithPassword } = await import("../../lib/account-crypto.ts");
+    const rows = JSON.parse(decryptWithPassword(blob, tmpPwd)) as { id: string; label: string; email: string; access_token: string; expires_at: number | null }[];
+
+    // Get post-export current tokens (may differ if refreshBeforeExport changed them)
+    const postExportTokens = accountIds.map((id) => {
+      const acc = accountService.getWithTokens(id);
+      if (!acc) return null;
+      return { id, label: acc.label, email: acc.email, accessToken: acc.accessToken, expiresAt: acc.expiresAt };
+    }).filter(Boolean) as { id: string; label: string | null; email: string | null; accessToken: string; expiresAt: number | null }[];
+
+    const result = rows.map((row) => {
+      const pre = preExportTokens.find((t) => t.id === row.id);
+      const post = postExportTokens.find((t) => t.id === row.id);
+      return {
+        id: row.id,
+        label: row.label,
+        email: row.email,
+        preExportToken: pre?.accessToken ? pre.accessToken.slice(0, 20) + "..." : null,
+        preExportTokenFull: pre?.accessToken ?? null,
+        exportedToken: row.access_token.slice(0, 20) + "...",
+        exportedTokenFull: row.access_token,
+        postExportToken: post?.accessToken ? post.accessToken.slice(0, 20) + "..." : null,
+        postExportTokenFull: post?.accessToken ?? null,
+        preExportExpires: pre?.expiresAt ?? null,
+        exportedExpires: row.expires_at,
+        postExportExpires: post?.expiresAt ?? null,
+        tokenChanged: pre?.accessToken !== post?.accessToken,
+      };
+    });
+    return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** POST /api/accounts/test-raw-token — test an arbitrary access token against profile API */
+accountsRoutes.post("/test-raw-token", async (c) => {
+  const { token } = await c.req.json<{ token: string }>();
+  if (!token) return c.json(err("token required"), 400);
+  try {
+    const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "ppm/1.0",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 200) return c.json(ok({ status: "valid", code: 200 }));
+    if (res.status === 429) return c.json(ok({ status: "valid_rate_limited", code: 429 }));
+    const body = await res.text().catch(() => "");
+    return c.json(ok({ status: "invalid", code: res.status, error: body.slice(0, 300) }));
+  } catch (e) {
+    return c.json(ok({ status: "error", error: (e as Error).message }));
+  }
+});
+
+/** POST /api/accounts/:id/test-token — test access token validity + optionally refresh token */
+accountsRoutes.post("/:id/test-token", async (c) => {
+  const { id } = c.req.param();
+  const { testRefresh } = await c.req.json<{ testRefresh?: boolean }>().catch(() => ({ testRefresh: false }));
+  const account = accountService.getWithTokens(id);
+  if (!account) return c.json(err("Account not found"), 404);
+
+  const result: {
+    accessToken: { status: string; code?: number; error?: string };
+    refreshToken?: { status: string; code?: number; expiresIn?: number; newRefreshToken?: boolean; error?: string };
+  } = { accessToken: { status: "unknown" } };
+
+  // Test access token via profile API
+  try {
+    const res = await fetch("https://api.anthropic.com/api/oauth/profile", {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${account.accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "ppm/1.0",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.status === 200) {
+      result.accessToken = { status: "valid", code: 200 };
+    } else if (res.status === 429) {
+      result.accessToken = { status: "valid_rate_limited", code: 429 };
+    } else {
+      const body = await res.text().catch(() => "");
+      result.accessToken = { status: "invalid", code: res.status, error: body.slice(0, 300) };
+    }
+  } catch (e) {
+    result.accessToken = { status: "error", error: (e as Error).message };
+  }
+
+  // Test refresh token
+  if (testRefresh && account.refreshToken) {
+    try {
+      await accountService.refreshAccessToken(id, false);
+      const refreshed = accountService.getWithTokens(id);
+      result.refreshToken = {
+        status: "valid",
+        code: 200,
+        expiresIn: refreshed?.expiresAt ? refreshed.expiresAt - Math.floor(Date.now() / 1000) : undefined,
+        newRefreshToken: true,
+      };
+    } catch (e) {
+      result.refreshToken = { status: "invalid", error: (e as Error).message };
+    }
+  } else if (testRefresh && !account.refreshToken) {
+    result.refreshToken = { status: "no_token", error: "No refresh token (temporary account)" };
+  }
+
+  return c.json(ok(result));
 });
 
 /** DELETE /api/accounts/:id */

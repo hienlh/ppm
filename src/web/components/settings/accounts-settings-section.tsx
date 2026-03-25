@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Eye, Loader2, Copy, X, Download, Upload, Lock } from "lucide-react";
+import { Eye, Loader2, Copy, X, Download, Upload, Lock, FlaskConical } from "lucide-react";
 import { getAuthToken } from "../../lib/api-client";
 import {
   getAccounts,
@@ -20,10 +20,15 @@ import {
   updateAccountSettings,
   getAllAccountUsages,
   importAccounts,
+  testAccountToken,
+  testExport,
+  testRawToken,
   type AccountInfo,
   type AccountSettings,
   type AccountUsageEntry,
   type OAuthProfileData,
+  type TokenTestResult,
+  type ExportedTokenInfo,
 } from "../../lib/api-settings";
 
 function detectTokenType(token: string): string {
@@ -152,6 +157,7 @@ export function AccountsSettingsSection() {
   const [exportSelected, setExportSelected] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
   const [exportFullTransfer, setExportFullTransfer] = useState(false);
+  const [exportRefreshBefore, setExportRefreshBefore] = useState(false);
 
   // Import dialog
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -159,6 +165,16 @@ export function AccountsSettingsSection() {
   const [importData, setImportData] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+
+  // Token test dialog
+  const [showTokenTest, setShowTokenTest] = useState(false);
+  const [tokenTestResults, setTokenTestResults] = useState<Map<string, { loading: boolean; result?: TokenTestResult; error?: string }>>(new Map());
+  const [tokenTestRefresh, setTokenTestRefresh] = useState(false);
+  // Export simulation — accumulate rounds
+  const [exportRounds, setExportRounds] = useState<{ round: number; time: string; includeRefresh: boolean; items: ExportedTokenInfo[] }[]>([]);
+  const [exportSimLoading, setExportSimLoading] = useState(false);
+  const [exportSimIncludeRefresh, setExportSimIncludeRefresh] = useState(false);
+  const [rawTokenTests, setRawTokenTests] = useState<Map<string, { loading: boolean; status?: string; code?: number; error?: string }>>(new Map());
 
   useEffect(() => {
     refresh();
@@ -304,6 +320,7 @@ export function AccountsSettingsSection() {
     setExportConfirm("");
     setExportSelected(new Set(exportableAccounts.map((a) => a.id)));
     setExportFullTransfer(false);
+    setExportRefreshBefore(false);
     setShowExportDialog(true);
   }
 
@@ -325,7 +342,7 @@ export function AccountsSettingsSection() {
       const res = await fetch("/api/accounts/export", {
         method: "POST",
         headers,
-        body: JSON.stringify({ password: exportPassword, accountIds: [...exportSelected], includeRefreshToken: exportFullTransfer }),
+        body: JSON.stringify({ password: exportPassword, accountIds: [...exportSelected], includeRefreshToken: exportFullTransfer, refreshBeforeExport: exportRefreshBefore }),
       });
       if (!res.ok) { const j = await res.json() as any; throw new Error(j.error ?? `Export failed: ${res.status}`); }
       const text = await res.text();
@@ -374,6 +391,46 @@ export function AccountsSettingsSection() {
     setImporting(false);
   }
 
+
+  async function simulateExport() {
+    const oauthIds = accounts.filter((a) => a.hasRefreshToken).map((a) => a.id);
+    if (!oauthIds.length) return;
+    setExportSimLoading(true);
+    try {
+      const data = await testExport(oauthIds, exportSimIncludeRefresh);
+      const roundNum = exportRounds.length + 1;
+      const time = new Date().toLocaleTimeString();
+      setExportRounds((prev) => [...prev, { round: roundNum, time, includeRefresh: exportSimIncludeRefresh, items: data }]);
+    } catch { /* ignore */ }
+    setExportSimLoading(false);
+  }
+
+  async function testRawTokenClick(key: string, token: string) {
+    setRawTokenTests((prev) => new Map(prev).set(key, { loading: true }));
+    try {
+      const result = await testRawToken(token);
+      setRawTokenTests((prev) => new Map(prev).set(key, { loading: false, ...result }));
+    } catch (e) {
+      setRawTokenTests((prev) => new Map(prev).set(key, { loading: false, status: "error", error: (e as Error).message }));
+    }
+  }
+
+  async function runTokenTest(id: string) {
+    setTokenTestResults((prev) => new Map(prev).set(id, { loading: true }));
+    try {
+      const result = await testAccountToken(id, tokenTestRefresh);
+      setTokenTestResults((prev) => new Map(prev).set(id, { loading: false, result }));
+    } catch (e) {
+      setTokenTestResults((prev) => new Map(prev).set(id, { loading: false, error: (e as Error).message }));
+    }
+  }
+
+  async function runAllTokenTests() {
+    const oauthAccounts = accounts.filter((a) => a.expiresAt !== null);
+    for (const acc of oauthAccounts) {
+      runTokenTest(acc.id);
+    }
+  }
 
   const tokenHint = newToken.trim() ? detectTokenType(newToken.trim()) : "";
 
@@ -442,7 +499,7 @@ export function AccountsSettingsSection() {
           })}
         </div>
 
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className={`grid gap-1.5 ${import.meta.env.DEV ? "grid-cols-4" : "grid-cols-3"}`}>
           <Button size="sm" className="h-8 text-xs cursor-pointer" onClick={() => setShowAddDialog(true)}>
             + Add
           </Button>
@@ -452,6 +509,11 @@ export function AccountsSettingsSection() {
           <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer" onClick={() => openImportDialog()}>
             <Upload className="size-3.5 mr-1" /> Import
           </Button>
+          {import.meta.env.DEV && (
+            <Button size="sm" variant="outline" className="h-8 text-xs cursor-pointer" onClick={() => { setTokenTestResults(new Map()); setTokenTestRefresh(false); setExportRounds([]); setRawTokenTests(new Map()); setExportSimIncludeRefresh(false); setShowTokenTest(true); }}>
+              <FlaskConical className="size-3.5 mr-1" /> Test
+            </Button>
+          )}
         </div>
       </div>
 
@@ -715,6 +777,19 @@ export function AccountsSettingsSection() {
                 Include refresh tokens (full transfer)
               </label>
             </div>
+            {/* Refresh before export toggle */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="export-refresh-before"
+                checked={exportRefreshBefore}
+                onChange={(e) => setExportRefreshBefore(e.target.checked)}
+                className="size-3.5 accent-primary cursor-pointer"
+              />
+              <label htmlFor="export-refresh-before" className="text-[11px] cursor-pointer">
+                Refresh tokens before export
+              </label>
+            </div>
             {exportFullTransfer ? (
               <div className="rounded-md border border-red-500/30 bg-red-500/5 p-2.5 space-y-1">
                 <p className="text-[10px] font-medium text-red-600">Full transfer — source accounts will expire</p>
@@ -722,11 +797,18 @@ export function AccountsSettingsSection() {
                   Refresh tokens are included. Once the target machine refreshes, <strong>accounts on this machine will only work for ~1h</strong> then become temporary. Use this only to move accounts to another machine.
                 </p>
               </div>
-            ) : (
+            ) : exportRefreshBefore ? (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
-                <p className="text-[10px] font-medium text-amber-600">Temporary access only (default)</p>
+                <p className="text-[10px] font-medium text-amber-600">Refresh before export — invalidates previous shares</p>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
-                  Only access tokens exported (~1h validity). Source machine is not affected. Target must login directly for permanent access.
+                  Tokens will be refreshed to maximize validity (~1h). But <strong>any previously shared tokens will be invalidated</strong> because Anthropic only allows 1 active access token per account.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-md border border-green-500/30 bg-green-500/5 p-2.5 space-y-1">
+                <p className="text-[10px] font-medium text-green-600">Share current token (default, safe)</p>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  Exports the current access token as-is. Host and target share the same token. No invalidation. Token validity = remaining time until next auto-refresh.
                 </p>
               </div>
             )}
@@ -771,6 +853,173 @@ export function AccountsSettingsSection() {
             </Button>
             <Button size="sm" variant="destructive" className="text-xs h-7 cursor-pointer" onClick={confirmDelete} disabled={deleting}>
               {deleting ? <><Loader2 className="size-3 animate-spin mr-1" /> Removing...</> : "Remove"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Token test dialog */}
+      <Dialog open={showTokenTest} onOpenChange={(v) => { if (!v) setShowTokenTest(false); }}>
+        <DialogContent className="sm:max-w-xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-1.5"><FlaskConical className="size-3.5" /> Token Test</DialogTitle>
+            <DialogDescription className="text-xs">Test tokens & simulate export to compare token validity.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 overflow-y-auto flex-1 pr-1">
+            {/* Section 1: Quick test current DB tokens */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-medium">Current Tokens (DB)</p>
+                <Button size="sm" variant="outline" className="h-6 text-[10px] cursor-pointer" onClick={runAllTokenTests}>
+                  Test All
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                {accounts.map((acc) => {
+                  const entry = tokenTestResults.get(acc.id);
+                  return (
+                    <div key={acc.id} className="p-2 rounded border bg-card space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <span className="text-[11px] font-medium truncate block">{acc.label ?? acc.email ?? acc.id.slice(0, 8)}</span>
+                          {acc.expiresAt && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {acc.expiresAt > Math.floor(Date.now() / 1000)
+                                ? `${Math.floor((acc.expiresAt - Math.floor(Date.now() / 1000)) / 60)}m left`
+                                : `expired ${Math.floor((Math.floor(Date.now() / 1000) - acc.expiresAt) / 60)}m ago`}
+                            </span>
+                          )}
+                        </div>
+                        <Button size="sm" variant="outline" className="h-6 text-[10px] cursor-pointer shrink-0" disabled={entry?.loading} onClick={() => runTokenTest(acc.id)}>
+                          {entry?.loading ? <Loader2 className="size-3 animate-spin" /> : "Test"}
+                        </Button>
+                      </div>
+                      {entry && !entry.loading && (
+                        <div className="text-[10px] pl-1 border-l-2 border-muted ml-1">
+                          {entry.error && <p className="text-red-500">{entry.error}</p>}
+                          {entry.result && (
+                            <span className={entry.result.accessToken.status.startsWith("valid") ? "text-green-600" : "text-red-500"}>
+                              {entry.result.accessToken.status} {entry.result.accessToken.code && `(${entry.result.accessToken.code})`}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Section 2: Export simulation */}
+            <div className="border-t pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-medium">Simulate Export</p>
+                {exportRounds.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground">{exportRounds.length} round(s)</span>
+                )}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Each "Run Export" appends a new round. All tokens from every round are kept for comparison.
+              </p>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    id="sim-include-refresh"
+                    checked={exportSimIncludeRefresh}
+                    onChange={(e) => setExportSimIncludeRefresh(e.target.checked)}
+                    className="size-3 accent-primary cursor-pointer"
+                  />
+                  <label htmlFor="sim-include-refresh" className="text-[10px] cursor-pointer">Include refresh tokens</label>
+                </div>
+                <Button size="sm" className="h-7 text-[11px] cursor-pointer" disabled={exportSimLoading} onClick={simulateExport}>
+                  {exportSimLoading ? <><Loader2 className="size-3 animate-spin mr-1" /> Exporting...</> : `Run Export #${exportRounds.length + 1}`}
+                </Button>
+              </div>
+
+              {exportRounds.length > 0 && (
+                <div className="space-y-3">
+                  {/* Test All button across all rounds */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full h-7 text-[10px] cursor-pointer"
+                    onClick={() => {
+                      for (const round of exportRounds) {
+                        for (const item of round.items) {
+                          if (item.preExportTokenFull) testRawTokenClick(`r${round.round}-pre-${item.id}`, item.preExportTokenFull);
+                          if (item.exportedTokenFull) testRawTokenClick(`r${round.round}-exp-${item.id}`, item.exportedTokenFull);
+                          if (item.postExportTokenFull) testRawTokenClick(`r${round.round}-post-${item.id}`, item.postExportTokenFull);
+                        }
+                      }
+                    }}
+                  >
+                    Test All Tokens ({exportRounds.reduce((n, r) => n + r.items.length * 3, 0)} tokens)
+                  </Button>
+
+                  {/* Render each round */}
+                  {exportRounds.map((round) => (
+                    <div key={round.round} className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[11px] font-medium text-primary">Round #{round.round}</p>
+                        <span className="text-[9px] text-muted-foreground">{round.time}</span>
+                        <Badge variant={round.includeRefresh ? "destructive" : "secondary"} className="text-[8px] px-1 py-0">
+                          {round.includeRefresh ? "with refresh" : "access only"}
+                        </Badge>
+                      </div>
+                      {round.items.map((item) => (
+                        <div key={`r${round.round}-${item.id}`} className="p-2 rounded-lg border bg-card space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-medium">{item.label ?? item.email ?? item.id.slice(0, 8)}</span>
+                            {item.tokenChanged && <Badge variant="secondary" className="text-[8px] px-1 py-0">DB token changed</Badge>}
+                          </div>
+                          {[
+                            { key: `r${round.round}-pre-${item.id}`, label: "Pre-export", token: item.preExportTokenFull, preview: item.preExportToken, expires: item.preExportExpires },
+                            { key: `r${round.round}-exp-${item.id}`, label: "Exported", token: item.exportedTokenFull, preview: item.exportedToken, expires: item.exportedExpires },
+                            { key: `r${round.round}-post-${item.id}`, label: "Post-export", token: item.postExportTokenFull, preview: item.postExportToken, expires: item.postExportExpires },
+                          ].map((row) => {
+                            const test = rawTokenTests.get(row.key);
+                            return (
+                              <div key={row.key} className="flex items-center gap-1.5 text-[10px]">
+                                <span className="w-20 shrink-0 text-muted-foreground text-[9px]">{row.label}</span>
+                                <code className="flex-1 truncate font-mono text-[9px] bg-muted px-1 rounded">{row.preview ?? "N/A"}</code>
+                                {row.expires && (
+                                  <span className="text-[9px] text-muted-foreground shrink-0">
+                                    {row.expires > Math.floor(Date.now() / 1000)
+                                      ? `${Math.floor((row.expires - Math.floor(Date.now() / 1000)) / 60)}m`
+                                      : `exp`}
+                                  </span>
+                                )}
+                                {row.token ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-5 text-[9px] px-1.5 cursor-pointer shrink-0"
+                                    disabled={test?.loading}
+                                    onClick={() => testRawTokenClick(row.key, row.token!)}
+                                  >
+                                    {test?.loading ? <Loader2 className="size-2.5 animate-spin" /> : "Test"}
+                                  </Button>
+                                ) : <span className="text-[9px] text-muted-foreground">-</span>}
+                                {test && !test.loading && (
+                                  <span className={`text-[9px] font-medium shrink-0 ${test.status?.startsWith("valid") ? "text-green-600" : "text-red-500"}`}>
+                                    {test.status}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={() => setShowTokenTest(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

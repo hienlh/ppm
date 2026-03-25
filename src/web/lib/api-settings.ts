@@ -119,6 +119,39 @@ export function importAccounts(params: { data: string; password: string }): Prom
   return api.post<{ imported: number; refreshed: number }>("/api/accounts/import", params);
 }
 
+export interface TokenTestResult {
+  accessToken: { status: string; code?: number; error?: string };
+  refreshToken?: { status: string; code?: number; expiresIn?: number; newRefreshToken?: boolean; error?: string };
+}
+
+export function testAccountToken(id: string, testRefresh = false): Promise<TokenTestResult> {
+  return api.post<TokenTestResult>(`/api/accounts/${id}/test-token`, { testRefresh });
+}
+
+export interface ExportedTokenInfo {
+  id: string;
+  label: string;
+  email: string;
+  preExportToken: string | null;
+  preExportTokenFull: string | null;
+  exportedToken: string | null;
+  exportedTokenFull: string | null;
+  postExportToken: string | null;
+  postExportTokenFull: string | null;
+  preExportExpires: number | null;
+  exportedExpires: number | null;
+  postExportExpires: number | null;
+  tokenChanged: boolean;
+}
+
+export function testExport(accountIds: string[], includeRefreshToken = false): Promise<ExportedTokenInfo[]> {
+  return api.post<ExportedTokenInfo[]>("/api/accounts/test-export", { accountIds, includeRefreshToken });
+}
+
+export function testRawToken(token: string): Promise<{ status: string; code?: number; error?: string }> {
+  return api.post<{ status: string; code?: number; error?: string }>("/api/accounts/test-raw-token", { token });
+}
+
 export interface AIProviderSettings {
   type?: string;
   api_key_env?: string;
