@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.46] - 2026-03-25
+
+### Fixed
+- **Account delete**: Replace `window.confirm()` with shadcn Dialog for delete confirmation — native confirm was silently blocked in WebView/embedded contexts
+
 ## [0.8.45] - 2026-03-25
 
 ### Fixed
