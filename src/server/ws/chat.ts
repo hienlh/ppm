@@ -500,9 +500,10 @@ export const chatWebSocket = {
 
       // Store promise reference on entry to prevent GC from collecting the async operation.
       // Use setTimeout(0) to detach from WS handler's async scope.
+      const permMode = entry.permissionMode;
       entry.streamPromise = new Promise<void>((resolve) => {
         setTimeout(() => {
-          runStreamLoop(sessionId, providerId, parsed.content, entry.permissionMode).then(resolve, resolve);
+          runStreamLoop(sessionId, providerId, parsed.content, permMode).then(resolve, resolve);
         }, 0);
       });
     } else if (parsed.type === "cancel") {
