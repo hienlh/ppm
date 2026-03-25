@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.50] - 2026-03-25
+
+### Fixed
+- **Export token invalidation**: Export no longer auto-refreshes tokens by default — previously, every export called `refreshBeforeExport` which invalidated all previously shared tokens. Now opt-in via "Refresh tokens before export" toggle
+
+### Added
+- **Export refresh toggle**: New checkbox in export dialog — "Refresh tokens before export" (default off). Info box explains trade-offs: safe share (green) vs refresh-first (amber) vs full transfer (red)
+- **Token test dialog** (dev-only): Test access token validity per account, simulate multi-round export with pre/post/exported token comparison. Hidden in production builds via `import.meta.env.DEV`
+- **Test API endpoints** (dev): `POST /api/accounts/test-export`, `POST /api/accounts/test-raw-token`, `POST /api/accounts/:id/test-token`
+
 ## [0.8.49] - 2026-03-25
 
 ### Fixed
