@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.55] - 2026-03-26
+
+### Added
+- **Account management in Usage panel**: Add/Export/Import accounts directly from the Usage & Accounts panel — no more navigating to Settings
+- **Account dialogs**: Extracted reusable Add, Export, Import dialog components
+- **Horizontal account cards**: Account cards scroll horizontally with snap points when multiple accounts exist
+- **Per-account export**: Export button on each OAuth account card opens export dialog with that account pre-selected
+- **Default export password**: Export/import uses default password `ppm-hienlh` when password field left empty
+- **Operation feedback**: Success message banner with 4s auto-dismiss after add/export/import operations
+- **Image overlay**: Zoom preview overlay component for images (mermaid diagrams etc.)
+
+### Fixed
+- **SDK user message rendering**: System text in SDK-generated user messages (tool_result/task-notification XML) no longer renders as user chat bubbles
+- **Hot-reload port check**: `bun --hot` reload no longer exits with "port in use" — detects hot-reload mode via globalThis flag
+- **File listing order**: Command palette file listing uses BFS instead of DFS so root-level files appear before the limit
+
+### Changed
+- **Settings**: Removed Accounts category from settings (moved to Usage panel)
+
 ## [0.8.54] - 2026-03-25
 
 ### Added
