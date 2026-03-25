@@ -122,4 +122,80 @@ describe("PUT /settings/ai", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("saves api_key and masks it in response", async () => {
+    const app = createApp();
+    // Save an api_key
+    const putRes = await app.request("/settings/ai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: { claude: { api_key: "sk-ant-test-secret-key-12345" } },
+      }),
+    });
+    const putJson = await putRes.json() as any;
+    expect(putJson.ok).toBe(true);
+    // Response should have masked key (last 4 chars visible)
+    expect(putJson.data.providers.claude.api_key).toBe("••••2345");
+
+    // GET should also return masked
+    const getRes = await app.request("/settings/ai");
+    const getJson = await getRes.json() as any;
+    expect(getJson.data.providers.claude.api_key).toBe("••••2345");
+  });
+
+  it("does not overwrite api_key when masked value sent back", async () => {
+    const app = createApp();
+    // First, save a real key
+    await app.request("/settings/ai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: { claude: { api_key: "sk-ant-real-secret-key-abcd" } },
+      }),
+    });
+
+    // Now send masked value back (simulating UI onBlur with unchanged field)
+    const res = await app.request("/settings/ai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: { claude: { api_key: "••••abcd", model: "claude-opus-4-6" } },
+      }),
+    });
+    const json = await res.json() as any;
+    expect(json.ok).toBe(true);
+    // Model updated, key still masked with same last 4
+    expect(json.data.providers.claude.model).toBe("claude-opus-4-6");
+    expect(json.data.providers.claude.api_key).toBe("••••abcd");
+
+    // Verify underlying config still has real key
+    const ai = configService.get("ai");
+    expect(ai.providers.claude.api_key).toBe("sk-ant-real-secret-key-abcd");
+  });
+
+  it("clears api_key when empty string sent", async () => {
+    const app = createApp();
+    // Save a key first
+    await app.request("/settings/ai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: { claude: { api_key: "sk-ant-to-clear" } },
+      }),
+    });
+
+    // Clear it with empty string
+    const res = await app.request("/settings/ai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: { claude: { api_key: "" } },
+      }),
+    });
+    const json = await res.json() as any;
+    expect(json.ok).toBe(true);
+    // Empty key should not be masked
+    expect(json.data.providers.claude.api_key).toBeFalsy();
+  });
 });

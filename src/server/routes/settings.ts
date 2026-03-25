@@ -10,6 +10,7 @@ import {
   type ThemeConfig,
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
+import { proxyService } from "../../services/proxy.service.ts";
 
 export const settingsRoutes = new Hono();
 
@@ -17,7 +18,12 @@ export const settingsRoutes = new Hono();
 function stripSensitiveFields(ai: { providers: Record<string, unknown> }) {
   const clone = structuredClone(ai);
   for (const provider of Object.values(clone.providers)) {
-    delete (provider as Record<string, unknown>).api_key_env;
+    const p = provider as Record<string, unknown>;
+    delete p.api_key_env;
+    // Mask api_key: show only that it's set, not the value
+    if (p.api_key && typeof p.api_key === "string" && p.api_key.length > 0) {
+      p.api_key = "••••" + (p.api_key as string).slice(-4);
+    }
   }
   return clone;
 }
@@ -120,6 +126,10 @@ settingsRoutes.put("/ai", async (c) => {
     if (body.providers) {
       updated.providers = { ...currentAi.providers };
       for (const [name, config] of Object.entries(body.providers)) {
+        // Don't overwrite api_key with the masked value from UI
+        if (config.api_key && config.api_key.startsWith("••••")) {
+          delete config.api_key;
+        }
         updated.providers[name] = {
           ...currentAi.providers[name],
           ...config,
@@ -225,5 +235,47 @@ settingsRoutes.post("/telegram/test", async (c) => {
     return c.json(ok({ sent: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+// ── Proxy ────────────────────────────────────────────────────────────
+
+/** GET /settings/proxy — proxy status */
+settingsRoutes.get("/proxy", async (c) => {
+  const { tunnelService } = await import("../../services/tunnel.service.ts");
+  const tunnelUrl = tunnelService.getTunnelUrl();
+  const authKey = proxyService.getAuthKey();
+  return c.json(ok({
+    enabled: proxyService.isEnabled(),
+    authKey: authKey ?? null,
+    requestCount: proxyService.getRequestCount(),
+    tunnelUrl: tunnelUrl ?? null,
+    proxyEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/messages` : null,
+  }));
+});
+
+/** PUT /settings/proxy — update proxy settings */
+settingsRoutes.put("/proxy", async (c) => {
+  try {
+    const body = await c.req.json<{ enabled?: boolean; authKey?: string; generateKey?: boolean }>();
+    if (body.enabled !== undefined) {
+      proxyService.setEnabled(body.enabled);
+    }
+    if (body.generateKey) {
+      proxyService.generateAuthKey();
+    } else if (body.authKey !== undefined) {
+      proxyService.setAuthKey(body.authKey);
+    }
+    const { tunnelService } = await import("../../services/tunnel.service.ts");
+    const tunnelUrl = tunnelService.getTunnelUrl();
+    return c.json(ok({
+      enabled: proxyService.isEnabled(),
+      authKey: proxyService.getAuthKey() ?? null,
+      requestCount: proxyService.getRequestCount(),
+      tunnelUrl: tunnelUrl ?? null,
+      proxyEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/messages` : null,
+    }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
   }
 });

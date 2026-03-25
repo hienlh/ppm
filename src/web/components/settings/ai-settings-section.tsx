@@ -118,6 +118,27 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
         </div>
 
         <div className={fieldGap}>
+          <Label htmlFor="ai-api-key" className={compact ? labelSize : undefined}>API Key / Token</Label>
+          <Input
+            key={`apikey-${revision}`}
+            id="ai-api-key"
+            type="password"
+            defaultValue={config?.api_key ?? ""}
+            placeholder="sk-ant-... (optional, overrides accounts)"
+            className={compact ? "h-7 text-[11px] font-mono" : "font-mono"}
+            onBlur={(e) => {
+              const val = e.target.value.trim();
+              // Don't save if it's the masked value
+              if (val.startsWith("••••")) return;
+              handleSave("api_key", val || undefined);
+            }}
+          />
+          <p className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+            Direct API key or OAuth token. Leave empty to use connected accounts.
+          </p>
+        </div>
+
+        <div className={fieldGap}>
           <Label htmlFor="ai-effort" className={compact ? labelSize : undefined}>Effort</Label>
           <Select
             value={config?.effort ?? "high"}

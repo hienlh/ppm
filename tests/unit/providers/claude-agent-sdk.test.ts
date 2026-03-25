@@ -1,5 +1,8 @@
-import { describe, it, expect, beforeEach, mock, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import type { ChatEvent } from "../../../src/types/chat.ts";
+import { configService } from "../../../src/services/config.service.ts";
+import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
+import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 
 /**
  * Helper: create an async iterable from an array of items with optional delay.
@@ -415,6 +418,79 @@ describe("ClaudeAgentSdkProvider", () => {
       // But since our mock doesn't call canUseTool, just verify the stream completes
       const done = events.find((e) => e.type === "done");
       expect(done).toBeTruthy();
+    });
+  });
+
+  describe("buildQueryEnv priority (api_key / base_url from settings)", () => {
+    const savedEnv: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      setDb(openTestDb());
+      // Backup env vars we'll modify
+      savedEnv.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+      savedEnv.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+      // Clear them so they don't interfere
+      delete process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_BASE_URL;
+    });
+
+    afterEach(() => {
+      // Restore
+      if (savedEnv.ANTHROPIC_API_KEY !== undefined) process.env.ANTHROPIC_API_KEY = savedEnv.ANTHROPIC_API_KEY;
+      else delete process.env.ANTHROPIC_API_KEY;
+      if (savedEnv.ANTHROPIC_BASE_URL !== undefined) process.env.ANTHROPIC_BASE_URL = savedEnv.ANTHROPIC_BASE_URL;
+      else delete process.env.ANTHROPIC_BASE_URL;
+      // Reset config
+      (configService as any).config.ai = structuredClone(DEFAULT_CONFIG.ai);
+    });
+
+    it("uses settings api_key over account token", async () => {
+      // Set api_key in config
+      (configService as any).config.ai.providers.claude.api_key = "sk-ant-settings-key-xyz";
+
+      mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+      const session = await provider.createSession({});
+      for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+      const opts = mockQueryFn.mock.calls[0]![0].options;
+      expect(opts.env.ANTHROPIC_API_KEY).toBe("sk-ant-settings-key-xyz");
+      expect(opts.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+    });
+
+    it("uses settings base_url over env", async () => {
+      process.env.ANTHROPIC_BASE_URL = "https://env-url.example.com";
+      (configService as any).config.ai.providers.claude.base_url = "https://settings-url.example.com";
+
+      mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+      const session = await provider.createSession({});
+      for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+      const opts = mockQueryFn.mock.calls[0]![0].options;
+      expect(opts.env.ANTHROPIC_BASE_URL).toBe("https://settings-url.example.com");
+    });
+
+    it("falls back to shell env when no settings api_key and no accounts", async () => {
+      process.env.ANTHROPIC_API_KEY = "sk-ant-env-key-fallback";
+      // No settings api_key, no accounts
+
+      mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+      const session = await provider.createSession({});
+      for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+      const opts = mockQueryFn.mock.calls[0]![0].options;
+      expect(opts.env.ANTHROPIC_API_KEY).toBe("sk-ant-env-key-fallback");
+    });
+
+    it("settings api_key takes priority even when env vars are set", async () => {
+      process.env.ANTHROPIC_API_KEY = "sk-ant-env-should-be-ignored";
+      (configService as any).config.ai.providers.claude.api_key = "sk-ant-settings-wins";
+
+      mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
+      const session = await provider.createSession({});
+      for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
+
+      const opts = mockQueryFn.mock.calls[0]![0].options;
+      expect(opts.env.ANTHROPIC_API_KEY).toBe("sk-ant-settings-wins");
     });
   });
 

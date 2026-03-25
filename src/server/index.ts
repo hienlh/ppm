@@ -13,6 +13,7 @@ import { postgresRoutes } from "./routes/postgres.ts";
 import { databaseRoutes } from "./routes/database.ts";
 import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
+import { proxyRoutes } from "./routes/proxy.ts";
 import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
@@ -100,6 +101,9 @@ app.get("/api/logs/recent", async (c) => {
 if (process.env.NODE_ENV !== "production") {
   app.get("/api/debug/crash", () => { process.exit(1); });
 }
+
+// Proxy routes — before auth middleware (uses own auth key)
+app.route("/proxy", proxyRoutes);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);

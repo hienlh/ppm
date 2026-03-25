@@ -46,6 +46,7 @@ export type PermissionMode = typeof VALID_PERMISSION_MODES[number];
 export interface AIProviderConfig {
   type: "agent-sdk" | "mock";
   api_key_env?: string;
+  api_key?: string;
   base_url?: string;
   // Agent SDK-specific settings (ignored by mock provider)
   model?: string;

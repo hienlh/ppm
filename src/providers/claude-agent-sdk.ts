@@ -68,20 +68,33 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // Settings base_url has highest priority
     const providerConfig = this.getProviderConfig();
 
-    // Resolve each auth var: settings > shell env > "" (blocks project .env)
-    const resolvedApiKey = account
-      ? (account.accessToken.startsWith("sk-ant-oat") ? "" : account.accessToken)
-      : (process.env.ANTHROPIC_API_KEY ?? "");
-    const resolvedOAuth = account
-      ? (account.accessToken.startsWith("sk-ant-oat") ? account.accessToken : "")
-      : (process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "");
+    // Priority: settings api_key > account token > shell env > "" (blocks project .env)
+    const settingsApiKey = providerConfig.api_key?.trim() || "";
+
+    let resolvedApiKey: string;
+    let resolvedOAuth: string;
+
+    if (settingsApiKey) {
+      // Settings api_key overrides everything — treat as direct API key
+      resolvedApiKey = settingsApiKey;
+      resolvedOAuth = "";
+    } else if (account) {
+      resolvedApiKey = account.accessToken.startsWith("sk-ant-oat") ? "" : account.accessToken;
+      resolvedOAuth = account.accessToken.startsWith("sk-ant-oat") ? account.accessToken : "";
+    } else {
+      resolvedApiKey = process.env.ANTHROPIC_API_KEY ?? "";
+      resolvedOAuth = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "";
+    }
+
     const resolvedBaseUrl = providerConfig.base_url
       || process.env.ANTHROPIC_BASE_URL
       || "";
     const resolvedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN ?? "";
 
     // Log resolved sources
-    if (account) {
+    if (settingsApiKey) {
+      console.log(`[sdk] Auth from settings api_key (length=${settingsApiKey.length})`);
+    } else if (account) {
       console.log(`[sdk] Auth from PPM account (${account.accessToken.startsWith("sk-ant-oat") ? "OAuth" : "API key"})`);
     } else if (process.env.ANTHROPIC_API_KEY) {
       console.log(`[sdk] ANTHROPIC_API_KEY from shell env (length=${process.env.ANTHROPIC_API_KEY.length})`);

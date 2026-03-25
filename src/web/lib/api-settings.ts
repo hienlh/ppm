@@ -155,6 +155,7 @@ export function testRawToken(token: string): Promise<{ status: string; code?: nu
 export interface AIProviderSettings {
   type?: string;
   api_key_env?: string;
+  api_key?: string;
   base_url?: string;
   model?: string;
   effort?: string;
@@ -180,4 +181,22 @@ export function getAISettings(): Promise<AISettings> {
 
 export function updateAISettings(settings: Partial<AISettings>): Promise<AISettings> {
   return api.put<AISettings>("/api/settings/ai", settings);
+}
+
+// ── Proxy ────────────────────────────────────────────────────────────
+
+export interface ProxySettings {
+  enabled: boolean;
+  authKey: string | null;
+  requestCount: number;
+  tunnelUrl: string | null;
+  proxyEndpoint: string | null;
+}
+
+export function getProxySettings(): Promise<ProxySettings> {
+  return api.get<ProxySettings>("/api/settings/proxy");
+}
+
+export function updateProxySettings(params: { enabled?: boolean; authKey?: string; generateKey?: boolean }): Promise<ProxySettings> {
+  return api.put<ProxySettings>("/api/settings/proxy", params);
 }
