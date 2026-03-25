@@ -144,7 +144,9 @@ function buildBreadcrumbs(
 
 // ── List (moved from index.ts inline) ──────────────────────────────
 
-/** Recursive file listing for command palette. */
+/** Breadth-first file listing for command palette.
+ *  Lists all files at each level before descending into subdirectories,
+ *  so root-level files (e.g. ~/.npmrc) are always found before the limit. */
 export function list(dir: string): string[] {
   const resolved = resolvePath(dir);
   if (!isAllowedPath(resolved)) {
@@ -152,28 +154,29 @@ export function list(dir: string): string[] {
   }
 
   const files: string[] = [];
+  const queue: { path: string; depth: number }[] = [{ path: resolved, depth: 0 }];
 
-  function walk(dirPath: string, depth: number) {
-    if (depth > LIST_MAX_DEPTH || files.length >= LIST_MAX_FILES) return;
+  while (queue.length > 0 && files.length < LIST_MAX_FILES) {
+    const { path: dirPath, depth } = queue.shift()!;
+    if (depth > LIST_MAX_DEPTH) continue;
     let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(dirPath, { withFileTypes: true });
     } catch {
-      return;
+      continue;
     }
     for (const entry of entries) {
       if (SKIP_NAMES.has(entry.name)) continue;
       const full = resolve(dirPath, entry.name);
       if (entry.isFile()) {
         files.push(full);
-        if (files.length >= LIST_MAX_FILES) return;
+        if (files.length >= LIST_MAX_FILES) return files;
       } else if (entry.isDirectory()) {
-        walk(full, depth + 1);
+        queue.push({ path: full, depth: depth + 1 });
       }
     }
   }
 
-  walk(resolved, 0);
   return files;
 }
 
