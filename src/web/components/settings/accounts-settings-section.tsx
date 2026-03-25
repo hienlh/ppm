@@ -141,6 +141,10 @@ export function AccountsSettingsSection() {
   const [oauthCode, setOauthCode] = useState("");
   const [oauthLoading, setOauthLoading] = useState(false);
   const [oauthStep, setOauthStep] = useState<"idle" | "waiting">("idle");
+  // Delete confirmation
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; display: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   // Export dialog
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportPassword, setExportPassword] = useState("");
@@ -236,10 +240,22 @@ export function AccountsSettingsSection() {
     refresh();
   }
 
-  async function handleDelete(id: string, email: string | null) {
-    if (!confirm(`Remove account ${email ?? id}?`)) return;
-    await deleteAccount(id);
-    refresh();
+  function handleDelete(id: string, email: string | null) {
+    setDeleteTarget({ id, display: email ?? id.slice(0, 8) });
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteAccount(deleteTarget.id);
+      showMessage({ type: "success", text: "Account removed." });
+      refresh();
+    } catch (e) {
+      showMessage({ type: "error", text: (e as Error).message });
+    }
+    setDeleting(false);
+    setDeleteTarget(null);
   }
 
   function formatLastUsed(ts: number | null): string {
@@ -735,6 +751,26 @@ export function AccountsSettingsSection() {
               onClick={() => doExport(false)}
             >
               {exporting ? <><Loader2 className="size-3 animate-spin mr-1" /> Exporting...</> : <><Download className="size-3 mr-1" /> Download</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={!!deleteTarget} onOpenChange={(v) => { if (!v) setDeleteTarget(null); }}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Remove Account</DialogTitle>
+            <DialogDescription className="text-xs">
+              Remove <strong>{deleteTarget?.display}</strong>? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button size="sm" variant="destructive" className="text-xs h-7 cursor-pointer" onClick={confirmDelete} disabled={deleting}>
+              {deleting ? <><Loader2 className="size-3 animate-spin mr-1" /> Removing...</> : "Remove"}
             </Button>
           </DialogFooter>
         </DialogContent>
