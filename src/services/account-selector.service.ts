@@ -118,12 +118,14 @@ class AccountSelectorService {
    * Weighted sustainability score.
    * Considers 5-hour utilization, weekly utilization, and time until weekly reset.
    *
-   * score = 0.35 × (1 - 5hr) + 0.65 × min(weeklyRemaining / resetRatio, 1.0)
+   * score = 0.35 × (1 - 5hr) + 0.65 × min(weeklyRemaining / resetRatio, 2.0) / 2.0
    *
-   * weeklyRemaining / resetRatio normalizes remaining capacity by time until reset:
-   *  - 4% remaining with 34h left  → low sustainability (0.20)
-   *  - 78% remaining with 113h left → high sustainability (1.0, capped)
-   *  - 20% remaining with 6h left   → decent (resets soon, so it's fine)
+   * weeklyRemaining / resetRatio normalizes remaining capacity by time until reset.
+   * Capped at 2.0 (not 1.0) so accounts with imminent reset score higher:
+   *  - 4% remaining with 34h left  → raw 0.20, scaled 0.10 (low)
+   *  - 78% remaining with 113h left → raw 1.16, scaled 0.58 (good)
+   *  - 44% remaining with 32h left  → raw 2.32, scaled 1.00 (great — resets soon)
+   *  - 20% remaining with 6h left   → raw 5.6,  scaled 1.00 (great — resets very soon)
    */
   private pickLowestUsage(active: { id: string; createdAt: number }[]): string {
     const scored = active.map((acc) => {
@@ -142,7 +144,7 @@ class AccountSelectorService {
       const immediate = 1 - fiveHour;
       const weeklyRemaining = 1 - weekly;
       const resetRatio = weeklyResetHours / 168;
-      const sustainability = Math.min(weeklyRemaining / Math.max(resetRatio, 0.05), 1.0);
+      const sustainability = Math.min(weeklyRemaining / Math.max(resetRatio, 0.05), 2.0) / 2.0;
       const score = 0.35 * immediate + 0.65 * sustainability;
 
       return { id: acc.id, score, exhausted };

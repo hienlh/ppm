@@ -298,15 +298,21 @@ export function getCachedUsage(): ClaudeUsage & { activeAccountId?: string; acti
 
 export function startUsagePolling(): void {
   if (pollTimer) return;
-  // Use recursive setTimeout instead of setInterval to prevent overlap
-  // and ensure polling continues even if a single iteration errors
+  const POLL_TIMEOUT = 60_000; // max 60s per poll iteration
   const scheduleNext = () => {
     pollTimer = setTimeout(async () => {
-      await pollOnce();
+      try {
+        await Promise.race([
+          pollOnce(),
+          new Promise<void>(r => setTimeout(r, POLL_TIMEOUT)),
+        ]);
+      } catch {
+        // ignore — scheduleNext runs regardless
+      }
       scheduleNext();
     }, POLL_INTERVAL);
   };
-  pollOnce().then(scheduleNext);
+  pollOnce().then(scheduleNext, scheduleNext);
 }
 
 export function stopUsagePolling(): void {

@@ -325,9 +325,43 @@ describe("lowest-usage weighted sustainability strategy", () => {
     const picked = accountSelector.next();
     // Vincent: EXHAUSTED (weekly=100%)
     // Victor: EXHAUSTED (5hr=100%)
-    // Peter: score = 0.35*0.77 + 0.65*min(0.04/0.202, 1) = 0.270 + 0.129 = 0.399
-    // Jim: score = 0.35*0.53 + 0.65*min(0.78/0.673, 1) = 0.186 + 0.650 = 0.836
+    // Peter: sustainability = 0.04/0.202 = 0.198, scaled = 0.099
+    // Jim: sustainability = 0.78/0.673 = 1.159, scaled = 0.580
     expect(picked!.id).toBe(jim.id);
+  });
+
+  it("prefers account with imminent reset over one with more weekly remaining", () => {
+    // Jim: 5hr=78%, weekly=24%, reset 4d14h (110h) — lots remaining but far reset
+    const jim = addAccount("jim@test.com");
+    // Alex: 5hr=63%, weekly=56%, reset 1d7h (31h) — less remaining but resets very soon
+    const alex = addAccount("alex@test.com");
+
+    insertUsage(jim.id, { fiveHour: 0.78, weekly: 0.24, weeklyResetsAt: hoursFromNow(110) });
+    insertUsage(alex.id, { fiveHour: 0.63, weekly: 0.56, weeklyResetsAt: hoursFromNow(31) });
+
+    const picked = accountSelector.next();
+    // Jim: raw sustainability = 0.76/0.655 = 1.16, scaled = min(1.16,2)/2 = 0.58
+    //      score = 0.35*0.22 + 0.65*0.58 = 0.454
+    // Alex: raw sustainability = 0.44/0.185 = 2.38, scaled = min(2.38,2)/2 = 1.0
+    //       score = 0.35*0.37 + 0.65*1.0 = 0.780
+    expect(picked!.id).toBe(alex.id);
+  });
+
+  it("imminent reset wins even when other account has lower 5hr", () => {
+    // A: 5hr=40%, weekly=24%, reset 111h — lower 5hr but far reset
+    const a = addAccount("a@test.com");
+    // B: 5hr=50%, weekly=56%, reset 32h — higher 5hr but resets soon
+    const b = addAccount("b@test.com");
+
+    insertUsage(a.id, { fiveHour: 0.40, weekly: 0.24, weeklyResetsAt: hoursFromNow(111) });
+    insertUsage(b.id, { fiveHour: 0.50, weekly: 0.56, weeklyResetsAt: hoursFromNow(32) });
+
+    const picked = accountSelector.next();
+    // Without the 2.0 cap scaling, both sustainability would be 1.0 and A wins on 5hr.
+    // With scaling: A sustainability = 1.15 → 0.576, B sustainability = 2.31 → 1.0
+    // A score = 0.35*0.60 + 0.65*0.576 = 0.584
+    // B score = 0.35*0.50 + 0.65*1.0 = 0.825
+    expect(picked!.id).toBe(b.id);
   });
 });
 

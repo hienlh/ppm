@@ -530,6 +530,7 @@ class AccountService {
         client_id: OAUTH_CLIENT_ID,
         refresh_token: account.refreshToken,
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
