@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { VERSION } from "../../version.ts";
 import {
   getInstallMethod,
+  compareSemver,
   applyUpgrade,
   signalSupervisorUpgrade,
 } from "../../services/upgrade.service.ts";
@@ -20,7 +21,11 @@ upgradeRoutes.get("/", (c) => {
   try {
     if (existsSync(STATUS_FILE)) {
       const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
-      availableVersion = data.availableVersion ?? null;
+      const candidate = data.availableVersion ?? null;
+      // Only report if actually newer than current version
+      if (candidate && compareSemver(VERSION, candidate) < 0) {
+        availableVersion = candidate;
+      }
     }
   } catch {}
 

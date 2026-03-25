@@ -407,9 +407,9 @@ export async function runSupervisor(opts: {
   const logFd = openSync(LOG_FILE, "a");
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
 
-  // Write supervisor PID
+  // Write supervisor PID + clear stale availableVersion from previous run
   writeFileSync(PID_FILE, String(process.pid));
-  updateStatus({ supervisorPid: process.pid, port: opts.port, host: opts.host });
+  updateStatus({ supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null });
 
   // Build __serve__ args
   const serverArgs = [
