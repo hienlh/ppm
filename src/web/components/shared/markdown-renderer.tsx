@@ -2,9 +2,27 @@ import { useMemo, useRef, useEffect } from "react";
 import { marked } from "marked";
 import { useTabStore } from "@/stores/tab-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
+import { useImageOverlay } from "@/stores/image-overlay-store";
+import { useDiagramOverlay } from "@/stores/diagram-overlay-store";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
+import mermaid from "mermaid";
+
+/** Mermaid keywords that start a diagram definition */
+const MERMAID_KEYWORDS = /^(sequenceDiagram|flowchart|graph\s|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|quadrantChart|requirementDiagram|gitGraph|mindmap|timeline|sankey|xychart|block-beta|packet-beta|architecture-beta|kanban)\b/;
+
+let mermaidInitialized = false;
+function ensureMermaidInit() {
+  if (mermaidInitialized) return;
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "default",
+    securityLevel: "loose",
+    fontFamily: "ui-sans-serif, system-ui, sans-serif",
+  });
+  mermaidInitialized = true;
+}
 
 /** Detect local absolute file paths (Unix or Windows) */
 const LOCAL_PATH_RE = /^(\/|[A-Za-z]:[/\\])/;
@@ -88,10 +106,45 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
   const containerRef = useRef<HTMLDivElement>(null);
   const openTab = useTabStore((s) => s.openTab);
   const fileTree = useFileStore((s) => s.tree);
+  const openImageOverlay = useImageOverlay((s) => s.open);
+  const openDiagramOverlay = useDiagramOverlay((s) => s.open);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
+    // --- Render mermaid diagrams ---
+    const renderMermaid = async () => {
+      ensureMermaidInit();
+      const pres = container.querySelectorAll("pre");
+      for (const pre of pres) {
+        const code = pre.querySelector("code");
+        if (!code) continue;
+        const langClass = code.className ?? "";
+        const text = (code.textContent ?? "").trim();
+        const isMermaid = langClass.includes("language-mermaid") || MERMAID_KEYWORDS.test(text);
+        if (!isMermaid) continue;
+
+        try {
+          const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
+          const { svg } = await mermaid.render(id, text);
+          const wrapper = document.createElement("div");
+          wrapper.className = "mermaid-diagram group relative cursor-pointer rounded-lg border border-border bg-white dark:bg-zinc-50 p-3 overflow-x-auto my-2";
+          wrapper.innerHTML = svg;
+          // Expand icon hint
+          const hint = document.createElement("div");
+          hint.className = "absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/60 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none";
+          hint.textContent = "Click to expand";
+          wrapper.appendChild(hint);
+          // Click to open overlay
+          wrapper.addEventListener("click", () => openDiagramOverlay(svg));
+          pre.replaceWith(wrapper);
+        } catch {
+          // Render failed — leave as code block
+        }
+      }
+    };
+    renderMermaid();
 
     // --- Click handler for file links and clickable code ---
     const handleClick = (e: MouseEvent) => {
@@ -206,7 +259,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
           img.style.borderRadius = "0.375rem";
           img.style.border = "1px solid var(--color-border)";
           img.style.cursor = "pointer";
-          img.onclick = () => window.open(url, "_blank");
+          img.onclick = () => openImageOverlay(url, img.alt || basename(src));
         })
         .catch(() => {
           img.style.opacity = "0.5";
@@ -263,7 +316,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       container.removeEventListener("click", handleClick);
       blobUrls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [html, projectName, openTab, codeActions]);
+  }, [html, projectName, openTab, codeActions, openImageOverlay, openDiagramOverlay]);
 
   return (
     <div

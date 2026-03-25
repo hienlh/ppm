@@ -22,6 +22,8 @@ import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { UpgradeBanner } from "@/components/layout/upgrade-banner";
+import { ImageOverlay } from "@/components/shared/image-overlay";
+import { DiagramOverlay } from "@/components/shared/diagram-overlay";
 import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
@@ -279,6 +281,12 @@ export function App() {
 
         {/* Global bug report popup */}
         <BugReportPopup />
+
+        {/* Global image lightbox */}
+        <ImageOverlay />
+
+        {/* Global diagram lightbox (mermaid) */}
+        <DiagramOverlay />
 
         {/* Toast notifications */}
         <Toaster
