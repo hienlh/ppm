@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.56] - 2026-03-26
+
+### Added
+- **Account card footer**: Token expiry countdown and status label (long-lived/temp/expired/key) with color coding; hover for explanation
+
 ## [0.8.55] - 2026-03-26
 
 ### Added
