@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.48] - 2026-03-25
+
+### Fixed
+- **Account auth errors**: Use cooldown instead of permanent disable on `authentication_failed` / 401 — auth issues can be transient (subscription lapse, org changes, API hiccups)
+- **SDK refresh safety**: Pass `disableOnFail=false` in SDK error handlers — prevents `refreshAccessToken` from disabling accounts as side effect during auto-retry
+
 ## [0.8.47] - 2026-03-25
 
 ### Fixed
