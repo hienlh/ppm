@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.58] - 2026-03-26
+
+### Fixed
+- **Stale upgrade banner**: Banner showed old version (e.g. v0.8.56) even after upgrading past it. Route now compares availableVersion > currentVersion before returning. Supervisor clears stale availableVersion on startup.
+
 ## [0.8.57] - 2026-03-26
 
 ### Fixed
