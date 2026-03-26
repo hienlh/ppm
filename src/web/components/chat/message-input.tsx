@@ -322,6 +322,7 @@ export const MessageInput = memo(function MessageInput({
 
     onSlashStateChange?.(false, "");
     onFileStateChange?.(false, "");
+    if (voice.isListening) voice.stop();
     onSend(trimmed, readyAttachments);
     setValue("");
     // Revoke preview URLs
