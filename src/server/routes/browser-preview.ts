@@ -91,10 +91,55 @@ function rewriteHtml(html: string, proxyBase: string): string {
   return result;
 }
 
-/** Check if response content-type is HTML */
-function isHtmlResponse(resp: Response): boolean {
+/** Rewrite absolute import paths in JS/TS module responses */
+function rewriteJs(js: string, proxyBase: string): string {
+  // Static imports: import ... from "/...", import "/..."
+  let result = js.replace(
+    /((?:from|import)\s*["'])\/(?!\/)/g,
+    `$1${proxyBase}/`,
+  );
+
+  // Dynamic imports: import("/..."), import('/...')
+  result = result.replace(
+    /(import\s*\(\s*["'])\/(?!\/)/g,
+    `$1${proxyBase}/`,
+  );
+
+  // Vite-specific: new URL("/...", import.meta.url)
+  result = result.replace(
+    /(new\s+URL\(\s*["'])\/(?!\/)/g,
+    `$1${proxyBase}/`,
+  );
+
+  return result;
+}
+
+/** Rewrite absolute paths in CSS responses */
+function rewriteCss(css: string, proxyBase: string): string {
+  // url("/...") and url('/...') and url(/...)
+  let result = css.replace(
+    /(url\(\s*["']?)\/(?!\/)/g,
+    `$1${proxyBase}/`,
+  );
+  // @import "/..."
+  result = result.replace(
+    /(@import\s+["'])\/(?!\/)/g,
+    `$1${proxyBase}/`,
+  );
+  return result;
+}
+
+/** Detect response content type */
+function getResponseType(resp: Response, path: string): "html" | "js" | "css" | "other" {
   const ct = resp.headers.get("content-type") || "";
-  return ct.includes("text/html");
+  if (ct.includes("text/html")) return "html";
+  if (ct.includes("text/css")) return "css";
+  if (ct.includes("javascript") || ct.includes("typescript") || ct.includes("text/jsx")) return "js";
+  // Vite serves .ts/.tsx/.jsx with application/javascript or sometimes no content-type
+  // Fall back to extension detection for module files
+  const ext = path.split("?")[0]?.split(".").pop()?.toLowerCase();
+  if (ext && ["js", "mjs", "jsx", "ts", "tsx", "mts"].includes(ext)) return "js";
+  return "other";
 }
 
 /** Shared proxy handler */
@@ -126,12 +171,16 @@ async function proxyRequest(c: any, port: string, targetPath: string) {
       respHeaders.set("location", `${proxyBase}${location}`);
     }
 
-    // Rewrite HTML responses to fix absolute paths
-    if (isHtmlResponse(resp) && resp.body) {
-      const html = await resp.text();
-      const rewritten = rewriteHtml(html, proxyBase);
-      respHeaders.delete("content-length"); // Length changed after rewrite
-      respHeaders.set("content-type", "text/html; charset=utf-8");
+    // Rewrite text responses to fix absolute paths
+    const rtype = getResponseType(resp, targetPath);
+    if (rtype !== "other" && resp.body) {
+      const text = await resp.text();
+      let rewritten: string;
+      if (rtype === "html") rewritten = rewriteHtml(text, proxyBase);
+      else if (rtype === "js") rewritten = rewriteJs(text, proxyBase);
+      else rewritten = rewriteCss(text, proxyBase);
+
+      respHeaders.delete("content-length");
       return new Response(rewritten, {
         status: resp.status,
         statusText: resp.statusText,
