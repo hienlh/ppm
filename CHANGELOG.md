@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.63] - 2026-03-27
+
+### Changed
+- **Browser preview tab rewrite**: Replaced fragile reverse proxy (HTML/JS/CSS path rewriting) with per-port Cloudflare Quick Tunnels. User enters a port, PPM starts a tunnel, iframe loads the tunnel URL — all assets, HMR, fonts work natively. Ghost tunnels auto-cleaned every 30s. All tunnels killed on server shutdown.
+
 ## [0.8.62] - 2026-03-26
 
 ### Added
