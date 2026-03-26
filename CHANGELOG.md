@@ -1,10 +1,11 @@
 # Changelog
 
-## [0.8.60] - Unreleased
+## [0.8.60] - 2026-03-26
 
 ### Fixed
 - **Chat input drops uploading files on send**: Pressing send while files are still uploading now queues the message and auto-sends once all uploads complete, instead of silently dropping in-progress attachments. Send button shows spinner when queued; clicking again cancels.
 - **Ping interval leak**: `evictClient()` clears ping interval when broadcast error removes client
+- **Black screen after closing all tabs**: Panel auto-close used `Object.keys(panels)` which counted keep-alive panels from other projects — last panel got removed, leaving empty grid. Now uses `grid.flat().length` to count only current-project panels. Added defensive recovery in PanelLayout for empty grid.
 
 ## [0.8.59] - 2026-03-26
 
