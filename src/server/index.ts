@@ -14,6 +14,7 @@ import { databaseRoutes } from "./routes/database.ts";
 import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
+import { browserPreviewRoutes } from "./routes/browser-preview.ts";
 import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
@@ -125,6 +126,9 @@ app.route("/proxy", proxyRoutes);
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
+
+// Browser preview reverse proxy — proxies to localhost:<port> for iframe embedding
+app.route("/api/preview", browserPreviewRoutes);
 
 // Filesystem operations (browse, list, read, write) — consolidated in fs-browse route
 app.route("/api/fs", fsBrowseRoutes);

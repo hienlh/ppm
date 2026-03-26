@@ -10,7 +10,8 @@ export type TabType =
   | "postgres"
   | "git-graph"
   | "git-diff"
-  | "settings";
+  | "settings"
+  | "browser";
 
 export interface Tab {
   id: string;
