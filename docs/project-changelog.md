@@ -2,47 +2,94 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.8.60
+**Current Version:** v0.8.62
 
 ---
 
-## [0.8.60] — 2026-03-26
+## [0.8.62] — 2026-03-26
 
 ### Added
-- **Dynamic Model Listing** — Multi-provider UI improvements with provider-aware model discovery
-  - `listModels?()` optional method on AIProvider interface for runtime model discovery
-  - `ModelOption` type: `{ value: string; label: string }` for model IDs and display names
-  - Claude provider: Hardcoded 2 models (Sonnet 4.6, Opus 4.6)
-  - Cursor provider: Subprocess execution with 5-minute TTL cache and 10-second timeout
-- **Provider Models API Endpoints**
-  - `GET /api/settings/ai/providers/:id/models` — Global endpoint for Settings UI
-  - `GET /api/project/:name/chat/providers/:providerId/models` — Project-scoped endpoint for Chat tab
-- **AI Settings UI** — Per-provider tabs with dynamic model dropdowns
-  - Dropdown auto-populated from models API
-  - Fallback to hardcoded models if API call fails
-  - Provider-aware settings display (SDK vs CLI options)
-- **Chat History Bar** — Provider-aware usage display
-  - Provider badges showing active provider per session
-  - Full usage stats for Claude (tokens_in, tokens_out, cost)
-  - Context-only usage for other providers
-- **Provider Registry Pattern** — `list()` vs `listAll()` distinction
-  - `list()` returns user-facing providers (excludes mock)
-  - `listAll()` returns all providers including mock (internal only)
-  - `bootstrapProviders()` auto-detects CLI providers on startup
-- **13 new integration tests** for provider models API and multi-provider flows
+- **Cmd+Shift+V shortcut** — Command palette entry for voice input
+- **Voice input** — Web Speech API integration for chat
+
+---
+
+## [0.8.61] — 2026-03-26 (Beta)
+
+### Added
+- **Multi-Provider Architecture** — Generic AI provider system supporting Claude (SDK-based) and CLI-spawning providers
+  - `AIProvider` interface with optional capability methods (`abortQuery?`, `getMessages?`, `listSessionsByDir?`)
+  - `CliProvider` abstract base class for CLI-spawning providers (Cursor, Codex, Gemini)
+  - `CursorCliProvider` implementation — spawns `cursor-agent` with NDJSON streaming
+  - NDJSON line parser utility for TCP packet boundary handling
+  - Cursor event mapper — normalizes Cursor NDJSON → standard ChatEvent union
+  - Cursor history reader — loads sessions from `~/.cursor/chats/` SQLite DAG
+  - Provider selector UI component — users can choose provider when creating chat
+  - Async provider bootstrap — checks binary availability, registers only if available
+  - Workspace trust auto-retry — detects trust prompts, retries with `--trust` flag
+  - Process lifecycle management — SIGTERM → SIGKILL escalation, orphan cleanup
 
 ### Technical Details
-- **File Changes:**
-  - `src/types/chat.ts` — Added ModelOption interface, listModels method to AIProvider
-  - `src/providers/provider.interface.ts` — Re-export ModelOption
-  - `src/providers/registry.ts` — Implement list/listAll, add bootstrapProviders
-  - `src/providers/claude-agent-sdk.ts` — Add listModels implementation
-  - `src/providers/cursor-cli/cursor-provider.ts` — Add listModels with TTL cache + timeout
-  - `src/server/routes/settings.ts` — Add GET /ai/providers/:id/models endpoint
-  - `src/server/routes/chat.ts` — Add GET /providers/:providerId/models endpoint
-  - `src/web/components/settings/ai-settings-section.tsx` — Dynamic model dropdowns per provider
-  - `src/web/components/chat/chat-history-bar.tsx` — Provider badges and usage display
-- **Test Coverage:** 492 passing tests (13 new for provider models)
+- **Files Created:**
+  - `src/utils/ndjson-line-parser.ts` — NDJSON streaming parser
+  - `src/providers/cli-provider-base.ts` — Abstract CliProvider base class
+  - `src/providers/cursor-cli/cursor-provider.ts` — CursorCliProvider
+  - `src/providers/cursor-cli/cursor-event-mapper.ts` — Event mapping
+  - `src/providers/cursor-cli/cursor-history.ts` — SQLite history reader
+  - `src/web/components/chat/provider-selector.tsx` — Provider selection UI
+  - `tests/unit/ndjson-line-parser.test.ts` — Parser tests
+  - `tests/unit/cursor-event-mapper.test.ts` — Mapper tests
+  - `tests/integration/cursor-provider.test.ts` — Integration tests
+  - `tests/integration/chat-service-multi-provider.test.ts` — Service tests
+- **Files Modified:**
+  - `src/types/chat.ts` — Added optional capability methods to AIProvider, added `system` event type
+  - `src/types/config.ts` — Added `"cli"` type, `cli_command` field to AIProviderConfig
+  - `src/providers/registry.ts` — Added async `bootstrapProviders()` for conditional registration
+  - `src/server/ws/chat.ts` — Removed `as any` casts, use optional chaining for capabilities
+  - `src/services/chat.service.ts` — Use optional methods instead of duck-typing
+  - `src/web/components/chat/session-picker.tsx` — Integrated provider selector
+- **Breaking Changes:** None (backward compatible, all tests passing)
+- **Architecture:** All phases complete (6/6), 555 tests passing
+
+### Benefits
+- Extensible foundation for Codex, Gemini, and future providers (~100-150 lines each)
+- No more `as any` casts for provider methods — type-safe optional capability pattern
+- CLI providers can override session history reading (e.g., Cursor SQLite DAG)
+- Graceful degradation — missing CLI binary doesn't crash, logs info, skips provider
+
+---
+
+## [0.8.55] — 2026-03-26
+
+### Added
+- **Streaming Input Migration** — Persistent AsyncGenerator session model for chat
+  - Provider maintains long-lived streaming input per session (not per message)
+  - Follow-up messages push into existing generator instead of abort-and-replace
+  - Single streaming loop decoupled from WebSocket message handler
+  - Message priority support (`now`/`next`/`later`) for intelligent message ordering
+  - Image attachment support in message sending
+  - Session state persistence across FE disconnections (5-minute cleanup timeout)
+  - Event buffering on reconnect: clients receive buffered turn events after reconnection
+  - Phase transitions: `idle` → `initializing` → `connecting` → `thinking`/`streaming` → `idle`
+
+### Technical Details
+- **Provider Layer** (`src/providers/claude-agent-sdk.ts`): Maintains streaming session per sessionId
+- **WebSocket Handler** (`src/server/ws/chat.ts`):
+  - `runStreamLoop()` executes independently (detached from WS scope)
+  - `activeSessions` map persists session state across FE disconnections
+  - `startSessionConsumer()` pattern replaces per-message `runStreamLoop()` calls
+  - Event buffering (turnEvents array, max 10k events) for reconnect sync
+  - Per-client ping intervals (15s keepalive)
+- **Types** (`src/types/api.ts`, `src/types/chat.ts`):
+  - `ChatWsClientMessage` extended with `priority?: string` and optional `images`
+  - `SessionPhase` = "initializing" | "connecting" | "thinking" | "streaming" | "idle"
+  - `SessionEntry` tracks clients, abort handle, phase, pending approvals, buffered events
+- **Frontend** (`src/web/components/chat/message-input.tsx`): PriorityToggle component (visible during streaming)
+- **Benefits**:
+  - No SDK subprocess restarts between messages (faster context preservation)
+  - Tool approvals integrated into streaming (no query restart)
+  - Message buffering prevents loss on FE reconnection
+  - Cleaner architecture: BE owns Claude connection, FE disconnect ≠ abort
 
 ---
 

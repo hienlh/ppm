@@ -48,6 +48,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.SettingsTab,
     })),
   ),
+  browser: lazy(() =>
+    import("@/components/browser/browser-tab").then((m) => ({
+      default: m.BrowserTab,
+    })),
+  ),
 };
 
 function LoadingFallback() {

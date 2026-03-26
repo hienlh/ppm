@@ -124,6 +124,13 @@ export function useGlobalKeybindings() {
         return;
       }
 
+      // Toggle voice input in chat
+      if (match(e, "voice-input")) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("toggle-voice-input"));
+        return;
+      }
+
       // Open search (sidebar)
       if (match(e, "open-search")) {
         e.preventDefault();

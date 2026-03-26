@@ -10,6 +10,7 @@ import {
   Database,
   ChevronLeft,
   ChevronRight,
+  Globe,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -33,6 +34,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   "git-graph": GitBranch,
   "git-diff": FileDiff,
   settings: Settings,
+  browser: Globe,
 };
 
 interface TabBarProps {

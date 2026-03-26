@@ -140,27 +140,8 @@ POST   /api/db/connections/:id/query              → Execute query (readonly ch
 PATCH  /api/db/connections/:id/cell               → Update cell value (single)
 GET    /api/upgrade/status                        → Get current + available versions, install method
 POST   /api/upgrade/apply                         → Install new version, trigger supervisor self-replace
-GET    /api/settings/ai/providers/:id/models     → List models for provider (global)
-GET    /api/project/:name/chat/providers/:providerId/models → List models (project-scoped)
 WS     /ws/project/:name/chat/:sessionId          → Chat streaming
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
-```
-
-**Models Endpoints (v0.8.60+):**
-```typescript
-// Global models endpoint (for Settings UI)
-GET /api/settings/ai/providers/:id/models
-Response: { ok: true, data: ModelOption[] }
-
-// Project-scoped models endpoint (for Chat tab)
-GET /api/project/:name/chat/providers/:providerId/models
-Response: { ok: true, data: ModelOption[] }
-
-// ModelOption structure
-{
-  value: "claude-sonnet-4-6",
-  label: "Claude Sonnet 4.6"
-}
 ```
 
 ---
@@ -204,73 +185,67 @@ Response: { ok: true, data: ModelOption[] }
 ---
 
 ### Provider Layer (AI Adapters)
-**Component:** Provider interface + implementations + registry
+**Component:** Provider interface + implementations
 
 **Responsibilities:**
 - Abstract AI model differences behind common interface
 - Stream responses as async generators
 - Handle tool use and approval flows
 - Track token usage
-- Discover and list available models per provider
 
 **Interface (src/providers/provider.interface.ts):**
 ```typescript
 interface AIProvider {
-  // Required methods
   createSession(): Promise<Session>;
   sendMessage(sessionId: string, message: string, context?: FileContext[]): AsyncIterable<ChatEvent>;
-
-  // Optional methods (v0.8.60+)
-  listModels?(): Promise<ModelOption[]>;  // Discover available models
-  isAvailable?(): Promise<boolean>;       // Check if provider is available
-}
-
-interface ModelOption {
-  value: string;    // Model ID
-  label: string;    // Display name
+  onToolApproval(sessionId: string, requestId: string, approved: boolean, data?: unknown): Promise<void>;
 }
 ```
 
 **Implementations:**
-1. **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use
-   - Reads model/effort/maxTurns/budget/thinking from config (fresh per query)
-   - Windows CLI fallback for Bun subprocess pipe issues
-   - .env poisoning mitigation
-   - Multi-account support: injects account API token instead of ANTHROPIC_API_KEY env var
-   - `listModels()`: Returns hardcoded 2 models (Sonnet 4.6, Opus 4.6)
+- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use. Reads model/effort/maxTurns/budget/thinking from config. Settings refreshed per query. Windows CLI fallback for Bun subprocess pipe issues. .env poisoning mitigation. **Multi-account support:** Injects account API token from AccountService instead of relying on ANTHROPIC_API_KEY env var when accounts configured.
+- **mock-provider** (Testing) — Returns canned responses
+- **cursor-cli** (CLI-based) — Spawns `cursor-agent` CLI binary with NDJSON streaming. Extends `CliProvider` base class.
+- **codex/gemini** (Planned) — Pluggable via `CliProvider` extension (~100-150 lines each)
 
-2. **cursor-cli/cursor-provider** (CLI-based) — Subprocess provider
-   - Extends `CliProvider` abstract base for lifecycle management
-   - `listModels()`: Runs `cursor-agent --list-models` with subprocess
-   - 5-minute TTL cache (prevents repeated subprocess calls)
-   - 10-second timeout (graceful fallback)
-   - Platform-aware binary detection
+#### Multi-Provider Architecture (v0.8.61+)
 
-3. **mock-provider** (Testing) — Returns canned responses
-   - Deterministic for unit tests
+PPM supports multiple AI providers through a generic `AIProvider` interface and extensible base classes:
 
-**Provider Registry Pattern (src/providers/registry.ts):**
-```typescript
-// User-facing providers (excludes mock)
-list(): ProviderInfo[] {
-  return [{ id: "claude", name: "Claude" }, { id: "cursor", name: "Cursor" }];
-}
+**Provider Types:**
+1. **SDK-based** (claude-agent-sdk) — Uses Anthropic SDK for rich features (approvals, thinking blocks)
+2. **CLI-based** (cursor-cli, codex, gemini) — Spawns external binary with NDJSON streaming
 
-// All providers including internal (for ChatService aggregation)
-listAll(): ProviderInfo[] {
-  return [..., { id: "mock", name: "Mock" }];
-}
+**Base Classes:**
+- `AIProvider` interface — Defines required methods (createSession, sendMessage) + optional capabilities (abortQuery, getMessages, listSessionsByDir, ensureProjectPath)
+- `CliProvider` abstract class — Shared spawn/parse/abort logic for all CLI-spawning providers
+- Provider-specific subclasses implement: `buildArgs()`, `mapEvent()`, `extractSessionId()`, `isAvailable()`
 
-// Auto-detect CLI providers on startup
-async bootstrapProviders() {
-  for (const provider of this.providers.values()) {
-    if (await provider.isAvailable?.()) {
-      // Auto-create config entry if detected
-      await configService.save();
-    }
-  }
-}
-```
+**Streaming Infrastructure:**
+- `parseNdjsonLines()` utility — Async generator that buffers partial TCP packets, yields complete JSON lines
+- `ChatEvent` union type — Normalized event format across all providers (text, tool_use, thinking, approval_request, system, done, error)
+- Event mappers translate provider-specific JSON → ChatEvent (e.g., Cursor's `reasoning` type → `thinking` event)
+
+**Provider Registration & Bootstrap:**
+- `ProviderRegistry` maintains active provider instances
+- `bootstrapProviders()` async function checks `isAvailable()` on CLI providers before registering
+- Graceful fallback: if Cursor binary not found, provider skips registration (no crash, logged as info)
+- Config type `AIProviderConfig.type` union: `"agent-sdk" | "cli" | "mock"`
+
+**CLI-Provider Features:**
+- **Session capture** — Extract session ID from provider's init event, re-key process tracking
+- **Workspace trust auto-retry** — Detect trust prompts in stderr, retry once with `--trust` flag
+- **Process lifecycle** — Track active processes per session, escalate SIGTERM → SIGKILL on abort
+- **History loading** — Override `listSessions()` to read native provider history (e.g., Cursor SQLite DAG)
+- **Graceful degradation** — Missing binary → provider skipped, not fatal
+
+**New Files (v0.8.61):**
+- `src/utils/ndjson-line-parser.ts` — NDJSON streaming parser
+- `src/providers/cli-provider-base.ts` — Abstract base class for CLI providers
+- `src/providers/cursor-cli/cursor-provider.ts` — CursorCliProvider implementation
+- `src/providers/cursor-cli/cursor-event-mapper.ts` — NDJSON → ChatEvent mapping
+- `src/providers/cursor-cli/cursor-history.ts` — SQLite DAG reader for Cursor history
+- `src/web/components/chat/provider-selector.tsx` — UI component for provider selection
 
 ---
 
@@ -518,7 +493,27 @@ Returns full updated config. Validates ranges/enums before writing.
 
 ---
 
-## Chat Streaming Flow
+## Chat Streaming Flow (Persistent AsyncGenerator Sessions)
+
+### Architecture Overview (v0.8.55+)
+
+PPM uses a **persistent streaming session** model instead of per-message query execution:
+
+**Key Changes:**
+- Provider maintains **long-lived AsyncGenerator streaming input** per chat session (not per message)
+- Follow-up messages **push into the existing generator** instead of abort-and-replace
+- **Single streaming loop** per session decoupled from WebSocket message handler
+- Message priority support: `now` (interrupt current), `next` (queue first), `later` (queue at end)
+- Supports image attachments in messages
+
+**Design Benefits:**
+- Continuous context preservation — multi-turn conversations flow naturally
+- No SDK subprocess restarts between messages (faster)
+- Clean separation: BE owns Claude connection, FE disconnect doesn't abort
+- Message buffering on reconnect — clients that lose WS connection sync turn events
+- Tool approvals don't restart the query — integrated into streaming loop
+
+### Message Flow
 
 ```
 User types: "Debug this function"
@@ -527,18 +522,26 @@ MessageInput.tsx calls useChat.sendMessage()
     ↓
 useChat opens WebSocket: WS /ws/project/:name/chat/:sessionId
     ↓
-Sends: { type: "message", content: "Debug..." }
+Sends: { type: "message", content: "Debug...", priority?: "now"|"next"|"later" }
     ↓
-Server routes to ChatService.streamMessage()
+WS handler in chat.ts receives message
+    ↓
+If already streaming with different content → abort previous + wait cleanup
+If streaming, new message priority determines queue behavior:
+    • priority: "now" → abort current, restart with new content
+    • priority: "next" → push into pending queue (higher priority)
+    • priority: "later" → push to end of queue (FIFO)
+    ↓
+runStreamLoop() executes in detached async context
     ↓
 ChatService calls provider.sendMessage() (async generator)
     ↓
-Provider (Claude SDK) streams response:
-    1. Yields: { type: "text", content: "Here's what..." }
-    2. Yields: { type: "text", content: " happens..." }
-    3. Yields: { type: "tool_use", tool: "read_file", input: {...} }
+Provider (Claude SDK) yields events:
+    1. { type: "text", content: "Here's what..." }
+    2. { type: "text", content: " happens..." }
+    3. { type: "tool_use", tool: "read_file", input: {...} }
     ↓
-ChatService wraps as WebSocket messages:
+Stream loop buffers + broadcasts to all connected clients:
     { type: "text", content: "Here's what..." }
     { type: "text", content: " happens..." }
     { type: "tool_use", tool: "read_file", input: {...} }
@@ -550,14 +553,111 @@ User sees tool approval prompt, clicks "Approve"
     ↓
 Client sends: { type: "approval_response", requestId, approved: true }
     ↓
-ChatService.onToolApproval() executes tool (file_read, git commands, etc.)
+Provider continues streaming with tool result (no restart)
     ↓
-Provider continues streaming with tool result
+If multiple messages queued, next message processes after done event
     ↓
 Final response streamed, then: { type: "done", sessionId }
     ↓
-useChat closes WebSocket, saves message to store
+Phase transitions to idle, clients can send new message
+    ↓
+useChat saves message to store, displays in chat history
 ```
+
+### Session State Management
+
+**Session Entry** (BE-owned, persists across FE disconnections):
+```typescript
+interface SessionEntry {
+  providerId: string;              // Which AI provider (e.g., "claude")
+  clients: Set<ChatWsSocket>;      // Connected FE clients (may be empty)
+  abort?: AbortController;         // Current stream abort handle
+  projectPath?: string;            // Project context
+  projectName?: string;
+  pingIntervals: Map<...>;         // Per-client keepalive
+  phase: SessionPhase;             // "initializing" | "connecting" | "thinking" | "streaming" | "idle"
+  cleanupTimer?: ReturnType<...>;  // Auto-cleanup if no FE reconnects (5min)
+  pendingApprovalEvent?: {...};    // Current tool approval waiting
+  turnEvents: unknown[];           // Buffered events (for reconnect sync)
+  streamPromise?: Promise<void>;   // Track ongoing runStreamLoop
+  permissionMode?: string;         // Sticky permission mode for session
+}
+```
+
+**Client Connection States:**
+- **Active streaming + FE connected** → Events broadcast to all clients in real-time
+- **Active streaming + FE disconnected** → Events buffered in turnEvents array, BE stream continues
+- **FE reconnects** → Receive session_state + buffered turnEvents, resync with stream
+- **Idle (no query running)** → Phase is "idle", ready for next message
+- **Idle + no FE for 5min** → Cleanup timer removes session from memory
+
+### Follow-up Messages
+
+**Abort-and-Replace Pattern:**
+```typescript
+if (entry.phase !== "idle" && entry.abort) {
+  console.log(`[chat] aborting current query for new message`);
+  entry.abort.abort();
+  await entry.streamPromise;  // Wait for cleanup
+  // Re-fetch entry — may have been mutated during cleanup
+  entry = activeSessions.get(sessionId)!;
+}
+```
+
+**Multiple Message Queueing:**
+- First message: immediately starts runStreamLoop
+- Second message (while streaming): abort current, wait, start new runStreamLoop
+- Priority modes (future): could queue messages for intelligent interleaving
+
+### WebSocket Reconnection Sync
+
+```
+FE WebSocket closes (network issue, tab closes)
+    ↓
+BE keeps session alive, streaming continues
+    ↓
+FE reconnects: WS /ws/project/:name/chat/:sessionId
+    ↓
+open() handler checks activeSessions.get(sessionId)
+    ↓
+If exists (entry found):
+    1. Clear cleanup timer (FE is back)
+    2. Send session_state with current phase + pendingApproval
+    3. If phase !== "idle", send buffered turnEvents
+    4. Add WS to clients Set
+    ↓
+FE processes session_state, renders current phase
+    ↓
+FE applies buffered events to rebuild turn state
+    ↓
+FE displays: "reconnected, current phase: streaming" etc.
+```
+
+### Phase Transitions
+
+```
+idle → initializing → connecting → thinking/streaming ↔ thinking/streaming → idle
+  ^                                      ↑                                    ↓
+  └──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Phase Descriptions:**
+- **idle** — No query running, ready to accept new message
+- **initializing** — Preparing (permission checks, session resume)
+- **connecting** — Waiting for first SDK event (heartbeat: "connecting" with elapsed time every 5s)
+- **thinking** — Receiving thinking content (extended thinking)
+- **streaming** — Receiving text/tool_use content (dynamic switch between thinking/streaming)
+
+### Image Attachment Support
+
+Messages can now include images:
+```typescript
+type ChatWsClientMessage =
+  | { type: "message"; content: string; images?: { id: string; data: string }[]; priority?: string }
+  | ...
+```
+
+Images are passed to provider's message context and included in tool input/output.
 
 ---
 
