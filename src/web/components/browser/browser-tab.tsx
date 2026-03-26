@@ -1,77 +1,7 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import {
-  ArrowLeft,
-  ArrowRight,
-  RotateCcw,
-  ExternalLink,
-  Globe,
-} from "lucide-react";
+import { useState, useRef, useCallback } from "react";
+import { ExternalLink, Globe, Loader2, RefreshCw, X } from "lucide-react";
 import { useTabStore } from "@/stores/tab-store";
-
-/** Parse a URL string — returns normalized URL or null if invalid */
-function parseUrl(input: string): string | null {
-  let url = input.trim();
-  if (!url) return null;
-
-  // If just a port number, treat as localhost
-  if (/^\d+$/.test(url)) return `http://localhost:${url}`;
-
-  // If host:port without scheme, add http://
-  if (/^localhost(:\d+)?/.test(url)) url = `http://${url}`;
-  if (/^[\w.-]+:\d+/.test(url) && !url.includes("://")) url = `http://${url}`;
-
-  // If no scheme at all, add https:// for external, http:// for localhost
-  if (!url.includes("://")) {
-    url = url.includes("localhost") ? `http://${url}` : `https://${url}`;
-  }
-
-  try {
-    new URL(url);
-    return url;
-  } catch {
-    return null;
-  }
-}
-
-/** Check if a URL is a localhost address */
-function isLocalhost(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return (
-      u.hostname === "localhost" ||
-      u.hostname === "127.0.0.1" ||
-      u.hostname === "0.0.0.0" ||
-      u.hostname === "::1"
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** Convert URL to iframe src — proxy localhost through backend */
-function toIframeSrc(url: string): string {
-  if (!isLocalhost(url)) return url;
-
-  try {
-    const u = new URL(url);
-    const port = u.port || "80";
-    const path = u.pathname + u.search + u.hash;
-    return `/api/preview/${port}${path}`;
-  } catch {
-    return url;
-  }
-}
-
-/** Extract display URL from iframe src (reverse of toIframeSrc) */
-function fromIframeSrc(src: string): string {
-  const match = src.match(/^\/api\/preview\/(\d+)(\/.*)?$/);
-  if (match) {
-    const port = match[1];
-    const path = match[2] || "/";
-    return `http://localhost:${port}${path}`;
-  }
-  return src;
-}
+import { api } from "@/lib/api-client";
 
 interface BrowserTabProps {
   metadata?: Record<string, unknown>;
@@ -79,188 +9,139 @@ interface BrowserTabProps {
 }
 
 export function BrowserTab({ metadata, tabId }: BrowserTabProps) {
-  const initialUrl = (metadata?.url as string) || "http://localhost:3000";
-  const [addressBar, setAddressBar] = useState(initialUrl);
-  const [currentUrl, setCurrentUrl] = useState(initialUrl);
-  const [iframeSrc, setIframeSrc] = useState(toIframeSrc(initialUrl));
-  const [canGoBack, setCanGoBack] = useState(false);
-  const [canGoForward, setCanGoForward] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const initialPort = (metadata?.port as number) || 0;
+  const [portInput, setPortInput] = useState(initialPort ? String(initialPort) : "");
+  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const updateTab = useTabStore((s) => s.updateTab);
 
-  // Navigation history (iframe same-origin only)
-  const historyRef = useRef<string[]>([initialUrl]);
-  const historyIdxRef = useRef(0);
-
-  const navigate = useCallback(
-    (url: string, addToHistory = true) => {
-      const parsed = parseUrl(url);
-      if (!parsed) {
-        setError("Invalid URL");
-        return;
-      }
-
-      setError(null);
-      setCurrentUrl(parsed);
-      setAddressBar(parsed);
-      setIframeSrc(toIframeSrc(parsed));
-      setLoading(true);
-
-      if (addToHistory) {
-        const h = historyRef.current;
-        const idx = historyIdxRef.current;
-        // Truncate forward history
-        historyRef.current = h.slice(0, idx + 1);
-        historyRef.current.push(parsed);
-        historyIdxRef.current = historyRef.current.length - 1;
-      }
-
-      setCanGoBack(historyIdxRef.current > 0);
-      setCanGoForward(
-        historyIdxRef.current < historyRef.current.length - 1,
-      );
-
-      // Update tab title
-      if (tabId) {
-        try {
-          const u = new URL(parsed);
-          const title = isLocalhost(parsed)
-            ? `localhost:${u.port || "80"}`
-            : u.hostname;
-          updateTab(tabId, { title });
-        } catch {}
-      }
-    },
-    [tabId, updateTab],
-  );
-
-  const goBack = useCallback(() => {
-    if (historyIdxRef.current > 0) {
-      historyIdxRef.current--;
-      navigate(historyRef.current[historyIdxRef.current]!, false);
-    }
-  }, [navigate]);
-
-  const goForward = useCallback(() => {
-    if (historyIdxRef.current < historyRef.current.length - 1) {
-      historyIdxRef.current++;
-      navigate(historyRef.current[historyIdxRef.current]!, false);
-    }
-  }, [navigate]);
-
-  const reload = useCallback(() => {
+  const startTunnel = useCallback(async (port: number) => {
     setLoading(true);
     setError(null);
+    setTunnelUrl(null);
+
+    try {
+      const res = await api.post<{ port: number; url: string }>("/api/preview/tunnel", { port });
+      setTunnelUrl(res.url);
+      if (tabId) updateTab(tabId, { title: `localhost:${port}`, metadata: { ...metadata, port } });
+    } catch (e: any) {
+      setError(e.message || `Failed to start tunnel for port ${port}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [tabId, metadata, updateTab]);
+
+  const stopTunnel = useCallback(async () => {
+    const port = parseInt(portInput, 10);
+    if (!port) return;
+    try { await api.del(`/api/preview/tunnel/${port}`); } catch {}
+    setTunnelUrl(null);
+    if (tabId) updateTab(tabId, { title: "Browser" });
+  }, [portInput, tabId, updateTab]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const port = parseInt(portInput, 10);
+    if (port >= 1 && port <= 65535) startTunnel(port);
+    else setError("Port must be 1-65535");
+  };
+
+  const reload = () => {
     if (iframeRef.current) {
-      // Force reload by re-setting src
       const src = iframeRef.current.src;
       iframeRef.current.src = "";
-      requestAnimationFrame(() => {
-        if (iframeRef.current) iframeRef.current.src = src;
-      });
-    }
-  }, []);
-
-  const openExternal = useCallback(() => {
-    window.open(currentUrl, "_blank");
-  }, [currentUrl]);
-
-  const handleAddressKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      navigate(addressBar);
+      requestAnimationFrame(() => { if (iframeRef.current) iframeRef.current.src = src; });
     }
   };
 
-  // Navigate when metadata.url changes (e.g. opened from command palette)
-  useEffect(() => {
-    const metaUrl = metadata?.url as string | undefined;
-    if (metaUrl && metaUrl !== currentUrl) {
-      navigate(metaUrl);
-    }
-  }, [metadata?.url]);
+  // No tunnel yet — show port input
+  if (!tunnelUrl) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 p-6">
+        <Globe className="size-12 text-text-subtle" />
+        <h2 className="text-lg font-medium text-text-primary">Open Localhost</h2>
+        <p className="text-sm text-text-secondary text-center max-w-sm">
+          Enter the port of your local dev server to preview it here.
+        </p>
+        <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full max-w-xs">
+          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-surface border border-border focus-within:border-accent/50 transition-colors">
+            <span className="text-sm text-text-subtle shrink-0">localhost:</span>
+            <input
+              type="number"
+              value={portInput}
+              onChange={(e) => setPortInput(e.target.value)}
+              placeholder="3000"
+              min={1}
+              max={65535}
+              autoFocus
+              className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-subtle min-w-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={loading || !portInput}
+            className="px-4 py-2.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors shrink-0"
+          >
+            {loading ? <Loader2 className="size-4 animate-spin" /> : "Open"}
+          </button>
+        </form>
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        {loading && (
+          <div className="flex items-center gap-2 text-sm text-text-secondary">
+            <Loader2 className="size-4 animate-spin" />
+            <span>Starting tunnel... (may take a few seconds)</span>
+          </div>
+        )}
+      </div>
+    );
+  }
 
+  // Tunnel active — show iframe
   return (
     <div className="flex flex-col h-full w-full bg-background">
       {/* Toolbar */}
-      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border bg-surface shrink-0">
-        {/* Nav buttons */}
-        <button
-          onClick={goBack}
-          disabled={!canGoBack}
-          className="p-1.5 rounded hover:bg-surface-elevated disabled:opacity-30 transition-colors"
-          title="Back"
-        >
-          <ArrowLeft className="size-4" />
-        </button>
-        <button
-          onClick={goForward}
-          disabled={!canGoForward}
-          className="p-1.5 rounded hover:bg-surface-elevated disabled:opacity-30 transition-colors"
-          title="Forward"
-        >
-          <ArrowRight className="size-4" />
-        </button>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-surface shrink-0">
+        <Globe className="size-4 text-text-subtle shrink-0" />
+        <span className="text-xs text-text-primary font-medium">localhost:{portInput}</span>
+        <span className="text-xs text-text-subtle truncate ml-1">({tunnelUrl})</span>
+        <div className="flex-1" />
         <button
           onClick={reload}
           className="p-1.5 rounded hover:bg-surface-elevated transition-colors"
           title="Reload"
         >
-          <RotateCcw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+          <RefreshCw className="size-3.5" />
         </button>
-
-        {/* Address bar */}
-        <div className="flex-1 flex items-center gap-2 mx-1 px-2.5 py-1.5 rounded-md bg-background border border-border focus-within:border-accent/50 transition-colors">
-          <Globe className="size-3.5 text-text-subtle shrink-0" />
-          <input
-            type="text"
-            value={addressBar}
-            onChange={(e) => setAddressBar(e.target.value)}
-            onKeyDown={handleAddressKeyDown}
-            placeholder="Enter URL or port (e.g. 3000, localhost:8080)"
-            className="flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-subtle min-w-0"
-          />
-        </div>
-
-        {/* Open external */}
         <button
-          onClick={openExternal}
+          onClick={() => window.open(tunnelUrl, "_blank")}
           className="p-1.5 rounded hover:bg-surface-elevated transition-colors"
           title="Open in browser"
         >
-          <ExternalLink className="size-4" />
+          <ExternalLink className="size-3.5" />
+        </button>
+        <button
+          onClick={stopTunnel}
+          className="p-1.5 rounded hover:bg-surface-elevated text-red-400 transition-colors"
+          title="Stop tunnel"
+        >
+          <X className="size-3.5" />
         </button>
       </div>
 
-      {/* Content */}
+      {/* iframe */}
       <div className="flex-1 relative min-h-0">
-        {error ? (
-          <div className="flex items-center justify-center h-full text-text-secondary text-sm">
-            <p>{error}</p>
-          </div>
-        ) : (
-          <iframe
-            ref={iframeRef}
-            src={iframeSrc}
-            className="w-full h-full border-0"
-            sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"
-            onLoad={() => setLoading(false)}
-            onError={() => {
-              setLoading(false);
-              setError(`Failed to load ${currentUrl}`);
-            }}
-          />
-        )}
-
-        {/* Loading overlay */}
-        {loading && !error && (
+        <iframe
+          ref={iframeRef}
+          src={tunnelUrl}
+          className="w-full h-full border-0"
+          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"
+          onLoad={() => setLoading(false)}
+        />
+        {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-            <div className="flex items-center gap-2 text-sm text-text-secondary">
-              <RotateCcw className="size-4 animate-spin" />
-              <span>Loading...</span>
-            </div>
+            <Loader2 className="size-5 animate-spin text-text-secondary" />
           </div>
         )}
       </div>

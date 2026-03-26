@@ -455,11 +455,14 @@ export async function startServer(options: {
   }
   console.log();
 
-  // Graceful shutdown — stop server + tunnel + DB on exit
+  // Graceful shutdown — stop server + tunnel + preview tunnels + DB on exit
   const shutdown = () => {
     try { server.stop(true); } catch {}
     try {
       import("../services/tunnel.service.ts").then(({ tunnelService }) => tunnelService.stopTunnel()).catch(() => {});
+    } catch {}
+    try {
+      import("./routes/browser-preview.ts").then(({ stopAllPreviewTunnels }) => stopAllPreviewTunnels()).catch(() => {});
     } catch {}
     try {
       import("../services/db.service.ts").then(({ closeDb }) => closeDb()).catch(() => {});

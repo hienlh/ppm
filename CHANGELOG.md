@@ -1,10 +1,16 @@
 # Changelog
 
+## [0.9.0-beta.6] - 2026-03-27
+
+### Merged from main
+- **Browser preview tab**: Localhost preview via per-port Cloudflare Quick Tunnels. Enter port → tunnel starts → iframe loads tunnel URL. Ghost cleanup every 30s. All tunnels killed on shutdown.
+- **Voice input**: Mic button in chat, `Cmd+Shift+V` shortcut, command palette entry
+- **Voice input stops on send**: Auto-stops recognition when message sent
+
 ## [0.9.0-beta.5] - 2026-03-27
 
 ### Merged
-- Consolidated `feat/streaming-input-migration` into `beta` — all streaming input + multi-provider changes unified on single branch
-- Resolved merge conflicts across provider, WS handler, chat hooks, message input, and types
+- Consolidated `feat/streaming-input-migration` into `beta`
 
 ## [0.9.0-beta.3] - 2026-03-26
 
