@@ -118,6 +118,38 @@ browserPreviewRoutes.get("/tunnels", (c) => {
   return c.json(ok(list));
 });
 
+/** Check if a cloudflared process is still alive */
+function isProcessAlive(proc: import("bun").Subprocess): boolean {
+  try { process.kill(proc.pid, 0); return true; } catch { return false; }
+}
+
+/** Remove ghost tunnels (process died or target port no longer listening) */
+async function cleanupGhostTunnels() {
+  for (const [port, tunnel] of activeTunnels) {
+    // Check if cloudflared process is still running
+    if (!isProcessAlive(tunnel.process)) {
+      console.log(`[preview] ghost cleanup: tunnel for port ${port} — process dead`);
+      activeTunnels.delete(port);
+      continue;
+    }
+    // Check if target port is still listening
+    try {
+      const conn = await Bun.connect({ hostname: "127.0.0.1", port, socket: {
+        data() {}, open(s) { s.end(); }, error() {}, close() {},
+      }});
+      conn.end();
+    } catch {
+      // Port not listening — kill tunnel
+      console.log(`[preview] ghost cleanup: tunnel for port ${port} — port not listening`);
+      try { tunnel.process.kill(); } catch {}
+      activeTunnels.delete(port);
+    }
+  }
+}
+
+// Run ghost cleanup every 30s
+setInterval(cleanupGhostTunnels, 30_000);
+
 /** Cleanup all tunnels on server shutdown */
 export function stopAllPreviewTunnels() {
   for (const [port, tunnel] of activeTunnels) {
