@@ -10,7 +10,7 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { getAISettings } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
-import { MessageInput, type ChatAttachment } from "./message-input";
+import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
@@ -205,7 +205,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   );
 
   const handleSend = useCallback(
-    async (content: string, attachments: ChatAttachment[] = []) => {
+    async (content: string, attachments: ChatAttachment[] = [], priority?: MessagePriority) => {
       const fullContent = buildMessageWithAttachments(content, attachments);
       if (!fullContent.trim()) return;
 
@@ -227,7 +227,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           return;
         }
       }
-      sendMessage(fullContent, { permissionMode });
+      sendMessage(fullContent, { permissionMode, priority });
     },
     [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode],
   );

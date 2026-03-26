@@ -23,7 +23,7 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; content: string; permissionMode?: string }
+  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }
   | { type: "cancel" }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
   | { type: "ready" };

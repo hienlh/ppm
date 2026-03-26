@@ -171,6 +171,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
 
     for await (const event of provider.sendMessage(session.id, "Reply with exactly: OK")) {
       events.push(event);
+      if (event.type === "done") break; // Persistent generator — break after first turn
     }
 
     const textEvents = events.filter((e) => e.type === "text");
@@ -190,6 +191,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
 
     for await (const event of provider.sendMessage(session.id, "Reply with: test")) {
       events.push(event);
+      if (event.type === "done") break;
     }
 
     const doneEvent = events.find((e) => e.type === "done");
@@ -203,6 +205,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
 
     for await (const event of provider.sendMessage(session.id, "Reply with: hello")) {
       events.push(event);
+      if (event.type === "done") break;
     }
 
     const doneEvent = events.find((e) => e.type === "done");
@@ -214,15 +217,16 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
   it("multi-turn: resume maintains context", async () => {
     const session = await provider.createSession({ title: "Multi-turn" });
 
-    // Turn 1
-    for await (const _ of provider.sendMessage(session.id, "Remember: my favorite color is purple. Reply 'Got it.'")) {
-      // consume
+    // Turn 1 — break on done to close the persistent generator
+    for await (const event of provider.sendMessage(session.id, "Remember: my favorite color is purple. Reply 'Got it.'")) {
+      if (event.type === "done") break;
     }
 
-    // Turn 2 — should resume same session
+    // Turn 2 — new sendMessage creates new streaming session with resume
     const events: any[] = [];
     for await (const event of provider.sendMessage(session.id, "What is my favorite color? Reply with just the color.")) {
       events.push(event);
+      if (event.type === "done") break;
     }
 
     const fullText = events
@@ -237,6 +241,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
     const events: any[] = [];
     for await (const event of provider.sendMessage("nonexistent-id", "hello")) {
       events.push(event);
+      if (event.type === "done") break;
     }
 
     // Provider should yield events (text, error, or done) without throwing
@@ -252,6 +257,7 @@ describe("ClaudeAgentSdkProvider — PPM integration", () => {
     const events: any[] = [];
     for await (const event of provider.sendMessage(session.id, "hello")) {
       events.push(event);
+      if (event.type === "done") break;
     }
     expect(events.length).toBeGreaterThan(0);
     expect(events.some((e) => ["text", "usage", "error", "done"].includes(e.type))).toBe(true);
