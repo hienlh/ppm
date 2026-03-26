@@ -1,38 +1,9 @@
 # Changelog
 
-## [0.9.0-beta.2] - 2026-03-26
+## [0.8.60] - Unreleased
 
 ### Fixed
 - **Chat input drops uploading files on send**: Pressing send while files are still uploading now queues the message and auto-sends once all uploads complete, instead of silently dropping in-progress attachments. Send button shows spinner when queued; clicking again cancels.
-
-## [0.9.0-beta.1] - 2026-03-26
-
-### Fixed
-- **FE stuck on "Connecting"**: SDK system events (hook_started, init) now yield to streaming loop, transitioning phase `connecting → thinking` immediately instead of waiting 5-10s for first text event
-
-## [0.9.0-beta.0] - 2026-03-26
-
-### Added
-- **BE-owned state machine**: 5-phase session lifecycle (`initializing → connecting → thinking → streaming → idle`) — backend owns all phase transitions, frontend derives `isStreaming` from phase
-- **Multi-client broadcast**: Multiple browser tabs/devices connect to the same chat session simultaneously — all receive real-time events via `Set<ChatWsSocket>`
-- **Reconnect sync with turn_events**: Reconnecting client receives buffered events from in-progress stream as a single `turn_events` message, enabling seamless mid-stream reconnection
-- **session_state message**: Replaces `connected` + `status` with single `session_state` on WS open — includes phase, pendingApproval, sessionTitle
-- **Abort-and-replace**: Sending a new message while streaming aborts current query, waits for cleanup, then starts new query
-- **rAF chunking for turn_events**: Frontend processes reconnect event replay in batches of 100 via `requestAnimationFrame` to avoid blocking main thread
-- **Reconnecting overlay**: Visual indicator when client is replaying buffered events after reconnect
-- **Phase-aware thinking indicator**: Shows "Initializing", "Connecting", "Thinking" labels based on session phase
-- **ping keepalive**: Per-client application-level ping every 15s to detect stale connections
-- **evictClient helper**: Centralized cleanup (ping interval + client removal) used by both broadcast error and close handler
-
-### Changed
-- **WS protocol**: `connected` → `session_state`, `StreamingStatus` → `SessionPhase` throughout
-- **Frontend hook**: `use-chat.ts` rewritten — `processStreamEvent()` extracted for DRY reuse, `phaseRef` replaces `isStreamingRef`
-- **Message list**: `streamingStatus` prop → `phase` prop, removed `thinkingWarningThreshold`
-
-### Fixed
-- **Double done emission**: `doneEmitted` flag prevents SDK `done` + finally-block `done` duplication
-- **Missing content guard**: `{ type: "message" }` without `content` no longer crashes
-- **Stale entry after await**: Re-fetches session entry after `await streamPromise` in abort-and-replace
 - **Ping interval leak**: `evictClient()` clears ping interval when broadcast error removes client
 
 ## [0.8.59] - 2026-03-26
