@@ -502,22 +502,24 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
         // Log all system events for debugging SDK lifecycle
         if (msg.type === "system") {
-          console.log(`[sdk] session=${sessionId} system: subtype=${(msg as any).subtype ?? "none"} ${JSON.stringify(msg).slice(0, 500)}`);
-        }
+          const subtype = (msg as any).subtype ?? "none";
+          console.log(`[sdk] session=${sessionId} system: subtype=${subtype} ${JSON.stringify(msg).slice(0, 500)}`);
 
-        // Capture SDK session metadata from init message
-        if (msg.type === "system" && (msg as any).subtype === "init") {
-          const initMsg = msg as any;
-          // SDK may assign a different session_id than our UUID
-          if (initMsg.session_id && initMsg.session_id !== sessionId) {
-            // Persist mapping so resume works after server restart
-            setSessionMapping(sessionId, initMsg.session_id);
-            // Update our in-memory mapping
-            const oldMeta = this.activeSessions.get(sessionId);
-            if (oldMeta) {
-              this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
+          // Capture SDK session metadata from init message
+          if (subtype === "init") {
+            const initMsg = msg as any;
+            if (initMsg.session_id && initMsg.session_id !== sessionId) {
+              setSessionMapping(sessionId, initMsg.session_id);
+              const oldMeta = this.activeSessions.get(sessionId);
+              if (oldMeta) {
+                this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
+              }
             }
           }
+
+          // Yield system events so streaming loop can transition phases
+          // (e.g. connecting → thinking when hooks/init arrive)
+          yield { type: "system" as any, subtype } as any;
           continue;
         }
 

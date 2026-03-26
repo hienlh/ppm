@@ -365,8 +365,9 @@ describe("ClaudeAgentSdkProvider", () => {
   });
 
   describe("SystemMessage init handling", () => {
-    it("skips system init messages without yielding events", async () => {
+    it("yields lightweight system events for phase transitions", async () => {
       const iter = createMockQueryIterator([
+        { type: "system", subtype: "hook_started" },
         { type: "system", subtype: "init", session_id: "sdk-123" },
         {
           type: "assistant",
@@ -377,14 +378,18 @@ describe("ClaudeAgentSdkProvider", () => {
       mockQueryFn.mockReturnValue(iter);
 
       const session = await provider.createSession({});
-      const events: ChatEvent[] = [];
+      const events: any[] = [];
       for await (const event of provider.sendMessage(session.id, "hi")) {
         events.push(event);
       }
 
-      // Should not have any system-type events — only text, done
+      // System events are yielded as lightweight {type:"system", subtype} for phase transitions
+      const systemEvents = events.filter((e) => e.type === "system");
+      expect(systemEvents.length).toBeGreaterThanOrEqual(1);
+      expect(systemEvents[0].subtype).toBeDefined();
+
+      // Content events still present
       const types = events.map((e) => e.type);
-      expect(types).not.toContain("system");
       expect(types).toContain("text");
       expect(types).toContain("done");
     });

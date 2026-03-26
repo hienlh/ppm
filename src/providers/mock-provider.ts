@@ -92,8 +92,13 @@ export class MockProvider implements AIProvider {
     const abortController = new AbortController();
     this.activeAborts.set(sessionId, abortController);
 
+    // Simulate SDK system events (hooks, init) — real SDK emits these before content
+    yield { type: "system" as any, subtype: "hook_started" } as any;
+    await sleep(50);
+    yield { type: "system" as any, subtype: "init" } as any;
+
     // Simulate thinking delay
-    await sleep(300);
+    await sleep(250);
 
     // Pick a response
     const responseText =

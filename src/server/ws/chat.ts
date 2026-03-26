@@ -198,6 +198,16 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       const ev = event as any;
       const evType = ev.type ?? "unknown";
 
+      // System events (hook_started, init, etc.) → transition connecting → thinking
+      // These indicate SDK has connected and is processing, but no content yet.
+      if (evType === "system") {
+        if (!firstEventReceived) {
+          if (heartbeat) clearInterval(heartbeat);
+          setPhase(sessionId, "thinking");
+        }
+        continue; // Don't buffer or broadcast system events
+      }
+
       // First content event — stop heartbeat, transition phase
       const isMetadataEvent = evType === "account_info" || evType === "streaming_status";
       if (!firstEventReceived && !isMetadataEvent) {

@@ -156,6 +156,38 @@ describe("Chat WebSocket — New Protocol", () => {
     close();
   });
 
+  it("system events transition phase from connecting to thinking before first content", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, messages, waitForType, close } = await connectWs(session.id);
+
+    await waitForType("session_state");
+    ws.send(JSON.stringify({ type: "message", content: "hello" }));
+
+    // Wait for "thinking" phase — should arrive BEFORE first text event
+    // (system events from mock provider trigger connecting → thinking)
+    await waitForType("done");
+    await new Promise((r) => setTimeout(r, 100));
+
+    const phaseChanges = messages.filter((m) => m.type === "phase_changed");
+    const phases = phaseChanges.map((m: any) => m.phase);
+
+    // Phase sequence should include: connecting → thinking → streaming → idle
+    expect(phases).toContain("thinking");
+    expect(phases).toContain("streaming");
+    expect(phases).toContain("idle");
+
+    // "thinking" must come BEFORE "streaming" in sequence
+    const thinkingIdx = phases.indexOf("thinking");
+    const streamingIdx = phases.indexOf("streaming");
+    expect(thinkingIdx).toBeLessThan(streamingIdx);
+
+    // system events must NOT be broadcast to clients (they're internal)
+    const systemEvents = messages.filter((m) => m.type === "system");
+    expect(systemEvents).toHaveLength(0);
+
+    close();
+  });
+
   // ─── text streaming ───
 
   it("streams text events for a message", async () => {

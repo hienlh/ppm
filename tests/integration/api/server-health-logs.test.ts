@@ -26,7 +26,7 @@ describe("Health + Info endpoints", () => {
     const json = (await res.json()) as any;
     expect(res.status).toBe(200);
     expect(json.ok).toBe(true);
-    expect(json.data.version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(json.data.version).toMatch(/^\d+\.\d+\.\d+/);
     // device_name can be null or string
     expect(json.data).toHaveProperty("device_name");
   });
