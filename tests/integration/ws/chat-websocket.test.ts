@@ -530,7 +530,7 @@ describe("Chat WebSocket — New Protocol", () => {
 
   // ─── abort-and-replace from different client ───
 
-  it("client 2 sending message aborts client 1's active stream", async () => {
+  it("client 2 sending follow-up message pushes into active stream", async () => {
     const session = await chatService.createSession("mock", {});
 
     // Connect client 1, start streaming
@@ -538,27 +538,22 @@ describe("Chat WebSocket — New Protocol", () => {
     await c1.waitForType("session_state");
     c1.ws.send(JSON.stringify({ type: "message", content: "hello from client 1" }));
 
-    // Wait for streaming to start
-    await c1.waitForType("text");
+    // Wait for first turn to complete
+    await c1.waitForType("done");
 
     // Connect client 2
     const c2 = await connectWs(session.id);
     await c2.waitForType("session_state");
 
-    // Client 2 sends a new message — should abort client 1's stream (abort-and-replace)
+    // Client 2 sends a follow-up — pushed into existing stream (no abort-and-replace)
     c2.ws.send(JSON.stringify({ type: "message", content: "hello from client 2" }));
 
-    // Wait for the second done (first done comes from aborted stream, second from new stream)
-    // Both clients should eventually get done for the new stream
+    // Wait for the second done from the follow-up turn
     await c1.waitForNthType("done", 2, 15000);
 
-    // Client 1 should have received text events from both streams
+    // Client 1 should have received text events from both turns
     const c1Texts = c1.messages.filter((m) => m.type === "text");
     expect(c1Texts.length).toBeGreaterThan(0);
-
-    // Client 2 should have received text events from the new stream
-    const c2Texts = c2.messages.filter((m) => m.type === "text");
-    expect(c2Texts.length).toBeGreaterThan(0);
 
     c1.close();
     c2.close();

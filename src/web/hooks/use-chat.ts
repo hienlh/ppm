@@ -23,7 +23,7 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   sessionTitle: string | null;
-  sendMessage: (content: string, opts?: { permissionMode?: string }) => void;
+  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -375,11 +375,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   }, [sessionId, providerId, projectName]);
 
   const sendMessage = useCallback(
-    (content: string, opts?: { permissionMode?: string }) => {
+    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => {
       if (!content.trim()) return;
 
-      // If streaming, cancel current stream first then send immediately
-      if (phaseRef.current !== "idle") {
+      const isFollowUp = phaseRef.current !== "idle";
+
+      if (isFollowUp) {
+        // Streaming follow-up: finalize current assistant message, then send
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
         setMessages((prev) => {
@@ -392,7 +394,6 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           }
           return prev;
         });
-        send(JSON.stringify({ type: "cancel" }));
       }
 
       // Add user message
@@ -406,15 +407,26 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         },
       ]);
 
-      // Reset streaming state
+      // Reset streaming state for new turn
       streamingContentRef.current = "";
       streamingEventsRef.current = [];
       pendingMessageRef.current = null;
-      setPhase("initializing");
-      phaseRef.current = "initializing";
+      if (!isFollowUp) {
+        setPhase("initializing");
+        phaseRef.current = "initializing";
+      } else {
+        setPhase("thinking");
+        phaseRef.current = "thinking";
+      }
       setPendingApproval(null);
 
-      send(JSON.stringify({ type: "message", content, permissionMode: opts?.permissionMode }));
+      send(JSON.stringify({
+        type: "message",
+        content,
+        permissionMode: opts?.permissionMode,
+        priority: opts?.priority,
+        images: opts?.images,
+      }));
     },
     [send],
   );

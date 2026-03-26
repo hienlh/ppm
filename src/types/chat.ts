@@ -1,5 +1,7 @@
 export interface SendMessageOpts {
   permissionMode?: import("./config").PermissionMode | string;
+  priority?: 'now' | 'next' | 'later';
+  images?: Array<{ data: string; mediaType: string }>;
 }
 
 export interface AIProvider {
