@@ -257,9 +257,9 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
             : newTabs[newTabs.length - 1]?.id ?? null;
         }
 
-        // Auto-close panel if empty and not the last one
-        const panelIds = Object.keys(s.panels);
-        if (newTabs.length === 0 && panelIds.length > 1) {
+        // Auto-close panel if empty and not the last one in current grid
+        const gridPanelCount = s.grid.flat().length;
+        if (newTabs.length === 0 && gridPanelCount > 1) {
           const { [pid]: _, ...rest } = s.panels;
           const newGrid = gridRemovePanel(s.grid, pid);
           const newFocused = s.focusedPanelId === pid ? Object.keys(rest)[0]! : s.focusedPanelId;
@@ -331,9 +331,9 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       else toTabs.push(tab);
 
       set((s) => {
-        const panelIds = Object.keys(s.panels);
-        // Auto-close empty source panel if not last
-        if (fromTabs.length === 0 && panelIds.length > 1) {
+        const gridPanelCount = s.grid.flat().length;
+        // Auto-close empty source panel if not last in current grid
+        if (fromTabs.length === 0 && gridPanelCount > 1) {
           const { [fromPanelId]: _, ...rest } = s.panels;
           return {
             panels: {
@@ -405,14 +405,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       }
 
       set((s) => {
-        const panelIds = Object.keys(s.panels);
+        const gridPanelCount = s.grid.flat().length;
         let updatedPanels = {
           ...s.panels,
           [newPanel.id]: newPanel,
         };
 
-        // If source is now empty and not last panel, remove it
-        if (srcTabs.length === 0 && panelIds.length > 1) {
+        // If source is now empty and not last panel in grid, remove it
+        if (srcTabs.length === 0 && gridPanelCount > 1) {
           const { [sourcePanelId]: _, ...rest } = updatedPanels;
           updatedPanels = rest;
           newGrid = gridRemovePanel(newGrid, sourcePanelId);
@@ -428,7 +428,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
 
     closePanel: (panelId) => {
       const { panels, grid } = get();
-      if (Object.keys(panels).length <= 1) return;
+      if (grid.flat().length <= 1) return;
 
       const panel = panels[panelId];
       if (!panel) return;

@@ -1,6 +1,8 @@
+import { useEffect } from "react";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import { GripVertical, GripHorizontal } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
+import { createPanel } from "@/stores/panel-utils";
 import { EditorPanel } from "./editor-panel";
 
 interface PanelLayoutProps {
@@ -13,7 +15,21 @@ export function PanelLayout({ projectName }: PanelLayoutProps) {
   );
   const panelCount = grid.flat().length;
 
-  if (panelCount <= 1 && grid[0]?.[0]) {
+  // Recover from empty grid (corrupt persisted state or edge-case bug)
+  useEffect(() => {
+    if (panelCount === 0) {
+      const p = createPanel();
+      usePanelStore.setState((s) => ({
+        panels: { ...s.panels, [p.id]: p },
+        grid: [[p.id]],
+        focusedPanelId: p.id,
+      }));
+    }
+  }, [panelCount]);
+
+  if (panelCount === 0) return null;
+
+  if (panelCount === 1 && grid[0]?.[0]) {
     return <EditorPanel panelId={grid[0][0]} projectName={projectName} />;
   }
 
