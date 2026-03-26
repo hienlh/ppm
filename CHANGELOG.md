@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.0-beta.2] - 2026-03-26
+## [0.9.0] - 2026-03-26
 
 ### Fixed
 - **Chat input drops uploading files on send**: Pressing send while files are still uploading now queues the message and auto-sends once all uploads complete, instead of silently dropping in-progress attachments. Send button shows spinner when queued; clicking again cancels.
