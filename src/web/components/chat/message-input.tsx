@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { ArrowUp, Square, Paperclip } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Loader2 } from "lucide-react";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
 import { isSupportedFile, isImageFile } from "@/lib/file-support";
@@ -67,6 +67,7 @@ export const MessageInput = memo(function MessageInput({
   const [value, setValue] = useState(initialValue ?? "");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
+  const [pendingSend, setPendingSend] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -274,11 +275,14 @@ export const MessageInput = memo(function MessageInput({
     });
   }, []);
 
-  const handleSend = useCallback(() => {
+  /** Execute the actual send (called directly or after uploads complete) */
+  const executeSend = useCallback(() => {
     const trimmed = value.trim();
     const readyAttachments = attachments.filter((a) => a.status === "ready");
-    if (!trimmed && readyAttachments.length === 0) return;
-    if (disabled) return;
+    if (!trimmed && readyAttachments.length === 0) {
+      setPendingSend(false);
+      return;
+    }
 
     onSlashStateChange?.(false, "");
     onFileStateChange?.(false, "");
@@ -289,9 +293,32 @@ export const MessageInput = memo(function MessageInput({
       if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
     }
     setAttachments([]);
+    setPendingSend(false);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
-  }, [value, attachments, disabled, onSend, onSlashStateChange, onFileStateChange]);
+  }, [value, attachments, onSend, onSlashStateChange, onFileStateChange]);
+
+  const handleSend = useCallback(() => {
+    if (disabled) return;
+
+    // If files are still uploading, queue the send for when they finish
+    if (attachments.some((a) => a.status === "uploading")) {
+      const trimmed = value.trim();
+      if (trimmed || attachments.some((a) => a.status !== "error")) {
+        setPendingSend(true);
+      }
+      return;
+    }
+
+    executeSend();
+  }, [value, attachments, disabled, executeSend]);
+
+  // Auto-send when queued and all uploads complete
+  useEffect(() => {
+    if (!pendingSend) return;
+    if (attachments.some((a) => a.status === "uploading")) return;
+    executeSend();
+  }, [pendingSend, attachments, executeSend]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -404,7 +431,7 @@ export const MessageInput = memo(function MessageInput({
     [processFiles],
   );
 
-  const hasContent = value.trim().length > 0 || attachments.some((a) => a.status === "ready");
+  const hasContent = value.trim().length > 0 || attachments.some((a) => a.status !== "error");
   const showCancel = isStreaming && !hasContent;
 
   return (
@@ -472,12 +499,12 @@ export const MessageInput = memo(function MessageInput({
             </button>
           ) : (
             <button
-              onClick={(e) => { e.stopPropagation(); handleSend(); }}
+              onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
               disabled={disabled || !hasContent}
               className="flex items-center justify-center size-7 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 transition-colors"
-              aria-label="Send"
+              aria-label={pendingSend ? "Cancel queued send" : "Send"}
             >
-              <ArrowUp className="size-3.5" />
+              {pendingSend ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
             </button>
           )}
         </div>
@@ -533,12 +560,12 @@ export const MessageInput = memo(function MessageInput({
                 </button>
               ) : (
                 <button
-                  onClick={(e) => { e.stopPropagation(); handleSend(); }}
+                  onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
                   disabled={disabled || !hasContent}
                   className="flex items-center justify-center size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  aria-label="Send message"
+                  aria-label={pendingSend ? "Cancel queued send" : "Send message"}
                 >
-                  <ArrowUp className="size-4" />
+                  {pendingSend ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
                 </button>
               )}
             </div>
