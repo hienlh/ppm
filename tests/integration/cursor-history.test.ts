@@ -86,6 +86,13 @@ describe("Cursor history — real data fixtures", () => {
       expect(hasTestContent).toBe(true);
     });
 
+    it("should filter out <user_info> system context messages", async () => {
+      const messages = await loadCursorHistory(SESSION_305, undefined, FIXTURES_DIR);
+      for (const msg of messages) {
+        expect(msg.content.trimStart().startsWith("<user_info>")).toBe(false);
+      }
+    });
+
     it("should skip binary DAG metadata blobs", async () => {
       const messages = await loadCursorHistory(SESSION_574, undefined, FIXTURES_DIR);
       // No message content should start with binary characters

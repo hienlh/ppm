@@ -133,6 +133,8 @@ function parseDagBlobs(
           } else {
             content = JSON.stringify(parsed.content);
           }
+          // Filter out Cursor's injected <user_info> system context messages
+          if (parsed.role === "user" && /^<user_info>\s/i.test(content.trimStart())) continue;
           // Strip Cursor's <user_query> wrapper from user messages
           if (parsed.role === "user") {
             const match = content.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/);
