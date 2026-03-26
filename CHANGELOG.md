@@ -3,7 +3,8 @@
 ## [0.9.0-beta.5] - 2026-03-27
 
 ### Merged
-- All changes from `0.9.0-beta.3` (streaming input) and `0.9.0-beta.4` (multi-provider)
+- Consolidated `feat/streaming-input-migration` into `beta` — all streaming input + multi-provider changes unified on single branch
+- Resolved merge conflicts across provider, WS handler, chat hooks, message input, and types
 
 ## [0.9.0-beta.3] - 2026-03-26
 
