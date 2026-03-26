@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.61] - 2026-03-26
+
+### Added
+- **Browser preview tab**: Embed localhost web apps inside PPM via an iframe with reverse proxy. Includes toolbar with back/forward navigation, reload, address bar, and "Open in Browser" button. Supports any localhost port; external URLs load directly in iframe. Open via Command Palette → "Open Browser".
+
 ## [0.8.60] - 2026-03-26
 
 ### Fixed

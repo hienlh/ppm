@@ -86,6 +86,31 @@ async *streamMessages(input: string) {
 provider.sendMessage(input).then(...)
 ```
 
+### Long-Lived Streaming Sessions
+
+For chat-like features, maintain persistent streaming sessions instead of per-query execution:
+
+```typescript
+// Good: Session-scoped streaming (v0.8.55+)
+// Provider maintains AsyncGenerator per session
+const streaming = provider.sendMessage(sessionId, content);
+for await (const event of streaming) {
+  // Handle event (can receive multiple messages from same generator)
+  yield event;
+}
+
+// Avoid: Per-message query execution
+for (const message of messages) {
+  const result = await query(message); // Restarts SDK each time
+  yield result;
+}
+
+// Key Pattern: Decoupled streaming loop
+// Store streaming generator in session entry
+// Follow-up messages push into existing generator
+// FE disconnect ≠ abort (BE owns the connection)
+```
+
 ### Error Handling
 Use try-catch for async operations. Throw structured errors:
 
@@ -221,6 +246,63 @@ try {
 }
 ```
 
+### Provider Interface Pattern (Multi-Provider)
+
+PPM supports multiple AI providers through an extensible interface pattern:
+
+```typescript
+// Core interface defines required methods + optional capability methods
+interface AIProvider {
+  id: string;
+  name: string;
+
+  // Required: All providers must implement these
+  createSession(config: SessionConfig): Promise<Session>;
+  resumeSession(sessionId: string): Promise<Session>;
+  listSessions(): Promise<SessionInfo[]>;
+  deleteSession(sessionId: string): Promise<void>;
+  sendMessage(sessionId: string, message: string, opts?: SendMessageOpts): AsyncIterable<ChatEvent>;
+
+  // Optional: Providers implement what they support
+  abortQuery?(sessionId: string): void;
+  getMessages?(sessionId: string): Promise<ChatMessage[]>;
+  listSessionsByDir?(dir: string): Promise<SessionInfo[]>;
+  ensureProjectPath?(sessionId: string, path: string): void;
+  isAvailable?(): Promise<boolean>;
+}
+```
+
+**SDK-based Providers (Claude):**
+- Use Anthropic SDK for advanced features
+- Implement all optional methods
+- Streaming via SDK async generators
+
+**CLI-based Providers (Cursor, Codex, Gemini):**
+- Extend `CliProvider` abstract class
+- Implement: `buildArgs()`, `mapEvent()`, `extractSessionId()`, `isAvailable()`
+- Shared: spawn, parse NDJSON, abort, cleanup
+- Override `spawnProcess()` for provider-specific quirks (e.g., workspace trust)
+- Override `listSessions()` to read native provider history (e.g., SQLite)
+
+**Usage Pattern (Type-Safe Optional Calls):**
+```typescript
+// Good: Optional chaining for capabilities
+await provider.abortQuery?.(sessionId); // Silently skips if not implemented
+const messages = await provider.getMessages?.(sessionId) ?? [];
+
+// Avoid: Duck-typing checks (old pattern)
+if ("abortQuery" in provider) {
+  (provider as any).abortQuery(sessionId); // Not type-safe
+}
+```
+
+**Adding New Providers:**
+1. Create provider class implementing/extending AIProvider or CliProvider
+2. Implement `isAvailable()` for optional registration
+3. Register in `ProviderRegistry` via `bootstrapProviders()` if binary available
+4. Add event mapper if CLI-based (NDJSON → ChatEvent)
+5. ~100-150 lines per provider (extends CliProvider)
+
 ## API Conventions
 
 ### Response Envelope
@@ -252,18 +334,35 @@ GET    /api/project/:name/files/...   # Files (project-scoped)
 Structure WebSocket messages as typed JSON objects:
 
 ```typescript
-// Client -> Server (chat)
-{ type: "message"; content: string }
+// Client -> Server (chat, v0.8.55+)
+{ type: "message"; content: string; priority?: "now"|"next"|"later"; images?: {id: string; data: string}[] }
 { type: "cancel" }
-{ type: "approval_response"; requestId: string; approved: boolean }
+{ type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
+{ type: "ready" }  // FE handshake after WS open
 
 // Server -> Client (chat)
-{ type: "text"; content: string }
-{ type: "tool_use"; tool: string; input: unknown }
+{ type: "text"; content: string; parentToolUseId?: string }
+{ type: "thinking"; content: string; parentToolUseId?: string }
+{ type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string }
+{ type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
 { type: "approval_request"; requestId: string; tool: string; input: unknown }
-{ type: "done"; sessionId: string }
+{ type: "done"; sessionId: string; contextWindowPct?: number; resultSubtype?: string }
 { type: "error"; message: string }
+{ type: "account_info"; accountId: string; accountLabel: string }
+{ type: "phase_changed"; phase: SessionPhase; elapsed?: number }
+{ type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: {...}|null; sessionTitle: string|null }
+{ type: "turn_events"; events: unknown[] }  // Buffered events on reconnect
+{ type: "title_updated"; title: string }
+{ type: "ping" }  // Server keepalive
 ```
+
+**New Fields (v0.8.55+):**
+- `priority` — Message priority for queue ordering (future: "now" interrupts, "next" queues first, "later" queues at end)
+- `images` — Image attachments sent with message
+- `phase_changed` — Phase transitions (initializing → connecting → thinking/streaming → idle)
+- `session_state` — Session state snapshot on WS open/ready (includes current phase and pending approval)
+- `turn_events` — Buffered events sent on reconnection for sync
+- `parentToolUseId` — Hierarchical tool call support (nested tool results)
 
 ### Status Codes
 Use standard HTTP status codes:
