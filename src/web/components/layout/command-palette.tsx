@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Loader2,
   Globe,
+  Mic,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -159,6 +160,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action", shortcut: formatShortcut(getBinding("open-git-graph")) },
       { id: "browser", label: "Open Browser", icon: Globe, action: openNewTab("browser", "Browser"), keywords: "web preview localhost iframe url", group: "action" },
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },
+      { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },
       {
         id: "settings", label: "Settings", icon: Settings,
