@@ -134,6 +134,19 @@ export abstract class CliProvider implements AIProvider {
             if (capturedSessionId !== processKey) {
               this.activeProcesses.delete(processKey);
               this.activeProcesses.set(capturedSessionId, proc);
+              // Migrate session metadata to the real CLI-assigned ID
+              // so listSessions/getMessages use the correct key
+              const meta = this.sessions.get(processKey);
+              if (meta) {
+                this.sessions.delete(processKey);
+                meta.id = capturedSessionId;
+                this.sessions.set(capturedSessionId, meta);
+              }
+              const cnt = this.messageCount.get(processKey) ?? 0;
+              this.messageCount.delete(processKey);
+              this.messageCount.set(capturedSessionId, cnt);
+              // Notify frontend about the session ID change
+              yield { type: "session_migrated", oldSessionId: processKey, newSessionId: capturedSessionId } as ChatEvent;
             }
           }
         }

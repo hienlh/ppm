@@ -40,7 +40,7 @@ class ChatService {
     }
     // Aggregate from all providers
     const all: SessionInfo[] = [];
-    for (const info of providerRegistry.list()) {
+    for (const info of providerRegistry.listAll()) {
       const provider = providerRegistry.get(info.id);
       if (provider) {
         if (dir && provider.listSessionsByDir) {
@@ -81,7 +81,7 @@ class ChatService {
 
   /** Look up a session across all providers (for WS handler) */
   getSession(sessionId: string): Session | null {
-    for (const info of providerRegistry.list()) {
+    for (const info of providerRegistry.listAll()) {
       const provider = providerRegistry.get(info.id);
       if (!provider) continue;
       // Use internal sessions Map — SDK stores {meta, sdk}, others store Session directly

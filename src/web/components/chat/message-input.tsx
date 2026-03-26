@@ -5,6 +5,7 @@ import { randomId } from "@/lib/utils";
 import { isSupportedFile, isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
+import { ProviderSelector } from "./provider-selector";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
 import { flattenFileTree } from "./file-picker";
@@ -44,6 +45,10 @@ interface MessageInputProps {
   permissionMode?: string;
   /** Permission mode change handler */
   onModeChange?: (mode: string) => void;
+  /** Current provider ID */
+  providerId?: string;
+  /** Provider change handler — undefined when session is active (locked) */
+  onProviderChange?: (providerId: string) => void;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -63,6 +68,8 @@ export const MessageInput = memo(function MessageInput({
   autoFocus,
   permissionMode,
   onModeChange,
+  providerId,
+  onProviderChange,
 }: MessageInputProps) {
   const [value, setValue] = useState(initialValue ?? "");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -452,7 +459,7 @@ export const MessageInput = memo(function MessageInput({
       >
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
-        {/* Mobile: mode chip row */}
+        {/* Mobile: mode chip + provider selector row */}
         <div className="flex items-center gap-1 px-2 pt-2 md:hidden relative">
           <ModeChip
             mode={permissionMode ?? "bypassPermissions"}
@@ -464,6 +471,13 @@ export const MessageInput = memo(function MessageInput({
             open={modeSelectorOpen}
             onOpenChange={setModeSelectorOpen}
           />
+          {onProviderChange && projectName && (
+            <ProviderSelector
+              value={providerId ?? "claude"}
+              onChange={onProviderChange}
+              projectName={projectName}
+            />
+          )}
         </div>
         {/* Mobile: single row — attach + textarea + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
@@ -548,6 +562,14 @@ export const MessageInput = memo(function MessageInput({
                   onOpenChange={setModeSelectorOpen}
                 />
               </div>
+              {/* Provider selector — only when no active session */}
+              {onProviderChange && projectName && (
+                <ProviderSelector
+                  value={providerId ?? "claude"}
+                  onChange={onProviderChange}
+                  projectName={projectName}
+                />
+              )}
             </div>
             <div className="flex items-center gap-1">
               {showCancel ? (

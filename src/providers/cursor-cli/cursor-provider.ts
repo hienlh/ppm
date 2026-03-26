@@ -1,7 +1,7 @@
 import { CliProvider } from "../cli-provider-base.ts";
 import { mapCursorEvent } from "./cursor-event-mapper.ts";
 import { listCursorSessions, loadCursorHistory } from "./cursor-history.ts";
-import type { ChatEvent, ChatMessage, SessionInfo } from "../provider.interface.ts";
+import type { ChatEvent, ChatMessage, SessionInfo, ModelOption } from "../provider.interface.ts";
 import type { ChildProcess } from "node:child_process";
 
 const TRUST_PATTERNS = [
@@ -94,6 +94,40 @@ export class CursorCliProvider extends CliProvider {
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
     const meta = this.sessions.get(sessionId);
     return loadCursorHistory(sessionId, meta?.projectPath);
+  }
+
+  /** Cached models list with TTL from `cursor-agent --list-models` */
+  private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
+  private static CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+  async listModels(): Promise<ModelOption[]> {
+    if (this.modelsCache && Date.now() < this.modelsCache.expiry) {
+      return this.modelsCache.models;
+    }
+    try {
+      const proc = Bun.spawn(["cursor-agent", "--list-models"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const timeout = setTimeout(() => proc.kill(), 10_000);
+      const text = await new Response(proc.stdout).text();
+      clearTimeout(timeout);
+      await proc.exited;
+      const models: ModelOption[] = [];
+      for (const line of text.split("\n")) {
+        // Format: "model-id - Model Label" or "model-id - Model Label  (current, default)"
+        const match = line.match(/^(\S+)\s+-\s+(.+?)(?:\s+\(.*\))?$/);
+        if (match?.[1] && match[2]) {
+          models.push({ value: match[1], label: match[2].trim() });
+        }
+      }
+      if (models.length > 0) {
+        this.modelsCache = { models, expiry: Date.now() + CursorCliProvider.CACHE_TTL };
+      }
+      return models;
+    } catch {
+      return [];
+    }
   }
 
   // Workspace trust detection: log warning so user knows to re-run with --trust

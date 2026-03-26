@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff } from "lucide-react";
+import { History, Settings2, Loader2, RefreshCw, Search, Pencil, Check, X, BellOff } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { UsageDetailPanel } from "./usage-badge";
+import { ProviderBadge } from "./provider-selector";
 import type { SessionInfo } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
 
@@ -19,6 +20,7 @@ interface ChatHistoryBarProps {
   refreshUsage?: () => void;
   lastFetchedAt?: string | null;
   sessionId?: string | null;
+  providerId?: string;
   onSelectSession?: (session: SessionInfo) => void;
   onBugReport?: () => void;
   isConnected?: boolean;
@@ -50,7 +52,7 @@ function pctColor(pct: number): string {
 
 export function ChatHistoryBar({
   projectName, usageInfo, contextWindowPct, usageLoading, refreshUsage, lastFetchedAt,
-  sessionId, onSelectSession, onBugReport, isConnected, onReconnect,
+  sessionId, providerId, onSelectSession, onBugReport, isConnected, onReconnect,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -94,7 +96,7 @@ export function ChatHistoryBar({
         type: "chat",
         title: session.title || "Chat",
         projectId: projectName ?? null,
-        metadata: { projectName, sessionId: session.id },
+        metadata: { projectName, sessionId: session.id, providerId: session.providerId },
         closable: true,
       });
     }
@@ -126,7 +128,8 @@ export function ChatHistoryBar({
     ? sessions.filter((s) => (s.title || "").toLowerCase().includes(searchQuery.toLowerCase()))
     : sessions;
 
-  // Usage badge display
+  // Usage badge display — only meaningful for Claude (SDK) provider
+  const isClaudeProvider = !providerId || providerId === "claude";
   const fiveHourPct = usageInfo.fiveHour != null ? Math.round(usageInfo.fiveHour * 100) : null;
   const sevenDayPct = usageInfo.sevenDay != null ? Math.round(usageInfo.sevenDay * 100) : null;
   const worstPct = Math.max(fiveHourPct ?? 0, sevenDayPct ?? 0);
@@ -147,6 +150,14 @@ export function ChatHistoryBar({
           <span>History</span>
         </button>
 
+        {/* Active provider indicator */}
+        {sessionId && providerId && providerId !== "mock" && (
+          <span className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-text-secondary">
+            <ProviderBadge providerId={providerId} />
+            <span className="capitalize">{providerId}</span>
+          </span>
+        )}
+
         {/* Config */}
         <button
           onClick={() => togglePanel("config")}
@@ -158,28 +169,37 @@ export function ChatHistoryBar({
           <Settings2 className="size-3" />
         </button>
 
-        {/* Usage & Accounts */}
-        <button
-          onClick={() => togglePanel("usage")}
-          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-elevated ${
-            activePanel === "usage" ? "bg-primary/10" : ""
-          } ${usageColor}`}
-          title="Usage limits"
-        >
-          <Activity className="size-3" />
-          {usageInfo.activeAccountLabel && (
-            <span className="text-text-secondary font-normal truncate max-w-[60px]">[{usageInfo.activeAccountLabel}]</span>
-          )}
-          <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
-          <span className="text-text-subtle">·</span>
-          <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
-          {contextWindowPct != null && (
-            <>
-              <span className="text-text-subtle">·</span>
-              <span className={pctColor(contextWindowPct)}>Ctx:{contextWindowPct}%</span>
-            </>
-          )}
-        </button>
+        {/* Usage & Accounts — full display for Claude, minimal for other providers */}
+        {isClaudeProvider ? (
+          <button
+            onClick={() => togglePanel("usage")}
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-elevated ${
+              activePanel === "usage" ? "bg-primary/10" : ""
+            } ${usageColor}`}
+            title="Usage limits"
+          >
+            <Activity className="size-3" />
+            {usageInfo.activeAccountLabel && (
+              <span className="text-text-secondary font-normal truncate max-w-[60px]">[{usageInfo.activeAccountLabel}]</span>
+            )}
+            <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
+            <span className="text-text-subtle">·</span>
+            <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
+            {contextWindowPct != null && (
+              <>
+                <span className="text-text-subtle">·</span>
+                <span className={pctColor(contextWindowPct)}>Ctx:{contextWindowPct}%</span>
+              </>
+            )}
+          </button>
+        ) : (
+          contextWindowPct != null && (
+            <span className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${pctColor(contextWindowPct)}`}>
+              <Activity className="size-3" />
+              <span>Ctx:{contextWindowPct}%</span>
+            </span>
+          )
+        )}
 
         {/* Spacer */}
         <div className="flex-1" />
@@ -247,7 +267,7 @@ export function ChatHistoryBar({
                   key={session.id}
                   className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group"
                 >
-                  <MessageSquare className="size-3 shrink-0 text-text-subtle" />
+                  <ProviderBadge providerId={session.providerId} />
                   {editingId === session.id ? (
                     <form
                       className="flex items-center gap-1 flex-1 min-w-0"
@@ -303,8 +323,8 @@ export function ChatHistoryBar({
         </div>
       )}
 
-      {/* Usage panel */}
-      {activePanel === "usage" && (
+      {/* Usage panel — only for Claude provider */}
+      {activePanel === "usage" && isClaudeProvider && (
         <UsageDetailPanel
           usage={usageInfo}
           visible={true}

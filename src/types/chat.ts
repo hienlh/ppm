@@ -28,6 +28,12 @@ export interface AIProvider {
   ensureProjectPath?(sessionId: string, path: string): void;
   setForkSource?(sessionId: string, sourceSessionId: string): void;
   isAvailable?(): Promise<boolean>;
+  listModels?(): Promise<ModelOption[]>;
+}
+
+export interface ModelOption {
+  value: string;
+  label: string;
 }
 
 export interface Session {
@@ -101,6 +107,7 @@ export type ChatEvent =
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number }
+  | { type: "session_migrated"; oldSessionId: string; newSessionId: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "system"; subtype: string };
 

@@ -10,6 +10,7 @@ import type {
   SessionInfo,
   ChatEvent,
   ChatMessage,
+  ModelOption,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
@@ -237,6 +238,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   /** Register a fork source — when this session sends its first message, it will fork from sourceId */
   setForkSource(sessionId: string, sourceSessionId: string): void {
     this.forkSources.set(sessionId, sourceSessionId);
+  }
+
+  async listModels(): Promise<ModelOption[]> {
+    return [
+      { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+      { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    ];
   }
 
   /**

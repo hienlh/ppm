@@ -2,7 +2,47 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.8.53
+**Current Version:** v0.8.60
+
+---
+
+## [0.8.60] — 2026-03-26
+
+### Added
+- **Dynamic Model Listing** — Multi-provider UI improvements with provider-aware model discovery
+  - `listModels?()` optional method on AIProvider interface for runtime model discovery
+  - `ModelOption` type: `{ value: string; label: string }` for model IDs and display names
+  - Claude provider: Hardcoded 2 models (Sonnet 4.6, Opus 4.6)
+  - Cursor provider: Subprocess execution with 5-minute TTL cache and 10-second timeout
+- **Provider Models API Endpoints**
+  - `GET /api/settings/ai/providers/:id/models` — Global endpoint for Settings UI
+  - `GET /api/project/:name/chat/providers/:providerId/models` — Project-scoped endpoint for Chat tab
+- **AI Settings UI** — Per-provider tabs with dynamic model dropdowns
+  - Dropdown auto-populated from models API
+  - Fallback to hardcoded models if API call fails
+  - Provider-aware settings display (SDK vs CLI options)
+- **Chat History Bar** — Provider-aware usage display
+  - Provider badges showing active provider per session
+  - Full usage stats for Claude (tokens_in, tokens_out, cost)
+  - Context-only usage for other providers
+- **Provider Registry Pattern** — `list()` vs `listAll()` distinction
+  - `list()` returns user-facing providers (excludes mock)
+  - `listAll()` returns all providers including mock (internal only)
+  - `bootstrapProviders()` auto-detects CLI providers on startup
+- **13 new integration tests** for provider models API and multi-provider flows
+
+### Technical Details
+- **File Changes:**
+  - `src/types/chat.ts` — Added ModelOption interface, listModels method to AIProvider
+  - `src/providers/provider.interface.ts` — Re-export ModelOption
+  - `src/providers/registry.ts` — Implement list/listAll, add bootstrapProviders
+  - `src/providers/claude-agent-sdk.ts` — Add listModels implementation
+  - `src/providers/cursor-cli/cursor-provider.ts` — Add listModels with TTL cache + timeout
+  - `src/server/routes/settings.ts` — Add GET /ai/providers/:id/models endpoint
+  - `src/server/routes/chat.ts` — Add GET /providers/:providerId/models endpoint
+  - `src/web/components/settings/ai-settings-section.tsx` — Dynamic model dropdowns per provider
+  - `src/web/components/chat/chat-history-bar.tsx` — Provider badges and usage display
+- **Test Coverage:** 492 passing tests (13 new for provider models)
 
 ---
 

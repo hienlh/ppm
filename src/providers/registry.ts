@@ -19,11 +19,17 @@ class ProviderRegistry {
     return this.providers.get(id);
   }
 
+  /** List providers visible to users (excludes internal-only providers like mock) */
   list(): ProviderInfo[] {
-    return Array.from(this.providers.values()).map((p) => ({
-      id: p.id,
-      name: p.name,
-    }));
+    return Array.from(this.providers.values())
+      .filter((p) => p.id !== "mock")
+      .map((p) => ({ id: p.id, name: p.name }));
+  }
+
+  /** List all registered providers including internal ones (for ChatService aggregation) */
+  listAll(): ProviderInfo[] {
+    return Array.from(this.providers.values())
+      .map((p) => ({ id: p.id, name: p.name }));
   }
 
   /** Get the default provider based on config's default_provider */
@@ -55,6 +61,18 @@ export async function bootstrapProviders(): Promise<void> {
     const cursor = new CursorCliProvider();
     if (await cursor.isAvailable()) {
       providerRegistry.register(cursor);
+      // Ensure config has an entry for cursor so settings UI shows it
+      const ai = configService.get("ai");
+      if (!ai.providers["cursor"]) {
+        configService.set("ai", {
+          ...ai,
+          providers: {
+            ...ai.providers,
+            cursor: { type: "cli", cli_command: "cursor-agent", permission_mode: "bypassPermissions" },
+          },
+        });
+        configService.save();
+      }
       console.log("[registry] Cursor provider registered (cursor-agent found)");
     } else {
       console.log("[registry] Cursor provider skipped (cursor-agent not found)");

@@ -23,6 +23,8 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   sessionTitle: string | null;
+  /** When CLI provider assigns a different session ID, this holds the new ID */
+  migratedSessionId: string | null;
   sendMessage: (content: string, opts?: { permissionMode?: string }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
@@ -51,6 +53,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [migratedSessionId, setMigratedSessionId] = useState<string | null>(null);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const streamingAccountRef = useRef<{ accountId: string; accountLabel: string } | null>(null);
@@ -242,6 +245,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
+
+    // Handle session ID migration (CLI provider assigned different ID)
+    if ((data as any).type === "session_migrated") {
+      const newId = (data as any).newSessionId as string;
+      if (newId) setMigratedSessionId(newId);
+      return;
+    }
 
     // Handle title updates from SDK summary
     if ((data as any).type === "title_updated") {
@@ -518,6 +528,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     pendingApproval,
     contextWindowPct,
     sessionTitle,
+    migratedSessionId,
     sendMessage,
     respondToApproval,
     cancelStreaming,

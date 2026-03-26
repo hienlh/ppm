@@ -140,8 +140,27 @@ POST   /api/db/connections/:id/query              → Execute query (readonly ch
 PATCH  /api/db/connections/:id/cell               → Update cell value (single)
 GET    /api/upgrade/status                        → Get current + available versions, install method
 POST   /api/upgrade/apply                         → Install new version, trigger supervisor self-replace
+GET    /api/settings/ai/providers/:id/models     → List models for provider (global)
+GET    /api/project/:name/chat/providers/:providerId/models → List models (project-scoped)
 WS     /ws/project/:name/chat/:sessionId          → Chat streaming
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
+```
+
+**Models Endpoints (v0.8.60+):**
+```typescript
+// Global models endpoint (for Settings UI)
+GET /api/settings/ai/providers/:id/models
+Response: { ok: true, data: ModelOption[] }
+
+// Project-scoped models endpoint (for Chat tab)
+GET /api/project/:name/chat/providers/:providerId/models
+Response: { ok: true, data: ModelOption[] }
+
+// ModelOption structure
+{
+  value: "claude-sonnet-4-6",
+  label: "Claude Sonnet 4.6"
+}
 ```
 
 ---
@@ -185,27 +204,73 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 ---
 
 ### Provider Layer (AI Adapters)
-**Component:** Provider interface + implementations
+**Component:** Provider interface + implementations + registry
 
 **Responsibilities:**
 - Abstract AI model differences behind common interface
 - Stream responses as async generators
 - Handle tool use and approval flows
 - Track token usage
+- Discover and list available models per provider
 
 **Interface (src/providers/provider.interface.ts):**
 ```typescript
 interface AIProvider {
+  // Required methods
   createSession(): Promise<Session>;
   sendMessage(sessionId: string, message: string, context?: FileContext[]): AsyncIterable<ChatEvent>;
-  onToolApproval(sessionId: string, requestId: string, approved: boolean, data?: unknown): Promise<void>;
+
+  // Optional methods (v0.8.60+)
+  listModels?(): Promise<ModelOption[]>;  // Discover available models
+  isAvailable?(): Promise<boolean>;       // Check if provider is available
+}
+
+interface ModelOption {
+  value: string;    // Model ID
+  label: string;    // Display name
 }
 ```
 
 **Implementations:**
-- **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use. Reads model/effort/maxTurns/budget/thinking from config. Settings refreshed per query. Windows CLI fallback for Bun subprocess pipe issues. .env poisoning mitigation. **Multi-account support:** Injects account API token from AccountService instead of relying on ANTHROPIC_API_KEY env var when accounts configured.
-- **mock-provider** (Testing) — Returns canned responses
-- **Note:** CLI provider removed (v2); agent SDK is sole AI provider with Windows CLI fallback
+1. **claude-agent-sdk** (Primary) — @anthropic-ai/claude-agent-sdk, streaming, tool use
+   - Reads model/effort/maxTurns/budget/thinking from config (fresh per query)
+   - Windows CLI fallback for Bun subprocess pipe issues
+   - .env poisoning mitigation
+   - Multi-account support: injects account API token instead of ANTHROPIC_API_KEY env var
+   - `listModels()`: Returns hardcoded 2 models (Sonnet 4.6, Opus 4.6)
+
+2. **cursor-cli/cursor-provider** (CLI-based) — Subprocess provider
+   - Extends `CliProvider` abstract base for lifecycle management
+   - `listModels()`: Runs `cursor-agent --list-models` with subprocess
+   - 5-minute TTL cache (prevents repeated subprocess calls)
+   - 10-second timeout (graceful fallback)
+   - Platform-aware binary detection
+
+3. **mock-provider** (Testing) — Returns canned responses
+   - Deterministic for unit tests
+
+**Provider Registry Pattern (src/providers/registry.ts):**
+```typescript
+// User-facing providers (excludes mock)
+list(): ProviderInfo[] {
+  return [{ id: "claude", name: "Claude" }, { id: "cursor", name: "Cursor" }];
+}
+
+// All providers including internal (for ChatService aggregation)
+listAll(): ProviderInfo[] {
+  return [..., { id: "mock", name: "Mock" }];
+}
+
+// Auto-detect CLI providers on startup
+async bootstrapProviders() {
+  for (const provider of this.providers.values()) {
+    if (await provider.isAvailable?.()) {
+      // Auto-create config entry if detected
+      await configService.save();
+    }
+  }
+}
+```
 
 ---
 

@@ -14,7 +14,7 @@ import { MessageInput, type ChatAttachment } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
-import { ProviderSelector } from "./provider-selector";
+
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
@@ -90,6 +90,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     pendingApproval,
     contextWindowPct,
     sessionTitle,
+    migratedSessionId,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -97,6 +98,13 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     refetchMessages,
     isConnected,
   } = useChat(sessionId, providerId, projectName);
+
+  // When CLI provider assigns a different session ID, update our state
+  useEffect(() => {
+    if (migratedSessionId && migratedSessionId !== sessionId) {
+      setSessionId(migratedSessionId);
+    }
+  }, [migratedSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-clear notification badge when this tab is active and document is visible.
   // Handles the case where notification arrived while browser tab was hidden.
@@ -141,11 +149,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     useTabStore.getState().openTab({
       type: "chat",
       title: "AI Chat",
-      metadata: { projectName },
+      metadata: { projectName, providerId },
       projectId: projectName || null,
       closable: true,
     });
-  }, [projectName]);
+  }, [projectName, providerId]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
     setSessionId(session.id);
@@ -346,6 +354,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           refreshUsage={refreshUsage}
           lastFetchedAt={lastFetchedAt}
           sessionId={sessionId}
+          providerId={providerId}
           onSelectSession={handleSelectSession}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}
           isConnected={isConnected}
@@ -371,17 +380,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           visible={showFilePicker}
         />
 
-        {/* Provider selector — visible when no active session */}
-        {!sessionId && (
-          <div className="px-3 py-1.5 border-t border-border">
-            <ProviderSelector
-              value={providerId}
-              onChange={setProviderId}
-              projectName={projectName}
-            />
-          </div>
-        )}
-
         {/* Input */}
         <MessageInput
           onSend={handleSend}
@@ -398,6 +396,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           externalFiles={externalFiles}
           permissionMode={permissionMode}
           onModeChange={setPermissionMode}
+          providerId={providerId}
+          onProviderChange={!sessionId ? setProviderId : undefined}
         />
       </div>
 

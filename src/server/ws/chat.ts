@@ -135,7 +135,8 @@ function startCleanupTimer(sessionId: string): void {
  * Standalone streaming loop — decoupled from WS message handler.
  * Runs independently so WS close does NOT kill the Claude query.
  */
-async function runStreamLoop(sessionId: string, providerId: string, content: string, permissionMode?: string): Promise<void> {
+async function runStreamLoop(initialSessionId: string, providerId: string, content: string, permissionMode?: string): Promise<void> {
+  let sessionId = initialSessionId;
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     console.error(`[chat] session=${sessionId} runStreamLoop: no entry — aborting`);
@@ -197,6 +198,23 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
+
+      // Session ID migrated: CLI provider assigned a different ID than PPM generated.
+      // Migrate activeSessions key so all subsequent events use the real ID.
+      if (evType === "session_migrated") {
+        const { oldSessionId, newSessionId } = ev;
+        const migrated = activeSessions.get(oldSessionId);
+        if (migrated) {
+          activeSessions.delete(oldSessionId);
+          activeSessions.set(newSessionId, migrated);
+          sessionId = newSessionId; // update local ref for subsequent setPhase/broadcast calls
+          // Notify frontend to update its sessionId state
+          broadcast(newSessionId, { type: "session_migrated", oldSessionId, newSessionId });
+          console.log(`[chat] session migrated: ${oldSessionId} → ${newSessionId}`);
+          logSessionEvent(newSessionId, "INFO", `Session ID migrated from ${oldSessionId}`);
+        }
+        continue;
+      }
 
       // System events (hook_started, init, etc.) → transition connecting → thinking
       // These indicate SDK has connected and is processing, but no content yet.

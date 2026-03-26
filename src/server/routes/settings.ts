@@ -11,6 +11,7 @@ import {
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
 import { proxyService } from "../../services/proxy.service.ts";
+import { providerRegistry } from "../../providers/registry.ts";
 
 export const settingsRoutes = new Hono();
 
@@ -152,6 +153,19 @@ settingsRoutes.put("/ai", async (c) => {
     return c.json(ok(stripSensitiveFields(updated)));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** GET /settings/ai/providers/:id/models — list models for a provider (global, no project context needed) */
+settingsRoutes.get("/ai/providers/:id/models", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const provider = providerRegistry.get(id);
+    if (!provider) return c.json(err(`Provider "${id}" not found`), 404);
+    const models = await provider.listModels?.() ?? [];
+    return c.json(ok(models));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
   }
 });
 

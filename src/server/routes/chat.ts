@@ -57,6 +57,19 @@ chatRoutes.get("/providers", (c) => {
   }
 });
 
+/** GET /chat/providers/:providerId/models — list available models for a provider */
+chatRoutes.get("/providers/:providerId/models", async (c) => {
+  try {
+    const providerId = c.req.param("providerId");
+    const provider = providerRegistry.get(providerId);
+    if (!provider) return c.json(err(`Provider "${providerId}" not found`), 404);
+    const models = await provider.listModels?.() ?? [];
+    return c.json(ok(models));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /chat/sessions — list chat sessions filtered by project from context */
 chatRoutes.get("/sessions", async (c) => {
   try {

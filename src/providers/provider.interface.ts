@@ -8,4 +8,5 @@ export type {
   ToolApprovalHandler,
   UsageInfo,
   SendMessageOpts,
+  ModelOption,
 } from "../types/chat.ts";
