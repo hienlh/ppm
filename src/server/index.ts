@@ -166,6 +166,10 @@ export async function startServer(options: {
   // Setup log file (both foreground and daemon modes)
   await setupLogFile();
 
+  // Bootstrap CLI providers (checks binary availability)
+  const { bootstrapProviders } = await import("../providers/registry.ts");
+  await bootstrapProviders();
+
   // Check if port is already in use before starting.
   // Skip in hot-reload mode — Bun.serve() replaces the previous server on the same port,
   // but a net.createServer() probe would see it as "in use" and exit prematurely.

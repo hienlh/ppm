@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api, projectUrl } from "@/lib/api-client";
 import { Plus, Trash2, MessageSquare, ChevronDown } from "lucide-react";
+import { ProviderBadge } from "./provider-selector";
 import type { SessionInfo } from "../../../types/chat";
 
 interface SessionPickerProps {
@@ -114,7 +115,8 @@ export function SessionPicker({
                   }`}
                 >
                   <div className="flex flex-col min-w-0 flex-1">
-                    <span className="truncate text-xs font-medium">
+                    <span className="flex items-center gap-1.5 truncate text-xs font-medium">
+                      <ProviderBadge providerId={session.providerId} />
                       {session.title}
                     </span>
                     <span className="text-xs text-text-subtle">

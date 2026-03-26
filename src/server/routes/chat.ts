@@ -146,9 +146,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
     });
     // Store fork source so WS handler knows to use forkSession on first message
     const provider = providerRegistry.get(providerId);
-    if (provider && "setForkSource" in provider) {
-      (provider as any).setForkSource(session.id, sourceId);
-    }
+    provider?.setForkSource?.(session.id, sourceId);
     return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 500);

@@ -40,5 +40,26 @@ class ProviderRegistry {
 
 /** Singleton registry */
 export const providerRegistry = new ProviderRegistry();
+
+// SDK providers registered synchronously (no binary check needed)
 providerRegistry.register(new ClaudeAgentSdkProvider());
 providerRegistry.register(new MockProvider()); // testing only
+
+/**
+ * Bootstrap CLI providers asynchronously.
+ * Checks isAvailable() before registering — call at server startup.
+ */
+export async function bootstrapProviders(): Promise<void> {
+  try {
+    const { CursorCliProvider } = await import("./cursor-cli/cursor-provider.ts");
+    const cursor = new CursorCliProvider();
+    if (await cursor.isAvailable()) {
+      providerRegistry.register(cursor);
+      console.log("[registry] Cursor provider registered (cursor-agent found)");
+    } else {
+      console.log("[registry] Cursor provider skipped (cursor-agent not found)");
+    }
+  } catch (e) {
+    console.warn("[registry] Failed to load Cursor provider:", (e as Error).message);
+  }
+}

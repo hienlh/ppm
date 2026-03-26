@@ -14,6 +14,7 @@ import { MessageInput, type ChatAttachment } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
+import { ProviderSelector } from "./provider-selector";
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
@@ -369,6 +370,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onClose={handleFileClose}
           visible={showFilePicker}
         />
+
+        {/* Provider selector — visible when no active session */}
+        {!sessionId && (
+          <div className="px-3 py-1.5 border-t border-border">
+            <ProviderSelector
+              value={providerId}
+              onChange={setProviderId}
+              projectName={projectName}
+            />
+          </div>
+        )}
 
         {/* Input */}
         <MessageInput

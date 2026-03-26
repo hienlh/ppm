@@ -5,18 +5,29 @@ export interface SendMessageOpts {
 export interface AIProvider {
   id: string;
   name: string;
+
+  // Session lifecycle (required)
   createSession(config: SessionConfig): Promise<Session>;
   resumeSession(sessionId: string): Promise<Session>;
   listSessions(): Promise<SessionInfo[]>;
   deleteSession(sessionId: string): Promise<void>;
+
+  // Streaming (required)
   sendMessage(
     sessionId: string,
     message: string,
     opts?: SendMessageOpts,
   ): AsyncIterable<ChatEvent>;
-  /** Resolve a pending tool/question approval by requestId */
+
+  // Optional capabilities — providers implement what they support
   resolveApproval?(requestId: string, approved: boolean, data?: unknown): void;
   onToolApproval?: (callback: ToolApprovalHandler) => void;
+  abortQuery?(sessionId: string): void;
+  getMessages?(sessionId: string): Promise<ChatMessage[]>;
+  listSessionsByDir?(dir: string): Promise<SessionInfo[]>;
+  ensureProjectPath?(sessionId: string, path: string): void;
+  setForkSource?(sessionId: string, sourceSessionId: string): void;
+  isAvailable?(): Promise<boolean>;
 }
 
 export interface Session {
@@ -90,7 +101,8 @@ export type ChatEvent =
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number }
-  | { type: "account_info"; accountId: string; accountLabel: string };
+  | { type: "account_info"; accountId: string; accountLabel: string }
+  | { type: "system"; subtype: string };
 
 export type ToolApprovalHandler = (
   tool: string,

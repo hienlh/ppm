@@ -479,17 +479,17 @@ export const chatWebSocket = {
 
       // Resume session in provider (can be slow on first call — sdkListSessions)
       const provider = providerRegistry.get(providerId);
-      if (provider && "resumeSession" in provider) {
+      if (provider) {
         const t0 = Date.now();
-        await (provider as any).resumeSession(sessionId);
+        await provider.resumeSession(sessionId);
         const elapsed = Date.now() - t0;
         if (elapsed > 500) {
           console.warn(`[chat] session=${sessionId} resumeSession took ${elapsed}ms`);
           logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
         }
       }
-      if (entry.projectPath && provider && "ensureProjectPath" in provider) {
-        (provider as any).ensureProjectPath(sessionId, entry.projectPath);
+      if (entry.projectPath && provider?.ensureProjectPath) {
+        provider.ensureProjectPath(sessionId, entry.projectPath);
       }
 
       // Abort-and-replace: if already streaming, abort current query and wait for cleanup
@@ -518,9 +518,7 @@ export const chatWebSocket = {
       });
     } else if (parsed.type === "cancel") {
       const provider = providerRegistry.get(providerId);
-      if (provider && "abortQuery" in provider && typeof (provider as any).abortQuery === "function") {
-        (provider as any).abortQuery(sessionId);
-      }
+      provider?.abortQuery?.(sessionId);
     } else if (parsed.type === "approval_response") {
       const provider = providerRegistry.get(providerId);
       if (provider && typeof provider.resolveApproval === "function") {

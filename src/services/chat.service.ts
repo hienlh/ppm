@@ -7,7 +7,6 @@ import type {
   ChatMessage,
   SendMessageOpts,
 } from "../providers/provider.interface.ts";
-import { MockProvider } from "../providers/mock-provider.ts";
 
 class ChatService {
   async createSession(
@@ -34,9 +33,8 @@ class ChatService {
     if (providerId) {
       const provider = providerRegistry.get(providerId);
       if (!provider) throw new Error(`Provider "${providerId}" not found`);
-      // Pass dir to providers that support it (SDK provider)
-      if (dir && "listSessionsByDir" in provider) {
-        return (provider as any).listSessionsByDir(dir);
+      if (dir && provider.listSessionsByDir) {
+        return provider.listSessionsByDir(dir);
       }
       return provider.listSessions();
     }
@@ -45,8 +43,8 @@ class ChatService {
     for (const info of providerRegistry.list()) {
       const provider = providerRegistry.get(info.id);
       if (provider) {
-        if (dir && "listSessionsByDir" in provider) {
-          all.push(...await (provider as any).listSessionsByDir(dir));
+        if (dir && provider.listSessionsByDir) {
+          all.push(...await provider.listSessionsByDir(dir));
         } else {
           all.push(...await provider.listSessions());
         }
@@ -86,10 +84,10 @@ class ChatService {
     for (const info of providerRegistry.list()) {
       const provider = providerRegistry.get(info.id);
       if (!provider) continue;
-      const sessions = (provider as any).sessions as Map<string, unknown> | undefined;
-      if (sessions?.has(sessionId)) {
+      // Use internal sessions Map — SDK stores {meta, sdk}, others store Session directly
+      const sessions = (provider as any).sessions ?? (provider as any).activeSessions;
+      if (sessions instanceof Map && sessions.has(sessionId)) {
         const entry = sessions.get(sessionId);
-        // SDK provider stores {meta, sdk}, others store Session directly
         if (entry && typeof entry === "object" && "meta" in entry) {
           return (entry as { meta: Session }).meta;
         }
@@ -102,10 +100,7 @@ class ChatService {
   async getMessages(providerId: string, sessionId: string): Promise<ChatMessage[]> {
     const provider = providerRegistry.get(providerId);
     if (!provider) return [];
-    if ("getMessages" in provider && typeof (provider as any).getMessages === "function") {
-      return await (provider as any).getMessages(sessionId);
-    }
-    return [];
+    return await provider.getMessages?.(sessionId) ?? [];
   }
 }
 
