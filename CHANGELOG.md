@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.62] - 2026-03-26
+
+### Added
+- **Voice input in chat**: Mic button in chat input (mobile + desktop) using Web Speech API. Streams real-time interim results, appends to existing text, default language vi-VN. Button hidden on unsupported browsers.
+- **Voice input keyboard shortcut**: `Cmd+Shift+V` (Mac) / `Ctrl+Shift+V` (Win/Linux) toggles voice input globally. Customizable in Settings > Keyboard Shortcuts.
+- **Voice Input in Command Palette**: Search "voice", "mic", or "speech" to toggle voice input from the palette.
+
 ## [0.8.61] - 2026-03-26
 
 ### Added
