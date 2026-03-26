@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.0-beta.1] - 2026-03-26
+
+### Fixed
+- **FE stuck on "Connecting"**: SDK system events (hook_started, init) now yield to streaming loop, transitioning phase `connecting → thinking` immediately instead of waiting 5-10s for first text event
+
 ## [0.9.0-beta.0] - 2026-03-26
 
 ### Added
