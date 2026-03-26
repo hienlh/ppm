@@ -56,24 +56,8 @@ function rewriteHtml(html: string, proxyBase: string): string {
     if(typeof u==="string"&&u.startsWith("/")&&!u.startsWith(B+"/"))u=B+u;
     return _o.apply(this,[m,u].concat([].slice.call(arguments,2)));
   };
-  // Patch WebSocket for HMR (Vite, webpack, etc.)
-  var _W=window.WebSocket;
-  window.WebSocket=function(u,p){
-    try{
-      var url=new URL(u);
-      if(url.hostname==="localhost"||url.hostname==="127.0.0.1"||url.hostname==="0.0.0.0"){
-        // Connect directly to the dev server's WebSocket (same host as PPM)
-        url.host=location.host;
-        u=url.toString();
-      }
-    }catch(e){}
-    return p!==undefined?new _W(u,p):new _W(u);
-  };
-  window.WebSocket.prototype=_W.prototype;
-  window.WebSocket.CONNECTING=_W.CONNECTING;
-  window.WebSocket.OPEN=_W.OPEN;
-  window.WebSocket.CLOSING=_W.CLOSING;
-  window.WebSocket.CLOSED=_W.CLOSED;
+  // Note: WebSocket (HMR) connects directly to the dev server — no rewrite needed.
+  // Through Cloudflare tunnel, HMR won't work (acceptable tradeoff).
 })();
 </script>`;
 
