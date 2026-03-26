@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { ArrowUp, Square, Paperclip, Loader2 } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff } from "lucide-react";
+import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
 import { isSupportedFile, isImageFile } from "@/lib/file-support";
@@ -73,6 +74,41 @@ export const MessageInput = memo(function MessageInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
   const fileItemsRef = useRef<FileNode[]>([]);
+
+  // Voice input (Web Speech API)
+  const voice = useVoiceInput();
+  // Store pre-voice text so voice appends to existing input
+  const preVoiceTextRef = useRef("");
+  const voiceResultCb = useCallback((text: string) => {
+    const prefix = preVoiceTextRef.current;
+    const newValue = prefix ? prefix + " " + text : text;
+    setValue(newValue);
+    // Auto-resize textarea
+    requestAnimationFrame(() => {
+      const ta = window.matchMedia("(min-width: 768px)").matches
+        ? textareaRef.current
+        : mobileTextareaRef.current;
+      if (ta) {
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
+      }
+    });
+  }, []);
+  const handleVoiceToggle = useCallback(() => {
+    if (voice.isListening) {
+      voice.stop();
+    } else {
+      preVoiceTextRef.current = value.trim();
+      voice.start(voiceResultCb);
+    }
+  }, [voice.isListening, voice.start, voice.stop, value, voiceResultCb]);
+
+  // Listen for global keyboard shortcut (Cmd+Shift+V) to toggle voice
+  useEffect(() => {
+    const handler = () => { if (voice.supported) handleVoiceToggle(); };
+    window.addEventListener("toggle-voice-input", handler);
+    return () => window.removeEventListener("toggle-voice-input", handler);
+  }, [voice.supported, handleVoiceToggle]);
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette)
   useEffect(() => {
@@ -465,7 +501,7 @@ export const MessageInput = memo(function MessageInput({
             onOpenChange={setModeSelectorOpen}
           />
         </div>
-        {/* Mobile: single row — attach + textarea + send */}
+        {/* Mobile: single row — attach + mic + textarea + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
           <button
             type="button"
@@ -476,6 +512,21 @@ export const MessageInput = memo(function MessageInput({
           >
             <Paperclip className="size-4" />
           </button>
+          {voice.supported && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
+              disabled={disabled}
+              className={`flex items-center justify-center size-7 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                voice.isListening
+                  ? "bg-red-600 text-white animate-pulse"
+                  : "text-text-subtle hover:text-text-primary"
+              }`}
+              aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
+            >
+              {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+            </button>
+          )}
           <textarea
             ref={mobileTextareaRef}
             value={value}
@@ -535,6 +586,21 @@ export const MessageInput = memo(function MessageInput({
               >
                 <Paperclip className="size-4" />
               </button>
+              {voice.supported && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
+                  disabled={disabled}
+                  className={`flex items-center justify-center size-8 rounded-full transition-colors disabled:opacity-50 ${
+                    voice.isListening
+                      ? "bg-red-600 text-white animate-pulse"
+                      : "text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
+                  }`}
+                  aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
+                >
+                  {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+                </button>
+              )}
               {/* Mode indicator chip */}
               <div className="relative">
                 <ModeChip
