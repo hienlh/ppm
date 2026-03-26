@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0-beta.3] - 2026-03-26
+
+### Added
+- **Streaming input migration**: Chat system migrated from per-message `query()` to SDK-recommended persistent `AsyncGenerator` streaming input — follow-up messages `yield` into a single long-lived query instead of spawning new subprocesses
+- **Message priority**: Follow-up messages support `now` (interrupt), `next` (queue, default), `later` priority via SDK `streamInput` — PriorityToggle UI visible during streaming
+- **Image attachment support**: Messages can include base64 images (png/jpeg/gif/webp, max 5 images, max 5MB each) passed through to SDK `MessageParam` content blocks
+- **Persistent event consumer**: `startSessionConsumer()` runs for session lifetime, processing events across multiple turns — replaces per-message `runStreamLoop()`
+
+### Changed
+- **Cancel = interrupt**: Cancel button now calls `query.interrupt()` (session stays alive) instead of `query.close()` (killed subprocess)
+- **No more abort-and-replace**: Follow-up messages push into existing generator via `pushMessage()` instead of aborting current stream and starting new query
+- **Crash auto-recovery**: Streaming session cleanup on crash, next message auto-recovers by creating new session
+
+### Fixed
+- **First-message images dropped**: Images on initial message now passed through `startSessionConsumer` to SDK
+- **Double done event**: `yieldedDone` flag prevents duplicate done broadcast on session end
+- **Retry channel leak**: Old message channel properly closed (`controller.done()`) before retry
+- **abortQuery fallback cleanup**: Streaming session cleaned up when `interrupt()` unavailable
+
 ## [0.9.0-beta.2] - 2026-03-26
 
 ### Fixed
