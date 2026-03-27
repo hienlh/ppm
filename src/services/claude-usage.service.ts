@@ -51,6 +51,10 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 // Per-token cooldown map: token prefix → earliest allowed fetch time
 const tokenCooldowns = new Map<string, number>();
+const MIN_COOLDOWN_MS = 60_000; // floor: at least 60s cooldown on 429
+
+// Dedup: if a poll is already in-flight, reuse the same promise
+let inflightPoll: Promise<void> | null = null;
 
 // Legacy: Keychain token cache for users without accounts in DB
 let tokenCache: { token: string; timestamp: number } | null = null;
@@ -113,9 +117,10 @@ async function fetchUsageForToken(token: string): Promise<ClaudeUsage> {
   });
   if (res.status === 429) {
     const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
+    const cooldownMs = Math.max(retryAfter * 1000, MIN_COOLDOWN_MS);
     const cooldownKey = token.substring(0, 20);
-    tokenCooldowns.set(cooldownKey, Date.now() + retryAfter * 1000);
-    throw new Error(`Usage API 429 — cooldown ${retryAfter}s`);
+    tokenCooldowns.set(cooldownKey, Date.now() + cooldownMs);
+    throw new Error(`Usage API 429 — cooldown ${Math.ceil(cooldownMs / 1000)}s`);
   }
   if (!res.ok) throw new Error(`Usage API returned ${res.status}`);
   const raw = (await res.json()) as Record<string, any>;
@@ -228,7 +233,7 @@ async function fetchLegacySingleAccount(): Promise<void> {
   } catch {}
 }
 
-async function pollOnce(): Promise<void> {
+async function pollOnceInternal(): Promise<void> {
   try {
     const hasAccounts = accountService.list().length > 0;
     if (hasAccounts) {
@@ -239,6 +244,13 @@ async function pollOnce(): Promise<void> {
   } catch (e) {
     console.error("[usage] pollOnce error:", (e as Error).message);
   }
+}
+
+/** Deduped: concurrent callers share a single in-flight fetch */
+async function pollOnce(): Promise<void> {
+  if (inflightPoll) return inflightPoll;
+  inflightPoll = pollOnceInternal().finally(() => { inflightPoll = null; });
+  return inflightPoll;
 }
 
 // ---------------------------------------------------------------------------

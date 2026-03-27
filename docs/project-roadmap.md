@@ -1,6 +1,6 @@
 # PPM Project Roadmap
 
-**Last Updated:** March 22, 2026
+**Last Updated:** March 27, 2026
 
 ## Vision
 
@@ -56,19 +56,26 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ### v0.9.0 — "Open Platform" (Q2–Q3 2026)
 
-**Theme:** Multi-provider AI + extension system. Expand user base beyond Claude-only developers.
+**Theme:** Multi-provider AI (Claude + Cursor) + extension system. Ship a focused release, expand providers later.
 
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| **Multi-provider AI** | Critical | Refactor `ProviderInterface` for clean provider abstraction. Tiered support: Tier 1 (full agentic) = Claude Agent SDK; Tier 2 (chat + tools) = Gemini CLI, OpenAI Codex; Tier 3 (chat-only) = any OpenAI-compatible API. Clean base code for future Chinese providers (DeepSeek, Qwen). |
-| **Extension architecture** | High | Dynamic extension loading system. Extensions = npm packages exporting skills + optional UI panels. First extension: extract DB viewer from core. Extension API: register routes, UI panels, sidebar tabs, skills. Config: `"extensions": ["@ppm/ext-database", "@ppm/ext-docker"]`. |
-| **MCP Management** | Medium | UI to add/remove/configure MCP servers. Test connection. Per-project MCP overrides. Store in SQLite. Pass to Agent SDK via `mcpServers`. |
+**Overall progress: ~40%** (1/3 features complete, merge all at 100%)
 
-**Multi-provider — tiered approach:**
+| Feature | Priority | Status | Description |
+|---------|----------|--------|-------------|
+| **Multi-provider AI** | Critical | ✅ Done | ProviderInterface, registry, Cursor CLI, CLI provider base, UI provider/model selector, permission mode selector, system prompt customization, comprehensive tests — all on beta branch. |
+| **Extension architecture** | High | 🔴 0% | Dynamic extension loading. Extensions = npm packages. First extension: extract DB viewer from core. Extension API: register routes, UI panels, sidebar tabs, skills. Config: `"extensions": ["@ppm/ext-database", "@ppm/ext-docker"]`. |
+| **MCP Management** | Medium | 🔴 0% | UI to add/remove/configure MCP servers. Test connection. Per-project MCP overrides. Store in SQLite. Pass to Agent SDK via `mcpServers`. |
+
+**Multi-provider — v0.9 scope (reduced):**
 - Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy
-- Tier 2 (chat + tools): Provider-specific CLIs (Gemini CLI, Codex) — agentic via their own tool system
-- Tier 3 (chat-only): Any OpenAI-compatible API — conversation only, no tools
-- Provider interface refactor is foundation work — do it clean now, avoid painful refactor later
+- Tier 2 (agentic CLI): Cursor — agentic via its own tool system
+- Provider interface is clean enough to add more providers later without refactor
+
+**Deferred to v0.9.5+:**
+- Gemini CLI (Tier 2)
+- OpenAI Codex (Tier 2)
+- Tier 3 (chat-only): Any OpenAI-compatible API
+- Chinese providers (DeepSeek, Qwen) — v1.0+
 
 **Extension architecture — design principles:**
 - Extensions are npm packages: `ppm ext install @ppm/ext-database`
@@ -79,15 +86,27 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ---
 
-### v0.10.0 — "Intelligence" (Q3 2026)
+### v0.10.0 — "Enhanced Workflow" (Q3 2026)
 
-**Theme:** PPM's own AI layer. Built-in bot + programmable skills.
+**Theme:** Chat UX upgrade + git workflow. High-impact, independent features that ship fast.
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
+| **Chat history graph** | High | Visual branching tree of chat sessions. Fork conversations, navigate history graph. Game-changer for AI chat UX. |
+| **Worktree management** | Medium | UI to create/switch/delete git worktrees. Use different providers on different branches. Integrated with project switcher. |
+
+---
+
+### v0.11.0 — "Intelligence" (Q3–Q4 2026)
+
+**Theme:** Event system + PPM's own AI layer. Hooks → Skills API → Clawbot dependency chain.
+
+| Feature | Priority | Description |
+|---------|----------|-------------|
+| **Hooks system** | High | Event hooks for PPM lifecycle (file save, git commit, chat message, etc.). Foundation for Skills API and deeper extension integration. |
 | **PPM Skills API** | High | Stable internal API for AI to control PPM: file.read/write/search, terminal.run, git.status/commit/diff, db.query, editor.open/goto, project.switch. Skills are the bridge between AI and PPM features. |
 | **Built-in Clawbot** | High | Lightweight AI agent built into PPM using Anthropic Messages API (not Agent SDK). Uses Skills API + MCP tools. Instant response, no external CLI deps. For quick tasks: file search, code explanation, simple refactors. |
-| **Inline SQL** | Medium | Select text in Monaco → run as SQL. Connection picker in editor context menu. Results panel below editor. Leverages existing DB service. |
+| **More providers** | Medium | Gemini CLI (Tier 2), OpenAI Codex (Tier 2), Tier 3 chat-only (any OpenAI-compatible API). Provider interface already clean from v0.9. |
 
 **Built-in Clawbot — why it matters:**
 - Claude Agent SDK spawns subprocess — heavy, slow startup, requires CLI installed
@@ -106,6 +125,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 | **Self-hosted PPM Cloud** | High | Docker image of PPM Cloud for enterprise/team. Same codebase, self-hosted config flag. `docker-compose up` and it works. LDAP/SSO integration. |
 | **PPM Marketplace** | High | Publish/install/update extensions. Browse community extensions. Revenue sharing for paid extensions. Clawbot can create extension → test → publish in minutes. |
 | **Stability & hardening** | Critical | Security audit, performance optimization, comprehensive test coverage (>80%), documentation for contributors, CI/CD pipeline. |
+| **Inline SQL** | Medium | Select text in Monaco → run as SQL. Connection picker in editor context menu. Results panel below editor. Leverages existing DB service. |
 
 ---
 
@@ -130,6 +150,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 | **Cross-platform binaries** | Distribution | Compile macOS/Linux/Windows binaries via `bun build --compile`. `npx ppm` without Bun. |
 | **OLED dark mode** | UX | True black background for OLED screens. |
 | **Collaborative editing** | Social | Real-time multi-user file editing with CRDT (yjs/automerge). |
+| **Custom domain** | Cloud | Map custom domain to PPM Cloud tunnel URL. DNS CNAME + SSL via Let's Encrypt or Cloudflare. Access PPM at `code.yourdomain.com`. |
 
 ---
 
@@ -139,9 +160,10 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 |---------|-------|-------------|--------|
 | **v0.7** | Multi-Account & Mobile | Account management, usage tracking, mobile UX | ✅ Current |
 | **v0.8** | Always On | PPM Cloud, auto-start, AI chat enhancements | Q2 2026 |
-| **v0.9** | Open Platform | Multi-provider AI, extension architecture, MCP | Q2–Q3 2026 |
-| **v0.10** | Intelligence | Skills API, built-in Clawbot, inline SQL | Q3 2026 |
-| **v1.0** | Production Ready | Self-hosted Cloud, Marketplace, stability | Q4 2026 |
+| **v0.9** | Open Platform | Multi-provider (Claude + Cursor), extension architecture, MCP | Q2–Q3 2026 |
+| **v0.10** | Enhanced Workflow | Chat history graph, worktree management | Q3 2026 |
+| **v0.11** | Intelligence | Hooks, Skills API, Clawbot, more providers (Gemini/Codex/Tier 3) | Q3–Q4 2026 |
+| **v1.0** | Production Ready | Self-hosted Cloud, Marketplace, stability, inline SQL | Q4 2026 |
 
 ---
 
@@ -149,7 +171,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 
 1. **Own "phone to code"** — PPM wins on multi-device access. Don't chase Cursor/Windsurf feature parity.
 2. **PPM Cloud stays razor-thin** — Device registry + tunnel URLs only. No code storage. No cloud execution.
-3. **Multi-provider is tiered** — Full agentic = Claude SDK. Other providers get appropriate tier. Clean interface for future providers.
+3. **Multi-provider is tiered** — v0.9: Claude SDK (Tier 1) + Cursor (Tier 2). v0.11: Gemini, Codex, Tier 3. Clean interface for future providers.
 4. **Extensions keep core lightweight** — Features are opt-in. DB viewer, future tools = extensions. Core stays fast.
 5. **Clawbot enables the ecosystem** — Users create extensions with AI, publish to Marketplace. Zero-friction.
 6. **Self-hosted first, always** — Cloud is optional convenience. PPM works 100% offline/local.
@@ -160,7 +182,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| Refactor ProviderInterface for multi-provider | High | Foundation for v0.9 |
+| ~~Refactor ProviderInterface for multi-provider~~ | ~~High~~ | ✅ Done on beta branch (v0.9.0-beta.5) |
 | Simplify ChatService streaming | Medium | Reduce async generator complexity |
 | Extract WebSocket common logic | Low | DRY for chat/terminal WS |
 | Round-robin cursor bug in AccountSelector | Medium | Positional cursor not advancing correctly |
