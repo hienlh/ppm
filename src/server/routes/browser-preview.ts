@@ -21,8 +21,8 @@ interface ActiveTunnel {
   startedAt: number;
 }
 
-/** Active tunnels keyed by port */
-const activeTunnels = new Map<number, ActiveTunnel>();
+/** Active tunnels keyed by port — exported for testing */
+export const activeTunnels = new Map<number, ActiveTunnel>();
 
 /** Start a tunnel for a localhost port */
 browserPreviewRoutes.post("/tunnel", async (c) => {

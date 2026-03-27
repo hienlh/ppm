@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0-beta.7] - 2026-03-27
+
+### Merged from main
+- **Usage polling dedup**: Concurrent `pollOnce` calls share single in-flight fetch
+- **429 cooldown floor**: Min 60s cooldown on 429 responses
+- **Browser preview tests**: Unit tests (12) + integration test (6) for tunnel routes
+
 ## [0.9.0-beta.6] - 2026-03-27
 
 ### Merged from main
