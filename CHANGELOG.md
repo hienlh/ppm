@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.64] - 2026-03-27
+
+### Fixed
+- **Usage polling dedup**: Concurrent `pollOnce` calls now share a single in-flight fetch instead of hammering the API
+- **429 cooldown floor**: Minimum 60s cooldown on 429 responses, even if `retry-after` header is lower
+
+### Added
+- **Browser preview tests**: Unit tests (12) for tunnel route validation and lifecycle; integration test (6) verifying real Cloudflare tunnel creation and access
+
 ## [0.8.63] - 2026-03-27
 
 ### Changed
