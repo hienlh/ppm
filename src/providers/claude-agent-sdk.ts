@@ -758,7 +758,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           // Surface non-success subtypes as errors so FE can display them
+          // But suppress abort errors — user-initiated cancel is not a real error
           if (subtype && subtype !== "success") {
+            const errorsArr0 = Array.isArray(result.errors) ? result.errors : [];
+            const abortDetail = errorsArr0.join(" ") + " " + (typeof result.error === "string" ? result.error : "");
+            if (subtype === "error_during_execution" && /abort|request was aborted/i.test(abortDetail)) {
+              console.log(`[sdk] session=${sessionId} suppressing abort error (user-initiated cancel)`);
+              resultSubtype = subtype;
+              resultNumTurns = result.num_turns as number | undefined;
+              break;
+            }
             // SDK error results use `errors: string[]` array (not singular `error`)
             const errorsArr = Array.isArray(result.errors) ? result.errors : [];
             const sdkDetail = errorsArr.length > 0

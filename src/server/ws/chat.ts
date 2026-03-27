@@ -517,6 +517,8 @@ export const chatWebSocket = {
         }, 0);
       });
     } else if (parsed.type === "cancel") {
+      // Signal abortController so runStreamLoop suppresses error broadcast
+      if (entry?.abort) entry.abort.abort();
       const provider = providerRegistry.get(providerId);
       if (provider && "abortQuery" in provider && typeof (provider as any).abortQuery === "function") {
         (provider as any).abortQuery(sessionId);
