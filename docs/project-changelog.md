@@ -2,7 +2,34 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.8.62
+**Current Version:** v0.8.63
+
+---
+
+## [0.8.63] — 2026-03-28
+
+### Added
+- **MCP Server Management** — Configure Model Context Protocol servers via Settings UI
+  - REST API: GET/POST/PUT/DELETE `/api/settings/mcp`, plus import endpoints
+  - Storage: SQLite `mcp_servers` table (name, transport, config JSON)
+  - UI: Settings tab with server list, add/edit dialog, delete action
+  - Auto-import: Reads `~/.claude.json` on first access (skips existing/invalid)
+  - Validation: Name (alphanumeric, max 50 chars) + transport-specific config checks
+  - SDK integration: Servers passed to `query()` as `mcpServers`, tools auto-allowed via `mcp__*` wildcard
+
+### Technical Details
+- **Files Created:**
+  - `src/types/mcp.ts` — McpServerConfig types, validation functions
+  - `src/services/mcp-config.service.ts` — CRUD service + bulk import
+  - `src/server/routes/mcp.ts` — REST API endpoints
+  - `src/web/lib/api-mcp.ts` — Frontend API client
+  - `src/web/components/settings/mcp-settings-section.tsx` — Settings UI
+  - `src/web/components/settings/mcp-server-dialog.tsx` — Add/Edit dialog
+- **Files Modified:**
+  - `src/services/db.service.ts` — Schema v8 migration (mcp_servers table)
+  - `src/server/index.ts` — Route registration
+  - `src/providers/claude-agent-sdk.ts` — mcpServers + mcp__* allowedTools
+  - `src/web/components/settings/settings-tab.tsx` — MCP category added
 
 ---
 

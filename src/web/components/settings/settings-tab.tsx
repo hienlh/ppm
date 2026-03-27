@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, BellOff, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe,
+  Bot, BellRing, Keyboard, Globe, Plug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { TelegramSettingsSection } from "./telegram-settings-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
+import { McpSettingsSection } from "./mcp-settings-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
@@ -25,13 +26,14 @@ const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
 const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
   !window.matchMedia("(display-mode: standalone)").matches;
 
-type SettingsCategory = "ai" | "notifications" | "proxy" | "shortcuts";
+type SettingsCategory = "ai" | "notifications" | "proxy" | "shortcuts" | "mcp";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { value: "notifications", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
+  { value: "mcp", label: "MCP Servers", subtitle: "Model Context Protocol tools", icon: Plug },
 ];
 
 export function SettingsTab() {
@@ -84,6 +86,7 @@ export function SettingsTab() {
             {activeCategory === "notifications" && <NotificationsContent isSubscribed={isSubscribed} loading={loading} permission={permission} pushError={pushError} subscribe={subscribe} unsubscribe={unsubscribe} />}
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
+            {activeCategory === "mcp" && <McpSettingsSection />}
           </div>
         </ScrollArea>
       </div>

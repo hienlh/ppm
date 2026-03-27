@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 8;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -227,6 +227,20 @@ function runMigrations(database: Database): void {
       // Column may already exist
     }
     database.exec(`PRAGMA user_version = 7`);
+  }
+
+  if (current < 8) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        name TEXT PRIMARY KEY,
+        transport TEXT NOT NULL DEFAULT 'stdio',
+        config TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      PRAGMA user_version = 8;
+    `);
   }
 }
 

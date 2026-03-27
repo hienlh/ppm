@@ -13,6 +13,7 @@ import type {
   ModelOption,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
+import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionMapping, setSessionMapping } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
@@ -430,9 +431,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // go through the permission evaluation chain → canUseTool callback.
     const readOnlyTools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
     const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
+    const mcpTools = ["mcp__*"];
     const allowedTools = isBypass
-      ? [...readOnlyTools, ...writeTools]
-      : readOnlyTools;
+      ? [...readOnlyTools, ...writeTools, ...mcpTools]
+      : [...readOnlyTools, ...mcpTools];
 
     /**
      * Approval events to yield from the generator.
@@ -568,6 +570,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
+      // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats)
+      const mcpServers = mcpConfigService.list();
+      const hasMcp = Object.keys(mcpServers).length > 0;
+
       const queryOptions: Record<string, any> = {
         // On Windows, child_process.spawn("bun") fails with ENOENT — force node
         ...(process.platform === "win32" && { executable: "node" }),
@@ -580,6 +586,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         env: queryEnv,
         settings: { permissions: { allow: [], deny: [] } },
         allowedTools,
+        ...(hasMcp && { mcpServers }),
         permissionMode,
         allowDangerouslySkipPermissions: isBypass,
         ...(providerConfig.model && { model: providerConfig.model }),

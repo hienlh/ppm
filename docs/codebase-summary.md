@@ -32,6 +32,7 @@ src/
 │   │   ├── database.ts          # DB connection CRUD, schema management
 │   │   ├── git.ts               # Git operations (status, commit, log, graph)
 │   │   ├── files.ts             # File operations (read, write, tree)
+│   │   ├── mcp.ts               # MCP server CRUD + import (GET, POST, PUT, DELETE)
 │   │   ├── upgrade.ts           # Version checking, upgrade
 │   │   └── static.ts            # Serve frontend (dist/web)
 │   ├── helpers/
@@ -50,12 +51,13 @@ src/
 ├── services/                    # Business logic (25+ files)
 │   ├── chat.service.ts          # Session/message streaming
 │   ├── config.service.ts        # Config loading/persistence
-│   ├── db.service.ts            # SQLite CRUD
+│   ├── db.service.ts            # SQLite CRUD (schema migrations)
 │   ├── file.service.ts          # File operations
 │   ├── git.service.ts           # Git commands
 │   ├── terminal.service.ts      # PTY management
 │   ├── account.service.ts       # Account CRUD & encryption
 │   ├── upgrade.service.ts       # Version checking, installation
+│   ├── mcp-config.service.ts    # MCP server CRUD (list, get, set, remove, import)
 │   ├── database/
 │   │   ├── adapter-registry.ts  # SQLite/Postgres adapter registry
 │   │   ├── sqlite-adapter.ts
@@ -71,6 +73,7 @@ src/
 │   ├── config.ts
 │   ├── database.ts
 │   ├── git.ts
+│   ├── mcp.ts                   # McpServerConfig, McpTransportType, validation
 │   ├── project.ts
 │   └── terminal.ts
 └── web/                         # React frontend (Vite + React 18)
@@ -86,7 +89,9 @@ src/
     │   │   ├── chat-history-bar.tsx # ADDED: Provider badges, provider-aware usage
     │   │   └── ... (6 other chat components)
     │   ├── settings/
-    │   │   └── ai-settings-section.tsx # UPDATED: Per-provider tabs, dynamic model dropdowns
+    │   │   ├── ai-settings-section.tsx # UPDATED: Per-provider tabs, dynamic model dropdowns
+    │   │   ├── mcp-settings-section.tsx # ADDED: MCP servers tab (list, add, edit, delete)
+    │   │   └── mcp-server-dialog.tsx    # ADDED: Add/Edit MCP server dialog
     │   ├── database/
     │   ├── editor/
     │   ├── explorer/
@@ -104,6 +109,7 @@ src/
 │       ├── lib/                     # Utilities (11 files)
 │       │   ├── api-client.ts        # Fetch wrapper with auth token, envelope unwrapping
 │       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
+│       │   ├── api-mcp.ts           # ADDED: MCP settings API client (CRUD + import)
 │       │   ├── ws-client.ts         # WebSocket with exponential backoff + Cloudflare handshake
 │       │   ├── file-support.ts      # File type detection (language, icons, preview)
 │       │   ├── project-avatar.ts    # Smart project initials (collision resolution)

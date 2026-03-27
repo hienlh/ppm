@@ -945,6 +945,157 @@ ppm db data <name> <table>   # Show table data (paginated)
 
 ---
 
+## MCP Server Management
+
+### Overview
+MCP (Model Context Protocol) servers extend Claude with custom tools and resources. PPM manages MCP server configurations via Settings UI, storing them in SQLite and passing them to the Claude Agent SDK.
+
+**Features:**
+- **Add/Edit/Delete** MCP servers via Settings UI
+- **Auto-import** from `~/.claude.json` on first access (convenience, no forced import)
+- **Three transport types:** stdio, HTTP, SSE
+- **Validation** on name and config before storage
+- **SDK integration:** Servers passed to `query()` as `mcpServers` object, tools auto-allowed via `mcp__*` wildcard
+
+### Storage Schema
+
+```sql
+CREATE TABLE mcp_servers (
+  name TEXT PRIMARY KEY,
+  transport TEXT NOT NULL DEFAULT 'stdio',  -- 'stdio' | 'http' | 'sse'
+  config TEXT NOT NULL,                     -- JSON: McpServerConfig
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+```
+
+**Config Format (JSON):**
+```json
+{
+  "type": "stdio",
+  "command": "path/to/server",
+  "args": ["--flag"],
+  "env": { "VAR": "value" }
+}
+```
+
+Or HTTP/SSE:
+```json
+{
+  "type": "http",
+  "url": "http://localhost:3000",
+  "headers": { "Authorization": "Bearer token" }
+}
+```
+
+### REST API
+
+**Endpoints** (`src/server/routes/mcp.ts`):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| **GET** | `/api/settings/mcp` | List all servers; auto-import on first access |
+| **GET** | `/api/settings/mcp/:name` | Get single server config |
+| **POST** | `/api/settings/mcp` | Add new server (validates name + config) |
+| **PUT** | `/api/settings/mcp/:name` | Update existing server |
+| **DELETE** | `/api/settings/mcp/:name` | Remove server |
+| **GET** | `/api/settings/mcp/import/preview` | Preview servers in `~/.claude.json` |
+| **POST** | `/api/settings/mcp/import` | Bulk import from `~/.claude.json` |
+
+**Add Server Example:**
+```bash
+POST /api/settings/mcp
+Content-Type: application/json
+
+{
+  "name": "file-server",
+  "config": {
+    "type": "stdio",
+    "command": "/usr/local/bin/file-server",
+    "args": ["--port", "8000"]
+  }
+}
+```
+
+### Service Layer
+
+**McpConfigService** (`src/services/mcp-config.service.ts`):
+- `list()` — Record<name, McpServerConfig> (SDK-compatible format)
+- `listWithMeta()` — Array with metadata (for UI)
+- `get(name)` — Single server config
+- `set(name, config)` — Add or update (upsert)
+- `remove(name)` — Delete server
+- `exists(name)` — Check if name exists
+- `bulkImport(servers)` — Transactional import from `~/.claude.json`, skips existing/invalid
+
+**Validation:**
+- `validateMcpName(name)` — alphanumeric + hyphens/underscores, max 50 chars
+- `validateMcpConfig(config)` — type-specific checks (command for stdio, url for http/sse)
+
+### Frontend Integration
+
+**UI Components:**
+- `MCP Settings Section` (`src/web/components/settings/mcp-settings-section.tsx`) — Tab in Settings UI
+- `MCP Server Dialog` (`src/web/components/settings/mcp-server-dialog.tsx`) — Add/Edit modal
+- `API client` (`src/web/lib/api-mcp.ts`) — Fetch/mutate operations
+
+**Workflow:**
+1. User opens Settings → MCP tab
+2. **GET** `/api/settings/mcp` (auto-imports on first access)
+3. Display list with transport badge + actions (edit, delete)
+4. Click "Add" → Dialog with name + transport selector + config fields
+5. **POST** to `/api/settings/mcp` or **PUT** to update
+6. On success, list refreshes
+
+### SDK Integration
+
+**Claude Agent SDK Provider** (`src/providers/claude-agent-sdk.ts`):
+```typescript
+// Line ~574
+const mcpServers = mcpConfigService.list();
+const hasMcp = Object.keys(mcpServers).length > 0;
+
+// Line ~589: Pass to query() if servers exist
+const mcpTools = ["mcp__*"];
+const queryConfig = {
+  // ... other options
+  ...(hasMcp && { mcpServers }),
+  allowedTools: [...otherTools, ...mcpTools],
+};
+
+const query = new Query(messages, queryConfig);
+```
+
+**Tool Allow List:**
+- All MCP tools automatically allowed via wildcard `mcp__*`
+- MCP server connection failures don't block chat (logged as warning)
+
+### Import Flow
+
+**Auto-import on first access:**
+1. GET `/api/settings/mcp` called
+2. If table is empty, read `~/.claude.json`
+3. If `mcpServers` key exists, bulk import (validate + skip duplicates)
+4. Return populated list
+
+**Manual import:**
+1. GET `/api/settings/mcp/import/preview` — show what's available
+2. POST `/api/settings/mcp/import` — import validated servers
+3. Returns `{ imported: N, skipped: M }`
+
+### Error Handling
+
+| Scenario | Response |
+|----------|----------|
+| Invalid name (non-alphanumeric) | 400 Bad Request |
+| Invalid config (missing required fields) | 400 Bad Request |
+| Duplicate name | 409 Conflict |
+| Server not found (GET/:name, PUT/:name, DELETE/:name) | 404 Not Found |
+| `~/.claude.json` not found (import) | 404 Not Found |
+| Corrupt config JSON (recovery) | Log warning, skip entry, continue |
+
+---
+
 ## Deployment Architecture
 
 ### Single-Machine Deployment (Current)
