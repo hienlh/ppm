@@ -13,7 +13,7 @@ import type {
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionMapping, setSessionMapping } from "../services/db.service.ts";
+import { getSessionMapping, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
@@ -200,10 +200,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   async listSessionsByDir(dir?: string): Promise<SessionInfo[]> {
     try {
       const sdkSessions = await sdkListSessions({ dir, limit: 50 });
+      // Overlay DB titles (user-set) over SDK titles
+      const ids = sdkSessions.map((s) => s.sessionId);
+      const dbTitles = getSessionTitles(ids);
       return sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
+        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));

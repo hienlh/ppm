@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 8;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -228,6 +228,18 @@ function runMigrations(database: Database): void {
     }
     database.exec(`PRAGMA user_version = 7`);
   }
+
+  if (current < 8) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_titles (
+        session_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      PRAGMA user_version = 8;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +320,33 @@ export function getAllSessionMappings(): Record<string, string> {
   const rows = getDb().query("SELECT ppm_id, sdk_id FROM session_map").all() as { ppm_id: string; sdk_id: string }[];
   const result: Record<string, string> = {};
   for (const r of rows) result[r.ppm_id] = r.sdk_id;
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Session title helpers (user-set titles persisted in PPM DB)
+// ---------------------------------------------------------------------------
+
+export function getSessionTitle(sessionId: string): string | null {
+  const row = getDb().query("SELECT title FROM session_titles WHERE session_id = ?").get(sessionId) as { title: string } | null;
+  return row?.title ?? null;
+}
+
+export function setSessionTitle(sessionId: string, title: string): void {
+  getDb().query(
+    "INSERT INTO session_titles (session_id, title, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(session_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at",
+  ).run(sessionId, title);
+}
+
+/** Bulk-fetch DB titles for a list of session IDs. Returns map of id → title. */
+export function getSessionTitles(sessionIds: string[]): Record<string, string> {
+  if (sessionIds.length === 0) return {};
+  const placeholders = sessionIds.map(() => "?").join(", ");
+  const rows = getDb().query(
+    `SELECT session_id, title FROM session_titles WHERE session_id IN (${placeholders})`,
+  ).all(...sessionIds) as { session_id: string; title: string }[];
+  const result: Record<string, string> = {};
+  for (const r of rows) result[r.session_id] = r.title;
   return result;
 }
 
