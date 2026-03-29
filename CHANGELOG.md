@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.66] - 2026-03-29
+
+### Fixed
+- **Auto-upgrade port conflict**: Supervisor self-replace now sets `shuttingDown` flag before killing server, preventing crash-restart loop from respawning on the same port as the new supervisor
+- **Account cooldown re-enable**: Handle expired accounts that cannot be re-enabled during cooldown clear — disable them instead of crashing
+- **Hot-reload log duplication**: Guard `setupLogFile()` against re-wrapping console on `bun --hot` module re-execution
+
 ## [0.8.65] - 2026-03-29
 
 ### Added
