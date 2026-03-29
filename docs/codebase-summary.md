@@ -104,7 +104,7 @@ ppm/
 │       │   ├── use-health-check.ts  # Detect server crashes/restarts via health endpoint
 │       │   ├── use-usage.ts         # Fetch token usage from backend
 │       │   └── use-push-notification.ts # Web push notifications via Service Worker
-│       ├── lib/                     # Utilities (11 files)
+│       ├── lib/                     # Utilities (12 files)
 │       │   ├── api-client.ts        # Fetch wrapper with auth token, envelope unwrapping
 │       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
 │       │   ├── ws-client.ts         # WebSocket with exponential backoff + Cloudflare handshake
@@ -113,6 +113,7 @@ ppm/
 │       │   ├── project-palette.ts   # 12-color palette for project avatars
 │       │   ├── use-monaco-theme.ts  # Sync Monaco Editor theme with app theme
 │       │   ├── color-utils.ts       # WCAG color contrast helper
+│       │   ├── csv-parser.ts        # CSV state-machine parser/serializer
 │       │   └── utils.ts             # Helpers (cn, randomId, basename, etc.)
 │       ├── styles/
 │       │   └── globals.css          # Tailwind directives, custom CSS
@@ -131,9 +132,12 @@ ppm/
 │           │   ├── usage-badge.tsx  # Token usage display
 │           │   ├── attachment-chips.tsx # Display attached files
 │           │   └── chat-placeholder.tsx # Empty state
-│           ├── editor/              # Code editor (650+ LOC, 3 files)
+│           ├── editor/              # Code editor (800+ LOC, 6 files)
 │           │   ├── code-editor.tsx  # Monaco Editor integration (@monaco-editor/react, v2.0+)
 │           │   ├── diff-viewer.tsx  # Monaco diff viewer for git diffs (v2.0+)
+│           │   ├── editor-breadcrumb.tsx # VSCode-style breadcrumb with nested dropdown
+│           │   ├── editor-toolbar.tsx # File-type contextual toolbar
+│           │   ├── csv-preview.tsx  # CSV table viewer with @tanstack/react-table
 │           │   └── editor-placeholder.tsx
 │           ├── explorer/            # File tree (489 LOC, 2 files)
 │           │   ├── file-tree.tsx    # Directory tree view
@@ -346,11 +350,13 @@ UI updates staged/unstaged lists
 | @monaco-editor/react | Code editor | 4.7.0 |
 | xterm | Terminal emulator | 6.0 |
 | zustand | State management | 5.0.11 |
-| @anthropic-ai/claude-agent-sdk | AI provider | 0.2.76 |
+| @anthropic-ai/claude-agent-sdk | AI provider | 0.2.81 |
 | vite | Frontend bundler | 8.0 |
 | tailwindcss | Utility CSS | 4.2 |
 | radix-ui | Accessible components | 1.4.3 |
 | next-themes | Theme switcher | 0.4.6 |
+| @tanstack/react-table | Table library | 8.21.3 |
+| @tanstack/react-virtual | Virtual scrolling | 3.13.23 |
 
 ## Build Output
 

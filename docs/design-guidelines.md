@@ -393,6 +393,27 @@ screens: {
 // - Word wrap toggle (Alt+Z)
 // - Monaco diff viewer for git diffs
 // - Theme sync with app dark/light mode
+// - VSCode-style breadcrumb navigation (EditorBreadcrumb)
+// - File-type contextual toolbar (EditorToolbar)
+```
+
+### CSV Preview
+
+```tsx
+// src/web/components/editor/csv-preview.tsx
+// Table viewer for CSV files with sorting and editing
+
+<CsvPreview
+  content={csvString}
+  onContentChange={setCsvString}
+/>
+
+// Features:
+// - State-machine CSV parser (handles quoted fields, embedded commas/newlines)
+// - Virtual scrolling (@tanstack/react-virtual) for large files
+// - Column sorting via @tanstack/react-table
+// - Inline cell editing with live serialization
+// - Mobile-friendly table layout
 ```
 
 ### Terminal Component
