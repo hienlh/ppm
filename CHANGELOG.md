@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.65] - 2026-03-29
+
+### Added
+- **Editor breadcrumb bar**: VSCode-style path breadcrumb with nested dropdown navigation from file tree. Click segment to see siblings, click file to switch, Ctrl+Click to open new tab. Desktop only.
+- **Editor toolbar**: Right-aligned contextual actions — Markdown Edit/Preview toggle, CSV Table/Raw toggle, Word Wrap toggle. Replaces previously dead button code.
+- **CSV table preview**: `@tanstack/react-table` viewer with virtual scrolling (handles 10K+ rows), inline cell editing, column sorting, column resizing, and auto-save. State-machine CSV parser handles quoted fields, escaped quotes, and embedded newlines.
+
+### Fixed
+- **Chat session titles**: Persist session titles in PPM DB to prevent SDK from overwriting user-set titles
+- **Chat abort error**: Suppress abort error toast when user cancels an in-progress chat
+- **Usage polling**: Clear stale inflight poll on race timeout; add id tiebreaker to snapshot queries
+
 ## [0.8.64] - 2026-03-27
 
 ### Fixed
