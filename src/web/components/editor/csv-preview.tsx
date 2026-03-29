@@ -14,9 +14,10 @@ import { ArrowUp, ArrowDown } from "lucide-react";
 interface CsvPreviewProps {
   content: string;
   onContentChange: (csv: string) => void;
+  wordWrap?: boolean;
 }
 
-export function CsvPreview({ content, onContentChange }: CsvPreviewProps) {
+export function CsvPreview({ content, onContentChange, wordWrap }: CsvPreviewProps) {
   const parsed = useMemo(() => parseCsv(content), [content]);
   const [rows, setRows] = useState<string[][]>(() => parsed.rows);
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -57,12 +58,13 @@ export function CsvPreview({ content, onContentChange }: CsvPreviewProps) {
           <CsvCell
             value={getValue()}
             onSave={(v) => updateCell(row.index, i, v)}
+            wordWrap={wordWrap}
           />
         ),
         size: 150,
         minSize: 80,
       })),
-    [headers, updateCell],
+    [headers, updateCell, wordWrap],
   );
 
   const table = useReactTable({
@@ -145,7 +147,7 @@ export function CsvPreview({ content, onContentChange }: CsvPreviewProps) {
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="px-2 py-1 border-b border-border/50 border-r border-r-border/30 last:border-r-0 truncate"
+                    className={`px-2 py-1 border-b border-border/50 border-r border-r-border/30 last:border-r-0 ${wordWrap ? "whitespace-pre-wrap break-words" : "truncate"}`}
                     style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -160,19 +162,29 @@ export function CsvPreview({ content, onContentChange }: CsvPreviewProps) {
   );
 }
 
-function CsvCell({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+function CsvCell({ value, onSave, wordWrap }: { value: string; onSave: (v: string) => void; wordWrap?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea to fit content
+  const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
 
   useEffect(() => {
-    if (editing) inputRef.current?.focus();
-  }, [editing]);
+    if (editing && textareaRef.current) {
+      textareaRef.current.focus();
+      autoResize(textareaRef.current);
+    }
+  }, [editing, autoResize]);
 
   if (!editing) {
     return (
       <span
-        className="block truncate cursor-text"
+        className={`block cursor-text ${wordWrap ? "whitespace-pre-wrap break-words" : "truncate"}`}
         onClick={() => {
           setDraft(value);
           setEditing(true);
@@ -183,18 +195,27 @@ function CsvCell({ value, onSave }: { value: string; onSave: (v: string) => void
     );
   }
 
+  const isMultiline = draft.includes("\n");
+
   return (
-    <input
-      ref={inputRef}
-      className="w-full bg-transparent outline-none border-b border-primary text-xs font-mono"
+    <textarea
+      ref={textareaRef}
+      className="w-full bg-transparent outline-none border border-primary/50 rounded text-xs font-mono resize-none p-0.5"
+      style={{ minHeight: isMultiline ? 48 : 20 }}
+      rows={1}
       value={draft}
-      onChange={(e) => setDraft(e.target.value)}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        autoResize(e.target);
+      }}
       onBlur={() => {
         setEditing(false);
         if (draft !== value) onSave(draft);
       }}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !e.shiftKey) {
+          // Enter = save, Shift+Enter = newline
+          e.preventDefault();
           setEditing(false);
           if (draft !== value) onSave(draft);
         } else if (e.key === "Escape") {

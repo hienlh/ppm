@@ -230,7 +230,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
       {/* Content area */}
       {isCsv && csvMode === "table" ? (
         <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>}>
-          <CsvPreview content={content ?? ""} onContentChange={handleChange} />
+          <CsvPreview content={content ?? ""} onContentChange={handleChange} wordWrap={wordWrap} />
         </Suspense>
       ) : isMarkdown && mdMode === "preview" ? (
         <MarkdownPreview content={content ?? ""} />
