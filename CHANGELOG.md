@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.67] - 2026-03-29
+
+### Improved
+- **CSV cell word wrap**: Wrap toggle now applies to CSV table cells (same button as code editor word wrap)
+- **CSV inline editing**: Cell editor upgraded from single-line input to auto-resizing textarea — supports multi-line content, Shift+Enter for newlines, Enter to save
+
 ## [0.8.66] - 2026-03-29
 
 ### Fixed
