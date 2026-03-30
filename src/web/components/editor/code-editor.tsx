@@ -7,7 +7,12 @@ import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { Loader2, FileWarning, ExternalLink, Code, Eye, WrapText } from "lucide-react";
+import { Loader2, FileWarning, ExternalLink } from "lucide-react";
+import { EditorBreadcrumb } from "./editor-breadcrumb";
+import { EditorToolbar } from "./editor-toolbar";
+import { lazy, Suspense } from "react";
+
+const CsvPreview = lazy(() => import("./csv-preview").then((m) => ({ default: m.CsvPreview })));
 
 /** Image extensions renderable inline */
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
@@ -58,7 +63,9 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const isPdf = ext === "pdf";
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
+  const isCsv = ext === "csv";
   const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
+  const [csvMode, setCsvMode] = useState<"table" | "raw">("table");
 
   // Redirect .db files to sqlite viewer by changing tab type
   useEffect(() => {
@@ -196,33 +203,36 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     );
   }
 
-  const mdModeButtons = isMarkdown ? (
-    <>
-      <button type="button" onClick={() => setMdMode("edit")}
-        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${mdMode === "edit" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-      >
-        <Code className="size-3" /> Edit
-      </button>
-      <button type="button" onClick={() => setMdMode("preview")}
-        className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${mdMode === "preview" ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-      >
-        <Eye className="size-3" /> Preview
-      </button>
-    </>
-  ) : null;
-
-  const wrapBtn = (
-    <button type="button" onClick={toggleWordWrap} title="Toggle word wrap (Alt+Z)"
-      className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${wordWrap ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-    >
-      <WrapText className="size-3" />
-      <span className="hidden sm:inline">Wrap</span>
-    </button>
-  );
-
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
-      {isMarkdown && mdMode === "preview" ? (
+      {/* Breadcrumb + Toolbar bar — desktop only */}
+      {filePath && projectName && tabId && (
+        <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0">
+          <EditorBreadcrumb
+            filePath={filePath}
+            projectName={projectName}
+            tabId={tabId}
+            className="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none px-2 gap-0.5"
+          />
+          <EditorToolbar
+            ext={ext}
+            mdMode={mdMode}
+            onMdModeChange={setMdMode}
+            csvMode={csvMode}
+            onCsvModeChange={setCsvMode}
+            wordWrap={wordWrap}
+            onToggleWordWrap={toggleWordWrap}
+            className="shrink-0 flex items-center gap-1 px-2"
+          />
+        </div>
+      )}
+
+      {/* Content area */}
+      {isCsv && csvMode === "table" ? (
+        <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>}>
+          <CsvPreview content={content ?? ""} onContentChange={handleChange} wordWrap={wordWrap} />
+        </Suspense>
+      ) : isMarkdown && mdMode === "preview" ? (
         <MarkdownPreview content={content ?? ""} />
       ) : (
         <div className="flex-1 overflow-hidden">

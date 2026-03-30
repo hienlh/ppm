@@ -239,6 +239,12 @@ function runMigrations(database: Database): void {
         updated_at TEXT DEFAULT (datetime('now'))
       );
 
+      CREATE TABLE IF NOT EXISTS session_titles (
+        session_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
       PRAGMA user_version = 8;
     `);
   }
@@ -322,6 +328,33 @@ export function getAllSessionMappings(): Record<string, string> {
   const rows = getDb().query("SELECT ppm_id, sdk_id FROM session_map").all() as { ppm_id: string; sdk_id: string }[];
   const result: Record<string, string> = {};
   for (const r of rows) result[r.ppm_id] = r.sdk_id;
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Session title helpers (user-set titles persisted in PPM DB)
+// ---------------------------------------------------------------------------
+
+export function getSessionTitle(sessionId: string): string | null {
+  const row = getDb().query("SELECT title FROM session_titles WHERE session_id = ?").get(sessionId) as { title: string } | null;
+  return row?.title ?? null;
+}
+
+export function setSessionTitle(sessionId: string, title: string): void {
+  getDb().query(
+    "INSERT INTO session_titles (session_id, title, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(session_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at",
+  ).run(sessionId, title);
+}
+
+/** Bulk-fetch DB titles for a list of session IDs. Returns map of id → title. */
+export function getSessionTitles(sessionIds: string[]): Record<string, string> {
+  if (sessionIds.length === 0) return {};
+  const placeholders = sessionIds.map(() => "?").join(", ");
+  const rows = getDb().query(
+    `SELECT session_id, title FROM session_titles WHERE session_id IN (${placeholders})`,
+  ).all(...sessionIds) as { session_id: string; title: string }[];
+  const result: Record<string, string> = {};
+  for (const r of rows) result[r.session_id] = r.title;
   return result;
 }
 
@@ -455,13 +488,13 @@ export function insertLimitSnapshot(data: Omit<LimitSnapshotRow, "id" | "recorde
 
 export function getLatestLimitSnapshot(): LimitSnapshotRow | null {
   return getDb().query(
-    "SELECT * FROM claude_limit_snapshots ORDER BY recorded_at DESC LIMIT 1",
+    "SELECT * FROM claude_limit_snapshots ORDER BY recorded_at DESC, id DESC LIMIT 1",
   ).get() as LimitSnapshotRow | null;
 }
 
 export function getLatestSnapshotForAccount(accountId: string): LimitSnapshotRow | null {
   return getDb().query(
-    "SELECT * FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC LIMIT 1",
+    "SELECT * FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1",
   ).get(accountId) as LimitSnapshotRow | null;
 }
 
@@ -469,17 +502,17 @@ export function getAllLatestSnapshots(): LimitSnapshotRow[] {
   return getDb().query(
     `SELECT s.* FROM claude_limit_snapshots s
      INNER JOIN (
-       SELECT account_id, MAX(recorded_at) as max_recorded
+       SELECT account_id, MAX(id) as max_id
        FROM claude_limit_snapshots WHERE account_id IS NOT NULL
        GROUP BY account_id
-     ) latest ON s.account_id = latest.account_id AND s.recorded_at = latest.max_recorded`,
+     ) latest ON s.id = latest.max_id`,
   ).all() as LimitSnapshotRow[];
 }
 
 export function touchSnapshotTimestamp(accountId: string): void {
   getDb().query(
     `UPDATE claude_limit_snapshots SET recorded_at = datetime('now')
-     WHERE id = (SELECT id FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC LIMIT 1)`,
+     WHERE id = (SELECT id FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1)`,
   ).run(accountId);
 }
 

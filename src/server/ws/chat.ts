@@ -3,6 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
+import { getSessionTitle } from "../../services/db.service.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 
 const PING_INTERVAL_MS = 15_000; // 15s keepalive
@@ -260,10 +261,11 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
 
-        // Fire-and-forget: title + notification
+        // Fire-and-forget: fetch updated session title (DB title takes priority) + notification
         sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
           const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
-          const title = found?.customTitle ?? found?.summary;
+          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+          const title = dbTitle ?? found?.customTitle ?? found?.summary;
           if (title) {
             broadcast(sessionId, { type: "title_updated", title });
             const session = chatService.getSession(sessionId);
@@ -387,11 +389,12 @@ export const chatWebSocket = {
       existing.clients.add(ws);
       setupClientPing(existing, ws);
 
-      // Async: resolve title from SDK if in-memory title is generic
+      // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
       if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
         sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
           const found = sessions.find((s) => s.sessionId === sessionId);
-          const title = found?.customTitle ?? found?.summary;
+          const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+          const title = dbTitle ?? found?.customTitle ?? found?.summary;
           if (title) {
             broadcast(sessionId, { type: "title_updated", title });
             if (session) session.title = title;
@@ -424,11 +427,12 @@ export const chatWebSocket = {
       sessionTitle: session?.title || null,
     }));
 
-    // Async: resolve title from SDK if in-memory title is generic
+    // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
     if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
       sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
         const found = sessions.find((s) => s.sessionId === sessionId);
-        const title = found?.customTitle ?? found?.summary;
+        const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
+        const title = dbTitle ?? found?.customTitle ?? found?.summary;
         if (title) {
           broadcast(sessionId, { type: "title_updated", title });
           if (session) session.title = title;
@@ -565,7 +569,7 @@ export const chatWebSocket = {
         console.log(`[chat] session=${sessionId} follow-up pushed to generator`);
       }
     } else if (parsed.type === "cancel") {
-      // Interrupt current turn — session stays alive for next message
+      // Fully teardown streaming session — user must resume to continue
       const provider = providerRegistry.get(providerId);
       provider?.abortQuery?.(sessionId);
     } else if (parsed.type === "approval_response") {

@@ -23,6 +23,10 @@ import { ok, err } from "../types/api.ts";
 
 /** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
 async function setupLogFile() {
+  // Guard: prevent re-wrapping console on hot-reload (bun --hot re-executes the module)
+  if ((globalThis as any).__PPM_LOG_SETUP__) return;
+  (globalThis as any).__PPM_LOG_SETUP__ = true;
+
   const { resolve } = await import("node:path");
   const { homedir } = await import("node:os");
   const { appendFileSync, mkdirSync, existsSync } = await import("node:fs");

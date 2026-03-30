@@ -15,7 +15,7 @@ import type {
 import { configService } from "../services/config.service.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionMapping, setSessionMapping } from "../services/db.service.ts";
+import { getSessionMapping, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
@@ -282,10 +282,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   async listSessionsByDir(dir?: string): Promise<SessionInfo[]> {
     try {
       const sdkSessions = await sdkListSessions({ dir, limit: 50 });
+      // Overlay DB titles (user-set) over SDK titles
+      const ids = sdkSessions.map((s) => s.sessionId);
+      const dbTitles = getSessionTitles(ids);
       return sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
-        title: s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
+        title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
@@ -932,7 +935,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           }
 
           // Surface non-success subtypes as errors so FE can display them
+          // But suppress abort errors — user-initiated cancel is not a real error
           if (subtype && subtype !== "success") {
+            const errorsArr0 = Array.isArray(result.errors) ? result.errors : [];
+            const abortDetail = errorsArr0.join(" ") + " " + (typeof result.error === "string" ? result.error : "");
+            if (subtype === "error_during_execution" && /abort|request was aborted/i.test(abortDetail)) {
+              console.log(`[sdk] session=${sessionId} suppressing abort error (user-initiated cancel)`);
+              resultSubtype = subtype;
+              resultNumTurns = result.num_turns as number | undefined;
+              break;
+            }
             // SDK error results use `errors: string[]` array (not singular `error`)
             const errorsArr = Array.isArray(result.errors) ? result.errors : [];
             const sdkDetail = errorsArr.length > 0

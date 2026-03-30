@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0-beta.8] - 2026-03-30
+
+### Fixed
+- **SDK process leak**: Prevent claude-agent-sdk subprocess leak on WS disconnect and cancel — cleanup timer now starts regardless of streaming state, orphaned sessions cleaned up in 30s, abortQuery fully teardowns subprocess
+
+### Merged from main (0.8.65–0.8.67)
+- **CSV cell word wrap**: Wrap toggle applies to CSV table cells
+- **CSV inline editing**: Cell editor upgraded to auto-resizing textarea with multi-line support
+- **Auto-upgrade port conflict**: Supervisor self-replace prevents crash-restart loop
+- **Editor breadcrumb bar**: VSCode-style path breadcrumb with nested dropdown navigation
+- **Editor toolbar**: Contextual actions — Markdown Edit/Preview, CSV Table/Raw, Word Wrap
+- **CSV table preview**: `@tanstack/react-table` viewer with virtual scrolling and inline editing
+- **Chat session titles**: Persist in PPM DB to prevent SDK from overwriting user-set titles
+- **Chat abort error**: Suppress abort error toast on user cancel
+
 ## [0.9.0-beta.7] - 2026-03-27
 
 ### Merged from main

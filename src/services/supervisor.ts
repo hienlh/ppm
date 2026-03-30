@@ -328,6 +328,9 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
   const currentSupervisorPid = process.pid;
 
   try {
+    // Prevent spawnServer crash-restart loop from respawning killed children
+    shuttingDown = true;
+
     // Kill server + tunnel children FIRST to free the port for the new supervisor
     log("INFO", "Stopping server and tunnel before spawning new supervisor");
     if (serverChild) { try { serverChild.kill(); } catch {} serverChild = null; }
@@ -365,12 +368,14 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
       } catch {}
     }
 
-    // Timeout — new supervisor didn't start
+    // Timeout — new supervisor didn't start, restore old supervisor
     log("ERROR", "Self-replace timeout: new supervisor did not start");
     try { child.kill(); } catch {}
+    shuttingDown = false;
     return { success: false, error: "New supervisor failed to start within 30s" };
   } catch (e) {
     log("ERROR", `Self-replace error: ${e}`);
+    shuttingDown = false;
     return { success: false, error: (e as Error).message };
   }
 }
@@ -436,7 +441,12 @@ export async function runSupervisor(opts: {
   process.on("SIGUSR1", async () => {
     log("INFO", "SIGUSR1 received, starting self-replace for upgrade");
     const result = await selfReplace();
-    if (!result.success) log("ERROR", `Self-replace failed: ${result.error}`);
+    if (!result.success) {
+      log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
+      // Respawn server (and tunnel if configured) since selfReplace killed them
+      spawnServer(serverArgs, logFd);
+      if (opts.share) spawnTunnel(opts.port);
+    }
   });
 
   // Start health checks

@@ -57,8 +57,14 @@ class AccountSelectorService {
     // Clear expired cooldowns
     for (const acc of allAccounts) {
       if (acc.status === "cooldown" && acc.cooldownUntil && acc.cooldownUntil <= now) {
-        accountService.setEnabled(acc.id);
-        this.retryCounts.delete(acc.id);
+        try {
+          accountService.setEnabled(acc.id);
+          this.retryCounts.delete(acc.id);
+        } catch {
+          // Account expired or cannot be re-enabled — disable it
+          accountService.setDisabled(acc.id);
+          this.retryCounts.delete(acc.id);
+        }
       }
     }
 

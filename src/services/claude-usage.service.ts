@@ -249,8 +249,13 @@ async function pollOnceInternal(): Promise<void> {
 /** Deduped: concurrent callers share a single in-flight fetch */
 async function pollOnce(): Promise<void> {
   if (inflightPoll) return inflightPoll;
-  inflightPoll = pollOnceInternal().finally(() => { inflightPoll = null; });
-  return inflightPoll;
+  const thisPoll = pollOnceInternal().finally(() => {
+    // Only clear if still the current poll — prevents a stale .finally() from
+    // clearing a newer poll after timeout handler force-nulled inflightPoll.
+    if (inflightPoll === thisPoll) inflightPoll = null;
+  });
+  inflightPoll = thisPoll;
+  return thisPoll;
 }
 
 // ---------------------------------------------------------------------------
@@ -313,14 +318,14 @@ export function startUsagePolling(): void {
   const POLL_TIMEOUT = 60_000; // max 60s per poll iteration
   const scheduleNext = () => {
     pollTimer = setTimeout(async () => {
-      try {
-        await Promise.race([
-          pollOnce(),
-          new Promise<void>(r => setTimeout(r, POLL_TIMEOUT)),
-        ]);
-      } catch {
-        // ignore — scheduleNext runs regardless
-      }
+      const timeout = new Promise<"timeout">(r => setTimeout(() => r("timeout"), POLL_TIMEOUT));
+      const result = await Promise.race([
+        pollOnce().then(() => "done" as const),
+        timeout,
+      ]).catch(() => "error" as const);
+      // If the poll timed out, force-clear inflightPoll so next scheduled poll
+      // starts a fresh fetch instead of reusing the stale hanging promise.
+      if (result === "timeout") inflightPoll = null;
       scheduleNext();
     }, POLL_INTERVAL);
   };
@@ -338,4 +343,13 @@ export function updateFromSdkEvent(_rateLimitType?: string, _utilization?: numbe
 export async function refreshUsageNow(): Promise<ClaudeUsage & { activeAccountId?: string; activeAccountLabel?: string }> {
   await pollOnce();
   return getCachedUsage();
+}
+
+/** @internal Test-only: reset module-level state between tests */
+export function _resetForTesting(): void {
+  inMemoryCostUsd = 0;
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  tokenCooldowns.clear();
+  inflightPoll = null;
+  tokenCache = null;
 }
