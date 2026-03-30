@@ -118,11 +118,12 @@ function clearClientPing(entry: SessionEntry, ws: ChatWsSocket): void {
   }
 }
 
-/** Start cleanup timer — only called when Claude is done AND no FE connected */
-function startCleanupTimer(sessionId: string): void {
+/** Start cleanup timer — called when no FE connected. Urgent mode (30s) for orphaned streaming sessions. */
+function startCleanupTimer(sessionId: string, urgent = false): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   if (entry.cleanupTimer) clearTimeout(entry.cleanupTimer);
+  const delay = urgent ? 30_000 : CLEANUP_TIMEOUT_MS;
   entry.cleanupTimer = setTimeout(() => {
     console.log(`[chat] session=${sessionId} cleanup: no FE reconnected within timeout`);
     logSessionEvent(sessionId, "INFO", "Session cleaned up (no FE reconnected)");
@@ -134,7 +135,7 @@ function startCleanupTimer(sessionId: string): void {
     for (const interval of entry.pingIntervals.values()) clearInterval(interval);
     entry.pingIntervals.clear();
     activeSessions.delete(sessionId);
-  }, CLEANUP_TIMEOUT_MS);
+  }, delay);
 }
 
 /**
@@ -589,8 +590,9 @@ export const chatWebSocket = {
     evictClient(entry, ws);
     console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
-    if (entry.clients.size === 0 && !entry.isStreamingActive) {
-      startCleanupTimer(sessionId);
+    if (entry.clients.size === 0) {
+      // Use shorter timeout if streaming is still active (orphaned session — no FE to consume events)
+      startCleanupTimer(sessionId, entry.isStreamingActive);
     }
   },
 };

@@ -1057,20 +1057,23 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
 
-  /** Interrupt the current turn — session stays alive for the next message */
+  /** Abort and fully teardown the streaming session — user must resume to continue */
   abortQuery(sessionId: string): void {
     const ss = this.streamingSessions.get(sessionId);
-    if (ss && typeof ss.query.interrupt === "function") {
-      ss.query.interrupt().catch(() => {});
-      console.log(`[sdk] abortQuery: interrupted session=${sessionId}`);
+    if (ss) {
+      // Signal generator to end, then close the query (kills bun subprocess)
+      ss.controller.done();
+      ss.query.close();
+      this.streamingSessions.delete(sessionId);
+      this.activeQueries.delete(sessionId);
+      console.log(`[sdk] abortQuery: closed streaming session=${sessionId}`);
       return;
     }
-    // Fallback: close query entirely and clean up streaming session
+    // Non-streaming fallback
     const q = this.activeQueries.get(sessionId);
     if (q) {
       q.close();
       this.activeQueries.delete(sessionId);
-      this.streamingSessions.delete(sessionId);
     }
   }
 
