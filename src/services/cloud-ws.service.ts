@@ -125,20 +125,24 @@ function doConnect(): void {
   if (!shouldConnect || reconnecting) return;
   reconnecting = true;
 
+  // Capture local ref — if a reconnect replaces `ws` before this socket's
+  // handlers fire, stale handlers must not reset module-level state.
+  let sock: WebSocket;
   try {
-    ws = new WebSocket(wsUrl);
+    sock = new WebSocket(wsUrl);
+    ws = sock;
   } catch {
     reconnecting = false;
-    scheduleReconnect();
+    scheduleReconnect("constructor");
     return;
   }
 
-  ws.onopen = () => {
+  sock.onopen = () => {
+    if (ws !== sock) return; // stale — newer connection replaced us
     reconnecting = false;
     log("INFO", "Cloud WS connected, sending auth");
 
-    // Send auth as first message (not in URL)
-    ws!.send(JSON.stringify({
+    sock.send(JSON.stringify({
       type: "auth",
       deviceId,
       secretKey,
@@ -152,7 +156,7 @@ function doConnect(): void {
     // Flush queued messages
     while (outboundQueue.length > 0 && connected) {
       const msg = outboundQueue.shift()!;
-      ws!.send(JSON.stringify(msg));
+      sock.send(JSON.stringify(msg));
     }
 
     // Send immediate heartbeat
@@ -165,7 +169,7 @@ function doConnect(): void {
     }, HEARTBEAT_INTERVAL_MS);
   };
 
-  ws.onmessage = (event) => {
+  sock.onmessage = (event) => {
     try {
       const msg = JSON.parse(String(event.data)) as CommandMsg;
       if (msg.type === "command" && commandHandler) {
@@ -174,29 +178,29 @@ function doConnect(): void {
     } catch {} // ignore malformed
   };
 
-  ws.onclose = (event) => {
-    log("WARN", `Cloud WS closed: code=${event.code} reason=${event.reason || "(none)"}`);
+  sock.onclose = (event) => {
+    if (ws !== sock) return; // stale — ignore close from replaced connection
+    log("WARN", `Cloud WS closed: code=${event.code} reason=${event.reason || ""}`);
     connected = false;
     reconnecting = false;
     ws = null;
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
-    if (shouldConnect) scheduleReconnect();
+    if (shouldConnect) scheduleReconnect("onclose");
   };
 
-  ws.onerror = (event) => {
-    log("ERROR", `Cloud WS error: ${(event as any)?.message || "unknown"}`);
-    // onclose will fire after onerror — reconnect handled there
+  sock.onerror = (event) => {
+    log("ERROR", `Cloud WS error: ${String(event)}`);
   };
 }
 
-function scheduleReconnect(): void {
+function scheduleReconnect(source = "unknown"): void {
   if (!shouldConnect || reconnectTimer) return;
   const base = BACKOFF_STEPS[Math.min(reconnectAttempt, BACKOFF_STEPS.length - 1)]!;
   // Add ±30% jitter to prevent thundering herd after Cloud deploy
   const jitter = base * (0.7 + Math.random() * 0.6);
   const delay = Math.round(jitter);
   reconnectAttempt++;
-  log("WARN", `Cloud WS reconnect in ${delay}ms (attempt #${reconnectAttempt})`);
+  log("WARN", `Cloud WS reconnect in ${delay}ms (attempt #${reconnectAttempt}) src=${source}`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     doConnect();
