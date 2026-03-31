@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.75] - 2026-04-01
+
+### Changed
+- **Tunnel always enabled**: `ppm start` now always starts Cloudflare tunnel — `--share` flag deprecated (still accepted, no-op)
+
 ## [0.8.74] - 2026-04-01
 
 ### Fixed
