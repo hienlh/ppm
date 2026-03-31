@@ -1,9 +1,10 @@
 # Changelog
 
-## [0.8.73] - 2026-04-01
+## [0.8.74] - 2026-04-01
 
 ### Fixed
-- **Cloud WS reconnect loop**: Stale WebSocket closure handlers from replaced connections no longer reset module state — prevents infinite reconnect cycle after upgrade/restart
+- **Cloud WS reconnect loop**: Stale WebSocket closure handlers from replaced connections no longer reset module state
+- **Cloud WS auth race**: Delay heartbeat/queue flush 500ms after auth to let server complete async DB auth — prevents 4002 rejection
 
 ## [0.8.72] - 2026-03-31
 
