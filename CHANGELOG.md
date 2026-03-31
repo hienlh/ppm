@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.68] - 2026-03-31
+
+### Fixed
+- **Hot-reload timer leak**: Background polling timers (usage fetch, account refresh, cloud heartbeat) leaked on Bun `--hot` reload — module-level vars reset but old timers kept running, causing 221+ concurrent timers and ~38K 429 errors/day. Moved timer refs to `globalThis` to survive reloads.
+
 ## [0.8.67] - 2026-03-29
 
 ### Improved
