@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, RefreshCw, Search, Pencil, Check, X, BellOff } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -48,6 +48,34 @@ function pctColor(pct: number): string {
   if (pct >= 90) return "text-red-500";
   if (pct >= 70) return "text-amber-500";
   return "text-green-500";
+}
+
+function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projectName: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          const data = await api.get<{ ppmSessionId: string; sdkSessionId: string; jsonlPath: string | null; projectPath: string }>(
+            `${projectUrl(projectName)}/chat/sessions/${sessionId}/debug?project=${encodeURIComponent(projectName)}`,
+          );
+          const info = [
+            `PPM Session: ${data.ppmSessionId}`,
+            `SDK Session: ${data.sdkSessionId}`,
+            data.jsonlPath ? `JSONL: ${data.jsonlPath}` : `JSONL: not found`,
+            data.projectPath ? `Project: ${data.projectPath}` : null,
+          ].filter(Boolean).join("\n");
+          await navigator.clipboard.writeText(info);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch { /* silent */ }
+      }}
+      className={`p-1 rounded transition-colors ${copied ? "text-green-500 bg-green-500/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
+      title={copied ? "Copied!" : "Copy session debug info"}
+    >
+      {copied ? <ClipboardCheck className="size-3" /> : <Bug className="size-3" />}
+    </button>
+  );
 }
 
 export function ChatHistoryBar({
@@ -122,6 +150,27 @@ export function ChatHistoryBar({
   }, [editingId, editingTitle, projectName]);
 
   const cancelEditing = useCallback(() => setEditingId(null), []);
+
+  const togglePin = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
+    e.stopPropagation();
+    if (!projectName) return;
+    const url = `${projectUrl(projectName)}/chat/sessions/${session.id}/pin`;
+    try {
+      if (session.pinned) {
+        await api.del(url);
+      } else {
+        await api.put(url);
+      }
+      setSessions((prev) => {
+        const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
+        return updated.sort((a, b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+      });
+    } catch { /* silent */ }
+  }, [projectName]);
 
   // Filter sessions by search query
   const filteredSessions = searchQuery.trim()
@@ -215,6 +264,11 @@ export function ChatHistoryBar({
           </button>
         )}
 
+        {/* Debug info — copy session IDs + JSONL path */}
+        {sessionId && (
+          <DebugCopyButton sessionId={sessionId} projectName={projectName} />
+        )}
+
         {/* Connection indicator */}
         {onReconnect && (
           <button
@@ -298,8 +352,19 @@ export function ChatHistoryBar({
                         {session.title || "Untitled"}
                       </button>
                       <button
+                        onClick={(e) => togglePin(e, session)}
+                        className={`p-0.5 rounded transition-all ${
+                          session.pinned
+                            ? "text-primary hover:text-primary/70"
+                            : "text-text-subtle hover:text-text-secondary md:opacity-0 md:group-hover:opacity-100"
+                        }`}
+                        title={session.pinned ? "Unpin session" : "Pin session"}
+                      >
+                        {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+                      </button>
+                      <button
                         onClick={(e) => startEditing(session, e)}
-                        className="p-0.5 rounded text-text-subtle hover:text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="p-0.5 rounded text-text-subtle hover:text-text-secondary md:opacity-0 md:group-hover:opacity-100 transition-opacity"
                         title="Rename session"
                       >
                         <Pencil className="size-3" />
@@ -307,7 +372,7 @@ export function ChatHistoryBar({
                     </>
                   )}
                   {editingId !== session.id && session.updatedAt && (
-                    <span className="text-[10px] text-text-subtle shrink-0">{formatDate(session.updatedAt)}</span>
+                    <span className="text-[10px] text-text-subtle shrink-0 w-10 text-right">{formatDate(session.updatedAt)}</span>
                   )}
                 </div>
               ))

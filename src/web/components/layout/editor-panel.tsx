@@ -1,8 +1,10 @@
-import { Suspense, lazy } from "react";
-import { Loader2, Terminal, MessageSquare, GitBranch } from "lucide-react";
+import { Suspense, lazy, useEffect, useState, useCallback } from "react";
+import { Loader2, Terminal, MessageSquare, GitBranch, Pin, PinOff } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import type { TabType } from "@/stores/tab-store";
+import { api, projectUrl } from "@/lib/api-client";
+import type { SessionInfo } from "../../../types/chat";
 import { TabBar } from "./tab-bar";
 import { SplitDropOverlay } from "./split-drop-overlay";
 import { cn } from "@/lib/utils";
@@ -74,8 +76,68 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
   );
 }
 
+function formatRelativeDate(iso: string): string {
+  try {
+    const date = new Date(iso);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMin = Math.floor(diffMs / 60_000);
+    if (diffMin < 1) return "Just now";
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return `${diffDay}d ago`;
+    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+const MAX_RECENT_SESSIONS = 5;
+
 function EmptyPanel({ panelId }: { panelId: string }) {
   const activeProject = useProjectStore((s) => s.activeProject);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
+
+  const loadSessions = useCallback(async () => {
+    if (!activeProject?.name) return;
+    setLoadingSessions(true);
+    try {
+      const data = await api.get<SessionInfo[]>(`${projectUrl(activeProject.name)}/chat/sessions`);
+      setSessions(data.slice(0, MAX_RECENT_SESSIONS));
+    } catch {
+      // silently ignore — empty state still functional without sessions
+    } finally {
+      setLoadingSessions(false);
+    }
+  }, [activeProject?.name]);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  const togglePin = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
+    e.stopPropagation();
+    if (!activeProject?.name) return;
+    const url = `${projectUrl(activeProject.name)}/chat/sessions/${session.id}/pin`;
+    try {
+      if (session.pinned) {
+        await api.del(url);
+      } else {
+        await api.put(url);
+      }
+      setSessions((prev) => {
+        const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
+        return updated.sort((a, b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+      });
+    } catch {
+      // silently ignore
+    }
+  }, [activeProject?.name]);
 
   function openTab(type: TabType) {
     const needsProject = type !== "settings";
@@ -86,23 +148,92 @@ function EmptyPanel({ panelId }: { panelId: string }) {
     );
   }
 
+  function openSession(session: SessionInfo) {
+    usePanelStore.getState().openTab(
+      {
+        type: "chat",
+        title: session.title || "Chat",
+        projectId: activeProject?.name ?? null,
+        metadata: { projectName: activeProject?.name, sessionId: session.id, providerId: session.providerId },
+        closable: true,
+      },
+      panelId,
+    );
+  }
+
+  const pinnedSessions = sessions.filter((s) => s.pinned);
+  const recentSessions = sessions.filter((s) => !s.pinned).slice(0, MAX_RECENT_SESSIONS);
+
+  function renderSessionRow(session: SessionInfo) {
+    return (
+      <button
+        key={session.id}
+        onClick={() => openSession(session)}
+        className="group flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-elevated active:bg-surface-elevated transition-colors border-b border-border/50 last:border-0"
+      >
+        <MessageSquare className="size-3.5 shrink-0 text-text-subtle" />
+        <span className="flex-1 min-w-0 text-xs font-medium truncate text-text-primary">
+          {session.title || "Untitled"}
+        </span>
+        {session.updatedAt && (
+          <span className="text-[10px] text-text-subtle shrink-0">
+            {formatRelativeDate(session.updatedAt)}
+          </span>
+        )}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => togglePin(e, session)}
+          className={`p-1 rounded transition-colors shrink-0 ${
+            session.pinned
+              ? "text-primary hover:text-primary/70"
+              : "text-text-subtle md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary"
+          }`}
+          aria-label={session.pinned ? "Unpin session" : "Pin session"}
+        >
+          {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-4 text-text-secondary">
-      <p className="text-sm">Open a tab to get started</p>
-      <div className="flex flex-col md:flex-row flex-wrap justify-center gap-2">
-        {QUICK_OPEN_TABS.map((opt) => {
-          const Icon = opt.icon;
-          return (
-            <button
-              key={opt.type}
-              onClick={() => openTab(opt.type)}
-              className="flex items-center gap-2 px-4 py-2 rounded-md border border-border bg-surface hover:bg-surface-elevated text-sm text-foreground transition-colors"
-            >
-              <Icon className="size-4" />
-              {opt.label}
-            </button>
-          );
-        })}
+    <div className="flex flex-col h-full overflow-y-auto text-text-secondary">
+      <div className="flex flex-col items-center justify-center gap-6 px-4 flex-1">
+        <p className="text-sm">Open a tab to get started</p>
+        <div className="grid grid-cols-3 gap-2 w-full max-w-sm">
+          {QUICK_OPEN_TABS.map((opt) => {
+            const Icon = opt.icon;
+            return (
+              <button
+                key={opt.type}
+                onClick={() => openTab(opt.type)}
+                className="flex flex-col items-center justify-center gap-1.5 px-2 py-3 rounded-md border border-border bg-surface hover:bg-surface-elevated active:bg-surface-elevated text-xs text-foreground transition-colors"
+              >
+                <Icon className="size-5" />
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeProject && !loadingSessions && pinnedSessions.length > 0 && (
+          <div className="flex flex-col gap-2 w-full max-w-sm">
+            <p className="text-xs text-text-subtle text-center">Pinned</p>
+            <div className="w-full rounded-md border border-border bg-surface overflow-hidden">
+              {pinnedSessions.map(renderSessionRow)}
+            </div>
+          </div>
+        )}
+
+        {activeProject && !loadingSessions && recentSessions.length > 0 && (
+          <div className="flex flex-col gap-2 w-full max-w-sm">
+            <p className="text-xs text-text-subtle text-center">Recent chats</p>
+            <div className="w-full rounded-md border border-border bg-surface overflow-hidden">
+              {recentSessions.map(renderSessionRow)}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

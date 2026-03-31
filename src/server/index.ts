@@ -162,8 +162,6 @@ app.route("/", staticRoutes);
 
 export async function startServer(options: {
   port?: string;
-  foreground?: boolean;
-  daemon?: boolean; // compat, ignored (daemon is now default)
   share?: boolean;
   config?: string;
   profile?: string;
@@ -173,40 +171,31 @@ export async function startServer(options: {
   const port = parseInt(options.port ?? String(configService.get("port")), 10);
   const host = configService.get("host");
 
-  // Setup log file (both foreground and daemon modes)
   await setupLogFile();
 
   // Bootstrap CLI providers (checks binary availability)
   const { bootstrapProviders } = await import("../providers/registry.ts");
   await bootstrapProviders();
 
-  // Check if port is already in use before starting.
-  // Skip in hot-reload mode — Bun.serve() replaces the previous server on the same port,
-  // but a net.createServer() probe would see it as "in use" and exit prematurely.
-  // globalThis persists across bun --hot reloads, so we use a flag set after first start.
-  const isHotReload = !!(globalThis as any).__PPM_SERVER_STARTED__;
-  if (!isHotReload) {
-    const portInUse = await new Promise<boolean>((resolve) => {
-      const net = require("node:net") as typeof import("node:net");
-      const tester = net.createServer()
-        .once("error", (err: NodeJS.ErrnoException) => {
-          resolve(err.code === "EADDRINUSE");
-        })
-        .once("listening", () => {
-          tester.close(() => resolve(false));
-        })
-        .listen(port, host);
-    });
-    if (portInUse) {
-      console.error(`\n  ✗  Port ${port} is already in use.`);
-      console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
-      process.exit(1);
-    }
+  // Check if port is already in use before spawning supervisor
+  const portInUse = await new Promise<boolean>((resolve) => {
+    const net = require("node:net") as typeof import("node:net");
+    const tester = net.createServer()
+      .once("error", (err: NodeJS.ErrnoException) => {
+        resolve(err.code === "EADDRINUSE");
+      })
+      .once("listening", () => {
+        tester.close(() => resolve(false));
+      })
+      .listen(port, host);
+  });
+  if (portInUse) {
+    console.error(`\n  ✗  Port ${port} is already in use.`);
+    console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
+    process.exit(1);
   }
 
-  const isDaemon = !options.foreground;
-
-  if (isDaemon) {
+  {
     const { resolve } = await import("node:path");
     const { homedir } = await import("node:os");
     const { writeFileSync, readFileSync, mkdirSync, existsSync, openSync } = await import("node:fs");
@@ -272,7 +261,6 @@ export async function startServer(options: {
       if (isNaN(supervisorPid)) {
         console.error("  ✗  Failed to start supervisor on Windows.");
         console.error(`     ${result.stderr.toString().trim()}`);
-        console.error("     Try: ppm start -f (foreground mode)");
         process.exit(1);
       }
     } else {
@@ -297,7 +285,6 @@ export async function startServer(options: {
       try { process.kill(supervisorPid, 0); } catch {
         console.error("  ✗  Supervisor exited immediately after start.");
         console.error("     Check logs: ppm logs");
-        console.error("     Or try: ppm start -f (foreground mode)");
         process.exit(1);
       }
       // Check if server PID appeared in status.json
@@ -353,130 +340,6 @@ export async function startServer(options: {
 
     process.exit(0);
   }
-
-  // Foreground mode — with WebSocket support
-  const server = Bun.serve({
-    port,
-    hostname: host,
-    fetch(req, server) {
-      const url = new URL(req.url);
-
-      // WebSocket upgrade: /ws/project/:projectName/terminal/:id
-      if (url.pathname.startsWith("/ws/project/")) {
-        const parts = url.pathname.split("/");
-        const projectName = parts[3] ?? "";
-        const wsType = parts[4] ?? "";
-        const id = parts[5] ?? "";
-
-        if (wsType === "terminal") {
-          const upgraded = server.upgrade(req, {
-            data: { type: "terminal", id, projectName },
-          });
-          if (upgraded) return undefined;
-          return new Response("WebSocket upgrade failed", { status: 400 });
-        }
-
-        if (wsType === "chat") {
-          const sessionId = id;
-          const upgraded = server.upgrade(req, {
-            data: { type: "chat", sessionId, projectName },
-          });
-          if (upgraded) return undefined;
-          return new Response("WebSocket upgrade failed", { status: 400 });
-        }
-      }
-
-      return app.fetch(req, server);
-    },
-    websocket: {
-      idleTimeout: 960,
-      sendPong: true,
-      perMessageDeflate: false, // Disable compression — Cloudflare tunnels can mangle compressed frames
-      open(ws: any) {
-        if (ws.data?.type === "health") {
-          ws.send(JSON.stringify({ type: "health", status: "ok" }));
-        } else if (ws.data?.type === "chat") chatWebSocket.open(ws);
-        else terminalWebSocket.open(ws);
-      },
-      message(ws: any, msg: any) {
-        if (ws.data?.type === "health") {
-          // Respond to ping with pong
-          ws.send(JSON.stringify({ type: "health", status: "ok" }));
-        } else if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
-        else terminalWebSocket.message(ws, msg);
-      },
-      close(ws: any) {
-        if (ws.data?.type === "health") return;
-        if (ws.data?.type === "chat") chatWebSocket.close(ws);
-        else terminalWebSocket.close(ws);
-      },
-    } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
-  });
-
-  // Mark server as started — survives bun --hot reloads (globalThis persists)
-  (globalThis as any).__PPM_SERVER_STARTED__ = true;
-
-  // Start background usage polling
-  import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
-
-  // Start background account token refresh
-  import("../services/account.service.ts").then(({ accountService }) => accountService.startAutoRefresh()).catch(() => {});
-
-  console.log(`\n  PPM ready\n`);
-  console.log(`  ➜  Local:   http://localhost:${server.port}/`);
-
-  const { networkInterfaces } = await import("node:os");
-  const nets = networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name] ?? []) {
-      if (net.family === "IPv4" && !net.internal) {
-        console.log(`  ➜  Network: http://${net.address}:${server.port}/`);
-      }
-    }
-  }
-
-  // Share tunnel in foreground mode
-  if (options.share) {
-    try {
-      const { tunnelService } = await import("../services/tunnel.service.ts");
-      console.log("\n  Starting share tunnel...");
-      const shareUrl = await tunnelService.startTunnel(server.port!);
-      console.log(`  ➜  Share:   ${shareUrl}`);
-      if (!configService.get("auth").enabled) {
-        console.log(`\n  ⚠  Warning: auth is disabled — your IDE is publicly accessible!`);
-        console.log(`     Enable auth: run 'ppm config set auth.enabled true' or restart without --share.`);
-      }
-      const qr = await import("qrcode-terminal");
-      console.log();
-      qr.generate(shareUrl, { small: true });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`  ✗  Share failed: ${msg}`);
-    }
-  }
-
-  console.log(`\n  Auth: ${configService.get("auth").enabled ? "enabled" : "disabled"}`);
-  if (configService.get("auth").enabled) {
-    console.log(`  Token: ${configService.get("auth").token}`);
-  }
-  console.log();
-
-  // Graceful shutdown — stop server + tunnel + preview tunnels + DB on exit
-  const shutdown = () => {
-    try { server.stop(true); } catch {}
-    try {
-      import("../services/tunnel.service.ts").then(({ tunnelService }) => tunnelService.stopTunnel()).catch(() => {});
-    } catch {}
-    try {
-      import("./routes/browser-preview.ts").then(({ stopAllPreviewTunnels }) => stopAllPreviewTunnels()).catch(() => {});
-    } catch {}
-    try {
-      import("../services/db.service.ts").then(({ closeDb }) => closeDb()).catch(() => {});
-    } catch {}
-  };
-  process.on("SIGINT", () => { shutdown(); process.exit(0); });
-  process.on("SIGTERM", () => { shutdown(); process.exit(0); });
-  process.on("exit", shutdown);
 }
 
 // Internal entry point for daemon child process

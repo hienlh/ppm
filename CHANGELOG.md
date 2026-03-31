@@ -7,6 +7,49 @@
 
 ## [0.9.0-beta.8] - 2026-03-30
 
+## [0.8.72] - 2026-03-31
+
+### Added
+- **Supervisor state machine**: States `running → paused → upgrading` with promise-based wait/resume. Supervisor pauses after 10 consecutive crashes, resumes via `ppm restart --force` or SIGUSR2
+- **Cloud WebSocket client**: Persistent WS connection from supervisor to PPM Cloud replacing HTTP heartbeat — auto-reconnect with exponential backoff + jitter, 60s heartbeat, 50-message offline queue
+- **Remote commands via Cloud**: Supervisor handles restart/stop/upgrade/resume/status commands received from Cloud WS
+- **`ppm restart --force`**: Resume a paused supervisor (crashed too many times)
+- **Status CLI state display**: `ppm status` shows paused/upgrading state with reason, timestamp, and last crash error
+
+### Changed
+- **Foreground mode removed**: `ppm start` no longer accepts `-f`/`--foreground` — always runs as supervised daemon
+- **Heartbeat via WS**: Cloud heartbeat migrated from HTTP polling (5min) to WebSocket (60s), includes `appVersion`, `serverPid`, `uptime`
+
+### Fixed
+- **Upgrade failure recovery**: `selfReplace` failure now correctly resets state from "upgrading" back to "running" and notifies Cloud
+
+## [0.8.71] - 2026-03-31
+
+### Added
+- **Pin/Save sessions**: Pin important chat sessions to always appear at the top of history, empty state, and session picker — persisted in DB across devices
+- Mobile-friendly: pin/rename/delete buttons always visible on mobile, hover-reveal on desktop
+
+### Fixed
+- Fixed duplicate import in chat routes
+- Fixed session action buttons misaligned when date column has variable width
+
+## [0.8.70] - 2026-03-31
+
+### Added
+- **Recent chats on empty state**: When no tabs are open, show up to 5 recent chat sessions for quick access — click to reopen directly
+
+## [0.8.69] - 2026-03-31
+
+### Fixed
+- **Auth 401 auto-retry**: Detect 401 errors returned as assistant text content (SDK doesn't always set error field) — refresh OAuth token and retry with fresh session automatically instead of showing raw error to user
+- **Result-level 401 retry**: 401 in SDK result events now triggers token refresh + retry (previously only refreshed without retrying)
+
+### Added
+- **Account retry notification**: FE shows inline status when auth retry happens (e.g. "↻ Token refreshed — retrying with **Alex**...")
+- **Session debug button**: Bug icon in chat toolbar copies session IDs + JSONL path to clipboard for quick debugging
+
+## [0.8.68] - 2026-03-31
+
 ### Fixed
 - **SDK process leak**: Prevent claude-agent-sdk subprocess leak on WS disconnect and cancel — cleanup timer now starts regardless of streaming state, orphaned sessions cleaned up in 30s, abortQuery fully teardowns subprocess
 

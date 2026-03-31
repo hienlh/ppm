@@ -610,6 +610,13 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
       groups.push({ kind: "thinking", content: thinkingBuffer });
       thinkingBuffer = "";
     }
+    if (event.type === "account_retry") {
+      if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
+      const label = (event as any).accountLabel ?? "another account";
+      const reason = (event as any).reason ?? "Auth failed";
+      groups.push({ kind: "text", content: `\n\n> ↻ ${reason} — retrying with **${label}**...\n\n` });
+      continue;
+    }
     if (event.type === "text") {
       textBuffer += event.content;
     } else if (event.type === "tool_use") {

@@ -16,8 +16,6 @@ program
   .command("start")
   .description("Start the PPM server (background by default)")
   .option("-p, --port <port>", "Port to listen on")
-  .option("-f, --foreground", "Run in foreground (default: background daemon)")
-  .option("-d, --daemon", "Run as background daemon (default, kept for compat)")
   .option("-s, --share", "Share via public URL (Cloudflare tunnel)")
   .option("-c, --config <path>", "Path to config file (YAML import into DB)")
   .option("--profile <name>", "DB profile name (e.g. 'dev' → ppm.dev.db)")
@@ -51,6 +49,7 @@ program
   .command("restart")
   .description("Restart the server (keeps tunnel alive)")
   .option("-c, --config <path>", "Path to config file")
+  .option("--force", "Force resume from paused state")
   .action(async (options) => {
     const { restartServer } = await import("./cli/commands/restart.ts");
     await restartServer(options);

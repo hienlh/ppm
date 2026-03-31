@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 8;
+const CURRENT_SCHEMA_VERSION = 9;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -248,6 +248,17 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 8;
     `);
   }
+
+  if (current < 9) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_pins (
+        session_id TEXT PRIMARY KEY,
+        pinned_at TEXT DEFAULT (datetime('now'))
+      );
+
+      PRAGMA user_version = 9;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +367,25 @@ export function getSessionTitles(sessionIds: string[]): Record<string, string> {
   const result: Record<string, string> = {};
   for (const r of rows) result[r.session_id] = r.title;
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Session pin helpers
+// ---------------------------------------------------------------------------
+
+export function pinSession(sessionId: string): void {
+  getDb().query(
+    "INSERT INTO session_pins (session_id, pinned_at) VALUES (?, datetime('now')) ON CONFLICT(session_id) DO UPDATE SET pinned_at = datetime('now')",
+  ).run(sessionId);
+}
+
+export function unpinSession(sessionId: string): void {
+  getDb().query("DELETE FROM session_pins WHERE session_id = ?").run(sessionId);
+}
+
+export function getPinnedSessionIds(): Set<string> {
+  const rows = getDb().query("SELECT session_id FROM session_pins ORDER BY pinned_at DESC").all() as { session_id: string }[];
+  return new Set(rows.map((r) => r.session_id));
 }
 
 // ---------------------------------------------------------------------------

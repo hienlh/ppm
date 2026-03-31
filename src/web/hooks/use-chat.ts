@@ -121,6 +121,17 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         break;
       }
 
+      case "account_retry": {
+        // Update streaming account to the new one being tried
+        if (ev.accountId && ev.accountLabel) {
+          streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
+        }
+        // Surface retry as a system-level event in the stream
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
       case "text": {
         const pid = ev.parentToolUseId as string | undefined;
         if (pid && routeToParent(ev as ChatEvent, pid)) {

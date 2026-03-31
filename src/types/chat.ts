@@ -61,6 +61,7 @@ export interface SessionInfo {
   projectName?: string;
   createdAt: string;
   updatedAt?: string;
+  pinned?: boolean;
 }
 
 export interface LimitBucket {
@@ -111,6 +112,7 @@ export type ChatEvent =
   | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number }
   | { type: "session_migrated"; oldSessionId: string; newSessionId: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
+  | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }
   | { type: "system"; subtype: string };
 
 export type ToolApprovalHandler = (
