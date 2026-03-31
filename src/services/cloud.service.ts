@@ -362,12 +362,16 @@ export async function sendHeartbeat(tunnelUrl: string): Promise<boolean> {
   }
 }
 
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+// Survive Bun --hot reloads: persist timer ref across module re-evaluations
+const CLOUD_HOT_KEY = "__PPM_CLOUD_HEARTBEAT__" as const;
+const cloudHotState = ((globalThis as any)[CLOUD_HOT_KEY] ??= {
+  heartbeatTimer: null as ReturnType<typeof setInterval> | null,
+}) as { heartbeatTimer: ReturnType<typeof setInterval> | null };
 
 /** Start periodic heartbeat (call once after tunnel URL is obtained) */
 export function startHeartbeat(tunnelUrl: string): void {
   // Clear any existing heartbeat to prevent duplicates on restart
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (cloudHotState.heartbeatTimer) clearInterval(cloudHotState.heartbeatTimer);
 
   // Initial heartbeat immediately
   sendHeartbeat(tunnelUrl).then((ok) => {
@@ -376,16 +380,16 @@ export function startHeartbeat(tunnelUrl: string): void {
   });
 
   // Periodic heartbeat every 5 minutes
-  heartbeatTimer = setInterval(() => {
+  cloudHotState.heartbeatTimer = setInterval(() => {
     sendHeartbeat(tunnelUrl).catch(() => {});
   }, HEARTBEAT_INTERVAL_MS);
 }
 
 /** Stop periodic heartbeat */
 export function stopHeartbeat(): void {
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
+  if (cloudHotState.heartbeatTimer) {
+    clearInterval(cloudHotState.heartbeatTimer);
+    cloudHotState.heartbeatTimer = null;
   }
 }
 
