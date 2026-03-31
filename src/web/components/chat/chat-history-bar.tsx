@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -46,6 +46,34 @@ function pctColor(pct: number): string {
   if (pct >= 90) return "text-red-500";
   if (pct >= 70) return "text-amber-500";
   return "text-green-500";
+}
+
+function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projectName: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          const data = await api.get<{ ppmSessionId: string; sdkSessionId: string; jsonlPath: string | null; projectPath: string }>(
+            `${projectUrl(projectName)}/chat/sessions/${sessionId}/debug?project=${encodeURIComponent(projectName)}`,
+          );
+          const info = [
+            `PPM Session: ${data.ppmSessionId}`,
+            `SDK Session: ${data.sdkSessionId}`,
+            data.jsonlPath ? `JSONL: ${data.jsonlPath}` : `JSONL: not found`,
+            data.projectPath ? `Project: ${data.projectPath}` : null,
+          ].filter(Boolean).join("\n");
+          await navigator.clipboard.writeText(info);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch { /* silent */ }
+      }}
+      className={`p-1 rounded transition-colors ${copied ? "text-green-500 bg-green-500/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
+      title={copied ? "Copied!" : "Copy session debug info"}
+    >
+      {copied ? <ClipboardCheck className="size-3" /> : <Bug className="size-3" />}
+    </button>
+  );
 }
 
 export function ChatHistoryBar({
@@ -193,6 +221,11 @@ export function ChatHistoryBar({
           >
             <BellOff className="size-3" />
           </button>
+        )}
+
+        {/* Debug info — copy session IDs + JSONL path */}
+        {sessionId && (
+          <DebugCopyButton sessionId={sessionId} projectName={projectName} />
         )}
 
         {/* Connection indicator */}

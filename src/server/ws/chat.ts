@@ -11,7 +11,7 @@ const CLEANUP_TIMEOUT_MS = 5 * 60_000; // 5min after Claude done + no FE
 const MAX_TURN_EVENTS = 10_000; // memory safety cap
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
-  "approval_request", "error", "done", "account_info",
+  "approval_request", "error", "done", "account_info", "account_retry",
 ]);
 
 type ChatWsSocket = {
@@ -210,7 +210,7 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
       }
 
       // First content event — stop heartbeat, transition phase
-      const isMetadataEvent = evType === "account_info" || evType === "streaming_status";
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const waitMs = Date.now() - startTime;

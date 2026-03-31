@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.69] - 2026-03-31
+
+### Fixed
+- **Auth 401 auto-retry**: Detect 401 errors returned as assistant text content (SDK doesn't always set error field) — refresh OAuth token and retry with fresh session automatically instead of showing raw error to user
+- **Result-level 401 retry**: 401 in SDK result events now triggers token refresh + retry (previously only refreshed without retrying)
+
+### Added
+- **Account retry notification**: FE shows inline status when auth retry happens (e.g. "↻ Token refreshed — retrying with **Alex**...")
+- **Session debug button**: Bug icon in chat toolbar copies session IDs + JSONL path to clipboard for quick debugging
+
 ## [0.8.68] - 2026-03-31
 
 ### Fixed

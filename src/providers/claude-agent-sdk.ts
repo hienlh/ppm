@@ -131,6 +131,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return null;
   }
 
+  /** Extract text content from an SDK assistant message */
+  private extractAssistantText(msg: unknown): string {
+    const content = (msg as any)?.message?.content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .filter((b: any) => b.type === "text" && typeof b.text === "string")
+      .map((b: any) => b.text)
+      .join("");
+  }
+
   /** Read current provider config from yaml (fresh each call) */
   private getProviderConfig(): Partial<import("../types/config.ts").AIProviderConfig> {
     const ai = configService.get("ai");
@@ -619,7 +629,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // Full assistant message
         if (msg.type === "assistant") {
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
-          const assistantError = (msg as any).error as string | undefined;
+          let assistantError = (msg as any).error as string | undefined;
+
+          // SDK sometimes returns auth errors as text content without setting error field.
+          // Detect 401 pattern in text: "Failed to authenticate. API Error: 401 ..."
+          if (!assistantError) {
+            const textContent = this.extractAssistantText(msg);
+            if (textContent && /API Error:\s*401\b.*authentication_error/i.test(textContent)) {
+              assistantError = "authentication_failed";
+              console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
+            }
+          }
+
           if (assistantError) {
             // Dump full SDK message for debugging
             console.error(`[sdk] session=${sessionId} cwd=${effectiveCwd} assistant error: ${assistantError} (isFirst=${isFirstMessage} retry=${retryCount})`);
@@ -630,10 +651,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               authRetried = true;
               try {
                 await accountService.refreshAccessToken(account.id, false);
-                console.log(`[sdk] session=${sessionId} OAuth token refreshed for ${account.id} — retrying`);
-                // Re-build env with refreshed token
                 const refreshedAccount = accountService.getWithTokens(account.id);
                 if (refreshedAccount) {
+                  const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
+                  console.log(`[sdk] session=${sessionId} OAuth token refreshed for ${account.id} (${label}) — retrying`);
+                  yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                   const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
                   const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: retryEnv };
                   const rq = query({
@@ -660,6 +682,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             };
             const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
             yield { type: "error", message: hint };
+            // Skip emitting the raw 401 error as text content — already shown as error event
+            continue;
           }
           const content = (msg as any).message?.content;
           if (Array.isArray(content)) {
@@ -715,11 +739,30 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               yield { type: "error", message: "Rate limited. This account is now on cooldown. Please retry." };
               break;
             } else if (errCode === 401) {
-              // Try refresh once
-              try {
-                await accountService.refreshAccessToken(account.id, false);
-                console.log(`[sdk] 401 on account ${account.id} — token refreshed`);
-              } catch {
+              // Refresh token and retry with fresh session (same logic as assistant-level auth retry)
+              if (!authRetried) {
+                authRetried = true;
+                try {
+                  await accountService.refreshAccessToken(account.id, false);
+                  const refreshedAccount = accountService.getWithTokens(account.id);
+                  if (refreshedAccount) {
+                    const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
+                    console.log(`[sdk] 401 in result on account ${account.id} (${label}) — token refreshed, retrying`);
+                    yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
+                    const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
+                    const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: retryEnv };
+                    const rq = query({
+                      prompt: message,
+                      options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                    });
+                    this.activeQueries.set(sessionId, rq);
+                    eventSource = rq;
+                    continue retryLoop;
+                  }
+                } catch {
+                  accountSelector.onAuthError(account.id);
+                }
+              } else {
                 accountSelector.onAuthError(account.id);
               }
             } else {

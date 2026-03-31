@@ -8,6 +8,7 @@ import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sd
 import { listSlashItems } from "../../services/slash-items.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
+import { getSessionMapping } from "../../services/db.service.ts";
 import { getSessionMapping, setSessionTitle } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -167,6 +168,22 @@ chatRoutes.get("/sessions/:id/logs", (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
+});
+
+/** GET /chat/sessions/:id/debug — session debug info (IDs, JSONL path) */
+chatRoutes.get("/sessions/:id/debug", (c) => {
+  const ppmId = c.req.param("id");
+  const sdkId = getSessionMapping(ppmId) ?? ppmId;
+  const projectName = c.req.query("project") ?? "";
+  // Resolve JSONL path: ~/.claude/projects/<encoded-cwd>/<sdkId>.jsonl
+  const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const provider = providerRegistry.get("claude") as any;
+  const projectPath = provider?.activeSessions?.get(ppmId)?.projectPath ?? "";
+  const encodedCwd = projectPath ? projectPath.replace(/\//g, "-") : "";
+  const jsonlDir = encodedCwd ? resolve(homedir, ".claude", "projects", encodedCwd) : "";
+  const jsonlPath = jsonlDir ? resolve(jsonlDir, `${sdkId}.jsonl`) : "";
+  const jsonlExists = jsonlPath ? existsSync(jsonlPath) : false;
+  return c.json(ok({ ppmSessionId: ppmId, sdkSessionId: sdkId, jsonlPath: jsonlExists ? jsonlPath : null, jsonlDir, projectPath }));
 });
 
 /** POST /chat/upload — upload files for chat attachments, returns server-side paths */
