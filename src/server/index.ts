@@ -164,6 +164,9 @@ export async function startServer(options: {
   config?: string;
   profile?: string;
 }) {
+  // Tunnel always enabled — cloudflared shares the server publicly
+  options.share = true;
+
   // Load config
   configService.load(options.config);
   const port = parseInt(options.port ?? String(configService.get("port")), 10);

@@ -10,7 +10,7 @@ export function registerAutoStartCommands(program: Command): void {
     .command("enable")
     .description("Register PPM to start automatically on boot")
     .option("-p, --port <port>", "Override port")
-    .option("-s, --share", "Enable Cloudflare tunnel on boot")
+    .option("-s, --share", "(deprecated) Tunnel is now always enabled")
     .option("-c, --config <path>", "Config file path")
     .option("--profile <name>", "DB profile name")
     .action(async (options) => {

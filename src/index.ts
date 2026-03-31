@@ -16,7 +16,7 @@ program
   .command("start")
   .description("Start the PPM server (background by default)")
   .option("-p, --port <port>", "Port to listen on")
-  .option("-s, --share", "Share via public URL (Cloudflare tunnel)")
+  .option("-s, --share", "(deprecated) Tunnel is now always enabled")
   .option("-c, --config <path>", "Path to config file (YAML import into DB)")
   .option("--profile <name>", "DB profile name (e.g. 'dev' → ppm.dev.db)")
   .action(async (options) => {
