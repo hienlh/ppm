@@ -9,7 +9,7 @@ const RESTARTING_FLAG = resolve(PPM_DIR, ".restarting");
 const RESTART_RESULT = resolve(PPM_DIR, ".restart-result");
 
 /** Restart only the server process, keeping the tunnel alive */
-export async function restartServer(options: { config?: string }) {
+export async function restartServer(options: { config?: string; force?: boolean }) {
   // Ignore SIGHUP so this process survives when PPM terminal dies
   process.on("SIGHUP", () => {});
 
@@ -31,6 +31,14 @@ export async function restartServer(options: { config?: string }) {
   if (supervisorPid) {
     try { process.kill(supervisorPid, 0); } catch {
       console.log("Supervisor not running. Use 'ppm stop && ppm start' instead.");
+      process.exit(1);
+    }
+
+    // Check if supervisor is paused — require --force to resume
+    const state = status.state as string | undefined;
+    if (state === "paused" && !options.force) {
+      console.log("\n  Server is paused (crashed too many times).");
+      console.log("  Use 'ppm restart --force' to resume.\n");
       process.exit(1);
     }
 

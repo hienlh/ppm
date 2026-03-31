@@ -37,6 +37,24 @@ let tunnelChild: Subprocess | null = null;
 let tunnelUrl: string | null = null;
 let shuttingDown = false;
 
+type SupervisorState = "running" | "paused" | "upgrading";
+let supervisorState: SupervisorState = "running";
+
+let resumeResolve: (() => void) | null = null;
+
+function waitForResume(): Promise<void> {
+  return new Promise((resolve) => {
+    resumeResolve = resolve;
+  });
+}
+
+function triggerResume(): void {
+  if (resumeResolve) {
+    resumeResolve();
+    resumeResolve = null;
+  }
+}
+
 let serverRestarts = 0;
 let lastServerCrash = 0;
 let tunnelRestarts = 0;
@@ -129,8 +147,25 @@ export async function spawnServer(
   serverRestarts++;
 
   if (serverRestarts > MAX_RESTARTS) {
-    log("FATAL", `Server exceeded ${MAX_RESTARTS} restarts, giving up`);
-    shutdown();
+    log("WARN", `Server exceeded ${MAX_RESTARTS} restarts, pausing`);
+    notifyStateChange("running", "paused", "max_restarts_exceeded");
+    supervisorState = "paused";
+    updateStatus({
+      state: "paused",
+      pid: null,
+      pausedAt: new Date().toISOString(),
+      pauseReason: "max_restarts",
+      lastCrashError: `exit ${exitCode}`,
+    });
+    // Wait for resume signal — supervisor stays alive
+    await waitForResume();
+    // Resumed — reset and respawn
+    notifyStateChange("paused", "running", "user_resume");
+    supervisorState = "running";
+    serverRestarts = 0;
+    updateStatus({ state: "running", pausedAt: null, pauseReason: null });
+    log("INFO", "Resuming server after pause");
+    if (!shuttingDown) return spawnServer(serverArgs, logFd);
     return;
   }
 
@@ -189,12 +224,7 @@ async function syncUrlToCloud(url: string) {
   } catch {}
 }
 
-function startCloudHeartbeat(url: string) {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => {
-    if (tunnelUrl) syncUrlToCloud(tunnelUrl);
-  }, 5 * 60 * 1000);
-}
+// HTTP heartbeat removed — WS is the sole heartbeat mechanism (Phase 4)
 
 export async function spawnTunnel(port: number): Promise<void> {
   let bin: string;
@@ -230,9 +260,8 @@ export async function spawnTunnel(port: number): Promise<void> {
   updateStatus({ shareUrl: tunnelUrl, tunnelPid: tunnelChild.pid });
   log("INFO", `Tunnel ready: ${tunnelUrl} (PID: ${tunnelChild.pid})`);
 
-  // Sync new URL to cloud immediately + start periodic heartbeat
+  // One-time sync of tunnel URL to cloud (WS handles periodic heartbeat)
   await syncUrlToCloud(tunnelUrl);
-  startCloudHeartbeat(tunnelUrl);
 
   const exitCode = await tunnelChild.exited;
   tunnelChild = null;
@@ -330,6 +359,9 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
   try {
     // Prevent spawnServer crash-restart loop from respawning killed children
     shuttingDown = true;
+    notifyStateChange(supervisorState, "upgrading", "self_replace");
+    supervisorState = "upgrading";
+    updateStatus({ state: "upgrading" });
 
     // Kill server + tunnel children FIRST to free the port for the new supervisor
     log("INFO", "Stopping server and tunnel before spawning new supervisor");
@@ -372,11 +404,141 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     log("ERROR", "Self-replace timeout: new supervisor did not start");
     try { child.kill(); } catch {}
     shuttingDown = false;
+    notifyStateChange("upgrading", "running", "upgrade_failed");
+    supervisorState = "running";
+    updateStatus({ state: "running" });
     return { success: false, error: "New supervisor failed to start within 30s" };
   } catch (e) {
     log("ERROR", `Self-replace error: ${e}`);
     shuttingDown = false;
+    notifyStateChange("upgrading", "running", "upgrade_failed");
+    supervisorState = "running";
+    updateStatus({ state: "running" });
     return { success: false, error: (e as Error).message };
+  }
+}
+
+// ─── Cloud WS integration ─────────────────────────────────────────────
+
+/** Notify Cloud of supervisor state change via WS */
+async function notifyStateChange(from: string, to: string, reason: string) {
+  try {
+    const { send, isConnected } = await import("./cloud-ws.service.ts");
+    if (isConnected()) {
+      send({
+        type: "state_change",
+        from,
+        to,
+        reason,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  } catch {}
+}
+
+/** Connect supervisor to Cloud via WebSocket (if device is linked) */
+async function connectCloud(opts: { port: number }, serverArgs: string[], logFd: number) {
+  try {
+    const { getCloudDevice } = await import("./cloud.service.ts");
+    const device = getCloudDevice();
+    if (!device) return; // not linked to cloud
+
+    const { connect, onCommand } = await import("./cloud-ws.service.ts");
+    const { VERSION } = await import("../version.ts");
+    const startTime = Date.now();
+
+    connect({
+      cloudUrl: device.cloud_url,
+      deviceId: device.device_id,
+      secretKey: device.secret_key,
+      heartbeatFn: () => ({
+        type: "heartbeat" as const,
+        tunnelUrl,
+        state: supervisorState,
+        appVersion: VERSION,
+        serverPid: serverChild?.pid ?? null,
+        uptime: Math.floor((Date.now() - startTime) / 1000),
+        timestamp: new Date().toISOString(),
+      }),
+    });
+
+    // Handle commands from Cloud
+    onCommand(async (cmd) => {
+      const { send } = await import("./cloud-ws.service.ts");
+      const sendResult = (success: boolean, error?: string, data?: Record<string, unknown>) => {
+        send({
+          type: "command_result",
+          id: cmd.id,
+          success,
+          error,
+          data,
+          timestamp: new Date().toISOString(),
+        });
+      };
+
+      log("INFO", `Cloud command received: ${cmd.action}`);
+
+      switch (cmd.action) {
+        case "restart":
+          if (serverChild) {
+            serverRestartRequested = true;
+            try { serverChild.kill(); } catch {}
+            sendResult(true);
+          } else if (supervisorState === "paused") {
+            triggerResume();
+            sendResult(true);
+          } else {
+            sendResult(false, "No server child to restart");
+          }
+          break;
+
+        case "resume":
+          if (supervisorState === "paused") {
+            triggerResume();
+            sendResult(true);
+          } else {
+            sendResult(false, "Not in paused state");
+          }
+          break;
+
+        case "stop":
+          sendResult(true);
+          // Delay exit to allow WS buffer to flush
+          setTimeout(() => {
+            shutdown();
+            process.exit(0);
+          }, 500);
+          break;
+
+        case "upgrade":
+          // Send result BEFORE selfReplace (which exits on success)
+          sendResult(true, undefined, { status: "upgrading" });
+          await new Promise(r => setTimeout(r, 300));
+          const result = await selfReplace();
+          // Only reaches here on failure — selfReplace exits on success
+          if (!result.success) {
+            sendResult(false, result.error);
+            if (!serverChild && !shuttingDown) {
+              spawnServer(serverArgs, logFd);
+            }
+          }
+          break;
+
+        case "status":
+          sendResult(true, undefined, {
+            state: supervisorState,
+            serverPid: serverChild?.pid ?? null,
+            tunnelUrl,
+            serverRestarts,
+          });
+          break;
+
+        default:
+          sendResult(false, `Unknown action: ${cmd.action}`);
+      }
+    });
+  } catch (e) {
+    log("WARN", `Cloud WS setup failed: ${e}`);
   }
 }
 
@@ -385,6 +547,14 @@ export function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   log("INFO", "Supervisor shutting down");
+
+  // Unblock if paused
+  triggerResume();
+
+  // Disconnect Cloud WS
+  import("./cloud-ws.service.ts")
+    .then(({ disconnect }) => disconnect())
+    .catch(() => {});
 
   if (healthTimer) clearInterval(healthTimer);
   if (tunnelProbeTimer) clearInterval(tunnelProbeTimer);
@@ -414,7 +584,10 @@ export async function runSupervisor(opts: {
 
   // Write supervisor PID + clear stale availableVersion from previous run
   writeFileSync(PID_FILE, String(process.pid));
-  updateStatus({ supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null });
+  updateStatus({
+    supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
+    state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,
+  });
 
   // Build __serve__ args
   const serverArgs = [
@@ -428,8 +601,13 @@ export async function runSupervisor(opts: {
   process.on("SIGTERM", () => { shutdown(); process.exit(0); });
   process.on("SIGINT", () => { shutdown(); process.exit(0); });
 
-  // SIGUSR2 = graceful server restart (tunnel stays alive)
+  // SIGUSR2 = graceful server restart (tunnel stays alive) or resume from paused
   process.on("SIGUSR2", () => {
+    if (supervisorState === "paused") {
+      log("INFO", "SIGUSR2 received while paused, resuming server");
+      triggerResume();
+      return;
+    }
     log("INFO", "SIGUSR2 received, restarting server only");
     if (serverChild) {
       serverRestartRequested = true; // flag so spawnServer skips backoff
@@ -457,6 +635,9 @@ export async function runSupervisor(opts: {
     checkAvailableVersion();
     upgradeCheckTimer = setInterval(checkAvailableVersion, UPGRADE_CHECK_INTERVAL_MS);
   }, UPGRADE_SKIP_INITIAL_MS);
+
+  // Connect to Cloud via WebSocket (if device is linked)
+  connectCloud(opts, serverArgs, logFd);
 
   // Spawn server + tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];

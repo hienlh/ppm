@@ -15,6 +15,10 @@ interface DaemonStatus {
   tunnelAlive: boolean;
   supervisorPid: number | null;
   supervisorAlive: boolean;
+  state: string | null;
+  pausedAt: string | null;
+  pauseReason: string | null;
+  lastCrashError: string | null;
 }
 
 function isAlive(pid: number): boolean {
@@ -26,6 +30,7 @@ function getDaemonStatus(): DaemonStatus {
     running: false, pid: null, port: null, host: null,
     shareUrl: null, tunnelPid: null, tunnelAlive: false,
     supervisorPid: null, supervisorAlive: false,
+    state: null, pausedAt: null, pauseReason: null, lastCrashError: null,
   };
 
   if (existsSync(STATUS_FILE)) {
@@ -46,6 +51,10 @@ function getDaemonStatus(): DaemonStatus {
         tunnelAlive,
         supervisorPid,
         supervisorAlive,
+        state: (data.state as string) ?? null,
+        pausedAt: (data.pausedAt as string) ?? null,
+        pauseReason: (data.pauseReason as string) ?? null,
+        lastCrashError: (data.lastCrashError as string) ?? null,
       };
     } catch { return dead; }
   }
@@ -160,6 +169,16 @@ export async function showStatus(options: { json?: boolean; all?: boolean }) {
   console.log(`\n  PPM daemon status\n`);
   if (status.supervisorPid) {
     console.log(`  Supervisor: ${status.supervisorAlive ? "running" : "stopped"} (PID: ${status.supervisorPid})`);
+  }
+  // Show state info
+  const state = status.state ?? (status.running ? "running" : "stopped");
+  if (state === "paused") {
+    console.log(`  State:   PAUSED — ${status.pauseReason ?? "unknown reason"}`);
+    if (status.pausedAt) console.log(`  Paused:  ${status.pausedAt}`);
+    if (status.lastCrashError) console.log(`  Error:   ${status.lastCrashError}`);
+    console.log(`\n  Resume:  ppm restart --force`);
+  } else if (state === "upgrading") {
+    console.log(`  State:   UPGRADING`);
   }
   console.log(`  Server:  ${status.running ? "running" : "stopped"} (PID: ${status.pid})`);
   if (status.port) console.log(`  Local:   http://localhost:${status.port}/`);
