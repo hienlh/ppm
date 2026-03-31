@@ -1,6 +1,6 @@
 {
   "name": "@hienlh/ppm",
-  "version": "0.8.72",
+  "version": "0.8.73",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "author": "hienlh",
   "license": "MIT",
@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "concurrently \"bun run dev:server\" \"bun run dev:web\"",
-    "dev:server": "bun run --hot src/index.ts start --profile dev -f",
+    "dev:server": "bun run --hot src/server/index.ts __serve__ 8081 0.0.0.0 '' dev",
     "dev:web": "bun run vite --config vite.config.ts",
     "build:web": "bun run vite build --config vite.config.ts",
     "build": "bun run build:web && bun build src/index.ts --compile --outfile dist/ppm",

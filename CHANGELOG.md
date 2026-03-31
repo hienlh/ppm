@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.73] - 2026-04-01
+
+### Fixed
+- **Cloud WS reconnect loop**: Stale WebSocket closure handlers from replaced connections no longer reset module state — prevents infinite reconnect cycle after upgrade/restart
+
 ## [0.8.72] - 2026-03-31
 
 ### Added
