@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.71] - 2026-03-31
+
+### Added
+- **Pin/Save sessions**: Pin important chat sessions to always appear at the top of history, empty state, and session picker — persisted in DB across devices
+- Mobile-friendly: pin/rename/delete buttons always visible on mobile, hover-reveal on desktop
+
+### Fixed
+- Fixed duplicate import in chat routes
+- Fixed session action buttons misaligned when date column has variable width
+
 ## [0.8.70] - 2026-03-31
 
 ### Added
