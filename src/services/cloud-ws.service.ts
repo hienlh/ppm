@@ -18,6 +18,7 @@ interface HeartbeatMsg extends WsMessage {
   tunnelUrl: string | null;
   state: string;
   appVersion: string;
+  availableVersion: string | null;
   serverPid: number | null;
   uptime: number;
 }

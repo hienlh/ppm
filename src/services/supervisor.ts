@@ -456,6 +456,7 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
         tunnelUrl,
         state: supervisorState,
         appVersion: VERSION,
+        availableVersion: (readStatus().availableVersion as string) || null,
         serverPid: serverChild?.pid ?? null,
         uptime: Math.floor((Date.now() - startTime) / 1000),
         timestamp: new Date().toISOString(),
