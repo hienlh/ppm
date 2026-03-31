@@ -8,8 +8,7 @@ import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sd
 import { listSlashItems } from "../../services/slash-items.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
-import { getSessionMapping } from "../../services/db.service.ts";
-import { getSessionMapping, setSessionTitle } from "../../services/db.service.ts";
+import { getSessionMapping, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -64,7 +63,16 @@ chatRoutes.get("/sessions", async (c) => {
     const projectPath = c.get("projectPath");
     const providerId = c.req.query("providerId");
     const sessions = await chatService.listSessions(providerId, projectPath);
-    return c.json(ok(sessions));
+    // Enrich with pin status
+    const pinnedIds = getPinnedSessionIds();
+    const enriched = sessions.map((s) => ({ ...s, pinned: pinnedIds.has(s.id) }));
+    // Sort: pinned first (by pinned_at implicit via Set order), then unpinned by createdAt
+    enriched.sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+    return c.json(ok(enriched));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -129,6 +137,28 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const session = chatService.getSession(id);
     if (session) session.title = title;
     return c.json(ok({ id, title }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PUT /chat/sessions/:id/pin — pin a session */
+chatRoutes.put("/sessions/:id/pin", (c) => {
+  try {
+    const id = c.req.param("id");
+    pinSession(id);
+    return c.json(ok({ id, pinned: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** DELETE /chat/sessions/:id/pin — unpin a session */
+chatRoutes.delete("/sessions/:id/pin", (c) => {
+  try {
+    const id = c.req.param("id");
+    unpinSession(id);
+    return c.json(ok({ id, pinned: false }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

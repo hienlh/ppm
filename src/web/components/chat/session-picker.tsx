@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { api, projectUrl } from "@/lib/api-client";
-import { Plus, Trash2, MessageSquare, ChevronDown } from "lucide-react";
+import { Plus, Trash2, MessageSquare, ChevronDown, Pin, PinOff } from "lucide-react";
 import type { SessionInfo } from "../../../types/chat";
 
 interface SessionPickerProps {
@@ -57,6 +57,75 @@ export function SessionPicker({
     }
   };
 
+  const handleTogglePin = async (e: React.MouseEvent, session: SessionInfo) => {
+    e.stopPropagation();
+    if (!projectName) return;
+    const url = `${projectUrl(projectName)}/chat/sessions/${session.id}/pin`;
+    try {
+      if (session.pinned) {
+        await api.del(url);
+      } else {
+        await api.put(url);
+      }
+      setSessions((prev) => {
+        const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
+        return updated.sort((a, b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+      });
+    } catch {
+      // Silently fail
+    }
+  };
+
+  function renderSessionRow(session: SessionInfo) {
+    return (
+      <div
+        key={session.id}
+        onClick={() => {
+          onSelectSession(session);
+          setOpen(false);
+        }}
+        className={`group flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-surface-elevated transition-colors ${
+          session.id === currentSessionId
+            ? "bg-surface-elevated text-text-primary"
+            : "text-text-secondary"
+        }`}
+      >
+        <div className="flex flex-col min-w-0 flex-1">
+          <span className="truncate text-xs font-medium">
+            {session.title}
+          </span>
+          <span className="text-xs text-text-subtle">
+            {new Date(session.createdAt).toLocaleDateString()}
+          </span>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            onClick={(e) => handleTogglePin(e, session)}
+            className={`p-1 rounded transition-colors ${
+              session.pinned
+                ? "text-primary hover:text-primary/70"
+                : "text-text-subtle md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary"
+            }`}
+            aria-label={session.pinned ? "Unpin session" : "Pin session"}
+          >
+            {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+          </button>
+          <button
+            onClick={(e) => handleDelete(e, session)}
+            className="p-1 rounded hover:bg-red-500/20 text-text-subtle hover:text-red-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
+            aria-label="Delete session"
+          >
+            <Trash2 className="size-3" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="relative">
       <button
@@ -100,36 +169,14 @@ export function SessionPicker({
                   No sessions yet
                 </p>
               )}
-              {sessions.map((session) => (
-                <div
-                  key={session.id}
-                  onClick={() => {
-                    onSelectSession(session);
-                    setOpen(false);
-                  }}
-                  className={`flex items-center justify-between px-3 py-2 text-sm cursor-pointer hover:bg-surface-elevated transition-colors ${
-                    session.id === currentSessionId
-                      ? "bg-surface-elevated text-text-primary"
-                      : "text-text-secondary"
-                  }`}
-                >
-                  <div className="flex flex-col min-w-0 flex-1">
-                    <span className="truncate text-xs font-medium">
-                      {session.title}
-                    </span>
-                    <span className="text-xs text-text-subtle">
-                      {new Date(session.createdAt).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <button
-                    onClick={(e) => handleDelete(e, session)}
-                    className="p-1 rounded hover:bg-red-500/20 text-text-subtle hover:text-red-400 transition-colors shrink-0"
-                    aria-label="Delete session"
-                  >
-                    <Trash2 className="size-3" />
-                  </button>
-                </div>
-              ))}
+              {sessions.filter((s) => s.pinned).length > 0 && (
+                <p className="px-3 py-1 text-[10px] text-text-subtle uppercase tracking-wider bg-surface">Pinned</p>
+              )}
+              {sessions.filter((s) => s.pinned).map((session) => renderSessionRow(session))}
+              {sessions.filter((s) => s.pinned).length > 0 && sessions.filter((s) => !s.pinned).length > 0 && (
+                <div className="border-t border-border" />
+              )}
+              {sessions.filter((s) => !s.pinned).map((session) => renderSessionRow(session))}
             </div>
           </div>
         </>

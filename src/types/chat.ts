@@ -42,6 +42,7 @@ export interface SessionInfo {
   projectName?: string;
   createdAt: string;
   updatedAt?: string;
+  pinned?: boolean;
 }
 
 export interface LimitBucket {

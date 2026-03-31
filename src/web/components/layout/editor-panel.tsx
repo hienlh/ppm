@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState, useCallback } from "react";
-import { Loader2, Terminal, MessageSquare, GitBranch } from "lucide-react";
+import { Loader2, Terminal, MessageSquare, GitBranch, Pin, PinOff } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import type { TabType } from "@/stores/tab-store";
@@ -116,6 +116,29 @@ function EmptyPanel({ panelId }: { panelId: string }) {
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
 
+  const togglePin = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
+    e.stopPropagation();
+    if (!activeProject?.name) return;
+    const url = `${projectUrl(activeProject.name)}/chat/sessions/${session.id}/pin`;
+    try {
+      if (session.pinned) {
+        await api.del(url);
+      } else {
+        await api.put(url);
+      }
+      setSessions((prev) => {
+        const updated = prev.map((s) => s.id === session.id ? { ...s, pinned: !s.pinned } : s);
+        return updated.sort((a, b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+      });
+    } catch {
+      // silently ignore
+    }
+  }, [activeProject?.name]);
+
   function openTab(type: TabType) {
     const needsProject = type !== "settings";
     const metadata = needsProject && activeProject ? { projectName: activeProject.name } : undefined;
@@ -135,6 +158,42 @@ function EmptyPanel({ panelId }: { panelId: string }) {
         closable: true,
       },
       panelId,
+    );
+  }
+
+  const pinnedSessions = sessions.filter((s) => s.pinned);
+  const recentSessions = sessions.filter((s) => !s.pinned).slice(0, MAX_RECENT_SESSIONS);
+
+  function renderSessionRow(session: SessionInfo) {
+    return (
+      <button
+        key={session.id}
+        onClick={() => openSession(session)}
+        className="group flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-elevated active:bg-surface-elevated transition-colors border-b border-border/50 last:border-0"
+      >
+        <MessageSquare className="size-3.5 shrink-0 text-text-subtle" />
+        <span className="flex-1 min-w-0 text-xs font-medium truncate text-text-primary">
+          {session.title || "Untitled"}
+        </span>
+        {session.updatedAt && (
+          <span className="text-[10px] text-text-subtle shrink-0">
+            {formatRelativeDate(session.updatedAt)}
+          </span>
+        )}
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => togglePin(e, session)}
+          className={`p-1 rounded transition-colors shrink-0 ${
+            session.pinned
+              ? "text-primary hover:text-primary/70"
+              : "text-text-subtle md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary"
+          }`}
+          aria-label={session.pinned ? "Unpin session" : "Pin session"}
+        >
+          {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+        </span>
+      </button>
     );
   }
 
@@ -158,27 +217,20 @@ function EmptyPanel({ panelId }: { panelId: string }) {
           })}
         </div>
 
-        {activeProject && !loadingSessions && sessions.length > 0 && (
+        {activeProject && !loadingSessions && pinnedSessions.length > 0 && (
+          <div className="flex flex-col gap-2 w-full max-w-sm">
+            <p className="text-xs text-text-subtle text-center">Pinned</p>
+            <div className="w-full rounded-md border border-border bg-surface overflow-hidden">
+              {pinnedSessions.map(renderSessionRow)}
+            </div>
+          </div>
+        )}
+
+        {activeProject && !loadingSessions && recentSessions.length > 0 && (
           <div className="flex flex-col gap-2 w-full max-w-sm">
             <p className="text-xs text-text-subtle text-center">Recent chats</p>
             <div className="w-full rounded-md border border-border bg-surface overflow-hidden">
-              {sessions.map((session) => (
-                <button
-                  key={session.id}
-                  onClick={() => openSession(session)}
-                  className="flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-elevated active:bg-surface-elevated transition-colors border-b border-border/50 last:border-0"
-                >
-                  <MessageSquare className="size-3.5 shrink-0 text-text-subtle" />
-                  <span className="flex-1 min-w-0 text-xs font-medium truncate text-text-primary">
-                    {session.title || "Untitled"}
-                  </span>
-                  {session.updatedAt && (
-                    <span className="text-[10px] text-text-subtle shrink-0">
-                      {formatRelativeDate(session.updatedAt)}
-                    </span>
-                  )}
-                </button>
-              ))}
+              {recentSessions.map(renderSessionRow)}
             </div>
           </div>
         )}
