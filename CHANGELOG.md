@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.76] - 2026-04-01
+
+### Fixed
+- **SDK error messages**: 500/5xx server errors and 429 rate-limits now show correct user-facing messages instead of confusing "unknown API error" with debug instructions
+- **Session title on resume**: Prioritize DB-stored title when resuming a chat session
+
 ## [0.8.75] - 2026-04-01
 
 ### Changed
