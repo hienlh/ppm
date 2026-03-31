@@ -140,8 +140,10 @@ function doConnect(): void {
   sock.onopen = () => {
     if (ws !== sock) return; // stale — newer connection replaced us
     reconnecting = false;
+    reconnectAttempt = 0;
     log("INFO", "Cloud WS connected, sending auth");
 
+    // Send auth as first message — server must process this before any other msg
     sock.send(JSON.stringify({
       type: "auth",
       deviceId,
@@ -150,23 +152,28 @@ function doConnect(): void {
       version: 1,
     }));
 
-    connected = true;
-    reconnectAttempt = 0;
+    // Delay setting connected + sending heartbeat to let server process auth.
+    // Server's authenticateDevice() is async (DB lookup), so messages sent
+    // immediately after auth arrive before authenticated=true → 4002 reject.
+    setTimeout(() => {
+      if (ws !== sock) return; // replaced during delay
+      connected = true;
 
-    // Flush queued messages
-    while (outboundQueue.length > 0 && connected) {
-      const msg = outboundQueue.shift()!;
-      sock.send(JSON.stringify(msg));
-    }
+      // Flush queued messages
+      while (outboundQueue.length > 0 && connected) {
+        const msg = outboundQueue.shift()!;
+        sock.send(JSON.stringify(msg));
+      }
 
-    // Send immediate heartbeat
-    if (getHeartbeatData) send(getHeartbeatData());
+      // Send immediate heartbeat
+      if (getHeartbeatData) send(getHeartbeatData());
 
-    // Start periodic heartbeat
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-    heartbeatTimer = setInterval(() => {
-      if (getHeartbeatData && connected) send(getHeartbeatData());
-    }, HEARTBEAT_INTERVAL_MS);
+      // Start periodic heartbeat
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = setInterval(() => {
+        if (getHeartbeatData && connected) send(getHeartbeatData());
+      }, HEARTBEAT_INTERVAL_MS);
+    }, 500); // 500ms for DB auth round-trip
   };
 
   sock.onmessage = (event) => {
