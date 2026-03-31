@@ -13,7 +13,7 @@ import type {
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionMapping, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
+import { getSessionMapping, setSessionMapping, getSessionTitles, getSessionTitle } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
@@ -176,10 +176,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         (s) => s.sessionId === sessionId || s.sessionId === mappedSdkId,
       );
       if (found) {
+        const dbTitle = getSessionTitle(found.sessionId);
         const meta: Session = {
           id: sessionId,
           providerId: this.id,
-          title: found.customTitle ?? found.summary ?? "Resumed Chat",
+          title: dbTitle ?? found.customTitle ?? found.summary ?? "Resumed Chat",
           createdAt: new Date(found.lastModified).toISOString(),
         };
         this.activeSessions.set(sessionId, meta);
@@ -631,13 +632,21 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
           let assistantError = (msg as any).error as string | undefined;
 
-          // SDK sometimes returns auth errors as text content without setting error field.
-          // Detect 401 pattern in text: "Failed to authenticate. API Error: 401 ..."
-          if (!assistantError) {
+          // SDK sometimes returns errors as text content without setting a specific error field.
+          // Detect known HTTP error patterns in text and reclassify accordingly.
+          if (!assistantError || assistantError === "unknown") {
             const textContent = this.extractAssistantText(msg);
-            if (textContent && /API Error:\s*401\b.*authentication_error/i.test(textContent)) {
-              assistantError = "authentication_failed";
-              console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
+            if (textContent) {
+              if (/API Error:\s*401\b.*authentication_error/i.test(textContent)) {
+                assistantError = "authentication_failed";
+                console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
+              } else if (/API Error:\s*5\d{2}\b/i.test(textContent) || /internal server error/i.test(textContent)) {
+                assistantError = "server_error";
+                console.warn(`[sdk] session=${sessionId} detected 5xx in assistant text content — treating as server error`);
+              } else if (/API Error:\s*429\b/i.test(textContent) || /rate.?limit/i.test(textContent)) {
+                assistantError = "rate_limit";
+                console.warn(`[sdk] session=${sessionId} detected 429/rate-limit in assistant text content — treating as rate limit`);
+              }
             }
           }
 
