@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.70] - 2026-03-31
+
+### Added
+- **Recent chats on empty state**: When no tabs are open, show up to 5 recent chat sessions for quick access — click to reopen directly
+
 ## [0.8.69] - 2026-03-31
 
 ### Fixed
@@ -9,7 +14,6 @@
 ### Added
 - **Account retry notification**: FE shows inline status when auth retry happens (e.g. "↻ Token refreshed — retrying with **Alex**...")
 - **Session debug button**: Bug icon in chat toolbar copies session IDs + JSONL path to clipboard for quick debugging
-- **Recent chats on empty state**: When no tabs are open, show up to 5 recent chat sessions for quick access — click to reopen directly
 
 ## [0.8.68] - 2026-03-31
 
