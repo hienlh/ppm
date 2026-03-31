@@ -174,7 +174,8 @@ function doConnect(): void {
     } catch {} // ignore malformed
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
+    log("WARN", `Cloud WS closed: code=${event.code} reason=${event.reason || "(none)"}`);
     connected = false;
     reconnecting = false;
     ws = null;
@@ -182,7 +183,8 @@ function doConnect(): void {
     if (shouldConnect) scheduleReconnect();
   };
 
-  ws.onerror = () => {
+  ws.onerror = (event) => {
+    log("ERROR", `Cloud WS error: ${(event as any)?.message || "unknown"}`);
     // onclose will fire after onerror — reconnect handled there
   };
 }
