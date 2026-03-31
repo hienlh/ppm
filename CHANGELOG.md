@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.72] - 2026-03-31
+
+### Added
+- **Supervisor state machine**: States `running → paused → upgrading` with promise-based wait/resume. Supervisor pauses after 10 consecutive crashes, resumes via `ppm restart --force` or SIGUSR2
+- **Cloud WebSocket client**: Persistent WS connection from supervisor to PPM Cloud replacing HTTP heartbeat — auto-reconnect with exponential backoff + jitter, 60s heartbeat, 50-message offline queue
+- **Remote commands via Cloud**: Supervisor handles restart/stop/upgrade/resume/status commands received from Cloud WS
+- **`ppm restart --force`**: Resume a paused supervisor (crashed too many times)
+- **Status CLI state display**: `ppm status` shows paused/upgrading state with reason, timestamp, and last crash error
+
+### Changed
+- **Foreground mode removed**: `ppm start` no longer accepts `-f`/`--foreground` — always runs as supervised daemon
+- **Heartbeat via WS**: Cloud heartbeat migrated from HTTP polling (5min) to WebSocket (60s), includes `appVersion`, `serverPid`, `uptime`
+
+### Fixed
+- **Upgrade failure recovery**: `selfReplace` failure now correctly resets state from "upgrading" back to "running" and notifies Cloud
+
 ## [0.8.71] - 2026-03-31
 
 ### Added
