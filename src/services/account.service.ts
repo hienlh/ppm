@@ -69,9 +69,14 @@ const OAUTH_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token";
 const OAUTH_SCOPE = "org:create_api_key user:profile user:inference";
 const OAUTH_PLATFORM_REDIRECT = "https://platform.claude.com/oauth/code/callback";
 
+// Survive Bun --hot reloads: persist timer ref across module re-evaluations
+const ACCT_HOT_KEY = "__PPM_ACCT_REFRESH__" as const;
+const acctHotState = ((globalThis as any)[ACCT_HOT_KEY] ??= {
+  refreshTimer: null as ReturnType<typeof setInterval> | null,
+}) as { refreshTimer: ReturnType<typeof setInterval> | null };
+
 class AccountService {
   private pendingStates = new Map<string, { verifier: string; createdAt: number }>();
-  private refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   private toAccount(row: AccountRow): Account {
     let profileData: OAuthProfileData | null = null;
@@ -689,7 +694,7 @@ class AccountService {
   // ---------------------------------------------------------------------------
 
   startAutoRefresh(): void {
-    if (this.refreshTimer) return;
+    if (acctHotState.refreshTimer) return;
     const CHECK_INTERVAL_MS = 5 * 60_000;
     const REFRESH_BUFFER_S = 5 * 60;
 
@@ -729,20 +734,20 @@ class AccountService {
     // Run immediately on startup, then every 5 minutes
     refreshExpiring().catch(() => {});
     cleanupExpiredTemporary();
-    this.refreshTimer = setInterval(() => {
+    acctHotState.refreshTimer = setInterval(() => {
       refreshExpiring().catch(() => {});
       cleanupExpiredTemporary();
     }, CHECK_INTERVAL_MS);
 
-    if (typeof this.refreshTimer === "object" && this.refreshTimer !== null && "unref" in this.refreshTimer) {
-      (this.refreshTimer as NodeJS.Timeout).unref();
+    if (typeof acctHotState.refreshTimer === "object" && acctHotState.refreshTimer !== null && "unref" in acctHotState.refreshTimer) {
+      (acctHotState.refreshTimer as NodeJS.Timeout).unref();
     }
   }
 
   stopAutoRefresh(): void {
-    if (this.refreshTimer) {
-      clearInterval(this.refreshTimer);
-      this.refreshTimer = null;
+    if (acctHotState.refreshTimer) {
+      clearInterval(acctHotState.refreshTimer);
+      acctHotState.refreshTimer = null;
     }
   }
 }

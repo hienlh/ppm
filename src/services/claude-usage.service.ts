@@ -47,14 +47,19 @@ const POLL_INTERVAL = 300_000; // 5min
 const ACCOUNT_STAGGER_MS = 1_000; // 1s between accounts
 
 let inMemoryCostUsd = 0;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+// Survive Bun --hot reloads: module-level vars reset on reload, globalThis persists.
+// Without this, each hot-reload creates a NEW polling timer without clearing the old one,
+// leading to N concurrent timers after N reloads (observed: 221 timers → 38k 429 errors/day).
+const HOT_KEY = "__PPM_USAGE_POLL__" as const;
+const hotState = ((globalThis as any)[HOT_KEY] ??= {
+  pollTimer: null as ReturnType<typeof setTimeout> | null,
+  inflightPoll: null as Promise<void> | null,
+}) as { pollTimer: ReturnType<typeof setTimeout> | null; inflightPoll: Promise<void> | null };
 
 // Per-token cooldown map: token prefix → earliest allowed fetch time
 const tokenCooldowns = new Map<string, number>();
 const MIN_COOLDOWN_MS = 60_000; // floor: at least 60s cooldown on 429
-
-// Dedup: if a poll is already in-flight, reuse the same promise
-let inflightPoll: Promise<void> | null = null;
 
 // Legacy: Keychain token cache for users without accounts in DB
 let tokenCache: { token: string; timestamp: number } | null = null;
@@ -248,13 +253,13 @@ async function pollOnceInternal(): Promise<void> {
 
 /** Deduped: concurrent callers share a single in-flight fetch */
 async function pollOnce(): Promise<void> {
-  if (inflightPoll) return inflightPoll;
+  if (hotState.inflightPoll) return hotState.inflightPoll;
   const thisPoll = pollOnceInternal().finally(() => {
     // Only clear if still the current poll — prevents a stale .finally() from
     // clearing a newer poll after timeout handler force-nulled inflightPoll.
-    if (inflightPoll === thisPoll) inflightPoll = null;
+    if (hotState.inflightPoll === thisPoll) hotState.inflightPoll = null;
   });
-  inflightPoll = thisPoll;
+  hotState.inflightPoll = thisPoll;
   return thisPoll;
 }
 
@@ -314,10 +319,10 @@ export function getCachedUsage(): ClaudeUsage & { activeAccountId?: string; acti
 }
 
 export function startUsagePolling(): void {
-  if (pollTimer) return;
+  if (hotState.pollTimer) return;
   const POLL_TIMEOUT = 60_000; // max 60s per poll iteration
   const scheduleNext = () => {
-    pollTimer = setTimeout(async () => {
+    hotState.pollTimer = setTimeout(async () => {
       const timeout = new Promise<"timeout">(r => setTimeout(() => r("timeout"), POLL_TIMEOUT));
       const result = await Promise.race([
         pollOnce().then(() => "done" as const),
@@ -325,7 +330,7 @@ export function startUsagePolling(): void {
       ]).catch(() => "error" as const);
       // If the poll timed out, force-clear inflightPoll so next scheduled poll
       // starts a fresh fetch instead of reusing the stale hanging promise.
-      if (result === "timeout") inflightPoll = null;
+      if (result === "timeout") hotState.inflightPoll = null;
       scheduleNext();
     }, POLL_INTERVAL);
   };
@@ -333,7 +338,7 @@ export function startUsagePolling(): void {
 }
 
 export function stopUsagePolling(): void {
-  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  if (hotState.pollTimer) { clearTimeout(hotState.pollTimer); hotState.pollTimer = null; }
 }
 
 export function updateFromSdkEvent(_rateLimitType?: string, _utilization?: number, costUsd?: number): void {
@@ -348,8 +353,8 @@ export async function refreshUsageNow(): Promise<ClaudeUsage & { activeAccountId
 /** @internal Test-only: reset module-level state between tests */
 export function _resetForTesting(): void {
   inMemoryCostUsd = 0;
-  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  if (hotState.pollTimer) { clearTimeout(hotState.pollTimer); hotState.pollTimer = null; }
   tokenCooldowns.clear();
-  inflightPoll = null;
+  hotState.inflightPoll = null;
   tokenCache = null;
 }

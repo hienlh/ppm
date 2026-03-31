@@ -9,7 +9,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useTabStore } from "@/stores/tab-store";
 import { basename } from "@/lib/utils";
@@ -151,20 +150,16 @@ function SegmentDropdown({ segment, isLast, projectName, onFileClick }: SegmentD
           {segment.name}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="max-h-[300px] overflow-hidden p-0">
-        <ScrollArea className="max-h-[300px]">
-          <div className="p-1">
-            {sorted.map((node) => (
-              <NodeMenuItem
-                key={node.path}
-                node={node}
-                projectName={projectName}
-                activePath={segment.fullPath}
-                onFileClick={onFileClick}
-              />
-            ))}
-          </div>
-        </ScrollArea>
+      <DropdownMenuContent align="start" className="max-h-[300px] p-1">
+        {sorted.map((node) => (
+          <NodeMenuItem
+            key={node.path}
+            node={node}
+            projectName={projectName}
+            activePath={segment.fullPath}
+            onFileClick={onFileClick}
+          />
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -188,20 +183,16 @@ function NodeMenuItem({ node, projectName, activePath, onFileClick }: NodeMenuIt
           <Icon className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{node.name}</span>
         </DropdownMenuSubTrigger>
-        <DropdownMenuSubContent className="max-h-[300px] overflow-hidden p-0">
-          <ScrollArea className="max-h-[300px]">
-            <div className="p-1">
-              {sortNodes(node.children).map((child) => (
-                <NodeMenuItem
-                  key={child.path}
-                  node={child}
-                  projectName={projectName}
-                  activePath={activePath}
-                  onFileClick={onFileClick}
-                />
-              ))}
-            </div>
-          </ScrollArea>
+        <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto p-1">
+          {sortNodes(node.children).map((child) => (
+            <NodeMenuItem
+              key={child.path}
+              node={child}
+              projectName={projectName}
+              activePath={activePath}
+              onFileClick={onFileClick}
+            />
+          ))}
         </DropdownMenuSubContent>
       </DropdownMenuSub>
     );
