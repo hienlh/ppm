@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.0-beta.10] - 2026-03-31
+
+### Merged from main (0.8.69 → 0.8.72)
+- **Supervisor state machine**: States `running → paused → upgrading` with promise-based wait/resume
+- **Cloud WebSocket client**: Persistent WS connection replacing HTTP heartbeat — auto-reconnect with backoff
+- **Remote commands via Cloud**: Supervisor handles restart/stop/upgrade/resume/status via Cloud WS
+- **Pin/Save sessions**: Pin important chat sessions to top of history — persisted in DB across devices
+- **Editor breadcrumb scrolling**: Enable scrolling in breadcrumb dropdown menus
+
 ## [0.9.0-beta.9] - 2026-03-31
 
 ### Merged from main (0.8.68)
