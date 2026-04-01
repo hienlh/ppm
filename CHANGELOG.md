@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.80] - 2026-04-01
+
+### Added
+- **Cloud command ack**: Device sends `command_ack` immediately when receiving a cloud command, before processing — allows cloud to confirm receipt and update UI
+
 ## [0.8.79] - 2026-04-01
 
 ### Added

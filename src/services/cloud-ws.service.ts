@@ -30,6 +30,11 @@ interface StateChangeMsg extends WsMessage {
   reason: string;
 }
 
+interface CommandAckMsg extends WsMessage {
+  type: "command_ack";
+  id: string;
+}
+
 interface CommandResultMsg extends WsMessage {
   type: "command_result";
   id: string;
@@ -38,7 +43,7 @@ interface CommandResultMsg extends WsMessage {
   data?: Record<string, unknown>;
 }
 
-type OutboundMsg = HeartbeatMsg | StateChangeMsg | CommandResultMsg;
+type OutboundMsg = HeartbeatMsg | StateChangeMsg | CommandAckMsg | CommandResultMsg;
 
 interface CommandMsg extends WsMessage {
   type: "command";

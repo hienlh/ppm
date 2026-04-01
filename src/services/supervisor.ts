@@ -483,6 +483,13 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
 
       log("INFO", `Cloud command received: ${cmd.action}`);
 
+      // Send immediate ack so Cloud can update UI before processing
+      send({
+        type: "command_ack",
+        id: cmd.id,
+        timestamp: new Date().toISOString(),
+      });
+
       switch (cmd.action) {
         case "restart":
           if (serverChild) {
