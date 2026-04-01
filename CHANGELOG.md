@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.85] - 2026-04-01
+
+### Added
+- **Connection lost overlay**: Full-screen overlay when API unreachable for >15s — tunnel mode links to PPM Cloud for new URL, localhost mode shows restart hint
+
+### Fixed
+- **Double-Shift command palette**: Only triggers when Shift pressed alone — no longer fires during Shift+key combos (uppercase typing, shortcuts)
+
 ## [0.8.84] - 2026-04-01
 
 ### Fixed
