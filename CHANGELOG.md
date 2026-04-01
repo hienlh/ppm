@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.79] - 2026-04-01
+
+### Added
+- **Chat welcome screen**: New chat tabs now show pinned and recent sessions (same as empty panel) instead of a bare placeholder — quick access to continue previous conversations
+
 ## [0.8.78] - 2026-04-01
 
 ### Fixed
