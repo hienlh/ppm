@@ -437,5 +437,8 @@ if (process.argv.includes("__serve__")) {
   // Start background account token refresh in daemon child
   import("../services/account.service.ts").then(({ accountService }) => accountService.startAutoRefresh()).catch(() => {});
 
+  // Start background usage limit polling (every 5 min)
+  import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
+
   console.log(`Server child ready on port ${port}`);
 }
