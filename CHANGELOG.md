@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.83] - 2026-04-01
+
+### Fixed
+- **Account label desync**: Status bar now shows the actual streaming account label (real-time) instead of stale `lastPickedId` from usage polling — matches "via X" shown in chat messages when using multi-account round-robin
+
 ## [0.8.82] - 2026-04-01
 
 ### Added
