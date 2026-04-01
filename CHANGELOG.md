@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.82] - 2026-04-01
+
+### Added
+- **Thinking block auto-scroll**: Thinking content now auto-scrolls to bottom during streaming using `StickToBottom`
+- **Expandable recent sessions**: "Show more" / "Show less" button on chat welcome and empty panel — fetches up to 20 sessions, shows 5 initially
+
 ## [0.8.81] - 2026-04-01
 
 ### Fixed
