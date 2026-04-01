@@ -515,9 +515,18 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           }, 500);
           break;
 
-        case "upgrade":
-          // Send result BEFORE selfReplace (which exits on success)
-          sendResult(true, undefined, { status: "upgrading" });
+        case "upgrade": {
+          // Install new version FIRST (same as CLI / HTTP route)
+          const { applyUpgrade } = await import("./upgrade.service.ts");
+          sendResult(true, undefined, { status: "installing" });
+          await new Promise(r => setTimeout(r, 300));
+          const installResult = await applyUpgrade();
+          if (!installResult.success) {
+            sendResult(false, installResult.error);
+            break;
+          }
+          // New version installed — self-replace to pick it up
+          sendResult(true, undefined, { status: "upgrading", newVersion: installResult.newVersion });
           await new Promise(r => setTimeout(r, 300));
           const result = await selfReplace();
           // Only reaches here on failure — selfReplace exits on success
@@ -528,6 +537,7 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
             }
           }
           break;
+        }
 
         case "status":
           sendResult(true, undefined, {
@@ -653,6 +663,12 @@ export async function runSupervisor(opts: {
   }
 
   await Promise.all(promises);
+
+  // If upgrading, selfReplace handles process.exit — wait for it
+  if (supervisorState === "upgrading") {
+    log("INFO", "Server loop exited during upgrade, waiting for selfReplace to finish");
+    await new Promise(() => {}); // selfReplace will call process.exit()
+  }
 
   // If we get here, both loops exited (shutdown or max restarts)
   log("INFO", "Supervisor exiting");
