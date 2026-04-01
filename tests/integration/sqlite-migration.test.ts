@@ -227,9 +227,9 @@ describe("YAML → SQLite migration", () => {
     const testDb = openTestDb();
 
     const row = testDb.query("PRAGMA user_version").get() as { user_version: number };
-    expect(row.user_version).toBe(7);
+    expect(row.user_version).toBe(10);
 
-    // All tables should exist (v1–v7 migrations)
+    // All tables should exist (v1–v10 migrations)
     const tables = testDb.query(
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
     ).all() as { name: string }[];
@@ -244,6 +244,7 @@ describe("YAML → SQLite migration", () => {
     expect(names).toContain("connection_table_cache");
     expect(names).toContain("claude_limit_snapshots");
     expect(names).toContain("accounts");
+    expect(names).toContain("workspace_state");
 
     testDb.close();
     db.close();

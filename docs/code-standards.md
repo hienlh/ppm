@@ -745,3 +745,129 @@ if (options.share) {
 
 This keeps startup fast when features aren't used.
 
+---
+
+## Tab ID & URL Conventions (v0.8.77+)
+
+### Deterministic Tab IDs
+
+Tab IDs are derived from type + metadata, not random:
+
+```typescript
+// Format: "{type}:{identifier}" for most tabs, "{type}" for singletons
+editor:src/index.ts           // Editor tab with file path
+chat:claude/abc123            // Chat with provider/session ID
+terminal:1                    // Terminal tab index
+database:conn-1/users         // Database: connection ID / table
+git-graph                      // Singleton: no identifier
+settings                       // Singleton: no identifier
+
+// Derivation in panel-utils.ts
+export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): string {
+  switch (type) {
+    case "editor":
+      return `editor:${metadata?.filePath ?? "untitled"}`;
+    case "chat": {
+      const provider = metadata?.providerId ?? "default";
+      return `chat:${provider}/${metadata?.sessionId ?? randomId()}`;
+    }
+    case "terminal":
+      return `terminal:${metadata?.terminalIndex ?? 1}`;
+    case "git-graph":
+      return "git-graph"; // Singleton
+    // ... other cases
+  }
+}
+```
+
+### URL Format
+
+URLs are built from project name + deterministic tab ID:
+
+```typescript
+// Format: /project/{projectName}/{type}/{identifier}
+/project/ppm                          // Project root (no active tab)
+/project/ppm/editor/src/index.ts      // Open editor
+/project/ppm/chat/claude/abc123       // Open chat
+/project/ppm/terminal/1               // Open terminal
+/project/ppm/database/conn-1/users    // Open database
+/project/ppm/git-graph                // Git history (singleton)
+
+// URL building in use-url-sync.ts
+export function buildUrl(projectName: string, tabId: string | null): string {
+  const colonIdx = tabId?.indexOf(":");
+  if (colonIdx === -1) {
+    // Singleton
+    url += `/${tabId}`;
+  } else {
+    const [type, identifier] = tabId.split(":", 1);
+    url += `/${type}/${identifier}`;
+  }
+  return url;
+}
+```
+
+### Deep Linking
+
+When user navigates to a URL, parse it and auto-create tabs:
+
+```typescript
+// In use-url-sync hook
+export function parseUrlState(): UrlState {
+  const match = path.match(/^\/project\/([^/]+)(?:\/([^/]+)(\/.*)?)?/);
+  const [, projectName, tabType, tabIdentifierPath] = match;
+
+  // Build tab metadata from URL
+  const metadata = buildMetadataFromUrl(tabType, tabIdentifier, projectName);
+
+  // Auto-open tab if it doesn't exist
+  if (metadata) {
+    panelStore.openTab({
+      type: tabType,
+      title: getTabTitle(tabType, metadata),
+      metadata,
+    });
+  }
+}
+```
+
+### Server-Side Workspace Persistence
+
+Tab layouts are persisted in the `workspace_state` SQLite table:
+
+```typescript
+// workspace.ts routes
+GET  /api/project/:name/workspace  → { layout: PanelLayout, updatedAt: string }
+PUT  /api/project/:name/workspace  → { updatedAt: string }
+
+// PanelLayout structure
+interface PanelLayout {
+  panels: Record<string, Panel>;    // panelId → { tabs, activeTabId }
+  grid: string[][];                 // Row/column grid of panel IDs
+  focusedPanelId: string;
+}
+
+// Sync is debounced (1.5s) client-side after layout changes
+// Latest-wins: server timestamp compared with client localStorage
+```
+
+### Migration from Random IDs
+
+Old tab IDs (tab-xxxx) are automatically migrated to deterministic format:
+
+```typescript
+// In panel-utils.ts
+export function migrateTabIdToDeterministic(tab: Tab): Tab {
+  if (tab.id.startsWith("tab-")) {
+    // Convert to deterministic ID
+    return {
+      ...tab,
+      id: deriveTabId(tab.type, tab.metadata),
+    };
+  }
+  return tab;
+}
+```
+
+This happens on first load per project; old URLs redirect to project root.
+

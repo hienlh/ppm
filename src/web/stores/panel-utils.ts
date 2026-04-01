@@ -1,5 +1,5 @@
 import { randomId } from "@/lib/utils";
-import type { Tab } from "./tab-store";
+import type { Tab, TabType } from "./tab-store";
 
 // ---------------------------------------------------------------------------
 // Panel types
@@ -70,6 +70,62 @@ export function findPanelPosition(grid: string[][], panelId: string): { row: num
 }
 
 // ---------------------------------------------------------------------------
+// Deterministic tab IDs
+// ---------------------------------------------------------------------------
+
+/** Derive deterministic tab ID from type + metadata */
+export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): string {
+  switch (type) {
+    case "editor":
+      return `editor:${metadata?.filePath ?? "untitled"}`;
+    case "chat": {
+      const provider = metadata?.providerId ?? "default";
+      return `chat:${provider}/${metadata?.sessionId ?? randomId()}`;
+    }
+    case "terminal":
+      return `terminal:${metadata?.terminalIndex ?? 1}`;
+    case "database":
+      return `database:${metadata?.connectionId ?? "default"}:${metadata?.tableName ?? ""}`;
+    case "sqlite":
+      return `sqlite:${metadata?.filePath ?? "default"}`;
+    case "postgres":
+      return `postgres:${metadata?.connectionId ?? "default"}:${metadata?.tableName ?? ""}`;
+    case "git-graph":
+      return "git-graph";
+    case "git-diff":
+      return `git-diff:${metadata?.filePath ?? "unknown"}`;
+    case "settings":
+      return "settings";
+    case "browser":
+      return `browser:${metadata?.url ?? "blank"}`;
+    default:
+      return `${type}:${randomId()}`;
+  }
+}
+
+/** Migrate old random tab IDs to deterministic IDs */
+export function migrateTabIds(layout: PanelLayout): PanelLayout {
+  const migrated = { ...layout, panels: { ...layout.panels } };
+  for (const [panelId, panel] of Object.entries(migrated.panels)) {
+    const newTabs = panel.tabs.map((tab) => {
+      if (tab.id.startsWith("tab-")) {
+        const newId = deriveTabId(tab.type, tab.metadata);
+        return { ...tab, id: newId };
+      }
+      return tab;
+    });
+    const idMap = new Map<string, string>();
+    panel.tabs.forEach((old, i) => {
+      if (old.id !== newTabs[i]!.id) idMap.set(old.id, newTabs[i]!.id);
+    });
+    const newActive = idMap.get(panel.activeTabId ?? "") ?? panel.activeTabId;
+    const newHistory = panel.tabHistory.map((h) => idMap.get(h) ?? h);
+    migrated.panels[panelId] = { ...panel, tabs: newTabs, activeTabId: newActive, tabHistory: newHistory };
+  }
+  return migrated;
+}
+
+// ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
 const STORAGE_PREFIX = "ppm-panels-";
@@ -81,19 +137,105 @@ function storageKey(projectName: string): string {
 
 export function savePanelLayout(projectName: string, layout: PanelLayout): void {
   try {
-    localStorage.setItem(storageKey(projectName), JSON.stringify(layout));
+    const withTimestamp = { ...layout, updatedAt: new Date().toISOString() };
+    localStorage.setItem(storageKey(projectName), JSON.stringify(withTimestamp));
+    // Debounced server sync
+    syncWorkspaceToServer(projectName, layout);
   } catch { /* ignore */ }
 }
 
 export function loadPanelLayout(projectName: string): PanelLayout | null {
   try {
     const raw = localStorage.getItem(storageKey(projectName));
-    if (raw) return JSON.parse(raw) as PanelLayout;
+    if (raw) {
+      const layout = JSON.parse(raw) as PanelLayout;
+      return migrateTabIds(layout);
+    }
   } catch { /* ignore */ }
 
   // Migrate from old tab-store format
   return migrateOldTabStore(projectName);
 }
+
+// ---------------------------------------------------------------------------
+// Server sync
+// ---------------------------------------------------------------------------
+
+export interface PanelLayoutWithTimestamp extends PanelLayout {
+  updatedAt: string;
+}
+
+/** Fetch workspace from server */
+export async function fetchWorkspaceFromServer(
+  projectName: string,
+): Promise<PanelLayoutWithTimestamp | null> {
+  try {
+    const headers: Record<string, string> = {};
+    const token = localStorage.getItem("ppm-auth-token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`/api/project/${encodeURIComponent(projectName)}/workspace`, { headers });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!json.ok || !json.data) return null;
+    return { ...json.data.layout, updatedAt: json.data.updatedAt };
+  } catch {
+    return null;
+  }
+}
+
+/** Save workspace to server (debounced per project) */
+const syncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function syncWorkspaceToServer(projectName: string, layout: PanelLayout): void {
+  const existing = syncTimers.get(projectName);
+  if (existing) clearTimeout(existing);
+
+  syncTimers.set(projectName, setTimeout(async () => {
+    syncTimers.delete(projectName);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("ppm-auth-token");
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/project/${encodeURIComponent(projectName)}/workspace`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ layout }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data?.updatedAt) {
+          const key = `${STORAGE_PREFIX}${projectName}`;
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const local = JSON.parse(raw);
+            local.updatedAt = json.data.updatedAt;
+            localStorage.setItem(key, JSON.stringify(local));
+          }
+        }
+      }
+    } catch { /* silent fail — localStorage is still the cache */ }
+  }, 1500));
+}
+
+/** Compare local vs server timestamps, return newer layout */
+export function resolveWorkspaceConflict(
+  local: PanelLayoutWithTimestamp | null,
+  server: PanelLayoutWithTimestamp | null,
+): PanelLayoutWithTimestamp | null {
+  if (!local && !server) return null;
+  if (!local) return server!;
+  if (!server) return local;
+
+  const localTime = new Date(local.updatedAt).getTime();
+  const serverTime = new Date(server.updatedAt).getTime();
+  return serverTime >= localTime ? server : local;
+}
+
+// ---------------------------------------------------------------------------
+// Old format migration
+// ---------------------------------------------------------------------------
 
 function migrateOldTabStore(projectName: string): PanelLayout | null {
   try {

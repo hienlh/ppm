@@ -140,9 +140,23 @@ POST   /api/db/connections/:id/query              → Execute query (readonly ch
 PATCH  /api/db/connections/:id/cell               → Update cell value (single)
 GET    /api/upgrade/status                        → Get current + available versions, install method
 POST   /api/upgrade/apply                         → Install new version, trigger supervisor self-replace
+GET    /api/project/:name/workspace               → Get saved workspace layout + metadata
+PUT    /api/project/:name/workspace               → Save workspace layout (layout JSON)
 WS     /ws/project/:name/chat/:sessionId          → Chat streaming
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
 ```
+
+**URL Format (Deterministic Tabs, v0.8.77+):**
+```
+/project/{name}                          → Project root (project switcher)
+/project/{name}/editor/{filePath}        → Open editor tab (e.g., src/index.ts)
+/project/{name}/chat/{provider}/{sessionId} → Open chat tab
+/project/{name}/terminal/{index}         → Open terminal tab
+/project/{name}/database/{connId}/{table} → Open database browser
+/project/{name}/git-graph                → Git history graph (singleton)
+/project/{name}/settings                 → Settings panel (singleton)
+```
+Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `chat:claude/abc123`). Deep links auto-create missing tabs.
 
 ---
 
@@ -161,7 +175,7 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 |---------|---------|-------------|
 | **ChatService** | Session management, message streaming | createSession, streamMessage, getHistory |
 | **ConfigService** | Config loading (YAML→SQLite migration) | load, save, getToken |
-| **DbService** | SQLite persistence (9 tables, WAL, connections/accounts CRUD) | getDb, openTestDb, getConnections, insertConnection, deleteConnection, getTableCache |
+| **DbService** | SQLite persistence (10 tables, WAL, connections/accounts/workspace CRUD) | getDb, openTestDb, getWorkspace, setWorkspace, getConnections, insertConnection, deleteConnection, getTableCache |
 | **TableCacheService** | Cache table metadata, search tables | syncTables, searchTables, invalidateCache |
 | **GitService** | Git command execution | status, diff, commit, stage, branch |
 | **FileService** | File operations with validation | read, write, tree, delete, mkdir |
@@ -260,11 +274,11 @@ PPM supports multiple AI providers through a generic `AIProvider` interface and 
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
-- SQLite: WAL mode, foreign keys, lazy init, schema v1 with 6 tables
+- SQLite: WAL mode, foreign keys, lazy init, schema v10 (10 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, session_logs, workspace_state)
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)
-- Migration: Automatic YAML→SQLite migration on first run with new db.service
+- Migration: Automatic YAML→SQLite migration on first run with new db.service; schema auto-upgrade on version bump
 
 ---
 
@@ -283,6 +297,24 @@ PPM supports multiple AI providers through a generic `AIProvider` interface and 
 ```typescript
 const messages = chatStore((s) => s.messages); // Subscribe to messages only
 ```
+
+#### Workspace Sync (v0.8.77+)
+
+**Deterministic Tab IDs & URL Routing:**
+- Tab IDs derived from type + metadata: `deriveTabId(type, metadata) → {type}:{identifier}`
+- Examples: `editor:src/index.ts`, `chat:claude/abc123`, `terminal:1`, `git-graph`
+- URLs rebuilt from active tab: `/project/{name}/{type}/{identifier}`
+- Deep linking: URL → `parseUrlState()` → auto-create tabs if missing
+
+**Workspace Persistence:**
+1. **Client**: PanelStore layout (grid, panels, tabs) cached in localStorage per project
+2. **Server**: Workspace JSON persisted in `workspace_state` SQLite table
+3. **Sync Flow:**
+   - User loads project → fetch workspace from server (GET `/api/project/:name/workspace`)
+   - Latest-wins: server `updated_at` vs client localStorage timestamp
+   - Panel layout changes debounced (1.5s) → POST to server
+   - On reconnect: server layout restored, client edits queued
+4. **Cross-Device:** Any device can load workspace, browser restores exact grid + active tabs
 
 ---
 

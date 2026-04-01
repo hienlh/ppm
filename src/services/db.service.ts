@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 10;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -251,6 +251,42 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 9;
     `);
   }
+
+  if (current < 10) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS workspace_state (
+        project_name TEXT PRIMARY KEY,
+        layout_json  TEXT NOT NULL,
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      PRAGMA user_version = 10;
+    `);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Workspace helpers
+// ---------------------------------------------------------------------------
+
+export interface WorkspaceRow {
+  project_name: string;
+  layout_json: string;
+  updated_at: string;
+}
+
+export function getWorkspace(projectName: string): WorkspaceRow | null {
+  return getDb().query(
+    "SELECT project_name, layout_json, updated_at FROM workspace_state WHERE project_name = ?",
+  ).get(projectName) as WorkspaceRow | null;
+}
+
+export function setWorkspace(projectName: string, layoutJson: string): string {
+  const now = new Date().toISOString();
+  getDb().query(
+    "INSERT INTO workspace_state (project_name, layout_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(project_name) DO UPDATE SET layout_json = excluded.layout_json, updated_at = excluded.updated_at",
+  ).run(projectName, layoutJson, now);
+  return now;
 }
 
 // ---------------------------------------------------------------------------

@@ -10,12 +10,18 @@ import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
+import { usePanelStore } from "@/stores/panel-store";
+import {
+  fetchWorkspaceFromServer,
+  resolveWorkspaceConflict,
+  savePanelLayout,
+} from "@/stores/panel-utils";
 import {
   useSettingsStore,
   applyThemeClass,
 } from "@/stores/settings-store";
 import { getAuthToken } from "@/lib/api-client";
-import { useUrlSync, parseUrlState } from "@/hooks/use-url-sync";
+import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useServerReload } from "@/hooks/use-server-reload";
@@ -127,56 +133,52 @@ export function App() {
     });
   }, [authState]);
 
-  // Fetch projects after auth, then restore from URL if applicable
+  // Fetch projects after auth, then restore workspace + URL
   useEffect(() => {
     if (authState !== "authenticated") return;
 
-    fetchProjects().then(() => {
-      const { projectName: urlProject, tabId: urlTab, openChat } = initialUrlRef.current;
+    fetchProjects().then(async () => {
+      const urlState = initialUrlRef.current;
       const { projects, customOrder } = useProjectStore.getState();
       if (projects.length === 0) return;
 
       // URL project takes priority, then fall back to first sorted project
-      let target = urlProject ? projects.find((p) => p.name === urlProject) : undefined;
+      let target = urlState.projectName
+        ? projects.find((p) => p.name === urlState.projectName)
+        : undefined;
       if (!target) {
         target = resolveOrder(projects, customOrder)[0];
       }
-      if (target) {
-        useProjectStore.getState().setActiveProject(target);
-        if (urlProject && urlTab) {
-          queueMicrotask(() => {
-            const { tabs } = useTabStore.getState();
-            if (tabs.some((t) => t.id === urlTab)) {
-              useTabStore.getState().setActiveTab(urlTab);
-            }
-          });
+      if (!target) return;
+
+      useProjectStore.getState().setActiveProject(target);
+
+      // Fetch server workspace + compare with localStorage (latest-wins)
+      const serverLayout = await fetchWorkspaceFromServer(target.name);
+      if (serverLayout) {
+        const localRaw = localStorage.getItem(`ppm-panels-${target.name}`);
+        const localLayout = localRaw ? JSON.parse(localRaw) : null;
+        const resolved = resolveWorkspaceConflict(localLayout, serverLayout);
+        if (resolved && resolved === serverLayout) {
+          // Server wins — overwrite localStorage and reload panels
+          savePanelLayout(target.name, resolved);
+          usePanelStore.getState().reloadProject(target.name);
         }
       }
 
-      // Deep link: ?openChat=sessionId — open/focus the chat tab
-      if (openChat) {
-        queueMicrotask(() => {
-          const { tabs, setActiveTab, openTab } = useTabStore.getState();
-          const existing = tabs.find(
-            (t) => t.type === "chat" && t.metadata?.sessionId === openChat,
-          );
-          if (existing) {
-            setActiveTab(existing.id);
-          } else {
-            openTab({
-              type: "chat",
-              title: "Chat",
-              projectId: target?.name ?? null,
-              closable: true,
-              metadata: { sessionId: openChat },
-            });
-          }
-          // Clean up query param
+      // Auto-open target tab from URL (type-based)
+      queueMicrotask(() => {
+        if (urlState.tabType) {
+          autoOpenFromUrl(urlState.tabType, urlState.tabIdentifier, target!.name);
+        }
+        // Legacy: ?openChat= query param
+        if (urlState.openChat) {
+          autoOpenFromUrl("chat", urlState.openChat, target!.name);
           const url = new URL(window.location.href);
           url.searchParams.delete("openChat");
           window.history.replaceState(null, "", url.pathname);
-        });
-      }
+        }
+      });
     });
   }, [authState, fetchProjects]);
 

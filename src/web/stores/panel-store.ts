@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { randomId } from "@/lib/utils";
 import type { Tab, TabType } from "./tab-store";
 import {
   type Panel,
@@ -13,17 +12,14 @@ import {
   MAX_ROWS,
   savePanelLayout,
   loadPanelLayout,
+  deriveTabId,
 } from "./panel-utils";
 
 /** Tab types that can only have 1 instance per project */
-const SINGLETON_TYPES = new Set<TabType>(["git-graph"]);
+const SINGLETON_TYPES = new Set<TabType>(["git-graph", "settings"]);
 
 /** Tab types removed in a prior version — filter them out when loading persisted state */
 const OBSOLETE_TAB_TYPES = new Set(["projects", "git-status"]);
-
-function generateTabId(): string {
-  return `tab-${randomId()}`;
-}
 
 function pushHistory(history: string[], id: string): string[] {
   const filtered = history.filter((h) => h !== id);
@@ -47,6 +43,7 @@ export interface PanelStore {
 
   // Project lifecycle
   switchProject: (projectName: string) => void;
+  reloadProject: (projectName: string) => void;
 
   // Panel focus
   setFocusedPanel: (panelId: string) => void;
@@ -188,6 +185,25 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       }
     },
 
+    reloadProject: (projectName) => {
+      const { projectGrids, projectFocused, panels } = get();
+      // Clear in-memory cache so switchProject re-reads from localStorage
+      const newGrids = { ...projectGrids };
+      const newFocused = { ...projectFocused };
+      delete newGrids[projectName];
+      delete newFocused[projectName];
+
+      // Remove old panels belonging to this project from flat map
+      const oldGrid = projectGrids[projectName];
+      const oldPanelIds = oldGrid ? new Set(oldGrid.flat()) : new Set<string>();
+      const cleanedPanels = { ...panels };
+      for (const id of oldPanelIds) delete cleanedPanels[id];
+
+      set({ projectGrids: newGrids, projectFocused: newFocused, panels: cleanedPanels, currentProject: null });
+      // Re-trigger full load from localStorage
+      get().switchProject(projectName);
+    },
+
     setFocusedPanel: (panelId) => {
       if (get().panels[panelId]) set({ focusedPanelId: panelId });
     },
@@ -197,10 +213,25 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       const panel = get().panels[pid];
       if (!panel) return "";
 
-      // Singleton check across ALL panels
+      // Terminal: compute next available index if not provided
+      if (tabDef.type === "terminal" && !tabDef.metadata?.terminalIndex) {
+        const allTabs = Object.values(get().panels).flatMap((p) => p.tabs);
+        const terminalNums = allTabs
+          .filter((t) => t.type === "terminal")
+          .map((t) => {
+            const match = t.id.match(/^terminal:(\d+)/);
+            return match ? parseInt(match[1]!, 10) : 0;
+          });
+        const nextIndex = terminalNums.length > 0 ? Math.max(...terminalNums) + 1 : 1;
+        tabDef = { ...tabDef, metadata: { ...tabDef.metadata, terminalIndex: nextIndex } };
+      }
+
+      const baseId = deriveTabId(tabDef.type, tabDef.metadata);
+
+      // Singleton check — focus existing across ALL panels
       if (SINGLETON_TYPES.has(tabDef.type)) {
         for (const p of Object.values(get().panels)) {
-          const existing = p.tabs.find((t) => t.type === tabDef.type && t.projectId === tabDef.projectId);
+          const existing = p.tabs.find((t) => t.id === baseId);
           if (existing) {
             set((s) => ({
               focusedPanelId: p.id,
@@ -219,7 +250,30 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         }
       }
 
-      const id = generateTabId();
+      // Non-singleton: dedup within SAME panel only
+      const currentPanel = get().panels[pid]!;
+      const existingInPanel = currentPanel.tabs.find((t) => t.id === baseId);
+      if (existingInPanel) {
+        set((s) => ({
+          panels: {
+            ...s.panels,
+            [pid]: {
+              ...currentPanel,
+              activeTabId: existingInPanel.id,
+              tabHistory: pushHistory(currentPanel.tabHistory, existingInPanel.id),
+            },
+          },
+        }));
+        persist();
+        return existingInPanel.id;
+      }
+
+      // Check if same base ID exists in OTHER panels (split case)
+      const existsElsewhere = Object.values(get().panels).some(
+        (p) => p.id !== pid && p.tabs.some((t) => t.id === baseId),
+      );
+      const id = existsElsewhere ? `${baseId}@${pid}` : baseId;
+
       const tab: Tab = { ...tabDef, id };
       set((s) => {
         const p = s.panels[pid]!;

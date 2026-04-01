@@ -2,7 +2,42 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.8.60
+**Current Version:** v0.8.76
+
+---
+
+## [0.8.77] — 2026-04-01 (Planned)
+
+### Added
+- **Deterministic Tab URLs + Backend Workspace Sync**
+  - Tab IDs now deterministic ({type}:{identifier}) instead of random (tab-xxxx)
+  - URL format changed: `/project/{name}/{tabType}/{identifier}` (e.g., `/project/ppm/editor/src/index.ts`)
+  - New `workspace_state` database table (schema v10) persists tab layout per project
+  - GET/PUT `/api/project/:name/workspace` endpoints for server-side persistence
+  - Frontend syncs workspace layout to server with 1.5s debounce
+  - Deep linking from URL auto-creates tabs if missing
+  - Latest-wins conflict resolution: server timestamp > client localStorage
+  - Tab ID patterns standardized: `editor:path`, `chat:provider/sessionId`, `terminal:index`, etc.
+  - Migration from random IDs to deterministic IDs on first load
+
+### Technical Details
+- **Files Created:**
+  - `src/server/routes/workspace.ts` — Workspace GET/PUT endpoints
+  - `src/web/hooks/use-workspace-sync.ts` — Server sync orchestration with debounce
+- **Files Modified:**
+  - `src/services/db.service.ts` — Added workspace_state table (schema v10), helper functions
+  - `src/web/stores/panel-utils.ts` — Deterministic tab ID derivation logic
+  - `src/web/hooks/use-url-sync.ts` — URL parsing/building with new format
+  - `src/web/stores/panel-store.ts` — Load workspace from server on project switch
+  - `src/web/stores/tab-store.ts` — Tab interface updated with metadata
+- **Breaking Changes:** URLs changed; old `/project/{name}/tab/{id}` URLs redirected or ignored (fallback to project root)
+- **Migration:** Client-side: old random tab IDs migrated to deterministic format on first load
+
+### Benefits
+- **Shareable deep links** — URLs point to specific files/chats (e.g., `/project/ppm/editor/src/index.ts`)
+- **Cross-device persistence** — Workspace layout saved on server, restored on any device
+- **URL-driven navigation** — Paste URL to recreate workspace state
+- **Conflict-free sync** — Latest timestamp wins; no manual merge dialogs
 
 ---
 
