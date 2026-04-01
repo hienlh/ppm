@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.78] - 2026-04-01
+
+### Fixed
+- **Cloud version reporting**: Supervisor heartbeat now reads version from running server child (via `status.json`) instead of its own captured constant — after `ppm restart` or `bunx @hienlh/ppm@latest restart`, cloud dashboard correctly reflects the updated version
+
 ## [0.8.77] - 2026-04-01
 
 ### Added

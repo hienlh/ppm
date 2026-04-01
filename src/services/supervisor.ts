@@ -451,16 +451,20 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
       cloudUrl: device.cloud_url,
       deviceId: device.device_id,
       secretKey: device.secret_key,
-      heartbeatFn: () => ({
-        type: "heartbeat" as const,
-        tunnelUrl,
-        state: supervisorState,
-        appVersion: VERSION,
-        availableVersion: (readStatus().availableVersion as string) || null,
-        serverPid: serverChild?.pid ?? null,
-        uptime: Math.floor((Date.now() - startTime) / 1000),
-        timestamp: new Date().toISOString(),
-      }),
+      heartbeatFn: () => {
+        const status = readStatus();
+        return {
+          type: "heartbeat" as const,
+          tunnelUrl,
+          state: supervisorState,
+          // Use server-reported version (source of truth) with supervisor fallback
+          appVersion: (status.serverVersion as string) || VERSION,
+          availableVersion: (status.availableVersion as string) || null,
+          serverPid: serverChild?.pid ?? null,
+          uptime: Math.floor((Date.now() - startTime) / 1000),
+          timestamp: new Date().toISOString(),
+        };
+      },
     });
 
     // Handle commands from Cloud

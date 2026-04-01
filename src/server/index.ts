@@ -360,12 +360,16 @@ if (process.argv.includes("__serve__")) {
 
   // Sync externally-started tunnel URL + PID into tunnelService
   // so GET /api/tunnel reflects the correct state and Share button doesn't start a duplicate.
+  // Also write server version to status.json so supervisor heartbeat reports the actual running version.
   try {
     const { resolve: r } = await import("node:path");
     const { homedir: h } = await import("node:os");
-    const { readFileSync: rf } = await import("node:fs");
+    const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
     const statusFile = r(h(), ".ppm", "status.json");
     const status = JSON.parse(rf(statusFile, "utf-8"));
+    // Write running server version — source of truth for heartbeat
+    status.serverVersion = VERSION;
+    wf(statusFile, JSON.stringify(status));
     if (status.shareUrl) {
       const { tunnelService } = await import("../services/tunnel.service.ts");
       tunnelService.setExternalUrl(status.shareUrl);
