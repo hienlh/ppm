@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Activity, RefreshCw, Eye, Download, Upload, Plus, X } from "lucide-react";
+import { Activity, RefreshCw, Eye, Download, Upload, Plus, X, Settings } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { UsageInfo, LimitBucket } from "../../../types/chat";
 import {
@@ -12,6 +12,7 @@ import {
   type OAuthProfileData,
 } from "../../lib/api-settings";
 import { AddAccountDialog, ExportAccountsDialog, ImportAccountsDialog } from "./account-dialogs";
+import { AccountRotationSettings } from "./account-rotation-settings";
 
 interface UsageBadgeProps {
   usage: UsageInfo;
@@ -245,6 +246,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showRotationSettings, setShowRotationSettings] = useState(false);
   const [exportPreselect, setExportPreselect] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -338,6 +340,13 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
           )}
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowRotationSettings(true)}
+            className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+            title="Rotation & retry settings"
+          >
+            <Settings className="size-3" />
+          </button>
           {onReload && (
             <button
               onClick={() => { onReload(); loadAll(); }}
@@ -455,6 +464,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       <AddAccountDialog open={showAddDialog} onOpenChange={setShowAddDialog} onSuccess={handleSuccess} />
       <ExportAccountsDialog open={showExportDialog} onOpenChange={(v) => { setShowExportDialog(v); if (!v) setExportPreselect(null); }} accounts={accounts} preselectId={exportPreselect} onMessage={showMessage} />
       <ImportAccountsDialog open={showImportDialog} onOpenChange={setShowImportDialog} onSuccess={handleSuccess} />
+      <AccountRotationSettings open={showRotationSettings} onOpenChange={setShowRotationSettings} />
     </div>
   );
 }

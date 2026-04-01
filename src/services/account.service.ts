@@ -623,13 +623,13 @@ class AccountService {
       if (!row.id || !row.access_token) continue;
       const hasRefresh = !!row.refresh_token && row.refresh_token !== "";
 
-      // Duplicate handling: if existing account has no refresh token but import does, upgrade it
+      // Duplicate handling: update existing account tokens from import
       const existingById = getAccountById(row.id);
       const existingByEmail = row.email ? this.list().find((a) => a.email === row.email) : null;
       const existing = existingById ?? (existingByEmail ? getAccountById(existingByEmail.id) : null);
       if (existing) {
-        if (hasRefresh && !this.hasRefreshToken(existing.id)) {
-          // Upgrade: import has refresh token, existing doesn't → update tokens
+        if (hasRefresh) {
+          // Always update tokens when import has refresh token (handles expired/invalid tokens too)
           let accessToken = row.access_token;
           if (!looksEncrypted(accessToken)) accessToken = encrypt(accessToken);
           const refreshToken = looksEncrypted(row.refresh_token) ? row.refresh_token : encrypt(row.refresh_token);
@@ -641,9 +641,9 @@ class AccountService {
           });
           imported++;
           fullTransferIds.push(existing.id);
-          console.log(`[accounts] Upgraded ${row.email ?? existing.id} with refresh token from import`);
+          console.log(`[accounts] Updated ${row.email ?? existing.id} tokens from import`);
         }
-        continue; // skip if existing already has refresh token or import doesn't
+        continue; // skip if import doesn't have refresh token
       }
 
       // New account — insert

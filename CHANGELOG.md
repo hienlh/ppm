@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.84] - 2026-04-01
+
+### Fixed
+- **Account import overwrite**: Import now updates tokens for existing accounts even when they already have a (possibly expired/corrupt) refresh token — previously skipped, causing "0 imported"
+- **Tunnel probe adopted PID**: Supervisor now monitors adopted tunnel processes and respawns if they die
+
+### Added
+- **Account rotation settings**: Settings gear icon in Usage & Accounts panel for rotation/retry config
+
 ## [0.8.83] - 2026-04-01
 
 ### Fixed

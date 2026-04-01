@@ -35,6 +35,7 @@ const LOG_FILE = resolve(PPM_DIR, "ppm.log");
 let serverChild: Subprocess | null = null;
 let tunnelChild: Subprocess | null = null;
 let tunnelUrl: string | null = null;
+let adoptedTunnelPid: number | null = null; // PID of tunnel kept alive across upgrade
 let shuttingDown = false;
 
 type SupervisorState = "running" | "paused" | "upgrading";
@@ -311,26 +312,46 @@ function startServerHealthCheck(port: number) {
 
 function startTunnelProbe(port: number) {
   tunnelProbeTimer = setInterval(async () => {
-    if (shuttingDown || !tunnelUrl || !tunnelChild) {
-      tunnelFailCount = 0;
-      return;
+    if (shuttingDown || !tunnelUrl) { tunnelFailCount = 0; return; }
+    if (!tunnelChild && !adoptedTunnelPid) { tunnelFailCount = 0; return; }
+
+    // Check if adopted tunnel process is still alive
+    if (adoptedTunnelPid && !tunnelChild) {
+      try { process.kill(adoptedTunnelPid, 0); } catch {
+        log("WARN", "Adopted tunnel process died, respawning");
+        adoptedTunnelPid = null;
+        tunnelUrl = null;
+        updateStatus({ shareUrl: null, tunnelPid: null });
+        tunnelFailCount = 0;
+        spawnTunnel(port);
+        return;
+      }
     }
+
     try {
       const res = await fetch(`${tunnelUrl}/api/health`, {
         signal: AbortSignal.timeout(10_000),
       });
       if (res.ok) {
         tunnelFailCount = 0;
-        tunnelRestarts = 0; // reset on success
+        tunnelRestarts = 0;
         return;
       }
     } catch {}
     tunnelFailCount++;
-    if (tunnelFailCount >= TUNNEL_PROBE_FAIL_THRESHOLD && tunnelChild) {
+    if (tunnelFailCount >= TUNNEL_PROBE_FAIL_THRESHOLD) {
       log("WARN", `Tunnel URL dead (${tunnelFailCount} failures), regenerating`);
-      try { tunnelChild.kill(); } catch {}
+      if (tunnelChild) {
+        try { tunnelChild.kill(); } catch {}
+        // spawnTunnel loop handles respawn via exited promise
+      } else if (adoptedTunnelPid) {
+        try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {}
+        adoptedTunnelPid = null;
+        tunnelUrl = null;
+        updateStatus({ shareUrl: null, tunnelPid: null });
+        spawnTunnel(port);
+      }
       tunnelFailCount = 0;
-      // spawnTunnel loop handles respawn via exited promise
     }
   }, TUNNEL_PROBE_INTERVAL_MS);
 }
@@ -351,6 +372,23 @@ async function checkAvailableVersion() {
   }
 }
 
+/** Try to adopt an existing tunnel process from status.json (survives upgrade) */
+function adoptTunnel(): boolean {
+  try {
+    const status = readStatus();
+    const pid = status.tunnelPid as number;
+    const url = status.shareUrl as string;
+    if (!pid || !url) return false;
+    process.kill(pid, 0); // throws if process is dead
+    adoptedTunnelPid = pid;
+    tunnelUrl = url;
+    log("INFO", `Adopted existing tunnel (PID: ${pid}, URL: ${url})`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Spawn new supervisor from updated code, wait for it to be healthy, then exit */
 async function selfReplace(): Promise<{ success: boolean; error?: string }> {
   log("INFO", "Starting self-replace for upgrade");
@@ -363,10 +401,9 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     supervisorState = "upgrading";
     updateStatus({ state: "upgrading" });
 
-    // Kill server + tunnel children FIRST to free the port for the new supervisor
-    log("INFO", "Stopping server and tunnel before spawning new supervisor");
+    // Kill server child to free the port; keep tunnel alive for domain continuity
+    log("INFO", "Stopping server before spawning new supervisor (tunnel kept alive)");
     if (serverChild) { try { serverChild.kill(); } catch {} serverChild = null; }
-    if (tunnelChild) { try { tunnelChild.kill(); } catch {} tunnelChild = null; }
     // Clear health timers so we don't try to respawn killed children
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
     if (tunnelProbeTimer) { clearInterval(tunnelProbeTimer); tunnelProbeTimer = null; }
@@ -586,6 +623,7 @@ export function shutdown() {
 
   if (serverChild) { try { serverChild.kill(); } catch {} }
   if (tunnelChild) { try { tunnelChild.kill(); } catch {} }
+  if (adoptedTunnelPid) { try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {} }
 }
 
 // ─── Main entry ────────────────────────────────────────────────────────
@@ -643,9 +681,9 @@ export async function runSupervisor(opts: {
     const result = await selfReplace();
     if (!result.success) {
       log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
-      // Respawn server (and tunnel if configured) since selfReplace killed them
       spawnServer(serverArgs, logFd);
-      if (opts.share) spawnTunnel(opts.port);
+      // Tunnel was kept alive during selfReplace; only respawn if dead
+      if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(opts.port);
     }
   });
 
@@ -666,7 +704,10 @@ export async function runSupervisor(opts: {
 
   if (opts.share) {
     startTunnelProbe(opts.port);
-    promises.push(spawnTunnel(opts.port));
+    // Try adopting tunnel kept alive from previous upgrade; spawn new if dead
+    if (!adoptTunnel()) {
+      promises.push(spawnTunnel(opts.port));
+    }
   }
 
   await Promise.all(promises);
