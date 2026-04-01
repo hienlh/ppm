@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState, useCallback } from "react";
-import { Loader2, Terminal, MessageSquare, GitBranch, Pin, PinOff } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Terminal, MessageSquare, GitBranch, Pin, PinOff } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import type { TabType } from "@/stores/tab-store";
@@ -95,18 +95,20 @@ function formatRelativeDate(iso: string): string {
 }
 
 const MAX_RECENT_SESSIONS = 5;
+const FETCH_SESSIONS_LIMIT = 20;
 
 function EmptyPanel({ panelId }: { panelId: string }) {
   const activeProject = useProjectStore((s) => s.activeProject);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   const loadSessions = useCallback(async () => {
     if (!activeProject?.name) return;
     setLoadingSessions(true);
     try {
       const data = await api.get<SessionInfo[]>(`${projectUrl(activeProject.name)}/chat/sessions`);
-      setSessions(data.slice(0, MAX_RECENT_SESSIONS));
+      setSessions(data.slice(0, FETCH_SESSIONS_LIMIT));
     } catch {
       // silently ignore — empty state still functional without sessions
     } finally {
@@ -162,7 +164,9 @@ function EmptyPanel({ panelId }: { panelId: string }) {
   }
 
   const pinnedSessions = sessions.filter((s) => s.pinned);
-  const recentSessions = sessions.filter((s) => !s.pinned).slice(0, MAX_RECENT_SESSIONS);
+  const allRecentSessions = sessions.filter((s) => !s.pinned);
+  const recentSessions = showAll ? allRecentSessions : allRecentSessions.slice(0, MAX_RECENT_SESSIONS);
+  const hasMore = allRecentSessions.length > MAX_RECENT_SESSIONS;
 
   function renderSessionRow(session: SessionInfo) {
     return (
@@ -232,6 +236,15 @@ function EmptyPanel({ panelId }: { panelId: string }) {
             <div className="w-full rounded-md border border-border bg-surface overflow-hidden">
               {recentSessions.map(renderSessionRow)}
             </div>
+            {hasMore && (
+              <button
+                onClick={() => setShowAll(!showAll)}
+                className="flex items-center justify-center gap-1 text-[11px] text-text-subtle hover:text-text-primary transition-colors py-1"
+              >
+                {showAll ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+                {showAll ? "Show less" : `Show more (${allRecentSessions.length - MAX_RECENT_SESSIONS})`}
+              </button>
+            )}
           </div>
         )}
       </div>

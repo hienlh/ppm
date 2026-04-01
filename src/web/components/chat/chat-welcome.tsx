@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { Bot, MessageSquare, Pin, PinOff } from "lucide-react";
+import { Bot, ChevronDown, ChevronUp, MessageSquare, Pin, PinOff } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import type { SessionInfo } from "../../../types/chat";
 
 const MAX_RECENT_SESSIONS = 5;
+const FETCH_SESSIONS_LIMIT = 20;
 
 function formatRelativeDate(iso: string): string {
   try {
@@ -31,13 +32,14 @@ interface ChatWelcomeProps {
 export function ChatWelcome({ projectName, onSelectSession }: ChatWelcomeProps) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   const loadSessions = useCallback(async () => {
     if (!projectName) return;
     setLoading(true);
     try {
       const data = await api.get<SessionInfo[]>(`${projectUrl(projectName)}/chat/sessions`);
-      setSessions(data.slice(0, MAX_RECENT_SESSIONS));
+      setSessions(data.slice(0, FETCH_SESSIONS_LIMIT));
     } catch {
       // silently ignore
     } finally {
@@ -71,7 +73,9 @@ export function ChatWelcome({ projectName, onSelectSession }: ChatWelcomeProps) 
   }, [projectName]);
 
   const pinnedSessions = sessions.filter((s) => s.pinned);
-  const recentSessions = sessions.filter((s) => !s.pinned).slice(0, MAX_RECENT_SESSIONS);
+  const allRecentSessions = sessions.filter((s) => !s.pinned);
+  const recentSessions = showAll ? allRecentSessions : allRecentSessions.slice(0, MAX_RECENT_SESSIONS);
+  const hasMore = allRecentSessions.length > MAX_RECENT_SESSIONS;
 
   function renderSessionRow(session: SessionInfo) {
     return (
@@ -128,6 +132,15 @@ export function ChatWelcome({ projectName, onSelectSession }: ChatWelcomeProps) 
           <div className="w-full rounded-md border border-border bg-surface overflow-hidden">
             {recentSessions.map(renderSessionRow)}
           </div>
+          {hasMore && (
+            <button
+              onClick={() => setShowAll(!showAll)}
+              className="flex items-center justify-center gap-1 text-[11px] text-text-subtle hover:text-text-primary transition-colors py-1"
+            >
+              {showAll ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
+              {showAll ? "Show less" : `Show more (${allRecentSessions.length - MAX_RECENT_SESSIONS})`}
+            </button>
+          )}
         </div>
       )}
     </div>

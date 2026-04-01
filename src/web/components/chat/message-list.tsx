@@ -726,9 +726,11 @@ function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming:
         {!isStreaming && <span className="text-text-subtle/50 ml-auto">{content.length > 100 ? `${Math.round(content.length / 4)} tokens` : ""}</span>}
       </button>
       {expanded && (
-        <div className="px-2 pb-2 text-text-subtle/80 whitespace-pre-wrap max-h-60 overflow-y-auto text-[11px] leading-relaxed">
-          {content}
-        </div>
+        <StickToBottom className="max-h-60 overflow-y-auto" resize="smooth" initial="instant">
+          <StickToBottom.Content className="px-2 pb-2 text-text-subtle/80 whitespace-pre-wrap text-[11px] leading-relaxed">
+            {content}
+          </StickToBottom.Content>
+        </StickToBottom>
       )}
     </div>
   );
