@@ -30,6 +30,7 @@ import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { UpgradeBanner } from "@/components/layout/upgrade-banner";
 import { ImageOverlay } from "@/components/shared/image-overlay";
 import { DiagramOverlay } from "@/components/shared/diagram-overlay";
+import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overlay";
 import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
@@ -289,6 +290,9 @@ export function App() {
 
         {/* Global diagram lightbox (mermaid) */}
         <DiagramOverlay />
+
+        {/* Connection lost overlay — shown when API unreachable for >15s */}
+        <ConnectionLostOverlay />
 
         {/* Toast notifications */}
         <Toaster
