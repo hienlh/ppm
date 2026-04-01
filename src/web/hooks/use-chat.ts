@@ -23,8 +23,9 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   sessionTitle: string | null;
-  streamingAccountLabel: string | null;
-  sendMessage: (content: string, opts?: { permissionMode?: string }) => void;
+  /** When CLI provider assigns a different session ID, this holds the new ID */
+  migratedSessionId: string | null;
+  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -51,8 +52,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
-  const [streamingAccountLabel, setStreamingAccountLabel] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [migratedSessionId, setMigratedSessionId] = useState<string | null>(null);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const streamingAccountRef = useRef<{ accountId: string; accountLabel: string } | null>(null);
@@ -117,7 +118,6 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     switch (evType) {
       case "account_info": {
         streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
-        setStreamingAccountLabel(ev.accountLabel ?? null);
         break;
       }
 
@@ -125,7 +125,6 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         // Update streaming account to the new one being tried
         if (ev.accountId && ev.accountLabel) {
           streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
-          setStreamingAccountLabel(ev.accountLabel);
         }
         // Surface retry as a system-level event in the stream
         streamingEventsRef.current.push(ev as ChatEvent);
@@ -241,7 +240,6 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
         streamingAccountRef.current = null;
-        setStreamingAccountLabel(null);
         // Phase transition to idle comes from BE via phase_changed
         break;
       }
@@ -258,6 +256,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
+
+    // Handle session ID migration (CLI provider assigned different ID)
+    if ((data as any).type === "session_migrated") {
+      const newId = (data as any).newSessionId as string;
+      if (newId) setMigratedSessionId(newId);
+      return;
+    }
 
     // Handle title updates from SDK summary
     if ((data as any).type === "title_updated") {
@@ -391,11 +396,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   }, [sessionId, providerId, projectName]);
 
   const sendMessage = useCallback(
-    (content: string, opts?: { permissionMode?: string }) => {
+    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => {
       if (!content.trim()) return;
 
-      // If streaming, cancel current stream first then send immediately
-      if (phaseRef.current !== "idle") {
+      const isFollowUp = phaseRef.current !== "idle";
+
+      if (isFollowUp) {
+        // Streaming follow-up: finalize current assistant message, then send
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
         setMessages((prev) => {
@@ -408,7 +415,6 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           }
           return prev;
         });
-        send(JSON.stringify({ type: "cancel" }));
       }
 
       // Add user message
@@ -422,15 +428,26 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         },
       ]);
 
-      // Reset streaming state
+      // Reset streaming state for new turn
       streamingContentRef.current = "";
       streamingEventsRef.current = [];
       pendingMessageRef.current = null;
-      setPhase("initializing");
-      phaseRef.current = "initializing";
+      if (!isFollowUp) {
+        setPhase("initializing");
+        phaseRef.current = "initializing";
+      } else {
+        setPhase("thinking");
+        phaseRef.current = "thinking";
+      }
       setPendingApproval(null);
 
-      send(JSON.stringify({ type: "message", content, permissionMode: opts?.permissionMode }));
+      send(JSON.stringify({
+        type: "message",
+        content,
+        permissionMode: opts?.permissionMode,
+        priority: opts?.priority,
+        images: opts?.images,
+      }));
     },
     [send],
   );
@@ -534,7 +551,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     pendingApproval,
     contextWindowPct,
     sessionTitle,
-    streamingAccountLabel,
+    migratedSessionId,
     sendMessage,
     respondToApproval,
     cancelStreaming,

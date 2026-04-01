@@ -871,3 +871,158 @@ export function migrateTabIdToDeterministic(tab: Tab): Tab {
 
 This happens on first load per project; old URLs redirect to project root.
 
+---
+
+## Provider Pattern (Multi-Provider Architecture)
+
+### AIProvider Interface
+All AI providers implement the `AIProvider` interface from `src/types/chat.ts`:
+
+```typescript
+interface AIProvider {
+  // Required methods
+  createSession(): Promise<Session>;
+  sendMessage(sessionId: string, message: string, context?: FileContext[]): AsyncIterable<ChatEvent>;
+
+  // Optional methods (v0.8.60+)
+  listModels?(): Promise<ModelOption[]>;
+  isAvailable?(): Promise<boolean>;
+}
+
+interface ModelOption {
+  value: string;    // Model ID (e.g., "claude-sonnet-4-6")
+  label: string;    // Display name (e.g., "Claude Sonnet 4.6")
+}
+```
+
+### Adding a New Provider
+
+**Step 1: Create provider file** (`src/providers/{name}-provider.ts`)
+```typescript
+export class MyProvider implements AIProvider {
+  async createSession(): Promise<Session> {
+    // Return { id: string; ... }
+  }
+
+  async *sendMessage(sessionId, message, context?) {
+    // Stream ChatEvent objects
+    yield { type: "text", content: "response" };
+  }
+
+  // Optional: Discover available models
+  async listModels(): Promise<ModelOption[]> {
+    return [
+      { value: "model-1", label: "Model 1" },
+      { value: "model-2", label: "Model 2" }
+    ];
+  }
+
+  // Optional: Check provider availability
+  async isAvailable(): Promise<boolean> {
+    // Check binary exists, API key set, etc.
+    return true;
+  }
+}
+```
+
+**Step 2: Register in ProviderRegistry** (`src/providers/registry.ts`)
+```typescript
+constructor() {
+  this.providers.set("my-provider", {
+    id: "my-provider",
+    name: "My Provider",
+    instance: new MyProvider()
+  });
+}
+```
+
+**Step 3: Add to config schema** (`schemas/ppm-config.schema.json`)
+```json
+{
+  "ai.providers.my_provider": {
+    "type": "object",
+    "properties": {
+      "type": { "const": "my-type" },
+      "model": { "type": "string" }
+    }
+  }
+}
+```
+
+### CLI Provider Pattern
+
+For subprocess-based providers (e.g., Cursor), extend `CliProvider`:
+
+```typescript
+import { CliProvider } from "./cli-provider-base";
+
+export class CursorProvider extends CliProvider {
+  async listModels(): Promise<ModelOption[]> {
+    // Cache result with TTL
+    if (this.modelsCache && Date.now() < this.modelsCache.expiry) {
+      return this.modelsCache.models;
+    }
+
+    try {
+      // Execute subprocess with timeout
+      const result = await this.executeWithTimeout(
+        "cursor-agent --list-models",
+        10000  // 10 second timeout
+      );
+
+      const models = JSON.parse(result);
+
+      // Cache for 5 minutes
+      this.modelsCache = {
+        models,
+        expiry: Date.now() + 5 * 60 * 1000
+      };
+
+      return models;
+    } catch (error) {
+      // Graceful fallback on timeout/error
+      return [];
+    }
+  }
+}
+```
+
+### Testing Providers
+
+Mock for deterministic testing:
+
+```typescript
+// tests/unit/providers/my-provider.test.ts
+describe("MyProvider", () => {
+  it("should stream messages", async () => {
+    const provider = new MyProvider();
+    const session = await provider.createSession();
+
+    const events: ChatEvent[] = [];
+    for await (const event of provider.sendMessage(session.id, "test")) {
+      events.push(event);
+    }
+
+    expect(events.length).toBeGreaterThan(0);
+  });
+});
+```
+
+### Provider Registry Usage
+
+```typescript
+// Get specific provider
+const provider = providerRegistry.get("claude");
+
+// Get user-facing providers (for dropdowns)
+const providers = providerRegistry.list();
+
+// Get all providers including mock (internal)
+const allProviders = providerRegistry.listAll();
+
+// Check if provider is available
+const available = await provider.isAvailable?.();
+
+// List models
+const models = await provider.listModels?.() ?? [];
+```

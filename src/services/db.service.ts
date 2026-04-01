@@ -231,6 +231,14 @@ function runMigrations(database: Database): void {
 
   if (current < 8) {
     database.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        name TEXT PRIMARY KEY,
+        transport TEXT NOT NULL DEFAULT 'stdio',
+        config TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
       CREATE TABLE IF NOT EXISTS session_titles (
         session_id TEXT PRIMARY KEY,
         title TEXT NOT NULL,

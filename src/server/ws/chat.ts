@@ -23,7 +23,6 @@ type ChatWsSocket = {
 interface SessionEntry {
   providerId: string;
   clients: Set<ChatWsSocket>;
-  abort?: AbortController;
   projectPath?: string;
   projectName?: string;
   pingIntervals: Map<ChatWsSocket, ReturnType<typeof setInterval>>;
@@ -33,6 +32,8 @@ interface SessionEntry {
   turnEvents: unknown[];
   streamPromise?: Promise<void>;
   permissionMode?: string;
+  /** Whether the persistent event consumer loop is running */
+  isStreamingActive: boolean;
 }
 
 /** Tracks active sessions — persists even when FE disconnects */
@@ -118,42 +119,46 @@ function clearClientPing(entry: SessionEntry, ws: ChatWsSocket): void {
   }
 }
 
-/** Start cleanup timer — only called when Claude is done AND no FE connected */
-function startCleanupTimer(sessionId: string): void {
+/** Start cleanup timer — called when no FE connected. Urgent mode (30s) for orphaned streaming sessions. */
+function startCleanupTimer(sessionId: string, urgent = false): void {
   const entry = activeSessions.get(sessionId);
   if (!entry) return;
   if (entry.cleanupTimer) clearTimeout(entry.cleanupTimer);
+  const delay = urgent ? 30_000 : CLEANUP_TIMEOUT_MS;
   entry.cleanupTimer = setTimeout(() => {
     console.log(`[chat] session=${sessionId} cleanup: no FE reconnected within timeout`);
     logSessionEvent(sessionId, "INFO", "Session cleaned up (no FE reconnected)");
+    // Close streaming session in provider
+    const provider = providerRegistry.get(entry.providerId);
+    if (provider && "closeStreamingSession" in provider) {
+      (provider as any).closeStreamingSession(sessionId);
+    }
     for (const interval of entry.pingIntervals.values()) clearInterval(interval);
     entry.pingIntervals.clear();
     activeSessions.delete(sessionId);
-  }, CLEANUP_TIMEOUT_MS);
+  }, delay);
 }
 
 /**
- * Standalone streaming loop — decoupled from WS message handler.
- * Runs independently so WS close does NOT kill the Claude query.
+ * Persistent event consumer — runs for the entire session lifetime.
+ * First message creates the query; follow-ups push into the provider's
+ * message channel. Events from ALL turns flow through this single loop.
  */
-async function runStreamLoop(sessionId: string, providerId: string, content: string, permissionMode?: string): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
-    console.error(`[chat] session=${sessionId} runStreamLoop: no entry — aborting`);
+    console.error(`[chat] session=${sessionId} startSessionConsumer: no entry — aborting`);
     return;
   }
-  const streamStartMs = Date.now();
-  console.log(`[chat] session=${sessionId} runStreamLoop started (clients=${entry.clients.size})`);
+  console.log(`[chat] session=${sessionId} startSessionConsumer started (clients=${entry.clients.size})`);
 
-  const abortController = new AbortController();
-  entry.abort = abortController;
+  entry.isStreamingActive = true;
   entry.pendingApprovalEvent = undefined;
   entry.turnEvents = [];
   setPhase(sessionId, "connecting");
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let lastContextWindowPct: number | undefined;
-  let doneEmitted = false;
 
   try {
     const userPreview = content.slice(0, 200);
@@ -162,12 +167,12 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
 
     let eventCount = 0;
     let firstEventReceived = false;
-    const startTime = Date.now();
+    let startTime = Date.now();
 
     // Heartbeat: while waiting for first response, send elapsed time every 5s
     const CONNECTION_TIMEOUT_S = 120;
     heartbeat = setInterval(() => {
-      if (firstEventReceived || abortController.signal.aborted) {
+      if (firstEventReceived) {
         clearInterval(heartbeat);
         return;
       }
@@ -186,27 +191,40 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
           type: "error",
           message: `Claude SDK timed out after ${elapsed}s for project "${projectPath || "(no project)"}".${wslHint}\n\nDebug steps:\n1. Run: \`${debugCmd}\` — if it also hangs, the issue is your Claude CLI environment\n2. Check env vars: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause silent hang\n3. Try with env cleared: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" ${debugCmd}\`\n4. Check hooks/MCP: \`cat ${projectPath}/.claude/settings.local.json\`\n5. Refresh auth: \`claude login\``,
         });
-        abortController.abort();
         return;
       }
-      // Heartbeat uses broadcast() directly — NOT setPhase() (same-phase guard would skip elapsed updates)
       broadcast(sessionId, { type: "phase_changed", phase: "connecting", elapsed });
     }, 5_000);
 
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode })) {
-      if (abortController.signal.aborted) break;
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
 
-      // System events (hook_started, init, etc.) → transition connecting → thinking
-      // These indicate SDK has connected and is processing, but no content yet.
+      // Session ID migrated: CLI provider assigned a different ID than PPM generated.
+      // Migrate activeSessions key so all subsequent events use the real ID.
+      if (evType === "session_migrated") {
+        const { oldSessionId, newSessionId } = ev;
+        const migrated = activeSessions.get(oldSessionId);
+        if (migrated) {
+          activeSessions.delete(oldSessionId);
+          activeSessions.set(newSessionId, migrated);
+          sessionId = newSessionId; // update local ref for subsequent setPhase/broadcast calls
+          // Notify frontend to update its sessionId state
+          broadcast(newSessionId, { type: "session_migrated", oldSessionId, newSessionId });
+          console.log(`[chat] session migrated: ${oldSessionId} → ${newSessionId}`);
+          logSessionEvent(newSessionId, "INFO", `Session ID migrated from ${oldSessionId}`);
+        }
+        continue;
+      }
+
+      // System events → transition connecting → thinking
       if (evType === "system") {
         if (!firstEventReceived) {
           if (heartbeat) clearInterval(heartbeat);
           setPhase(sessionId, "thinking");
         }
-        continue; // Don't buffer or broadcast system events
+        continue;
       }
 
       // First content event — stop heartbeat, transition phase
@@ -239,10 +257,11 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         console.error(`[chat] session=${sessionId} error: ${errorDetail}`);
         logSessionEvent(sessionId, "ERROR", errorDetail);
       } else if (evType === "done") {
-        doneEmitted = true;
+        // Turn complete — transition to idle, clear buffer for next turn
         logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
-        // Fire-and-forget: fetch updated session title (DB title takes priority)
+
+        // Fire-and-forget: fetch updated session title (DB title takes priority) + notification
         sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
           const found = sessions.find((s) => s.sessionId === sessionId || s.sessionId === ev.sessionId);
           const dbTitle = getSessionTitle(found?.sessionId ?? sessionId);
@@ -253,7 +272,6 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
             if (session) session.title = title;
           }
         }).catch(() => {});
-        // Fire-and-forget notification broadcast (push + telegram)
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
@@ -268,7 +286,6 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
         }).catch(() => {});
       } else if (evType === "approval_request") {
         entry.pendingApprovalEvent = ev;
-        // Fire-and-forget notification for approval/question
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
@@ -287,32 +304,40 @@ async function runStreamLoop(sessionId: string, providerId: string, content: str
 
       // Buffer + broadcast content events
       bufferAndBroadcast(sessionId, event);
+
+      // After "done", transition to idle + clear turn buffer for next turn
+      // Consumer loop continues — query waits for next message in generator
+      if (evType === "done") {
+        entry.turnEvents = [];
+        entry.pendingApprovalEvent = undefined;
+        setPhase(sessionId, "idle");
+        // Reset heartbeat tracking for next turn
+        firstEventReceived = false;
+        startTime = Date.now();
+      }
     }
 
-    logSessionEvent(sessionId, "INFO", `Stream completed (${eventCount} events)`);
-    console.log(`[chat] session=${sessionId} stream completed (${eventCount} events)`);
+    logSessionEvent(sessionId, "INFO", `Session consumer completed (${eventCount} events total)`);
+    console.log(`[chat] session=${sessionId} session consumer completed (${eventCount} events)`);
   } catch (e) {
     const errMsg = (e as Error).message;
     logSessionEvent(sessionId, "ERROR", `Exception: ${errMsg}`);
-    if (!abortController.signal.aborted) {
-      bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
-    }
+    bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
   } finally {
     if (heartbeat) clearInterval(heartbeat);
-    // 1. Buffer and broadcast done event (skip if SDK already yielded one)
-    if (!doneEmitted) {
-      bufferAndBroadcast(sessionId, { type: "done", sessionId, contextWindowPct: lastContextWindowPct });
-    }
-    // 2. Clear buffer BEFORE setting phase to idle
+    entry.isStreamingActive = false;
     entry.turnEvents = [];
-    // 3. Transition to idle
     setPhase(sessionId, "idle");
-    // 4. Cleanup
-    entry.abort = undefined;
     entry.pendingApprovalEvent = undefined;
+    // Close streaming session in provider
+    const provider = providerRegistry.get(entry.providerId);
+    if (provider && "closeStreamingSession" in provider) {
+      (provider as any).closeStreamingSession(sessionId);
+    }
     if (entry.clients.size === 0) {
       startCleanupTimer(sessionId);
     }
+    console.log(`[chat] session=${sessionId} consumer loop ended`);
   }
 }
 
@@ -389,6 +414,7 @@ export const chatWebSocket = {
       pingIntervals: new Map(),
       phase: "idle",
       turnEvents: [],
+      isStreamingActive: false,
     };
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
@@ -439,7 +465,7 @@ export const chatWebSocket = {
       if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
       const newEntry: SessionEntry = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
-        pingIntervals: new Map(), phase: "idle", turnEvents: [],
+        pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false,
       };
       activeSessions.set(sessionId, newEntry);
       setupClientPing(newEntry, ws);
@@ -476,57 +502,76 @@ export const chatWebSocket = {
         ws.send(JSON.stringify({ type: "error", message: "Message content is required" }));
         return;
       }
+      // Validate image payload
+      if (parsed.images?.length) {
+        if (parsed.images.length > 5) {
+          ws.send(JSON.stringify({ type: "error", message: "Max 5 images per message" }));
+          return;
+        }
+        const MAX_BASE64_SIZE = 7_000_000; // ~5MB decoded
+        const SUPPORTED_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+        for (const img of parsed.images) {
+          if (img.data.length > MAX_BASE64_SIZE) {
+            ws.send(JSON.stringify({ type: "error", message: "Image too large (max 5MB)" }));
+            return;
+          }
+          if (!SUPPORTED_TYPES.has(img.mediaType)) {
+            ws.send(JSON.stringify({ type: "error", message: `Unsupported image type: ${img.mediaType}` }));
+            return;
+          }
+        }
+      }
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
       }
 
-      // Resume session in provider (can be slow on first call — sdkListSessions)
       const provider = providerRegistry.get(providerId);
-      if (provider && "resumeSession" in provider) {
-        const t0 = Date.now();
-        await (provider as any).resumeSession(sessionId);
-        const elapsed = Date.now() - t0;
-        if (elapsed > 500) {
-          console.warn(`[chat] session=${sessionId} resumeSession took ${elapsed}ms`);
-          logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
+
+      if (!entry.isStreamingActive) {
+        // First message or post-crash recovery: start persistent consumer
+        // Resume session in provider (can be slow on first call — sdkListSessions)
+        if (provider && "resumeSession" in provider) {
+          const t0 = Date.now();
+          await (provider as any).resumeSession(sessionId);
+          const elapsed = Date.now() - t0;
+          if (elapsed > 500) {
+            console.warn(`[chat] session=${sessionId} resumeSession took ${elapsed}ms`);
+            logSessionEvent(sessionId, "PERF", `resumeSession took ${elapsed}ms`);
+          }
         }
-      }
-      if (entry.projectPath && provider && "ensureProjectPath" in provider) {
-        (provider as any).ensureProjectPath(sessionId, entry.projectPath);
-      }
-
-      // Abort-and-replace: if already streaming, abort current query and wait for cleanup
-      if (entry.phase !== "idle" && entry.abort) {
-        console.log(`[chat] session=${sessionId} aborting current query for new message`);
-        entry.abort.abort();
-        if (entry.streamPromise) {
-          await entry.streamPromise;
+        if (entry.projectPath && provider && "ensureProjectPath" in provider) {
+          (provider as any).ensureProjectPath(sessionId, entry.projectPath);
         }
-        // Re-fetch entry after await — may have been mutated during cleanup
-        entry = activeSessions.get(sessionId)!;
-        if (!entry) return;
+
+        entry.turnEvents = [];
+        setPhase(sessionId, "initializing");
+
+        const permMode = entry.permissionMode;
+        const msgImages = parsed.type === "message" ? parsed.images : undefined;
+        entry.streamPromise = new Promise<void>((resolve) => {
+          setTimeout(() => {
+            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages).then(resolve, resolve);
+          }, 0);
+        });
+      } else {
+        // Follow-up: push into existing generator via provider
+        if (provider && "pushMessage" in provider && parsed.type === "message") {
+          (provider as any).pushMessage(sessionId, parsed.content, {
+            priority: parsed.priority ?? 'next',
+            images: parsed.images,
+          });
+        }
+        // Clear turn events for new turn display + transition phase
+        entry.turnEvents = [];
+        entry.pendingApprovalEvent = undefined;
+        setPhase(sessionId, "thinking");
+        console.log(`[chat] session=${sessionId} follow-up pushed to generator`);
       }
-
-      // Reset for new query
-      entry.turnEvents = [];
-      setPhase(sessionId, "initializing");
-
-      // Store promise reference on entry to prevent GC from collecting the async operation.
-      // Use setTimeout(0) to detach from WS handler's async scope.
-      const permMode = entry.permissionMode;
-      entry.streamPromise = new Promise<void>((resolve) => {
-        setTimeout(() => {
-          runStreamLoop(sessionId, providerId, parsed.content, permMode).then(resolve, resolve);
-        }, 0);
-      });
     } else if (parsed.type === "cancel") {
-      // Signal abortController so runStreamLoop suppresses error broadcast
-      if (entry?.abort) entry.abort.abort();
+      // Fully teardown streaming session — user must resume to continue
       const provider = providerRegistry.get(providerId);
-      if (provider && "abortQuery" in provider && typeof (provider as any).abortQuery === "function") {
-        (provider as any).abortQuery(sessionId);
-      }
+      provider?.abortQuery?.(sessionId);
     } else if (parsed.type === "approval_response") {
       const provider = providerRegistry.get(providerId);
       if (provider && typeof provider.resolveApproval === "function") {
@@ -549,8 +594,9 @@ export const chatWebSocket = {
     evictClient(entry, ws);
     console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
-    if (entry.clients.size === 0 && entry.phase === "idle") {
-      startCleanupTimer(sessionId);
+    if (entry.clients.size === 0) {
+      // Use shorter timeout if streaming is still active (orphaned session — no FE to consume events)
+      startCleanupTimer(sessionId, entry.isStreamingActive);
     }
   },
 };

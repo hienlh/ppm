@@ -58,13 +58,13 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 **Theme:** Multi-provider AI (Claude + Cursor) + extension system. Ship a focused release, expand providers later.
 
-**Overall progress: ~40%** (1/3 features complete, merge all at 100%)
+**Overall progress: ~53%** (2/3 features complete, merge all at 100%)
 
 | Feature | Priority | Status | Description |
 |---------|----------|--------|-------------|
 | **Multi-provider AI** | Critical | ✅ Done | ProviderInterface, registry, Cursor CLI, CLI provider base, UI provider/model selector, permission mode selector, system prompt customization, comprehensive tests — all on beta branch. |
+| **MCP Management** | Medium | ✅ Done | REST API (CRUD + import), SQLite storage, Settings UI, auto-import from `~/.claude.json`, validation, SDK integration. |
 | **Extension architecture** | High | 🔴 0% | Dynamic extension loading. Extensions = npm packages. First extension: extract DB viewer from core. Extension API: register routes, UI panels, sidebar tabs, skills. Config: `"extensions": ["@ppm/ext-database", "@ppm/ext-docker"]`. |
-| **MCP Management** | Medium | 🔴 0% | UI to add/remove/configure MCP servers. Test connection. Per-project MCP overrides. Store in SQLite. Pass to Agent SDK via `mcpServers`. |
 
 **Multi-provider — v0.9 scope (reduced):**
 - Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy

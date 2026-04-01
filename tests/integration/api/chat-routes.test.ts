@@ -33,7 +33,8 @@ describe("Chat REST API", () => {
     expect(Array.isArray(json.data)).toBe(true);
     const ids = json.data.map((p: any) => p.id);
     expect(ids).toContain("claude");
-    expect(ids).toContain("mock");
+    // mock provider is hidden from user-facing list
+    expect(ids).not.toContain("mock");
   });
 
   it("POST /chat/sessions creates a session", async () => {

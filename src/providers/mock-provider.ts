@@ -167,7 +167,7 @@ export class MockProvider implements AIProvider {
     }
   }
 
-  getMessages(sessionId: string): ChatMessage[] {
+  async getMessages(sessionId: string): Promise<ChatMessage[]> {
     return this.messageHistory.get(sessionId) ?? [];
   }
 }

@@ -2,11 +2,11 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.8.76
+**Current Version:** v0.8.87
 
 ---
 
-## [0.8.77] — 2026-04-01 (Planned)
+## [0.8.77] — 2026-04-01
 
 ### Added
 - **Deterministic Tab URLs + Backend Workspace Sync**
@@ -38,6 +38,41 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 - **Cross-device persistence** — Workspace layout saved on server, restored on any device
 - **URL-driven navigation** — Paste URL to recreate workspace state
 - **Conflict-free sync** — Latest timestamp wins; no manual merge dialogs
+
+---
+
+## [0.8.63] — 2026-03-28
+
+### Added
+- **MCP Server Management** — Configure Model Context Protocol servers via Settings UI
+  - REST API: GET/POST/PUT/DELETE `/api/settings/mcp`, plus import endpoints
+  - Storage: SQLite `mcp_servers` table (name, transport, config JSON)
+  - UI: Settings tab with server list, add/edit dialog, delete action
+  - Auto-import: Reads `~/.claude.json` on first access (skips existing/invalid)
+  - Validation: Name (alphanumeric, max 50 chars) + transport-specific config checks
+  - SDK integration: Servers passed to `query()` as `mcpServers`, tools auto-allowed via `mcp__*` wildcard
+
+### Technical Details
+- **Files Created:**
+  - `src/types/mcp.ts` — McpServerConfig types, validation functions
+  - `src/services/mcp-config.service.ts` — CRUD service + bulk import
+  - `src/server/routes/mcp.ts` — REST API endpoints
+  - `src/web/lib/api-mcp.ts` — Frontend API client
+  - `src/web/components/settings/mcp-settings-section.tsx` — Settings UI
+  - `src/web/components/settings/mcp-server-dialog.tsx` — Add/Edit dialog
+- **Files Modified:**
+  - `src/services/db.service.ts` — Schema v8 migration (mcp_servers table)
+  - `src/server/index.ts` — Route registration
+  - `src/providers/claude-agent-sdk.ts` — mcpServers + mcp__* allowedTools
+  - `src/web/components/settings/settings-tab.tsx` — MCP category added
+
+---
+
+## [0.8.62] — 2026-03-26
+
+### Added
+- **Cmd+Shift+V shortcut** — Command palette entry for voice input
+- **Voice input** — Web Speech API integration for chat
 
 ---
 
@@ -76,7 +111,7 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
   - `src/services/chat.service.ts` — Use optional methods instead of duck-typing
   - `src/web/components/chat/session-picker.tsx` — Integrated provider selector
 - **Breaking Changes:** None (backward compatible, all tests passing)
-- **Architecture:** All phases complete (6/6), 479 tests passing
+- **Architecture:** All phases complete (6/6), 555 tests passing
 
 ### Benefits
 - Extensible foundation for Codex, Gemini, and future providers (~100-150 lines each)

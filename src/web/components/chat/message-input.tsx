@@ -1,11 +1,12 @@
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock } from "lucide-react";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
 import { isSupportedFile, isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
+import { ProviderSelector } from "./provider-selector";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
 import { flattenFileTree } from "./file-picker";
@@ -21,8 +22,10 @@ export interface ChatAttachment {
   status: "uploading" | "ready" | "error";
 }
 
+export type MessagePriority = 'now' | 'next' | 'later';
+
 interface MessageInputProps {
-  onSend: (content: string, attachments: ChatAttachment[]) => void;
+  onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => void;
   isStreaming?: boolean;
   onCancel?: () => void;
   disabled?: boolean;
@@ -45,6 +48,10 @@ interface MessageInputProps {
   permissionMode?: string;
   /** Permission mode change handler */
   onModeChange?: (mode: string) => void;
+  /** Current provider ID */
+  providerId?: string;
+  /** Provider change handler — undefined when session is active (locked) */
+  onProviderChange?: (providerId: string) => void;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -64,11 +71,14 @@ export const MessageInput = memo(function MessageInput({
   autoFocus,
   permissionMode,
   onModeChange,
+  providerId,
+  onProviderChange,
 }: MessageInputProps) {
   const [value, setValue] = useState(initialValue ?? "");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
   const [pendingSend, setPendingSend] = useState(false);
+  const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -323,7 +333,7 @@ export const MessageInput = memo(function MessageInput({
     onSlashStateChange?.(false, "");
     onFileStateChange?.(false, "");
     if (voice.isListening) voice.stop();
-    onSend(trimmed, readyAttachments);
+    onSend(trimmed, readyAttachments, isStreaming ? priority : undefined);
     setValue("");
     // Revoke preview URLs
     for (const att of attachments) {
@@ -331,9 +341,10 @@ export const MessageInput = memo(function MessageInput({
     }
     setAttachments([]);
     setPendingSend(false);
+    setPriority('next');
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
-  }, [value, attachments, onSend, onSlashStateChange, onFileStateChange]);
+  }, [value, attachments, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority]);
 
   const handleSend = useCallback(() => {
     if (disabled) return;
@@ -489,7 +500,7 @@ export const MessageInput = memo(function MessageInput({
       >
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
-        {/* Mobile: mode chip row */}
+        {/* Mobile: mode chip + provider selector row */}
         <div className="flex items-center gap-1 px-2 pt-2 md:hidden relative">
           <ModeChip
             mode={permissionMode ?? "bypassPermissions"}
@@ -501,6 +512,14 @@ export const MessageInput = memo(function MessageInput({
             open={modeSelectorOpen}
             onOpenChange={setModeSelectorOpen}
           />
+          {onProviderChange && projectName && (
+            <ProviderSelector
+              value={providerId ?? "claude"}
+              onChange={onProviderChange}
+              projectName={projectName}
+            />
+          )}
+          {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
         </div>
         {/* Mobile: single row — attach + mic + textarea + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
@@ -615,6 +634,15 @@ export const MessageInput = memo(function MessageInput({
                   onOpenChange={setModeSelectorOpen}
                 />
               </div>
+              {/* Provider selector — only when no active session */}
+              {onProviderChange && projectName && (
+                <ProviderSelector
+                  value={providerId ?? "claude"}
+                  onChange={onProviderChange}
+                  projectName={projectName}
+                />
+              )}
+              {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
             </div>
             <div className="flex items-center gap-1">
               {showCancel ? (
@@ -658,6 +686,37 @@ function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
     >
       <Icon className="size-3" />
       <span className="max-w-[100px] truncate">{label}</span>
+    </button>
+  );
+}
+
+const PRIORITY_OPTIONS: { value: MessagePriority; label: string; Icon: typeof Zap }[] = [
+  { value: 'now', label: 'Interrupt', Icon: Zap },
+  { value: 'next', label: 'Queue', Icon: ListOrdered },
+  { value: 'later', label: 'Later', Icon: Clock },
+];
+
+/** Compact priority toggle — visible only during streaming */
+function PriorityToggle({ value, onChange }: { value: MessagePriority; onChange: (v: MessagePriority) => void }) {
+  const cycle = useCallback(() => {
+    const order: MessagePriority[] = ['next', 'later', 'now'];
+    const idx = order.indexOf(value);
+    onChange(order[(idx + 1) % order.length]!);
+  }, [value, onChange]);
+
+  const current = PRIORITY_OPTIONS.find((o) => o.value === value) ?? PRIORITY_OPTIONS[1]!;
+  const Icon = current.Icon;
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); cycle(); }}
+      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors border border-transparent hover:border-border"
+      aria-label={`Message priority: ${current.label}`}
+      title={`Priority: ${current.label} (click to cycle)`}
+    >
+      <Icon className="size-3" />
+      <span>{current.label}</span>
     </button>
   );
 }

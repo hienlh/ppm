@@ -85,4 +85,38 @@ describe("validateAIProviderConfig", () => {
   it("rejects non-integer thinking_budget_tokens", () => {
     expect(validateAIProviderConfig({ thinking_budget_tokens: 1.5 })).toHaveLength(1);
   });
+
+  // CLI provider validation
+  it("accepts valid CLI provider config", () => {
+    const errors = validateAIProviderConfig({
+      type: "cli",
+      cli_command: "cursor-agent",
+      model: "any-model-string",
+    });
+    expect(errors).toHaveLength(0);
+  });
+
+  it("rejects CLI provider without cli_command", () => {
+    const errors = validateAIProviderConfig({ type: "cli" });
+    expect(errors.some((e) => e.includes("cli_command"))).toBe(true);
+  });
+
+  it("rejects CLI provider with invalid cli_command", () => {
+    const errors = validateAIProviderConfig({ type: "cli", cli_command: "rm" });
+    expect(errors.some((e) => e.includes("cli_command"))).toBe(true);
+  });
+
+  it("accepts 'cli' as valid type", () => {
+    const errors = validateAIProviderConfig({ type: "cli", cli_command: "cursor-agent" });
+    expect(errors.filter((e) => e.includes("type"))).toHaveLength(0);
+  });
+
+  it("CLI provider skips model validation (accepts any string)", () => {
+    const errors = validateAIProviderConfig({
+      type: "cli",
+      cli_command: "cursor-agent",
+      model: "custom-cursor-model-v2",
+    });
+    expect(errors.filter((e) => e.includes("model"))).toHaveLength(0);
+  });
 });

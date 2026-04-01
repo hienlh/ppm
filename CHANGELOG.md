@@ -85,6 +85,22 @@
 - **Cloud WS reconnect loop**: Stale WebSocket closure handlers from replaced connections no longer reset module state
 - **Cloud WS auth race**: Delay heartbeat/queue flush 500ms after auth to let server complete async DB auth — prevents 4002 rejection
 
+## [0.9.0-beta.10] - 2026-03-31
+
+### Merged from main (0.8.69 → 0.8.72)
+- **Supervisor state machine**: States `running → paused → upgrading` with promise-based wait/resume
+- **Cloud WebSocket client**: Persistent WS connection replacing HTTP heartbeat — auto-reconnect with backoff
+- **Remote commands via Cloud**: Supervisor handles restart/stop/upgrade/resume/status via Cloud WS
+- **Pin/Save sessions**: Pin important chat sessions to top of history — persisted in DB across devices
+- **Editor breadcrumb scrolling**: Enable scrolling in breadcrumb dropdown menus
+
+## [0.9.0-beta.9] - 2026-03-31
+
+### Merged from main (0.8.68)
+- **Hot-reload timer leak**: Background polling timers (usage fetch, account refresh, cloud heartbeat) leaked on Bun `--hot` reload — module-level vars reset but old timers kept running. Moved timer refs to `globalThis` to survive reloads.
+
+## [0.9.0-beta.8] - 2026-03-30
+
 ## [0.8.72] - 2026-03-31
 
 ### Added
@@ -129,60 +145,57 @@
 ## [0.8.68] - 2026-03-31
 
 ### Fixed
-- **Hot-reload timer leak**: Background polling timers (usage fetch, account refresh, cloud heartbeat) leaked on Bun `--hot` reload — module-level vars reset but old timers kept running, causing 221+ concurrent timers and ~38K 429 errors/day. Moved timer refs to `globalThis` to survive reloads.
+- **SDK process leak**: Prevent claude-agent-sdk subprocess leak on WS disconnect and cancel — cleanup timer now starts regardless of streaming state, orphaned sessions cleaned up in 30s, abortQuery fully teardowns subprocess
 
-## [0.8.67] - 2026-03-29
+### Merged from main (0.8.65–0.8.67)
+- **CSV cell word wrap**: Wrap toggle applies to CSV table cells
+- **CSV inline editing**: Cell editor upgraded to auto-resizing textarea with multi-line support
+- **Auto-upgrade port conflict**: Supervisor self-replace prevents crash-restart loop
+- **Editor breadcrumb bar**: VSCode-style path breadcrumb with nested dropdown navigation
+- **Editor toolbar**: Contextual actions — Markdown Edit/Preview, CSV Table/Raw, Word Wrap
+- **CSV table preview**: `@tanstack/react-table` viewer with virtual scrolling and inline editing
+- **Chat session titles**: Persist in PPM DB to prevent SDK from overwriting user-set titles
+- **Chat abort error**: Suppress abort error toast on user cancel
 
-### Improved
-- **CSV cell word wrap**: Wrap toggle now applies to CSV table cells (same button as code editor word wrap)
-- **CSV inline editing**: Cell editor upgraded from single-line input to auto-resizing textarea — supports multi-line content, Shift+Enter for newlines, Enter to save
+## [0.9.0-beta.7] - 2026-03-27
 
-## [0.8.66] - 2026-03-29
+### Merged from main
+- **Usage polling dedup**: Concurrent `pollOnce` calls share single in-flight fetch
+- **429 cooldown floor**: Min 60s cooldown on 429 responses
+- **Browser preview tests**: Unit tests (12) + integration test (6) for tunnel routes
 
-### Fixed
-- **Auto-upgrade port conflict**: Supervisor self-replace now sets `shuttingDown` flag before killing server, preventing crash-restart loop from respawning on the same port as the new supervisor
-- **Account cooldown re-enable**: Handle expired accounts that cannot be re-enabled during cooldown clear — disable them instead of crashing
-- **Hot-reload log duplication**: Guard `setupLogFile()` against re-wrapping console on `bun --hot` module re-execution
+## [0.9.0-beta.6] - 2026-03-27
 
-## [0.8.65] - 2026-03-29
+### Merged from main
+- **Browser preview tab**: Localhost preview via per-port Cloudflare Quick Tunnels. Enter port → tunnel starts → iframe loads tunnel URL. Ghost cleanup every 30s. All tunnels killed on shutdown.
+- **Voice input**: Mic button in chat, `Cmd+Shift+V` shortcut, command palette entry
+- **Voice input stops on send**: Auto-stops recognition when message sent
+
+## [0.9.0-beta.5] - 2026-03-27
+
+### Merged
+- Consolidated `feat/streaming-input-migration` into `beta`
+
+## [0.9.0-beta.3] - 2026-03-26
 
 ### Added
-- **Editor breadcrumb bar**: VSCode-style path breadcrumb with nested dropdown navigation from file tree. Click segment to see siblings, click file to switch, Ctrl+Click to open new tab. Desktop only.
-- **Editor toolbar**: Right-aligned contextual actions — Markdown Edit/Preview toggle, CSV Table/Raw toggle, Word Wrap toggle. Replaces previously dead button code.
-- **CSV table preview**: `@tanstack/react-table` viewer with virtual scrolling (handles 10K+ rows), inline cell editing, column sorting, column resizing, and auto-save. State-machine CSV parser handles quoted fields, escaped quotes, and embedded newlines.
-
-### Fixed
-- **Chat session titles**: Persist session titles in PPM DB to prevent SDK from overwriting user-set titles
-- **Chat abort error**: Suppress abort error toast when user cancels an in-progress chat
-- **Usage polling**: Clear stale inflight poll on race timeout; add id tiebreaker to snapshot queries
-
-## [0.8.64] - 2026-03-27
-
-### Fixed
-- **Usage polling dedup**: Concurrent `pollOnce` calls now share a single in-flight fetch instead of hammering the API
-- **429 cooldown floor**: Minimum 60s cooldown on 429 responses, even if `retry-after` header is lower
-
-### Added
-- **Browser preview tests**: Unit tests (12) for tunnel route validation and lifecycle; integration test (6) verifying real Cloudflare tunnel creation and access
-
-## [0.8.63] - 2026-03-27
+- **Streaming input migration**: Chat system migrated from per-message `query()` to SDK-recommended persistent `AsyncGenerator` streaming input — follow-up messages `yield` into a single long-lived query instead of spawning new subprocesses
+- **Message priority**: Follow-up messages support `now` (interrupt), `next` (queue, default), `later` priority via SDK `streamInput` — PriorityToggle UI visible during streaming
+- **Image attachment support**: Messages can include base64 images (png/jpeg/gif/webp, max 5 images, max 5MB each) passed through to SDK `MessageParam` content blocks
+- **Persistent event consumer**: `startSessionConsumer()` runs for session lifetime, processing events across multiple turns — replaces per-message `runStreamLoop()`
 
 ### Changed
-- **Browser preview tab rewrite**: Replaced fragile reverse proxy (HTML/JS/CSS path rewriting) with per-port Cloudflare Quick Tunnels. User enters a port, PPM starts a tunnel, iframe loads the tunnel URL — all assets, HMR, fonts work natively. Ghost tunnels auto-cleaned every 30s. All tunnels killed on server shutdown.
+- **Cancel = interrupt**: Cancel button now calls `query.interrupt()` (session stays alive) instead of `query.close()` (killed subprocess)
+- **No more abort-and-replace**: Follow-up messages push into existing generator via `pushMessage()` instead of aborting current stream and starting new query
+- **Crash auto-recovery**: Streaming session cleanup on crash, next message auto-recovers by creating new session
 
-## [0.8.62] - 2026-03-26
+### Fixed
+- **First-message images dropped**: Images on initial message now passed through `startSessionConsumer` to SDK
+- **Double done event**: `yieldedDone` flag prevents duplicate done broadcast on session end
+- **Retry channel leak**: Old message channel properly closed (`controller.done()`) before retry
+- **abortQuery fallback cleanup**: Streaming session cleaned up when `interrupt()` unavailable
 
-### Added
-- **Voice input in chat**: Mic button in chat input (mobile + desktop) using Web Speech API. Streams real-time interim results, appends to existing text, default language vi-VN. Button hidden on unsupported browsers.
-- **Voice input keyboard shortcut**: `Cmd+Shift+V` (Mac) / `Ctrl+Shift+V` (Win/Linux) toggles voice input globally. Customizable in Settings > Keyboard Shortcuts.
-- **Voice Input in Command Palette**: Search "voice", "mic", or "speech" to toggle voice input from the palette.
-
-## [0.8.61] - 2026-03-26
-
-### Added
-- **Browser preview tab**: Embed localhost web apps inside PPM via an iframe with reverse proxy. Includes toolbar with back/forward navigation, reload, address bar, and "Open in Browser" button. Supports any localhost port; external URLs load directly in iframe. Open via Command Palette → "Open Browser".
-
-## [0.8.60] - 2026-03-26
+## [0.9.0-beta.2] - 2026-03-26
 
 ### Fixed
 - **Chat input drops uploading files on send**: Pressing send while files are still uploading now queues the message and auto-sends once all uploads complete, instead of silently dropping in-progress attachments. Send button shows spinner when queued; clicking again cancels.

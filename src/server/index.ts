@@ -14,6 +14,7 @@ import { databaseRoutes } from "./routes/database.ts";
 import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
+import { mcpRoutes } from "./routes/mcp.ts";
 import { browserPreviewRoutes } from "./routes/browser-preview.ts";
 import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
@@ -139,6 +140,7 @@ app.route("/api/fs", fsBrowseRoutes);
 
 // API routes
 app.route("/api/settings", settingsRoutes);
+app.route("/api/settings/mcp", mcpRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 app.route("/api/push", pushRoutes);
 app.route("/api/projects", projectRoutes);
@@ -173,6 +175,10 @@ export async function startServer(options: {
   const host = configService.get("host");
 
   await setupLogFile();
+
+  // Bootstrap CLI providers (checks binary availability)
+  const { bootstrapProviders } = await import("../providers/registry.ts");
+  await bootstrapProviders();
 
   // Check if port is already in use before spawning supervisor
   const portInUse = await new Promise<boolean>((resolve) => {

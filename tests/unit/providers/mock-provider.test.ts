@@ -121,7 +121,7 @@ describe("MockProvider", () => {
       // consume
     }
 
-    const messages = provider.getMessages(session.id);
+    const messages = await provider.getMessages(session.id);
     expect(messages).toHaveLength(2); // user + assistant
     expect(messages[0].role).toBe("user");
     expect(messages[0].content).toBe("hello");

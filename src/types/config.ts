@@ -44,18 +44,24 @@ const VALID_PERMISSION_MODES = ["default", "acceptEdits", "plan", "bypassPermiss
 export type PermissionMode = typeof VALID_PERMISSION_MODES[number];
 
 export interface AIProviderConfig {
-  type: "agent-sdk" | "mock";
+  type: "agent-sdk" | "cli" | "mock";
+
+  // Common fields (all providers)
+  permission_mode?: PermissionMode;
+  system_prompt?: string;
+  model?: string;
+
+  // SDK-specific (Claude)
   api_key_env?: string;
   api_key?: string;
   base_url?: string;
-  // Agent SDK-specific settings (ignored by mock provider)
-  model?: string;
   effort?: "low" | "medium" | "high" | "max";
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
-  permission_mode?: PermissionMode;
-  system_prompt?: string;
+
+  // CLI-specific (Cursor, Codex, Gemini)
+  cli_command?: string;
 }
 
 export const DEFAULT_CONFIG: PpmConfig = {
@@ -80,11 +86,13 @@ export const DEFAULT_CONFIG: PpmConfig = {
   },
 };
 
-const VALID_TYPES = ["agent-sdk", "mock"] as const;
+const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;
 const VALID_EFFORTS = ["low", "medium", "high"] as const;
 const VALID_MODELS = ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"] as const;
+/** Allowed CLI commands for CLI providers (prevents command injection) */
+const VALID_CLI_COMMANDS = ["cursor-agent", "codex", "gemini"] as const;
 /** Only these values are allowed for default_provider in config */
-export const VALID_PROVIDERS = ["claude"] as const;
+export const VALID_PROVIDERS = ["claude", "cursor"] as const;
 const VALID_THEMES: ThemeConfig[] = ["light", "dark", "system"];
 
 /** Validate AI provider config fields. Returns array of error messages (empty = valid). */
@@ -93,9 +101,22 @@ export function validateAIProviderConfig(config: Partial<AIProviderConfig>): str
   if (config.type != null && !VALID_TYPES.includes(config.type as any)) {
     errors.push(`type must be one of: ${VALID_TYPES.join(", ")}`);
   }
-  if (config.model != null && !VALID_MODELS.includes(config.model as any)) {
-    errors.push(`model must be one of: ${VALID_MODELS.join(", ")}`);
+
+  // CLI-specific validation
+  if (config.type === "cli") {
+    if (!config.cli_command) {
+      errors.push("cli_command is required for CLI providers");
+    } else if (!VALID_CLI_COMMANDS.includes(config.cli_command as any)) {
+      errors.push(`cli_command must be one of: ${VALID_CLI_COMMANDS.join(", ")}`);
+    }
+    // CLI providers accept any model string — skip VALID_MODELS check
+  } else {
+    // SDK/mock model validation
+    if (config.model != null && !VALID_MODELS.includes(config.model as any)) {
+      errors.push(`model must be one of: ${VALID_MODELS.join(", ")}`);
+    }
   }
+
   if (config.effort && !VALID_EFFORTS.includes(config.effort as any)) {
     errors.push(`effort must be one of: ${VALID_EFFORTS.join(", ")}`);
   }
@@ -149,8 +170,9 @@ export function sanitizeConfig(config: PpmConfig): boolean {
     dirty = true;
   }
 
-  // Fix invalid default_provider — must be in VALID_PROVIDERS
-  if (!VALID_PROVIDERS.includes(config.ai.default_provider as any)) {
+  // Fix invalid default_provider — must be in VALID_PROVIDERS or be a registered provider key
+  if (!VALID_PROVIDERS.includes(config.ai.default_provider as any) &&
+      !config.ai.providers[config.ai.default_provider]) {
     config.ai.default_provider = DEFAULT_CONFIG.ai.default_provider;
     dirty = true;
   }

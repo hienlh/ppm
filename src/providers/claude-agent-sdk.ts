@@ -10,10 +10,12 @@ import type {
   SessionInfo,
   ChatEvent,
   ChatMessage,
+  ModelOption,
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
+import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionMapping, setSessionMapping, getSessionTitles, getSessionTitle } from "../services/db.service.ts";
+import { getSessionMapping, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
@@ -22,6 +24,84 @@ import { homedir } from "node:os";
 
 function getSdkSessionId(ppmId: string): string {
   return getSessionMapping(ppmId) ?? ppmId;
+}
+
+// ── Streaming Input: message channel for persistent query ──
+
+interface MessageController {
+  push(msg: any): void;
+  done(): void;
+}
+
+function createMessageChannel(): {
+  generator: AsyncGenerator<any, void, undefined>;
+  controller: MessageController;
+} {
+  const queue: any[] = [];
+  let resolve: ((msg: any) => void) | null = null;
+  let isDone = false;
+
+  async function* gen(): AsyncGenerator<any, void, undefined> {
+    while (!isDone) {
+      if (queue.length > 0) {
+        yield queue.shift()!;
+      } else {
+        const msg = await new Promise<any>((r) => { resolve = r; });
+        if (!isDone) yield msg;
+      }
+    }
+  }
+
+  return {
+    generator: gen(),
+    controller: {
+      push(msg: any) {
+        if (isDone) return;
+        if (resolve) {
+          const r = resolve;
+          resolve = null;
+          r(msg);
+        } else {
+          queue.push(msg);
+        }
+      },
+      done() {
+        isDone = true;
+        if (resolve) {
+          const r = resolve;
+          resolve = null;
+          r(null); // Unblock pending promise; isDone prevents yield
+        }
+      },
+    },
+  };
+}
+
+/** Build a MessageParam with optional image content blocks */
+function buildMessageParam(
+  text: string,
+  images?: Array<{ data: string; mediaType: string }>,
+): { role: 'user'; content: string | any[] } {
+  if (!images || images.length === 0) {
+    return { role: 'user' as const, content: text };
+  }
+  const blocks: any[] = [];
+  for (const img of images) {
+    blocks.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.data },
+    });
+  }
+  if (text.trim()) {
+    blocks.push({ type: 'text', text });
+  }
+  return { role: 'user' as const, content: blocks };
+}
+
+interface StreamingSession {
+  meta: Session;
+  query: any;
+  controller: MessageController;
 }
 
 /**
@@ -49,6 +129,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private activeQueries = new Map<string, { close: () => void }>();
   /** Fork source: ppmSessionId → sourceSessionId (used on first message to fork) */
   private forkSources = new Map<string, string>();
+  /** Streaming sessions: persistent query + message channel per session */
+  private streamingSessions = new Map<string, StreamingSession>();
 
   /** Auth-related env keys for diagnostic logging */
   private readonly AUTH_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
@@ -176,12 +258,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         (s) => s.sessionId === sessionId || s.sessionId === mappedSdkId,
       );
       if (found) {
-        const dbTitle = getSessionTitle(found.sessionId);
         const meta: Session = {
           id: sessionId,
           providerId: this.id,
-          title: dbTitle ?? found.customTitle ?? found.summary ?? "Resumed Chat",
-          projectPath: (found as any).cwd || undefined,
+          title: found.customTitle ?? found.summary ?? "Resumed Chat",
           createdAt: new Date(found.lastModified).toISOString(),
         };
         this.activeSessions.set(sessionId, meta);
@@ -234,6 +314,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
+    this.closeStreamingSession(sessionId);
     this.activeSessions.delete(sessionId);
     this.messageCount.delete(sessionId);
   }
@@ -254,6 +335,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.forkSources.set(sessionId, sourceSessionId);
   }
 
+  async listModels(): Promise<ModelOption[]> {
+    return [
+      { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+      { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    ];
+  }
+
   /**
    * Resolve a pending approval from FE (tool approval or AskUserQuestion answer).
    * Called by WS handler when client sends approval_response.
@@ -266,11 +355,63 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     }
   }
 
+  /**
+   * Push a follow-up message into an existing streaming session's generator.
+   * Called by WS handler for follow-up messages (Phase 2).
+   */
+  pushMessage(sessionId: string, content: string, opts?: { priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }): void {
+    const ss = this.streamingSessions.get(sessionId);
+    if (!ss) {
+      console.warn(`[sdk] pushMessage: no streaming session for ${sessionId}`);
+      return;
+    }
+    const msgContent = buildMessageParam(content, opts?.images);
+    ss.controller.push({
+      type: 'user',
+      message: msgContent,
+      parent_tool_use_id: null,
+      session_id: sessionId,
+      priority: opts?.priority ?? 'next',
+    });
+    console.log(`[sdk] pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
+  }
+
+  /** Close a streaming session — generator + query cleanup */
+  closeStreamingSession(sessionId: string): void {
+    const ss = this.streamingSessions.get(sessionId);
+    if (ss) {
+      ss.controller.done();
+      ss.query.close();
+      this.streamingSessions.delete(sessionId);
+      console.log(`[sdk] closeStreamingSession: session=${sessionId}`);
+    }
+  }
+
+  /** Check if a streaming session is active for a given session ID */
+  hasStreamingSession(sessionId: string): boolean {
+    return this.streamingSessions.has(sessionId);
+  }
+
   async *sendMessage(
     sessionId: string,
     message: string,
-    opts?: import("./provider.interface.ts").SendMessageOpts & { forkSession?: boolean },
+    opts?: import("./provider.interface.ts").SendMessageOpts & { forkSession?: boolean; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> },
   ): AsyncIterable<ChatEvent> {
+    // Follow-up: push into existing streaming session, yield nothing
+    const existingStream = this.streamingSessions.get(sessionId);
+    if (existingStream) {
+      const msgContent = buildMessageParam(message, opts?.images);
+      existingStream.controller.push({
+        type: 'user',
+        message: msgContent,
+        parent_tool_use_id: null,
+        session_id: sessionId,
+        priority: opts?.priority ?? 'next',
+      });
+      console.log(`[sdk] sendMessage follow-up: session=${sessionId} pushed to generator`);
+      return; // Events flow through first-message's consumer loop
+    }
+
     if (!this.activeSessions.has(sessionId)) {
       await this.resumeSession(sessionId);
     }
@@ -303,9 +444,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // go through the permission evaluation chain → canUseTool callback.
     const readOnlyTools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
     const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
+    const mcpTools = ["mcp__*"];
     const allowedTools = isBypass
-      ? [...readOnlyTools, ...writeTools]
-      : readOnlyTools;
+      ? [...readOnlyTools, ...writeTools, ...mcpTools]
+      : [...readOnlyTools, ...mcpTools];
 
     /**
      * Approval events to yield from the generator.
@@ -393,6 +535,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultSubtype: string | undefined;
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
+    let yieldedDone = false;
     try {
       // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
       // For fork: use the source session's SDK id
@@ -440,6 +583,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
+      // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats)
+      const mcpServers = mcpConfigService.list();
+      const hasMcp = Object.keys(mcpServers).length > 0;
+
       const queryOptions: Record<string, any> = {
         // On Windows, child_process.spawn("bun") fails with ENOENT — force node
         ...(process.platform === "win32" && { executable: "node" }),
@@ -452,6 +599,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         env: queryEnv,
         settings: { permissions: { allow: [], deny: [] } },
         allowedTools,
+        ...(hasMcp && { mcpServers }),
         permissionMode,
         allowDangerouslySkipPermissions: isBypass,
         ...(providerConfig.model && { model: providerConfig.model }),
@@ -464,14 +612,25 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         includePartialMessages: true,
       };
 
+      // Streaming input: create message channel and persistent query
+      const { generator: streamGen, controller: streamCtrl } = createMessageChannel();
+      const firstMsg = {
+        type: 'user' as const,
+        message: buildMessageParam(message),
+        parent_tool_use_id: null,
+        session_id: sessionId,
+      };
+      streamCtrl.push(firstMsg);
+
       const q = query({
-        prompt: message,
+        prompt: streamGen,
         options: {
           ...queryOptions,
           ...(permissionHooks && { hooks: permissionHooks }),
           canUseTool,
         } as any,
       });
+      this.streamingSessions.set(sessionId, { meta, query: q, controller: streamCtrl });
       this.activeQueries.set(sessionId, q);
       let eventSource: AsyncIterable<any> = q;
 
@@ -486,23 +645,29 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let retryCount = 0;
       let authRetried = false;
 
+      let hadAnyEvents = false;
       retryLoop: while (true) {
       let sdkEventCount = 0;
       for await (const msg of eventSource) {
         sdkEventCount++;
+        hadAnyEvents = true;
         if (sdkEventCount === 1) {
           console.log(`[sdk] first event received: type=${(msg as any).type} subtype=${(msg as any).subtype ?? "none"}`);
           // Detect immediate failure: first event is a result with error + 0 turns
           if ((msg as any).type === "result" && (msg as any).subtype === "error_during_execution" && ((msg as any).num_turns ?? 0) === 0 && retryCount < MAX_RETRIES) {
             retryCount++;
             console.warn(`[sdk] transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
-            // Resume existing SDK session on retry to preserve conversation history.
-            // If first message, SDK may have partially created the session — resume with sdkId.
-            const retryOpts = { ...queryOptions, sessionId: undefined, resume: sdkId };
+            // Close failed query and old channel, create new channel + query for retry
+            streamCtrl.done();
+            q.close();
+            const { generator: retryGen, controller: retryCtrl } = createMessageChannel();
+            retryCtrl.push(firstMsg);
+            const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
             const rq = query({
-              prompt: message,
+              prompt: retryGen,
               options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
             });
+            this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl });
             this.activeQueries.set(sessionId, rq);
             eventSource = rq;
             continue retryLoop;
@@ -634,21 +799,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
           let assistantError = (msg as any).error as string | undefined;
 
-          // SDK sometimes returns errors as text content without setting a specific error field.
-          // Detect known HTTP error patterns in text and reclassify accordingly.
-          if (!assistantError || assistantError === "unknown") {
+          // SDK sometimes returns auth errors as text content without setting error field.
+          // Detect 401 pattern in text: "Failed to authenticate. API Error: 401 ..."
+          if (!assistantError) {
             const textContent = this.extractAssistantText(msg);
-            if (textContent) {
-              if (/API Error:\s*401\b.*authentication_error/i.test(textContent)) {
-                assistantError = "authentication_failed";
-                console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
-              } else if (/API Error:\s*5\d{2}\b/i.test(textContent) || /internal server error/i.test(textContent)) {
-                assistantError = "server_error";
-                console.warn(`[sdk] session=${sessionId} detected 5xx in assistant text content — treating as server error`);
-              } else if (/API Error:\s*429\b/i.test(textContent) || /rate.?limit/i.test(textContent)) {
-                assistantError = "rate_limit";
-                console.warn(`[sdk] session=${sessionId} detected 429/rate-limit in assistant text content — treating as rate limit`);
-              }
+            if (textContent && /API Error:\s*401\b.*authentication_error/i.test(textContent)) {
+              assistantError = "authentication_failed";
+              console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
             }
           }
 
@@ -668,12 +825,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   console.log(`[sdk] session=${sessionId} OAuth token refreshed for ${account.id} (${label}) — retrying`);
                   yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                   const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                  // Resume existing SDK session to preserve conversation history
-                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: sdkId, env: retryEnv };
+                  // Close failed query and old channel, create new channel + query with refreshed token
+                  streamCtrl.done();
+                  q.close();
+                  const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
+                  authRetryCtrl.push(firstMsg);
+                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: retryEnv };
                   const rq = query({
-                    prompt: message,
+                    prompt: authRetryGen,
                     options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
                   });
+                  this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl });
                   this.activeQueries.set(sessionId, rq);
                   eventSource = rq;
                   continue retryLoop;
@@ -747,9 +909,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const errCode = this.detectResultErrorCode(msg);
             if (errCode === 429) {
               accountSelector.onRateLimit(account.id);
-              // Post-stream 429 already has content — surface error to user
+              // Post-stream 429 — surface error, continue waiting for next turn
               yield { type: "error", message: "Rate limited. This account is now on cooldown. Please retry." };
-              break;
+              continue;
             } else if (errCode === 401) {
               // Refresh token and retry with fresh session (same logic as assistant-level auth retry)
               if (!authRetried) {
@@ -762,8 +924,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     console.log(`[sdk] 401 in result on account ${account.id} (${label}) — token refreshed, retrying`);
                     yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                     const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                    // Resume existing SDK session to preserve conversation history
-                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: sdkId, env: retryEnv };
+                    const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: retryEnv };
                     const rq = query({
                       prompt: message,
                       options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -886,7 +1047,26 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
             }
           }
-          break;
+
+          // Streaming input: yield done for this turn, then continue for next turn
+          yieldedDone = true;
+          yield {
+            type: "done",
+            sessionId,
+            resultSubtype: resultSubtype as any,
+            numTurns: resultNumTurns,
+            contextWindowPct: resultContextWindowPct,
+          };
+
+          // Reset per-turn state for next turn
+          lastPartialText = "";
+          pendingToolCount = 0;
+          assistantContent = "";
+          resultSubtype = undefined;
+          resultNumTurns = undefined;
+          resultContextWindowPct = undefined;
+          sdkEventCount = 0;
+          continue; // Wait for next turn from generator
         }
       }
 
@@ -895,7 +1075,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         yield approvalEvents.shift()!;
       }
 
-      if (sdkEventCount === 0) {
+      if (!hadAnyEvents) {
         yield { type: "error", message: "Claude did not respond. Check that 'claude' CLI works in your terminal." };
       }
       break; // Exit retryLoop — normal completion
@@ -905,84 +1085,46 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       console.error(`[sdk] session=${sessionId} cwd=${meta.projectPath} error: ${msg}`);
       if (msg.includes("abort") || msg.includes("closed")) {
         // User-initiated abort or WS closed — nothing to report
-      } else if (!isFirstMessage && msg.includes("exited with code")) {
-        // SDK subprocess crashed during session resume — retry as fresh session
-        console.warn(`[sdk] session resume failed, retrying as fresh session`);
-        try {
-          const providerConfig = this.getProviderConfig();
-          const effectiveCwd = meta.projectPath || homedir();
-          const retryAccount = accountSelector.isEnabled() ? accountSelector.next() : null;
-          const queryEnv = this.buildQueryEnv(meta.projectPath, retryAccount);
-          const retryOptions = {
-              ...(process.platform === "win32" && { executable: "node" }),
-              cwd: effectiveCwd,
-              systemPrompt: systemPromptOpt,
-              settingSources: ["user", "project"],
-              env: queryEnv,
-              settings: { permissions: { allow: [], deny: [] } },
-              allowedTools,
-              permissionMode,
-              allowDangerouslySkipPermissions: isBypass,
-              ...(providerConfig.model && { model: providerConfig.model }),
-              maxTurns: providerConfig.max_turns ?? 100,
-              includePartialMessages: true,
-            };
-          const retryQuery = query({
-              prompt: message,
-              options: {
-                ...retryOptions,
-                ...(permissionHooks && { hooks: permissionHooks }),
-                canUseTool,
-              } as any,
-            });
-          this.activeQueries.set(sessionId, retryQuery);
-          for await (const retryMsg of retryQuery) {
-            if (retryMsg.type === "system") continue;
-            if (retryMsg.type === "result") {
-              const r = retryMsg as any;
-              if (r.subtype && r.subtype !== "success") {
-                const retryErrors = Array.isArray(r.errors) ? r.errors.join("\n") : "";
-                yield { type: "error", message: retryErrors || `Agent stopped: ${r.subtype}` };
-              }
-              resultSubtype = r.subtype;
-              resultNumTurns = r.num_turns;
-              break;
-            }
-            if ((retryMsg as any).type === "assistant") {
-              const content = (retryMsg as any).message?.content;
-              if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (block.type === "text" && typeof block.text === "string") {
-                    yield { type: "text", content: block.text };
-                  }
-                }
-              }
-            }
-          }
-        } catch (retryErr) {
-          const retryMsg = (retryErr as Error).message ?? String(retryErr);
-          console.error(`[sdk] retry also failed: ${retryMsg}`);
-          yield { type: "error", message: `SDK error: ${msg}` };
-        }
+      } else if (msg.includes("exited with code")) {
+        // Subprocess crashed — session will auto-recover on next message
+        console.warn(`[sdk] session=${sessionId} subprocess crashed: ${msg}`);
+        yield { type: "error", message: `SDK subprocess crashed. Send another message to auto-recover.` };
       } else {
         yield { type: "error", message: `SDK error: ${msg}` };
       }
     } finally {
       this.activeQueries.delete(sessionId);
+      this.streamingSessions.delete(sessionId);
+      console.log(`[sdk] session=${sessionId} streaming session ended`);
     }
 
-    yield {
-      type: "done",
-      sessionId,
-      resultSubtype: resultSubtype as any,
-      numTurns: resultNumTurns,
-      contextWindowPct: resultContextWindowPct,
-    };
+    // Final done event when query ends (crash, close, generator done)
+    // Skip if we already yielded done from the result handler (avoid duplicate)
+    if (!yieldedDone) {
+      yield {
+        type: "done",
+        sessionId,
+        resultSubtype: resultSubtype as any,
+        numTurns: resultNumTurns,
+        contextWindowPct: resultContextWindowPct,
+      };
+    }
   }
 
 
-  /** Abort an active query for a session */
+  /** Abort and fully teardown the streaming session — user must resume to continue */
   abortQuery(sessionId: string): void {
+    const ss = this.streamingSessions.get(sessionId);
+    if (ss) {
+      // Signal generator to end, then close the query (kills bun subprocess)
+      ss.controller.done();
+      ss.query.close();
+      this.streamingSessions.delete(sessionId);
+      this.activeQueries.delete(sessionId);
+      console.log(`[sdk] abortQuery: closed streaming session=${sessionId}`);
+      return;
+    }
+    // Non-streaming fallback
     const q = this.activeQueries.get(sessionId);
     if (q) {
       q.close();

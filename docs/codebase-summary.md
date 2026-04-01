@@ -1,103 +1,105 @@
 # PPM Codebase Summary
 
-Generated from codebase analysis of 135+ TypeScript files, ~22.5K LOC (including multi-account feature).
+**Last Updated:** 2026-03-26
+**Version:** 0.8.60
+**Repository:** PPM (Project & Process Manager) — Multi-provider web IDE/project manager with Claude Agent SDK
+
+**Core Statistics:**
+- **303 files** across CLI, server, web, and test layers
+- **490,667 tokens** total codebase size
+- **492 passing tests** (13 new tests for provider models API)
+- **Tech Stack:** Bun (runtime), Hono (HTTP), React (UI), Claude Agent SDK (AI)
+
+---
 
 ## Directory Structure
 
 ```
-ppm/
-├── src/
-│   ├── index.ts                     # CLI entry point (Commander.js program)
-│   ├── cli/
-│   │   ├── commands/                # CLI command implementations (14 files, 1700 LOC)
-│   │   │   ├── start.ts             # Start server (background by default, --foreground/-f, --share/-s for tunnel)
-│   │   │   ├── stop.ts              # Stop daemon (reads status.json or ppm.pid, graceful shutdown)
-│   │   │   ├── restart.ts           # Restart daemon (keeps tunnel alive)
-│   │   │   ├── status.ts            # Show daemon status
-│   │   │   ├── open.ts              # Open browser to http://localhost:PORT
-│   │   │   ├── logs.ts              # Tail daemon logs
-│   │   │   ├── report.ts            # File bug report on GitHub
-│   │   │   ├── init.ts              # Initialize config (scan git repos, DB profile support)
-│   │   │   ├── projects.ts          # Add/remove/list/scan projects
-│   │   │   ├── config-cmd.ts        # View/set config values
-│   │   │   ├── git-cmd.ts           # Git operations (status, diff, log, commit)
-│   │   │   ├── chat-cmd.ts          # Chat CLI (send messages, manage sessions)
-│   │   │   └── db-cmd.ts            # Database CLI (list, query, manage connections)
-│   │   └── utils/
-│   │       └── project-resolver.ts  # Resolve project name -> path
-│   ├── server/
-│   │   ├── index.ts                 # Hono server setup, Bun.serve, WebSocket upgrade
-│   │   ├── middleware/
-│   │   │   └── auth.ts              # Token validation middleware
-│   │   ├── routes/
-│   │   │   ├── settings.ts          # GET/PUT /api/settings/ai (AI provider config)
-│   │   │   ├── projects.ts          # GET/POST /api/projects, DELETE /:name
-│   │   │   ├── accounts.ts          # GET/POST/PUT/DELETE /api/accounts, POST activate
-│   │   │   ├── project-scoped.ts    # Mount chat, git, files under /api/project/:name/*
-│   │   │   ├── chat.ts              # GET/POST/DELETE sessions, GET messages, usage, slash-items
-│   │   │   ├── git.ts               # GET status, diff, log, graph; POST commit, stage, discard
-│   │   │   ├── files.ts             # GET tree, read, diff; PUT write; POST mkdir, delete
-│   │   │   ├── database.ts          # GET/POST/PUT/DELETE /api/db/connections (CRUD), query execution
-│   │   │   └── static.ts            # Serve dist/web/index.html (frontend)
-│   │   ├── helpers/
-│   │   │   └── resolve-project.ts   # Helper to resolve project from request params
-│   │   └── ws/
-│   │       ├── chat.ts              # WebSocket chat streaming (220 LOC)
-│   │       └── terminal.ts          # WebSocket terminal I/O (terminal.service.ts integration)
-│   ├── providers/                   # AI Provider adapters (4 files, 1190 LOC)
-│   │   ├── provider.interface.ts    # AIProvider interface (createSession, sendMessage, onToolApproval)
-│   │   ├── claude-agent-sdk.ts      # Primary: SDK integration, tool approval, Windows CLI fallback, .env poisoning mitigation
-│   │   ├── mock-provider.ts         # Test provider (ignores config)
-│   │   └── registry.ts              # ProviderRegistry (singleton, router to active provider)
-│   ├── services/                    # Business logic (20 files, 3300+ LOC)
-│   │   ├── chat.service.ts          # Session lifecycle, message streaming
-│   │   ├── config.service.ts        # Config loading (YAML→SQLite migration)
-│   │   ├── db.service.ts            # SQLite persistence (schema v5, WAL mode, 9 tables, connection/account CRUD)
-│   │   ├── account.service.ts       # Account CRUD, token encryption/decryption, active selection
-│   │   ├── account-selector.service.ts # Select active account based on config
-│   │   ├── project.service.ts       # Project CRUD, scanning, resolution
-│   │   ├── file.service.ts          # File ops with path validation
-│   │   ├── git.service.ts           # Git operations (status, diff, log, graph)
-│   │   ├── terminal.service.ts      # PTY management, Bun.spawn native shell
-│   │   ├── claude-usage.service.ts  # Token tracking, cost calculation
-│   │   ├── push-notification.service.ts # Web push subscriptions
-│   │   ├── session-log.service.ts   # Session audit logs with redaction
-│   │   ├── slash-items.service.ts   # /slash command detection & completion
-│   │   ├── git-dirs.service.ts      # Cached git directory discovery
-│   │   ├── cloudflared.service.ts   # Download cloudflared binary (platform-specific)
-│   │   ├── tunnel.service.ts        # Cloudflare Quick Tunnel lifecycle
-│   │   ├── table-cache.service.ts   # Table metadata cache & search for DB connections
-│   │   └── database/                # Database adapters & registry
-│   │       ├── adapter-registry.ts  # DatabaseAdapter registry (extensible)
-│   │       ├── sqlite-adapter.ts    # SQLite connection, query execution
-│   │       ├── postgres-adapter.ts  # PostgreSQL connection, query execution
-│   │       ├── init-adapters.ts     # Initialize adapters at server start
-│   │       └── readonly-check.ts    # isReadOnlyQuery() safety regex (CTE-safe)
-│   ├── lib/                         # Shared utilities (2 files)
-│   │   ├── account-crypto.ts        # AES-256 encryption/decryption for API keys
-│   │   └── network-utils.ts         # Network utility helpers
-│   ├── types/                       # TypeScript interfaces (7 files, 450 LOC)
-│   │   ├── api.ts                   # ApiResponse envelope, WebSocket message types
-│   │   ├── chat.ts                  # Session, Message, ChatEvent types
-│   │   ├── config.ts                # Config schema
-│   │   ├── database.ts              # DatabaseAdapter, DbConnectionConfig, DbTableInfo, etc.
-│   │   ├── git.ts                   # GitStatus, GitDiff, GitCommit types
-│   │   ├── project.ts               # Project interface
-│   │   └── terminal.ts              # Terminal types
-│   └── web/                         # React frontend (Vite)
-│       ├── main.tsx                 # React mount (<App> into #root)
-│       ├── app.tsx                  # Root component (auth check, project load, theme)
-│       ├── stores/                  # Zustand state stores (6 files)
-│       │   ├── project-store.ts     # Active project, projects list, localStorage persistence
-│       │   ├── tab-store.ts         # Tab facade, delegates to panel-store
-│       │   ├── panel-store.ts       # Grid layout, panel creation/movement, keep-alive snapshots
-│       │   ├── panel-utils.ts       # Layout algorithm helpers, grid manipulation
-│       │   ├── file-store.ts        # File cache
-│       │   └── settings-store.ts    # Theme, sidebar state, git view mode, device name
-│       ├── hooks/                   # Custom React hooks (9 files)
-│       │   ├── use-chat.ts          # Chat streaming, messages, approvals, context window tracking
-│       │   ├── use-websocket.ts     # WebSocket connection with auto-reconnect
-│       │   ├── use-terminal.ts      # Terminal connection and streaming
+src/
+├── cli/
+│   ├── commands/                # 13 CLI commands (start, stop, init, config, chat, db, git, etc.)
+│   └── utils/
+│       └── project-resolver.ts  # Resolve project name -> path
+├── server/
+│   ├── index.ts                 # Hono server setup, Bun.serve, WebSocket upgrade
+│   ├── middleware/
+│   │   └── auth.ts              # Token validation middleware
+│   ├── routes/
+│   │   ├── settings.ts          # GET/PUT /api/settings/ai, GET /api/settings/ai/providers/:id/models
+│   │   ├── chat.ts              # Sessions, messages, GET /chat/providers/:providerId/models
+│   │   ├── projects.ts          # Project CRUD, reorder, color
+│   │   ├── accounts.ts          # Account management (multi-account support)
+│   │   ├── database.ts          # DB connection CRUD, schema management
+│   │   ├── git.ts               # Git operations (status, commit, log, graph)
+│   │   ├── files.ts             # File operations (read, write, tree)
+│   │   ├── mcp.ts               # MCP server CRUD + import (GET, POST, PUT, DELETE)
+│   │   ├── upgrade.ts           # Version checking, upgrade
+│   │   └── static.ts            # Serve frontend (dist/web)
+│   ├── helpers/
+│   │   └── resolve-project.ts   # Resolve project from request params
+│   └── ws/
+│       ├── chat.ts              # WebSocket chat streaming
+│       └── terminal.ts          # WebSocket terminal I/O
+├── providers/                   # AI Provider adapters
+│   ├── provider.interface.ts    # AIProvider interface (ADDED: listModels?())
+│   ├── claude-agent-sdk.ts      # Primary provider (listModels: hardcoded 2 models)
+│   ├── cursor-cli/
+│   │   └── cursor-provider.ts   # CLI-based provider (listModels: subprocess with TTL cache)
+│   ├── cli-provider-base.ts     # Abstract base for CLI providers
+│   ├── mock-provider.ts         # Test provider
+│   └── registry.ts              # Provider routing (list() vs listAll())
+├── services/                    # Business logic (25+ files)
+│   ├── chat.service.ts          # Session/message streaming
+│   ├── config.service.ts        # Config loading/persistence
+│   ├── db.service.ts            # SQLite CRUD (schema migrations)
+│   ├── file.service.ts          # File operations
+│   ├── git.service.ts           # Git commands
+│   ├── terminal.service.ts      # PTY management
+│   ├── account.service.ts       # Account CRUD & encryption
+│   ├── upgrade.service.ts       # Version checking, installation
+│   ├── mcp-config.service.ts    # MCP server CRUD (list, get, set, remove, import)
+│   ├── database/
+│   │   ├── adapter-registry.ts  # SQLite/Postgres adapter registry
+│   │   ├── sqlite-adapter.ts
+│   │   ├── postgres-adapter.ts
+│   │   └── readonly-check.ts    # CTE-safe readonly validation
+│   └── ... (20+ other services)
+├── lib/
+│   ├── account-crypto.ts        # AES-256 encryption
+│   └── network-utils.ts
+├── types/
+│   ├── chat.ts                  # Session, Message, ChatEvent, ModelOption, AIProvider
+│   ├── api.ts                   # ApiResponse envelope
+│   ├── config.ts
+│   ├── database.ts
+│   ├── git.ts
+│   ├── mcp.ts                   # McpServerConfig, McpTransportType, validation
+│   ├── project.ts
+│   └── terminal.ts
+└── web/                         # React frontend (Vite + React 18)
+    ├── app.tsx                  # Root component
+    ├── stores/                  # Zustand state (6 stores)
+    ├── hooks/                   # Custom hooks (9 hooks)
+    ├── components/
+    │   ├── chat/
+    │   │   ├── chat-tab.tsx
+    │   │   ├── message-list.tsx
+    │   │   ├── message-input.tsx
+    │   │   ├── provider-selector.tsx
+    │   │   ├── chat-history-bar.tsx # ADDED: Provider badges, provider-aware usage
+    │   │   └── ... (6 other chat components)
+    │   ├── settings/
+    │   │   ├── ai-settings-section.tsx # UPDATED: Per-provider tabs, dynamic model dropdowns
+    │   │   ├── mcp-settings-section.tsx # ADDED: MCP servers tab (list, add, edit, delete)
+    │   │   └── mcp-server-dialog.tsx    # ADDED: Add/Edit MCP server dialog
+    │   ├── database/
+    │   ├── editor/
+    │   ├── explorer/
+    │   ├── git/
+    │   ├── layout/
+    │   ├── terminal/
+    │   └── ui/
+    └── lib/
 │       │   ├── use-url-sync.ts      # Sync browser URL with active project/tab state
 │       │   ├── use-tab-drag.ts      # Tab drag-and-drop logic
 │       │   ├── use-global-keybindings.ts # Global shortcuts (Shift+Shift palette, Alt+[/] tab cycling)
@@ -107,6 +109,7 @@ ppm/
 │       ├── lib/                     # Utilities (12 files)
 │       │   ├── api-client.ts        # Fetch wrapper with auth token, envelope unwrapping
 │       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
+│       │   ├── api-mcp.ts           # ADDED: MCP settings API client (CRUD + import)
 │       │   ├── ws-client.ts         # WebSocket with exponential backoff + Cloudflare handshake
 │       │   ├── file-support.ts      # File type detection (language, icons, preview)
 │       │   ├── project-avatar.ts    # Smart project initials (collision resolution)
@@ -370,11 +373,174 @@ UI updates staged/unstaged lists
 - PWA manifest, service worker
 - Assets (~500KB gzipped)
 
+## Multi-Provider Architecture (v0.8.60)
+
+### Dynamic Model Listing Feature
+
+**Problem:** Different AI providers expose different models. Claude has hardcoded models, but CLI-based providers (e.g., Cursor) discover models at runtime.
+
+**Solution:** Optional `listModels()` method on `AIProvider` interface
+
+### Provider Interface
+
+```typescript
+// src/types/chat.ts
+export interface ModelOption {
+  value: string;    // Model ID (e.g., "claude-sonnet-4-6")
+  label: string;    // Display name (e.g., "Claude Sonnet 4.6")
+}
+
+interface AIProvider {
+  // Required methods
+  createSession(): Promise<Session>;
+  sendMessage(sessionId, message, context?): AsyncIterable<ChatEvent>;
+
+  // Optional methods
+  listModels?(): Promise<ModelOption[]>;
+  isAvailable?(): Promise<boolean>;
+  // ... (5 other optional methods)
+}
+```
+
+### Provider Implementations
+
+#### Claude (agent-sdk.ts)
+- `listModels()` returns hardcoded 2 models: Sonnet 4.6, Opus 4.6
+- Direct implementation (no subprocess)
+
+#### Cursor (cursor-provider.ts)
+- `listModels()` runs `cursor-agent --list-models` subprocess
+- 5-minute TTL cache (prevents repeated subprocess calls)
+- 10-second timeout (graceful fallback to empty list)
+- Extends `CliProvider` abstract base
+
+#### Mock (mock-provider.ts)
+- For testing; returns canned models
+
+### API Endpoints
+
+**Global Models Endpoint** (`GET /api/settings/ai/providers/:id/models`)
+```typescript
+// Used in Settings UI (no project context needed)
+settingsRoutes.get("/ai/providers/:id/models", async (c) => {
+  const provider = providerRegistry.get(c.req.param("id"));
+  const models = await provider.listModels?.() ?? [];
+  return c.json(ok(models));
+});
+```
+
+**Project-Scoped Models Endpoint** (`GET /api/project/:name/chat/providers/:providerId/models`)
+```typescript
+// Used in Chat tab (scoped to project for consistency)
+chatRoutes.get("/providers/:providerId/models", async (c) => {
+  const provider = providerRegistry.get(c.req.param("providerId"));
+  const models = await provider.listModels?.() ?? [];
+  return c.json(ok(models));
+});
+```
+
+### Provider Registry Pattern
+
+**list() — User-facing providers:**
+```typescript
+list(): ProviderInfo[] {
+  return [
+    { id: "claude", name: "Claude" },
+    { id: "cursor", name: "Cursor" }
+    // mock excluded
+  ];
+}
+```
+
+**listAll() — All providers (internal):**
+```typescript
+listAll(): ProviderInfo[] {
+  return [..., { id: "mock", name: "Mock" }];
+}
+```
+
+**Auto-Bootstrap:**
+```typescript
+// On startup, detect CLI providers
+async bootstrapProviders() {
+  const cursor = this.providers.get("cursor");
+  if (cursor && await cursor.isAvailable?.()) {
+    // Auto-create config entry if detected
+    // Save config (only if new)
+  }
+}
+```
+
+### UI Components
+
+#### AI Settings Section (ai-settings-section.tsx) — UPDATED
+- Per-provider tabs (Claude, Cursor, etc.)
+- Dynamic model dropdowns fetched from `/api/settings/ai/providers/:id/models`
+- Fallback to hardcoded models if API call fails
+- Provider-aware settings (SDK vs CLI options)
+
+#### Chat History Bar (chat-history-bar.tsx) — ADDED
+- Provider badges showing active provider for each session
+- Provider-aware usage display:
+  - **Claude:** Full stats `(tokens_in:X, tokens_out:Y, cost: $Z)`
+  - **Other:** Context-only `(tokens: X)`
+
+### Configuration
+
+```yaml
+ai:
+  default_provider: claude
+  providers:
+    claude:
+      type: agent-sdk
+      model: claude-sonnet-4-6  # from listModels()
+      effort: high
+      max_turns: 100
+    cursor:
+      type: cli
+      model: cursor-fast        # from listModels()
+```
+
+### Testing
+
+**New Integration Tests (13 tests):**
+- `provider-models-api.test.ts` — Model API endpoints
+- `chat-service-multi-provider.test.ts` — Multi-provider flows
+- `cursor-provider.test.ts` — Subprocess TTL cache, timeout handling
+
+---
+
 ## Testing Strategy
 
 | Test Type | Location | Coverage |
 |-----------|----------|----------|
 | Unit | tests/unit/ | Services, utilities |
-| Integration | tests/integration/ | API routes, WebSocket |
+| Integration | tests/integration/ | API routes, WebSocket, provider models |
 | E2E | None yet | Planned for v3 |
+
+**Key Gotchas:**
+- Test DB isolated per test (never writes to ~/.ppm/ppm.db)
+- Auth disabled in test mode (test-setup.ts)
+- Mock provider used for deterministic responses
+- 492 passing tests (0 failures, v0.8.60)
+
+---
+
+## Recent Changes (v0.8.60)
+
+### Added
+- **Dynamic Model Listing** — `listModels?()` on AIProvider interface
+- **Provider Models APIs** — Global and project-scoped endpoints
+- **AI Settings UI** — Per-provider tabs with dynamic model dropdowns
+- **Chat History Badges** — Provider-aware usage display
+- **13 new integration tests** for provider models API
+
+### Technical Details
+- `ModelOption` type: `{ value: string; label: string }`
+- Claude: Hardcoded 2 models
+- Cursor: Subprocess with 5-min TTL cache, 10s timeout
+- Registry: `list()` vs `listAll()` distinction
+- Bootstrap: Auto-detect CLI providers on startup
+
+---
 
