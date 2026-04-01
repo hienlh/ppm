@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.77] - 2026-04-01
+
+### Added
+- **Deterministic tab IDs**: Tabs now use `{type}:{identifier}` format (e.g., `editor:src/index.ts`) instead of random UUIDs — enables deduplication, shareable URLs, and cross-device persistence
+- **Type-based URLs**: URLs reflect tab content — `/project/my-app/editor/src/index.ts`, `/project/my-app/chat/claude-agent-sdk/session-abc`
+- **Backend workspace sync**: New `workspace_state` table (DB v10) with GET/PUT `/api/project/:name/workspace` endpoints — tab layout persists server-side with per-project debounce and latest-wins merge
+- **Deep linking**: Opening a URL auto-restores workspace from server and focuses the target tab
+- **Split-duplicate support**: Same file can open in multiple panels using `@panel-id` suffix on non-singleton tab types
+
+### Changed
+- **URL format**: From `/project/{name}/tab/{randomId}` to `/project/{name}/{type}/{path}` — old random-ID URLs gracefully ignored
+- **Tab migration**: `migrateTabIds()` automatically converts old random tab IDs to deterministic format on project load
+- **Singleton dedup**: Only `git-graph` and `settings` tabs are globally deduplicated; editor/chat/terminal tabs allow split duplicates
+
 ## [0.8.76] - 2026-04-01
 
 ### Fixed
