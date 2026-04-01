@@ -90,6 +90,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     pendingApproval,
     contextWindowPct,
     sessionTitle,
+    streamingAccountLabel,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -353,6 +354,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onSelectSession={handleSelectSession}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}
           isConnected={isConnected}
+          streamingAccountLabel={streamingAccountLabel}
           onReconnect={() => {
             if (!isConnected) reconnect();
             refetchMessages();

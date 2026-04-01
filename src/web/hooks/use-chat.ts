@@ -23,6 +23,7 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   sessionTitle: string | null;
+  streamingAccountLabel: string | null;
   sendMessage: (content: string, opts?: { permissionMode?: string }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
@@ -50,6 +51,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  const [streamingAccountLabel, setStreamingAccountLabel] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
@@ -115,6 +117,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     switch (evType) {
       case "account_info": {
         streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
+        setStreamingAccountLabel(ev.accountLabel ?? null);
         break;
       }
 
@@ -122,6 +125,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         // Update streaming account to the new one being tried
         if (ev.accountId && ev.accountLabel) {
           streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
+          setStreamingAccountLabel(ev.accountLabel);
         }
         // Surface retry as a system-level event in the stream
         streamingEventsRef.current.push(ev as ChatEvent);
@@ -237,6 +241,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
         streamingAccountRef.current = null;
+        setStreamingAccountLabel(null);
         // Phase transition to idle comes from BE via phase_changed
         break;
       }
@@ -529,6 +534,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     pendingApproval,
     contextWindowPct,
     sessionTitle,
+    streamingAccountLabel,
     sendMessage,
     respondToApproval,
     cancelStreaming,

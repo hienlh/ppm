@@ -22,6 +22,7 @@ interface ChatHistoryBarProps {
   onSelectSession?: (session: SessionInfo) => void;
   onBugReport?: () => void;
   isConnected?: boolean;
+  streamingAccountLabel?: string | null;
   onReconnect?: () => void;
 }
 
@@ -78,7 +79,7 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
 
 export function ChatHistoryBar({
   projectName, usageInfo, contextWindowPct, usageLoading, refreshUsage, lastFetchedAt,
-  sessionId, onSelectSession, onBugReport, isConnected, onReconnect,
+  sessionId, onSelectSession, onBugReport, isConnected, streamingAccountLabel, onReconnect,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -216,8 +217,8 @@ export function ChatHistoryBar({
           title="Usage limits"
         >
           <Activity className="size-3" />
-          {usageInfo.activeAccountLabel && (
-            <span className="text-text-secondary font-normal truncate max-w-[60px]">[{usageInfo.activeAccountLabel}]</span>
+          {(streamingAccountLabel || usageInfo.activeAccountLabel) && (
+            <span className="text-text-secondary font-normal truncate max-w-[60px]">[{streamingAccountLabel || usageInfo.activeAccountLabel}]</span>
           )}
           <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
           <span className="text-text-subtle">·</span>
