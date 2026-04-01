@@ -14,6 +14,7 @@ import { MessageInput, type ChatAttachment } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
+import { ChatWelcome } from "./chat-welcome";
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
 import type { Session, SessionInfo } from "../../../types/chat";
@@ -321,18 +322,22 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         </div>
       )}
 
-      {/* Messages */}
-      <MessageList
-        messages={messages}
-        messagesLoading={messagesLoading}
-        pendingApproval={pendingApproval}
-        onApprovalResponse={respondToApproval}
-        isStreaming={isStreaming}
-        phase={phase}
-        connectingElapsed={connectingElapsed}
-        projectName={projectName}
-        onFork={!isStreaming ? handleFork : undefined}
-      />
+      {/* Messages or Welcome screen */}
+      {!sessionId ? (
+        <ChatWelcome projectName={projectName} onSelectSession={handleSelectSession} />
+      ) : (
+        <MessageList
+          messages={messages}
+          messagesLoading={messagesLoading}
+          pendingApproval={pendingApproval}
+          onApprovalResponse={respondToApproval}
+          isStreaming={isStreaming}
+          phase={phase}
+          connectingElapsed={connectingElapsed}
+          projectName={projectName}
+          onFork={!isStreaming ? handleFork : undefined}
+        />
+      )}
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-background shrink-0">
