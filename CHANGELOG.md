@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.81] - 2026-04-01
+
+### Fixed
+- **Usage polling**: Re-wire `startUsagePolling()` into server startup — accidentally removed during supervisor refactor, causing prod to never auto-fetch usage limits (only manual refresh worked)
+
 ## [0.8.80] - 2026-04-01
 
 ### Added
