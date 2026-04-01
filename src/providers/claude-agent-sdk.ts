@@ -181,6 +181,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           id: sessionId,
           providerId: this.id,
           title: dbTitle ?? found.customTitle ?? found.summary ?? "Resumed Chat",
+          projectPath: (found as any).cwd || undefined,
           createdAt: new Date(found.lastModified).toISOString(),
         };
         this.activeSessions.set(sessionId, meta);
@@ -495,8 +496,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if ((msg as any).type === "result" && (msg as any).subtype === "error_during_execution" && ((msg as any).num_turns ?? 0) === 0 && retryCount < MAX_RETRIES) {
             retryCount++;
             console.warn(`[sdk] transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
-            // Re-create query for retry — don't reuse sessionId in case SDK partially created it
-            const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
+            // Resume existing SDK session on retry to preserve conversation history.
+            // If first message, SDK may have partially created the session — resume with sdkId.
+            const retryOpts = { ...queryOptions, sessionId: undefined, resume: sdkId };
             const rq = query({
               prompt: message,
               options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -666,7 +668,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   console.log(`[sdk] session=${sessionId} OAuth token refreshed for ${account.id} (${label}) — retrying`);
                   yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                   const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: retryEnv };
+                  // Resume existing SDK session to preserve conversation history
+                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: sdkId, env: retryEnv };
                   const rq = query({
                     prompt: message,
                     options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -759,7 +762,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     console.log(`[sdk] 401 in result on account ${account.id} (${label}) — token refreshed, retrying`);
                     yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                     const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                    const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: retryEnv };
+                    // Resume existing SDK session to preserve conversation history
+                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: sdkId, env: retryEnv };
                     const rq = query({
                       prompt: message,
                       options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
