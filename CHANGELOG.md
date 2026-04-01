@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.88] - 2026-04-01
+
+### Added
+- **Multi-provider architecture**: Generic AI provider system — `AIProvider` interface, `CliProvider` base class, `ProviderRegistry`, Cursor CLI integration with NDJSON streaming
+- **MCP server management**: Configure Model Context Protocol servers via Settings UI — SQLite storage, REST API (CRUD + import), SDK integration with `mcp__*` wildcard
+- **SDK streaming input**: Persistent `AsyncGenerator`-based chat with message channel pattern replacing one-shot queries
+
+### Fixed
+- **SDK process leak**: Prevent orphaned SDK processes on WebSocket disconnect and cancel
+- **Cursor history**: Filter out `<user_info>` system context messages from imported sessions
+
 ## [0.8.87] - 2026-04-01
 
 ### Fixed
