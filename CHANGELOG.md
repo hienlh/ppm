@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.87] - 2026-04-01
+
+### Fixed
+- **Session message loss on auth retry**: OAuth token expiry mid-query (e.g. during long bash commands) caused retry to create a new SDK session, overwriting the session mapping and losing all prior messages. Retry now resumes existing session instead.
+- **Session CWD fallback to homedir**: `resumeSession()` didn't restore `projectPath` from SDK metadata, causing queries to use `$HOME` as CWD and JSONL to be stored under wrong project. Now extracts `cwd` from SDK session data.
+
 ## [0.8.85] - 2026-04-01
 
 ### Added
