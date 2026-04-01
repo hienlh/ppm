@@ -21,6 +21,7 @@ export function useGlobalKeybindings() {
 
   useEffect(() => {
     let lastShiftUp = 0;
+    let shiftAlone = false; // true if Shift was pressed without any other key
     const { matchesEvent } = useKeybindingsStore.getState();
 
     let composing = false;
@@ -28,9 +29,24 @@ export function useGlobalKeybindings() {
     function onCompositionEnd() { composing = false; }
 
     function handler(e: KeyboardEvent) {
+      // Track whether Shift is pressed alone (not as a modifier for another key)
+      if (e.type === "keydown" && e.key === "Shift") {
+        shiftAlone = true;
+        return;
+      }
+      // Any non-Shift keydown while Shift is held means Shift is used as modifier
+      if (e.type === "keydown" && e.shiftKey) {
+        shiftAlone = false;
+      }
+      // Any non-Shift key resets the double-tap timer (user is typing, not double-tapping)
+      if (e.type === "keydown" && e.key !== "Shift") {
+        lastShiftUp = 0;
+      }
+
       // Double-Shift detection (on keyup to avoid repeats) — always active
-      // Skip during IME composition (e.g. Vietnamese Telex) to prevent false triggers
-      if (e.type === "keyup" && e.key === "Shift" && !e.ctrlKey && !e.metaKey && !e.altKey && !composing && !e.isComposing) {
+      // Only counts if Shift was pressed alone (not used as modifier e.g. Shift+T for uppercase)
+      // Also skip during IME composition (e.g. Vietnamese Telex) to prevent false triggers
+      if (e.type === "keyup" && e.key === "Shift" && shiftAlone && !e.ctrlKey && !e.metaKey && !e.altKey && !composing && !e.isComposing) {
         const now = Date.now();
         if (now - lastShiftUp < 400) {
           lastShiftUp = 0;
