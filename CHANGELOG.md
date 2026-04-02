@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.94] - 2026-04-02
+
+### Fixed
+- **Session JSONL "not found" after disconnect/restart**: Debug endpoint relied on in-memory `projectPath` which was lost when session cleanup timer expired or server restarted. Now persists `project_path` in `session_map` DB table (migration 11) and falls back to DB lookup when in-memory state is gone.
+- **Session mapping missing project info**: `setSessionMapping` now saves `projectName` and `projectPath` at both session creation and SDK init, ensuring resumed sessions can locate their JSONL files.
+
 ## [0.8.93] - 2026-04-02
 
 ### Removed
