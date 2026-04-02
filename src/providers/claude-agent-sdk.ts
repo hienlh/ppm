@@ -910,6 +910,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
             }
 
+            // Auth failed permanently after retry — cooldown account and break loop.
+            // SDK doesn't send a result event after auth errors in streaming mode,
+            // so the streaming session would stay alive with broken credentials forever.
+            // Breaking here lets the finally block tear down the session, so the next
+            // user message creates a fresh session with a different account.
+            if (assistantError === "authentication_failed" && account && authRetried) {
+              accountSelector.onAuthError(account.id);
+              console.warn(`[sdk] session=${sessionId} auth permanently failed — tearing down streaming session`);
+              yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
+              break;
+            }
+
             const errorHints: Record<string, string> = {
               authentication_failed: "API authentication failed. Check your account credentials in Settings → Accounts.",
               billing_error: "Billing error on this account. Check your subscription status.",
@@ -1158,7 +1170,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
     } finally {
       this.activeQueries.delete(sessionId);
-      this.streamingSessions.delete(sessionId);
+      // Properly close streaming session: terminate subprocess + generator
+      const ss = this.streamingSessions.get(sessionId);
+      if (ss) {
+        ss.controller.done();
+        ss.query.close();
+        this.streamingSessions.delete(sessionId);
+      }
       console.log(`[sdk] session=${sessionId} streaming session ended`);
     }
 
