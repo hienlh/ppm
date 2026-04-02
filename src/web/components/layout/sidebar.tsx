@@ -1,15 +1,17 @@
-import { useCallback, useRef } from "react";
-import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database, Search } from "lucide-react";
+import { useCallback, useRef, useMemo } from "react";
+import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database, Search, Puzzle } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
+import { useExtensionStore } from "@/stores/extension-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { SearchPanel } from "@/components/explorer/search-panel";
+import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { cn } from "@/lib/utils";
 
-const TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
+const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },
@@ -63,6 +65,19 @@ export function Sidebar() {
   const setSidebarWidth = useSettingsStore((s) => s.setSidebarWidth);
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
+  const contributions = useExtensionStore((s) => s.contributions);
+
+  // Build tabs list: built-in + extension-contributed sidebar views
+  const TABS = useMemo(() => {
+    const tabs: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [...BUILTIN_TABS];
+    if (contributions?.views) {
+      const sidebarViews = contributions.views["sidebar"] ?? contributions.views["explorer"] ?? [];
+      for (const view of sidebarViews) {
+        tabs.push({ id: `ext:${view.id}` as SidebarActiveTab, label: view.name, icon: Puzzle });
+      }
+    }
+    return tabs;
+  }, [contributions]);
 
   if (sidebarCollapsed) {
     return (
@@ -134,6 +149,9 @@ export function Sidebar() {
         )}
         {sidebarActiveTab === "settings" && (
           <SettingsTab />
+        )}
+        {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (
+          <ExtensionTreeView viewId={sidebarActiveTab.slice(4)} className="h-full" />
         )}
       </div>
 

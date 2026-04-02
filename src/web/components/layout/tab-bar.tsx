@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Globe,
+  Puzzle,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -35,6 +36,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   "git-diff": FileDiff,
   settings: Settings,
   browser: Globe,
+  "extension-webview": Puzzle,
 };
 
 interface TabBarProps {

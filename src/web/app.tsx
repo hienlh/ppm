@@ -31,6 +31,9 @@ import { UpgradeBanner } from "@/components/layout/upgrade-banner";
 import { ImageOverlay } from "@/components/shared/image-overlay";
 import { DiagramOverlay } from "@/components/shared/diagram-overlay";
 import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overlay";
+import { StatusBar } from "@/components/layout/status-bar";
+import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
+import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
 import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
@@ -248,17 +251,20 @@ export function App() {
           <Sidebar />
 
           {/* Content area — keep-alive per project */}
-          {[...mountedProjects].map((projectName) => (
-            <div
-              key={projectName}
-              className={cn(
-                "flex-1 overflow-hidden pb-12 md:pb-0",
-                activeProjectName !== projectName && "hidden",
-              )}
-            >
-              <PanelLayout projectName={projectName} />
-            </div>
-          ))}
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {[...mountedProjects].map((projectName) => (
+              <div
+                key={projectName}
+                className={cn(
+                  "flex-1 overflow-hidden pb-12 md:pb-0",
+                  activeProjectName !== projectName && "hidden",
+                )}
+              >
+                <PanelLayout projectName={projectName} />
+              </div>
+            ))}
+            <StatusBar />
+          </div>
         </div>
 
         {/* Mobile bottom nav */}
@@ -291,6 +297,10 @@ export function App() {
 
         {/* Global diagram lightbox (mermaid) */}
         <DiagramOverlay />
+
+        {/* Extension modals (QuickPick, InputBox) */}
+        <ExtensionQuickPick />
+        <ExtensionInputBox />
 
         {/* Connection lost overlay — shown when API unreachable for >15s */}
         <ConnectionLostOverlay />

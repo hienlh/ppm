@@ -12,12 +12,14 @@ import {
   Loader2,
   Globe,
   Mic,
+  Puzzle,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
+import { useExtensionStore } from "@/stores/extension-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 
@@ -103,6 +105,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const getBinding = useKeybindingsStore((s) => s.getBinding);
+  const extContributions = useExtensionStore((s) => s.contributions);
 
   // Fetch filesystem files when path query changes directory
   const fetchFsFiles = useCallback(async (dir: string) => {
@@ -154,7 +157,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       onClose();
     };
 
-    return [
+    const builtIn: CommandItem[] = [
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action", shortcut: formatShortcut(getBinding("open-chat")) },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
       { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action", shortcut: formatShortcut(getBinding("open-git-graph")) },
@@ -174,7 +177,24 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         shortcut: formatShortcut(getBinding("open-settings")),
       },
     ];
-  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding]);
+
+    // Append extension-contributed commands
+    const extCmds: CommandItem[] = (extContributions?.commands ?? []).map((cmd) => ({
+      id: `ext:${cmd.command}`,
+      label: cmd.title,
+      hint: cmd.category,
+      icon: Puzzle,
+      group: "action" as const,
+      keywords: `extension ${cmd.command} ${cmd.category ?? ""}`,
+      action: () => {
+        // Phase 4: execute via WS bridge
+        console.log("[CmdPalette] ext command:", cmd.command);
+        onClose();
+      },
+    }));
+
+    return [...builtIn, ...extCmds];
+  }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions]);
 
   // File commands — derived from file store tree (project files)
   const fileCommands = useMemo<CommandItem[]>(() => {

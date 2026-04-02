@@ -53,6 +53,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.BrowserTab,
     })),
   ),
+  "extension-webview": lazy(() =>
+    import("@/components/extensions/extension-webview").then((m) => ({
+      default: m.ExtensionWebview,
+    })),
+  ),
 };
 
 function LoadingFallback() {

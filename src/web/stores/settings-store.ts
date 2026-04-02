@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
-export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search";
+export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -44,6 +44,11 @@ function loadPersistedSettings(): PersistedSettings {
   return {};
 }
 
+function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
+  if (typeof tab !== "string") return false;
+  return ["explorer", "git", "settings", "database", "search"].includes(tab) || tab.startsWith("ext:");
+}
+
 function persistSettings(update: Partial<PersistedSettings>) {
   const current = loadPersistedSettings();
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, ...update }));
@@ -79,7 +84,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   wordWrap: _initial.wordWrap ?? false,
-  sidebarActiveTab: (["git", "settings", "database", "search"] as SidebarActiveTab[]).includes(_initial.sidebarActiveTab as SidebarActiveTab) ? _initial.sidebarActiveTab! : "explorer",
+  sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "explorer",
   deviceName: null,
   version: null,
 

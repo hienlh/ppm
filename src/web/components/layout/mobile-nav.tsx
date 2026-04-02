@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Terminal, MessageSquare, GitBranch, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
-  ChevronLeft, ChevronRight, Globe,
+  ChevronLeft, ChevronRight, Globe, Puzzle,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
@@ -26,6 +26,7 @@ const NEW_TAB_LABELS: Partial<Record<TabType, string>> = Object.fromEntries(NEW_
 const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal, chat: MessageSquare, editor: FileCode, database: Database, sqlite: Database, postgres: Database,
   "git-graph": GitBranch, "git-diff": FileDiff, settings: Settings, browser: Globe,
+  "extension-webview": Puzzle,
 };
 
 interface MobileNavProps { onMenuPress: () => void; onProjectsPress: () => void; }
