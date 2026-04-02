@@ -7,6 +7,7 @@ import { contributionRegistry } from "./contribution-registry.ts";
 import { RpcChannel } from "./extension-rpc.ts";
 import { parseManifest, discoverManifests } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
+import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
 const EXTENSIONS_DIR = resolve(PPM_DIR, "extensions");
@@ -32,6 +33,9 @@ class ExtensionService {
       setExtensionStorageValue(extId, scope, key, value);
       return { ok: true };
     });
+
+    // Register vscode-compat API handlers (commands, window, workspace, fs)
+    registerVscodeCompatHandlers(this.rpc);
 
     this.rpc.onEvent("worker:ready", () => {
       this.workerReady = true;
