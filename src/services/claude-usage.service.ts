@@ -278,18 +278,23 @@ export function getAllAccountUsages(): AccountUsageEntry[] {
   const accounts = accountService.list();
   const snapshots = getAllLatestSnapshots();
   const snapshotMap = new Map(snapshots.map(s => [s.account_id, s]));
-  return accounts.map(acc => {
+  const nowS = Math.floor(Date.now() / 1000);
+  const result: AccountUsageEntry[] = [];
+  for (const acc of accounts) {
     const withTokens = accountService.getWithTokens(acc.id);
+    // Skip expired accounts without refresh token (temporary/disposable)
+    if (acc.expiresAt && acc.expiresAt < nowS && !withTokens?.refreshToken) continue;
     const isOAuth = withTokens?.accessToken.startsWith("sk-ant-oat") ?? false;
     const row = snapshotMap.get(acc.id);
-    return {
+    result.push({
       accountId: acc.id,
       accountLabel: acc.label,
       accountStatus: acc.status,
       isOAuth,
       usage: row ? snapshotToUsage(row) : {},
-    };
-  });
+    });
+  }
+  return result;
 }
 
 /** Get cached usage for active account (used by chat header) */

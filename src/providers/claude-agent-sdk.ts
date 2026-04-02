@@ -650,7 +650,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         allowDangerouslySkipPermissions: isBypass,
         ...(providerConfig.model && { model: providerConfig.model }),
         ...(providerConfig.effort && { effort: providerConfig.effort }),
-        maxTurns: providerConfig.max_turns ?? 100,
+        maxTurns: providerConfig.max_turns ?? 1000,
         ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
         ...(providerConfig.thinking_budget_tokens != null && {
           thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
@@ -688,7 +688,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // it's a transient subprocess failure — retry once before surfacing the error.
       // Also handles authentication_failed by refreshing OAuth token and retrying.
       const MAX_RETRIES = 1;
+      const MAX_RATE_LIMIT_RETRIES = 3;
+      const RATE_LIMIT_BACKOFF_MS = [15_000, 30_000, 60_000]; // 15s, 30s, 60s
       let retryCount = 0;
+      let rateLimitRetryCount = 0;
       let authRetried = false;
 
       let hadAnyEvents = false;
@@ -736,7 +739,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (subtype === "init") {
             const initMsg = msg as any;
             if (initMsg.session_id && initMsg.session_id !== sessionId) {
-              setSessionMapping(sessionId, initMsg.session_id, meta.projectName, meta.projectPath);
+              // Only update sdk_id mapping for brand-new sessions (first message).
+              // For resumed sessions the SDK may create a new session_id, but the
+              // old JSONL (keyed by the original sdk_id) still holds the full
+              // conversation history.  Overwriting the mapping would orphan it.
+              const existingSdkId = getSessionMapping(sessionId);
+              const isFirstMessage = existingSdkId === null || existingSdkId === sessionId;
+              if (isFirstMessage) {
+                setSessionMapping(sessionId, initMsg.session_id, meta.projectName, meta.projectPath);
+              } else {
+                console.log(`[sdk] session=${sessionId} ignoring new sdk_id=${initMsg.session_id} to preserve existing mapping → ${existingSdkId}`);
+              }
               const oldMeta = this.activeSessions.get(sessionId);
               if (oldMeta) {
                 this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
@@ -922,12 +935,36 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               break;
             }
 
+            // Rate limit — auto-retry with exponential backoff
+            if ((assistantError === "rate_limit" || assistantError === "server_error") && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
+              const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
+              rateLimitRetryCount++;
+              if (account) accountSelector.onRateLimit(account.id);
+              console.warn(`[sdk] session=${sessionId} rate limited — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+              yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
+              await new Promise((r) => setTimeout(r, backoff));
+              // Close failed query and recreate
+              streamCtrl.done();
+              q.close();
+              const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
+              rlRetryCtrl.push(firstMsg);
+              const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
+              const rq = query({
+                prompt: rlRetryGen,
+                options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+              });
+              this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl });
+              this.activeQueries.set(sessionId, rq);
+              eventSource = rq;
+              continue retryLoop;
+            }
+
             const errorHints: Record<string, string> = {
               authentication_failed: "API authentication failed. Check your account credentials in Settings → Accounts.",
               billing_error: "Billing error on this account. Check your subscription status.",
-              rate_limit: "Rate limited by the API. Please wait and try again.",
+              rate_limit: `Rate limited by the API. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.`,
               invalid_request: "Invalid request sent to the API.",
-              server_error: "Anthropic API server error. Try again shortly.",
+              server_error: `Anthropic API server error. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.`,
               unknown: `API error in project "${effectiveCwd}". Debug:\n1. Run: \`cd ${effectiveCwd} && claude -p "hi"\`\n2. Check env: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause this\n3. Try: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" claude -p "hi"\`\n4. Refresh auth: \`claude login\``,
             };
             const hint = errorHints[assistantError] ?? `API error: ${assistantError}`;
@@ -985,8 +1022,28 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const errCode = this.detectResultErrorCode(msg);
             if (errCode === 429) {
               accountSelector.onRateLimit(account.id);
-              // Post-stream 429 — surface error, continue waiting for next turn
-              yield { type: "error", message: "Rate limited. This account is now on cooldown. Please retry." };
+              // Auto-retry with backoff for result-level 429
+              if (rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
+                const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
+                rateLimitRetryCount++;
+                console.warn(`[sdk] session=${sessionId} result 429 — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
+                await new Promise((r) => setTimeout(r, backoff));
+                streamCtrl.done();
+                q.close();
+                const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
+                rlRetryCtrl.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
+                const rq = query({
+                  prompt: rlRetryGen,
+                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl });
+                this.activeQueries.set(sessionId, rq);
+                eventSource = rq;
+                continue retryLoop;
+              }
+              yield { type: "error", message: `Rate limited. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.` };
               continue;
             } else if (errCode === 401) {
               // Refresh token and retry with fresh session (same logic as assistant-level auth retry)
