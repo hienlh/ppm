@@ -14,6 +14,13 @@ import {
   getSessionMapping,
   setSessionMapping,
   getAllSessionMappings,
+  deleteSessionMapping,
+  getSessionTitle,
+  setSessionTitle,
+  deleteSessionTitle,
+  pinSession,
+  unpinSession,
+  getPinnedSessionIds,
   getPushSubscriptions,
   upsertPushSubscription,
   deletePushSubscription,
@@ -190,6 +197,64 @@ describe("db.service", () => {
       setSessionMapping("ppm-1", "sdk-1", "my-project");
       // project_name is stored but not returned by getSessionMapping
       expect(getSessionMapping("ppm-1")).toBe("sdk-1");
+    });
+
+    it("deleteSessionMapping removes a mapping", () => {
+      setSessionMapping("ppm-del", "sdk-del");
+      expect(getSessionMapping("ppm-del")).toBe("sdk-del");
+      deleteSessionMapping("ppm-del");
+      expect(getSessionMapping("ppm-del")).toBeNull();
+    });
+
+    it("deleteSessionMapping is safe on nonexistent key", () => {
+      expect(() => deleteSessionMapping("nonexistent")).not.toThrow();
+    });
+  });
+
+  describe("session titles CRUD", () => {
+    it("set and get title", () => {
+      setSessionTitle("sess-t1", "My Custom Title");
+      expect(getSessionTitle("sess-t1")).toBe("My Custom Title");
+    });
+
+    it("returns null for unknown session", () => {
+      expect(getSessionTitle("unknown")).toBeNull();
+    });
+
+    it("upserts on conflict", () => {
+      setSessionTitle("sess-t2", "Old Title");
+      setSessionTitle("sess-t2", "New Title");
+      expect(getSessionTitle("sess-t2")).toBe("New Title");
+    });
+
+    it("deleteSessionTitle removes a title", () => {
+      setSessionTitle("sess-del", "To Delete");
+      expect(getSessionTitle("sess-del")).toBe("To Delete");
+      deleteSessionTitle("sess-del");
+      expect(getSessionTitle("sess-del")).toBeNull();
+    });
+
+    it("deleteSessionTitle is safe on nonexistent key", () => {
+      expect(() => deleteSessionTitle("nonexistent")).not.toThrow();
+    });
+  });
+
+  describe("session pins CRUD", () => {
+    it("pin and check", () => {
+      pinSession("sess-pin1");
+      const pinned = getPinnedSessionIds();
+      expect(pinned.has("sess-pin1")).toBe(true);
+    });
+
+    it("unpin removes from set", () => {
+      pinSession("sess-pin2");
+      expect(getPinnedSessionIds().has("sess-pin2")).toBe(true);
+      unpinSession("sess-pin2");
+      expect(getPinnedSessionIds().has("sess-pin2")).toBe(false);
+    });
+
+    it("unpin is safe on nonexistent key", () => {
+      expect(() => unpinSession("nonexistent")).not.toThrow();
     });
   });
 
