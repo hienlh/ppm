@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Activity, RefreshCw, Eye, Download, Upload, Plus, X, Settings } from "lucide-react";
+import { Activity, RefreshCw, Eye, Download, Upload, Plus, X, Settings, Trash2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { UsageInfo, LimitBucket } from "../../../types/chat";
 import {
@@ -7,6 +7,7 @@ import {
   getActiveAccount,
   getAllAccountUsages,
   patchAccount,
+  deleteAccount,
   type AccountInfo,
   type AccountUsageEntry,
   type OAuthProfileData,
@@ -152,11 +153,12 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${days}d ago`;
 }
 
-function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onExport, onViewProfile, flash }: {
+function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, onExport, onViewProfile, flash }: {
   entry: AccountUsageEntry;
   isActive: boolean;
   accountInfo?: AccountInfo;
   onToggle?: (id: string, status: string) => void;
+  onDelete?: (id: string, display: string) => void;
   onExport?: (id: string) => void;
   onViewProfile?: (profile: OAuthProfileData) => void;
   flash?: boolean;
@@ -164,19 +166,24 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onExport, on
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
   const status = accountInfo?.status ?? entry.accountStatus;
+  // Expired: has expiresAt in the past AND no refresh token to auto-renew
+  const isExpired = !!(accountInfo && !accountInfo.hasRefreshToken && accountInfo.expiresAt && accountInfo.expiresAt < Math.floor(Date.now() / 1000));
 
   return (
-    <div className={`rounded-md border p-2 space-y-1.5 transition-colors duration-500 min-w-[200px] shrink-0 snap-start ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
+    <div className={`rounded-md border p-2 space-y-1.5 transition-colors duration-500 min-w-[200px] shrink-0 snap-start ${isExpired ? "opacity-50" : ""} ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
       <div className="flex items-center gap-1.5">
         <span className="text-xs font-medium truncate flex-1 min-w-0">
           {entry.accountLabel ?? entry.accountId.slice(0, 8)}
         </span>
-        {!entry.isOAuth && (
+        {isExpired && (
+          <span className="text-[9px] text-red-500 shrink-0 font-medium">Expired</span>
+        )}
+        {!entry.isOAuth && !isExpired && (
           <span className="text-[9px] text-text-subtle shrink-0">API key</span>
         )}
         {/* Account controls */}
         <div className="flex items-center gap-0.5 shrink-0">
-          {onViewProfile && accountInfo?.profileData && (
+          {!isExpired && onViewProfile && accountInfo?.profileData && (
             <button
               className="p-1 rounded cursor-pointer text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors"
               onClick={() => onViewProfile(accountInfo.profileData!)}
@@ -185,7 +192,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onExport, on
               <Eye className="size-3" />
             </button>
           )}
-          {onExport && entry.isOAuth && (
+          {!isExpired && onExport && entry.isOAuth && (
             <button
               className="p-1 rounded cursor-pointer text-text-subtle hover:text-blue-500 hover:bg-surface-elevated transition-colors"
               onClick={() => onExport(entry.accountId)}
@@ -194,13 +201,22 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onExport, on
               <Download className="size-3" />
             </button>
           )}
-          {onToggle && (
+          {!isExpired && onToggle && (
             <Switch
               checked={status !== "disabled"}
               onCheckedChange={() => onToggle(entry.accountId, status)}
               disabled={status === "cooldown"}
               className="scale-[0.6] cursor-pointer"
             />
+          )}
+          {onDelete && (
+            <button
+              className="p-1 rounded cursor-pointer text-text-subtle hover:text-red-500 hover:bg-surface-elevated transition-colors"
+              onClick={() => onDelete(entry.accountId, entry.accountLabel ?? entry.accountId.slice(0, 8))}
+              title="Remove account"
+            >
+              <Trash2 className="size-3" />
+            </button>
           )}
         </div>
       </div>
@@ -247,6 +263,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showRotationSettings, setShowRotationSettings] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; display: string } | null>(null);
   const [exportPreselect, setExportPreselect] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -325,13 +342,26 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
     onReload?.();
   }
 
+  async function confirmDeleteAccount() {
+    if (!deleteTarget) return;
+    try {
+      await deleteAccount(deleteTarget.id);
+      showMessage(`Account "${deleteTarget.display}" removed.`);
+      loadAll();
+      onReload?.();
+    } catch (e) {
+      showMessage(`Failed to remove: ${(e as Error).message}`);
+    }
+    setDeleteTarget(null);
+  }
+
   function openExportAll() {
     setExportPreselect(null);
     setShowExportDialog(true);
   }
 
   return (
-    <div className="border-b border-border bg-surface px-3 py-2.5 space-y-2.5 max-h-[350px] overflow-y-auto">
+    <div className="relative border-b border-border bg-surface px-3 py-2.5 space-y-2.5 max-h-[350px] overflow-y-auto">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary">Usage & Accounts</span>
@@ -384,6 +414,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
                 isActive={entry.accountId === (activeAccountId ?? usage.activeAccountId)}
                 accountInfo={accountMap.get(entry.accountId)}
                 onToggle={handleToggle}
+                onDelete={(id, display) => setDeleteTarget({ id, display })}
                 onExport={(id) => { setExportPreselect(id); setShowExportDialog(true); }}
                 onViewProfile={setProfileView}
                 flash={flashIds.has(entry.accountId)}
@@ -459,6 +490,25 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
           <Upload className="size-3" /> Import
         </button>
       </div>
+
+      {/* Delete confirmation overlay */}
+      {deleteTarget && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-md">
+          <div className="bg-surface border border-border rounded-lg shadow-lg p-4 mx-4 max-w-[280px] w-full space-y-3">
+            <p className="text-xs text-text-primary text-center">
+              Remove <strong className="text-foreground">{deleteTarget.display}</strong>?
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 px-3 py-1.5 rounded-md text-xs border border-border text-text-secondary hover:bg-surface-hover cursor-pointer transition-colors">
+                Cancel
+              </button>
+              <button onClick={confirmDeleteAccount} className="flex-1 px-3 py-1.5 rounded-md text-xs bg-red-500 text-white hover:bg-red-600 cursor-pointer transition-colors">
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Account dialogs */}
       <AddAccountDialog open={showAddDialog} onOpenChange={setShowAddDialog} onSuccess={handleSuccess} />

@@ -139,7 +139,7 @@ class AccountService {
       await this.refreshAccessToken(id, false);
       return this.getWithTokens(id);
     } catch (e) {
-      console.error(`[accounts] Pre-flight refresh failed for ${id}:`, e);
+      console.error(`[accounts] Pre-flight refresh failed for ${id}: ${(e as Error).message ?? e}`);
       return null;
     }
   }
@@ -709,7 +709,7 @@ class AccountService {
         try {
           await this.refreshAccessToken(acc.id, false);
         } catch (e) {
-          console.error(`[accounts] Auto-refresh failed for ${acc.id}:`, e);
+          console.error(`[accounts] Auto-refresh failed for ${acc.id}: ${(e as Error).message ?? e}`);
         }
       }
     };

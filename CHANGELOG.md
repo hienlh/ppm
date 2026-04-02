@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.89] - 2026-04-02
+
+### Added
+- **Account delete button**: Trash icon on each account card in Usage & Accounts panel with overlay confirmation popup
+- **Expired account UX**: Expired temporary accounts (no refresh token) are dimmed, toggle/export hidden — only delete available
+
+### Fixed
+- **Account panel showing all accounts**: Usage & Accounts panel now always displays all accounts including expired temporary ones (previously filtered out)
+- **MCP config table missing**: `McpConfigService.list()` gracefully returns empty object when `mcp_servers` table doesn't exist yet
+- **Account error logging**: Consistent error message formatting in auto-refresh and pre-flight refresh logs
+
 ## [0.8.88] - 2026-04-01
 
 ### Added

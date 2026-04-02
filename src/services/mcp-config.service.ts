@@ -27,13 +27,22 @@ export class McpConfigService {
 
   /** List all MCP servers as Record (SDK-compatible format) */
   list(): Record<string, McpServerConfig> {
-    const rows = this.db.query("SELECT name, config FROM mcp_servers ORDER BY name").all() as { name: string; config: string }[];
-    const result: Record<string, McpServerConfig> = {};
-    for (const row of rows) {
-      const parsed = safeParse(row.config, row.name);
-      if (parsed) result[row.name] = parsed;
+    try {
+      const rows = this.db.query("SELECT name, config FROM mcp_servers ORDER BY name").all() as { name: string; config: string }[];
+      const result: Record<string, McpServerConfig> = {};
+      for (const row of rows) {
+        const parsed = safeParse(row.config, row.name);
+        if (parsed) result[row.name] = parsed;
+      }
+      return result;
+    } catch (e) {
+      const msg = (e as Error).message ?? String(e);
+      if (msg.includes("no such table")) {
+        console.warn("[mcp] mcp_servers table not found — returning empty list");
+        return {};
+      }
+      throw e;
     }
-    return result;
   }
 
   /** List as array with metadata (for UI) */
