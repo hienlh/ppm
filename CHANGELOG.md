@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.91] - 2026-04-02
+
+### Added
+- **Session delete cleanup**: Deleting a session now removes JSONL files, DB mappings, titles, and pins; kills orphaned CLI processes
+- **Mid-message fork**: Fork a session at a specific message via `forkAtMessage()` SDK capability with dynamic import
+- **Compact handling**: Detect SDK compact events (`status`/`compact_boundary`) and forward "compacting..." status to frontend
+- **Change password UI**: Settings panel for changing password with current/new password fields
+
+### Fixed
+- **Orphaned session on fork failure**: Restructured fork route to create PPM session only after SDK fork succeeds
+- **Compact status stale badge**: Reset `compactStatus` on session change to prevent stale "compacting..." indicator
+- **Cloud heartbeat device name**: Include device name in heartbeat payloads for cloud sync
+- **Upgrade banner compact**: Reduced padding and fixed mobile overlap with device name badge
+
 ## [0.8.90] - 2026-04-02
 
 ### Fixed
