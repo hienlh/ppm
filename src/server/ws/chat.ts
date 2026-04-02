@@ -218,8 +218,14 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         continue;
       }
 
-      // System events → transition connecting → thinking
+      // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
+        const sub = (ev as any).subtype;
+        if (sub === "compacting") {
+          broadcast(sessionId, { type: "compact_status", status: "compacting" });
+        } else if (sub === "compact_done") {
+          broadcast(sessionId, { type: "compact_status", status: "done" });
+        }
         if (!firstEventReceived) {
           if (heartbeat) clearInterval(heartbeat);
           setPhase(sessionId, "thinking");

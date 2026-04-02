@@ -16,6 +16,7 @@ interface ChatHistoryBarProps {
   projectName: string;
   usageInfo: UsageInfo;
   contextWindowPct?: number | null;
+  compactStatus?: "compacting" | null;
   usageLoading?: boolean;
   refreshUsage?: () => void;
   lastFetchedAt?: string | null;
@@ -79,7 +80,7 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
 }
 
 export function ChatHistoryBar({
-  projectName, usageInfo, contextWindowPct, usageLoading, refreshUsage, lastFetchedAt,
+  projectName, usageInfo, contextWindowPct, compactStatus, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, providerId, onSelectSession, onBugReport, isConnected, onReconnect,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
@@ -240,14 +241,27 @@ export function ChatHistoryBar({
                 <span className={pctColor(contextWindowPct)}>Ctx:{contextWindowPct}%</span>
               </>
             )}
+            {compactStatus === "compacting" && (
+              <>
+                <span className="text-text-subtle">·</span>
+                <span className="text-blue-400 animate-pulse">compacting...</span>
+              </>
+            )}
           </button>
         ) : (
-          contextWindowPct != null && (
-            <span className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${pctColor(contextWindowPct)}`}>
-              <Activity className="size-3" />
-              <span>Ctx:{contextWindowPct}%</span>
-            </span>
-          )
+          <>
+            {contextWindowPct != null && (
+              <span className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${pctColor(contextWindowPct)}`}>
+                <Activity className="size-3" />
+                <span>Ctx:{contextWindowPct}%</span>
+              </span>
+            )}
+            {compactStatus === "compacting" && (
+              <span className="text-[11px] px-1.5 py-0.5 text-blue-400 animate-pulse">
+                compacting...
+              </span>
+            )}
+          </>
         )}
 
         {/* Spacer */}

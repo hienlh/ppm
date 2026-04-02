@@ -43,7 +43,7 @@ interface MessageListProps {
   connectingElapsed?: number;
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
-  onFork?: (userMessage: string) => void;
+  onFork?: (userMessage: string, messageId?: string) => void;
 }
 
 export function MessageList({
@@ -96,7 +96,7 @@ export function MessageList({
                 message={msg}
                 isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                 projectName={projectName}
-                onFork={msg.role === "user" && onFork ? () => onFork(msg.content) : undefined}
+                onFork={msg.role === "user" && onFork ? () => onFork(msg.content, msg.id) : undefined}
               />
             ))}
 

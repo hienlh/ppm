@@ -424,6 +424,14 @@ export function getPinnedSessionIds(): Set<string> {
   return new Set(rows.map((r) => r.session_id));
 }
 
+export function deleteSessionMapping(ppmId: string): void {
+  getDb().query("DELETE FROM session_map WHERE ppm_id = ?").run(ppmId);
+}
+
+export function deleteSessionTitle(sessionId: string): void {
+  getDb().query("DELETE FROM session_titles WHERE session_id = ?").run(sessionId);
+}
+
 // ---------------------------------------------------------------------------
 // Push subscription helpers
 // ---------------------------------------------------------------------------

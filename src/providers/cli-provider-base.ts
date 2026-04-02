@@ -84,7 +84,13 @@ export abstract class CliProvider implements AIProvider {
     }));
   }
 
+  markAsResumed(sessionId: string): void {
+    this.messageCount.set(sessionId, 1);
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
+    const proc = this.activeProcesses.get(sessionId);
+    if (proc) { proc.kill(); this.activeProcesses.delete(sessionId); }
     this.sessions.delete(sessionId);
     this.messageCount.delete(sessionId);
   }

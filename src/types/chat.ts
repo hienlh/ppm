@@ -29,6 +29,8 @@ export interface AIProvider {
   listSessionsByDir?(dir: string): Promise<SessionInfo[]>;
   ensureProjectPath?(sessionId: string, path: string): void;
   setForkSource?(sessionId: string, sourceSessionId: string): void;
+  forkAtMessage?(sessionId: string, messageId: string, opts?: { title?: string; dir?: string }): Promise<{ sessionId: string }>;
+  markAsResumed?(sessionId: string): void;
   isAvailable?(): Promise<boolean>;
   listModels?(): Promise<ModelOption[]>;
 }

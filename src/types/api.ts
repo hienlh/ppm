@@ -44,4 +44,5 @@ export type ChatWsServerMessage =
   | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null }
   | { type: "turn_events"; events: unknown[] }
   | { type: "title_updated"; title: string }
+  | { type: "compact_status"; status: "compacting" | "done" }
   | { type: "ping" };

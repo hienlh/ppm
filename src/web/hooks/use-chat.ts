@@ -22,6 +22,7 @@ interface UseChatReturn {
   connectingElapsed: number;
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
+  compactStatus: "compacting" | null;
   sessionTitle: string | null;
   /** When CLI provider assigns a different session ID, this holds the new ID */
   migratedSessionId: string | null;
@@ -51,6 +52,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [connectingElapsed, setConnectingElapsed] = useState(0);
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
+  const [compactStatus, setCompactStatus] = useState<"compacting" | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [migratedSessionId, setMigratedSessionId] = useState<string | null>(null);
@@ -267,6 +269,19 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // Handle title updates from SDK summary
     if ((data as any).type === "title_updated") {
       setSessionTitle((data as any).title ?? null);
+      return;
+    }
+
+    // Handle compact status events
+    if ((data as any).type === "compact_status") {
+      const status = (data as any).status;
+      if (status === "compacting") {
+        setCompactStatus("compacting");
+      } else if (status === "done") {
+        setCompactStatus(null);
+        // Refresh messages to show compacted history
+        refetchRef.current?.();
+      }
       return;
     }
 
@@ -550,6 +565,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     connectingElapsed,
     pendingApproval,
     contextWindowPct,
+    compactStatus,
     sessionTitle,
     migratedSessionId,
     sendMessage,

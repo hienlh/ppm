@@ -89,6 +89,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     connectingElapsed,
     pendingApproval,
     contextWindowPct,
+    compactStatus,
     sessionTitle,
     migratedSessionId,
     sendMessage,
@@ -162,12 +163,13 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   }, [tabId, updateTab]);
 
   /** Fork current session and open new tab with the forked session, resending userMessage */
-  const handleFork = useCallback(async (userMessage: string) => {
+  const handleFork = useCallback(async (userMessage: string, messageId?: string) => {
     if (!sessionId || !projectName) return;
     try {
       const { api, projectUrl } = await import("@/lib/api-client");
       const forked = await api.post<{ id: string; forkedFrom: string }>(
         `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
+        { messageId },
       );
       // Open new chat tab with forked session — it will send userMessage on connect
       useTabStore.getState().openTab({
@@ -350,6 +352,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           projectName={projectName}
           usageInfo={usageInfo}
           contextWindowPct={contextWindowPct}
+          compactStatus={compactStatus}
           usageLoading={usageLoading}
           refreshUsage={refreshUsage}
           lastFetchedAt={lastFetchedAt}

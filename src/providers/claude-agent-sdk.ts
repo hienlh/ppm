@@ -19,8 +19,10 @@ import { getSessionMapping, setSessionMapping, getSessionTitles } from "../servi
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
+
+const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
 
 function getSdkSessionId(ppmId: string): string {
   return getSessionMapping(ppmId) ?? ppmId;
@@ -317,6 +319,21 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.closeStreamingSession(sessionId);
     this.activeSessions.delete(sessionId);
     this.messageCount.delete(sessionId);
+    this.pendingApprovals.delete(sessionId);
+    this.forkSources.delete(sessionId);
+
+    // Best-effort: delete JSONL from ~/.claude/projects/
+    const sdkId = getSessionMapping(sessionId) ?? sessionId;
+    try {
+      if (existsSync(CLAUDE_PROJECTS_DIR)) {
+        const projectDirs = readdirSync(CLAUDE_PROJECTS_DIR);
+        for (const dir of projectDirs) {
+          if (dir.includes("..") || dir.includes("/")) continue; // safety
+          const jsonlPath = resolve(CLAUDE_PROJECTS_DIR, dir, `${sdkId}.jsonl`);
+          if (existsSync(jsonlPath)) { unlinkSync(jsonlPath); break; }
+        }
+      }
+    } catch { /* best-effort */ }
   }
 
   /**
@@ -333,6 +350,29 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   /** Register a fork source — when this session sends its first message, it will fork from sourceId */
   setForkSource(sessionId: string, sourceSessionId: string): void {
     this.forkSources.set(sessionId, sourceSessionId);
+  }
+
+  /** Fork a session at a specific message using SDK forkSession() */
+  async forkAtMessage(
+    sessionId: string,
+    messageId: string,
+    opts?: { title?: string; dir?: string },
+  ): Promise<{ sessionId: string }> {
+    const sdkId = getSessionMapping(sessionId) ?? sessionId;
+    // Dynamic import: Bun's ESM linker fails to resolve forkSession as a static named export
+    // in certain test configurations. Lazy import avoids the module linking issue.
+    const { forkSession } = await import("@anthropic-ai/claude-agent-sdk");
+    const result = await forkSession(sdkId, {
+      upToMessageId: messageId,
+      title: opts?.title,
+      dir: opts?.dir,
+    });
+    return { sessionId: result.sessionId };
+  }
+
+  /** Mark session as resumed so next sendMessage uses resume path */
+  markAsResumed(sessionId: string): void {
+    this.messageCount.set(sessionId, 1);
   }
 
   async listModels(): Promise<ModelOption[]> {
@@ -696,6 +736,24 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
               }
             }
+          }
+
+          // Detect compacting status
+          if (subtype === "status") {
+            const status = (msg as any).status;
+            if (status === "compacting") {
+              console.log(`[sdk] session=${sessionId} COMPACTING`);
+              yield { type: "system" as const, subtype: "compacting" } as ChatEvent;
+              continue;
+            }
+          }
+
+          // Detect compact boundary (compact finished, messages replaced in JSONL)
+          if (subtype === "compact_boundary") {
+            const meta = (msg as any).compact_metadata;
+            console.log(`[sdk] session=${sessionId} COMPACT_BOUNDARY trigger=${meta?.trigger} pre_tokens=${meta?.pre_tokens}`);
+            yield { type: "system" as const, subtype: "compact_done" } as ChatEvent;
+            continue;
           }
 
           // Yield system events so streaming loop can transition phases

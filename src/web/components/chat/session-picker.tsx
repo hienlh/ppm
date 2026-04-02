@@ -47,6 +47,7 @@ export function SessionPicker({
 
   const handleDelete = async (e: React.MouseEvent, session: SessionInfo) => {
     e.stopPropagation();
+    if (!window.confirm("Delete this session? This cannot be undone.")) return;
     try {
       if (!projectName) return;
       await api.del(

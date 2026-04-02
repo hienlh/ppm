@@ -8,7 +8,7 @@ import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sd
 import { listSlashItems } from "../../services/slash-items.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
-import { getSessionMapping, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession } from "../../services/db.service.ts";
+import { getSessionMapping, setSessionMapping, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionTitle } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -125,7 +125,13 @@ chatRoutes.delete("/sessions/:id", async (c) => {
   try {
     const id = c.req.param("id");
     const providerId = c.req.query("providerId") ?? "claude";
+    const sdkId = getSessionMapping(id) ?? id;
+    // Provider-specific cleanup (JSONL, process, etc.)
     await chatService.deleteSession(providerId, id);
+    // Shared DB cleanup
+    deleteSessionMapping(id);
+    deleteSessionTitle(sdkId);
+    unpinSession(sdkId);
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 404);
@@ -184,15 +190,33 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
     const providerId = c.req.query("providerId") ?? "claude";
-    // Create a new PPM session that will fork from sourceId on first message
+    const body = await c.req.json<{ messageId?: string }>().catch(() => ({} as { messageId?: string }));
+    const provider = providerRegistry.get(providerId);
+    if (!provider) return c.json(err("Provider not found"), 404);
+
+    // Create a new PPM session
     const session = await chatService.createSession(providerId, {
       projectName,
       projectPath,
       title: "Forked Chat",
     });
-    // Store fork source so WS handler knows to use forkSession on first message
-    const provider = providerRegistry.get(providerId);
-    provider?.setForkSource?.(session.id, sourceId);
+
+    if (body.messageId && provider.forkAtMessage) {
+      // Mid-fork: immediate SDK fork at specific message
+      const result = await provider.forkAtMessage(sourceId, body.messageId, {
+        title: session.title, dir: projectPath,
+      });
+      // Map new PPM id → new SDK session id
+      setSessionMapping(session.id, result.sessionId);
+      // Mark so next sendMessage uses resume (not create new)
+      provider.markAsResumed?.(session.id);
+    } else if (provider.setForkSource) {
+      // Deferred fork from end (current behavior — full history copy on first msg)
+      provider.setForkSource(session.id, sourceId);
+    } else {
+      return c.json(err("Provider does not support forking"), 400);
+    }
+
     return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 500);
