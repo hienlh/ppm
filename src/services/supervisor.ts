@@ -378,15 +378,31 @@ function adoptTunnel(): boolean {
     const status = readStatus();
     const pid = status.tunnelPid as number;
     const url = status.shareUrl as string;
-    if (!pid || !url) return false;
+    if (!pid || !url) {
+      log("DEBUG", `adoptTunnel: missing tunnelPid(${pid}) or shareUrl(${url}) in status`);
+      return false;
+    }
     process.kill(pid, 0); // throws if process is dead
     adoptedTunnelPid = pid;
     tunnelUrl = url;
     log("INFO", `Adopted existing tunnel (PID: ${pid}, URL: ${url})`);
     return true;
-  } catch {
+  } catch (e) {
+    log("WARN", `adoptTunnel: tunnel PID ${(readStatus().tunnelPid)} unreachable: ${e}`);
     return false;
   }
+}
+
+/** Kill stale tunnel PID from status.json (cleanup after failed adoption) */
+function killStaleTunnel() {
+  try {
+    const status = readStatus();
+    const pid = status.tunnelPid as number;
+    if (!pid) return;
+    try { process.kill(pid, "SIGTERM"); } catch {}
+    log("INFO", `Killed stale tunnel (PID: ${pid})`);
+  } catch {}
+  updateStatus({ tunnelPid: null, shareUrl: null });
 }
 
 /** Spawn new supervisor from updated code, wait for it to be healthy, then exit */
@@ -706,6 +722,7 @@ export async function runSupervisor(opts: {
     startTunnelProbe(opts.port);
     // Try adopting tunnel kept alive from previous upgrade; spawn new if dead
     if (!adoptTunnel()) {
+      killStaleTunnel(); // kill orphaned tunnel before spawning new one
       promises.push(spawnTunnel(opts.port));
     }
   }
