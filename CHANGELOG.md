@@ -1,10 +1,16 @@
 # Changelog
 
-## [0.8.95] - 2026-04-02
+## [0.8.95] - 2026-04-03
+
+### Added
+- **Rate-limit auto-retry**: SDK automatically retries on rate_limit/server_error with exponential backoff (15s, 30s, 60s) up to 3 attempts
+- **Increased max turns**: Default maxTurns bumped from 100 to 1000 for longer agent sessions
 
 ### Fixed
 - **Streaming auth loop**: SDK auth errors in streaming mode don't emit result events, leaving the session alive with broken credentials — every follow-up message fails with 401 forever. Now breaks the loop, cooldowns the account, and tears down the session so the next message picks a different account.
 - **Streaming session resource leak**: `finally` block now properly closes SDK subprocess and generator instead of just removing from map.
+- **Session mapping on resume**: Preserve existing sdk_id mapping when resuming sessions to prevent orphaning JSONL conversation history
+- **Usage list expired accounts**: Exclude expired temporary accounts (no refresh token) from usage dashboard
 
 ## [0.8.94] - 2026-04-02
 
