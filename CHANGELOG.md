@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.92] - 2026-04-02
+
+### Fixed
+- **Fork UX**: Forked session now shows conversation history up to the fork point, puts the forked user message in input for editing instead of auto-sending
+- **Fork at first message**: Forking the first user message creates a fresh empty session instead of erroring
+
 ## [0.8.91] - 2026-04-02
 
 ### Added
