@@ -377,6 +377,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setPhase("idle");
     phaseRef.current = "idle";
     setPendingApproval(null);
+    setCompactStatus(null);
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     setIsConnected(false);

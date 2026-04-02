@@ -194,30 +194,27 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
     const provider = providerRegistry.get(providerId);
     if (!provider) return c.json(err("Provider not found"), 404);
 
-    // Create a new PPM session
-    const session = await chatService.createSession(providerId, {
-      projectName,
-      projectPath,
-      title: "Forked Chat",
-    });
-
     if (body.messageId && provider.forkAtMessage) {
-      // Mid-fork: immediate SDK fork at specific message
+      // Mid-fork: SDK fork first, then create PPM session only on success
       const result = await provider.forkAtMessage(sourceId, body.messageId, {
-        title: session.title, dir: projectPath,
+        title: "Forked Chat", dir: projectPath,
       });
-      // Map new PPM id → new SDK session id
+      const session = await chatService.createSession(providerId, {
+        projectName, projectPath, title: "Forked Chat",
+      });
       setSessionMapping(session.id, result.sessionId);
-      // Mark so next sendMessage uses resume (not create new)
       provider.markAsResumed?.(session.id);
+      return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     } else if (provider.setForkSource) {
-      // Deferred fork from end (current behavior — full history copy on first msg)
+      // Deferred fork from end (full history copy on first msg)
+      const session = await chatService.createSession(providerId, {
+        projectName, projectPath, title: "Forked Chat",
+      });
       provider.setForkSource(session.id, sourceId);
+      return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     } else {
       return c.json(err("Provider does not support forking"), 400);
     }
-
-    return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
