@@ -15,7 +15,7 @@ import type {
 import { configService } from "../services/config.service.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionMapping, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
+import { getSessionMapping, getSessionProjectPath, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService } from "../services/account.service.ts";
 import { resolve } from "node:path";
@@ -244,6 +244,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     };
     this.activeSessions.set(id, meta);
     this.messageCount.set(id, 0);
+    // Pre-persist mapping so project_path survives server restarts
+    setSessionMapping(id, id, config.projectName, config.projectPath);
     return meta;
   }
 
@@ -253,6 +255,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     // Check if we have a mapped SDK session ID (from a previous query)
     const mappedSdkId = getSdkSessionId(sessionId);
+    // Restore project_path from DB so resumed sessions can find JSONL
+    const dbProjectPath = getSessionProjectPath(sessionId) ?? undefined;
 
     try {
       const sdkSessions = await sdkListSessions({ limit: 100 });
@@ -264,6 +268,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           id: sessionId,
           providerId: this.id,
           title: found.customTitle ?? found.summary ?? "Resumed Chat",
+          projectPath: dbProjectPath,
           createdAt: new Date(found.lastModified).toISOString(),
         };
         this.activeSessions.set(sessionId, meta);
@@ -280,6 +285,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       id: sessionId,
       providerId: this.id,
       title: "Resumed Chat",
+      projectPath: dbProjectPath,
       createdAt: new Date().toISOString(),
     };
     this.activeSessions.set(sessionId, meta);
@@ -730,7 +736,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (subtype === "init") {
             const initMsg = msg as any;
             if (initMsg.session_id && initMsg.session_id !== sessionId) {
-              setSessionMapping(sessionId, initMsg.session_id);
+              setSessionMapping(sessionId, initMsg.session_id, meta.projectName, meta.projectPath);
               const oldMeta = this.activeSessions.get(sessionId);
               if (oldMeta) {
                 this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });

@@ -271,6 +271,21 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 10;
     `);
   }
+
+  if (current < 11) {
+    try {
+      database.exec(`ALTER TABLE session_map ADD COLUMN project_path TEXT`);
+    } catch {
+      // Column may already exist
+    }
+    // Backfill project_path from projects table where project_name matches
+    database.exec(`
+      UPDATE session_map SET project_path = (
+        SELECT path FROM projects WHERE projects.name = session_map.project_name
+      ) WHERE project_path IS NULL AND project_name IS NOT NULL
+    `);
+    database.exec(`PRAGMA user_version = 11`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -365,10 +380,15 @@ export function getSessionMapping(ppmId: string): string | null {
   return row?.sdk_id ?? null;
 }
 
-export function setSessionMapping(ppmId: string, sdkId: string, projectName?: string): void {
+export function getSessionProjectPath(ppmId: string): string | null {
+  const row = getDb().query("SELECT project_path FROM session_map WHERE ppm_id = ?").get(ppmId) as { project_path: string } | null;
+  return row?.project_path ?? null;
+}
+
+export function setSessionMapping(ppmId: string, sdkId: string, projectName?: string, projectPath?: string): void {
   getDb().query(
-    "INSERT INTO session_map (ppm_id, sdk_id, project_name) VALUES (?, ?, ?) ON CONFLICT(ppm_id) DO UPDATE SET sdk_id = excluded.sdk_id, project_name = excluded.project_name",
-  ).run(ppmId, sdkId, projectName ?? null);
+    "INSERT INTO session_map (ppm_id, sdk_id, project_name, project_path) VALUES (?, ?, ?, ?) ON CONFLICT(ppm_id) DO UPDATE SET sdk_id = excluded.sdk_id, project_name = COALESCE(excluded.project_name, session_map.project_name), project_path = COALESCE(excluded.project_path, session_map.project_path)",
+  ).run(ppmId, sdkId, projectName ?? null, projectPath ?? null);
 }
 
 export function getAllSessionMappings(): Record<string, string> {
