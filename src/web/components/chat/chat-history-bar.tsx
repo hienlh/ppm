@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2 } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -170,6 +170,16 @@ export function ChatHistoryBar({
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
       });
+    } catch { /* silent */ }
+  }, [projectName]);
+
+  const deleteSession = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
+    e.stopPropagation();
+    if (!projectName) return;
+    if (!window.confirm("Delete this session? This cannot be undone.")) return;
+    try {
+      await api.del(`${projectUrl(projectName)}/chat/sessions/${session.id}?providerId=${session.providerId}`);
+      setSessions((prev) => prev.filter((s) => s.id !== session.id));
     } catch { /* silent */ }
   }, [projectName]);
 
@@ -382,6 +392,13 @@ export function ChatHistoryBar({
                         title="Rename session"
                       >
                         <Pencil className="size-3" />
+                      </button>
+                      <button
+                        onClick={(e) => deleteSession(e, session)}
+                        className="p-0.5 rounded text-text-subtle hover:text-red-400 hover:bg-red-500/20 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                        title="Delete session"
+                      >
+                        <Trash2 className="size-3" />
                       </button>
                     </>
                   )}
