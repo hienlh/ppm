@@ -135,14 +135,12 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     }
   }, [sessionTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-send pending message for forked sessions (set by handleFork)
-  const pendingForkMsgRef = useRef(metadata?.pendingMessage as string | undefined);
+  // Pending fork message — show in input for user to edit, not auto-send
+  const [forkDraft, setForkDraft] = useState<string | undefined>(metadata?.pendingMessage as string | undefined);
   useEffect(() => {
-    if (pendingForkMsgRef.current && isConnected && sessionId) {
-      const msg = pendingForkMsgRef.current;
-      pendingForkMsgRef.current = undefined;
-      if (tabId) updateTab(tabId, { metadata: { ...metadata, pendingMessage: undefined } });
-      setTimeout(() => sendMessage(msg, { permissionMode }), 100);
+    if (forkDraft && isConnected && sessionId && tabId) {
+      // Clear from tab metadata once consumed
+      updateTab(tabId, { metadata: { ...metadata, pendingMessage: undefined } });
     }
   }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -385,10 +383,14 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
         {/* Input */}
         <MessageInput
-          onSend={handleSend}
+          onSend={(content, attachments, priority) => {
+            if (forkDraft) setForkDraft(undefined);
+            handleSend(content, attachments, priority);
+          }}
           isStreaming={isStreaming}
           onCancel={cancelStreaming}
-          autoFocus={!(metadata?.sessionId)}
+          autoFocus={!(metadata?.sessionId) || !!forkDraft}
+          initialValue={forkDraft}
           projectName={projectName}
           onSlashStateChange={handleSlashStateChange}
           onSlashItemsLoaded={setSlashItems}

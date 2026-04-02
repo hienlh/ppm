@@ -123,8 +123,8 @@ describe("Session Delete — DB cleanup", () => {
 });
 
 describe("Session Fork — route dispatch", () => {
-  it("fork returns 400 for provider without fork support", async () => {
-    // Mock provider has no setForkSource or forkAtMessage
+  it("fork without messageId creates fresh empty session", async () => {
+    // Fork at first message — no previous message ID, creates new empty session
     const createRes = await req("/chat/sessions", {
       method: "POST",
       body: JSON.stringify({ providerId: "mock", title: "Source" }),
@@ -137,8 +137,8 @@ describe("Session Fork — route dispatch", () => {
     });
     const json = (await forkRes.json()) as any;
 
-    expect(json.ok).toBe(false);
-    expect(json.error).toContain("does not support forking");
+    expect(json.ok).toBe(true);
+    expect(json.data.forkedFrom).toBe(source.id);
   });
 
   it("fork with messageId returns 400 for provider without forkAtMessage", async () => {

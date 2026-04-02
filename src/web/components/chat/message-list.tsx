@@ -90,13 +90,17 @@ export function MessageList({
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
       <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content className="p-4 space-y-4">
-          {filtered.map((msg) => (
+          {filtered.map((msg, idx) => (
               <MessageBubble
                 key={msg.id}
                 message={msg}
                 isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                 projectName={projectName}
-                onFork={msg.role === "user" && onFork ? () => onFork(msg.content, msg.id) : undefined}
+                onFork={msg.role === "user" && onFork ? () => {
+                  // Pass the previous message ID so the fork includes history up to (but not including) this user message
+                  const prevMsg = idx > 0 ? filtered[idx - 1] : undefined;
+                  onFork(msg.content, prevMsg?.id);
+                } : undefined}
               />
             ))}
 
