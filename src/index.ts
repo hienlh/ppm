@@ -135,4 +135,7 @@ registerAutoStartCommands(program);
 const { registerCloudCommands } = await import("./cli/commands/cloud.ts");
 registerCloudCommands(program);
 
+const { registerExtCommands } = await import("./cli/commands/ext-cmd.ts");
+registerExtCommands(program);
+
 program.parse();

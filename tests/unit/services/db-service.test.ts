@@ -52,11 +52,11 @@ describe("db.service", () => {
       expect(tables).toContain("accounts");
     });
 
-    it("sets user_version to 11 after all migrations", () => {
+    it("sets user_version to 12 after all migrations", () => {
       const { openTestDb: open } = require("../../../src/services/db.service.ts");
       const db = open();
       const row = db.query("PRAGMA user_version").get() as { user_version: number };
-      expect(row.user_version).toBe(11);
+      expect(row.user_version).toBe(12);
       db.close();
     });
 

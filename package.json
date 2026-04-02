@@ -6,6 +6,7 @@
   "license": "MIT",
   "module": "src/index.ts",
   "type": "module",
+  "workspaces": ["packages/*"],
   "bin": {
     "ppm": "src/index.ts"
   },

@@ -149,6 +149,10 @@ app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
 
+// Extensions management
+import { extensionRoutes } from "./routes/extensions.ts";
+app.route("/api/extensions", extensionRoutes);
+
 // Upgrade routes (check for updates, apply upgrade)
 import { upgradeRoutes } from "./routes/upgrade.ts";
 app.route("/api/upgrade", upgradeRoutes);
@@ -445,6 +449,11 @@ if (process.argv.includes("__serve__")) {
 
   // Start background usage limit polling (every 5 min)
   import("../services/claude-usage.service.ts").then(({ startUsagePolling }) => startUsagePolling()).catch(() => {});
+
+  // Discover + activate enabled extensions
+  import("../services/extension.service.ts").then(({ extensionService }) => extensionService.startup()).catch((e) => {
+    console.error("[ExtService] Startup error:", e);
+  });
 
   console.log(`Server child ready on port ${port}`);
 }

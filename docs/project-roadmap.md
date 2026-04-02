@@ -58,24 +58,30 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 **Theme:** Multi-provider AI (Claude + Cursor) + extension system. Ship a focused release, expand providers later.
 
-**Overall progress: ~53%** (2/3 features complete, merge all at 100%)
+**Overall progress: 100%** (All 3 features complete)
 
 | Feature | Priority | Status | Description |
 |---------|----------|--------|-------------|
 | **Multi-provider AI** | Critical | ✅ Done | ProviderInterface, registry, Cursor CLI, CLI provider base, UI provider/model selector, permission mode selector, system prompt customization, comprehensive tests — all on beta branch. |
 | **MCP Management** | Medium | ✅ Done | REST API (CRUD + import), SQLite storage, Settings UI, auto-import from `~/.claude.json`, validation, SDK integration. |
-| **Extension architecture** | High | 🔴 0% | Dynamic extension loading. Extensions = npm packages. First extension: extract DB viewer from core. Extension API: register routes, UI panels, sidebar tabs, skills. Config: `"extensions": ["@ppm/ext-database", "@ppm/ext-docker"]`. |
+| **Extension architecture (Phase 1)** | High | ✅ Done | VSCode-compatible npm extensions, Bun Worker isolation, RPC protocol, state persistence, contribution registry, CLI support, dev mode. First extension: database viewer. |
 
 **Multi-provider — v0.9 scope (reduced):**
 - Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy
 - Tier 2 (agentic CLI): Cursor — agentic via its own tool system
 - Provider interface is clean enough to add more providers later without refactor
 
-**Deferred to v0.9.5+:**
+**Deferred to v0.9.5+ (Multi-Provider Phase 2):**
 - Gemini CLI (Tier 2)
 - OpenAI Codex (Tier 2)
 - Tier 3 (chat-only): Any OpenAI-compatible API
 - Chinese providers (DeepSeek, Qwen) — v1.0+
+
+**Extension System Phase 2 (v0.10+):**
+- Webview UI support (HTML/React panels)
+- Settings UI auto-generation from manifest
+- Hot reload during dev
+- Extension marketplace (v1.0)
 
 **Extension architecture — design principles:**
 - Extensions are npm packages: `ppm ext install @ppm/ext-database`

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 10;
+const CURRENT_SCHEMA_VERSION = 12;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -285,6 +285,33 @@ function runMigrations(database: Database): void {
       ) WHERE project_path IS NULL AND project_name IS NOT NULL
     `);
     database.exec(`PRAGMA user_version = 11`);
+  }
+
+  if (current < 12) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS extensions (
+        id TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        display_name TEXT,
+        description TEXT,
+        icon TEXT,
+        enabled INTEGER DEFAULT 1,
+        manifest TEXT NOT NULL,
+        installed_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS extension_storage (
+        ext_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        PRIMARY KEY (ext_id, scope, key),
+        FOREIGN KEY (ext_id) REFERENCES extensions(id) ON DELETE CASCADE
+      );
+
+      PRAGMA user_version = 12;
+    `);
   }
 }
 
@@ -809,6 +836,62 @@ export function deleteAccount(id: string): void {
 
 export function incrementAccountRequests(id: string): void {
   getDb().query("UPDATE accounts SET total_requests = total_requests + 1 WHERE id = ?").run(id);
+}
+
+// ---------------------------------------------------------------------------
+// Extension helpers
+// ---------------------------------------------------------------------------
+
+import type { ExtensionRow, ExtensionStorageRow } from "../types/extension.ts";
+
+export function getExtensions(): ExtensionRow[] {
+  return getDb().query("SELECT * FROM extensions ORDER BY display_name, id").all() as ExtensionRow[];
+}
+
+export function getExtensionById(id: string): ExtensionRow | null {
+  return getDb().query("SELECT * FROM extensions WHERE id = ?").get(id) as ExtensionRow | null;
+}
+
+export function insertExtension(row: Omit<ExtensionRow, "installed_at" | "updated_at">): void {
+  getDb().query(
+    `INSERT INTO extensions (id, version, display_name, description, icon, enabled, manifest)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(row.id, row.version, row.display_name, row.description, row.icon, row.enabled, row.manifest);
+}
+
+export function updateExtension(id: string, updates: Partial<Pick<ExtensionRow, "version" | "display_name" | "description" | "icon" | "enabled" | "manifest">>): void {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (updates.version !== undefined) { sets.push("version = ?"); vals.push(updates.version); }
+  if (updates.display_name !== undefined) { sets.push("display_name = ?"); vals.push(updates.display_name); }
+  if (updates.description !== undefined) { sets.push("description = ?"); vals.push(updates.description); }
+  if (updates.icon !== undefined) { sets.push("icon = ?"); vals.push(updates.icon); }
+  if (updates.enabled !== undefined) { sets.push("enabled = ?"); vals.push(updates.enabled); }
+  if (updates.manifest !== undefined) { sets.push("manifest = ?"); vals.push(updates.manifest); }
+  if (sets.length === 0) return;
+  sets.push("updated_at = datetime('now')");
+  vals.push(id);
+  getDb().query(`UPDATE extensions SET ${sets.join(", ")} WHERE id = ?`).run(...(vals as SQLQueryBindings[]));
+}
+
+export function deleteExtension(id: string): void {
+  getDb().query("DELETE FROM extensions WHERE id = ?").run(id);
+}
+
+export function getExtensionStorage(extId: string, scope: string): ExtensionStorageRow[] {
+  return getDb().query("SELECT * FROM extension_storage WHERE ext_id = ? AND scope = ?").all(extId, scope) as ExtensionStorageRow[];
+}
+
+export function setExtensionStorageValue(extId: string, scope: string, key: string, value: string | null): void {
+  getDb().query(
+    `INSERT INTO extension_storage (ext_id, scope, key, value)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(ext_id, scope, key) DO UPDATE SET value = excluded.value`,
+  ).run(extId, scope, key, value);
+}
+
+export function deleteExtensionStorage(extId: string): void {
+  getDb().query("DELETE FROM extension_storage WHERE ext_id = ?").run(extId);
 }
 
 // Auto-close on process exit

@@ -17,7 +17,8 @@
 ```
 src/
 ├── cli/
-│   ├── commands/                # 13 CLI commands (start, stop, init, config, chat, db, git, etc.)
+│   ├── commands/                # 14 CLI commands (start, stop, init, config, chat, db, git, ext, etc.)
+│   │   └── ext-cmd.ts           # Extension CLI (install/remove/list/enable/disable/dev)
 │   └── utils/
 │       └── project-resolver.ts  # Resolve project name -> path
 ├── server/
@@ -33,6 +34,7 @@ src/
 │   │   ├── git.ts               # Git operations (status, commit, log, graph)
 │   │   ├── files.ts             # File operations (read, write, tree)
 │   │   ├── mcp.ts               # MCP server CRUD + import (GET, POST, PUT, DELETE)
+│   │   ├── extensions.ts        # Extension install/remove/list/enable/disable, contributions
 │   │   ├── upgrade.ts           # Version checking, upgrade
 │   │   └── static.ts            # Serve frontend (dist/web)
 │   ├── helpers/
@@ -48,16 +50,22 @@ src/
 │   ├── cli-provider-base.ts     # Abstract base for CLI providers
 │   ├── mock-provider.ts         # Test provider
 │   └── registry.ts              # Provider routing (list() vs listAll())
-├── services/                    # Business logic (25+ files)
+├── services/                    # Business logic (30+ files)
 │   ├── chat.service.ts          # Session/message streaming
 │   ├── config.service.ts        # Config loading/persistence
-│   ├── db.service.ts            # SQLite CRUD (schema migrations)
+│   ├── db.service.ts            # SQLite CRUD (schema migrations, extension_storage)
 │   ├── file.service.ts          # File operations
 │   ├── git.service.ts           # Git commands
 │   ├── terminal.service.ts      # PTY management
 │   ├── account.service.ts       # Account CRUD & encryption
 │   ├── upgrade.service.ts       # Version checking, installation
 │   ├── mcp-config.service.ts    # MCP server CRUD (list, get, set, remove, import)
+│   ├── extension.service.ts     # Extension lifecycle, activation, state management
+│   ├── extension-installer.ts   # npm install, symlink, removal
+│   ├── extension-manifest.ts    # Parse + discover manifests
+│   ├── extension-rpc.ts         # RPC channel (request/response/events)
+│   ├── extension-host-worker.ts # Worker-side extension loading
+│   ├── contribution-registry.ts # Central registry for commands, views, config
 │   ├── database/
 │   │   ├── adapter-registry.ts  # SQLite/Postgres adapter registry
 │   │   ├── sqlite-adapter.ts
@@ -74,6 +82,7 @@ src/
 │   ├── database.ts
 │   ├── git.ts
 │   ├── mcp.ts                   # McpServerConfig, McpTransportType, validation
+│   ├── extension.ts             # ExtensionManifest, ExtensionInfo, RpcMessage, ExtensionContext
 │   ├── project.ts
 │   └── terminal.ts
 └── web/                         # React frontend (Vite + React 18)
@@ -526,21 +535,79 @@ ai:
 
 ---
 
-## Recent Changes (v0.8.60)
+## Extension System (v0.9.0+)
 
-### Added
+### Core Architecture
+
+**Installation Directory:** `~/.ppm/extensions/node_modules/`
+**State Storage:** SQLite `extension_storage` table (globalState + workspaceState)
+**Worker Isolation:** Bun Worker threads per activated extension
+**RPC Protocol:** Typed request/response/event messaging
+
+### New Files & Services
+- `src/types/extension.ts` — ExtensionManifest, ExtensionContext, RpcMessage types
+- `src/server/routes/extensions.ts` — REST API (GET/POST/DELETE/PATCH)
+- `src/services/extension.service.ts` — Lifecycle, activation, state management (120 LOC)
+- `src/services/extension-installer.ts` — npm install, symlink, removal (100 LOC)
+- `src/services/extension-manifest.ts` — Parse + discover manifests (70 LOC)
+- `src/services/extension-rpc.ts` — RPC channel implementation (120 LOC)
+- `src/services/extension-host-worker.ts` — Worker-side extension loading (150 LOC)
+- `src/services/contribution-registry.ts` — Central command/view/config registry (80 LOC)
+- `src/cli/commands/ext-cmd.ts` — Extension CLI commands (121 LOC)
+
+### Manifest Example (package.json)
+```json
+{
+  "name": "@ppm/ext-database",
+  "ppm": {
+    "displayName": "Database Browser",
+    "main": "dist/extension.js",
+    "activationEvents": ["onView:databases"],
+    "contributes": {
+      "commands": [{"command": "ppm.database.openConnection", "title": "..."}],
+      "views": {"explorer": [{"id": "databases", "name": "Databases"}]},
+      "configuration": {"properties": {"ppm.database.maxRows": {"type": "number"}}}
+    }
+  }
+}
+```
+
+### REST API Endpoints
+- `GET /api/extensions` — List installed
+- `POST /api/extensions` — Install from npm
+- `DELETE /api/extensions/:id` — Remove
+- `PATCH /api/extensions/:id` — Enable/disable
+- `GET /api/extensions/contributions` — List all contributions
+
+### CLI Commands
+```
+ppm ext list                      # List extensions
+ppm ext install @ppm/ext-db       # Install
+ppm ext remove @ppm/ext-db        # Uninstall
+ppm ext enable @ppm/ext-db        # Enable
+ppm ext disable @ppm/ext-db       # Disable
+ppm ext dev /path/to/src          # Dev symlink
+```
+
+---
+
+## Recent Changes (v0.8.60+)
+
+### v0.9.0 (Extension System Phase 1)
+- **Extension Framework** — VSCode-compatible npm-installable extensions
+- **Worker Isolation** — Crash-safe extension execution in Bun Workers
+- **RPC Protocol** — Bidirectional messaging (request/response/events)
+- **State Management** — globalState + workspaceState persistence in SQLite
+- **Contribution Registry** — Commands, views, configuration registry
+- **CLI Support** — `ppm ext` commands for lifecycle management
+- **Dev Mode** — Symlink local extensions for development
+
+### v0.8.60
 - **Dynamic Model Listing** — `listModels?()` on AIProvider interface
 - **Provider Models APIs** — Global and project-scoped endpoints
 - **AI Settings UI** — Per-provider tabs with dynamic model dropdowns
 - **Chat History Badges** — Provider-aware usage display
 - **13 new integration tests** for provider models API
-
-### Technical Details
-- `ModelOption` type: `{ value: string; label: string }`
-- Claude: Hardcoded 2 models
-- Cursor: Subprocess with 5-min TTL cache, 10s timeout
-- Registry: `list()` vs `listAll()` distinction
-- Bootstrap: Auto-detect CLI providers on startup
 
 ---
 

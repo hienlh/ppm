@@ -1098,6 +1098,364 @@ const queryConfig = {
 const query = new Query(messages, queryConfig);
 ```
 
+---
+
+## Extension System (Phase 1 — v0.9.0+)
+
+### Overview
+
+PPM Extension System enables VSCode-compatible, npm-installable extensions that run in isolated Bun Worker threads. Crash-safe, permission-based, with RPC messaging between main process and worker.
+
+**Architecture:**
+- **Package Format:** npm packages (`@ppm/ext-database`, `@ppm/ext-docker`, etc.)
+- **Installation:** `~/.ppm/extensions/node_modules/{id}/`
+- **Lifecycle:** Install → Enable → Activate → Deactivate → Remove
+- **Worker Isolation:** Each activated extension runs in a Bun Worker (crash-safe)
+- **Communication:** RPC protocol (request/response/events) between main process + worker
+- **State Storage:** globalState (persistent) + workspaceState (per-project) in SQLite
+- **Contributions:** Commands, views, configuration contributed via manifest
+
+### Manifest Format
+
+Extension metadata defined in `package.json` under `ppm` key:
+
+```json
+{
+  "name": "@ppm/ext-database",
+  "version": "1.0.0",
+  "main": "dist/extension.js",
+  "ppm": {
+    "displayName": "Database Browser",
+    "description": "Browse and query databases",
+    "icon": "database.svg",
+    "engines": { "ppm": ">=0.9.0" },
+    "activationEvents": ["onView:databases"],
+    "contributes": {
+      "commands": [
+        {
+          "command": "ppm.database.openConnection",
+          "title": "Open Database Connection",
+          "category": "Database"
+        }
+      ],
+      "views": {
+        "explorer": [
+          {
+            "id": "databases",
+            "name": "Databases",
+            "type": "tree"
+          }
+        ]
+      },
+      "configuration": {
+        "properties": {
+          "ppm.database.maxRows": {
+            "type": "number",
+            "default": 1000,
+            "description": "Max rows to fetch per query"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Fields:**
+- `engines.ppm` — PPM version requirement
+- `activationEvents` — When extension activates (e.g., `onView:databases`, `onCommand:ext.activate`)
+- `contributes` — UI elements + commands contributed by extension
+
+### Installation & Lifecycle
+
+**Installation** (`ppm ext install @ppm/ext-database`):
+1. Fetch package from npm
+2. Extract to `~/.ppm/extensions/node_modules/{id}/`
+3. Parse manifest from `package.json`
+4. Store in SQLite `extensions` table (enabled=1)
+5. Discover contributions
+
+**Activation** (`ppm ext enable @ppm/ext-database` or automatic):
+1. Load manifest + entry point from disk
+2. Spawn Bun Worker (process isolation)
+3. Load extension code into worker
+4. Call `activate(context)` function
+5. Register contributions in `contributionRegistry`
+6. Mark as activated
+
+**Deactivation:**
+1. Unregister contributions
+2. Terminate worker
+3. Clear persisted state if needed
+
+**Removal** (`ppm ext remove @ppm/ext-database`):
+1. Deactivate if active
+2. Delete from `~/.ppm/extensions/`
+3. Remove from SQLite
+4. Unregister contributions
+
+### RPC Protocol (Extension ↔ Main Process)
+
+**Message Types:**
+
+1. **Request** (extension → main)
+   ```json
+   {
+     "type": "request",
+     "id": 1,
+     "method": "storage:get",
+     "params": ["extId", "global", "key"]
+   }
+   ```
+
+2. **Response** (main → extension)
+   ```json
+   {
+     "type": "response",
+     "id": 1,
+     "result": "value"
+   }
+   ```
+
+3. **Event** (both directions)
+   ```json
+   {
+     "type": "event",
+     "event": "file:changed",
+     "data": { "path": "/path/to/file" }
+   }
+   ```
+
+**Built-in Methods:**
+- `storage:get(extId, scope, key)` — Get persistent value
+- `storage:set(extId, scope, key, value)` — Set persistent value
+- `storage:delete(extId, scope, key)` — Delete key
+- Extension can define custom RPC methods via `rpc.onRequest(method, handler)`
+
+### State Storage
+
+**Database Schema:**
+
+```sql
+CREATE TABLE extension_storage (
+  ext_id TEXT NOT NULL,
+  scope TEXT NOT NULL,  -- 'global' | 'workspace'
+  key TEXT NOT NULL,
+  value TEXT,           -- JSON-serialized
+  PRIMARY KEY (ext_id, scope, key)
+);
+```
+
+**Scopes:**
+- **globalState** — Persists across all projects (e.g., user settings, cache)
+- **workspaceState** — Project-specific state (e.g., open panel state)
+
+**API** (inside extension):
+```typescript
+// In activate(context: ExtensionContext)
+const globalVal = context.globalState.get("lastConnection", "default");
+await context.globalState.update("lastConnection", "my-db");
+
+const wsVal = context.workspaceState.get("selectedTable");
+await context.workspaceState.update("selectedTable", "users");
+```
+
+### Contribution Registry
+
+**Purpose:** Central registry of all extension contributions (commands, views, etc.)
+
+**Storage:** In-memory map during runtime
+
+**Endpoints:**
+- `GET /api/extensions/contributions` — List all active contributions
+
+**Contribution Types:**
+1. **Commands** — Callable actions (e.g., `ppm.database.openConnection`)
+   - Registered: `registry.registerCommand(extId, command)`
+   - Invoked: `POST /api/extensions/{extId}/commands/{command}`
+
+2. **Views** — Sidebar panels or tree views
+   - Registered: `registry.registerView(extId, view)`
+   - Rendered in UI based on `type` (tree, webview)
+
+3. **Configuration** — Settings schema
+   - Registered: `registry.registerConfig(extId, schema)`
+   - Merged with global settings
+
+### CLI Commands
+
+```bash
+ppm ext list                      # List installed extensions
+ppm ext install @ppm/ext-database # Install from npm
+ppm ext remove @ppm/ext-database  # Uninstall
+ppm ext enable @ppm/ext-database  # Enable extension
+ppm ext disable @ppm/ext-database # Disable extension
+ppm ext dev /path/to/ext-src      # Symlink local extension for dev
+ppm ext config <ext-id> <key> <value> # Set config value
+```
+
+**Dev Mode** (`ppm ext dev /path/to/src`):
+- Symlinks local extension to `~/.ppm/extensions/node_modules/`
+- Auto-reloads on file change
+- Extension runs from source (TypeScript not compiled)
+
+### REST API
+
+**Endpoints** (`src/server/routes/extensions.ts`):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| **GET** | `/api/extensions` | List installed extensions |
+| **POST** | `/api/extensions` | Install extension (body: {name, version?}) |
+| **GET** | `/api/extensions/:id` | Get extension info (manifest, status) |
+| **DELETE** | `/api/extensions/:id` | Remove extension |
+| **PATCH** | `/api/extensions/:id` | Update extension (body: {enabled}) |
+| **GET** | `/api/extensions/contributions` | List all contributions (commands, views, config) |
+| **POST** | `/api/extensions/:id/commands/:cmd` | Invoke extension command |
+
+**Example: Install Extension**
+```bash
+POST /api/extensions
+Content-Type: application/json
+
+{ "name": "@ppm/ext-database", "version": "1.0.0" }
+
+# Response
+{
+  "ok": true,
+  "data": {
+    "id": "@ppm/ext-database",
+    "version": "1.0.0",
+    "displayName": "Database Browser",
+    "enabled": true,
+    "activated": false
+  }
+}
+```
+
+### Service Layer
+
+**ExtensionService** (`src/services/extension.service.ts`):
+- `discover()` — Scan `~/.ppm/extensions/` for installed packages
+- `install(name)` — Fetch from npm, install locally
+- `remove(id)` — Uninstall extension
+- `activate(id)` — Load + run extension in worker
+- `deactivate(id)` — Terminate worker, cleanup
+- `parseManifest(pkg)` — Extract manifest from package.json
+- `setExtensionState(extId, scope, key, value)` — Persist state
+
+**ExtensionInstaller** (`src/services/extension-installer.ts`):
+- `installExtension(name, dir)` — npm install + verify
+- `removeExtension(id, dir)` — rm -rf extension directory
+- `devLinkExtension(localPath)` — Symlink for local dev
+
+**ExtensionManifest** (`src/services/extension-manifest.ts`):
+- `parseManifest(pkg)` — Validate + parse ppm section
+- `discoverManifests(dir)` — Scan all installed extensions
+
+**RpcChannel** (`src/services/extension-rpc.ts`):
+- Bidirectional RPC messaging
+- Request/response matching by ID
+- Event broadcasting
+- Timeout handling
+
+### Worker Integration
+
+**ExtensionHostWorker** (`src/services/extension-host-worker.ts`):
+- Worker-side code that loads + activates extension
+- Loads extension code into worker context
+- Exposes ExtensionContext API (globalState, workspaceState, subscriptions)
+- Handles incoming RPC messages
+- Communicates back to main process
+
+**Design:**
+```
+Main Process                Worker
+     ↓                         ↓
+ ExtensionService    ExtensionHostWorker
+     ↓                         ↓
+ RpcChannel ←────────────→ RpcChannel
+     ↓                         ↓
+ Sends: {                Extension Code
+   type: "request",      (User's ext.ts)
+   method: "..."        ↓
+ }                   activate(context)
+     ↓                   ↓
+ Handlers respond  context.storage.get()
+     ↑                   ↑
+     └─────────────────┘
+```
+
+### Dev Workflow
+
+**Creating an Extension:**
+
+1. Create npm package:
+   ```bash
+   npm init -y @ppm/ext-my-feature
+   npm install @ppm/extension-api
+   ```
+
+2. Write `src/extension.ts`:
+   ```typescript
+   import type { ExtensionContext } from "@ppm/extension-api";
+
+   export async function activate(context: ExtensionContext) {
+     console.log(`Extension ${context.extensionId} activated!`);
+     
+     const val = context.globalState.get("count", 0);
+     await context.globalState.update("count", val + 1);
+   }
+
+   export function deactivate() {
+     console.log("Extension deactivated");
+   }
+   ```
+
+3. Add to `package.json`:
+   ```json
+   {
+     "ppm": {
+       "displayName": "My Feature",
+       "main": "dist/extension.js",
+       "contributes": {
+         "commands": [...]
+       }
+     }
+   }
+   ```
+
+4. Install locally for dev:
+   ```bash
+   ppm ext dev /path/to/ext-my-feature
+   ```
+
+5. Extension auto-activates based on `activationEvents`, state persists
+
+### Crash Safety
+
+**Worker Isolation:**
+- Each extension in isolated Bun Worker thread
+- Worker crash doesn't crash main process
+- Error events logged, extension marked as failed
+- Main process continues operating
+
+**Cleanup:**
+- Worker terminates → cleanup timer expires after 5min
+- Persisted state preserved in SQLite (not lost on crash)
+- Next activation reloads from disk, state auto-restored
+
+### Future Enhancements (Phase 2+)
+
+- **UI Webview Support** — Extensions define HTML/React UI panels
+- **Extension Settings UI** — Auto-generate UI from `contributes.configuration`
+- **Hot Reload** — Auto-reload extension on file change during dev
+- **Marketplace** — Browse, rate, publish extensions (v1.0+)
+- **Permissions** — User prompt for sensitive operations
+- **Inter-Extension API** — Extensions can call each other via RPC
+
+---
+
 **Tool Allow List:**
 - All MCP tools automatically allowed via wildcard `mcp__*`
 - MCP server connection failures don't block chat (logged as warning)
