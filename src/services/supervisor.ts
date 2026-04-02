@@ -578,30 +578,6 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           }, 500);
           break;
 
-        case "upgrade": {
-          // Install new version FIRST (same as CLI / HTTP route)
-          const { applyUpgrade } = await import("./upgrade.service.ts");
-          sendResult(true, undefined, { status: "installing" });
-          await new Promise(r => setTimeout(r, 300));
-          const installResult = await applyUpgrade();
-          if (!installResult.success) {
-            sendResult(false, installResult.error);
-            break;
-          }
-          // New version installed — self-replace to pick it up
-          sendResult(true, undefined, { status: "upgrading", newVersion: installResult.newVersion });
-          await new Promise(r => setTimeout(r, 300));
-          const result = await selfReplace();
-          // Only reaches here on failure — selfReplace exits on success
-          if (!result.success) {
-            sendResult(false, result.error);
-            if (!serverChild && !shuttingDown) {
-              spawnServer(serverArgs, logFd);
-            }
-          }
-          break;
-        }
-
         case "status":
           sendResult(true, undefined, {
             state: supervisorState,

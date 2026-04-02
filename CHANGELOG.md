@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.93] - 2026-04-02
+
+### Removed
+- **Cloud upgrade command**: Removed remote upgrade trigger from cloud — upgrade is now local-only (CLI `ppm upgrade` or UI banner)
+
 ## [0.8.92] - 2026-04-02
 
 ### Fixed
