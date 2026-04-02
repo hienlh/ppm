@@ -14,6 +14,7 @@ import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { TelegramSettingsSection } from "./telegram-settings-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
 import { McpSettingsSection } from "./mcp-settings-section";
+import { ChangePasswordSection } from "./change-password-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
@@ -127,6 +128,9 @@ export function SettingsTab() {
               Shown in page title and synced to PPM Cloud.
             </p>
           </section>
+
+          {/* Security: Change Password */}
+          <ChangePasswordSection />
 
           {/* Quick: Theme */}
           <section className="space-y-2">

@@ -252,6 +252,33 @@ settingsRoutes.post("/telegram/test", async (c) => {
   }
 });
 
+// ── Auth / Password ──────────────────────────────────────────────────
+
+/** PUT /settings/auth/password — change the access password (token) */
+settingsRoutes.put("/auth/password", async (c) => {
+  try {
+    const { password, confirm } = await c.req.json<{ password: string; confirm: string }>();
+    if (typeof password !== "string" || !password.trim()) {
+      return c.json(err("Password is required"), 400);
+    }
+    if (password !== confirm) {
+      return c.json(err("Passwords do not match"), 400);
+    }
+    const trimmed = password.trim();
+    if (trimmed.length < 4) {
+      return c.json(err("Password must be at least 4 characters"), 400);
+    }
+
+    const auth = configService.get("auth");
+    configService.set("auth", { ...auth, token: trimmed });
+    configService.save();
+
+    return c.json(ok({ token: trimmed }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
 // ── Proxy ────────────────────────────────────────────────────────────
 
 /** GET /settings/proxy — proxy status */
