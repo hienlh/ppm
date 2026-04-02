@@ -37,6 +37,7 @@ type AuthState = "checking" | "authenticated" | "unauthenticated";
 
 export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
+  const [upgradeBannerVisible, setUpgradeBannerVisible] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "settings" | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
@@ -229,11 +230,11 @@ export function App() {
     <TooltipProvider>
       <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden relative">
         {/* Upgrade banner — shown when new version available */}
-        <UpgradeBanner />
+        <UpgradeBanner onVisibilityChange={setUpgradeBannerVisible} />
 
         {/* Mobile device name badge — floating top-left */}
         {deviceName && (
-          <div className="md:hidden fixed top-0 left-0 z-50 px-2 py-0.5 bg-primary/80 text-primary-foreground text-[10px] font-medium rounded-br">
+          <div className={cn("md:hidden fixed left-0 z-50 px-2 py-0.5 bg-primary/80 text-primary-foreground text-[10px] font-medium rounded-br transition-[top]", upgradeBannerVisible ? "top-7" : "top-0")}>
             {deviceName}
           </div>
         )}

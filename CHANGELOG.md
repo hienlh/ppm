@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.90] - 2026-04-02
+
+### Fixed
+- **Upgrade banner height**: Reduced padding and button sizes for a more compact banner
+- **Mobile banner overlap**: Device name badge now shifts down when upgrade banner is visible, preventing overlap on mobile
+
 ## [0.8.89] - 2026-04-02
 
 ### Added
