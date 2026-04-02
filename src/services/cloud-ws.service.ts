@@ -21,6 +21,7 @@ interface HeartbeatMsg extends WsMessage {
   availableVersion: string | null;
   serverPid: number | null;
   uptime: number;
+  deviceName?: string;
 }
 
 interface StateChangeMsg extends WsMessage {

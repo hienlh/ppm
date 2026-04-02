@@ -506,6 +506,8 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
       secretKey: device.secret_key,
       heartbeatFn: () => {
         const status = readStatus();
+        // Re-read device file each heartbeat to pick up name changes
+        const currentDevice = getCloudDevice();
         return {
           type: "heartbeat" as const,
           tunnelUrl,
@@ -515,6 +517,7 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           availableVersion: (status.availableVersion as string) || null,
           serverPid: serverChild?.pid ?? null,
           uptime: Math.floor((Date.now() - startTime) / 1000),
+          deviceName: currentDevice?.name ?? device.name,
           timestamp: new Date().toISOString(),
         };
       },

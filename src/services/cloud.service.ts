@@ -354,6 +354,7 @@ export async function sendHeartbeat(tunnelUrl: string): Promise<boolean> {
         secret_key: device.secret_key,
         tunnel_url: tunnelUrl,
         status: "online",
+        name: device.name,
       }),
     });
     return res.ok;
