@@ -258,9 +258,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     group: "db" as const,
     connectionColor: r.connectionColor,
     action: () => {
-      const tabType = r.connectionType === "postgres" ? "postgres" : "sqlite";
       openTab({
-        type: tabType,
+        type: "database",
         title: `${r.connectionName} · ${r.tableName}`,
         projectId: null,
         closable: true,

@@ -24,7 +24,7 @@ const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
 const NEW_TAB_LABELS: Partial<Record<TabType, string>> = Object.fromEntries(NEW_TAB_OPTIONS.map((o) => [o.type, o.label]));
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
-  terminal: Terminal, chat: MessageSquare, editor: FileCode, sqlite: Database, postgres: Database,
+  terminal: Terminal, chat: MessageSquare, editor: FileCode, database: Database, sqlite: Database, postgres: Database,
   "git-graph": GitBranch, "git-diff": FileDiff, settings: Settings, browser: Globe,
   "extension-webview": Puzzle,
 };

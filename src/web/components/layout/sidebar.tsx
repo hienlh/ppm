@@ -1,11 +1,12 @@
 import { useCallback, useRef, useMemo } from "react";
-import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Search, Puzzle } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database, Search, Puzzle } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
+import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,7 @@ const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementTy
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },
+  { id: "database", label: "Database", icon: Database },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -141,6 +143,9 @@ export function Sidebar() {
         )}
         {sidebarActiveTab === "search" && (
           <SearchPanel />
+        )}
+        {sidebarActiveTab === "database" && (
+          <DatabaseSidebar />
         )}
         {sidebarActiveTab === "settings" && (
           <SettingsTab />

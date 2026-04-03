@@ -5,6 +5,7 @@ export type TabType =
   | "terminal"
   | "chat"
   | "editor"
+  | "database"
   | "sqlite"
   | "postgres"
   | "git-graph"
