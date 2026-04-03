@@ -341,6 +341,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         connectingElapsed={connectingElapsed}
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
+        onSelectSession={handleSelectSession}
       />
 
       {/* Bottom toolbar */}

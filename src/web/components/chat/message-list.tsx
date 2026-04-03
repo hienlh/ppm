@@ -26,6 +26,7 @@ import {
   XCircle,
   ExternalLink,
 } from "lucide-react";
+import { ChatWelcome } from "./chat-welcome";
 import { QuestionCard } from "./question-card";
 import type { Question } from "./question-card";
 import { useTabStore } from "@/stores/tab-store";
@@ -44,6 +45,8 @@ interface MessageListProps {
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
   onFork?: (userMessage: string, messageId?: string) => void;
+  /** Called when user selects a recent session from the welcome screen */
+  onSelectSession?: (session: import("../../../types/chat").SessionInfo) => void;
 }
 
 export function MessageList({
@@ -53,6 +56,7 @@ export function MessageList({
   onApprovalResponse,
   isStreaming,
   phase,
+  onSelectSession,
   connectingElapsed,
   projectName,
   onFork,
@@ -70,10 +74,10 @@ export function MessageList({
 
   if (messages.length === 0 && !isStreaming) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
-        <Bot className="size-10 text-text-subtle" />
-        <p className="text-sm">Send a message to start the conversation</p>
-      </div>
+      <ChatWelcome
+        projectName={projectName || ""}
+        onSelectSession={onSelectSession || (() => {})}
+      />
     );
   }
 
