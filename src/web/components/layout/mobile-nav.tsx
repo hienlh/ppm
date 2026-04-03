@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Terminal, MessageSquare, GitBranch, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
-  ChevronLeft, ChevronRight, Globe, Puzzle,
+  ChevronRight, Globe, Puzzle,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
@@ -42,7 +42,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const prevTabCount = useRef(tabs.length);
   const notifications = useNotificationStore((s) => s.notifications);
-  const { canScrollLeft, canScrollRight, scrollLeft: doScrollLeft, scrollRight: doScrollRight } =
+  const { canScrollLeft, canScrollRight, scrollRight: doScrollRight } =
     useTabOverflow(mobileScrollRef);
   const hiddenUnread = getHiddenUnreadDirection(mobileScrollRef.current, tabRefs.current as Map<string, HTMLElement>, tabs, notifications);
 
@@ -114,21 +114,51 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   return (
     <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-background border-t border-border z-40 select-none">
       <div className="flex items-center h-12">
-        <button onClick={onMenuPress} className="flex items-center justify-center size-12 shrink-0 text-text-secondary border-r border-border">
-          <Menu className="size-5" />
-        </button>
+        {/* Fixed section: Menu + Project + Add — curved right edge */}
+        <div className={cn(
+          "flex items-center shrink-0 bg-background relative z-10 transition-all duration-200",
+          canScrollLeft ? "rounded-r-2xl shadow-[6px_0_12px_-4px_rgba(0,0,0,0.12)]" : "border-r border-border",
+        )}>
+          <button onClick={onMenuPress} className="flex items-center justify-center size-12 shrink-0 text-text-secondary">
+            <Menu className="size-5" />
+          </button>
 
-        <div className="flex-1 min-w-0 relative flex items-center h-12">
-          {/* Left scroll arrow */}
-          {canScrollLeft && (
-            <button onClick={doScrollLeft} className="absolute left-0 z-10 flex items-center justify-center size-8 bg-gradient-to-r from-background via-background to-transparent">
-              <span className="relative">
-                <ChevronLeft className="size-3.5 text-text-secondary" />
-                {hiddenUnread.left && <span className={cn("absolute -top-1 -right-0.5 size-1.5 rounded-full", notificationColor(hiddenUnread.left))} />}
-              </span>
-            </button>
-          )}
-          <div ref={mobileScrollRef} className="flex-1 min-w-0 flex items-center h-12 overflow-x-auto scrollbar-none">
+          <div className="w-px self-stretch bg-border shrink-0" />
+
+          <button
+            onClick={onProjectsPress}
+            className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
+            title="Switch project"
+          >
+            {activeInitials ? (
+              <div
+                className="size-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                style={{ background: activeColor }}
+              >
+                {activeInitials}
+              </div>
+            ) : (
+              <Layers className="size-5" />
+            )}
+          </button>
+
+          <div className="w-px self-stretch bg-border shrink-0" />
+
+          <button
+            onClick={() => openCommandPalette()}
+            className={cn(
+              "flex items-center justify-center shrink-0 text-text-secondary gap-1.5 h-12",
+              tabs.length === 0 ? "px-4" : "w-12",
+            )}
+          >
+            <Plus className="size-4" />
+            {tabs.length === 0 && <span className="text-xs">New Tab</span>}
+          </button>
+        </div>
+
+        {/* Tab list — overlaps under curved edge so tabs slide beneath it */}
+        <div className="flex-1 min-w-0 relative flex items-center h-12 -ml-4">
+          <div ref={mobileScrollRef} className="flex-1 min-w-0 flex items-center h-12 overflow-x-auto scrollbar-none pl-4">
           {tabs.map((tab) => {
             const Icon = TAB_ICONS[tab.type];
             const isActive = tab.id === activeTabId;
@@ -179,32 +209,6 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             </button>
           )}
         </div>
-
-        {/* Add tab — opens command palette */}
-        <button
-          onClick={() => openCommandPalette()}
-          className="flex items-center justify-center size-12 shrink-0 border-t-2 border-transparent text-text-secondary"
-        >
-          <Plus className="size-4" />
-        </button>
-
-        {/* Projects button (rightmost) */}
-        <button
-          onClick={onProjectsPress}
-          className="flex items-center justify-center size-12 shrink-0 text-text-secondary border-l border-border"
-          title="Switch project"
-        >
-          {activeInitials ? (
-            <div
-              className="size-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
-              style={{ background: activeColor }}
-            >
-              {activeInitials}
-            </div>
-          ) : (
-            <Layers className="size-5" />
-          )}
-        </button>
       </div>
 
       {/* New tab action sheet */}
