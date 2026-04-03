@@ -15,25 +15,38 @@ export function getQueryPanelHtml(connectionName: string, tableName?: string): s
 <head>
 <meta charset="utf-8">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 12px; font-size: 13px; }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #ffffff; --surface: #f4f4f5; --text: #09090b; --subtext: #71717a; --subtle: #a1a1aa;
+    --border: #e4e4e7; --border2: #d4d4d8; --blue: #3b82f6; --red: #ef4444; --green: #22c55e;
+    --surface-hover: #f4f4f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #09090b; --surface: #18181b; --text: #fafafa; --subtext: #a1a1aa; --subtle: #52525b;
+      --border: #27272a; --border2: #3f3f46; --blue: #3b82f6; --red: #ef4444; --green: #22c55e;
+      --surface-hover: #27272a;
+    }
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); padding: 12px; font-size: 13px; }
   .header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .header h3 { font-size: 14px; font-weight: 600; }
-  .header .badge { background: #313244; padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #a6adc8; }
-  textarea { width: 100%; height: 80px; background: #313244; border: 1px solid #45475a; border-radius: 6px; color: #cdd6f4; padding: 8px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; resize: vertical; }
-  textarea:focus { outline: none; border-color: #89b4fa; }
+  .header .badge { background: var(--surface); padding: 2px 8px; border-radius: 4px; font-size: 11px; color: var(--subtext); }
+  textarea { width: 100%; height: 80px; background: var(--surface); border: 1px solid var(--border2); border-radius: 6px; color: var(--text); padding: 8px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; resize: vertical; }
+  textarea:focus { outline: none; border-color: var(--blue); }
   .actions { display: flex; gap: 8px; margin: 8px 0; }
-  button { background: #89b4fa; color: #1e1e2e; border: none; padding: 6px 16px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; }
-  button:hover { background: #74c7ec; }
-  button.secondary { background: #313244; color: #cdd6f4; }
-  .status { font-size: 11px; color: #a6adc8; margin: 4px 0; }
-  .error { color: #f38ba8; background: #45475a; padding: 8px; border-radius: 4px; margin: 8px 0; font-size: 12px; }
+  button { background: var(--blue); color: #fff; border: none; padding: 6px 16px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  button:hover { opacity: 0.9; }
+  button.secondary { background: var(--surface); color: var(--text); }
+  .status { font-size: 11px; color: var(--subtext); margin: 4px 0; }
+  .error { color: var(--red); background: var(--surface); padding: 8px; border-radius: 4px; margin: 8px 0; font-size: 12px; }
   table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
-  th { background: #313244; text-align: left; padding: 6px 8px; border-bottom: 1px solid #45475a; font-weight: 600; position: sticky; top: 0; }
-  td { padding: 4px 8px; border-bottom: 1px solid #313244; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  tr:hover td { background: #313244; }
-  .results { max-height: 60vh; overflow: auto; border: 1px solid #45475a; border-radius: 6px; }
-  .empty { text-align: center; padding: 24px; color: #6c7086; }
+  th { background: var(--surface); text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border2); font-weight: 600; position: sticky; top: 0; color: var(--subtext); }
+  td { padding: 4px 8px; border-bottom: 1px solid var(--border); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr:hover td { background: var(--surface-hover); }
+  .results { max-height: 60vh; overflow: auto; border: 1px solid var(--border2); border-radius: 6px; }
+  .empty { text-align: center; padding: 24px; color: var(--subtle); }
+  .null-val { color: var(--subtle); font-style: italic; }
 </style>
 </head>
 <body>
@@ -101,7 +114,7 @@ export function getQueryPanelHtml(connectionName: string, tableName?: string): s
         html += '<tr>';
         cols.forEach(c => {
           const v = row[c];
-          html += '<td>' + (v === null ? '<span style="color:#6c7086">NULL</span>' : esc(v)) + '</td>';
+          html += v === null ? '<td class="null-val">NULL</td>' : '<td>' + esc(v) + '</td>';
         });
         html += '</tr>';
       });

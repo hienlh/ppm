@@ -27,12 +27,22 @@ export function getTableViewerHtml(opts: TableViewerOptions): string {
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --bg: #1e1e2e; --surface: #181825; --mantle: #11111b;
-    --overlay0: #6c7086; --overlay1: #7f849c;
-    --text: #cdd6f4; --subtext: #a6adc8; --subtle: #585b70;
-    --border: #313244; --border2: #45475a;
-    --blue: #89b4fa; --green: #a6e3a1; --red: #f38ba8; --yellow: #f9e2af;
-    --surface-hover: #313244;
+    --bg: #ffffff; --surface: #f4f4f5; --mantle: #fafafa;
+    --overlay0: #71717a; --overlay1: #52525b;
+    --text: #09090b; --subtext: #71717a; --subtle: #a1a1aa;
+    --border: #e4e4e7; --border2: #d4d4d8;
+    --blue: #3b82f6; --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+    --surface-hover: #f4f4f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #09090b; --surface: #18181b; --mantle: #09090b;
+      --overlay0: #71717a; --overlay1: #a1a1aa;
+      --text: #fafafa; --subtext: #a1a1aa; --subtle: #52525b;
+      --border: #27272a; --border2: #3f3f46;
+      --blue: #3b82f6; --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+      --surface-hover: #27272a;
+    }
   }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 
