@@ -9,6 +9,8 @@ const MAX_RETRY_CONFIG_KEY = "account_max_retry";
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
 const AUTH_BACKOFF_BASE_MS = 5 * 60_000; // 5min base for auth errors (longer than rate limits)
+/** Skip accounts whose 5-hour utilization >= this threshold (proactive avoidance) */
+const FIVE_HOUR_SKIP_THRESHOLD = 0.95;
 
 class AccountSelectorService {
   private cursor = 0;
@@ -74,18 +76,25 @@ class AccountSelectorService {
       return null;
     }
 
+    // Proactive: skip accounts whose 5-hour utilization >= 95%
+    const usable = active.filter((a) => {
+      const snap = getLatestSnapshotForAccount(a.id);
+      return !snap || (snap.five_hour_util ?? 0) < FIVE_HOUR_SKIP_THRESHOLD;
+    });
+    const candidates = usable.length > 0 ? usable : active; // fallback to all if every account is near limit
+
     let pickedId: string;
     const strategy = this.getStrategy();
     if (strategy === "lowest-usage") {
-      pickedId = this.pickLowestUsage(active);
+      pickedId = this.pickLowestUsage(candidates);
     } else if (strategy === "fill-first") {
-      const sorted = [...active].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
+      const sorted = [...candidates].sort((a, b) => b.priority - a.priority || a.createdAt - b.createdAt);
       pickedId = sorted[0]!.id;
     } else {
       // Round-robin
-      this.cursor = this.cursor % active.length;
-      pickedId = active[this.cursor]!.id;
-      this.cursor = (this.cursor + 1) % active.length;
+      this.cursor = this.cursor % candidates.length;
+      pickedId = candidates[this.cursor]!.id;
+      this.cursor = (this.cursor + 1) % candidates.length;
     }
     this._lastPickedId = pickedId;
     const result = accountService.getWithTokens(pickedId);

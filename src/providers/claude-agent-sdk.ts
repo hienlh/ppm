@@ -935,20 +935,31 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               break;
             }
 
-            // Rate limit — auto-retry with exponential backoff
+            // Rate limit — auto-retry with exponential backoff, switching account if possible
             if ((assistantError === "rate_limit" || assistantError === "server_error") && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
               const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
               rateLimitRetryCount++;
               if (account) accountSelector.onRateLimit(account.id);
-              console.warn(`[sdk] session=${sessionId} rate limited — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+
+              // Try to switch to a different account
+              const nextAccount = accountSelector.next();
+              if (nextAccount && account && nextAccount.id !== account.id) {
+                account = nextAccount;
+                const label = nextAccount.label ?? nextAccount.email ?? "Unknown";
+                console.warn(`[sdk] session=${sessionId} rate limited — switching to account ${nextAccount.id} (${label}), retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                yield { type: "account_retry" as const, reason: `Rate limited — switching account`, accountId: nextAccount.id, accountLabel: label };
+              } else {
+                console.warn(`[sdk] session=${sessionId} rate limited — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+              }
               yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
               await new Promise((r) => setTimeout(r, backoff));
-              // Close failed query and recreate
+              // Close failed query and recreate with (potentially new) account env
               streamCtrl.done();
               q.close();
+              const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
               const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
               rlRetryCtrl.push(firstMsg);
-              const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
+              const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: rlRetryEnv };
               const rq = query({
                 prompt: rlRetryGen,
                 options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1022,18 +1033,29 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const errCode = this.detectResultErrorCode(msg);
             if (errCode === 429) {
               accountSelector.onRateLimit(account.id);
-              // Auto-retry with backoff for result-level 429
+              // Auto-retry with backoff for result-level 429, switching account if possible
               if (rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
                 const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
                 rateLimitRetryCount++;
-                console.warn(`[sdk] session=${sessionId} result 429 — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+
+                // Try to switch to a different account
+                const nextAccount = accountSelector.next();
+                if (nextAccount && nextAccount.id !== account.id) {
+                  account = nextAccount;
+                  const label = nextAccount.label ?? nextAccount.email ?? "Unknown";
+                  console.warn(`[sdk] session=${sessionId} result 429 — switching to account ${nextAccount.id} (${label}), retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                  yield { type: "account_retry" as const, reason: `Rate limited — switching account`, accountId: nextAccount.id, accountLabel: label };
+                } else {
+                  console.warn(`[sdk] session=${sessionId} result 429 — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                }
                 yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
                 await new Promise((r) => setTimeout(r, backoff));
                 streamCtrl.done();
                 q.close();
+                const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
                 rlRetryCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined, env: rlRetryEnv };
                 const rq = query({
                   prompt: rlRetryGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
