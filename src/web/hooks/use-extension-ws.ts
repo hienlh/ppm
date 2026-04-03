@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from "react";
 import { WsClient } from "@/lib/ws-client";
 import { useExtensionStore } from "@/stores/extension-store";
+import { getAuthToken } from "@/lib/api-client";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
 
@@ -18,7 +19,11 @@ export function useExtensionWs(enabled = true) {
 
   useEffect(() => {
     if (!enabled) return;
-    const client = new WsClient("/ws/extensions");
+
+    // Pass auth token as query param for WS auth
+    const token = getAuthToken();
+    const wsUrl = token ? `/ws/extensions?token=${encodeURIComponent(token)}` : "/ws/extensions";
+    const client = new WsClient(wsUrl);
     clientRef.current = client;
 
     client.onMessage((event) => {
@@ -45,11 +50,14 @@ export function useExtensionWs(enabled = true) {
           break;
 
         case "tree:update":
-          store.updateTree(msg.viewId, msg.items);
+          if (msg.parentId) {
+            store.updateTreeChildren(msg.viewId, msg.parentId, msg.items);
+          } else {
+            store.updateTree(msg.viewId, msg.items);
+          }
           break;
 
         case "tree:refresh":
-          // Re-request tree data — for now clear to trigger re-render
           store.removeTree(msg.viewId);
           break;
 
@@ -58,13 +66,21 @@ export function useExtensionWs(enabled = true) {
             : msg.level === "warn" ? toast.warning
             : toast.info;
           if (msg.actions && msg.actions.length > 0) {
-            toastFn(msg.message, {
+            const toastOpts: Record<string, unknown> = {
               action: {
                 label: msg.actions[0],
                 onClick: () => send({ type: "notification:action", id: msg.id, action: msg.actions![0] ?? null }),
               },
               onDismiss: () => send({ type: "notification:action", id: msg.id, action: null }),
-            });
+            };
+            // Support a second action button via cancel
+            if (msg.actions.length > 1) {
+              toastOpts.cancel = {
+                label: msg.actions[1],
+                onClick: () => send({ type: "notification:action", id: msg.id, action: msg.actions![1] ?? null }),
+              };
+            }
+            toastFn(msg.message, toastOpts);
           } else {
             toastFn(msg.message);
           }
@@ -113,8 +129,6 @@ export function useExtensionWs(enabled = true) {
           break;
 
         case "webview:postMessage":
-          // Forward to iframe — handled by ExtensionWebview component
-          // via a custom event on window
           window.dispatchEvent(new CustomEvent("ext:webview:message", {
             detail: { panelId: msg.panelId, message: msg.message },
           }));
@@ -129,14 +143,30 @@ export function useExtensionWs(enabled = true) {
     };
     window.addEventListener("ext:webview:send", webviewSendHandler);
 
+    // Listen for tree:expand requests (dispatched by ExtensionTreeView component)
+    const treeExpandHandler = (e: Event) => {
+      const { viewId, itemId } = (e as CustomEvent).detail;
+      client.send(JSON.stringify({ type: "tree:expand", viewId, itemId }));
+    };
+    window.addEventListener("ext:tree:expand", treeExpandHandler);
+
+    // Listen for command:execute requests (dispatched by StatusBar / TreeView)
+    const commandHandler = (e: Event) => {
+      const { command, args } = (e as CustomEvent).detail;
+      client.send(JSON.stringify({ type: "command:execute", command, args }));
+    };
+    window.addEventListener("ext:command:execute", commandHandler);
+
     client.connect();
 
     return () => {
       window.removeEventListener("ext:webview:send", webviewSendHandler);
+      window.removeEventListener("ext:tree:expand", treeExpandHandler);
+      window.removeEventListener("ext:command:execute", commandHandler);
       client.disconnect();
       clientRef.current = null;
     };
-  }, [send]);
+  }, [send, enabled]);
 
   return { send };
 }

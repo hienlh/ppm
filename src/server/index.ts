@@ -401,6 +401,14 @@ if (process.argv.includes("__serve__")) {
       }
 
       if (url.pathname === "/ws/extensions") {
+        // Auth check for extension WS
+        const authConfig = configService.get("auth");
+        if (authConfig.enabled) {
+          const token = url.searchParams.get("token");
+          if (token !== authConfig.token) {
+            return new Response("Unauthorized", { status: 401 });
+          }
+        }
         const upgraded = server.upgrade(req, { data: { type: "extensions" } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });

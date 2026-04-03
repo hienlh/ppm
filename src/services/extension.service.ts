@@ -109,8 +109,13 @@ class ExtensionService {
       workspace: Object.fromEntries(workspaceStorage.map((r) => [r.key, r.value])),
     };
 
+    // Pass server base URL so extensions can make fetch() calls in the Worker
+    const { configService: cfg } = await import("./config.service.ts");
+    const port = cfg.get("port") ?? 8080;
+    const baseUrl = `http://localhost:${port}`;
+
     const result = await rpc.sendRequest<{ ok: boolean; error?: string }>(
-      "ext:activate", id, entryPath, extDir, storedState,
+      "ext:activate", id, entryPath, extDir, storedState, baseUrl,
     );
     if (!result.ok) throw new Error(`Failed to activate ${id}: ${result.error}`);
 

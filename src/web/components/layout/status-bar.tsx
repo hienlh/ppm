@@ -39,8 +39,9 @@ function StatusBarEntry({ item }: { item: StatusBarItemUI }) {
       }`}
       onClick={() => {
         if (item.command) {
-          // Future: execute extension command via WS bridge
-          console.log("[StatusBar] execute command:", item.command);
+          window.dispatchEvent(new CustomEvent("ext:command:execute", {
+            detail: { command: item.command },
+          }));
         }
       }}
     >

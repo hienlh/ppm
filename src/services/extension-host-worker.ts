@@ -28,8 +28,11 @@ self.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
 // --- RPC handlers ---
 
 rpc.onRequest("ext:activate", async (params) => {
-  const [extId, entryPath, extensionPath, storedState] = params as [string, string, string, Record<string, Record<string, string | null>>?];
+  const [extId, entryPath, extensionPath, storedState, baseUrl] = params as [string, string, string, Record<string, Record<string, string | null>>?, string?];
   if (activeExtensions.has(extId)) return { ok: true, already: true };
+
+  // Expose server base URL so extensions can use fetch() with absolute URLs
+  if (baseUrl) (globalThis as any).__PPM_BASE_URL__ = baseUrl;
 
   // Create RpcClient adapter for vscode-compat (Worker's RPC → vscode-compat interface)
   const rpcClient = {

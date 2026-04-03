@@ -63,6 +63,7 @@ interface ExtensionStore {
   // Tree views
   treeViews: Record<string, TreeItemUI[]>;
   updateTree: (viewId: string, items: TreeItemUI[]) => void;
+  updateTreeChildren: (viewId: string, parentId: string, children: TreeItemUI[]) => void;
   removeTree: (viewId: string) => void;
 
   // Webview panels
@@ -107,6 +108,17 @@ export const useExtensionStore = create<ExtensionStore>((set, get) => ({
   updateTree: (viewId, items) => set((s) => ({
     treeViews: { ...s.treeViews, [viewId]: items },
   })),
+  updateTreeChildren: (viewId, parentId, children) => set((s) => {
+    const items = s.treeViews[viewId];
+    if (!items) return s;
+    const merge = (nodes: TreeItemUI[]): TreeItemUI[] =>
+      nodes.map((n) => {
+        if (n.id === parentId) return { ...n, children, collapsibleState: "expanded" as const };
+        if (n.children) return { ...n, children: merge(n.children) };
+        return n;
+      });
+    return { treeViews: { ...s.treeViews, [viewId]: merge(items) } };
+  }),
   removeTree: (viewId) => set((s) => {
     const { [viewId]: _, ...rest } = s.treeViews;
     return { treeViews: rest };

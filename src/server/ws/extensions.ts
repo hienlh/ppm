@@ -151,8 +151,8 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
             "ext:tree:expand", msg.viewId, msg.itemId,
           );
           if (result?.ok && result.items) {
-            // Send updated children back to the requesting client
-            ws.send(JSON.stringify({ type: "tree:update", viewId: msg.viewId, items: result.items as import("../../types/extension-messages.ts").TreeItemMsg[] } satisfies ExtServerMsg));
+            // Send children back to the requesting client (parentId distinguishes child updates from root updates)
+            ws.send(JSON.stringify({ type: "tree:update", viewId: msg.viewId, items: result.items as import("../../types/extension-messages.ts").TreeItemMsg[], parentId: msg.itemId } satisfies ExtServerMsg));
           }
         }
       } catch (e) {

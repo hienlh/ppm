@@ -147,7 +147,17 @@ export class WindowService {
         rpc.request("window:tree:update", viewId, items);
       }).catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
     }
+    // Subscribe to onDidChangeTreeData — re-push entire tree on change
+    let changeUnsub: (() => void) | undefined;
+    if (provider.onDidChangeTreeData) {
+      changeUnsub = provider.onDidChangeTreeData(() => {
+        this._getTreeChildren(viewId).then((items) => {
+          rpc.request("window:tree:update", viewId, items);
+        }).catch((e) => console.error(`[vscode-compat] tree refresh error (${viewId}):`, e));
+      });
+    }
     return new Disposable(() => {
+      if (changeUnsub) changeUnsub();
       this._treeProviders.delete(viewId);
       rpc.request("window:tree:refresh", viewId);
     });

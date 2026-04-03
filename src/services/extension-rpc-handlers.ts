@@ -142,34 +142,53 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     const [key, value, _target] = params as [string, unknown, unknown];
     try {
       const { configService } = await import("./config.service.ts");
-      // Only allow extension-scoped config updates (future: dedicated extension config)
-      console.log(`[Ext:config] update ${key} = ${JSON.stringify(value)}`);
-    } catch {}
+      configService.set(key as any, value);
+    } catch (e) {
+      console.error(`[Ext:config] update error for ${key}:`, e);
+    }
     return { ok: true };
   });
 
-  // --- workspace fs ---
+  // --- workspace fs (path-restricted) ---
+
+  /** Validate path is within allowed roots. Throws if path escapes. */
+  async function assertSafePath(filePath: string): Promise<string> {
+    const { resolve, relative } = await import("node:path");
+    const resolved = resolve(filePath);
+    // Allow: CWD (project root) and ~/.ppm/extensions/ (extension storage)
+    const { homedir } = await import("node:os");
+    const allowedRoots = [resolve(process.cwd()), resolve(homedir(), ".ppm", "extensions")];
+    const isSafe = allowedRoots.some((root) => {
+      const rel = relative(root, resolved);
+      return !rel.startsWith("..") && !rel.startsWith("/");
+    });
+    if (!isSafe) throw new Error(`Path outside allowed scope: ${filePath}`);
+    return resolved;
+  }
+
   rpc.onRequest("workspace:fs:readFile", async (params) => {
     const [filePath] = params as [string];
+    const safePath = await assertSafePath(filePath);
     const { readFileSync } = await import("node:fs");
-    const content = readFileSync(filePath);
-    // Return as base64 for serialization
+    const content = readFileSync(safePath);
     return Buffer.from(content).toString("base64");
   });
 
   rpc.onRequest("workspace:fs:writeFile", async (params) => {
     const [filePath, base64Content] = params as [string, string];
+    const safePath = await assertSafePath(filePath);
     const { writeFileSync } = await import("node:fs");
-    writeFileSync(filePath, Buffer.from(base64Content, "base64"));
+    writeFileSync(safePath, Buffer.from(base64Content, "base64"));
     return { ok: true };
   });
 
   rpc.onRequest("workspace:fs:stat", async (params) => {
     const [filePath] = params as [string];
+    const safePath = await assertSafePath(filePath);
     const { statSync } = await import("node:fs");
-    const stat = statSync(filePath);
+    const stat = statSync(safePath);
     return {
-      type: stat.isDirectory() ? 2 : 1, // FileType: File=1, Directory=2
+      type: stat.isDirectory() ? 2 : 1,
       size: stat.size,
       mtime: stat.mtimeMs,
     };
@@ -177,12 +196,13 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
 
   rpc.onRequest("workspace:fs:readDirectory", async (params) => {
     const [dirPath] = params as [string];
+    const safePath = await assertSafePath(dirPath);
     const { readdirSync, statSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const entries = readdirSync(dirPath);
+    const entries = readdirSync(safePath);
     return entries.map((name) => {
       try {
-        const full = resolve(dirPath, name);
+        const full = resolve(safePath, name);
         const s = statSync(full);
         return [name, s.isDirectory() ? 2 : 1] as [string, number];
       } catch {
@@ -193,10 +213,9 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
 
   rpc.onRequest("workspace:findFiles", async (params) => {
     const [pattern, maxResults] = params as [string, number];
-    // Basic glob implementation using Bun.Glob
     const glob = new Bun.Glob(pattern);
     const results: string[] = [];
-    for await (const path of glob.scan({ cwd: "." })) {
+    for await (const path of glob.scan({ cwd: process.cwd() })) {
       results.push(path);
       if (results.length >= maxResults) break;
     }

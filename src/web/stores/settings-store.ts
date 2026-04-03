@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
-export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | `ext:${string}`;
+export type SidebarActiveTab = "explorer" | "git" | "settings" | "search" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -46,7 +46,7 @@ function loadPersistedSettings(): PersistedSettings {
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
   if (typeof tab !== "string") return false;
-  return ["explorer", "git", "settings", "database", "search"].includes(tab) || tab.startsWith("ext:");
+  return ["explorer", "git", "settings", "search"].includes(tab) || tab.startsWith("ext:");
 }
 
 function persistSettings(update: Partial<PersistedSettings>) {

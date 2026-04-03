@@ -36,10 +36,14 @@ interface VscodeApi {
 }
 
 export function activate(context: ExtensionContext, vscode: VscodeApi): void {
+  // Server base URL for fetch() calls (set by Worker before activation)
+  const baseUrl = (globalThis as any).__PPM_BASE_URL__ || "";
+
   // --- Tree View ---
   const emitter = new vscode.EventEmitter<unknown>();
   const treeProvider = new ConnectionTreeProvider(
     { fire: (el?: unknown) => emitter.fire(el), event: emitter.event },
+    baseUrl,
   );
 
   const treeView = vscode.window.createTreeView("ppm-db.connections", {
@@ -107,7 +111,7 @@ function openQueryPanel(
 
     try {
       const start = Date.now();
-      const res = await fetch(`/api/db/connections/${connectionId}/query`, {
+      const res = await fetch(`${baseUrl}/api/db/connections/${connectionId}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sql: msg.sql }),

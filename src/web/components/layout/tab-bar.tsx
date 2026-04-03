@@ -29,7 +29,6 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal,
   chat: MessageSquare,
   editor: FileCode,
-  database: Database,
   sqlite: Database,
   postgres: Database,
   "git-graph": GitBranch,

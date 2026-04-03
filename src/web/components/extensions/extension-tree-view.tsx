@@ -8,6 +8,20 @@ interface ExtensionTreeViewProps {
   className?: string;
 }
 
+/** Dispatch a tree:expand request to fetch children from the server */
+function requestTreeExpand(viewId: string, itemId: string) {
+  window.dispatchEvent(new CustomEvent("ext:tree:expand", {
+    detail: { viewId, itemId },
+  }));
+}
+
+/** Dispatch a command:execute request via the WS bridge */
+function executeCommand(command: string) {
+  window.dispatchEvent(new CustomEvent("ext:command:execute", {
+    detail: { command },
+  }));
+}
+
 /** Generic TreeView renderer for extension-contributed tree data */
 export function ExtensionTreeView({ viewId, className }: ExtensionTreeViewProps) {
   const items = useExtensionStore((s) => s.treeViews[viewId]) ?? [];
@@ -23,25 +37,33 @@ export function ExtensionTreeView({ viewId, className }: ExtensionTreeViewProps)
   return (
     <div className={cn("overflow-y-auto text-sm", className)} role="tree" aria-label={viewId}>
       {items.map((item) => (
-        <TreeNode key={item.id} item={item} depth={0} />
+        <TreeNode key={item.id} item={item} depth={0} viewId={viewId} />
       ))}
     </div>
   );
 }
 
-function TreeNode({ item, depth }: { item: TreeItemUI; depth: number }) {
+function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; viewId: string }) {
   const [expanded, setExpanded] = useState(item.collapsibleState === "expanded");
   const hasChildren = item.collapsibleState !== "none";
 
+  // Sync expanded state when store updates (e.g., after children arrive)
+  const storeExpanded = item.collapsibleState === "expanded";
+  if (storeExpanded && !expanded) setExpanded(true);
+
   const handleClick = useCallback(() => {
     if (hasChildren) {
-      setExpanded((e) => !e);
+      const willExpand = !expanded;
+      setExpanded(willExpand);
+      // Request children from server when expanding and no children loaded yet
+      if (willExpand && (!item.children || item.children.length === 0)) {
+        requestTreeExpand(viewId, item.id);
+      }
     }
     if (item.command) {
-      // Future: execute extension command via WS bridge
-      console.log("[TreeView] execute command:", item.command);
+      executeCommand(item.command);
     }
-  }, [hasChildren, item.command]);
+  }, [hasChildren, expanded, item.command, item.id, item.children, viewId]);
 
   const paddingLeft = 8 + depth * 16;
 
@@ -78,7 +100,7 @@ function TreeNode({ item, depth }: { item: TreeItemUI; depth: number }) {
       {hasChildren && expanded && item.children && (
         <div role="group">
           {item.children.map((child) => (
-            <TreeNode key={child.id} item={child} depth={depth + 1} />
+            <TreeNode key={child.id} item={child} depth={depth + 1} viewId={viewId} />
           ))}
         </div>
       )}

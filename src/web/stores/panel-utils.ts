@@ -84,8 +84,6 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     }
     case "terminal":
       return `terminal:${metadata?.terminalIndex ?? 1}`;
-    case "database":
-      return `database:${metadata?.connectionId ?? "default"}:${metadata?.tableName ?? ""}`;
     case "sqlite":
       return `sqlite:${metadata?.filePath ?? "default"}`;
     case "postgres":

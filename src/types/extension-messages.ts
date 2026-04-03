@@ -38,7 +38,7 @@ export interface QuickPickItemMsg {
 // --- Server → Client messages ---
 
 export type ExtServerMsg =
-  | { type: "tree:update"; viewId: string; items: TreeItemMsg[] }
+  | { type: "tree:update"; viewId: string; items: TreeItemMsg[]; parentId?: string }
   | { type: "tree:refresh"; viewId: string }
   | { type: "statusbar:update"; item: StatusBarItemMsg }
   | { type: "statusbar:remove"; itemId: string }
