@@ -380,7 +380,7 @@ export function ChatHistoryBar({
                         className={`p-0.5 rounded transition-all ${
                           session.pinned
                             ? "text-primary hover:text-primary/70"
-                            : "text-text-subtle hover:text-text-secondary md:opacity-0 md:group-hover:opacity-100"
+                            : "text-text-subtle hover:text-text-secondary can-hover:opacity-0 can-hover:group-hover:opacity-100"
                         }`}
                         title={session.pinned ? "Unpin session" : "Pin session"}
                       >
@@ -388,14 +388,14 @@ export function ChatHistoryBar({
                       </button>
                       <button
                         onClick={(e) => startEditing(session, e)}
-                        className="p-0.5 rounded text-text-subtle hover:text-text-secondary md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                        className="p-0.5 rounded text-text-subtle hover:text-text-secondary can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
                         title="Rename session"
                       >
                         <Pencil className="size-3" />
                       </button>
                       <button
                         onClick={(e) => deleteSession(e, session)}
-                        className="p-0.5 rounded text-text-subtle hover:text-red-400 hover:bg-red-500/20 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                        className="p-0.5 rounded text-text-subtle hover:text-red-400 hover:bg-red-500/20 can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
                         title="Delete session"
                       >
                         <Trash2 className="size-3" />

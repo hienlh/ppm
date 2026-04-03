@@ -509,7 +509,7 @@ function ActionButtons({
   disabled: boolean;
 }) {
   return (
-    <div className="hidden md:flex absolute right-0 top-0 bottom-0 items-center gap-0.5 pl-6 pr-1 bg-gradient-to-l from-background from-70% to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+    <div className="hidden md:flex absolute right-0 top-0 bottom-0 items-center gap-0.5 pl-6 pr-1 bg-gradient-to-l from-background from-70% to-transparent can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity">
       {onOpenFile && (
         <button
           type="button"

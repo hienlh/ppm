@@ -192,7 +192,7 @@ function EmptyPanel({ panelId }: { panelId: string }) {
           className={`p-1 rounded transition-colors shrink-0 ${
             session.pinned
               ? "text-primary hover:text-primary/70"
-              : "text-text-subtle md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary"
+              : "text-text-subtle can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:text-text-primary"
           }`}
           aria-label={session.pinned ? "Unpin session" : "Pin session"}
         >

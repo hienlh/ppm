@@ -329,7 +329,7 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
         <button
           onClick={onFork}
           title="Retry from this message (fork session)"
-          className="absolute top-1.5 right-1.5 opacity-0 group-hover/user:opacity-100 transition-opacity size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
+          className="absolute top-1.5 right-1.5 can-hover:opacity-0 can-hover:group-hover/user:opacity-100 transition-opacity size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
         >
           <RotateCcw className="size-3" />
         </button>

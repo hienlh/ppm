@@ -85,7 +85,7 @@ function ResizeHandle({ orientation }: { orientation: "horizontal" | "vertical" 
         transition-colors duration-150
       `}
     >
-      <div className="absolute opacity-0 group-hover/handle:opacity-70 transition-opacity text-foreground/50">
+      <div className="absolute can-hover:opacity-0 can-hover:group-hover/handle:opacity-70 transition-opacity text-foreground/50">
         {isVertical ? <GripVertical className="size-3" /> : <GripHorizontal className="size-3" />}
       </div>
     </Separator>

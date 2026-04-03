@@ -114,7 +114,7 @@ export function DraggableTab({
             tabIndex={0}
             onClick={(e) => { e.stopPropagation(); onClose(); }}
             onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onClose(); } }}
-            className="ml-1 opacity-0 group-hover:opacity-100 rounded-sm hover:bg-surface-elevated p-0.5 transition-opacity"
+            className="ml-1 can-hover:opacity-0 can-hover:group-hover:opacity-100 rounded-sm hover:bg-surface-elevated p-0.5 transition-opacity"
           >
             <X className="size-3" />
           </span>

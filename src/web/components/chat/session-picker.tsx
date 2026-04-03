@@ -111,7 +111,7 @@ export function SessionPicker({
             className={`p-1 rounded transition-colors ${
               session.pinned
                 ? "text-primary hover:text-primary/70"
-                : "text-text-subtle md:opacity-0 md:group-hover:opacity-100 hover:text-text-primary"
+                : "text-text-subtle can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:text-text-primary"
             }`}
             aria-label={session.pinned ? "Unpin session" : "Pin session"}
           >
@@ -119,7 +119,7 @@ export function SessionPicker({
           </button>
           <button
             onClick={(e) => handleDelete(e, session)}
-            className="p-1 rounded hover:bg-red-500/20 text-text-subtle hover:text-red-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
+            className="p-1 rounded hover:bg-red-500/20 text-text-subtle hover:text-red-400 transition-colors can-hover:opacity-0 can-hover:group-hover:opacity-100"
             aria-label="Delete session"
           >
             <Trash2 className="size-3" />

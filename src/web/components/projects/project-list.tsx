@@ -180,7 +180,7 @@ export function ProjectList() {
             )}
           >
             {/* Action buttons */}
-            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute top-2 right-2 flex gap-1 can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity">
               <button
                 onClick={(e) => openEdit(project, e)}
                 className="p-1.5 rounded-md hover:bg-surface-elevated text-text-subtle hover:text-text-primary transition-colors"

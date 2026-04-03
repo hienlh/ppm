@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Only apply hover-dependent styles when device has real pointer (mouse/trackpad) */
+@custom-variant can-hover (@media (hover: hover) and (pointer: fine));
+
 @theme {
   /* Dark theme colors (default) */
   --color-background: #0f1419;

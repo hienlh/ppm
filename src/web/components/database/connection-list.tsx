@@ -147,7 +147,7 @@ export function ConnectionList({
                     )}
 
                     {/* Actions (hover) */}
-                    <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                    <div className="flex can-hover:hidden can-hover:group-hover:flex items-center gap-0.5 shrink-0">
                       <button
                         onClick={() => handleRefresh(conn.id)}
                         disabled={isRefreshing}

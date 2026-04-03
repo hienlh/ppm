@@ -24,11 +24,14 @@ These rules MUST be followed when creating or modifying any UI component. PPM is
 - Mobile (below `md:`): full-width bottom sheet, slides up from bottom, max-height 85vh, rounded top corners
 - Pattern: use `hidden md:block` for desktop dialog, `md:hidden` for mobile bottom sheet, or a responsive wrapper
 
-### 2. No Hover States on Mobile
+### 2. No Hover States on Touch Devices
 - **NEVER** rely on `hover:` for essential interactions or information disclosure
 - Hover states are acceptable for desktop enhancement but must have a touch alternative
 - Use `active:` or `pressed` states for touch feedback instead
-- Action buttons hidden behind `hover:` MUST be always-visible on mobile (use `md:opacity-0 md:group-hover:opacity-100`)
+- Action buttons hidden behind `hover:` MUST use the `can-hover:` variant (defined in `globals.css` via `@media (hover: hover) and (pointer: fine)`)
+- Pattern: `can-hover:opacity-0 can-hover:group-hover:opacity-100` — buttons visible on touch devices, hover-reveal on mouse devices
+- For `hidden`/`flex` toggles: `flex can-hover:hidden can-hover:group-hover:flex`
+- **DO NOT** use `md:opacity-0 md:group-hover:opacity-100` — iPad matches `md:` but has no hover
 
 ### 3. Touch Targets
 - Minimum touch target: **44×44px** (Apple HIG)

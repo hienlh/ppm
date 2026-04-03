@@ -191,7 +191,7 @@ function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; vi
 
         {/* Action buttons (visible on hover) */}
         {item.actions && item.actions.length > 0 && (
-          <div className="hidden group-hover/node:flex items-center gap-0.5 shrink-0">
+          <div className="flex can-hover:hidden can-hover:group-hover/node:flex items-center gap-0.5 shrink-0">
             {item.actions.map((action) => (
               <ActionButton key={action.command} action={action} />
             ))}

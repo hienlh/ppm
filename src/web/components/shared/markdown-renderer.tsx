@@ -133,7 +133,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
           wrapper.innerHTML = svg;
           // Expand icon hint
           const hint = document.createElement("div");
-          hint.className = "absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/60 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none";
+          hint.className = "absolute top-2 right-2 flex items-center gap-1 px-2 py-1 rounded bg-black/60 text-white text-xs can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity pointer-events-none";
           hint.textContent = "Click to expand";
           wrapper.appendChild(hint);
           // Click to open overlay
