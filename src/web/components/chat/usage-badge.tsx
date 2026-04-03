@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Activity, RefreshCw, Eye, Download, Upload, Plus, X, Settings, Trash2 } from "lucide-react";
+import { Activity, RefreshCw, Eye, Download, Upload, Plus, X, Settings, Trash2, Maximize2, Minimize2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { UsageInfo, LimitBucket } from "../../../types/chat";
 import {
@@ -265,6 +265,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [showRotationSettings, setShowRotationSettings] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; display: string } | null>(null);
   const [exportPreselect, setExportPreselect] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const prevUsagesRef = useRef<AccountUsageEntry[]>([]);
@@ -361,7 +362,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   }
 
   return (
-    <div className="relative border-b border-border bg-surface px-3 py-2.5 space-y-2.5 max-h-[350px] overflow-y-auto">
+    <div className={`relative border-b border-border bg-surface px-3 py-2.5 space-y-2.5 ${isFullscreen ? "fixed inset-0 z-50 max-h-none overflow-y-auto" : "max-h-[350px] overflow-y-auto"}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary">Usage & Accounts</span>
@@ -377,6 +378,15 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
           >
             <Settings className="size-3" />
           </button>
+          {hasMultipleAccounts && (
+            <button
+              onClick={() => setIsFullscreen((v) => !v)}
+              className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen view"}
+            >
+              {isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+            </button>
+          )}
           {onReload && (
             <button
               onClick={() => { onReload(); loadAll(); }}
@@ -388,7 +398,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
             </button>
           )}
           <button
-            onClick={onClose}
+            onClick={() => { setIsFullscreen(false); onClose(); }}
             className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
           >
             <X className="size-3" />
@@ -403,7 +413,10 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       )}
 
       {(hasMultipleAccounts || initialLoading) ? (
-        <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 snap-x snap-mandatory scrollbar-thin">
+        <div className={isFullscreen
+          ? "grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-2"
+          : "flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 snap-x snap-mandatory scrollbar-thin"
+        }>
           {initialLoading ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
           ) : (

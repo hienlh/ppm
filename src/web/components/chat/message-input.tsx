@@ -521,7 +521,7 @@ export const MessageInput = memo(function MessageInput({
           )}
           {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
         </div>
-        {/* Mobile: single row — attach + mic + textarea + send */}
+        {/* Mobile: single row — attach + textarea + mic + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
           <button
             type="button"
@@ -532,6 +532,19 @@ export const MessageInput = memo(function MessageInput({
           >
             <Paperclip className="size-4" />
           </button>
+          <textarea
+            ref={mobileTextareaRef}
+            value={value}
+            onChange={(e) => { handleChange(e.target.value, e.target.selectionStart); handleInput(e); }}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            placeholder={isStreaming ? "Follow-up..." : "Ask anything..."}
+            disabled={disabled}
+            rows={1}
+            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20"
+          />
           {voice.supported && (
             <button
               type="button"
@@ -547,19 +560,6 @@ export const MessageInput = memo(function MessageInput({
               {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
             </button>
           )}
-          <textarea
-            ref={mobileTextareaRef}
-            value={value}
-            onChange={(e) => { handleChange(e.target.value, e.target.selectionStart); handleInput(e); }}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            placeholder={isStreaming ? "Follow-up..." : "Ask anything..."}
-            disabled={disabled}
-            rows={1}
-            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20"
-          />
           {showCancel ? (
             <button
               onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
@@ -606,21 +606,6 @@ export const MessageInput = memo(function MessageInput({
               >
                 <Paperclip className="size-4" />
               </button>
-              {voice.supported && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
-                  disabled={disabled}
-                  className={`flex items-center justify-center size-8 rounded-full transition-colors disabled:opacity-50 ${
-                    voice.isListening
-                      ? "bg-red-600 text-white animate-pulse"
-                      : "text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
-                  }`}
-                  aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
-                >
-                  {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-                </button>
-              )}
               {/* Mode indicator chip */}
               <div className="relative">
                 <ModeChip
@@ -645,6 +630,21 @@ export const MessageInput = memo(function MessageInput({
               {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
             </div>
             <div className="flex items-center gap-1">
+              {voice.supported && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
+                  disabled={disabled}
+                  className={`flex items-center justify-center size-8 rounded-full transition-colors disabled:opacity-50 ${
+                    voice.isListening
+                      ? "bg-red-600 text-white animate-pulse"
+                      : "text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
+                  }`}
+                  aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
+                >
+                  {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+                </button>
+              )}
               {showCancel ? (
                 <button
                   onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
