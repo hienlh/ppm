@@ -38,6 +38,20 @@ extensionRoutes.post("/install", async (c) => {
   }
 });
 
+// POST /api/extensions/dev-link — symlink local extension for development
+extensionRoutes.post("/dev-link", async (c) => {
+  const body = await c.req.json<{ path?: string }>().catch(() => ({}) as { path?: string });
+  if (!body.path) return c.json(err("Missing 'path' field"), 400);
+
+  try {
+    const manifest = await extensionService.devLink(body.path);
+    return c.json(ok(manifest), 201);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json(err(msg), 500);
+  }
+});
+
 // DELETE /api/extensions/:id — remove extension
 extensionRoutes.delete("/:id{.+}", async (c) => {
   const id = c.req.param("id");

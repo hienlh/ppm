@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, BellOff, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe, Plug,
+  Bot, BellRing, Keyboard, Globe, Plug, Puzzle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { TelegramSettingsSection } from "./telegram-settings-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
 import { McpSettingsSection } from "./mcp-settings-section";
+import { ExtensionManagerSection } from "./extension-manager-section";
 import { ChangePasswordSection } from "./change-password-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
@@ -27,7 +28,7 @@ const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
 const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
   !window.matchMedia("(display-mode: standalone)").matches;
 
-type SettingsCategory = "ai" | "notifications" | "proxy" | "shortcuts" | "mcp";
+type SettingsCategory = "ai" | "notifications" | "proxy" | "shortcuts" | "mcp" | "extensions";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
@@ -35,6 +36,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { value: "mcp", label: "MCP Servers", subtitle: "Model Context Protocol tools", icon: Plug },
+  { value: "extensions", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
 ];
 
 export function SettingsTab() {
@@ -88,6 +90,7 @@ export function SettingsTab() {
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
             {activeCategory === "mcp" && <McpSettingsSection />}
+            {activeCategory === "extensions" && <ExtensionManagerSection />}
           </div>
         </ScrollArea>
       </div>
