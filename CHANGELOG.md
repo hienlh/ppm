@@ -6,6 +6,7 @@
 - **Mobile input layout**: Reorder buttons (attach → textarea → mic → send) for better thumb reach
 - **Desktop input layout**: Move mic button next to send button for consistent grouping
 - **Usage panel fullscreen**: Add fullscreen toggle for Usage & Accounts panel when multiple accounts present, with grid layout in fullscreen mode
+- **Session context loss on token refresh**: Auth refresh and rate-limit account switching now resume the existing SDK session instead of starting a fresh one, preserving all conversation context (tool calls, thinking, etc.)
 
 ## [0.9.1] - 2026-04-03
 
