@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.5] - 2026-04-04
+
+### Fixed
+- **Streaming session survives FE disconnect**: Active chat sessions no longer killed when iPad sleeps or browser disconnects — agent runs to completion, cleanup only applies to idle sessions
+- **Instant WS reconnect on wake**: Added `visibilitychange` listener so WebSocket reconnects immediately when page becomes visible instead of waiting for exponential backoff
+
+### Changed
+- **Mobile nav layout**: Updated mobile navigation layout
+
 ## [0.9.4] - 2026-04-03
 
 ### Fixed
