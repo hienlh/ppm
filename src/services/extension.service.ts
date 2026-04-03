@@ -121,6 +121,7 @@ class ExtensionService {
 
     this.activatedIds.add(id);
     if (manifest.contributes) contributionRegistry.register(id, manifest.contributes);
+    this.broadcastContributions();
     console.log(`[ExtService] Activated ${id}`);
   }
 
@@ -133,6 +134,7 @@ class ExtensionService {
     }
     this.activatedIds.delete(id);
     contributionRegistry.unregister(id);
+    this.broadcastContributions();
     console.log(`[ExtService] Deactivated ${id}`);
   }
 
@@ -213,6 +215,14 @@ class ExtensionService {
 
   isActivated(id: string): boolean { return this.activatedIds.has(id); }
   getExtensionsDir(): string { return EXTENSIONS_DIR; }
+
+  /** Push current contributions to all connected browser clients */
+  private broadcastContributions(): void {
+    try {
+      const { broadcastExtMsg } = require("../server/ws/extensions.ts");
+      broadcastExtMsg({ type: "contributions:update", contributions: contributionRegistry.getAll() });
+    } catch {}
+  }
 }
 
 export const extensionService = new ExtensionService();
