@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from "react";
 import { WsClient } from "@/lib/ws-client";
 import { useExtensionStore } from "@/stores/extension-store";
+import { useTabStore } from "@/stores/tab-store";
 import { getAuthToken } from "@/lib/api-client";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
@@ -117,6 +118,14 @@ export function useExtensionWs(enabled = true) {
             viewType: msg.viewType,
             title: msg.title,
             html: "",
+          });
+          // Open a tab to display the webview panel
+          useTabStore.getState().openTab({
+            type: "extension-webview",
+            title: msg.title,
+            projectId: null,
+            closable: true,
+            metadata: { panelId: msg.panelId, extensionId: msg.extensionId },
           });
           break;
 
