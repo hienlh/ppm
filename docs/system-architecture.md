@@ -1100,19 +1100,32 @@ const query = new Query(messages, queryConfig);
 
 ---
 
-## Extension System (Phase 1 — v0.9.0+)
+## Extension System (v0.9.0+)
 
 ### Overview
 
-PPM Extension System enables VSCode-compatible, npm-installable extensions that run in isolated Bun Worker threads. Crash-safe, permission-based, with RPC messaging between main process and worker.
+PPM Extension System enables VSCode-compatible, npm-installable extensions that run in isolated Bun Worker threads. Crash-safe, permission-based, with RPC messaging between main process and worker, and WebSocket bridge for real-time UI updates.
 
-**Architecture:**
+**Architecture (3-tier):**
+```
+Extension Code (Bun Worker)        ← @ppm/vscode-compat API
+  │ RPC (postMessage)
+  ▼
+Main Process (Hono/Bun)            ← extension-rpc-handlers.ts
+  │ WebSocket (/ws/extensions)
+  ▼
+Browser (React)                    ← Zustand store + React components
+```
+
+**Key components:**
 - **Package Format:** npm packages (`@ppm/ext-database`, `@ppm/ext-docker`, etc.)
 - **Installation:** `~/.ppm/extensions/node_modules/{id}/`
 - **Lifecycle:** Install → Enable → Activate → Deactivate → Remove
-- **Worker Isolation:** Each activated extension runs in a Bun Worker (crash-safe)
-- **Communication:** RPC protocol (request/response/events) between main process + worker
-- **State Storage:** globalState (persistent) + workspaceState (per-project) in SQLite
+- **Worker Isolation:** Each activated extension runs in a Bun Worker (crash-safe, 10s activation timeout)
+- **Communication:** RPC (Worker↔Main) + WebSocket (Main↔Browser)
+- **API Shim:** `@ppm/vscode-compat` — VSCode-compatible API (commands, window, workspace)
+- **State Storage:** globalState + workspaceState in SQLite via Memento
+- **UI Bridge:** StatusBar, TreeView, WebviewPanel, QuickPick, InputBox, Notifications
 - **Contributions:** Commands, views, configuration contributed via manifest
 
 ### Manifest Format
@@ -1178,10 +1191,11 @@ Extension metadata defined in `package.json` under `ppm` key:
 **Activation** (`ppm ext enable @ppm/ext-database` or automatic):
 1. Load manifest + entry point from disk
 2. Spawn Bun Worker (process isolation)
-3. Load extension code into worker
-4. Call `activate(context)` function
+3. Create scoped `@ppm/vscode-compat` API instance (RPC-backed)
+4. Call `activate(context, vscodeApi)` with 10s timeout
 5. Register contributions in `contributionRegistry`
-6. Mark as activated
+6. Broadcast `contributions:update` via WS to all connected browsers
+7. Mark as activated
 
 **Deactivation:**
 1. Unregister contributions
@@ -1259,6 +1273,31 @@ await context.globalState.update("lastConnection", "my-db");
 const wsVal = context.workspaceState.get("selectedTable");
 await context.workspaceState.update("selectedTable", "users");
 ```
+
+### WebSocket Bridge (Extension ↔ Browser)
+
+Extensions interact with the browser UI via a dedicated WebSocket at `/ws/extensions`. The main process translates between Worker RPC and WS messages.
+
+**Server → Client (ExtServerMsg):** `tree:update`, `tree:refresh`, `statusbar:update/remove`, `notification`, `quickpick:show`, `inputbox:show`, `webview:create/html/dispose/postMessage`, `contributions:update`
+
+**Client → Server (ExtClientMsg):** `ready`, `command:execute`, `tree:expand/click`, `webview:message`, `quickpick:resolve`, `inputbox:resolve`, `notification:action`
+
+**Message routing:**
+- Extension calls `vscode.window.showInformationMessage()` → RPC → `extension-rpc-handlers.ts` → `broadcastExtMsg()` → WS → `use-extension-ws` hook → toast notification
+- Browser user clicks tree item → WS `tree:click` → `extensions.ts` → Worker RPC `ext:command:execute` → CommandService → extension handler
+- Webview iframe postMessage → parent → CustomEvent → WS `webview:message` → Worker RPC `ext:webview:message` → EventEmitter → extension's `onDidReceiveMessage` handler
+
+**Request/response pattern:** QuickPick, InputBox, and notification actions use `requestFromBrowser(msg, trackingId, 30s timeout)` — sends WS message and awaits browser response via pending Promise map.
+
+### UI Components
+
+Extension UI state lives in Zustand (`extension-store.ts`) and renders via React:
+- **StatusBar** — Fixed bottom bar with left/right aligned items
+- **TreeView** — Recursive tree with expand/collapse, renders in sidebar for `ext:*` tabs
+- **WebviewPanel** — Sandboxed iframe (`allow-scripts` only), `acquireVsCodeApi()` shim auto-injected
+- **QuickPick** — Filterable picker with keyboard nav, bottom-sheet on mobile
+- **InputBox** — Text input dialog with password mode support
+- **Command Palette** — Extension commands merged with built-in commands
 
 ### Contribution Registry
 

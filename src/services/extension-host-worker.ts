@@ -52,8 +52,12 @@ rpc.onRequest("ext:activate", async (params) => {
     const mod = await import(entryPath);
     const activateFn = mod.activate || mod.default?.activate;
     if (typeof activateFn === "function") {
-      // Pass vscode-compat API as second argument for extensions to use
-      await activateFn(context, api);
+      // Activation timeout: 10s max to prevent hanging extensions
+      const activatePromise = Promise.resolve(activateFn(context, api));
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Activation timeout (10s) for ${extId}`)), 10_000),
+      );
+      await Promise.race([activatePromise, timeoutPromise]);
     }
     activeExtensions.set(extId, {
       deactivate: mod.deactivate || mod.default?.deactivate,
@@ -111,8 +115,14 @@ rpc.onRequest("ext:command:execute", async (params) => {
 rpc.onRequest("ext:webview:message", async (params) => {
   const [panelId, message] = params as [string, unknown];
   for (const [, ext] of activeExtensions) {
-    if (ext.window && (ext.window as any)._deliverWebviewMessage(panelId, message)) {
-      return { ok: true };
+    if (!ext.window) continue;
+    try {
+      if ((ext.window as any)._deliverWebviewMessage(panelId, message)) {
+        return { ok: true };
+      }
+    } catch (e) {
+      console.error(`[ExtHost] webview:message error (${panelId}):`, e);
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
   return { ok: false, error: `No handler for panel ${panelId}` };
@@ -123,8 +133,13 @@ rpc.onRequest("ext:tree:expand", async (params) => {
   const [viewId, itemId] = params as [string, string | undefined];
   for (const [, ext] of activeExtensions) {
     if (ext.window) {
-      const items = await (ext.window as any)._getTreeChildren(viewId, itemId);
-      if (items.length > 0) return { ok: true, items };
+      try {
+        const items = await (ext.window as any)._getTreeChildren(viewId, itemId);
+        if (items.length > 0) return { ok: true, items };
+      } catch (e) {
+        console.error(`[ExtHost] tree:expand error (${viewId}):`, e);
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
     }
   }
   return { ok: true, items: [] };

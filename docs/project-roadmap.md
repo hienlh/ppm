@@ -64,7 +64,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 |---------|----------|--------|-------------|
 | **Multi-provider AI** | Critical | ✅ Done | ProviderInterface, registry, Cursor CLI, CLI provider base, UI provider/model selector, permission mode selector, system prompt customization, comprehensive tests — all on beta branch. |
 | **MCP Management** | Medium | ✅ Done | REST API (CRUD + import), SQLite storage, Settings UI, auto-import from `~/.claude.json`, validation, SDK integration. |
-| **Extension architecture (Phase 1)** | High | ✅ Done | VSCode-compatible npm extensions, Bun Worker isolation, RPC protocol, state persistence, contribution registry, CLI support, dev mode. First extension: database viewer. |
+| **Extension architecture (Phase 1-6)** | High | ✅ Done | VSCode-compatible npm extensions, Bun Worker isolation, RPC protocol, state persistence, contribution registry, CLI support, dev mode. @ppm/vscode-compat API shim (commands, window, workspace). UI components (StatusBar, TreeView, WebviewPanel, QuickPick, InputBox). WS bridge for real-time ext↔browser communication. First extension: ext-database with tree view + SQL query panel. Unit tests + extension dev guide. |
 
 **Multi-provider — v0.9 scope (reduced):**
 - Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy
@@ -77,10 +77,10 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 - Tier 3 (chat-only): Any OpenAI-compatible API
 - Chinese providers (DeepSeek, Qwen) — v1.0+
 
-**Extension System Phase 2 (v0.10+):**
-- Webview UI support (HTML/React panels)
+**Extension System — remaining for v0.10+:**
 - Settings UI auto-generation from manifest
-- Hot reload during dev
+- Hot reload during dev (`ppm ext dev --watch`)
+- Extension template scaffold (`ppm ext create <name>`)
 - Extension marketplace (v1.0)
 
 **Extension architecture — design principles:**
