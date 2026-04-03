@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2] - 2026-04-03
+
+### Fixed
+- **Mobile input layout**: Reorder buttons (attach → textarea → mic → send) for better thumb reach
+- **Desktop input layout**: Move mic button next to send button for consistent grouping
+- **Usage panel fullscreen**: Add fullscreen toggle for Usage & Accounts panel when multiple accounts present, with grid layout in fullscreen mode
+
 ## [0.9.1] - 2026-04-03
 
 **"Open Platform"** — Multi-provider AI, MCP management, and extension architecture.
