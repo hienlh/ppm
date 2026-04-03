@@ -94,11 +94,11 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ### v0.10.0 — "Enhanced Workflow" (Q3 2026)
 
-**Theme:** Chat UX upgrade + git workflow. High-impact, independent features that ship fast.
+**Theme:** Agent collaboration + git workflow. High-impact, independent features that ship fast.
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
-| **Chat history graph** | High | Visual branching tree of chat sessions. Fork conversations, navigate history graph. Game-changer for AI chat UX. |
+| **Agent Team** | High | Multi-agent collaboration within PPM. Spawn agent teams for parallel task execution — lead agent delegates to specialist agents (coder, tester, reviewer). Task coordination, file ownership, progress tracking. |
 | **Worktree management** | Medium | UI to create/switch/delete git worktrees. Use different providers on different branches. Integrated with project switcher. |
 
 ---
@@ -167,7 +167,7 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 | **v0.7** | Multi-Account & Mobile | Account management, usage tracking, mobile UX | ✅ Current |
 | **v0.8** | Always On | PPM Cloud, auto-start, AI chat enhancements | Q2 2026 |
 | **v0.9** | Open Platform | Multi-provider (Claude + Cursor), extension architecture, MCP | Q2–Q3 2026 |
-| **v0.10** | Enhanced Workflow | Chat history graph, worktree management | Q3 2026 |
+| **v0.10** | Enhanced Workflow | Agent Team, worktree management | Q3 2026 |
 | **v0.11** | Intelligence | Hooks, Skills API, Clawbot, more providers (Gemini/Codex/Tier 3) | Q3–Q4 2026 |
 | **v1.0** | Production Ready | Self-hosted Cloud, Marketplace, stability, inline SQL | Q4 2026 |
 
