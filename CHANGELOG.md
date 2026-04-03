@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.4] - 2026-04-03
+
+### Fixed
+- **ext-database adaptive theme**: Replace hardcoded Catppuccin Mocha dark theme with light/dark adaptive CSS using `prefers-color-scheme` and shadcn zinc palette (table viewer + query panel)
+
+### Added
+- **ext-database connection management**: Edit, delete, test, export, import connections via commands (matching builtin viewer features)
+- **ext-database tree view groups**: Connections grouped by group name, readonly 🔒 indicator, row counts on table nodes
+- **ext-database color & readonly**: Add connection flow now collects group name, color, and readonly toggle
+
 ## [0.9.3] - 2026-04-03
 
 ### Fixed
