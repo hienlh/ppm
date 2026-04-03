@@ -10,10 +10,53 @@ import { StatusBarAlignment as SBAlign } from "./types.ts";
 export class WindowService {
   private rpc: RpcClient;
   private extId: string;
+  /** @internal Monotonic counter for unique panel/statusbar IDs */
+  private _idCounter = 0;
+  /** @internal Panel emitters keyed by panelId — for webview message delivery */
+  private _panelEmitters = new Map<string, EventEmitter<unknown>>();
+  /** @internal Tree providers keyed by viewId — for tree expand/refresh */
+  private _treeProviders = new Map<string, { provider: any }>();
 
   constructor(rpc: RpcClient, extId: string) {
     this.rpc = rpc;
     this.extId = extId;
+  }
+
+  /** @internal Deliver a message from the WS bridge to a webview panel's onDidReceiveMessage */
+  _deliverWebviewMessage(panelId: string, message: unknown): boolean {
+    const emitter = this._panelEmitters.get(panelId);
+    if (emitter) { emitter.fire(message); return true; }
+    return false;
+  }
+
+  /** @internal Get tree children for a viewId (used by Worker for tree:expand) */
+  async _getTreeChildren(viewId: string, parentId?: string): Promise<unknown[]> {
+    const entry = this._treeProviders.get(viewId);
+    if (!entry) return [];
+    const provider = entry.provider;
+    // For root items, parentId is undefined
+    const children = await Promise.resolve(provider.getChildren(parentId));
+    if (!children || !Array.isArray(children)) return [];
+    return this._serializeTreeItems(provider, children);
+  }
+
+  /** @internal Serialize tree elements into TreeItemMsg-compatible objects */
+  private async _serializeTreeItems(provider: any, elements: unknown[]): Promise<unknown[]> {
+    const results: unknown[] = [];
+    for (const el of elements) {
+      const treeItem = provider.getTreeItem ? await Promise.resolve(provider.getTreeItem(el)) : el;
+      results.push({
+        id: treeItem.id ?? String(el),
+        label: treeItem.label ?? String(el),
+        description: treeItem.description,
+        tooltip: treeItem.tooltip,
+        icon: treeItem.iconPath?.id ?? treeItem.iconPath ?? undefined,
+        collapsibleState: treeItem.collapsibleState === 0 ? "none" : treeItem.collapsibleState === 2 ? "expanded" : treeItem.collapsibleState === 1 ? "collapsed" : (treeItem.collapsibleState ?? "none"),
+        command: typeof treeItem.command === "string" ? treeItem.command : treeItem.command?.command,
+        contextValue: treeItem.contextValue,
+      });
+    }
+    return results;
   }
 
   // --- Messages ---
@@ -48,7 +91,7 @@ export class WindowService {
   // --- Status Bar ---
 
   createStatusBarItem(alignment?: StatusBarAlignment, priority?: number): StatusBarItem {
-    const id = `${this.extId}-sb-${Date.now()}`;
+    const id = `${this.extId}-sb-${++this._idCounter}`;
     const rpc = this.rpc;
     const extId = this.extId;
     const item: StatusBarItem = {
@@ -96,14 +139,16 @@ export class WindowService {
 
   createTreeView(viewId: string, options: { treeDataProvider: unknown }): Disposable {
     const rpc = this.rpc;
-    // Initial tree data push — if provider has getChildren
-    const provider = options.treeDataProvider as { getChildren?: (el?: unknown) => unknown[] | Promise<unknown[]> };
+    const provider = options.treeDataProvider as any;
+    this._treeProviders.set(viewId, { provider });
+    // Initial tree data push — serialize via getTreeItem
     if (provider.getChildren) {
-      Promise.resolve(provider.getChildren()).then((items) => {
+      this._getTreeChildren(viewId).then((items) => {
         rpc.request("window:tree:update", viewId, items);
-      }).catch(() => {});
+      }).catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
     }
     return new Disposable(() => {
+      this._treeProviders.delete(viewId);
       rpc.request("window:tree:refresh", viewId);
     });
   }
@@ -111,13 +156,14 @@ export class WindowService {
   // --- Webview Panel ---
 
   createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn): unknown {
-    const panelId = `${this.extId}-wv-${Date.now()}`;
+    const panelId = `${this.extId}-wv-${++this._idCounter}`;
     const rpc = this.rpc;
     const extId = this.extId;
     rpc.request("window:webview:create", panelId, extId, viewType, title);
 
     const onDidDispose = new EventEmitter<void>();
     const onDidReceiveMessage = new EventEmitter<unknown>();
+    this._panelEmitters.set(panelId, onDidReceiveMessage);
 
     let currentHtml = "";
     const webview = {
@@ -140,7 +186,8 @@ export class WindowService {
       onDidDispose: onDidDispose.event,
       onDidChangeViewState: new EventEmitter().event,
       reveal() {},
-      dispose() {
+      dispose: () => {
+        this._panelEmitters.delete(panelId);
         rpc.request("window:webview:dispose", panelId);
         onDidDispose.fire();
         onDidDispose.dispose();

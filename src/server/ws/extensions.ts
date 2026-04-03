@@ -132,14 +132,32 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
     }
 
     case "webview:message": {
-      // Phase 5: forward to extension's onDidReceiveMessage handler
-      console.log(`[ExtWS] webview:message for panel ${msg.panelId}`);
+      try {
+        const { extensionService } = await import("../../services/extension.service.ts");
+        if (extensionService["rpc"]) {
+          await extensionService["rpc"].sendRequest("ext:webview:message", msg.panelId, msg.message);
+        }
+      } catch (e) {
+        console.error(`[ExtWS] webview:message error:`, e);
+      }
       break;
     }
 
     case "tree:expand": {
-      // Phase 5: call TreeDataProvider.getChildren(itemId)
-      console.log(`[ExtWS] tree:expand ${msg.viewId}/${msg.itemId}`);
+      try {
+        const { extensionService } = await import("../../services/extension.service.ts");
+        if (extensionService["rpc"]) {
+          const result = await extensionService["rpc"].sendRequest<{ ok: boolean; items?: unknown[] }>(
+            "ext:tree:expand", msg.viewId, msg.itemId,
+          );
+          if (result?.ok && result.items) {
+            // Send updated children back to the requesting client
+            ws.send(JSON.stringify({ type: "tree:update", viewId: msg.viewId, items: result.items as import("../../types/extension-messages.ts").TreeItemMsg[] } satisfies ExtServerMsg));
+          }
+        }
+      } catch (e) {
+        console.error(`[ExtWS] tree:expand error:`, e);
+      }
       break;
     }
   }

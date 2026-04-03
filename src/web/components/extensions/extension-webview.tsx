@@ -1,6 +1,21 @@
 import { useRef, useEffect, useCallback } from "react";
 import { useExtensionStore } from "@/stores/extension-store";
 
+/** Inject acquireVsCodeApi() shim so extension webviews can postMessage to parent */
+const VSCODE_API_SHIM = `<script>
+function acquireVsCodeApi(){return{postMessage:function(m){window.parent.postMessage(m,"*")},getState:function(){try{return JSON.parse(sessionStorage.getItem("vscode-state")||"null")}catch{return null}},setState:function(s){sessionStorage.setItem("vscode-state",JSON.stringify(s));return s}}}
+</script>`;
+
+function injectVscodeApiShim(html: string): string {
+  if (!html) return html;
+  // Insert shim right after <head> tag (or at start if no <head>)
+  const headIdx = html.indexOf("<head>");
+  if (headIdx !== -1) {
+    return html.slice(0, headIdx + 6) + VSCODE_API_SHIM + html.slice(headIdx + 6);
+  }
+  return VSCODE_API_SHIM + html;
+}
+
 interface ExtensionWebviewProps {
   metadata?: Record<string, unknown>;
 }
@@ -14,8 +29,9 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const panel = useExtensionStore((s) => panelId ? s.webviewPanels[panelId] : undefined);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Write HTML content into iframe via srcdoc
-  const html = panel?.html ?? "";
+  // Inject acquireVsCodeApi shim + write HTML into iframe via srcdoc
+  const rawHtml = panel?.html ?? "";
+  const html = injectVscodeApiShim(rawHtml);
 
   // Listen for postMessage from iframe → forward to extension via WS bridge
   useEffect(() => {

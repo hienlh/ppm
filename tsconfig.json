@@ -24,7 +24,9 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/web/*"]
+      "@/*": ["./src/web/*"],
+      "@ppm/vscode-compat": ["./packages/vscode-compat/src/index.ts"],
+      "@ppm/vscode-compat/*": ["./packages/vscode-compat/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],

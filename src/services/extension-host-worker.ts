@@ -4,12 +4,17 @@
  * Communicates with the main process via typed RPC (postMessage).
  */
 import { RpcChannel } from "./extension-rpc.ts";
-import type { ExtensionContext, StateStore, Disposable, RpcMessage } from "../types/extension.ts";
+import { createVscodeCompat } from "@ppm/vscode-compat";
+import type { WindowService } from "@ppm/vscode-compat/src/window.ts";
+import type { CommandService } from "@ppm/vscode-compat/src/commands.ts";
+import type { Disposable, RpcMessage } from "../types/extension.ts";
 
-// Active extension instances: id → { module, context, deactivate }
+// Active extension instances: id → { module, context, deactivate, services }
 const activeExtensions = new Map<string, {
   deactivate?: () => void | Promise<void>;
-  context: ExtensionContext;
+  context: { subscriptions: Disposable[] };
+  window?: WindowService;
+  commands?: CommandService;
 }>();
 
 const rpc = new RpcChannel((msg) => postMessage(msg));
@@ -26,14 +31,36 @@ rpc.onRequest("ext:activate", async (params) => {
   const [extId, entryPath, extensionPath, storedState] = params as [string, string, string, Record<string, Record<string, string | null>>?];
   if (activeExtensions.has(extId)) return { ok: true, already: true };
 
-  const context = createExtensionContext(extId, extensionPath, storedState);
+  // Create RpcClient adapter for vscode-compat (Worker's RPC → vscode-compat interface)
+  const rpcClient = {
+    request: <T = unknown>(method: string, ...p: unknown[]) => rpc.sendRequest<T>(method, ...p),
+    notify: (event: string, data: unknown) => rpc.sendEvent(event, data),
+  };
+
+  // Create vscode-compat API scoped to this extension
+  const api = createVscodeCompat({
+    extensionId: extId,
+    extensionPath,
+    storagePath: `${extensionPath}/.storage`,
+    rpc: rpcClient,
+    storedState: storedState as { global?: Record<string, string | null>; workspace?: Record<string, string | null> },
+  });
+
+  const context = api._createContext();
+
   try {
     const mod = await import(entryPath);
     const activateFn = mod.activate || mod.default?.activate;
     if (typeof activateFn === "function") {
-      await activateFn(context);
+      // Pass vscode-compat API as second argument for extensions to use
+      await activateFn(context, api);
     }
-    activeExtensions.set(extId, { deactivate: mod.deactivate || mod.default?.deactivate, context });
+    activeExtensions.set(extId, {
+      deactivate: mod.deactivate || mod.default?.deactivate,
+      context,
+      window: api.window as WindowService,
+      commands: api.commands as CommandService,
+    });
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -53,24 +80,54 @@ rpc.onRequest("ext:deactivate", async (params) => {
     }
     // Dispose all subscriptions
     for (const sub of ext.context.subscriptions) {
-      try { sub.dispose(); } catch {}
+      try { (sub as Disposable).dispose(); } catch {}
     }
     activeExtensions.delete(extId);
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[ExtHost] Failed to deactivate ${extId}:`, msg);
-    activeExtensions.delete(extId); // remove even on error
+    activeExtensions.delete(extId);
     return { ok: false, error: msg };
   }
 });
 
 rpc.onRequest("ext:command:execute", async (params) => {
   const [command, ...args] = params as [string, ...unknown[]];
-  // Extensions register commands via vscode-compat shim (Phase 2).
-  // For now, emit an event so future shim can hook in.
-  rpc.sendEvent("command:executed", { command, args });
-  return { ok: true };
+  for (const [, ext] of activeExtensions) {
+    if (ext.commands) {
+      try {
+        const result = await (ext.commands as any).executeCommand(command, ...args);
+        return { ok: true, result };
+      } catch {
+        // Command not found in this extension, try next
+      }
+    }
+  }
+  return { ok: false, error: `Command not found: ${command}` };
+});
+
+// Deliver webview messages from browser → extension's onDidReceiveMessage
+rpc.onRequest("ext:webview:message", async (params) => {
+  const [panelId, message] = params as [string, unknown];
+  for (const [, ext] of activeExtensions) {
+    if (ext.window && (ext.window as any)._deliverWebviewMessage(panelId, message)) {
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: `No handler for panel ${panelId}` };
+});
+
+// Handle tree:expand — get children for a tree node
+rpc.onRequest("ext:tree:expand", async (params) => {
+  const [viewId, itemId] = params as [string, string | undefined];
+  for (const [, ext] of activeExtensions) {
+    if (ext.window) {
+      const items = await (ext.window as any)._getTreeChildren(viewId, itemId);
+      if (items.length > 0) return { ok: true, items };
+    }
+  }
+  return { ok: true, items: [] };
 });
 
 rpc.onRequest("ext:list-active", () => {
@@ -79,52 +136,7 @@ rpc.onRequest("ext:list-active", () => {
 
 rpc.onRequest("ext:ping", () => "pong");
 
-// --- Helper: create ExtensionContext ---
-
-function createExtensionContext(
-  extId: string,
-  extensionPath: string,
-  storedState?: Record<string, Record<string, string | null>>,
-): ExtensionContext {
-  const subscriptions: Disposable[] = [];
-
-  // State stores use RPC to persist in main process DB, hydrated from stored values
-  const createStateStore = (scope: string): StateStore => {
-    const cache = new Map<string, unknown>();
-
-    // Hydrate cache from persisted DB values
-    const stored = storedState?.[scope];
-    if (stored) {
-      for (const [key, val] of Object.entries(stored)) {
-        if (val !== null) {
-          try { cache.set(key, JSON.parse(val)); } catch { cache.set(key, val); }
-        }
-      }
-    }
-
-    return {
-      get<T = unknown>(key: string, defaultValue?: T): T | undefined {
-        if (cache.has(key)) return cache.get(key) as T;
-        return defaultValue;
-      },
-      async update(key: string, value: unknown): Promise<void> {
-        cache.set(key, value);
-        await rpc.sendRequest("storage:set", extId, scope, key, JSON.stringify(value));
-      },
-      keys(): readonly string[] {
-        return [...cache.keys()];
-      },
-    };
-  };
-
-  return {
-    extensionId: extId,
-    extensionPath,
-    globalState: createStateStore("global"),
-    workspaceState: createStateStore("workspace"),
-    subscriptions,
-  };
-}
+// ExtensionContext is now created by @ppm/vscode-compat's createVscodeCompat()._createContext()
 
 // Notify main process that worker is ready
 rpc.sendEvent("worker:ready", {});
