@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.0] - 2026-04-03
+## [0.9.1] - 2026-04-03
 
 **"Open Platform"** — Multi-provider AI, MCP management, and extension architecture.
 
