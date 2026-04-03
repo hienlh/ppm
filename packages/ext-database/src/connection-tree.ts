@@ -6,13 +6,17 @@
 interface ConnectionNode {
   id: string;
   name: string;
-  type: "connection" | "table" | "column";
+  type: "connection" | "group" | "table" | "column";
   connectionId?: number;
   connectionName?: string;
   connectionType?: string;
   connectionColor?: string | null;
+  connectionReadonly?: number;
+  groupName?: string | null;
   schemaName?: string;
   dataType?: string;
+  rowCount?: number;
+  children?: ConnectionNode[];
 }
 
 interface ApiConnection {
@@ -20,6 +24,8 @@ interface ApiConnection {
   name: string;
   type: string;
   color: string | null;
+  readonly: number;
+  group_name: string | null;
 }
 
 interface ApiTable {
@@ -54,7 +60,8 @@ export class ConnectionTreeProvider {
   }
 
   async getChildren(element?: ConnectionNode): Promise<ConnectionNode[]> {
-    if (!element) return this.getConnections();
+    if (!element) return this.getRootNodes();
+    if (element.type === "group") return element.children ?? [];
     if (element.type === "connection") return this.getTables(element);
     if (element.type === "table") return this.getColumns(element);
     return [];
@@ -62,13 +69,26 @@ export class ConnectionTreeProvider {
 
   getTreeItem(element: ConnectionNode): Record<string, unknown> {
     const isConn = element.type === "connection";
+    const isGroup = element.type === "group";
     const isTable = element.type === "table";
     const isCol = element.type === "column";
+
+    // Table description: row count
+    let description: string | undefined;
+    if (isCol) description = element.dataType;
+    else if (isTable && element.rowCount !== undefined) description = `${element.rowCount.toLocaleString()} rows`;
+
+    // Connection badge: type + readonly
+    let badge: string | undefined;
+    if (isConn) {
+      badge = element.connectionType === "postgres" ? "PG" : "DB";
+      if (element.connectionReadonly === 1) badge += " 🔒";
+    }
 
     return {
       id: element.id,
       label: element.name,
-      description: isCol ? element.dataType : undefined,
+      description,
       collapsibleState: isCol ? "none" : "collapsed",
       contextValue: element.type,
       command: isTable ? "ppm-db.openViewer" : undefined,
@@ -76,11 +96,47 @@ export class ConnectionTreeProvider {
         ? [element.connectionId, element.connectionName ?? "Database", element.name, element.schemaName ?? "public"]
         : undefined,
       color: isConn ? (element.connectionColor ?? undefined) : undefined,
-      badge: isConn ? (element.connectionType === "postgres" ? "PG" : "DB") : undefined,
+      badge,
       actions: isConn ? [
         { icon: "refresh", tooltip: "Refresh tables", command: "ppm-db.refreshConnection", commandArgs: [element.connectionId] },
-      ] : undefined,
+        { icon: "edit", tooltip: "Edit connection", command: "ppm-db.editConnection", commandArgs: [element.connectionId] },
+        { icon: "trash", tooltip: "Delete connection", command: "ppm-db.deleteConnection", commandArgs: [element.connectionId, element.name] },
+      ] : isGroup ? [] : undefined,
     };
+  }
+
+  /** Build root tree: group nodes wrapping connection nodes, or flat if no groups */
+  private async getRootNodes(): Promise<ConnectionNode[]> {
+    const connections = await this.getConnections();
+    // Group by group_name
+    const groups = new Map<string, ConnectionNode[]>();
+    for (const conn of connections) {
+      const key = conn.groupName ?? "__ungrouped__";
+      const list = groups.get(key) ?? [];
+      list.push(conn);
+      groups.set(key, list);
+    }
+    // If only one group (ungrouped), return connections flat
+    if (groups.size <= 1 && groups.has("__ungrouped__")) {
+      return connections;
+    }
+    // Build group nodes
+    const result: ConnectionNode[] = [];
+    const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
+      if (a === "__ungrouped__") return 1;
+      if (b === "__ungrouped__") return -1;
+      return a.localeCompare(b);
+    });
+    for (const key of sortedKeys) {
+      const label = key === "__ungrouped__" ? "Ungrouped" : key;
+      result.push({
+        id: `group:${key}`,
+        name: label,
+        type: "group",
+        children: groups.get(key) ?? [],
+      });
+    }
+    return result;
   }
 
   private async getConnections(): Promise<ConnectionNode[]> {
@@ -95,6 +151,8 @@ export class ConnectionTreeProvider {
         connectionId: c.id,
         connectionType: c.type,
         connectionColor: c.color,
+        connectionReadonly: c.readonly,
+        groupName: c.group_name,
       }));
     } catch {
       return [];
@@ -114,6 +172,7 @@ export class ConnectionTreeProvider {
         connectionName: conn.name,
         connectionType: conn.connectionType,
         schemaName: t.schema,
+        rowCount: t.rowCount,
       }));
     } catch {
       return [];

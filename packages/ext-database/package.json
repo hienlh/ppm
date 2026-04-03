@@ -9,7 +9,12 @@
       { "command": "ppm-db.openViewer", "title": "Database: Open Viewer" },
       { "command": "ppm-db.runQuery", "title": "Database: Run SQL Query" },
       { "command": "ppm-db.refreshConnections", "title": "Database: Refresh Connections", "icon": "refresh" },
-      { "command": "ppm-db.addConnection", "title": "Add connection", "icon": "plus" }
+      { "command": "ppm-db.addConnection", "title": "Add connection", "icon": "plus" },
+      { "command": "ppm-db.editConnection", "title": "Database: Edit Connection" },
+      { "command": "ppm-db.deleteConnection", "title": "Database: Delete Connection" },
+      { "command": "ppm-db.testConnection", "title": "Database: Test Connection" },
+      { "command": "ppm-db.exportConnections", "title": "Database: Export Connections" },
+      { "command": "ppm-db.importConnections", "title": "Database: Import Connections" }
     ],
     "views": {
       "sidebar": [
@@ -19,7 +24,9 @@
     "menus": {
       "commandPalette": [
         { "command": "ppm-db.openViewer" },
-        { "command": "ppm-db.runQuery" }
+        { "command": "ppm-db.runQuery" },
+        { "command": "ppm-db.exportConnections" },
+        { "command": "ppm-db.importConnections" }
       ],
       "view/title": [
         { "command": "ppm-db.refreshConnections", "when": "view == ppm-db.connections", "group": "navigation" },

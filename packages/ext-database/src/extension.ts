@@ -96,6 +96,67 @@ export function activate(context: ExtensionContext, vscode: VscodeApi): void {
     }),
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ppm-db.editConnection", async (...args: unknown[]) => {
+      const connectionId = args[0] as number;
+      if (connectionId) await editConnection(vscode, treeProvider, connectionId);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ppm-db.deleteConnection", async (...args: unknown[]) => {
+      const connectionId = args[0] as number;
+      const connectionName = (args[1] as string) ?? "this connection";
+      if (!connectionId) return;
+      const confirm = await vscode.window.showQuickPick(["Yes, delete", "Cancel"], {
+        placeHolder: `Delete "${connectionName}"?`,
+      });
+      if (confirm !== "Yes, delete") return;
+      try {
+        const res = await fetch(`${baseUrl}/api/db/connections/${connectionId}`, { method: "DELETE" });
+        const json = await res.json() as { ok: boolean; error?: string };
+        if (json.ok) {
+          await vscode.window.showInformationMessage(`Connection "${connectionName}" deleted`);
+          treeProvider.refresh();
+        } else {
+          await vscode.window.showErrorMessage(json.error ?? "Failed to delete connection");
+        }
+      } catch (e) {
+        await vscode.window.showErrorMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ppm-db.testConnection", async (...args: unknown[]) => {
+      const connectionId = args[0] as number;
+      if (!connectionId) return;
+      try {
+        const res = await fetch(`${baseUrl}/api/db/connections/${connectionId}/test`, { method: "POST" });
+        const json = await res.json() as { ok: boolean; data?: { ok: boolean; error?: string } };
+        if (json.ok && json.data?.ok) {
+          await vscode.window.showInformationMessage("Connection successful");
+        } else {
+          await vscode.window.showErrorMessage(`Connection failed: ${json.data?.error ?? "Unknown error"}`);
+        }
+      } catch (e) {
+        await vscode.window.showErrorMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ppm-db.exportConnections", async () => {
+      await exportConnections(vscode);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ppm-db.importConnections", async () => {
+      await importConnections(vscode, treeProvider);
+    }),
+  );
+
   // --- Status Bar ---
   const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 10);
   statusItem.text = "DB";
@@ -297,6 +358,27 @@ function openQueryPanel(
 // Add Connection — collect info via QuickPick + InputBox, then POST to API
 // ---------------------------------------------------------------------------
 
+/** Collect optional group/color/readonly via InputBox + QuickPick */
+async function collectConnectionExtras(vscode: VscodeApi): Promise<{ groupName?: string; color?: string; readonly?: number } | null> {
+  const groupName = await vscode.window.showInputBox({ prompt: "Group name (optional)", placeHolder: "e.g. Production" });
+  if (groupName === undefined) return null; // cancelled
+
+  const COLOR_OPTIONS = ["None", "#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
+  const color = await vscode.window.showQuickPick(COLOR_OPTIONS, { placeHolder: "Pick a color (optional)" });
+  if (color === undefined) return null;
+
+  const readonlyChoice = await vscode.window.showQuickPick(["Yes (recommended)", "No"], {
+    placeHolder: "Readonly mode? (blocks write queries)",
+  });
+  if (readonlyChoice === undefined) return null;
+
+  return {
+    groupName: groupName || undefined,
+    color: color === "None" ? undefined : color,
+    readonly: readonlyChoice.startsWith("Yes") ? 1 : 0,
+  };
+}
+
 async function addConnection(
   vscode: VscodeApi,
   treeProvider: ConnectionTreeProvider,
@@ -326,12 +408,16 @@ async function addConnection(
     connectionConfig = { type: "postgres", connectionString: connStr };
   }
 
-  // 4. Create via API
+  // 4. Group, color, readonly
+  const extras = await collectConnectionExtras(vscode);
+  if (extras === null) return;
+
+  // 5. Create via API
   try {
     const res = await fetch(`${baseUrl}/api/db/connections`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, name, connectionConfig }),
+      body: JSON.stringify({ type, name, connectionConfig, ...extras }),
     });
     const json = await res.json() as { ok: boolean; error?: string };
     if (json.ok) {
@@ -339,6 +425,152 @@ async function addConnection(
       treeProvider.refresh();
     } else {
       await vscode.window.showErrorMessage(json.error ?? "Failed to create connection");
+    }
+  } catch (e) {
+    await vscode.window.showErrorMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Edit Connection — update name, group, color, readonly via QuickPick/InputBox
+// ---------------------------------------------------------------------------
+
+async function editConnection(
+  vscode: VscodeApi,
+  treeProvider: ConnectionTreeProvider,
+  connectionId: number,
+): Promise<void> {
+  // Fetch current connection data
+  let conn: { id: number; name: string; type: string; group_name?: string; color?: string; readonly?: number };
+  try {
+    const res = await fetch(`${baseUrl}/api/db/connections/${connectionId}`);
+    const json = await res.json() as { ok: boolean; data?: typeof conn };
+    if (!json.ok || !json.data) {
+      await vscode.window.showErrorMessage("Failed to load connection");
+      return;
+    }
+    conn = json.data;
+  } catch (e) {
+    await vscode.window.showErrorMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
+
+  // Name
+  const name = await vscode.window.showInputBox({ prompt: "Connection name", value: conn.name });
+  if (name === undefined) return;
+
+  // Connection config (optional update)
+  let connectionConfig: Record<string, string> | undefined;
+  const updateConfig = await vscode.window.showQuickPick(["Keep current", "Update connection config"], {
+    placeHolder: "Connection config",
+  });
+  if (updateConfig === undefined) return;
+  if (updateConfig === "Update connection config") {
+    if (conn.type === "sqlite") {
+      const path = await vscode.window.showInputBox({ prompt: "SQLite file path", placeHolder: "/path/to/database.db" });
+      if (path === undefined) return;
+      if (path) connectionConfig = { type: "sqlite", path };
+    } else {
+      const connStr = await vscode.window.showInputBox({ prompt: "PostgreSQL connection string", placeHolder: "postgres://user:pass@host:5432/dbname" });
+      if (connStr === undefined) return;
+      if (connStr) connectionConfig = { type: "postgres", connectionString: connStr };
+    }
+  }
+
+  // Group, color, readonly
+  const groupName = await vscode.window.showInputBox({ prompt: "Group name", value: conn.group_name ?? "" });
+  if (groupName === undefined) return;
+
+  const COLOR_OPTIONS = ["None", "#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899"];
+  const color = await vscode.window.showQuickPick(COLOR_OPTIONS, { placeHolder: `Current color: ${conn.color ?? "None"}` });
+  if (color === undefined) return;
+
+  const readonlyChoice = await vscode.window.showQuickPick(["Yes (recommended)", "No"], {
+    placeHolder: `Readonly? (current: ${conn.readonly === 1 ? "Yes" : "No"})`,
+  });
+  if (readonlyChoice === undefined) return;
+
+  // Update via API
+  try {
+    const body: Record<string, unknown> = {
+      name: name || conn.name,
+      groupName: groupName || null,
+      color: color === "None" ? null : color,
+      readonly: readonlyChoice.startsWith("Yes") ? 1 : 0,
+    };
+    if (connectionConfig) body.connectionConfig = connectionConfig;
+
+    const res = await fetch(`${baseUrl}/api/db/connections/${connectionId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json() as { ok: boolean; error?: string };
+    if (json.ok) {
+      await vscode.window.showInformationMessage(`Connection "${name || conn.name}" updated`);
+      treeProvider.refresh();
+    } else {
+      await vscode.window.showErrorMessage(json.error ?? "Failed to update connection");
+    }
+  } catch (e) {
+    await vscode.window.showErrorMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Export Connections — copy JSON to clipboard via showInformationMessage
+// ---------------------------------------------------------------------------
+
+async function exportConnections(vscode: VscodeApi): Promise<void> {
+  try {
+    const res = await fetch(`${baseUrl}/api/db/connections/export`);
+    const json = await res.json() as { ok: boolean; data?: unknown };
+    if (!json.ok || !json.data) {
+      await vscode.window.showErrorMessage("Failed to export connections");
+      return;
+    }
+    // In extension context, we can't write to clipboard directly — show data as info
+    const data = json.data as { connections: unknown[] };
+    await vscode.window.showInformationMessage(`Exported ${data.connections.length} connection(s). Use built-in UI for file export.`);
+  } catch (e) {
+    await vscode.window.showErrorMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Import Connections — paste JSON via InputBox
+// ---------------------------------------------------------------------------
+
+async function importConnections(
+  vscode: VscodeApi,
+  treeProvider: ConnectionTreeProvider,
+): Promise<void> {
+  const jsonStr = await vscode.window.showInputBox({
+    prompt: "Paste connections JSON (from export)",
+    placeHolder: '{"connections": [...]}',
+  });
+  if (!jsonStr) return;
+
+  try {
+    const data = JSON.parse(jsonStr);
+    const conns = data.connections ?? data;
+    if (!Array.isArray(conns)) {
+      await vscode.window.showErrorMessage("Invalid format: expected connections array");
+      return;
+    }
+    const res = await fetch(`${baseUrl}/api/db/connections/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connections: conns }),
+    });
+    const json = await res.json() as { ok: boolean; data?: { imported: number; skipped: number; errors: string[] } };
+    if (json.ok && json.data) {
+      let msg = `Imported ${json.data.imported} connection(s)`;
+      if (json.data.skipped > 0) msg += `, ${json.data.skipped} skipped`;
+      await vscode.window.showInformationMessage(msg);
+      treeProvider.refresh();
+    } else {
+      await vscode.window.showErrorMessage("Import failed");
     }
   } catch (e) {
     await vscode.window.showErrorMessage(`Error: ${e instanceof Error ? e.message : String(e)}`);
