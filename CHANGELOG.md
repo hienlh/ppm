@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.6] - 2026-04-04
+
+### Fixed
+- **Touch device hover buttons**: Buttons hidden behind `hover:` are now always visible on iPad/touch devices using `@media (hover: hover)` detection instead of breakpoint-based hiding — fixes invisible action buttons across git panel, chat history, project list, session picker, tabs, and more (14 files)
+
 ## [0.9.5] - 2026-04-04
 
 ### Fixed
