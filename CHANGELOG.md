@@ -1,16 +1,41 @@
 # Changelog
 
-## [0.8.96] - 2026-04-03
+## [0.9.0] - 2026-04-03
 
-### Added
-- **Rate-limit auto-retry**: SDK automatically retries on rate_limit/server_error with exponential backoff (15s, 30s, 60s) up to 3 attempts
-- **Increased max turns**: Default maxTurns bumped from 100 to 1000 for longer agent sessions
+**"Open Platform"** — Multi-provider AI, MCP management, and extension architecture.
+
+### Added — Extension System
+- **Extension architecture (Phase 1-6)**: VSCode-compatible npm extensions with Bun Worker isolation, RPC protocol, state persistence, and contribution registry
+- **@ppm/vscode-compat API shim**: commands, window (showInformationMessage, showErrorMessage, showQuickPick, showInputBox, createTreeView, createWebviewPanel, createStatusBarItem), workspace, EventEmitter
+- **Extension UI components**: StatusBar items, TreeView with color dots/badges/actions, WebviewPanel (iframe sandbox), QuickPick/InputBox dialogs
+- **WS bridge**: Real-time extension↔browser communication for tree updates, command execution, webview messaging
+- **ext-database extension**: Database viewer with connection tree (color dots, PG/DB badges, action buttons), table viewer webview (data grid, inline editing, pagination, SQL panel), add connection flow
+- **Extension Manager UI**: Install/uninstall/enable/disable extensions in Settings, dev-link for local development
+- **CLI support**: `ppm ext install`, `ppm ext dev-link`, extension lifecycle management
+
+### Added — Multi-Provider AI
+- **Provider interface**: `AIProvider` with optional capabilities (`abortQuery?`, `getMessages?`, `listSessionsByDir?`)
+- **CliProvider base class**: Abstract base for CLI-spawning providers (Cursor, Codex, Gemini)
+- **Cursor CLI integration**: `CursorCliProvider` with NDJSON streaming, event mapping, history reader, workspace trust auto-retry
+- **Provider selector UI**: Choose provider when creating chat sessions
+
+### Added — MCP Management
+- **MCP server CRUD**: REST API, SQLite storage, Settings UI, add/edit/delete servers
+- **Auto-import**: Reads `~/.claude.json` on first access, skips existing/invalid entries
+- **SDK integration**: Servers passed as `mcpServers`, tools auto-allowed via `mcp__*` wildcard
+
+### Added — Other
+- **Rate-limit auto-retry**: SDK retries on rate_limit/server_error with exponential backoff (15s, 30s, 60s) up to 3 attempts
+- **Account rate-limit switching**: Auto-switch to next account on rate limit, skip 5hr-exhausted accounts
+- **Increased max turns**: Default maxTurns bumped from 100 to 1000
 
 ### Fixed
-- **Streaming auth loop**: SDK auth errors in streaming mode now breaks the loop, cooldowns the account, and tears down the session so the next message picks a different account
-- **Streaming session resource leak**: `finally` block now properly closes SDK subprocess and generator instead of just removing from map
-- **Session mapping on resume**: Preserve existing sdk_id mapping when resuming sessions to prevent orphaning JSONL conversation history
-- **Usage list expired accounts**: Exclude expired temporary accounts (no refresh token) from usage dashboard
+- **Streaming auth loop**: Auth errors break streaming loop, cooldown account, tear down session
+- **Streaming session resource leak**: `finally` block properly closes SDK subprocess and generator
+- **Session mapping on resume**: Preserve existing sdk_id mapping to prevent orphaning JSONL history
+- **Extension broadcast**: Contributions update broadcast on activate/deactivate
+- **Extension webview**: Open tab when extension creates a webview panel
+- **Extension auto-activate**: Auto-activate after dev-link install
 
 ## [0.8.94] - 2026-04-02
 

@@ -2,7 +2,22 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.8.87
+**Current Version:** v0.9.0
+
+---
+
+## [0.9.0] — 2026-04-03
+
+### Added
+- **Extension System (Phase 1-6)** — VSCode-compatible npm extensions with Bun Worker isolation, RPC protocol, @ppm/vscode-compat API shim, UI components (TreeView, WebviewPanel, StatusBar, QuickPick, InputBox), WS bridge, ext-database demo extension, Extension Manager UI, CLI support
+- **Multi-Provider AI** — ProviderInterface, CliProvider base, CursorCliProvider with NDJSON streaming, provider selector UI
+- **MCP Server Management** — REST API CRUD, SQLite storage, Settings UI, auto-import from ~/.claude.json, SDK integration
+- **ext-database extension** — Connection tree with color dots/badges/actions, table viewer webview with data grid/inline editing/pagination/SQL panel, add connection via QuickPick+InputBox flow
+
+### Technical Details
+- Extension architecture: npm packages isolated in Bun Workers, communicate via RPC, manifest-driven contribution points (commands, views, menus, configuration)
+- Multi-provider: Tier 1 (Claude Agent SDK, full agentic), Tier 2 (Cursor CLI, agentic via own tool system)
+- MCP: Servers passed to SDK as `mcpServers`, tools auto-allowed via `mcp__*` wildcard
 
 ---
 
