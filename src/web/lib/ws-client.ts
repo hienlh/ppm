@@ -12,9 +12,20 @@ export class WsClient {
   private intentionalClose = false;
   /** Messages queued while WS is still CONNECTING — flushed on open */
   private pendingMessages: (string | ArrayBuffer)[] = [];
+  private visibilityHandler: (() => void) | null = null;
 
   constructor(url: string) {
     this.url = url;
+    // Reconnect immediately when page becomes visible (e.g. iPad wake from sleep)
+    this.visibilityHandler = () => {
+      if (document.visibilityState === "visible" && !this.intentionalClose && this.ws?.readyState !== WebSocket.OPEN) {
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+        this.reconnectAttempts = 0;
+        this.connect();
+      }
+    };
+    document.addEventListener("visibilitychange", this.visibilityHandler);
   }
 
   connect(): void {
@@ -69,6 +80,10 @@ export class WsClient {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.visibilityHandler) {
+      document.removeEventListener("visibilitychange", this.visibilityHandler);
+      this.visibilityHandler = null;
     }
   }
 
