@@ -8,7 +8,8 @@
     "commands": [
       { "command": "ppm-db.openViewer", "title": "Database: Open Viewer" },
       { "command": "ppm-db.runQuery", "title": "Database: Run SQL Query" },
-      { "command": "ppm-db.refreshConnections", "title": "Database: Refresh Connections" }
+      { "command": "ppm-db.refreshConnections", "title": "Database: Refresh Connections", "icon": "refresh" },
+      { "command": "ppm-db.addConnection", "title": "Add connection", "icon": "plus" }
     ],
     "views": {
       "sidebar": [
@@ -19,6 +20,10 @@
       "commandPalette": [
         { "command": "ppm-db.openViewer" },
         { "command": "ppm-db.runQuery" }
+      ],
+      "view/title": [
+        { "command": "ppm-db.refreshConnections", "when": "view == ppm-db.connections", "group": "navigation" },
+        { "command": "ppm-db.addConnection", "when": "view == ppm-db.connections", "group": "navigation" }
       ]
     },
     "configuration": {

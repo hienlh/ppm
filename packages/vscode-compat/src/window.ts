@@ -16,6 +16,8 @@ export class WindowService {
   private _panelEmitters = new Map<string, EventEmitter<unknown>>();
   /** @internal Tree providers keyed by viewId — for tree expand/refresh */
   private _treeProviders = new Map<string, { provider: any }>();
+  /** @internal Cache original tree elements by ID so getChildren receives the real object */
+  private _treeElementCache = new Map<string, Map<string, unknown>>();
 
   constructor(rpc: RpcClient, extId: string) {
     this.rpc = rpc;
@@ -34,25 +36,43 @@ export class WindowService {
     const entry = this._treeProviders.get(viewId);
     if (!entry) return [];
     const provider = entry.provider;
-    // For root items, parentId is undefined
-    const children = await Promise.resolve(provider.getChildren(parentId));
+    // Resolve parentId → original cached element (or undefined for root)
+    let parentElement: unknown = undefined;
+    if (parentId) {
+      const cache = this._treeElementCache.get(viewId);
+      parentElement = cache?.get(parentId) ?? parentId;
+    }
+    const children = await Promise.resolve(provider.getChildren(parentElement));
     if (!children || !Array.isArray(children)) return [];
-    return this._serializeTreeItems(provider, children);
+    return this._serializeTreeItems(provider, children, viewId);
   }
 
   /** @internal Serialize tree elements into TreeItemMsg-compatible objects */
-  private async _serializeTreeItems(provider: any, elements: unknown[]): Promise<unknown[]> {
+  private async _serializeTreeItems(provider: any, elements: unknown[], viewId?: string): Promise<unknown[]> {
     const results: unknown[] = [];
+    // Ensure element cache exists for this view
+    if (viewId && !this._treeElementCache.has(viewId)) {
+      this._treeElementCache.set(viewId, new Map());
+    }
+    const cache = viewId ? this._treeElementCache.get(viewId)! : null;
+
     for (const el of elements) {
       const treeItem = provider.getTreeItem ? await Promise.resolve(provider.getTreeItem(el)) : el;
+      const id = treeItem.id ?? String(el);
+      // Cache the original element so getChildren receives the real object on expand
+      if (cache) cache.set(id, el);
       results.push({
-        id: treeItem.id ?? String(el),
+        id,
         label: treeItem.label ?? String(el),
         description: treeItem.description,
         tooltip: treeItem.tooltip,
         icon: treeItem.iconPath?.id ?? treeItem.iconPath ?? undefined,
         collapsibleState: treeItem.collapsibleState === 0 ? "none" : treeItem.collapsibleState === 2 ? "expanded" : treeItem.collapsibleState === 1 ? "collapsed" : (treeItem.collapsibleState ?? "none"),
         command: typeof treeItem.command === "string" ? treeItem.command : treeItem.command?.command,
+        commandArgs: treeItem.commandArgs ?? (typeof treeItem.command === "object" ? treeItem.command?.arguments : undefined),
+        color: treeItem.color,
+        badge: treeItem.badge,
+        actions: treeItem.actions,
         contextValue: treeItem.contextValue,
       });
     }
@@ -159,6 +179,7 @@ export class WindowService {
     return new Disposable(() => {
       if (changeUnsub) changeUnsub();
       this._treeProviders.delete(viewId);
+      this._treeElementCache.delete(viewId);
       rpc.request("window:tree:refresh", viewId);
     });
   }

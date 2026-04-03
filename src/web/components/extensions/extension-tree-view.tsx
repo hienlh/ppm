@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
-import { ChevronRight, ChevronDown } from "lucide-react";
-import { useExtensionStore, type TreeItemUI } from "@/stores/extension-store";
+import { useCallback, useState, useRef, useMemo } from "react";
+import { ChevronRight, ChevronDown, RefreshCw, Pencil, Trash2, Plus, Search } from "lucide-react";
+import { useExtensionStore, type TreeItemUI, type TreeItemAction } from "@/stores/extension-store";
 import { cn } from "@/lib/utils";
 
 interface ExtensionTreeViewProps {
@@ -16,85 +16,188 @@ function requestTreeExpand(viewId: string, itemId: string) {
 }
 
 /** Dispatch a command:execute request via the WS bridge */
-function executeCommand(command: string) {
+function executeCommand(command: string, args?: unknown[]) {
   window.dispatchEvent(new CustomEvent("ext:command:execute", {
-    detail: { command },
+    detail: { command, args },
   }));
 }
+
+const ACTION_ICONS: Record<string, React.ElementType> = {
+  refresh: RefreshCw,
+  edit: Pencil,
+  trash: Trash2,
+  plus: Plus,
+  search: Search,
+};
 
 /** Generic TreeView renderer for extension-contributed tree data */
 export function ExtensionTreeView({ viewId, className }: ExtensionTreeViewProps) {
   const items = useExtensionStore((s) => s.treeViews[viewId]) ?? [];
+  const contributions = useExtensionStore((s) => s.contributions);
 
-  if (items.length === 0) {
-    return (
-      <div className={cn("flex items-center justify-center p-4 text-xs text-text-subtle", className)}>
-        No items
-      </div>
-    );
-  }
+  // Find view name & header actions from contributions
+  const viewMeta = useMemo(() => {
+    if (!contributions) return { name: viewId, headerActions: [] };
+    // Find view name
+    let name = viewId;
+    const views = contributions.views;
+    if (views) {
+      for (const group of Object.values(views)) {
+        const found = group.find((v) => v.id === viewId);
+        if (found) { name = found.name; break; }
+      }
+    }
+    // Find header actions from menus.view/title
+    const headerActions: { command: string; title: string; icon?: string }[] = [];
+    const viewTitleMenus = contributions.menus?.["view/title"];
+    if (viewTitleMenus) {
+      for (const menu of viewTitleMenus) {
+        // Check "when" clause: view == viewId
+        if (menu.when) {
+          const match = menu.when.match(/view\s*==\s*(\S+)/);
+          if (match && match[1] !== viewId) continue;
+        }
+        // Find command title
+        const cmd = contributions.commands?.find((c) => c.command === menu.command);
+        if (cmd) headerActions.push({ command: cmd.command, title: cmd.title, icon: cmd.icon });
+      }
+    }
+    return { name, headerActions };
+  }, [contributions, viewId]);
 
   return (
-    <div className={cn("overflow-y-auto text-sm", className)} role="tree" aria-label={viewId}>
-      {items.map((item) => (
-        <TreeNode key={item.id} item={item} depth={0} viewId={viewId} />
-      ))}
+    <div className={cn("flex flex-col h-full", className)}>
+      {/* Header — matches built-in DatabaseSidebar header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
+        <span className="text-[10px] font-semibold text-text-subtle uppercase tracking-wider">
+          {viewMeta.name}
+        </span>
+        <div className="flex items-center gap-0.5">
+          {viewMeta.headerActions.map((action) => {
+            const iconName = action.icon ?? inferIcon(action.command);
+            const Icon = ACTION_ICONS[iconName] ?? RefreshCw;
+            return (
+              <button
+                key={action.command}
+                onClick={() => executeCommand(action.command)}
+                className="flex items-center justify-center size-5 rounded hover:bg-surface-elevated transition-colors text-text-subtle hover:text-foreground"
+                title={action.title}
+              >
+                <Icon className="size-3.5" />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Tree content */}
+      <div className="flex-1 overflow-y-auto min-h-0 py-1" role="tree" aria-label={viewId}>
+        {items.length === 0 ? (
+          <p className="px-4 py-6 text-xs text-text-subtle text-center">No items</p>
+        ) : (
+          items.map((item) => (
+            <TreeNode key={item.id} item={item} depth={0} viewId={viewId} />
+          ))
+        )}
+      </div>
     </div>
   );
 }
 
-function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; viewId: string }) {
-  const [expanded, setExpanded] = useState(item.collapsibleState === "expanded");
-  const hasChildren = item.collapsibleState !== "none";
+/** Infer icon name from command ID */
+function inferIcon(command: string): string {
+  if (command.includes("refresh")) return "refresh";
+  if (command.includes("add") || command.includes("create") || command.includes("new")) return "plus";
+  if (command.includes("delete") || command.includes("remove")) return "trash";
+  if (command.includes("edit") || command.includes("update")) return "edit";
+  if (command.includes("search") || command.includes("find")) return "search";
+  return "refresh";
+}
 
-  // Sync expanded state when store updates (e.g., after children arrive)
-  const storeExpanded = item.collapsibleState === "expanded";
-  if (storeExpanded && !expanded) setExpanded(true);
+function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; viewId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasChildren = item.collapsibleState !== "none";
+  const childrenLoaded = useRef(false);
+
+  // When children arrive from server, auto-expand once
+  if (item.children && item.children.length > 0 && !childrenLoaded.current) {
+    childrenLoaded.current = true;
+    if (!expanded) setExpanded(true);
+  }
+
+  const handleToggle = useCallback(() => {
+    if (!hasChildren) return;
+    const willExpand = !expanded;
+    setExpanded(willExpand);
+    if (willExpand && (!item.children || item.children.length === 0)) {
+      requestTreeExpand(viewId, item.id);
+    }
+  }, [hasChildren, expanded, item.id, item.children, viewId]);
 
   const handleClick = useCallback(() => {
-    if (hasChildren) {
-      const willExpand = !expanded;
-      setExpanded(willExpand);
-      // Request children from server when expanding and no children loaded yet
-      if (willExpand && (!item.children || item.children.length === 0)) {
-        requestTreeExpand(viewId, item.id);
-      }
-    }
+    handleToggle();
     if (item.command) {
-      executeCommand(item.command);
+      executeCommand(item.command, item.commandArgs);
     }
-  }, [hasChildren, expanded, item.command, item.id, item.children, viewId]);
+  }, [handleToggle, item.command, item.commandArgs]);
 
   const paddingLeft = 8 + depth * 16;
 
   return (
     <div role="treeitem" aria-expanded={hasChildren ? expanded : undefined}>
-      <button
-        className="flex items-center gap-1.5 w-full py-1 pr-2 text-left text-text-primary hover:bg-surface-elevated active:bg-surface-elevated transition-colors text-xs"
-        style={{ paddingLeft }}
-        onClick={handleClick}
-        title={item.tooltip}
+      <div
+        className={cn("group/node flex items-center gap-1 py-1 hover:bg-surface-elevated transition-colors")}
+        style={{ paddingLeft, paddingRight: 8 }}
       >
-        {/* Collapse/expand chevron */}
-        <span className="size-4 shrink-0 flex items-center justify-center">
+        {/* Expand chevron */}
+        <button
+          onClick={handleToggle}
+          className="shrink-0 text-text-subtle hover:text-foreground transition-colors"
+        >
           {hasChildren ? (
-            expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />
-          ) : null}
-        </span>
+            expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />
+          ) : (
+            <span className="size-3" />
+          )}
+        </button>
 
-        {/* Icon */}
-        {item.icon && (
-          <span className="size-4 shrink-0 flex items-center justify-center text-text-subtle">
-            {item.icon}
+        {/* Color dot */}
+        {item.color && (
+          <span
+            className="shrink-0 size-2 rounded-full border border-border"
+            style={{ backgroundColor: item.color }}
+          />
+        )}
+
+        {/* Label — click to toggle or execute command */}
+        <button
+          className="flex-1 text-left text-xs truncate hover:text-primary transition-colors"
+          onClick={handleClick}
+        >
+          {item.label}
+        </button>
+
+        {/* Description (column type info) */}
+        {item.description && (
+          <span className="shrink-0 ml-1 text-text-subtle text-[10px]">{item.description}</span>
+        )}
+
+        {/* Badge (PG/DB) */}
+        {item.badge && (
+          <span className="shrink-0 text-[9px] text-text-subtle uppercase px-1 rounded bg-surface-elevated">
+            {item.badge}
           </span>
         )}
 
-        {/* Label + description */}
-        <span className="truncate">{item.label}</span>
-        {item.description && (
-          <span className="ml-1 truncate text-text-subtle">{item.description}</span>
+        {/* Action buttons (visible on hover) */}
+        {item.actions && item.actions.length > 0 && (
+          <div className="hidden group-hover/node:flex items-center gap-0.5 shrink-0">
+            {item.actions.map((action) => (
+              <ActionButton key={action.command} action={action} />
+            ))}
+          </div>
         )}
-      </button>
+      </div>
 
       {/* Children */}
       {hasChildren && expanded && item.children && (
@@ -105,5 +208,33 @@ function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; vi
         </div>
       )}
     </div>
+  );
+}
+
+function ActionButton({ action }: { action: TreeItemAction }) {
+  const [spinning, setSpinning] = useState(false);
+  const Icon = ACTION_ICONS[action.icon] ?? RefreshCw;
+  const isTrash = action.icon === "trash";
+
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (action.icon === "refresh") {
+      setSpinning(true);
+      setTimeout(() => setSpinning(false), 1000);
+    }
+    executeCommand(action.command, action.commandArgs);
+  }, [action]);
+
+  return (
+    <button
+      onClick={handleClick}
+      className={cn(
+        "p-0.5 text-text-subtle transition-colors",
+        isTrash ? "hover:text-red-500" : "hover:text-foreground",
+      )}
+      title={action.tooltip}
+    >
+      <Icon className={cn("size-3", spinning && "animate-spin")} />
+    </button>
   );
 }

@@ -1,4 +1,4 @@
-import type { ExtensionContributes, ContributedCommand, ContributedView } from "../types/extension.ts";
+import type { ExtensionContributes, ContributedCommand, ContributedView, ContributedMenu } from "../types/extension.ts";
 
 /**
  * In-memory registry of all contribution points from enabled extensions.
@@ -8,6 +8,7 @@ class ContributionRegistry {
   private commands = new Map<string, ContributedCommand & { extId: string }>();
   private views = new Map<string, Map<string, ContributedView & { extId: string }>>();
   private configs = new Map<string, Record<string, unknown>>();
+  private menus = new Map<string, Array<ContributedMenu & { extId: string }>>();
 
   register(extId: string, contributes: ExtensionContributes): void {
     if (contributes.commands) {
@@ -27,18 +28,28 @@ class ContributionRegistry {
     if (contributes.configuration?.properties) {
       this.configs.set(extId, contributes.configuration.properties);
     }
+    if (contributes.menus) {
+      for (const [location, items] of Object.entries(contributes.menus)) {
+        if (!this.menus.has(location)) this.menus.set(location, []);
+        const list = this.menus.get(location)!;
+        for (const item of items) {
+          list.push({ ...item, extId });
+        }
+      }
+    }
   }
 
   unregister(extId: string): void {
-    // Remove commands belonging to this extension
     for (const [key, cmd] of this.commands) {
       if (cmd.extId === extId) this.commands.delete(key);
     }
-    // Remove views belonging to this extension
     for (const [, locationMap] of this.views) {
       for (const [key, view] of locationMap) {
         if (view.extId === extId) locationMap.delete(key);
       }
+    }
+    for (const [location, items] of this.menus) {
+      this.menus.set(location, items.filter((m) => m.extId !== extId));
     }
     this.configs.delete(extId);
   }
@@ -76,9 +87,14 @@ class ContributionRegistry {
     for (const location of this.views.keys()) {
       viewsByLocation[location] = this.getViews(location);
     }
+    const menusByLocation: Record<string, Array<ContributedMenu & { extId: string }>> = {};
+    for (const [location, items] of this.menus) {
+      menusByLocation[location] = items;
+    }
     return {
       commands: this.getCommands(),
       views: viewsByLocation,
+      menus: menusByLocation,
       configuration: this.getConfiguration(),
     };
   }
@@ -87,6 +103,7 @@ class ContributionRegistry {
     this.commands.clear();
     this.views.clear();
     this.configs.clear();
+    this.menus.clear();
   }
 }
 

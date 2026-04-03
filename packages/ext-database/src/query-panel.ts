@@ -81,17 +81,23 @@ export function getQueryPanelHtml(connectionName: string, tableName?: string): s
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (msg.type === 'queryResult') {
-      statusEl.textContent = msg.rows.length + ' row(s) returned in ' + msg.duration + 'ms';
-      if (msg.rows.length === 0) {
+      if (msg.changeType === 'modify') {
+        statusEl.textContent = (msg.rowsAffected ?? 0) + ' row(s) affected' + (msg.duration ? ' in ' + msg.duration + 'ms' : '');
+        resultsEl.innerHTML = '';
+        return;
+      }
+      const rows = msg.rows || [];
+      statusEl.textContent = rows.length + ' row(s) returned' + (msg.duration ? ' in ' + msg.duration + 'ms' : '');
+      if (rows.length === 0) {
         resultsEl.innerHTML = '<div class="empty">No results</div>';
         return;
       }
       function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-      const cols = Object.keys(msg.rows[0]);
+      const cols = msg.columns || Object.keys(rows[0]);
       let html = '<div class="results"><table><thead><tr>';
       cols.forEach(c => { html += '<th>' + esc(c) + '</th>'; });
       html += '</tr></thead><tbody>';
-      msg.rows.forEach(row => {
+      rows.forEach(row => {
         html += '<tr>';
         cols.forEach(c => {
           const v = row[c];

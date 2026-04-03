@@ -13,14 +13,25 @@ export interface StatusBarItemUI {
   extensionId?: string;
 }
 
+export interface TreeItemAction {
+  icon: "refresh" | "edit" | "trash" | "plus" | "search";
+  tooltip: string;
+  command: string;
+  commandArgs?: unknown[];
+}
+
 export interface TreeItemUI {
   id: string;
   label: string;
   description?: string;
   tooltip?: string;
   icon?: string;
+  color?: string;
+  badge?: string;
+  actions?: TreeItemAction[];
   collapsibleState: "none" | "collapsed" | "expanded";
   command?: string;
+  commandArgs?: unknown[];
   children?: TreeItemUI[];
   contextValue?: string;
 }

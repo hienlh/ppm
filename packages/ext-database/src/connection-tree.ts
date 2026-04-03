@@ -8,7 +8,9 @@ interface ConnectionNode {
   name: string;
   type: "connection" | "table" | "column";
   connectionId?: number;
+  connectionName?: string;
   connectionType?: string;
+  connectionColor?: string | null;
   schemaName?: string;
   dataType?: string;
 }
@@ -21,14 +23,17 @@ interface ApiConnection {
 }
 
 interface ApiTable {
-  table_name: string;
-  schema_name: string;
+  name: string;
+  schema: string;
+  rowCount: number;
 }
 
 interface ApiColumn {
-  column_name: string;
-  data_type: string;
-  is_nullable: string;
+  name: string;
+  type: string;
+  nullable: boolean;
+  pk: boolean;
+  defaultValue: string | null;
 }
 
 export class ConnectionTreeProvider {
@@ -55,21 +60,26 @@ export class ConnectionTreeProvider {
     return [];
   }
 
-  getTreeItem(element: ConnectionNode): {
-    id: string;
-    label: string;
-    description?: string;
-    collapsibleState: "none" | "collapsed" | "expanded";
-    command?: string;
-    contextValue?: string;
-  } {
+  getTreeItem(element: ConnectionNode): Record<string, unknown> {
+    const isConn = element.type === "connection";
+    const isTable = element.type === "table";
+    const isCol = element.type === "column";
+
     return {
       id: element.id,
       label: element.name,
-      description: element.type === "column" ? element.dataType : undefined,
-      collapsibleState: element.type === "column" ? "none" : "collapsed",
+      description: isCol ? element.dataType : undefined,
+      collapsibleState: isCol ? "none" : "collapsed",
       contextValue: element.type,
-      command: element.type === "table" ? "ppm-db.openViewer" : undefined,
+      command: isTable ? "ppm-db.openViewer" : undefined,
+      commandArgs: isTable
+        ? [element.connectionId, element.connectionName ?? "Database", element.name, element.schemaName ?? "public"]
+        : undefined,
+      color: isConn ? (element.connectionColor ?? undefined) : undefined,
+      badge: isConn ? (element.connectionType === "postgres" ? "PG" : "DB") : undefined,
+      actions: isConn ? [
+        { icon: "refresh", tooltip: "Refresh tables", command: "ppm-db.refreshConnection", commandArgs: [element.connectionId] },
+      ] : undefined,
     };
   }
 
@@ -84,6 +94,7 @@ export class ConnectionTreeProvider {
         type: "connection" as const,
         connectionId: c.id,
         connectionType: c.type,
+        connectionColor: c.color,
       }));
     } catch {
       return [];
@@ -96,12 +107,13 @@ export class ConnectionTreeProvider {
       const json = await res.json() as { ok: boolean; data?: ApiTable[] };
       if (!json.ok || !json.data) return [];
       return json.data.map((t) => ({
-        id: `table:${conn.connectionId}:${t.schema_name}.${t.table_name}`,
-        name: t.table_name,
+        id: `table:${conn.connectionId}:${t.schema}.${t.name}`,
+        name: t.name,
         type: "table" as const,
         connectionId: conn.connectionId,
+        connectionName: conn.name,
         connectionType: conn.connectionType,
-        schemaName: t.schema_name,
+        schemaName: t.schema,
       }));
     } catch {
       return [];
@@ -112,16 +124,16 @@ export class ConnectionTreeProvider {
     try {
       const schema = table.schemaName ?? "public";
       const res = await fetch(
-        `${this.baseUrl}/api/db/connections/${table.connectionId}/tables/${schema}.${table.name}/columns`,
+        `${this.baseUrl}/api/db/connections/${table.connectionId}/schema?table=${encodeURIComponent(table.name)}&schema=${schema}`,
       );
       const json = await res.json() as { ok: boolean; data?: ApiColumn[] };
       if (!json.ok || !json.data) return [];
       return json.data.map((c) => ({
-        id: `col:${table.connectionId}:${table.name}.${c.column_name}`,
-        name: c.column_name,
+        id: `col:${table.connectionId}:${table.name}.${c.name}`,
+        name: c.name,
         type: "column" as const,
         connectionId: table.connectionId,
-        dataType: c.data_type,
+        dataType: c.type + (c.pk ? " PK" : ""),
       }));
     } catch {
       return [];
