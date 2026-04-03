@@ -174,7 +174,14 @@ class ExtensionService {
   }
 
   async devLink(localPath: string): Promise<ExtensionManifest> {
-    return devLinkExtension(localPath, EXTENSIONS_DIR);
+    const manifest = devLinkExtension(localPath, EXTENSIONS_DIR);
+    // Auto-activate after dev-link (DB record is created with enabled=1)
+    if (!this.activatedIds.has(manifest.id)) {
+      try { await this.activate(manifest.id); } catch (e) {
+        console.error(`[ExtService] Auto-activate after dev-link failed:`, e);
+      }
+    }
+    return manifest;
   }
 
   async startup(): Promise<void> {
