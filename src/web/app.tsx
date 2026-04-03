@@ -34,6 +34,7 @@ import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overl
 import { StatusBar } from "@/components/layout/status-bar";
 import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
+import { useExtensionWs } from "@/hooks/use-extension-ws";
 import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
@@ -119,6 +120,9 @@ export function App() {
 
   // Auto-reload when server restarts (clears SW cache first)
   useServerReload();
+
+  // Extension WS bridge — connects to /ws/extensions for UI updates (only after auth)
+  useExtensionWs(authState === "authenticated");
 
   // Warn before closing browser tab (prevents accidental Ctrl+W)
   useEffect(() => {

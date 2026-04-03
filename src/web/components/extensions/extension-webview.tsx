@@ -17,25 +17,33 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Write HTML content into iframe via srcdoc
   const html = panel?.html ?? "";
 
-  // Listen for postMessage from iframe → forward to extension via WS (Phase 4)
+  // Listen for postMessage from iframe → forward to extension via WS bridge
   useEffect(() => {
     const handler = (event: MessageEvent) => {
-      // Only accept messages from our iframe
       if (iframeRef.current && event.source === iframeRef.current.contentWindow) {
-        console.log("[Webview] message from iframe:", event.data);
-        // Phase 4: forward to WS bridge → extension host
+        // Forward to server via custom event → picked up by useExtensionWs
+        window.dispatchEvent(new CustomEvent("ext:webview:send", {
+          detail: { panelId, message: event.data },
+        }));
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, []);
+  }, [panelId]);
 
-  // Phase 4: expose via WS bridge for extension→webview messaging
+  // Listen for server→webview messages (dispatched by useExtensionWs)
   // targetOrigin "*" is safe here because sandbox omits allow-same-origin,
   // so iframe origin is opaque "null". MUST restrict if allow-same-origin is ever added.
-  const postMessageToWebview = useCallback((message: unknown) => {
-    iframeRef.current?.contentWindow?.postMessage(message, "*");
-  }, []);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { panelId: targetId, message } = (e as CustomEvent).detail;
+      if (targetId === panelId) {
+        iframeRef.current?.contentWindow?.postMessage(message, "*");
+      }
+    };
+    window.addEventListener("ext:webview:message", handler);
+    return () => window.removeEventListener("ext:webview:message", handler);
+  }, [panelId]);
 
   if (!panel) {
     return (

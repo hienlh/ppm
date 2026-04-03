@@ -19,6 +19,7 @@ import { browserPreviewRoutes } from "./routes/browser-preview.ts";
 import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
+import { extensionWebSocket } from "./ws/extensions.ts";
 import { ok, err } from "../types/api.ts";
 
 /** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
@@ -399,6 +400,12 @@ if (process.argv.includes("__serve__")) {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
+      if (url.pathname === "/ws/extensions") {
+        const upgraded = server.upgrade(req, { data: { type: "extensions" } });
+        if (upgraded) return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
       if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
         const projectName = parts[3] ?? "";
@@ -431,14 +438,17 @@ if (process.argv.includes("__serve__")) {
       perMessageDeflate: false,
       open(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.open(ws);
+        else if (ws.data?.type === "extensions") extensionWebSocket.open(ws);
         else terminalWebSocket.open(ws);
       },
       message(ws: any, msg: any) {
         if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
+        else if (ws.data?.type === "extensions") extensionWebSocket.message(ws, msg);
         else terminalWebSocket.message(ws, msg);
       },
       close(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.close(ws);
+        else if (ws.data?.type === "extensions") extensionWebSocket.close(ws);
         else terminalWebSocket.close(ws);
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,

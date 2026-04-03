@@ -1,9 +1,16 @@
 /**
  * Main-side RPC handlers for vscode-compat API calls from the Worker.
  * Each handler runs in the main process, accessing PPM services directly.
+ * UI-facing calls are forwarded to browser clients via the WS bridge.
  */
 import type { RpcChannel } from "./extension-rpc.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
+import { broadcastExtMsg, requestFromBrowser } from "../server/ws/extensions.ts";
+
+let requestIdCounter = 0;
+function nextRequestId(): string {
+  return `req_${++requestIdCounter}_${Date.now()}`;
+}
 
 /** Register all vscode-compat RPC handlers on the given RPC channel */
 export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
@@ -23,25 +30,99 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     return contributionRegistry.getCommands().map((c) => c.command);
   });
 
-  // --- window messages (forwarded to WS clients in Phase 4) ---
+  // --- window messages (forwarded to browser via WS bridge) ---
   rpc.onRequest("window:showMessage", async (params) => {
     const [level, message, items] = params as [string, string, string[]];
-    // Phase 4 will forward to browser via WS. For now, log + return first item.
     console.log(`[Ext:${level}] ${message}`);
-    return items.length > 0 ? items[0] : undefined;
+    if (items.length > 0) {
+      const requestId = nextRequestId();
+      const action = await requestFromBrowser<string | null>(
+        { type: "notification", id: requestId, level: level as "info" | "warn" | "error", message, actions: items },
+        requestId,
+      );
+      return action ?? undefined;
+    }
+    // No action items — just broadcast notification
+    broadcastExtMsg({ type: "notification", id: nextRequestId(), level: level as "info" | "warn" | "error", message });
+    return undefined;
   });
 
   rpc.onRequest("window:showQuickPick", async (params) => {
-    const [items, _options] = params as [unknown[], unknown];
-    // Phase 4: send to browser, wait for user selection
-    console.log("[Ext:quickPick] items:", Array.isArray(items) ? items.length : 0);
-    return undefined; // No UI yet
+    const [items, options] = params as [unknown[], unknown];
+    const requestId = nextRequestId();
+    const selected = await requestFromBrowser<unknown[] | null>(
+      {
+        type: "quickpick:show", requestId,
+        items: items as { label: string; description?: string; detail?: string; picked?: boolean }[],
+        options: (options ?? {}) as { placeholder?: string; canPickMany?: boolean },
+      },
+      requestId,
+    );
+    return selected;
   });
 
   rpc.onRequest("window:showInputBox", async (params) => {
-    const [_options] = params as [unknown];
-    console.log("[Ext:inputBox] requested");
-    return undefined; // No UI yet
+    const [options] = params as [unknown];
+    const requestId = nextRequestId();
+    const value = await requestFromBrowser<string | null>(
+      {
+        type: "inputbox:show", requestId,
+        options: (options ?? {}) as { prompt?: string; value?: string; placeholder?: string; password?: boolean },
+      },
+      requestId,
+    );
+    return value;
+  });
+
+  // --- status bar (forwarded to browser via WS bridge) ---
+  rpc.onRequest("window:statusbar:update", async (params) => {
+    const [item] = params as [{ id: string; text: string; tooltip?: string; command?: string; alignment: "left" | "right"; priority: number; extensionId?: string }];
+    broadcastExtMsg({ type: "statusbar:update", item });
+    return { ok: true };
+  });
+
+  rpc.onRequest("window:statusbar:remove", async (params) => {
+    const [itemId] = params as [string];
+    broadcastExtMsg({ type: "statusbar:remove", itemId });
+    return { ok: true };
+  });
+
+  // --- webview panels (forwarded to browser via WS bridge) ---
+  rpc.onRequest("window:webview:create", async (params) => {
+    const [panelId, extensionId, viewType, title] = params as [string, string, string, string];
+    broadcastExtMsg({ type: "webview:create", panelId, extensionId, viewType, title });
+    return { ok: true };
+  });
+
+  rpc.onRequest("window:webview:html", async (params) => {
+    const [panelId, html] = params as [string, string];
+    broadcastExtMsg({ type: "webview:html", panelId, html });
+    return { ok: true };
+  });
+
+  rpc.onRequest("window:webview:dispose", async (params) => {
+    const [panelId] = params as [string];
+    broadcastExtMsg({ type: "webview:dispose", panelId });
+    return { ok: true };
+  });
+
+  rpc.onRequest("window:webview:postMessage", async (params) => {
+    const [panelId, message] = params as [string, unknown];
+    broadcastExtMsg({ type: "webview:postMessage", panelId, message });
+    return { ok: true };
+  });
+
+  // --- tree views (forwarded to browser via WS bridge) ---
+  rpc.onRequest("window:tree:update", async (params) => {
+    const [viewId, items] = params as [string, unknown[]];
+    broadcastExtMsg({ type: "tree:update", viewId, items: items as any });
+    return { ok: true };
+  });
+
+  rpc.onRequest("window:tree:refresh", async (params) => {
+    const [viewId] = params as [string];
+    broadcastExtMsg({ type: "tree:refresh", viewId });
+    return { ok: true };
   });
 
   // --- workspace config ---

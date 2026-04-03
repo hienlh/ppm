@@ -23,7 +23,7 @@ export class WindowService {
   }
 
   async showWarningMessage(message: string, ...items: string[]): Promise<string | undefined> {
-    return this.rpc.request<string | undefined>("window:showMessage", "warning", message, items);
+    return this.rpc.request<string | undefined>("window:showMessage", "warn", message, items);
   }
 
   async showErrorMessage(message: string, ...items: string[]): Promise<string | undefined> {
@@ -50,6 +50,7 @@ export class WindowService {
   createStatusBarItem(alignment?: StatusBarAlignment, priority?: number): StatusBarItem {
     const id = `${this.extId}-sb-${Date.now()}`;
     const rpc = this.rpc;
+    const extId = this.extId;
     const item: StatusBarItem = {
       alignment: (alignment as StatusBarAlignment) ?? SBAlign.Left,
       priority,
@@ -57,9 +58,15 @@ export class WindowService {
       tooltip: undefined,
       color: undefined,
       command: undefined,
-      show() { rpc.notify("window:statusBar:update", { id, ...serializeItem(item), visible: true }); },
-      hide() { rpc.notify("window:statusBar:update", { id, visible: false }); },
-      dispose() { rpc.notify("window:statusBar:dispose", { id }); },
+      show() {
+        rpc.request("window:statusbar:update", {
+          id, text: item.text, tooltip: item.tooltip, command: item.command as string | undefined,
+          alignment: item.alignment === SBAlign.Left ? "left" : "right",
+          priority: item.priority ?? 0, extensionId: extId,
+        });
+      },
+      hide() { rpc.request("window:statusbar:remove", id); },
+      dispose() { rpc.request("window:statusbar:remove", id); },
     };
     return item;
   }
@@ -85,32 +92,60 @@ export class WindowService {
     };
   }
 
-  // --- Tree View (registration only — rendering in Phase 3) ---
+  // --- Tree View ---
 
   createTreeView(viewId: string, options: { treeDataProvider: unknown }): Disposable {
-    this.rpc.notify("window:tree:register", { extId: this.extId, viewId });
+    const rpc = this.rpc;
+    // Initial tree data push — if provider has getChildren
+    const provider = options.treeDataProvider as { getChildren?: (el?: unknown) => unknown[] | Promise<unknown[]> };
+    if (provider.getChildren) {
+      Promise.resolve(provider.getChildren()).then((items) => {
+        rpc.request("window:tree:update", viewId, items);
+      }).catch(() => {});
+    }
     return new Disposable(() => {
-      this.rpc.notify("window:tree:unregister", { viewId });
+      rpc.request("window:tree:refresh", viewId);
     });
   }
 
-  // --- Webview Panel (stub — full impl in Phase 3) ---
+  // --- Webview Panel ---
 
   createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn): unknown {
-    this.rpc.notify("window:webview:create", { extId: this.extId, viewType, title, showOptions });
-    // Full WebviewPanel implementation in Phase 3 (UI gaps)
+    const panelId = `${this.extId}-wv-${Date.now()}`;
+    const rpc = this.rpc;
+    const extId = this.extId;
+    rpc.request("window:webview:create", panelId, extId, viewType, title);
+
     const onDidDispose = new EventEmitter<void>();
+    const onDidReceiveMessage = new EventEmitter<unknown>();
+
+    let currentHtml = "";
+    const webview = {
+      get html() { return currentHtml; },
+      set html(value: string) {
+        currentHtml = value;
+        rpc.request("window:webview:html", panelId, value);
+      },
+      options: {},
+      async postMessage(message: unknown): Promise<boolean> {
+        await rpc.request("window:webview:postMessage", panelId, message);
+        return true;
+      },
+      onDidReceiveMessage: onDidReceiveMessage.event,
+      asWebviewUri: (uri: unknown) => uri,
+    };
+
     return {
-      viewType, title,
-      webview: { html: "", options: {}, postMessage: async () => false, onDidReceiveMessage: new EventEmitter<unknown>().event, asWebviewUri: (uri: unknown) => uri },
+      viewType, title, webview,
       onDidDispose: onDidDispose.event,
       onDidChangeViewState: new EventEmitter().event,
       reveal() {},
-      dispose() { onDidDispose.fire(); onDidDispose.dispose(); },
+      dispose() {
+        rpc.request("window:webview:dispose", panelId);
+        onDidDispose.fire();
+        onDidDispose.dispose();
+        onDidReceiveMessage.dispose();
+      },
     };
   }
-}
-
-function serializeItem(item: StatusBarItem) {
-  return { text: item.text, tooltip: item.tooltip, color: item.color, command: item.command, alignment: item.alignment, priority: item.priority };
 }
