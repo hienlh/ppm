@@ -1383,10 +1383,10 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
     textContent = extractText(message);
   }
 
-  // SDK-generated user messages (containing tool_result) carry system text
-  // like <task-notification> XML — not actual user input. Clear it so it
-  // doesn't render as a user bubble. Real user messages never have tool_result blocks.
-  if (role === "user" && events.some((e) => e.type === "tool_result")) {
+  // SDK-generated user messages carry system text (tool_result blocks,
+  // <teammate-message> XML, <task-notification> XML) — not actual user input.
+  // Clear so they don't render as user bubbles.
+  if (role === "user" && (events.some((e) => e.type === "tool_result") || textContent.includes("<teammate-message"))) {
     textContent = "";
   }
 
