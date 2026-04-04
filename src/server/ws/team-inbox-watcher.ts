@@ -168,14 +168,30 @@ function inferMemberStatus(messages: unknown[], agentName: string): string {
   return "active";
 }
 
-/** Extract team name from TeamCreate tool_result output */
+/** Extract team name from TeamCreate tool_result output.
+ *  Output may be plain JSON, or a content-block array like:
+ *  [{"type":"text","text":"{ \"team_name\": \"foo\" }"}] */
 export function extractTeamName(output: string): string | null {
   try {
     const parsed = JSON.parse(output);
-    return parsed?.team_name ?? parsed?.name ?? null;
-  } catch {
-    // Try regex: look for team_name in text
-    const match = output.match(/"team_name"\s*:\s*"([^"]+)"/);
-    return match?.[1] ?? null;
-  }
+    // Direct JSON object: { team_name: "foo" }
+    if (parsed && !Array.isArray(parsed)) {
+      return parsed.team_name ?? parsed.name ?? null;
+    }
+    // Content-block array: [{"type":"text","text":"..."}]
+    if (Array.isArray(parsed)) {
+      for (const block of parsed) {
+        if (block?.type === "text" && typeof block.text === "string") {
+          try {
+            const inner = JSON.parse(block.text);
+            if (inner?.team_name) return inner.team_name;
+            if (inner?.name) return inner.name;
+          } catch { /* not JSON, try next block */ }
+        }
+      }
+    }
+  } catch { /* not valid JSON at all */ }
+  // Fallback regex
+  const match = output.match(/"team_name"\s*:\s*"([^"]+)"/);
+  return match?.[1] ?? null;
 }
