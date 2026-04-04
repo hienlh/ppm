@@ -350,7 +350,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         <ChatHistoryBar
           projectName={projectName}
           usageInfo={usageInfo}
-          contextWindowPct={contextWindowPct}
           compactStatus={compactStatus}
           usageLoading={usageLoading}
           refreshUsage={refreshUsage}

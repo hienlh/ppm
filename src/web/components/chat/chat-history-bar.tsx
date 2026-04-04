@@ -15,7 +15,6 @@ type PanelType = "history" | "config" | "usage" | null;
 interface ChatHistoryBarProps {
   projectName: string;
   usageInfo: UsageInfo;
-  contextWindowPct?: number | null;
   compactStatus?: "compacting" | null;
   usageLoading?: boolean;
   refreshUsage?: () => void;
@@ -80,7 +79,7 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
 }
 
 export function ChatHistoryBar({
-  projectName, usageInfo, contextWindowPct, compactStatus, usageLoading, refreshUsage, lastFetchedAt,
+  projectName, usageInfo, compactStatus, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, providerId, onSelectSession, onBugReport, isConnected, onReconnect,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
@@ -210,24 +209,29 @@ export function ChatHistoryBar({
           <span>History</span>
         </button>
 
-        {/* Active provider indicator */}
-        {sessionId && providerId && providerId !== "mock" && (
-          <span className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] text-text-secondary">
+        {/* Active provider + AI Settings (combined) */}
+        {sessionId && providerId && providerId !== "mock" ? (
+          <button
+            onClick={() => togglePanel("config")}
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
+              activePanel === "config" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
+            }`}
+            title="AI Settings"
+          >
             <ProviderBadge providerId={providerId} />
             <span className="capitalize">{providerId}</span>
-          </span>
+          </button>
+        ) : (
+          <button
+            onClick={() => togglePanel("config")}
+            className={`p-1 rounded transition-colors ${
+              activePanel === "config" ? "text-primary bg-primary/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"
+            }`}
+            title="AI Settings"
+          >
+            <Settings2 className="size-3" />
+          </button>
         )}
-
-        {/* Config */}
-        <button
-          onClick={() => togglePanel("config")}
-          className={`p-1 rounded transition-colors ${
-            activePanel === "config" ? "text-primary bg-primary/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"
-          }`}
-          title="AI Settings"
-        >
-          <Settings2 className="size-3" />
-        </button>
 
         {/* Usage & Accounts — full display for Claude, minimal for other providers */}
         {isClaudeProvider ? (
@@ -245,12 +249,6 @@ export function ChatHistoryBar({
             <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
             <span className="text-text-subtle">·</span>
             <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
-            {contextWindowPct != null && (
-              <>
-                <span className="text-text-subtle">·</span>
-                <span className={pctColor(contextWindowPct)}>Ctx:{contextWindowPct}%</span>
-              </>
-            )}
             {compactStatus === "compacting" && (
               <>
                 <span className="text-text-subtle">·</span>
@@ -259,19 +257,11 @@ export function ChatHistoryBar({
             )}
           </button>
         ) : (
-          <>
-            {contextWindowPct != null && (
-              <span className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${pctColor(contextWindowPct)}`}>
-                <Activity className="size-3" />
-                <span>Ctx:{contextWindowPct}%</span>
-              </span>
-            )}
-            {compactStatus === "compacting" && (
-              <span className="text-[11px] px-1.5 py-0.5 text-blue-400 animate-pulse">
-                compacting...
-              </span>
-            )}
-          </>
+          compactStatus === "compacting" ? (
+            <span className="text-[11px] px-1.5 py-0.5 text-blue-400 animate-pulse">
+              compacting...
+            </span>
+          ) : null
         )}
 
         {/* Spacer */}

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.8] - 2026-04-04
+
+### Fixed
+- **Fullscreen usage overlay**: Account cards now fill entire viewport as a no-scroll grid overlay instead of just expanding height with scroll
+- **Provider + Settings button merged**: Combined provider badge and AI Settings into a single clickable button in chat toolbar
+
+### Removed
+- Unused `contextWindowPct` display from chat toolbar (was already non-functional)
+
 ## [0.9.7] - 2026-04-04
 
 ### Added

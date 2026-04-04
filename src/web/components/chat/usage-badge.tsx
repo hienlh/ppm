@@ -153,7 +153,7 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${days}d ago`;
 }
 
-function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, onExport, onViewProfile, flash }: {
+function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, onExport, onViewProfile, flash, fullscreen }: {
   entry: AccountUsageEntry;
   isActive: boolean;
   accountInfo?: AccountInfo;
@@ -162,6 +162,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
   onExport?: (id: string) => void;
   onViewProfile?: (profile: OAuthProfileData) => void;
   flash?: boolean;
+  fullscreen?: boolean;
 }) {
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
@@ -170,7 +171,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
   const isExpired = !!(accountInfo && !accountInfo.hasRefreshToken && accountInfo.expiresAt && accountInfo.expiresAt < Math.floor(Date.now() / 1000));
 
   return (
-    <div className={`rounded-md border p-2 space-y-1.5 transition-colors duration-500 min-w-[200px] shrink-0 snap-start ${isExpired ? "opacity-50" : ""} ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
+    <div className={`rounded-md border p-2 transition-colors duration-500 ${fullscreen ? "flex flex-col gap-1.5 overflow-hidden" : "space-y-1.5 min-w-[200px] shrink-0 snap-start"} ${isExpired ? "opacity-50" : ""} ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
       <div className="flex items-center gap-1.5">
         <span className="text-xs font-medium truncate flex-1 min-w-0">
           {entry.accountLabel ?? entry.accountId.slice(0, 8)}
@@ -221,7 +222,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
         </div>
       </div>
       {hasBuckets ? (
-        <div className="space-y-1.5">
+        <div className={fullscreen ? "flex-1 flex flex-col justify-evenly min-h-0" : "space-y-1.5"}>
           <BucketRow label="5-Hour Session" bucket={usage.session} />
           <BucketRow label="Weekly" bucket={usage.weekly} />
           <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
@@ -337,6 +338,11 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
   const hasMultipleAccounts = allUsages.length > 0;
 
+  // Grid dimensions for fullscreen: cards fill viewport without scroll
+  const fsCount = allUsages.length || 1;
+  const fsCols = Math.ceil(Math.sqrt(fsCount));
+  const fsRows = Math.ceil(fsCount / fsCols);
+
   async function handleToggle(id: string, status: string) {
     await patchAccount(id, { status: status === "disabled" ? "active" : "disabled" });
     loadAll();
@@ -362,8 +368,8 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   }
 
   return (
-    <div className={`relative border-b border-border bg-surface px-3 py-2.5 space-y-2.5 ${isFullscreen ? "fixed inset-0 z-50 max-h-none overflow-y-auto" : "max-h-[350px] overflow-y-auto"}`}>
-      <div className="flex items-center justify-between">
+    <div className={`relative border-b border-border bg-surface px-3 py-2.5 ${isFullscreen ? "fixed inset-0 z-50 flex flex-col gap-2.5 overflow-hidden" : "space-y-2.5 max-h-[350px] overflow-y-auto"}`}>
+      <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary">Usage & Accounts</span>
           {lastFetchedAt && (
@@ -413,10 +419,16 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       )}
 
       {(hasMultipleAccounts || initialLoading) ? (
-        <div className={isFullscreen
-          ? "grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-2"
-          : "flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 snap-x snap-mandatory scrollbar-thin"
-        }>
+        <div
+          className={isFullscreen
+            ? "flex-1 min-h-0 grid gap-2 overflow-hidden"
+            : "flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 snap-x snap-mandatory scrollbar-thin"
+          }
+          style={isFullscreen ? {
+            gridTemplateColumns: `repeat(${fsCols}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${fsRows}, minmax(0, 1fr))`,
+          } : undefined}
+        >
           {initialLoading ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
           ) : (
@@ -431,6 +443,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
                 onExport={(id) => { setExportPreselect(id); setShowExportDialog(true); }}
                 onViewProfile={setProfileView}
                 flash={flashIds.has(entry.accountId)}
+                fullscreen={isFullscreen}
               />
             ))
           )}
@@ -492,7 +505,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       )}
 
       {/* Action buttons */}
-      <div className="border-t border-border pt-2 flex gap-1.5">
+      <div className="border-t border-border pt-2 flex gap-1.5 shrink-0">
         <button onClick={() => setShowAddDialog(true)} className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer">
           <Plus className="size-3" /> Add
         </button>
