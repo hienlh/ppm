@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { TAB_DRAG_TYPE, useIsDraggingTab, clearDragging, type DragPayload } from "@/hooks/use-tab-drag";
+import { useTouchDropZone } from "@/hooks/use-touch-tab-drag";
 import { usePanelStore } from "@/stores/panel-store";
 import { findPanelPosition, maxColumns, MAX_ROWS } from "@/stores/panel-utils";
 
@@ -12,6 +13,10 @@ interface SplitDropOverlayProps {
 export function SplitDropOverlay({ panelId }: SplitDropOverlayProps) {
   const [active, setActive] = useState<DropZone>(null);
   const isDragging = useIsDraggingTab();
+  const touchZone = useTouchDropZone();
+  const touchActive = touchZone?.panelId === panelId ? touchZone.zone : null;
+  // Touch zone takes precedence over HTML5 DnD zone
+  const displayZone = touchActive ?? active;
 
   const grid = usePanelStore((s) => s.grid);
   const isMobile = usePanelStore((s) => s.isMobile());
@@ -91,19 +96,19 @@ export function SplitDropOverlay({ panelId }: SplitDropOverlayProps) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {active === "left" && (
+      {displayZone === "left" && (
         <div className="absolute inset-y-0 left-0 w-1/3 bg-primary/10 border-2 border-primary/30 rounded-l-md" />
       )}
-      {active === "right" && (
+      {displayZone === "right" && (
         <div className="absolute inset-y-0 right-0 w-1/3 bg-primary/10 border-2 border-primary/30 rounded-r-md" />
       )}
-      {active === "top" && (
+      {displayZone === "top" && (
         <div className="absolute inset-x-0 top-0 h-1/3 bg-primary/10 border-2 border-primary/30 rounded-t-md" />
       )}
-      {active === "bottom" && (
+      {displayZone === "bottom" && (
         <div className="absolute inset-x-0 bottom-0 h-1/3 bg-primary/10 border-2 border-primary/30 rounded-b-md" />
       )}
-      {active === "center" && (
+      {displayZone === "center" && (
         <div className="absolute inset-0 bg-primary/5 border-2 border-dashed border-primary/30 rounded-md" />
       )}
     </div>

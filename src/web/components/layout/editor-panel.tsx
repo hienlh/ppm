@@ -55,7 +55,7 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
     >
       <TabBar panelId={panelId} />
 
-      <div className="flex-1 overflow-hidden relative">
+      <div className="flex-1 overflow-hidden relative" data-panel-drop-zone={panelId}>
         {panel.tabs.length === 0 ? (
           <EmptyPanel panelId={panelId} />
         ) : (

@@ -14,7 +14,7 @@ export interface DragPayload {
 let _dragging = false;
 const _listeners = new Set<() => void>();
 
-function setDragging(v: boolean) {
+export function setDragging(v: boolean) {
   if (_dragging === v) return;
   _dragging = v;
   _listeners.forEach((fn) => fn());

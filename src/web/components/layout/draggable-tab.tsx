@@ -17,6 +17,9 @@ interface DraggableTabProps {
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragEnd: () => void;
+  onTouchStart?: (e: React.TouchEvent) => void;
+  onTouchMove?: (e: React.TouchEvent) => void;
+  onTouchEnd?: (e: React.TouchEvent) => void;
   tabRef: (el: HTMLButtonElement | null) => void;
   /** If provided, double-clicking the title enters inline rename mode */
   onRename?: (newTitle: string) => void;
@@ -24,7 +27,7 @@ interface DraggableTabProps {
 
 export function DraggableTab({
   tab, isActive, icon: Icon, showDropBefore, notificationType, onSelect, onClose,
-  onDragStart, onDragOver, onDragEnd, tabRef, onRename,
+  onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd, tabRef, onRename,
 }: DraggableTabProps) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(tab.title);
@@ -67,6 +70,9 @@ export function DraggableTab({
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
         style={colorStyle}
         className={cn(
           "group flex items-center gap-1 px-3 h-10 whitespace-nowrap text-xs transition-colors",

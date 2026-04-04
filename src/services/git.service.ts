@@ -1,3 +1,4 @@
+import path from "node:path";
 import simpleGit, { type SimpleGit } from "simple-git";
 import type {
   GitStatus,
@@ -5,6 +6,7 @@ import type {
   GitCommit,
   GitBranch,
   GitGraphData,
+  GitWorktree,
 } from "../types/git.ts";
 
 class GitService {
@@ -396,6 +398,103 @@ class GitService {
     } catch {
       return null;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Worktree operations
+  // ---------------------------------------------------------------------------
+
+  /** Parse `git worktree list --porcelain -v` output into GitWorktree[]. */
+  async listWorktrees(projectPath: string): Promise<GitWorktree[]> {
+    const git = this.git(projectPath);
+    const raw = await git.raw(["worktree", "list", "--porcelain", "-v"]);
+    const worktrees: GitWorktree[] = [];
+    // Blocks are separated by blank lines
+    const blocks = raw.trim().split(/\n\n+/);
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i]!;
+      const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+      if (!lines.length) continue;
+      const wt: GitWorktree = {
+        path: "",
+        branch: "",
+        head: "",
+        isMain: i === 0,
+        isBare: false,
+        isDetached: false,
+        locked: false,
+        prunable: false,
+      };
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          wt.path = line.slice("worktree ".length);
+        } else if (line.startsWith("HEAD ")) {
+          wt.head = line.slice("HEAD ".length);
+        } else if (line.startsWith("branch ")) {
+          // refs/heads/main → main
+          const ref = line.slice("branch ".length);
+          wt.branch = ref.replace(/^refs\/heads\//, "");
+        } else if (line === "bare") {
+          wt.isBare = true;
+        } else if (line === "detached") {
+          wt.isDetached = true;
+        } else if (line.startsWith("locked")) {
+          wt.locked = true;
+          const reason = line.slice("locked".length).trim();
+          if (reason) wt.lockReason = reason;
+        } else if (line.startsWith("prunable")) {
+          wt.prunable = true;
+        }
+      }
+      if (wt.path) worktrees.push(wt);
+    }
+    return worktrees;
+  }
+
+  /**
+   * Validate that targetPath is safe: must be under the parent directory of
+   * projectPath and must not contain path traversal sequences.
+   */
+  private validateWorktreePath(projectPath: string, targetPath: string): void {
+    const resolvedTarget = path.resolve(targetPath);
+    const parentDir = path.dirname(path.resolve(projectPath));
+    if (!resolvedTarget.startsWith(parentDir + path.sep) && resolvedTarget !== parentDir) {
+      throw new Error(`Worktree path must be within: ${parentDir}`);
+    }
+    if (resolvedTarget.includes("..")) {
+      throw new Error("Worktree path must not contain '..'");
+    }
+  }
+
+  /** Create a new worktree. */
+  async addWorktree(
+    projectPath: string,
+    targetPath: string,
+    opts: { branch?: string; newBranch?: string } = {},
+  ): Promise<void> {
+    this.validateWorktreePath(projectPath, targetPath);
+    const args = ["worktree", "add"];
+    if (opts.newBranch) {
+      args.push("-b", opts.newBranch);
+    }
+    args.push(targetPath);
+    if (opts.branch) {
+      args.push(opts.branch);
+    }
+    await this.git(projectPath).raw(args);
+  }
+
+  /** Remove a worktree. Pass force=true to remove even with uncommitted changes. */
+  async removeWorktree(projectPath: string, targetPath: string, force = false): Promise<void> {
+    const args = ["worktree", "remove"];
+    if (force) args.push("-f");
+    args.push(targetPath);
+    await this.git(projectPath).raw(args);
+  }
+
+  /** Prune stale worktree metadata from .git/worktrees/. */
+  async pruneWorktrees(projectPath: string): Promise<void> {
+    await this.git(projectPath).raw(["worktree", "prune"]);
   }
 
   private parseRemoteUrl(

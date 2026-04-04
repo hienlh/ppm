@@ -273,3 +273,59 @@ gitRoutes.post("/tag", async (c) => {
     return c.json(err((e as Error).message), 500);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Worktree routes
+// ---------------------------------------------------------------------------
+
+/** GET /git/worktrees */
+gitRoutes.get("/worktrees", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const worktrees = await gitService.listWorktrees(projectPath);
+    return c.json(ok(worktrees));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/worktree/add { path, branch?, newBranch? } */
+gitRoutes.post("/worktree/add", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const { path: targetPath, branch, newBranch } = await c.req.json<{
+      path: string;
+      branch?: string;
+      newBranch?: string;
+    }>();
+    if (!targetPath) return c.json(err("Missing: path"), 400);
+    await gitService.addWorktree(projectPath, targetPath, { branch, newBranch });
+    return c.json(ok({ added: targetPath }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/worktree/remove { path, force? } */
+gitRoutes.post("/worktree/remove", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const { path: targetPath, force } = await c.req.json<{ path: string; force?: boolean }>();
+    if (!targetPath) return c.json(err("Missing: path"), 400);
+    await gitService.removeWorktree(projectPath, targetPath, force);
+    return c.json(ok({ removed: targetPath }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/worktree/prune */
+gitRoutes.post("/worktree/prune", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    await gitService.pruneWorktrees(projectPath);
+    return c.json(ok({ pruned: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});

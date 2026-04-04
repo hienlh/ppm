@@ -17,6 +17,7 @@ import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabDrag } from "@/hooks/use-tab-drag";
+import { useTouchTabDrag, wasTouchDragRecent } from "@/hooks/use-touch-tab-drag";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl } from "@/lib/api-client";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
@@ -57,6 +58,7 @@ export function TabBar({ panelId }: TabBarProps) {
 
   const { dropIndex, handleDragStart, handleDragOver, handleDragOverBar, handleDrop, handleDragEnd } =
     useTabDrag(effectivePanelId);
+  const { handleTouchStart, handleTouchMove, handleTouchEnd } = useTouchTabDrag(effectivePanelId);
 
   const notifications = useNotificationStore((s) => s.notifications);
   const { canScrollLeft, canScrollRight, scrollLeft: doScrollLeft, scrollRight: doScrollRight } =
@@ -142,6 +144,7 @@ export function TabBar({ panelId }: TabBarProps) {
               showDropBefore={dropIndex === i}
               notificationType={notiType}
               onSelect={() => {
+                if (wasTouchDragRecent()) return;
                 usePanelStore.getState().setActiveTab(tab.id, effectivePanelId);
                 if (sessionId) useNotificationStore.getState().clearForSession(sessionId);
               }}
@@ -149,6 +152,9 @@ export function TabBar({ panelId }: TabBarProps) {
               onDragStart={(e) => handleDragStart(e, tab.id)}
               onDragOver={(e) => handleDragOver(e, tab.id, i)}
               onDragEnd={handleDragEnd}
+              onTouchStart={(e) => handleTouchStart(e, tab.id, tab.title)}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
               tabRef={(el) => {
                 if (el) tabRefs.current.set(tab.id, el);
                 else tabRefs.current.delete(tab.id);

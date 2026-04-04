@@ -17,6 +17,8 @@ import { api, projectUrl } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { useProjectStore } from "@/stores/project-store";
+import { GitWorktreePanel } from "./git-worktree-panel";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -117,6 +119,9 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
   const { openTab } = useTabStore();
   const viewMode = useSettingsStore((s) => s.gitStatusViewMode);
   const setViewMode = useSettingsStore((s) => s.setGitStatusViewMode);
+  const activeProjectPath = useProjectStore((s) =>
+    s.projects.find((p) => p.name === projectName)?.path,
+  );
 
   const fetchStatus = useCallback(async () => {
     if (!projectName) return;
@@ -333,6 +338,14 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
         <div className="px-3 py-1.5 text-xs text-destructive bg-destructive/10 shrink-0">
           {error}
         </div>
+      )}
+
+      {/* Worktrees collapsible section */}
+      {projectName && (
+        <GitWorktreePanel
+          projectName={projectName}
+          projectPath={activeProjectPath}
+        />
       )}
 
       <ScrollArea className="flex-1 overflow-hidden">

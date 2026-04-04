@@ -52,3 +52,24 @@ export interface GitDiffFile {
   deletions: number;
   content: string;
 }
+
+export interface GitWorktree {
+  /** Absolute path to the worktree directory */
+  path: string;
+  /** Branch name (empty string if detached HEAD) */
+  branch: string;
+  /** HEAD commit hash */
+  head: string;
+  /** True for the main (original) worktree */
+  isMain: boolean;
+  /** True if bare repository worktree */
+  isBare: boolean;
+  /** True if in detached HEAD state */
+  isDetached: boolean;
+  /** True if worktree is locked (prevented from auto-pruning) */
+  locked: boolean;
+  /** Reason for lock, if any */
+  lockReason?: string;
+  /** True if this worktree can be pruned (directory missing/stale) */
+  prunable: boolean;
+}
