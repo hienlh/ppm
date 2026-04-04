@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -280,6 +281,10 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                 onCheckedChange={(v) => handleSave("agent_teams", v)}
               />
             </div>
+
+            {config?.agent_teams && (
+              <TeamListSection compact={compact} />
+            )}
           </>
         )}
 
@@ -322,6 +327,83 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
 
       {saving && <p className="text-xs text-text-subtle">Saving...</p>}
       {error && <p className="text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+/** Team list shown below the Agent Teams toggle in AI Settings */
+function TeamListSection({ compact }: { compact?: boolean }) {
+  const [teams, setTeams] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  const fetchTeams = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api.get<any[]>("/api/teams");
+      setTeams(data ?? []);
+    } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchTeams(); }, [fetchTeams]);
+
+  const handleDelete = async (name: string) => {
+    try {
+      await api.del(`/api/teams/${encodeURIComponent(name)}`);
+      setTeams((prev) => prev.filter((t) => t.name !== name));
+      setDeleteConfirm(null);
+    } catch {}
+  };
+
+  if (teams.length === 0 && !loading) return null;
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label className={compact ? "text-[11px]" : undefined}>
+          Teams ({teams.length})
+        </Label>
+        <button onClick={fetchTeams} className="text-text-subtle hover:text-foreground p-1" aria-label="Refresh teams">
+          <RefreshCw className={`size-3 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+      {teams.map((team) => (
+        <div key={team.name} className="flex items-center justify-between p-2 rounded bg-surface-elevated text-xs">
+          <div className="min-w-0">
+            <div className="font-medium truncate">{team.name}</div>
+            {team.description && <div className="text-text-subtle truncate">{team.description}</div>}
+            <div className="text-text-subtle">
+              {team.members?.length ?? team.memberCount ?? 0} members
+              {team.createdAt ? ` · ${new Date(team.createdAt).toLocaleDateString()}` : ""}
+            </div>
+          </div>
+          {deleteConfirm === team.name ? (
+            <div className="flex gap-1 shrink-0 ml-2">
+              <button
+                onClick={() => handleDelete(team.name)}
+                className="px-2 py-1 bg-red-600 text-white rounded text-[10px]"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-2 py-1 bg-zinc-600 text-white rounded text-[10px]"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setDeleteConfirm(team.name)}
+              className="shrink-0 text-text-subtle hover:text-red-500 p-1 ml-2"
+              aria-label={`Delete team ${team.name}`}
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useWebSocket } from "./use-websocket";
-import { getAuthToken, projectUrl } from "@/lib/api-client";
+import { api, getAuthToken, projectUrl } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { playNotificationSound } from "@/lib/notification-sounds";
@@ -12,6 +12,25 @@ interface ApprovalRequest {
   tool: string;
   input: unknown;
 }
+
+export interface TeamMessageItem {
+  from: string;
+  to: string;
+  text: string;
+  timestamp: string;
+  summary?: string;
+  parsedType?: string;
+  color?: string;
+}
+
+interface TeamActivityState {
+  hasTeams: boolean;
+  teamNames: string[];
+  messageCount: number;
+  unreadCount: number;
+}
+
+const EMPTY_TEAM_ACTIVITY: TeamActivityState = { hasTeams: false, teamNames: [], messageCount: 0, unreadCount: 0 };
 
 interface UseChatReturn {
   messages: ChatMessage[];
@@ -26,6 +45,12 @@ interface UseChatReturn {
   sessionTitle: string | null;
   /** When CLI provider assigns a different session ID, this holds the new ID */
   migratedSessionId: string | null;
+  /** Team activity state from WS events */
+  teamActivity: TeamActivityState;
+  /** All team messages (ref-backed, updated live) */
+  teamMessages: TeamMessageItem[];
+  /** Mark team messages as read (reset unread counter) */
+  markTeamRead: () => void;
   sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
@@ -67,6 +92,32 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   sessionIdRef.current = sessionId;
   const projectNameRef = useRef(projectName);
   projectNameRef.current = projectName;
+
+  // Team activity tracking
+  const teamActivityRef = useRef<{
+    teamNames: Set<string>;
+    messages: TeamMessageItem[];
+  }>({ teamNames: new Set(), messages: [] });
+  const teamUnreadRef = useRef(0);
+  const [teamActivity, setTeamActivity] = useState<TeamActivityState>(EMPTY_TEAM_ACTIVITY);
+  const [teamMessages, setTeamMessages] = useState<TeamMessageItem[]>([]);
+
+  const updateTeamActivity = useCallback(() => {
+    const ref = teamActivityRef.current;
+    setTeamActivity({
+      hasTeams: ref.teamNames.size > 0,
+      teamNames: Array.from(ref.teamNames),
+      messageCount: ref.messages.length,
+      unreadCount: teamUnreadRef.current,
+    });
+    // Snapshot messages array so React detects changes
+    setTeamMessages([...ref.messages]);
+  }, []);
+
+  const markTeamRead = useCallback(() => {
+    teamUnreadRef.current = 0;
+    updateTeamActivity();
+  }, [updateTeamActivity]);
 
   // Derived state
   const isStreaming = phase !== "idle";
@@ -211,6 +262,42 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           }];
         });
         // Phase reset comes from BE via phase_changed
+        break;
+      }
+
+      case "team_detected": {
+        const teamName = ev.teamName as string;
+        if (teamName) {
+          teamActivityRef.current.teamNames.add(teamName);
+          // Fetch full team data from REST
+          api.get<any>(`/api/teams/${encodeURIComponent(teamName)}`).then((res: any) => {
+            if (res?.messages) {
+              const existing = teamActivityRef.current.messages;
+              const newMsgs = (res.messages as any[]).filter(
+                (m: any) => !existing.some((e) => e.timestamp === m.timestamp && e.from === m.from)
+              );
+              existing.push(...newMsgs);
+              existing.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+            }
+            updateTeamActivity();
+          }).catch(() => {});
+          updateTeamActivity();
+        }
+        break;
+      }
+
+      case "team_inbox": {
+        const msgs = (ev as any).messages as any[];
+        if (Array.isArray(msgs)) {
+          teamActivityRef.current.messages.push(...msgs);
+          teamUnreadRef.current += msgs.length;
+          updateTeamActivity();
+        }
+        break;
+      }
+
+      case "team_updated": {
+        updateTeamActivity();
         break;
       }
 
@@ -381,6 +468,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     setIsConnected(false);
+    // Reset team state
+    teamActivityRef.current = { teamNames: new Set(), messages: [] };
+    teamUnreadRef.current = 0;
+    setTeamActivity(EMPTY_TEAM_ACTIVITY);
+    setTeamMessages([]);
 
     if (sessionId && projectName) {
       setMessagesLoading(true);
@@ -569,6 +661,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     compactStatus,
     sessionTitle,
     migratedSessionId,
+    teamActivity,
+    teamMessages,
+    markTeamRead,
     sendMessage,
     respondToApproval,
     cancelStreaming,

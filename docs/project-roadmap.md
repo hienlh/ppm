@@ -1,6 +1,6 @@
 # PPM Project Roadmap
 
-**Last Updated:** March 27, 2026
+**Last Updated:** April 4, 2026
 
 ## Vision
 
@@ -68,6 +68,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 **v0.9.x polish (post-release):**
 - File download feature (v0.9.2) — Single-file + folder-as-zip downloads with short-lived tokens, context menu + toolbar UI
+- Agent Team UI (v0.9.9) — Real-time team monitoring dashboard: REST API + fs.watch inbox events, team activity button with unread pulse, popover/drawer with members + messages, team management in Settings
 
 **Multi-provider — v0.9 scope (reduced):**
 - Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy

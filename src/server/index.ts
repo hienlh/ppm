@@ -150,6 +150,10 @@ app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
 
+// Agent Teams management
+import { teamRoutes } from "./routes/teams.ts";
+app.route("/api/teams", teamRoutes);
+
 // Extensions management
 import { extensionRoutes } from "./routes/extensions.ts";
 app.route("/api/extensions", extensionRoutes);

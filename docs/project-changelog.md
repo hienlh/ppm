@@ -14,6 +14,14 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
   - Adds `TeamCreate`, `TeamDelete`, `SendMessage`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` to allowed tools
   - Switch UI with warning about experimental status and ~7x token cost
   - Default: off. Requires Claude Code v2.1.32+
+- **Agent Team UI — Real-time Monitoring** — Visual collaboration dashboard for active teams
+  - Backend: REST endpoints (`GET /api/teams`, `GET /api/teams/:name`, `DELETE /api/teams/:name`) + fs.watch inbox monitor via chat WebSocket
+  - Real-time inbox events: `team_detected`, `team_inbox`, `team_updated` streamed to chat clients
+  - Frontend: Team activity button on chat input (Users icon with unread pulse dot)
+  - Desktop popover / Mobile drawer showing members (with status badges) + message timeline
+  - Settings UI: Team list in AI Settings with delete confirmation (only for inactive teams)
+  - Architecture: Type-safe types (`src/types/team.ts`), extracted team-inbox-watcher module, zero new type errors
+  - Mobile-first: Responsive popover/drawer, touch-friendly delete actions
 
 ---
 

@@ -98,6 +98,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     reconnect,
     refetchMessages,
     isConnected,
+    teamActivity,
+    teamMessages,
+    markTeamRead,
   } = useChat(sessionId, providerId, projectName);
 
   // When CLI provider assigns a different session ID, update our state
@@ -403,6 +406,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onModeChange={setPermissionMode}
           providerId={providerId}
           onProviderChange={!sessionId ? setProviderId : undefined}
+          teamActivity={teamActivity}
+          onTeamOpen={markTeamRead}
+          teamMessages={teamMessages}
         />
       </div>
 

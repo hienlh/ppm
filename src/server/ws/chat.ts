@@ -12,6 +12,7 @@ const MAX_TURN_EVENTS = 10_000; // memory safety cap
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
   "approval_request", "error", "done", "account_info", "account_retry",
+  "team_detected",
 ]);
 
 type ChatWsSocket = {
@@ -34,6 +35,12 @@ interface SessionEntry {
   permissionMode?: string;
   /** Whether the persistent event consumer loop is running */
   isStreamingActive: boolean;
+  /** Active team watchers keyed by team name */
+  teamWatchers: Map<string, { cleanup: () => void }>;
+  /** Set of detected team names for this session */
+  teamNames: Set<string>;
+  /** toolUseId of a pending TeamCreate call */
+  pendingTeamCreate?: string;
 }
 
 /** Tracks active sessions — persists even when FE disconnects */
@@ -133,6 +140,8 @@ function startCleanupTimer(sessionId: string): void {
     logSessionEvent(sessionId, "INFO", "Session cleaned up (idle, no FE reconnected)");
     for (const interval of entry.pingIntervals.values()) clearInterval(interval);
     entry.pingIntervals.clear();
+    for (const w of entry.teamWatchers.values()) w.cleanup();
+    entry.teamWatchers.clear();
     activeSessions.delete(sessionId);
   }, CLEANUP_TIMEOUT_MS);
 }
@@ -254,8 +263,32 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         logSessionEvent(sessionId, "TEXT", ev.content?.slice(0, 500) ?? "");
       } else if (evType === "tool_use") {
         logSessionEvent(sessionId, "TOOL_USE", `${ev.tool} ${JSON.stringify(ev.input).slice(0, 300)}`);
+        // Track TeamCreate calls for team detection
+        if (ev.tool === "TeamCreate") {
+          entry.pendingTeamCreate = ev.toolUseId;
+        }
       } else if (evType === "tool_result") {
         logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
+        // Detect team creation from TeamCreate tool_result
+        if (entry.pendingTeamCreate && entry.pendingTeamCreate === ev.toolUseId) {
+          const { extractTeamName, startTeamInboxWatcher } = await import("./team-inbox-watcher.ts");
+          const teamName = extractTeamName(ev.output ?? "");
+          if (teamName && !entry.teamNames.has(teamName)) {
+            entry.teamNames.add(teamName);
+            const watcher = startTeamInboxWatcher(teamName, {
+              onInboxUpdate: (tn, agent, msgs) => broadcast(sessionId, {
+                type: "team_inbox", teamName: tn, agent, messages: msgs,
+              }),
+              onConfigUpdate: (tn, config) => broadcast(sessionId, {
+                type: "team_updated", teamName: tn, team: config,
+              }),
+            });
+            entry.teamWatchers.set(teamName, watcher);
+            bufferAndBroadcast(sessionId, { type: "team_detected", teamName });
+            console.log(`[chat] session=${sessionId} team detected: ${teamName}`);
+          }
+          entry.pendingTeamCreate = undefined;
+        }
       } else if (evType === "error") {
         const errorDetail = ev.message ?? JSON.stringify(ev).slice(0, 500);
         console.error(`[chat] session=${sessionId} error: ${errorDetail}`);
@@ -333,6 +366,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     entry.turnEvents = [];
     setPhase(sessionId, "idle");
     entry.pendingApprovalEvent = undefined;
+    // Cleanup team watchers
+    for (const w of entry.teamWatchers.values()) w.cleanup();
+    entry.teamWatchers.clear();
     // Close streaming session in provider
     const provider = providerRegistry.get(entry.providerId);
     if (provider && "closeStreamingSession" in provider) {
@@ -419,6 +455,8 @@ export const chatWebSocket = {
       phase: "idle",
       turnEvents: [],
       isStreamingActive: false,
+      teamWatchers: new Map(),
+      teamNames: new Set(),
     };
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
@@ -470,6 +508,7 @@ export const chatWebSocket = {
       const newEntry: SessionEntry = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
         pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false,
+        teamWatchers: new Map(), teamNames: new Set(),
       };
       activeSessions.set(sessionId, newEntry);
       setupClientPing(newEntry, ws);

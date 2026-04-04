@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Users } from "lucide-react";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
@@ -7,6 +7,8 @@ import { isSupportedFile, isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
+import { TeamActivityPopover } from "./team-activity-popover";
+import type { TeamMessageItem } from "@/hooks/use-chat";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
 import { flattenFileTree } from "./file-picker";
@@ -52,6 +54,17 @@ interface MessageInputProps {
   providerId?: string;
   /** Provider change handler — undefined when session is active (locked) */
   onProviderChange?: (providerId: string) => void;
+  /** Team activity state from use-chat */
+  teamActivity?: {
+    hasTeams: boolean;
+    teamNames: string[];
+    messageCount: number;
+    unreadCount: number;
+  };
+  /** Called when user opens team popover (marks messages as read) */
+  onTeamOpen?: () => void;
+  /** Team messages for popover */
+  teamMessages?: TeamMessageItem[];
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -73,10 +86,14 @@ export const MessageInput = memo(function MessageInput({
   onModeChange,
   providerId,
   onProviderChange,
+  teamActivity,
+  onTeamOpen,
+  teamMessages,
 }: MessageInputProps) {
   const [value, setValue] = useState(initialValue ?? "");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
+  const [teamPopoverOpen, setTeamPopoverOpen] = useState(false);
   const [pendingSend, setPendingSend] = useState(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -520,6 +537,32 @@ export const MessageInput = memo(function MessageInput({
             />
           )}
           {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+          {teamActivity?.hasTeams && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const next = !teamPopoverOpen;
+                  setTeamPopoverOpen(next);
+                  if (next) onTeamOpen?.();
+                }}
+                className="relative flex items-center justify-center size-7 rounded-full text-text-subtle hover:text-text-primary transition-colors"
+                aria-label="Team activity"
+              >
+                <Users className="size-3.5" />
+                {(teamActivity.unreadCount ?? 0) > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 size-2 bg-primary rounded-full animate-pulse" />
+                )}
+              </button>
+              <TeamActivityPopover
+                teamNames={teamActivity.teamNames}
+                messages={teamMessages ?? []}
+                open={teamPopoverOpen}
+                onOpenChange={setTeamPopoverOpen}
+              />
+            </div>
+          )}
         </div>
         {/* Mobile: single row — attach + textarea + mic + send */}
         <div className="flex items-end gap-1 md:hidden px-2 py-2">
@@ -628,6 +671,32 @@ export const MessageInput = memo(function MessageInput({
                 />
               )}
               {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+              {teamActivity?.hasTeams && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const next = !teamPopoverOpen;
+                      setTeamPopoverOpen(next);
+                      if (next) onTeamOpen?.();
+                    }}
+                    className="relative flex items-center justify-center size-8 rounded-full text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors"
+                    aria-label="Team activity"
+                  >
+                    <Users className="size-4" />
+                    {(teamActivity.unreadCount ?? 0) > 0 && (
+                      <span className="absolute -top-0.5 -right-0.5 size-2.5 bg-primary rounded-full animate-pulse" />
+                    )}
+                  </button>
+                  <TeamActivityPopover
+                    teamNames={teamActivity.teamNames}
+                    messages={teamMessages ?? []}
+                    open={teamPopoverOpen}
+                    onOpenChange={setTeamPopoverOpen}
+                  />
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-1">
               {voice.supported && (
