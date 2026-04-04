@@ -806,9 +806,17 @@ function ThinkingIndicator({ lastMessage, phase, elapsed }: { lastMessage?: Chat
   );
 }
 
+/** Strip SDK teammate-message XML tags from text — team popover shows these */
+const TEAMMATE_MSG_RE = /<teammate-message[^>]*>[\s\S]*?<\/teammate-message>/g;
+function stripTeammateMessages(text: string): string {
+  return text.replace(TEAMMATE_MSG_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /** Wrapper: delegates to shared MarkdownRenderer with code actions enabled */
 function MarkdownContent({ content, projectName }: { content: string; projectName?: string }) {
-  return <MarkdownRenderer content={content} projectName={projectName} codeActions />;
+  const cleaned = stripTeammateMessages(content);
+  if (!cleaned) return null;
+  return <MarkdownRenderer content={cleaned} projectName={projectName} codeActions />;
 }
 
 /* ToolCard, ToolSummary, ToolDetails extracted to ./tool-cards.tsx */
