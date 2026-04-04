@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.7] - 2026-04-04
+
+### Added
+- **File download**: Browser-native single file download from file tree context menu and editor toolbar
+- **Folder zip download**: Stream folder contents as zip archive (excludes `.git`, `node_modules`)
+- **Download tokens**: Short-lived one-time tokens (30s TTL) for secure browser-initiated downloads
+- **Shared error-status helper**: Extracted `errorStatus()` to `src/server/helpers/error-status.ts`
+
+### Security
+- Download tokens scoped to `/files/raw` and `/files/download/zip` paths only
+- Path traversal protection with trailing slash check
+
 ## [0.9.6] - 2026-04-04
 
 ### Fixed
