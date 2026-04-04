@@ -54,26 +54,30 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
   const [copied, setCopied] = useState(false);
   return (
     <button
-      onClick={async () => {
+      onClick={() => {
         try {
-          const data = await api.get<{ ppmSessionId: string; sdkSessionId: string; jsonlPath: string | null; projectPath: string }>(
+          // Use ClipboardItem with pending promise so Safari doesn't lose user gesture
+          const textPromise = api.get<{ ppmSessionId: string; sdkSessionId: string; jsonlPath: string | null; projectPath: string }>(
             `${projectUrl(projectName)}/chat/sessions/${sessionId}/debug?project=${encodeURIComponent(projectName)}`,
-          );
-          const info = [
-            `PPM Session: ${data.ppmSessionId}`,
-            `SDK Session: ${data.sdkSessionId}`,
-            data.jsonlPath ? `JSONL: ${data.jsonlPath}` : `JSONL: not found`,
-            data.projectPath ? `Project: ${data.projectPath}` : null,
-          ].filter(Boolean).join("\n");
-          await navigator.clipboard.writeText(info);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
+          ).then((data) => {
+            const info = [
+              `PPM Session: ${data.ppmSessionId}`,
+              `SDK Session: ${data.sdkSessionId}`,
+              data.jsonlPath ? `JSONL: ${data.jsonlPath}` : `JSONL: not found`,
+              data.projectPath ? `Project: ${data.projectPath}` : null,
+            ].filter(Boolean).join("\n");
+            return new Blob([info], { type: "text/plain" });
+          });
+          navigator.clipboard.write([new ClipboardItem({ "text/plain": textPromise })]).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          });
         } catch { /* silent */ }
       }}
-      className={`size-10 flex items-center justify-center rounded transition-colors ${copied ? "text-green-500 bg-green-500/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
+      className={`p-1 rounded transition-colors ${copied ? "text-green-500 bg-green-500/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
       title={copied ? "Copied!" : "Copy session debug info"}
     >
-      {copied ? <ClipboardCheck className="size-4" /> : <Bug className="size-4" />}
+      {copied ? <ClipboardCheck className="size-3" /> : <Bug className="size-3" />}
     </button>
   );
 }
@@ -271,10 +275,10 @@ export function ChatHistoryBar({
         {hasUnread && sessionId && (
           <button
             onClick={() => clearForSession(sessionId)}
-            className="size-10 flex items-center justify-center rounded text-amber-500 hover:text-amber-400 hover:bg-surface-elevated transition-colors"
+            className="p-1 rounded text-amber-500 hover:text-amber-400 hover:bg-surface-elevated transition-colors"
             title="Mark as read"
           >
-            <BellOff className="size-4" />
+            <BellOff className="size-3" />
           </button>
         )}
 
@@ -287,10 +291,10 @@ export function ChatHistoryBar({
         {onReconnect && (
           <button
             onClick={onReconnect}
-            className="size-10 flex items-center justify-center"
+            className="size-4 flex items-center justify-center"
             title={isConnected ? "Connected" : "Disconnected — click to reconnect"}
           >
-            <span className={`size-2.5 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"}`} />
+            <span className={`size-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"}`} />
           </button>
         )}
       </div>
