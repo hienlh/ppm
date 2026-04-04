@@ -1355,9 +1355,10 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
   if (message && Array.isArray(message.content)) {
     for (const block of message.content as Array<Record<string, unknown>>) {
       if (block.type === "text" && typeof block.text === "string") {
-        textContent += block.text;
-        if (role === "assistant") {
-          events.push({ type: "text", content: block.text, ...(parentId && { parentToolUseId: parentId }) });
+        const cleaned = role === "assistant" ? stripTeammateXml(block.text) : block.text;
+        textContent += cleaned;
+        if (role === "assistant" && cleaned) {
+          events.push({ type: "text", content: cleaned, ...(parentId && { parentToolUseId: parentId }) });
         }
       } else if (block.type === "tool_use") {
         events.push({
@@ -1444,4 +1445,11 @@ function extractText(message: unknown): string {
       .join("");
   }
   return "";
+}
+
+/** Strip SDK teammate-message XML tags from assistant text */
+const TEAMMATE_MSG_RE = /<teammate-message[^>]*>[\s\S]*?<\/teammate-message>/g;
+function stripTeammateXml(text: string): string {
+  if (!text.includes("<teammate-message")) return text;
+  return text.replace(TEAMMATE_MSG_RE, "").replace(/\n{3,}/g, "\n\n").trim();
 }
