@@ -266,13 +266,16 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // Track TeamCreate calls for team detection
         if (ev.tool === "TeamCreate") {
           entry.pendingTeamCreate = ev.toolUseId;
+          console.log(`[chat] session=${sessionId} TeamCreate tool_use detected, toolUseId=${ev.toolUseId}`);
         }
       } else if (evType === "tool_result") {
         logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
+        console.log(`[chat] session=${sessionId} tool_result: toolUseId=${ev.toolUseId} pendingTeamCreate=${entry.pendingTeamCreate} output=${(ev.output ?? "").slice(0, 200)}`);
         // Detect team creation from TeamCreate tool_result
         if (entry.pendingTeamCreate && entry.pendingTeamCreate === ev.toolUseId) {
           const { extractTeamName, startTeamInboxWatcher } = await import("./team-inbox-watcher.ts");
           const teamName = extractTeamName(ev.output ?? "");
+          console.log(`[chat] session=${sessionId} TeamCreate result matched, extracted teamName=${teamName}`);
           if (teamName && !entry.teamNames.has(teamName)) {
             entry.teamNames.add(teamName);
             const watcher = startTeamInboxWatcher(teamName, {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// PPM CLI entry point — Bun runtime, Hono backend, React frontend, Claude Agent SDK for AI chat
 import { Command } from "commander";
 import { VERSION } from "./version.ts";
 
