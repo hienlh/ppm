@@ -79,6 +79,11 @@
           "type": "integer",
           "minimum": 0,
           "description": "0 = disabled"
+        },
+        "agent_teams": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable experimental Agent Teams (multi-agent collaboration)"
         }
       },
       "required": ["type"]

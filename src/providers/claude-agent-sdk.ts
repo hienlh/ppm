@@ -189,12 +189,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       console.log(`[sdk] ANTHROPIC_BASE_URL from shell env: ${process.env.ANTHROPIC_BASE_URL}`);
     }
 
+    // Enable experimental agent teams if toggled on in provider settings
+    const agentTeamsEnv = providerConfig.agent_teams
+      ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1", CLAUDE_CODE_ENABLE_TASKS: "1" }
+      : {};
+
     return {
       ...base,
       ANTHROPIC_API_KEY: resolvedApiKey,
       CLAUDE_CODE_OAUTH_TOKEN: resolvedOAuth,
       ANTHROPIC_BASE_URL: resolvedBaseUrl,
       ANTHROPIC_AUTH_TOKEN: resolvedAuthToken,
+      ...agentTeamsEnv,
     };
   }
 
@@ -490,9 +496,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // go through the permission evaluation chain → canUseTool callback.
     const readOnlyTools = ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "ToolSearch"];
     const writeTools = ["Write", "Edit", "Bash", "Agent", "Skill", "TodoWrite", "AskUserQuestion"];
+    const teamTools = providerConfig.agent_teams
+      ? ["TeamCreate", "TeamDelete", "SendMessage", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]
+      : [];
     const mcpTools = ["mcp__*"];
     const allowedTools = isBypass
-      ? [...readOnlyTools, ...writeTools, ...mcpTools]
+      ? [...readOnlyTools, ...writeTools, ...teamTools, ...mcpTools]
       : [...readOnlyTools, ...mcpTools];
 
     /**

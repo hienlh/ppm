@@ -59,6 +59,7 @@ export interface AIProviderConfig {
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
+  agent_teams?: boolean;
 
   // CLI-specific (Cursor, Codex, Gemini)
   cli_command?: string;

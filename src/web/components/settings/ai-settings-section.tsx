@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 import { api } from "@/lib/api-client";
 import { ProviderBadge } from "@/components/chat/provider-selector";
@@ -263,6 +264,20 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                   const val = parseInt(e.target.value);
                   handleSave("thinking_budget_tokens", isNaN(val) ? undefined : val);
                 }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <Label htmlFor="ai-agent-teams" className={compact ? labelSize : undefined}>Agent Teams</Label>
+                <p className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+                  Experimental. Enables multi-agent collaboration with shared tasks and messaging. Uses ~7x more tokens.
+                </p>
+              </div>
+              <Switch
+                id="ai-agent-teams"
+                checked={config?.agent_teams ?? false}
+                onCheckedChange={(v) => handleSave("agent_teams", v)}
               />
             </div>
           </>

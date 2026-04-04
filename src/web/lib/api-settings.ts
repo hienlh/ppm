@@ -164,6 +164,7 @@ export interface AIProviderSettings {
   thinking_budget_tokens?: number;
   permission_mode?: string;
   system_prompt?: string;
+  agent_teams?: boolean;
 }
 
 export interface AISettings {
