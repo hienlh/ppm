@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.15] - 2026-04-04
+
+### Fixed
+- **Chat toolbar touch targets**: Enlarged debug, mark-as-read, and connection indicator buttons to 40px minimum for iPad/touch usability
+- **Teammate-message tags**: Strip `<teammate-message>` XML tags from session history at backend level and chat text display
+- **TeamCreate output**: Handle content-block array format in TeamCreate output extraction
+
 ## [0.9.10] - 2026-04-04
 
 ### Added
