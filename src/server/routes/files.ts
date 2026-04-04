@@ -1,26 +1,14 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
-import {
-  fileService,
-  SecurityError,
-  NotFoundError,
-  ValidationError,
-} from "../../services/file.service.ts";
+import { fileService } from "../../services/file.service.ts";
 import { ok, err } from "../../types/api.ts";
+import { errorStatus } from "../helpers/error-status.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const fileRoutes = new Hono<Env>();
 
-/** Map error type to HTTP status code */
-function errorStatus(e: unknown): ContentfulStatusCode {
-  if (e instanceof SecurityError) return 403;
-  if (e instanceof NotFoundError) return 404;
-  if (e instanceof ValidationError) return 400;
-  return 500;
-}
 
 /** GET /files/tree?depth=3 */
 fileRoutes.get("/tree", (c) => {
@@ -34,7 +22,7 @@ fileRoutes.get("/tree", (c) => {
   }
 });
 
-/** GET /files/raw?path=... — serve file directly as binary (for PDF viewer, images, etc.) */
+/** GET /files/raw?path=...&download=true — serve file directly as binary (for PDF viewer, images, downloads) */
 fileRoutes.get("/raw", (c) => {
   try {
     const projectPath = c.get("projectPath");
@@ -49,10 +37,13 @@ fileRoutes.get("/raw", (c) => {
     if (!existsSync(absPath)) return c.json(err("File not found"), 404);
 
     const file = Bun.file(absPath);
+    const download = c.req.query("download") === "true";
+    const filename = filePath.split("/").pop() ?? "download";
+
     return new Response(file.stream(), {
       headers: {
-        "Content-Type": file.type || "application/octet-stream",
-        "Content-Disposition": "inline",
+        "Content-Type": download ? "application/octet-stream" : (file.type || "application/octet-stream"),
+        "Content-Disposition": download ? `attachment; filename="${filename}"` : "inline",
       },
     });
   } catch (e) {

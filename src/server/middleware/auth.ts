@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono";
 import { configService } from "../../services/config.service.ts";
+import { consumeDownloadToken } from "../../services/download-token.service.ts";
 import { err } from "../../types/api.ts";
 
 /** Auth middleware — checks Bearer token against config */
@@ -17,14 +18,24 @@ export async function authMiddleware(c: Context, next: Next) {
   }
 
   const header = c.req.header("Authorization");
-  if (!header || !header.startsWith("Bearer ")) {
-    return c.json(err("Unauthorized"), 401);
+  if (header?.startsWith("Bearer ")) {
+    const token = header.slice(7);
+    if (token === authConfig.token) {
+      return next();
+    }
   }
 
-  const token = header.slice(7);
-  if (token !== authConfig.token) {
-    return c.json(err("Unauthorized"), 401);
+  // Fallback: short-lived download token for browser-initiated downloads only
+  if (c.req.method === "GET") {
+    const path = c.req.path;
+    const isDownloadPath = path.endsWith("/files/raw") || path.endsWith("/files/download/zip");
+    if (isDownloadPath) {
+      const dlToken = c.req.query("dl_token");
+      if (dlToken && consumeDownloadToken(dlToken)) {
+        return next();
+      }
+    }
   }
 
-  return next();
+  return c.json(err("Unauthorized"), 401);
 }

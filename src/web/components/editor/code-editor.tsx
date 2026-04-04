@@ -222,6 +222,8 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
             onCsvModeChange={setCsvMode}
             wordWrap={wordWrap}
             onToggleWordWrap={toggleWordWrap}
+            filePath={filePath}
+            projectName={projectName}
             className="shrink-0 flex items-center gap-1 px-2"
           />
         </div>

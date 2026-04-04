@@ -1,4 +1,5 @@
-import { Code, Eye, WrapText, Table } from "lucide-react";
+import { Code, Eye, WrapText, Table, Download } from "lucide-react";
+import { downloadFile } from "@/lib/file-download";
 
 interface EditorToolbarProps {
   ext: string;
@@ -8,6 +9,8 @@ interface EditorToolbarProps {
   onCsvModeChange?: (mode: "table" | "raw") => void;
   wordWrap: boolean;
   onToggleWordWrap: () => void;
+  filePath?: string;
+  projectName?: string;
   className?: string;
 }
 
@@ -44,6 +47,8 @@ export function EditorToolbar({
   onCsvModeChange,
   wordWrap,
   onToggleWordWrap,
+  filePath,
+  projectName,
   className,
 }: EditorToolbarProps) {
   const isMarkdown = ext === "md" || ext === "mdx";
@@ -69,6 +74,14 @@ export function EditorToolbar({
         icon={WrapText}
         label="Wrap"
       />
+      {filePath && projectName && (
+        <ToolbarButton
+          active={false}
+          onClick={() => downloadFile(projectName, filePath)}
+          icon={Download}
+          label="Download"
+        />
+      )}
     </div>
   );
 }

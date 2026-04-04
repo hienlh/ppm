@@ -9,6 +9,7 @@ import {
   FileType,
   ChevronRight,
   ChevronDown,
+  Download,
   Loader2,
 } from "lucide-react";
 import { useFileStore, type FileNode } from "@/stores/file-store";
@@ -24,6 +25,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { FileActions } from "./file-actions";
+import { downloadFile, downloadFolder } from "@/lib/file-download";
 
 const FILE_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   ts: FileCode,
@@ -157,6 +159,11 @@ function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodePr
           <ContextMenuItem onClick={() => onAction("copy-path", node)}>
             Copy Path
           </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => onAction("download", node)}>
+            <Download className="size-3.5 mr-2" />
+            Download{isDir ? " as Zip" : ""}
+          </ContextMenuItem>
           {!isDir && selectedFiles.length === 2 && (
             <>
               <ContextMenuSeparator />
@@ -219,6 +226,14 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
   function handleAction(action: string, node: FileNode) {
     if (action === "copy-path") {
       navigator.clipboard.writeText(node.path).catch(() => {});
+      return;
+    }
+    if (action === "download") {
+      if (node.type === "directory") {
+        downloadFolder(activeProject!.name, node.path);
+      } else {
+        downloadFile(activeProject!.name, node.path);
+      }
       return;
     }
     if (action === "compare-selected" && selectedFiles.length === 2) {

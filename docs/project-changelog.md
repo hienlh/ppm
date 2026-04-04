@@ -2,7 +2,37 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.0
+**Current Version:** v0.9.2
+
+---
+
+## [0.9.2] — 2026-04-04
+
+### Added
+- **File Download Feature** — Single-file and folder-as-zip downloads with short-lived tokens
+  - Download tokens: one-time, 30s TTL, non-reusable
+  - Backend: POST `/files/download/token` for token generation, GET `/files/raw?download=true&dl_token=X` for file downloads, GET `/files/download/zip?path=X` for folder zips
+  - Frontend: Download context menu in file tree, download button in editor toolbar
+  - Security: Tokens scoped to download paths only, path traversal protection maintained
+  - Performance: Streaming via Bun.file() and archiver, no RAM buffering for large files
+  - Testing: 30 integration tests covering auth, streaming, path traversal, zip integrity
+
+### Technical Details
+- **Files Created:**
+  - `src/services/download-token.service.ts` — In-memory token store with TTL cleanup
+  - `src/server/routes/file-download.ts` — Download endpoints (token + zip)
+  - `src/web/lib/file-download.ts` — Download utilities (single file + folder)
+  - `tests/integration/file-download.test.ts` — Integration tests
+- **Files Modified:**
+  - `src/server/middleware/auth.ts` — Added dl_token fallback for downloads
+  - `src/server/routes/files.ts` — Added ?download=true mode
+  - `src/server/routes/project-scoped.ts` — Registered download routes
+  - `src/web/components/explorer/file-tree.tsx` — Added download context menu item
+  - `src/web/components/editor/editor-toolbar.tsx` — Added download button
+  - `src/web/components/editor/code-editor.tsx` — Passed filePath/projectName to toolbar
+  - `src/server/helpers/error-status.ts` — Extracted shared error helper
+- **Dependencies:**
+  - `archiver` — Streaming zip library (well-maintained, ~500KB)
 
 ---
 

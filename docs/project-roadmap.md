@@ -58,13 +58,16 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 **Theme:** Multi-provider AI (Claude + Cursor) + extension system. Ship a focused release, expand providers later.
 
-**Overall progress: 100%** (All 3 features complete)
+**Overall progress: 100%** (All 3 core features complete)
 
 | Feature | Priority | Status | Description |
 |---------|----------|--------|-------------|
 | **Multi-provider AI** | Critical | ✅ Done | ProviderInterface, registry, Cursor CLI, CLI provider base, UI provider/model selector, permission mode selector, system prompt customization, comprehensive tests — all on beta branch. |
 | **MCP Management** | Medium | ✅ Done | REST API (CRUD + import), SQLite storage, Settings UI, auto-import from `~/.claude.json`, validation, SDK integration. |
 | **Extension architecture (Phase 1-6)** | High | ✅ Done | VSCode-compatible npm extensions, Bun Worker isolation, RPC protocol, state persistence, contribution registry, CLI support, dev mode. @ppm/vscode-compat API shim (commands, window, workspace). UI components (StatusBar, TreeView, WebviewPanel, QuickPick, InputBox). WS bridge for real-time ext↔browser communication. First extension: ext-database with tree view + SQL query panel. Unit tests + extension dev guide. |
+
+**v0.9.x polish (post-release):**
+- File download feature (v0.9.2) — Single-file + folder-as-zip downloads with short-lived tokens, context menu + toolbar UI
 
 **Multi-provider — v0.9 scope (reduced):**
 - Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy

@@ -5,6 +5,7 @@ import { gitRoutes } from "./git.ts";
 import { fileRoutes } from "./files.ts";
 import { sqliteRoutes } from "./sqlite.ts";
 import { workspaceRoutes } from "./workspace.ts";
+import { downloadRoutes } from "./file-download.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -29,3 +30,4 @@ projectScopedRouter.route("/git", gitRoutes);
 projectScopedRouter.route("/files", fileRoutes);
 projectScopedRouter.route("/sqlite", sqliteRoutes);
 projectScopedRouter.route("/workspace", workspaceRoutes);
+projectScopedRouter.route("/files/download", downloadRoutes);
