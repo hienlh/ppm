@@ -70,10 +70,10 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
           setTimeout(() => setCopied(false), 1500);
         } catch { /* silent */ }
       }}
-      className={`p-1 rounded transition-colors ${copied ? "text-green-500 bg-green-500/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
+      className={`size-10 flex items-center justify-center rounded transition-colors ${copied ? "text-green-500 bg-green-500/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
       title={copied ? "Copied!" : "Copy session debug info"}
     >
-      {copied ? <ClipboardCheck className="size-3" /> : <Bug className="size-3" />}
+      {copied ? <ClipboardCheck className="size-4" /> : <Bug className="size-4" />}
     </button>
   );
 }
@@ -271,10 +271,10 @@ export function ChatHistoryBar({
         {hasUnread && sessionId && (
           <button
             onClick={() => clearForSession(sessionId)}
-            className="p-1 rounded text-amber-500 hover:text-amber-400 hover:bg-surface-elevated transition-colors"
+            className="size-10 flex items-center justify-center rounded text-amber-500 hover:text-amber-400 hover:bg-surface-elevated transition-colors"
             title="Mark as read"
           >
-            <BellOff className="size-3" />
+            <BellOff className="size-4" />
           </button>
         )}
 
@@ -287,10 +287,10 @@ export function ChatHistoryBar({
         {onReconnect && (
           <button
             onClick={onReconnect}
-            className="size-4 flex items-center justify-center"
+            className="size-10 flex items-center justify-center"
             title={isConnected ? "Connected" : "Disconnected — click to reconnect"}
           >
-            <span className={`size-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"}`} />
+            <span className={`size-2.5 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"}`} />
           </button>
         )}
       </div>
