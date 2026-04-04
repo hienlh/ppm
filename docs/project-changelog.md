@@ -2,7 +2,18 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.2
+**Current Version:** v0.9.9
+
+---
+
+## [0.9.9] — 2026-04-04
+
+### Added
+- **Agent Teams (experimental)** — Toggle in Settings > AI to enable multi-agent collaboration
+  - Passes `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` to SDK subprocess when enabled
+  - Adds `TeamCreate`, `TeamDelete`, `SendMessage`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet` to allowed tools
+  - Switch UI with warning about experimental status and ~7x token cost
+  - Default: off. Requires Claude Code v2.1.32+
 
 ---
 
