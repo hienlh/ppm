@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.10] - 2026-04-04
+
+### Added
+- **Agent Team UI**: Real-time team monitoring with REST API, WebSocket events, and popover UI
+  - REST endpoints: `GET /api/teams`, `GET /api/teams/:name`, `DELETE /api/teams/:name`
+  - WS: detect TeamCreate, fs.watch inbox changes, broadcast team_detected/team_inbox/team_updated
+  - Chat input: team button with unread pulse badge, activity popover with member status + message timeline
+  - AI Settings: team list with delete confirmation below Agent Teams toggle
+- **Git worktree management**: Create/delete worktrees with dialog UI, worktree panel, service + routes
+- **Touch tab drag**: Touch device support for tab dragging, split-drop overlay improvements
+
+### Security
+- Team name allowlist regex prevents path traversal on all team endpoints
+- CSS color sanitization in team message rendering
+
 ## [0.9.8] - 2026-04-04
 
 ### Fixed
