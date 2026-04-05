@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.28] - 2026-04-05
+
+### Added
+- **OpenAI-compatible proxy endpoint**: New `POST /proxy/v1/chat/completions` accepts OpenAI Chat Completions format requests and returns OpenAI-format responses (streaming SSE with `data: [DONE]` and non-streaming JSON), using SDK `query()` internally
+- **Dual endpoint display in proxy settings**: Shows both Anthropic and OpenAI-compatible endpoint URLs with separate copy buttons and env var examples
+
+### Changed
+- **Proxy test dialog**: OpenAI tab now uses the real `/proxy/v1/chat/completions` endpoint with proper OpenAI request format instead of hitting the Anthropic endpoint with different auth headers
+
 ## [0.9.26] - 2026-04-05
 
 ### Fixed
