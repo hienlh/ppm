@@ -10,11 +10,9 @@ import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
-import { usePanelStore } from "@/stores/panel-store";
 import {
   fetchWorkspaceFromServer,
   resolveWorkspaceConflict,
-  savePanelLayout,
 } from "@/stores/panel-utils";
 import {
   useSettingsStore,
@@ -160,20 +158,25 @@ export function App() {
       }
       if (!target) return;
 
-      useProjectStore.getState().setActiveProject(target);
-
-      // Fetch server workspace + compare with localStorage (latest-wins)
+      // Fetch server workspace BEFORE activating project.
+      // setActiveProject triggers switchProject which creates an empty layout
+      // with a new timestamp if localStorage is empty (new tunnel/device).
+      // By pre-populating localStorage, switchProject picks up the server data.
       const serverLayout = await fetchWorkspaceFromServer(target.name);
       if (serverLayout) {
         const localRaw = localStorage.getItem(`ppm-panels-${target.name}`);
         const localLayout = localRaw ? JSON.parse(localRaw) : null;
         const resolved = resolveWorkspaceConflict(localLayout, serverLayout);
         if (resolved && resolved === serverLayout) {
-          // Server wins — overwrite localStorage and reload panels
-          savePanelLayout(target.name, resolved);
-          usePanelStore.getState().reloadProject(target.name);
+          // Server wins — write directly to localStorage (no server sync needed)
+          localStorage.setItem(
+            `ppm-panels-${target.name}`,
+            JSON.stringify(serverLayout),
+          );
         }
       }
+
+      useProjectStore.getState().setActiveProject(target);
 
       // Auto-open target tab from URL (type-based)
       queueMicrotask(() => {

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.20] - 2026-04-05
+
+### Fixed
+- **SDK retry hangs after token refresh**: All 4 retry paths (auth refresh + rate limit, in streaming and result events) used a stale `sdkId` resolved once at function start — for first messages this equals the PPM UUID which the SDK doesn't recognize, causing `query()` to hang forever. Now re-resolves session mapping before each retry and pushes `firstMsg` when no SDK session exists yet.
+- **Workspace layout lost on new device**: Fetch server workspace BEFORE `setActiveProject` so `switchProject` picks up server data instead of creating an empty layout with a new timestamp
+
 ## [0.9.19] - 2026-04-05
 
 ### Fixed
