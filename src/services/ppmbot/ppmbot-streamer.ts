@@ -8,8 +8,36 @@ import {
 
 const MAX_MSG_LEN = 4096;
 const TYPING_REFRESH_MS = 4000;
-const STREAM_TIMEOUT_MS = 5 * 60 * 1000; // 5 min max per stream
+const EVENT_TIMEOUT_MS = 60_000; // 60s max wait per event
 const PLACEHOLDER = "\u2026"; // ellipsis
+
+/**
+ * Wrap an async iterable with per-event timeout.
+ * If .next() doesn't resolve within timeoutMs, yields a timeout error.
+ */
+async function* withEventTimeout<T>(
+  iterable: AsyncIterable<T>,
+  timeoutMs: number,
+): AsyncGenerator<T> {
+  const iterator = iterable[Symbol.asyncIterator]();
+  try {
+    while (true) {
+      const result = await Promise.race([
+        iterator.next(),
+        new Promise<{ done: true; value: undefined; timedOut: true }>((resolve) =>
+          setTimeout(() => resolve({ done: true, value: undefined, timedOut: true }), timeoutMs),
+        ),
+      ]);
+      if ("timedOut" in result) {
+        throw new Error("No response within 60 seconds");
+      }
+      if (result.done) break;
+      yield result.value;
+    }
+  } finally {
+    iterator.return?.();
+  }
+}
 
 export interface StreamConfig {
   showToolCalls: boolean;
@@ -120,14 +148,9 @@ export async function streamToTelegram(
     await telegram.editMessage(chatId, currentMsgId, html);
   };
 
-  // Process event stream with timeout
-  const streamStart = Date.now();
+  // Process event stream with per-event timeout
   try {
-    for await (const event of events) {
-      if (Date.now() - streamStart > STREAM_TIMEOUT_MS) {
-        appendHtml(segments, "\n\n⏱️ <i>Response timed out.</i>");
-        break;
-      }
+    for await (const event of withEventTimeout(events, EVENT_TIMEOUT_MS)) {
       await refreshTyping();
 
       switch (event.type) {

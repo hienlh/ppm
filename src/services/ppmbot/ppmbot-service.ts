@@ -184,10 +184,25 @@ class PPMBotService {
       }
       text += "\nSwitch: /project &lt;name&gt;";
     } else {
-      text += "⚠️ No projects yet. Add one in PPM Settings first.";
+      text += "No projects configured — I'll use a default workspace.";
     }
     text += "\n\nJust send a message to start chatting, or /help for commands.";
     await this.telegram!.sendMessage(Number(chatId), text);
+
+    // Identity onboarding: if no identity memories exist, ask user
+    const identityMemories = this.memory.recall("_global", "user identity name role");
+    if (identityMemories.length === 0) {
+      await this.telegram!.sendMessage(
+        Number(chatId),
+        "📝 <b>Quick intro?</b>\n\n" +
+          "I don't know much about you yet! Tell me:\n" +
+          "• Your name\n" +
+          "• What you work on (language, stack, role)\n" +
+          "• Preferred response language (English, Vietnamese, etc.)\n\n" +
+          "I'll remember your preferences for future chats.\n" +
+          "Or skip this and just start chatting!",
+      );
+    }
   }
 
   private async cmdProject(chatId: string, args: string): Promise<void> {

@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { chatService } from "../chat.service.ts";
 import { configService } from "../config.service.ts";
 import {
@@ -29,9 +32,10 @@ export class PPMBotSessionManager {
       return cached;
     }
 
-    const resolvedProject = this.resolveProject(
-      projectName || this.getDefaultProject(),
-    );
+    const input = projectName || this.getDefaultProject();
+    const resolvedProject = input
+      ? this.resolveProject(input)
+      : this.getFallbackProject();
     if (!resolvedProject) {
       throw new Error(`Project not found: "${projectName || "(default)"}"`);
     }
@@ -126,6 +130,13 @@ export class PPMBotSessionManager {
   private getDefaultProject(): string {
     const cfg = configService.get("clawbot") as PPMBotConfig | undefined;
     return cfg?.default_project || "";
+  }
+
+  /** Fallback project when nothing is configured: ~/.ppm/bot/ */
+  private getFallbackProject(): { name: string; path: string } {
+    const botDir = join(homedir(), ".ppm", "bot");
+    if (!existsSync(botDir)) mkdirSync(botDir, { recursive: true });
+    return { name: "bot", path: botDir };
   }
 
   private getDefaultProvider(): string {
