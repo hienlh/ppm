@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.32] - 2026-04-06
+
+### Added
+- **ClawBot Telegram integration**: Chat with AI providers directly from Telegram
+  - Long-polling Telegram bot (no webhook/public URL needed)
+  - Progressive message editing with 1s throttle for streaming responses
+  - Pairing-based access control (6-char code, approve via web UI)
+  - FTS5 memory system with AI extraction + regex fallback
+  - Cross-project memory recall when mentioning project names
+  - Message debouncing (configurable, default 2s) for rapid messages
+  - Context window monitoring with auto-session rotation at >80%
+  - 11 bot commands: /start, /project, /new, /sessions, /resume, /status, /stop, /memory, /forget, /remember, /help
+  - Settings UI: enable/disable, paired devices, system prompt, display toggles
+  - `[Claw]` prefix + bot icon in chat history for Telegram sessions
+  - DB migration v13: clawbot_sessions, clawbot_memories (FTS5), clawbot_paired_chats
+
 ## [0.9.31] - 2026-04-05
 
 ### Fixed
