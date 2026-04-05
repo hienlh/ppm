@@ -193,8 +193,14 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **AccountService** | Account CRUD, token encryption/decryption | getAccounts, createAccount, updateAccount, deleteAccount |
 | **AccountSelectorService** | Select active account based on config | getActiveAccount, setActiveAccount, selectByProject |
 | **UpgradeService** | Version checking, installation, self-replace signaling | checkForUpdate, applyUpgrade, getInstallMethod, compareSemver |
+| **ClawBotService** | Telegram bot orchestrator | start, stop, handleMessage, routeToChat |
+| **ClawBotTelegramService** | Telegram long-polling, message ops | getUpdates, sendMessage, editMessage, setTyping, handleCommands |
+| **ClawBotSessionService** | chatID → PPM sessionID mapping | mapSession, getSession, deleteSession |
+| **ClawBotMemoryService** | FTS5 memory persistence | saveMemory, recallMemories, decayMemories, searchByProject |
+| **ClawBotFormatterService** | Markdown → Telegram HTML + chunking | formatMarkdown, chunkMessage |
+| **ClawBotStreamerService** | ChatEvent → progressive Telegram edits | streamMessageEdits |
 
-**Key Files:** `src/services/*.service.ts`
+**Key Files:** `src/services/*.service.ts`, `src/services/clawbot/*.ts`
 
 ---
 
@@ -263,6 +269,63 @@ PPM supports multiple AI providers through a generic `AIProvider` interface and 
 
 ---
 
+### ClawBot Service Layer (Telegram Bot Integration)
+**Component:** Telegram bot service + subsidiary services
+
+**Responsibilities:**
+- Receive Telegram messages via long-polling (no webhooks needed)
+- Route Telegram user (chatID) to PPM session with pairing-based security
+- Persist session state + conversation memory in SQLite (FTS5)
+- Stream AI responses back to Telegram with progressive message editing
+- Format responses as Telegram HTML with proper chunking (4096 char limit)
+
+**Architecture:**
+```
+Telegram → ClawBotTelegramService (polling) → ClawBotService (orchestrator)
+                                                    ↓
+                                            ClawBotSessionService (chatID→sessionID)
+                                            ClawBotMemoryService (FTS5 recall)
+                                            ChatService + ProviderRegistry
+                                            ClawBotStreamerService (ChatEvent→edits)
+                                            ClawBotFormatterService (Markdown→HTML)
+```
+
+**Services (src/services/clawbot/):**
+- **ClawBotService** — Lifecycle management (start/stop), message queue, routing logic
+- **ClawBotTelegramService** — Telegram Bot API wrapper (getUpdates long-polling, sendMessage, editMessage, setTyping, command handlers)
+- **ClawBotSessionService** — chatID ↔ PPM sessionID bidirectional mapping, session state tracking
+- **ClawBotMemoryService** — FTS5 persistent memory (save, recall with relevance, decay factor, supersede logic, cross-project search by name mention)
+- **ClawBotFormatterService** — Markdown → Telegram HTML conversion, message chunking (respects 4096 char limit), code block formatting
+- **ClawBotStreamerService** — ChatEvent async generator → progressive Telegram message edits (1s throttle for rate limiting)
+
+**Security Model:**
+- **Pairing System** — Replace allowlists with code-based pairing: User requests pairing → receives code → owner approves in web UI → chatID registered in `clawbot_paired_chats`
+- **Per-User Sessions** — Each Telegram chatID maps to isolated PPM session (no cross-user interference)
+- **bypassPermissions** — ClawBot bot runs headless, auto-approves tools (no manual approval flow)
+
+**Database Schema (v13):**
+- `clawbot_sessions` — chatID (PK), sessionID (FK chat_sessions), pairedAt, lastUsed
+- `clawbot_memories` — id (PK), sessionID (FK), content (text), role (user|assistant), created, decay_factor (FTS5 full-text index)
+- `clawbot_paired_chats` — chatID (PK), pairingCode (unique, 6 chars), approvedAt, approvedBy (user ID)
+
+**Key Design Decisions:**
+1. **Long-polling** — No webhooks = no public URL required, simpler for self-hosted
+2. **Message queue** — Concurrent Telegram messages queued FIFO, prevents race conditions
+3. **Progressive edits** — Edit same message for long responses, reduce Telegram API calls, better UX
+4. **Memory system** — Hybrid extraction (AI primary + regex fallback), supports cross-project search by project name mention
+5. **Config reuse** — Shares existing Telegram bot_token with notifications, separate ClawBotConfig section
+6. **Session tagging** — [Claw] prefix visible in web UI without schema changes, robot icon for identification
+
+**Settings Endpoints:**
+- `GET /api/settings/clawbot` — Fetch config (enabled, bot token, default project, system prompt, debounce, display toggles)
+- `PUT /api/settings/clawbot` — Update config
+- `GET /api/clawbot/paired-chats` — List paired Telegram chatIDs
+- `POST /api/clawbot/pairing` — Request pairing code (returns code)
+- `POST /api/clawbot/pairing/:code/approve` — Approve pairing code (owner only)
+- `DELETE /api/clawbot/paired-chats/:chatId` — Revoke pairing
+
+---
+
 ### Data Access Layer (SQLite + Filesystem + Git)
 **Components:** SQLite via bun:sqlite, direct filesystem access, simple-git wrapper
 
@@ -274,7 +337,7 @@ PPM supports multiple AI providers through a generic `AIProvider` interface and 
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
-- SQLite: WAL mode, foreign keys, lazy init, schema v10 (10 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, session_logs, workspace_state)
+- SQLite: WAL mode, foreign keys, lazy init, schema v13 (13 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats)
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)

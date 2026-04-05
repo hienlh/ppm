@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -398,9 +398,14 @@ export function ChatHistoryBar({
                     <>
                       <button
                         onClick={() => openSession(session)}
-                        className="text-[11px] truncate flex-1 text-left"
+                        className="text-[11px] truncate flex-1 text-left flex items-center gap-1"
                       >
-                        {session.title || "Untitled"}
+                        {session.title?.startsWith("[Claw]") && (
+                          <Bot className="size-3 text-muted-foreground shrink-0" />
+                        )}
+                        {session.title?.startsWith("[Claw]")
+                          ? session.title.slice(7)
+                          : session.title || "Untitled"}
                       </button>
                       <button
                         onClick={(e) => togglePin(e, session)}

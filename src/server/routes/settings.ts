@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import { configService } from "../../services/config.service.ts";
-import { getConfigValue, setConfigValue } from "../../services/db.service.ts";
+import { getConfigValue, setConfigValue, listPairedChats, getPairingByCode, approvePairing, revokePairing } from "../../services/db.service.ts";
 import {
   validateAIProviderConfig,
   validateDefaultProvider,
   VALID_PROVIDERS,
+  DEFAULT_CONFIG,
   type AIProviderConfig,
   type TelegramConfig,
+  type ClawBotConfig,
   type ThemeConfig,
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
@@ -315,4 +317,73 @@ settingsRoutes.put("/proxy", async (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
+});
+
+// ── ClawBot ─────────────────────────────────────────────────────
+
+/** GET /settings/clawbot — return current clawbot config */
+settingsRoutes.get("/clawbot", (c) => {
+  const config = configService.get("clawbot") as ClawBotConfig | undefined;
+  if (!config) return c.json(ok(DEFAULT_CONFIG.clawbot));
+  return c.json(ok(config));
+});
+
+/** PUT /settings/clawbot — update clawbot config */
+settingsRoutes.put("/clawbot", async (c) => {
+  try {
+    const body = await c.req.json<Partial<ClawBotConfig>>();
+    const current = (configService.get("clawbot") as ClawBotConfig | undefined)
+      ?? structuredClone(DEFAULT_CONFIG.clawbot!);
+    const updated: ClawBotConfig = { ...current, ...body };
+
+    if (updated.debounce_ms < 0 || updated.debounce_ms > 30000) {
+      return c.json(err("debounce_ms must be 0-30000"), 400);
+    }
+
+    configService.set("clawbot", updated);
+    configService.save();
+
+    // Restart clawbot if running state changed
+    try {
+      const { clawbotService } = await import("../../services/clawbot/clawbot-service.ts");
+      if (updated.enabled && !clawbotService.isRunning) {
+        await clawbotService.start();
+      } else if (!updated.enabled && clawbotService.isRunning) {
+        clawbotService.stop();
+      }
+    } catch { /* ClawBot module not loaded yet — OK */ }
+
+    return c.json(ok(updated));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** GET /settings/clawbot/paired — list paired devices */
+settingsRoutes.get("/clawbot/paired", (c) => {
+  return c.json(ok(listPairedChats()));
+});
+
+/** POST /settings/clawbot/paired/approve — approve pairing by code */
+settingsRoutes.post("/clawbot/paired/approve", async (c) => {
+  try {
+    const { code } = await c.req.json<{ code: string }>();
+    const pairing = getPairingByCode(code);
+    if (!pairing) return c.json(err("Invalid pairing code"), 404);
+    approvePairing(pairing.telegram_chat_id);
+    // Notify user on Telegram
+    try {
+      const { clawbotService } = await import("../../services/clawbot/clawbot-service.ts");
+      await clawbotService.notifyPairingApproved(pairing.telegram_chat_id);
+    } catch { /* OK */ }
+    return c.json(ok({ approved: pairing.telegram_chat_id }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** DELETE /settings/clawbot/paired/:chatId — revoke pairing */
+settingsRoutes.delete("/clawbot/paired/:chatId", (c) => {
+  revokePairing(c.req.param("chatId"));
+  return c.json(ok({ revoked: true }));
 });

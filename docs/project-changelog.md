@@ -6,6 +6,53 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
+## [0.9.10] — 2026-04-06
+
+### Added
+- **ClawBot Telegram Integration** — Telegram bot service layer for AI-powered messaging
+  - Telegram long-polling: receive messages via polling (no webhooks needed for self-hosted)
+  - Session routing: chatID → PPM session mapping with per-user thread isolation
+  - Memory system: SQLite FTS5 for persistent conversation history + recall with decay/supersede
+  - Response streaming: ChatEvent → progressive Telegram message editing (1s throttle)
+  - Message formatting: Markdown → Telegram HTML with 4096-character chunking
+  - Pairing system: Code-based device pairing for security (owner approves in web UI)
+  - Message queue: Handle concurrent Telegram messages without race conditions
+  - Settings UI: Enable/disable, paired devices, default project, system prompt, display toggles, debounce config
+  - Chat history: [Claw] prefix sessions with robot icon for easy identification
+  - Cross-project memory: Auto-detect project name mentions → include that project's memories in context
+
+### Technical Details
+- **Database Migration (v13):**
+  - `clawbot_sessions` — chatID, sessionID, pairedAt, lastUsed
+  - `clawbot_memories` — sessionID, content, role, created, decay_factor (FTS5)
+  - `clawbot_paired_chats` — chatID, pairingCode, approvedAt, approvedBy
+- **Files Created:**
+  - `src/services/clawbot/clawbot.service.ts` — Main orchestrator
+  - `src/services/clawbot/clawbot-telegram.ts` — Telegram API polling
+  - `src/services/clawbot/clawbot-session.ts` — Session mapping
+  - `src/services/clawbot/clawbot-memory.ts` — FTS5 memory CRUD + hybrid extraction (AI + regex)
+  - `src/services/clawbot/clawbot-formatter.ts` — Markdown → Telegram HTML
+  - `src/services/clawbot/clawbot-streamer.ts` — ChatEvent → progressive message edits
+  - `src/types/clawbot.ts` — Type definitions
+  - `src/web/components/settings/clawbot-settings-section.tsx` — Settings UI
+- **Files Modified:**
+  - `src/services/db.service.ts` — Schema v13 migration
+  - `src/types/config.ts` — ClawBotConfig interface
+  - `src/server/index.ts` — ClawBot poller startup
+  - `src/server/routes/settings.ts` — ClawBot settings endpoints (GET/PUT)
+  - `src/web/components/settings/settings-tab.tsx` — ClawBot category
+  - `src/web/components/chat/chat-history-bar.tsx` — [Claw] prefix + icon tagging
+
+### Key Design Principles
+- **Long-polling over webhooks** — Simpler self-hosted setup, no public URL required
+- **bypassPermissions by default** — Headless bot, no manual tool approvals needed
+- **Hybrid memory extraction** — AI extraction (primary) + regex fallback (fallback)
+- **Progressive message editing** — 1s throttle balances UX with Telegram rate limits
+- **Message debouncing** — 2s default, configurable per session
+- **Pairing-based security** — Replace allowlists with owner-approved pairing codes
+
+---
+
 ## [0.9.9] — 2026-04-04
 
 ### Added

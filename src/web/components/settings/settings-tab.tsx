@@ -15,6 +15,7 @@ import { TelegramSettingsSection } from "./telegram-settings-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
 import { McpSettingsSection } from "./mcp-settings-section";
 import { ExtensionManagerSection } from "./extension-manager-section";
+import { ClawBotSettingsSection } from "./clawbot-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
@@ -28,11 +29,12 @@ const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
 const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
   !window.matchMedia("(display-mode: standalone)").matches;
 
-type SettingsCategory = "ai" | "notifications" | "proxy" | "shortcuts" | "mcp" | "extensions";
+type SettingsCategory = "ai" | "notifications" | "clawbot" | "proxy" | "shortcuts" | "mcp" | "extensions";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { value: "notifications", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
+  { value: "clawbot", label: "ClawBot", subtitle: "Telegram AI bot", icon: Bot },
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { value: "mcp", label: "MCP Servers", subtitle: "Model Context Protocol tools", icon: Plug },
@@ -87,6 +89,7 @@ export function SettingsTab() {
           <div className="p-3">
             {activeCategory === "ai" && <AISettingsSection compact />}
             {activeCategory === "notifications" && <NotificationsContent isSubscribed={isSubscribed} loading={loading} permission={permission} pushError={pushError} subscribe={subscribe} unsubscribe={unsubscribe} />}
+            {activeCategory === "clawbot" && <ClawBotSettingsSection />}
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
             {activeCategory === "mcp" && <McpSettingsSection />}

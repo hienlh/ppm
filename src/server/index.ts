@@ -477,5 +477,12 @@ if (process.argv.includes("__serve__")) {
     console.error("[ExtService] Startup error:", e);
   });
 
+  // Start ClawBot Telegram poller (if enabled)
+  import("../services/clawbot/clawbot-service.ts")
+    .then(({ clawbotService }) => clawbotService.start())
+    .catch((e) => {
+      console.error("[clawbot] Startup error:", e);
+    });
+
   console.log(`Server child ready on port ${port}`);
 }

@@ -109,20 +109,27 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ### v0.11.0 — "Intelligence" (Q3–Q4 2026)
 
-**Theme:** Event system + PPM's own AI layer. Hooks → Skills API → Clawbot dependency chain.
+**Theme:** Event system + PPM's own AI layer + Telegram bot. Hooks → Skills API → Clawbot dependency chain.
 
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| **Hooks system** | High | Event hooks for PPM lifecycle (file save, git commit, chat message, etc.). Foundation for Skills API and deeper extension integration. |
-| **PPM Skills API** | High | Stable internal API for AI to control PPM: file.read/write/search, terminal.run, git.status/commit/diff, db.query, editor.open/goto, project.switch. Skills are the bridge between AI and PPM features. |
-| **Built-in Clawbot** | High | Lightweight AI agent built into PPM using Anthropic Messages API (not Agent SDK). Uses Skills API + MCP tools. Instant response, no external CLI deps. For quick tasks: file search, code explanation, simple refactors. |
-| **More providers** | Medium | Gemini CLI (Tier 2), OpenAI Codex (Tier 2), Tier 3 chat-only (any OpenAI-compatible API). Provider interface already clean from v0.9. |
+| Feature | Priority | Status | Description |
+|---------|----------|--------|-------------|
+| **Hooks system** | High | — | Event hooks for PPM lifecycle (file save, git commit, chat message, etc.). Foundation for Skills API and deeper extension integration. |
+| **PPM Skills API** | High | — | Stable internal API for AI to control PPM: file.read/write/search, terminal.run, git.status/commit/diff, db.query, editor.open/goto, project.switch. Skills are the bridge between AI and PPM features. |
+| **Telegram Bot (ClawBot)** | High | ✅ Done (v0.9.10) | Long-polling Telegram bot with session routing, FTS5 memory system, progressive message editing, pairing-based security. Routes through existing providers (Claude SDK, Cursor). No external bot infrastructure. |
+| **Built-in Clawbot** | High | — | Lightweight AI agent built into PPM using Anthropic Messages API (not Agent SDK). Uses Skills API + MCP tools. Instant response, no external CLI deps. For quick tasks: file search, code explanation, simple refactors. |
+| **More providers** | Medium | — | Gemini CLI (Tier 2), OpenAI Codex (Tier 2), Tier 3 chat-only (any OpenAI-compatible API). Provider interface already clean from v0.9. |
 
 **Built-in Clawbot — why it matters:**
 - Claude Agent SDK spawns subprocess — heavy, slow startup, requires CLI installed
 - Clawbot = instant, lightweight, works with any LLM via Messages API
 - Users can use Clawbot to create extensions → zero-friction extension authoring
 - Foundation for "AI creates extensions on demand" vision
+
+**Telegram Bot — why it matters:**
+- Extends PPM beyond the web UI → reach users on mobile, messaging apps
+- Long-polling avoids webhooks — simpler for self-hosted, no public URL needed
+- Paired devices enable secure multi-user access — owner controls who can use the bot
+- Persistent memory in FTS5 — bot learns conversation context over time
 
 ---
 

@@ -9,6 +9,17 @@ export interface TelegramConfig {
   chat_id: string;
 }
 
+export interface ClawBotConfig {
+  enabled: boolean;
+  default_provider: string;
+  default_project: string;
+  system_prompt: string;
+  show_tool_calls: boolean;
+  show_thinking: boolean;
+  permission_mode: string;
+  debounce_ms: number;
+}
+
 export type ThemeConfig = "light" | "dark" | "system";
 
 export interface PpmConfig {
@@ -21,6 +32,7 @@ export interface PpmConfig {
   ai: AIConfig;
   push?: PushConfig;
   telegram?: TelegramConfig;
+  clawbot?: ClawBotConfig;
   cloud_url?: string;
 }
 
@@ -84,6 +96,16 @@ export const DEFAULT_CONFIG: PpmConfig = {
         permission_mode: "bypassPermissions",
       },
     },
+  },
+  clawbot: {
+    enabled: false,
+    default_provider: "claude",
+    default_project: "",
+    system_prompt: "",
+    show_tool_calls: true,
+    show_thinking: false,
+    permission_mode: "bypassPermissions",
+    debounce_ms: 2000,
   },
 };
 

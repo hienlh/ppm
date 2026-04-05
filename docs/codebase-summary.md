@@ -1,7 +1,7 @@
 # PPM Codebase Summary
 
-**Last Updated:** 2026-03-26
-**Version:** 0.8.60
+**Last Updated:** 2026-04-06
+**Version:** 0.9.10
 **Repository:** PPM (Project & Process Manager) — Multi-provider web IDE/project manager with Claude Agent SDK
 
 **Core Statistics:**
@@ -66,6 +66,13 @@ src/
 │   ├── extension-rpc.ts         # RPC channel (request/response/events)
 │   ├── extension-host-worker.ts # Worker-side extension loading
 │   ├── contribution-registry.ts # Central registry for commands, views, config
+│   ├── clawbot/                 # Telegram bot service layer
+│   │   ├── clawbot.service.ts   # Main orchestrator (poller lifecycle, routing)
+│   │   ├── clawbot-telegram.ts  # Telegram API (long-polling, send, edit, typing)
+│   │   ├── clawbot-session.ts   # Session mapping (chatID → PPM sessionID)
+│   │   ├── clawbot-memory.ts    # FTS5 memory (save, recall, decay, supersede)
+│   │   ├── clawbot-formatter.ts # Markdown → Telegram HTML, chunking
+│   │   └── clawbot-streamer.ts  # ChatEvent → progressive message edits
 │   ├── database/
 │   │   ├── adapter-registry.ts  # SQLite/Postgres adapter registry
 │   │   ├── sqlite-adapter.ts
@@ -269,6 +276,12 @@ src/
   - **DatabaseAdapterRegistry** — Register/retrieve DatabaseAdapter implementations (extensible pattern)
   - **SQLiteAdapter** — SQLite connection/query execution with readonly checks
   - **PostgresAdapter** — PostgreSQL connection/query execution with readonly checks
+  - **ClawBotService** — Telegram bot orchestrator (startup, shutdown, message routing)
+  - **ClawBotTelegramService** — Telegram API (long-polling, send, edit, typing, command handling)
+  - **ClawBotSessionService** — chatID → PPM sessionID mapping, session state tracking
+  - **ClawBotMemoryService** — FTS5 persistent memory (save, recall, decay, project-aware search)
+  - **ClawBotFormatterService** — Markdown → Telegram HTML, message chunking (4096 char limit)
+  - **ClawBotStreamerService** — ChatEvent streaming → progressive Telegram message editing
 - **Pattern:** Singleton services, dependency injection via imports, adapter registry for extensibility
 
 ### Provider Layer (src/providers/)
@@ -591,7 +604,24 @@ ppm ext dev /path/to/src          # Dev symlink
 
 ---
 
-## Recent Changes (v0.8.60+)
+## Recent Changes (v0.9.0+)
+
+### v0.9.10 (ClawBot Telegram Integration)
+- **Telegram Bot Service** — Long-polling Telegram bot with message routing
+  - Session mapping: chatID → PPM sessionID (per-user thread isolation)
+  - Pairing system: Code-based device pairing with owner approval in web UI
+  - Message queue: Handle concurrent Telegram messages without race conditions
+- **Memory System** — FTS5 persistent conversation memory
+  - Hybrid extraction: AI extraction (primary) + regex fallback
+  - Cross-project search: Auto-detect project name mentions → include memories
+  - Decay/supersede: Memory relevance based on age + custom decay factors
+- **Response Streaming** — Progressive Telegram message editing
+  - ChatEvent streaming with 1s throttle
+  - Markdown → Telegram HTML formatting with chunking (4096 char limit)
+- **Settings & History**
+  - Settings UI: Enable/disable, paired devices, default project, system prompt, display toggles, debounce config
+  - Chat history: [Claw] prefix sessions with robot icon for easy identification
+- **Database Schema v13** — `clawbot_sessions`, `clawbot_memories` (FTS5), `clawbot_paired_chats` tables
 
 ### v0.9.0 (Extension System Phase 1)
 - **Extension Framework** — VSCode-compatible npm-installable extensions

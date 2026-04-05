@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 12;
+const CURRENT_SCHEMA_VERSION = 13;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -311,6 +311,80 @@ function runMigrations(database: Database): void {
       );
 
       PRAGMA user_version = 12;
+    `);
+  }
+
+  if (current < 13) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS clawbot_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_chat_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL DEFAULT 'claude',
+        project_name TEXT NOT NULL,
+        project_path TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_message_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_clawbot_sessions_chat
+        ON clawbot_sessions(telegram_chat_id, is_active);
+      CREATE INDEX IF NOT EXISTS idx_clawbot_sessions_session
+        ON clawbot_sessions(session_id);
+
+      CREATE TABLE IF NOT EXISTS clawbot_memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT NOT NULL,
+        content TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'fact',
+        importance REAL NOT NULL DEFAULT 1.0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        session_id TEXT,
+        superseded_by INTEGER REFERENCES clawbot_memories(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_clawbot_memories_project
+        ON clawbot_memories(project, superseded_by);
+      CREATE INDEX IF NOT EXISTS idx_clawbot_memories_importance
+        ON clawbot_memories(importance DESC);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS clawbot_memories_fts USING fts5(
+        content,
+        content='clawbot_memories',
+        content_rowid='id'
+      );
+
+      -- FTS5 sync triggers
+      CREATE TRIGGER IF NOT EXISTS clawbot_memories_ai AFTER INSERT ON clawbot_memories BEGIN
+        INSERT INTO clawbot_memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS clawbot_memories_ad AFTER DELETE ON clawbot_memories BEGIN
+        INSERT INTO clawbot_memories_fts(clawbot_memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS clawbot_memories_au AFTER UPDATE ON clawbot_memories BEGIN
+        INSERT INTO clawbot_memories_fts(clawbot_memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+        INSERT INTO clawbot_memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+
+      CREATE TABLE IF NOT EXISTS clawbot_paired_chats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_chat_id TEXT NOT NULL UNIQUE,
+        telegram_user_id TEXT,
+        display_name TEXT,
+        pairing_code TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        approved_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_clawbot_paired_status
+        ON clawbot_paired_chats(status);
+
+      PRAGMA user_version = 13;
     `);
   }
 }
@@ -892,6 +966,210 @@ export function setExtensionStorageValue(extId: string, scope: string, key: stri
 
 export function deleteExtensionStorage(extId: string): void {
   getDb().query("DELETE FROM extension_storage WHERE ext_id = ?").run(extId);
+}
+
+// ---------------------------------------------------------------------------
+// ClawBot session helpers
+// ---------------------------------------------------------------------------
+
+import type { ClawBotSessionRow, ClawBotMemoryRow, ClawBotPairedChat } from "../types/clawbot.ts";
+
+export function getActiveClawBotSession(
+  telegramChatId: string,
+  projectName: string,
+): ClawBotSessionRow | null {
+  return getDb().query(
+    `SELECT * FROM clawbot_sessions
+     WHERE telegram_chat_id = ? AND project_name = ? AND is_active = 1
+     ORDER BY last_message_at DESC LIMIT 1`,
+  ).get(telegramChatId, projectName) as ClawBotSessionRow | null;
+}
+
+export function createClawBotSession(
+  telegramChatId: string,
+  sessionId: string,
+  providerId: string,
+  projectName: string,
+  projectPath: string,
+): void {
+  getDb().query(
+    `INSERT INTO clawbot_sessions
+     (telegram_chat_id, session_id, provider_id, project_name, project_path)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(telegramChatId, sessionId, providerId, projectName, projectPath);
+}
+
+export function deactivateClawBotSession(sessionId: string): void {
+  getDb().query(
+    "UPDATE clawbot_sessions SET is_active = 0 WHERE session_id = ?",
+  ).run(sessionId);
+}
+
+export function touchClawBotSession(sessionId: string): void {
+  getDb().query(
+    "UPDATE clawbot_sessions SET last_message_at = unixepoch() WHERE session_id = ?",
+  ).run(sessionId);
+}
+
+export function getRecentClawBotSessions(
+  telegramChatId: string,
+  limit = 10,
+): ClawBotSessionRow[] {
+  return getDb().query(
+    `SELECT * FROM clawbot_sessions
+     WHERE telegram_chat_id = ?
+     ORDER BY last_message_at DESC LIMIT ?`,
+  ).all(telegramChatId, limit) as ClawBotSessionRow[];
+}
+
+// ---------------------------------------------------------------------------
+// ClawBot memory helpers
+// ---------------------------------------------------------------------------
+
+export function insertClawBotMemory(
+  project: string,
+  content: string,
+  category: string,
+  importance: number,
+  sessionId?: string,
+): number {
+  const result = getDb().query(
+    `INSERT INTO clawbot_memories (project, content, category, importance, session_id)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(project, content, category, importance, sessionId ?? null);
+  return Number(result.lastInsertRowid);
+}
+
+export function searchClawBotMemories(
+  project: string,
+  query: string,
+  limit = 20,
+): Array<ClawBotMemoryRow & { rank: number }> {
+  return getDb().query(
+    `SELECT m.*, fts.rank
+     FROM clawbot_memories m
+     JOIN clawbot_memories_fts fts ON m.id = fts.rowid
+     WHERE clawbot_memories_fts MATCH ?
+       AND m.project IN (?, '_global')
+       AND m.superseded_by IS NULL
+     ORDER BY fts.rank
+     LIMIT ?`,
+  ).all(query, project, limit) as Array<ClawBotMemoryRow & { rank: number }>;
+}
+
+export function getClawBotMemories(
+  project: string,
+  limit = 20,
+): ClawBotMemoryRow[] {
+  return getDb().query(
+    `SELECT * FROM clawbot_memories
+     WHERE project IN (?, '_global')
+       AND superseded_by IS NULL
+     ORDER BY importance DESC, updated_at DESC
+     LIMIT ?`,
+  ).all(project, limit) as ClawBotMemoryRow[];
+}
+
+export function supersedeClawBotMemory(
+  oldId: number,
+  newId: number,
+): void {
+  getDb().query(
+    "UPDATE clawbot_memories SET superseded_by = ? WHERE id = ?",
+  ).run(newId, oldId);
+}
+
+export function deleteClawBotMemoriesByTopic(
+  project: string,
+  topic: string,
+): number {
+  const matches = getDb().query(
+    `SELECT m.id FROM clawbot_memories m
+     JOIN clawbot_memories_fts fts ON m.id = fts.rowid
+     WHERE clawbot_memories_fts MATCH ?
+       AND m.project IN (?, '_global')
+       AND m.superseded_by IS NULL`,
+  ).all(topic, project) as { id: number }[];
+
+  for (const row of matches) {
+    getDb().query("DELETE FROM clawbot_memories WHERE id = ?").run(row.id);
+  }
+  return matches.length;
+}
+
+export function decayClawBotMemories(): void {
+  getDb().query(
+    `UPDATE clawbot_memories
+     SET importance = importance * 0.95,
+         updated_at = unixepoch()
+     WHERE superseded_by IS NULL
+       AND category NOT IN ('preference', 'architecture')
+       AND updated_at < unixepoch() - 604800`,
+  ).run();
+  getDb().query(
+    `DELETE FROM clawbot_memories WHERE importance < 0.1 AND superseded_by IS NULL`,
+  ).run();
+}
+
+// ---------------------------------------------------------------------------
+// ClawBot pairing helpers
+// ---------------------------------------------------------------------------
+
+export function createPairingRequest(
+  chatId: string,
+  userId: string,
+  displayName: string,
+  code: string,
+): void {
+  getDb().query(
+    `INSERT INTO clawbot_paired_chats (telegram_chat_id, telegram_user_id, display_name, pairing_code, status)
+     VALUES (?, ?, ?, ?, 'pending')
+     ON CONFLICT(telegram_chat_id) DO UPDATE SET
+       telegram_user_id = excluded.telegram_user_id,
+       display_name = excluded.display_name,
+       pairing_code = excluded.pairing_code,
+       status = 'pending',
+       approved_at = NULL`,
+  ).run(chatId, userId, displayName, code);
+}
+
+export function approvePairing(chatId: string): void {
+  getDb().query(
+    `UPDATE clawbot_paired_chats
+     SET status = 'approved', pairing_code = NULL, approved_at = unixepoch()
+     WHERE telegram_chat_id = ? AND status = 'pending'`,
+  ).run(chatId);
+}
+
+export function revokePairing(chatId: string): void {
+  getDb().query(
+    "UPDATE clawbot_paired_chats SET status = 'revoked' WHERE telegram_chat_id = ?",
+  ).run(chatId);
+}
+
+export function getPairingByCode(code: string): ClawBotPairedChat | null {
+  return getDb().query(
+    "SELECT * FROM clawbot_paired_chats WHERE pairing_code = ? AND status = 'pending'",
+  ).get(code) as ClawBotPairedChat | null;
+}
+
+export function getPairingByChatId(chatId: string): ClawBotPairedChat | null {
+  return getDb().query(
+    "SELECT * FROM clawbot_paired_chats WHERE telegram_chat_id = ?",
+  ).get(chatId) as ClawBotPairedChat | null;
+}
+
+export function listPairedChats(): ClawBotPairedChat[] {
+  return getDb().query(
+    "SELECT * FROM clawbot_paired_chats WHERE status != 'revoked' ORDER BY created_at DESC",
+  ).all() as ClawBotPairedChat[];
+}
+
+export function isPairedChat(chatId: string): boolean {
+  const row = getDb().query(
+    "SELECT 1 FROM clawbot_paired_chats WHERE telegram_chat_id = ? AND status = 'approved'",
+  ).get(chatId);
+  return row != null;
 }
 
 // Auto-close on process exit
