@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { chatService } from "../../../src/services/chat.service.ts";
 
-const PORT = 19876;
+const PORT = 19879; // Unique port — avoid conflict with supervisor-resilience (19876)
 let server: ReturnType<typeof Bun.serve>;
 
 beforeAll(async () => {

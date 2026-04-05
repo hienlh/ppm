@@ -1,13 +1,10 @@
 # Changelog
 
-## [0.9.28] - 2026-04-05
+## [0.9.31] - 2026-04-05
 
-### Added
-- **OpenAI-compatible proxy endpoint**: New `POST /proxy/v1/chat/completions` accepts OpenAI Chat Completions format requests and returns OpenAI-format responses (streaming SSE with `data: [DONE]` and non-streaming JSON), using SDK `query()` internally
-- **Dual endpoint display in proxy settings**: Shows both Anthropic and OpenAI-compatible endpoint URLs with separate copy buttons and env var examples
-
-### Changed
-- **Proxy test dialog**: OpenAI tab now uses the real `/proxy/v1/chat/completions` endpoint with proper OpenAI request format instead of hitting the Anthropic endpoint with different auth headers
+### Fixed
+- **Tunnel URL lost on self-replace upgrade**: Server child's `stopTunnel()` killed the cloudflared process and wrote `tunnelPid: null` to status.json during SIGTERM — new supervisor couldn't adopt the tunnel. Now sets `.restarting` flag before killing server child so tunnel survives upgrade.
+- **Tunnel PID not set before status persist**: `setExternalUrl` called `persistToStatusFile` before `setExternalPid` was called, writing `tunnelPid: null` to status.json on server boot. Reordered to set PID first.
 
 ## [0.9.26] - 2026-04-05
 

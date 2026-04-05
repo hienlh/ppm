@@ -387,8 +387,8 @@ if (process.argv.includes("__serve__")) {
     wf(statusFile, JSON.stringify(status));
     if (status.shareUrl) {
       const { tunnelService } = await import("../services/tunnel.service.ts");
-      tunnelService.setExternalUrl(status.shareUrl);
       if (status.tunnelPid) tunnelService.setExternalPid(status.tunnelPid);
+      tunnelService.setExternalUrl(status.shareUrl);
     }
   } catch { /* status.json missing or no shareUrl — normal */ }
 
