@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.9.28] - 2026-04-05
+## [0.9.31] - 2026-04-05
 
 ### Fixed
 - **Tunnel URL lost on self-replace upgrade**: Server child's `stopTunnel()` killed the cloudflared process and wrote `tunnelPid: null` to status.json during SIGTERM — new supervisor couldn't adopt the tunnel. Now sets `.restarting` flag before killing server child so tunnel survives upgrade.
