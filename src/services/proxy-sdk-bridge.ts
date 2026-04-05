@@ -172,40 +172,82 @@ async function handleStreaming(
 
         // Track tool_use block indices to filter them out
         const skipBlockIndices = new Set<number>();
+        let streamed = false; // track if we sent any SSE events
+        let lastContentLen = 0; // for partial message diff
 
         try {
           for await (const message of response) {
-            if (message.type !== "stream_event") continue;
+            const msgType = (message as any).type;
 
-            const event = (message as any).event;
-            const eventType = event.type as string;
-            const eventIndex = event.index as number | undefined;
+            // ── stream_event: raw Anthropic SSE events (best quality) ──
+            if (msgType === "stream_event") {
+              const event = (message as any).event;
+              const eventType = event.type as string;
+              const eventIndex = event.index as number | undefined;
 
-            // Filter tool_use content blocks — external tools expect text only
-            if (eventType === "content_block_start") {
-              const block = event.content_block;
-              if (block?.type === "tool_use") {
+              if (eventType === "content_block_start" && event.content_block?.type === "tool_use") {
                 if (eventIndex !== undefined) skipBlockIndices.add(eventIndex);
                 continue;
               }
-            }
+              if (eventIndex !== undefined && skipBlockIndices.has(eventIndex)) continue;
 
-            // Skip deltas and stops for tool_use blocks
-            if (eventIndex !== undefined && skipBlockIndices.has(eventIndex)) continue;
-
-            // Override message_delta to always show end_turn
-            if (eventType === "message_delta") {
-              const patched = {
-                ...event,
-                delta: { ...(event.delta || {}), stop_reason: "end_turn" },
-                usage: event.usage || { output_tokens: 0 },
-              };
-              controller.enqueue(encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(patched)}\n\n`));
+              if (eventType === "message_delta") {
+                const patched = {
+                  ...event,
+                  delta: { ...(event.delta || {}), stop_reason: "end_turn" },
+                  usage: event.usage || { output_tokens: 0 },
+                };
+                controller.enqueue(encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(patched)}\n\n`));
+              } else {
+                controller.enqueue(encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`));
+              }
+              streamed = true;
               continue;
             }
 
-            // Forward all other events (message_start, text deltas, content_block_start/stop, message_stop)
-            controller.enqueue(encoder.encode(`event: ${eventType}\ndata: ${JSON.stringify(event)}\n\n`));
+            // ── partial: incremental content (fallback if no stream_event) ──
+            if (msgType === "partial" && !streamed) {
+              const content = (message as any).message?.content ?? [];
+              let fullText = "";
+              for (const block of content) {
+                if (block.type === "text") fullText += block.text ?? "";
+              }
+              const delta = fullText.slice(lastContentLen);
+              if (delta) {
+                // Emit Anthropic SSE envelope on first partial
+                if (lastContentLen === 0) {
+                  const msgStart = { type: "message_start", message: { id: `msg_${Date.now()}`, type: "message", role: "assistant", model: body.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } };
+                  controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify(msgStart)}\n\n`));
+                  controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`));
+                }
+                controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: delta } })}\n\n`));
+                lastContentLen = fullText.length;
+              }
+              continue;
+            }
+
+            // ── assistant: final complete message (fallback if nothing streamed) ──
+            if (msgType === "assistant" && !streamed && lastContentLen === 0) {
+              const content = (message as any).message?.content ?? [];
+              let fullText = "";
+              for (const block of content) {
+                if (block.type === "text") fullText += block.text ?? "";
+              }
+              if (fullText) {
+                const msgStart = { type: "message_start", message: { id: `msg_${Date.now()}`, type: "message", role: "assistant", model: body.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } };
+                controller.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify(msgStart)}\n\n`));
+                controller.enqueue(encoder.encode(`event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`));
+                controller.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: fullText } })}\n\n`));
+                lastContentLen = fullText.length;
+              }
+            }
+          }
+
+          // Close SSE envelope if we used partial/assistant fallback
+          if (!streamed && lastContentLen > 0) {
+            controller.enqueue(encoder.encode(`event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}\n\n`));
+            controller.enqueue(encoder.encode(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } })}\n\n`));
+            controller.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}\n\n`));
           }
 
           accountSelector.onSuccess(account.id);

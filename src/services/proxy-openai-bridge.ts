@@ -162,33 +162,61 @@ async function handleStreaming(
         send(chunk({ role: "assistant", content: "" }, null));
 
         const skipBlockIndices = new Set<number>();
+        let streamed = false;
+        let lastContentLen = 0;
 
         for await (const message of response) {
-          if (message.type !== "stream_event") continue;
+          const msgType = (message as any).type;
 
-          const event = (message as any).event;
-          const eventType = event.type as string;
-          const eventIndex = event.index as number | undefined;
+          // ── stream_event: raw Anthropic SSE events (best quality) ──
+          if (msgType === "stream_event") {
+            const event = (message as any).event;
+            const eventType = event.type as string;
+            const eventIndex = event.index as number | undefined;
 
-          // Track and skip tool_use blocks
-          if (eventType === "content_block_start" && event.content_block?.type === "tool_use") {
-            if (eventIndex !== undefined) skipBlockIndices.add(eventIndex);
+            if (eventType === "content_block_start" && event.content_block?.type === "tool_use") {
+              if (eventIndex !== undefined) skipBlockIndices.add(eventIndex);
+              continue;
+            }
+            if (eventIndex !== undefined && skipBlockIndices.has(eventIndex)) continue;
+
+            if (eventType === "content_block_delta" && event.delta?.type === "text_delta") {
+              const text = event.delta.text ?? "";
+              if (text) send(chunk({ content: text }, null));
+            }
+            if (eventType === "message_stop") send(chunk({}, "stop"));
+            streamed = true;
             continue;
           }
-          if (eventIndex !== undefined && skipBlockIndices.has(eventIndex)) continue;
 
-          // Text deltas → OpenAI content chunks
-          if (eventType === "content_block_delta" && event.delta?.type === "text_delta") {
-            const text = event.delta.text ?? "";
-            if (text) send(chunk({ content: text }, null));
+          // ── partial: incremental content (fallback if no stream_event) ──
+          if (msgType === "partial" && !streamed) {
+            const content = (message as any).message?.content ?? [];
+            let fullText = "";
+            for (const block of content) {
+              if (block.type === "text") fullText += block.text ?? "";
+            }
+            const delta = fullText.slice(lastContentLen);
+            if (delta) {
+              send(chunk({ content: delta }, null));
+              lastContentLen = fullText.length;
+            }
+            continue;
           }
 
-          // Message complete → finish chunk
-          if (eventType === "message_stop") {
-            send(chunk({}, "stop"));
+          // ── assistant: final message (fallback if nothing streamed) ──
+          if (msgType === "assistant" && !streamed && lastContentLen === 0) {
+            const content = (message as any).message?.content ?? [];
+            let fullText = "";
+            for (const block of content) {
+              if (block.type === "text") fullText += block.text ?? "";
+            }
+            if (fullText) send(chunk({ content: fullText }, null));
           }
         }
 
+        // Always send finish + DONE
+        if (!streamed) send(chunk({}, "stop"));
         accountSelector.onSuccess(account.id);
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
         controller.close();
