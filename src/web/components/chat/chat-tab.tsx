@@ -366,6 +366,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             if (!isConnected) reconnect();
             refetchMessages();
           }}
+          teamActivity={teamActivity}
+          teamMessages={teamMessages}
+          onTeamOpen={markTeamRead}
         />
 
         {/* Pickers (in-flow, above input — only one visible at a time) */}
@@ -406,9 +409,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onModeChange={setPermissionMode}
           providerId={providerId}
           onProviderChange={!sessionId ? setProviderId : undefined}
-          teamActivity={teamActivity}
-          onTeamOpen={markTeamRead}
-          teamMessages={teamMessages}
         />
       </div>
 

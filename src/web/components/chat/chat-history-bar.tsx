@@ -1,16 +1,25 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2 } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { UsageDetailPanel } from "./usage-badge";
+import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
 import type { SessionInfo } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
+import type { TeamMessageItem } from "@/hooks/use-chat";
 
-type PanelType = "history" | "config" | "usage" | null;
+type PanelType = "history" | "config" | "usage" | "team" | null;
+
+interface TeamActivityState {
+  hasTeams: boolean;
+  teamNames: string[];
+  messageCount: number;
+  unreadCount: number;
+}
 
 interface ChatHistoryBarProps {
   projectName: string;
@@ -25,6 +34,9 @@ interface ChatHistoryBarProps {
   onBugReport?: () => void;
   isConnected?: boolean;
   onReconnect?: () => void;
+  teamActivity?: TeamActivityState;
+  teamMessages?: TeamMessageItem[];
+  onTeamOpen?: () => void;
 }
 
 function formatDate(iso: string): string {
@@ -85,6 +97,7 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
 export function ChatHistoryBar({
   projectName, usageInfo, compactStatus, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, providerId, onSelectSession, onBugReport, isConnected, onReconnect,
+  teamActivity, teamMessages, onTeamOpen,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -268,6 +281,26 @@ export function ChatHistoryBar({
           ) : null
         )}
 
+        {/* Team activity */}
+        {teamActivity?.hasTeams && (
+          <button
+            onClick={() => {
+              togglePanel("team");
+              onTeamOpen?.();
+            }}
+            className={`relative flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
+              activePanel === "team" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
+            }`}
+            title="Team activity"
+          >
+            <Users className="size-3" />
+            <span>Team</span>
+            {(teamActivity.unreadCount ?? 0) > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 size-2 bg-primary rounded-full animate-pulse" />
+            )}
+          </button>
+        )}
+
         {/* Spacer */}
         <div className="flex-1" />
 
@@ -410,6 +443,16 @@ export function ChatHistoryBar({
       {activePanel === "config" && (
         <div className="border-t border-border/30 bg-surface px-3 py-2 max-h-[280px] overflow-y-auto">
           <AISettingsSection compact />
+        </div>
+      )}
+
+      {/* Team activity panel */}
+      {activePanel === "team" && teamActivity?.hasTeams && (
+        <div className="border-t border-border/30 bg-surface px-3 py-2 max-h-[280px] overflow-y-auto">
+          <TeamActivityPanel
+            teamNames={teamActivity.teamNames}
+            messages={teamMessages ?? []}
+          />
         </div>
       )}
 
