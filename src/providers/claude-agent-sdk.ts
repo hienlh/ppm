@@ -170,9 +170,24 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       resolvedOAuth = process.env.CLAUDE_CODE_OAUTH_TOKEN ?? "";
     }
 
+    // Detect self-referencing proxy: if shell env has ANTHROPIC_BASE_URL pointing to
+    // PPM's own /proxy endpoint (e.g. from `export` in the same shell), the SDK subprocess
+    // would call PPM's proxy instead of the real Anthropic API → infinite 401 loop.
+    const shellBaseUrl = process.env.ANTHROPIC_BASE_URL ?? "";
+    const isSelfProxy = shellBaseUrl.includes("/proxy");
+    if (isSelfProxy && shellBaseUrl) {
+      console.warn(`[sdk] Ignoring self-referencing ANTHROPIC_BASE_URL from shell: ${shellBaseUrl}`);
+    }
     const resolvedBaseUrl = providerConfig.base_url
-      || process.env.ANTHROPIC_BASE_URL
+      || (isSelfProxy ? "" : shellBaseUrl)
       || "";
+    // Also clear API key from shell if it was paired with the self-referencing proxy URL
+    // (it's likely a PPM proxy token, not a real Anthropic key)
+    if (isSelfProxy && !settingsApiKey && !account && process.env.ANTHROPIC_API_KEY) {
+      resolvedApiKey = "";
+      resolvedOAuth = "";
+      console.warn(`[sdk] Clearing shell ANTHROPIC_API_KEY (paired with self-referencing proxy)`);
+    }
     const resolvedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN ?? "";
 
     // Log resolved sources
@@ -180,13 +195,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       console.log(`[sdk] Auth from settings api_key (length=${settingsApiKey.length})`);
     } else if (account) {
       console.log(`[sdk] Auth from PPM account (${account.accessToken.startsWith("sk-ant-oat") ? "OAuth" : "API key"})`);
-    } else if (process.env.ANTHROPIC_API_KEY) {
+    } else if (process.env.ANTHROPIC_API_KEY && !isSelfProxy) {
       console.log(`[sdk] ANTHROPIC_API_KEY from shell env (length=${process.env.ANTHROPIC_API_KEY.length})`);
     }
     if (providerConfig.base_url) {
       console.log(`[sdk] ANTHROPIC_BASE_URL from settings: ${providerConfig.base_url}`);
-    } else if (process.env.ANTHROPIC_BASE_URL) {
-      console.log(`[sdk] ANTHROPIC_BASE_URL from shell env: ${process.env.ANTHROPIC_BASE_URL}`);
+    } else if (shellBaseUrl && !isSelfProxy) {
+      console.log(`[sdk] ANTHROPIC_BASE_URL from shell env: ${shellBaseUrl}`);
     }
 
     // Enable experimental agent teams if toggled on in provider settings

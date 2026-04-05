@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.24] - 2026-04-05
+
+### Fixed
+- **Self-referencing proxy loop**: SDK subprocess inherited `ANTHROPIC_BASE_URL=/proxy` from shell env, calling PPM's own proxy instead of real Anthropic API → infinite 401 loop. Now detects and strips self-referencing proxy URL and paired API key from SDK env.
+
 ## [0.9.22] - 2026-04-05
 
 ### Fixed
