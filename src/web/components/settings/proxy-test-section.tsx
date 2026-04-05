@@ -45,6 +45,7 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
   const [format, setFormat] = useState<EndpointFormat>("anthropic");
   const [message, setMessage] = useState(DEFAULT_MESSAGE);
   const [model, setModel] = useState(DEFAULT_MODEL);
+  const [streaming, setStreaming] = useState(true);
   const [testing, setTesting] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,9 +78,7 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
       ? `${baseUrl}/proxy/v1/chat/completions`
       : `${baseUrl}/proxy/v1/messages`;
 
-    const body = isOpenAi
-      ? JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] })
-      : JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] });
+    const body = JSON.stringify({ model, max_tokens: 256, stream: streaming, messages: [{ role: "user", content: message }] });
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (isOpenAi) {
@@ -100,18 +99,25 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
         return;
       }
 
-      const reader = res.body?.getReader();
-      if (!reader) { setError("No response body"); setTesting(false); return; }
-
-      const decoder = new TextDecoder();
-      let raw = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        raw += decoder.decode(value, { stream: true });
-        setOutput(raw);
+      if (!streaming) {
+        // Non-streaming: read full JSON and pretty-print
+        const text = await res.text();
+        try { setOutput(JSON.stringify(JSON.parse(text), null, 2)); } catch { setOutput(text); }
+        setElapsed(Date.now() - start);
+      } else {
+        // Streaming: read SSE chunks progressively
+        const reader = res.body?.getReader();
+        if (!reader) { setError("No response body"); setTesting(false); return; }
+        const decoder = new TextDecoder();
+        let raw = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          raw += decoder.decode(value, { stream: true });
+          setOutput(raw);
+        }
+        setElapsed(Date.now() - start);
       }
-      setElapsed(Date.now() - start);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -157,6 +163,26 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
           <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
           <option value="claude-opus-4-6">claude-opus-4-6</option>
         </select>
+      </div>
+
+      {/* Streaming toggle */}
+      <div className="flex items-center justify-between">
+        <Label className="text-[11px]">Streaming</Label>
+        <div className="flex gap-1">
+          {([true, false] as const).map((s) => (
+            <button
+              key={String(s)}
+              onClick={() => setStreaming(s)}
+              className={`h-7 px-3 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                streaming === s
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted text-muted-foreground border-transparent hover:bg-muted/80"
+              }`}
+            >
+              {s ? "Stream" : "JSON"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Message + Test button */}
