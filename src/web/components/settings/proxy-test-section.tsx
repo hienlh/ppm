@@ -14,7 +14,6 @@ type EndpointFormat = "anthropic" | "openai";
 
 interface ProxyTestDialogProps {
   authKey: string;
-  /** Current page origin, e.g. http://localhost:3210 */
   baseUrl: string;
 }
 
@@ -36,7 +35,7 @@ export function ProxyTestButton(props: ProxyTestDialogProps) {
             Send a test request and inspect the raw response.
           </DialogDescription>
         </DialogHeader>
-        <ProxyTestForm {...props} />
+        {open && <ProxyTestForm {...props} />}
       </DialogContent>
     </Dialog>
   );
@@ -58,9 +57,16 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [output]);
 
-  const endpoint = format === "anthropic"
-    ? `${baseUrl}/proxy/v1/messages`
-    : `${baseUrl}/proxy/v1/chat/completions`;
+  // Clear output when switching format
+  const switchFormat = (f: EndpointFormat) => {
+    setFormat(f);
+    setOutput(null);
+    setError(null);
+    setElapsed(null);
+  };
+
+  // Both formats hit the same proxy endpoint — only request/response shape differs
+  const endpoint = `${baseUrl}/proxy/v1/messages`;
 
   const runTest = async () => {
     setTesting(true);
@@ -69,17 +75,21 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
     setElapsed(null);
     const start = Date.now();
 
-    const isAnthropic = format === "anthropic";
-    const body = isAnthropic
-      ? JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] })
-      : JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] });
+    const body = JSON.stringify({
+      model,
+      max_tokens: 256,
+      stream: true,
+      messages: [{ role: "user", content: message }],
+    });
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (isAnthropic) {
+    if (format === "anthropic") {
       headers["x-api-key"] = authKey;
       headers["anthropic-version"] = "2023-06-01";
     } else {
+      // OpenAI-style: use Authorization Bearer
       headers["Authorization"] = `Bearer ${authKey}`;
+      headers["anthropic-version"] = "2023-06-01";
     }
 
     try {
@@ -114,15 +124,15 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 min-w-0">
       {/* Endpoint format toggle */}
-      <div className="space-y-1.5">
-        <Label className="text-[11px]">Endpoint Format</Label>
+      <div className="space-y-1.5 min-w-0">
+        <Label className="text-[11px]">Auth Style</Label>
         <div className="flex gap-1">
           {(["anthropic", "openai"] as const).map((f) => (
             <button
               key={f}
-              onClick={() => setFormat(f)}
+              onClick={() => switchFormat(f)}
               className={`flex-1 h-8 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
                 format === f
                   ? "bg-primary text-primary-foreground border-primary"
@@ -133,7 +143,9 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
             </button>
           ))}
         </div>
-        <code className="block text-[9px] font-mono text-muted-foreground truncate">{endpoint}</code>
+        <p className="text-[9px] text-muted-foreground">
+          {format === "anthropic" ? "x-api-key header" : "Authorization: Bearer header"}
+        </p>
       </div>
 
       {/* Model */}
@@ -159,7 +171,7 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Type a test message..."
-            className="h-9 text-[11px] flex-1"
+            className="h-9 text-[11px] flex-1 min-w-0"
             onKeyDown={(e) => { if (e.key === "Enter" && !testing) runTest(); }}
           />
           <Button
@@ -176,7 +188,7 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
 
       {/* Raw output */}
       {(output || error) && (
-        <div className="space-y-1">
+        <div className="space-y-1 min-w-0">
           <div className="flex items-center justify-between">
             <Label className="text-[10px] text-muted-foreground">Raw Response</Label>
             {elapsed != null && (
