@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.36] - 2026-04-06
+
+### Fixed
+- **Stream timeout during tool execution**: Per-event timeout increased from 60s to 180s. Tool calls (bash, file writes, memory saves) frequently exceed 60s between events, causing premature stream termination.
+
 ## [0.9.35] - 2026-04-06
 
 ### Fixed
