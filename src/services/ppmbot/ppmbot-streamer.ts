@@ -8,7 +8,7 @@ import {
 
 const MAX_MSG_LEN = 4096;
 const TYPING_REFRESH_MS = 4000;
-const EVENT_TIMEOUT_MS = 60_000; // 60s max wait per event
+const EVENT_TIMEOUT_MS = 180_000; // 3 min max wait per event (tool execution can be slow)
 const PLACEHOLDER = "\u2026"; // ellipsis
 
 /**
@@ -29,7 +29,7 @@ async function* withEventTimeout<T>(
         ),
       ]);
       if ("timedOut" in result) {
-        throw new Error("No response within 60 seconds");
+        throw new Error("No response within 3 minutes");
       }
       if (result.done) break;
       yield result.value;
