@@ -1,15 +1,15 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { openTestDb, setDb } from "../../../../src/services/db.service.ts";
 import { configService } from "../../../../src/services/config.service.ts";
-import { ClawBotSessionManager } from "../../../../src/services/clawbot/clawbot-session.ts";
+import { PPMBotSessionManager } from "../../../../src/services/ppmbot/ppmbot-session.ts";
 
-describe("ClawBot SessionManager", () => {
-  let manager: ClawBotSessionManager;
+describe("PPMBot SessionManager", () => {
+  let manager: PPMBotSessionManager;
 
   beforeEach(() => {
     const testDb = openTestDb();
     setDb(testDb);
-    manager = new ClawBotSessionManager();
+    manager = new PPMBotSessionManager();
   });
 
   describe("resolveProject", () => {

@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach } from "bun:test";
 import { openTestDb, setDb } from "../../../../src/services/db.service.ts";
 
 /**
- * ClawBotService is a singleton that depends on configService, chatService,
+ * PPMBotService is a singleton that depends on configService, chatService,
  * and the Telegram API. We test the pure/stateless helpers and DB interactions.
  * Full integration requires a running server — covered by e2e tests.
  */
 
-describe("ClawBot Service — pairing code generation", () => {
+describe("PPMBot Service — pairing code generation", () => {
   beforeEach(() => {
     const testDb = openTestDb();
     setDb(testDb);
@@ -31,7 +31,7 @@ describe("ClawBot Service — pairing code generation", () => {
   });
 });
 
-describe("ClawBot Service — DB pairing operations", () => {
+describe("PPMBot Service — DB pairing operations", () => {
   beforeEach(() => {
     const testDb = openTestDb();
     setDb(testDb);
@@ -90,11 +90,11 @@ describe("ClawBot Service — DB pairing operations", () => {
   });
 });
 
-describe("ClawBot Service — message debounce constants", () => {
+describe("PPMBot Service — message debounce constants", () => {
   it("should have CONTEXT_WINDOW_THRESHOLD at 80", async () => {
     // Read source to verify constant
     const source = await Bun.file(
-      "src/services/clawbot/clawbot-service.ts",
+      "src/services/ppmbot/ppmbot-service.ts",
     ).text();
     expect(source).toContain("const CONTEXT_WINDOW_THRESHOLD = 80");
   });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import type { ChatEvent } from "../../../../src/types/chat.ts";
-import type { StreamConfig } from "../../../../src/services/clawbot/clawbot-streamer.ts";
+import type { StreamConfig } from "../../../../src/services/ppmbot/ppmbot-streamer.ts";
 
 // We test streamToTelegram by providing a mock telegram object and a mock event iterable.
 
@@ -41,12 +41,12 @@ function makeMockTelegram() {
   };
 }
 
-describe("ClawBot Streamer — streamToTelegram", () => {
+describe("PPMBot Streamer — streamToTelegram", () => {
   // Dynamic import to avoid module-level side effects
-  let streamToTelegram: typeof import("../../../../src/services/clawbot/clawbot-streamer.ts").streamToTelegram;
+  let streamToTelegram: typeof import("../../../../src/services/ppmbot/ppmbot-streamer.ts").streamToTelegram;
 
   const loadModule = async () => {
-    const mod = await import("../../../../src/services/clawbot/clawbot-streamer.ts");
+    const mod = await import("../../../../src/services/ppmbot/ppmbot-streamer.ts");
     streamToTelegram = mod.streamToTelegram;
   };
 

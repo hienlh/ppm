@@ -969,23 +969,23 @@ export function deleteExtensionStorage(extId: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// ClawBot session helpers
+// PPMBot session helpers
 // ---------------------------------------------------------------------------
 
-import type { ClawBotSessionRow, ClawBotMemoryRow, ClawBotPairedChat } from "../types/clawbot.ts";
+import type { PPMBotSessionRow, PPMBotMemoryRow, PPMBotPairedChat } from "../types/ppmbot.ts";
 
-export function getActiveClawBotSession(
+export function getActivePPMBotSession(
   telegramChatId: string,
   projectName: string,
-): ClawBotSessionRow | null {
+): PPMBotSessionRow | null {
   return getDb().query(
     `SELECT * FROM clawbot_sessions
      WHERE telegram_chat_id = ? AND project_name = ? AND is_active = 1
      ORDER BY last_message_at DESC LIMIT 1`,
-  ).get(telegramChatId, projectName) as ClawBotSessionRow | null;
+  ).get(telegramChatId, projectName) as PPMBotSessionRow | null;
 }
 
-export function createClawBotSession(
+export function createPPMBotSession(
   telegramChatId: string,
   sessionId: string,
   providerId: string,
@@ -999,34 +999,34 @@ export function createClawBotSession(
   ).run(telegramChatId, sessionId, providerId, projectName, projectPath);
 }
 
-export function deactivateClawBotSession(sessionId: string): void {
+export function deactivatePPMBotSession(sessionId: string): void {
   getDb().query(
     "UPDATE clawbot_sessions SET is_active = 0 WHERE session_id = ?",
   ).run(sessionId);
 }
 
-export function touchClawBotSession(sessionId: string): void {
+export function touchPPMBotSession(sessionId: string): void {
   getDb().query(
     "UPDATE clawbot_sessions SET last_message_at = unixepoch() WHERE session_id = ?",
   ).run(sessionId);
 }
 
-export function getRecentClawBotSessions(
+export function getRecentPPMBotSessions(
   telegramChatId: string,
   limit = 10,
-): ClawBotSessionRow[] {
+): PPMBotSessionRow[] {
   return getDb().query(
     `SELECT * FROM clawbot_sessions
      WHERE telegram_chat_id = ?
      ORDER BY last_message_at DESC LIMIT ?`,
-  ).all(telegramChatId, limit) as ClawBotSessionRow[];
+  ).all(telegramChatId, limit) as PPMBotSessionRow[];
 }
 
 // ---------------------------------------------------------------------------
-// ClawBot memory helpers
+// PPMBot memory helpers
 // ---------------------------------------------------------------------------
 
-export function insertClawBotMemory(
+export function insertPPMBotMemory(
   project: string,
   content: string,
   category: string,
@@ -1040,11 +1040,11 @@ export function insertClawBotMemory(
   return Number(result.lastInsertRowid);
 }
 
-export function searchClawBotMemories(
+export function searchPPMBotMemories(
   project: string,
   query: string,
   limit = 20,
-): Array<ClawBotMemoryRow & { rank: number }> {
+): Array<PPMBotMemoryRow & { rank: number }> {
   return getDb().query(
     `SELECT m.*, fts.rank
      FROM clawbot_memories m
@@ -1054,23 +1054,23 @@ export function searchClawBotMemories(
        AND m.superseded_by IS NULL
      ORDER BY fts.rank
      LIMIT ?`,
-  ).all(query, project, limit) as Array<ClawBotMemoryRow & { rank: number }>;
+  ).all(query, project, limit) as Array<PPMBotMemoryRow & { rank: number }>;
 }
 
-export function getClawBotMemories(
+export function getPPMBotMemories(
   project: string,
   limit = 20,
-): ClawBotMemoryRow[] {
+): PPMBotMemoryRow[] {
   return getDb().query(
     `SELECT * FROM clawbot_memories
      WHERE project IN (?, '_global')
        AND superseded_by IS NULL
      ORDER BY importance DESC, updated_at DESC
      LIMIT ?`,
-  ).all(project, limit) as ClawBotMemoryRow[];
+  ).all(project, limit) as PPMBotMemoryRow[];
 }
 
-export function supersedeClawBotMemory(
+export function supersedePPMBotMemory(
   oldId: number,
   newId: number,
 ): void {
@@ -1079,7 +1079,7 @@ export function supersedeClawBotMemory(
   ).run(newId, oldId);
 }
 
-export function deleteClawBotMemoriesByTopic(
+export function deletePPMBotMemoriesByTopic(
   project: string,
   topic: string,
 ): number {
@@ -1097,7 +1097,7 @@ export function deleteClawBotMemoriesByTopic(
   return matches.length;
 }
 
-export function decayClawBotMemories(): void {
+export function decayPPMBotMemories(): void {
   getDb().query(
     `UPDATE clawbot_memories
      SET importance = importance * 0.95,
@@ -1112,7 +1112,7 @@ export function decayClawBotMemories(): void {
 }
 
 // ---------------------------------------------------------------------------
-// ClawBot pairing helpers
+// PPMBot pairing helpers
 // ---------------------------------------------------------------------------
 
 export function createPairingRequest(
@@ -1147,22 +1147,22 @@ export function revokePairing(chatId: string): void {
   ).run(chatId);
 }
 
-export function getPairingByCode(code: string): ClawBotPairedChat | null {
+export function getPairingByCode(code: string): PPMBotPairedChat | null {
   return getDb().query(
     "SELECT * FROM clawbot_paired_chats WHERE pairing_code = ? AND status = 'pending'",
-  ).get(code) as ClawBotPairedChat | null;
+  ).get(code) as PPMBotPairedChat | null;
 }
 
-export function getPairingByChatId(chatId: string): ClawBotPairedChat | null {
+export function getPairingByChatId(chatId: string): PPMBotPairedChat | null {
   return getDb().query(
     "SELECT * FROM clawbot_paired_chats WHERE telegram_chat_id = ?",
-  ).get(chatId) as ClawBotPairedChat | null;
+  ).get(chatId) as PPMBotPairedChat | null;
 }
 
-export function listPairedChats(): ClawBotPairedChat[] {
+export function listPairedChats(): PPMBotPairedChat[] {
   return getDb().query(
     "SELECT * FROM clawbot_paired_chats WHERE status != 'revoked' ORDER BY created_at DESC",
-  ).all() as ClawBotPairedChat[];
+  ).all() as PPMBotPairedChat[];
 }
 
 export function isPairedChat(chatId: string): boolean {

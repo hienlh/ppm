@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { openTestDb, setDb, getDb } from "../../../src/services/db.service.ts";
 
-describe("DB Migration v13 — ClawBot tables", () => {
+describe("DB Migration v13 — PPMBot tables", () => {
   beforeEach(() => {
     const testDb = openTestDb();
     setDb(testDb);

@@ -1,13 +1,14 @@
 import type { ChatEvent, ResultSubtype } from "../../types/chat.ts";
-import type { ClawBotTelegram } from "./clawbot-telegram.ts";
+import type { PPMBotTelegram } from "./ppmbot-telegram.ts";
 import {
   markdownToTelegramHtml,
   chunkMessage,
   escapeHtml,
-} from "./clawbot-formatter.ts";
+} from "./ppmbot-formatter.ts";
 
 const MAX_MSG_LEN = 4096;
 const TYPING_REFRESH_MS = 4000;
+const STREAM_TIMEOUT_MS = 5 * 60 * 1000; // 5 min max per stream
 const PLACEHOLDER = "\u2026"; // ellipsis
 
 export interface StreamConfig {
@@ -18,30 +19,59 @@ export interface StreamConfig {
 export interface StreamResult {
   contextWindowPct?: number;
   resultSubtype?: ResultSubtype;
-  /** All Telegram message IDs sent during this stream */
   messageIds: number[];
-  /** New session ID if session was migrated */
   newSessionId?: string;
 }
 
 /**
- * Consume a ChatEvent stream and progressively send/edit Telegram messages.
- *
- * Flow:
- * 1. Send placeholder message
- * 2. Accumulate text/tool/thinking events
- * 3. Edit message every time ClawBotTelegram allows (1s throttle)
- * 4. When text exceeds 4096, finalize current msg, start new one
- * 5. On done/error, finalize and return result
+ * Segments of accumulated response.
+ * - "md" = raw markdown from AI (needs conversion)
+ * - "html" = pre-formatted HTML (tool calls, thinking, errors — already escaped)
  */
+type Segment = { type: "md"; text: string } | { type: "html"; text: string };
+
+/** Render segments into Telegram HTML */
+function renderSegments(segments: Segment[]): string {
+  return segments
+    .map((s) => (s.type === "md" ? markdownToTelegramHtml(s.text) : s.text))
+    .join("");
+}
+
+/** Check if segments have meaningful content */
+function hasContent(segments: Segment[]): boolean {
+  return segments.some((s) => s.text.trim().length > 0);
+}
+
+/** Get raw text length (approximation for split decisions) */
+function segmentsLength(segments: Segment[]): number {
+  return segments.reduce((sum, s) => sum + s.text.length, 0);
+}
+
+/** Append markdown text — merges into last segment if also md */
+function appendMd(segments: Segment[], text: string): void {
+  const last = segments[segments.length - 1];
+  if (last?.type === "md") {
+    last.text += text;
+  } else {
+    segments.push({ type: "md", text });
+  }
+}
+
+/** Append pre-formatted HTML */
+function appendHtml(segments: Segment[], html: string): void {
+  segments.push({ type: "html", html: html } as any);
+  // fix: use correct field
+  segments[segments.length - 1] = { type: "html", text: html };
+}
+
 export async function streamToTelegram(
   chatId: number | string,
   events: AsyncIterable<ChatEvent>,
-  telegram: ClawBotTelegram,
+  telegram: PPMBotTelegram,
   config: StreamConfig,
 ): Promise<StreamResult> {
   const result: StreamResult = { messageIds: [] };
-  let accumulated = "";
+  const segments: Segment[] = [];
   let currentMsgId: number | null = null;
   let lastTypingTime = 0;
 
@@ -62,62 +92,54 @@ export async function streamToTelegram(
     result.messageIds.push(currentMsgId);
   }
 
-  const finalizeAndStartNew = async (text: string): Promise<void> => {
-    if (currentMsgId && text.trim()) {
-      const html = markdownToTelegramHtml(text);
-      await telegram.editMessageFinal(chatId, currentMsgId, html);
-    }
-    accumulated = "";
-    currentMsgId = null;
-  };
-
-  const sendNewMessage = async (text: string): Promise<void> => {
-    const html = markdownToTelegramHtml(text);
-    const chunks = chunkMessage(html, MAX_MSG_LEN);
-    for (const chunk of chunks) {
-      const sent = await telegram.sendMessage(chatId, chunk);
-      if (sent) {
-        currentMsgId = sent.message_id;
-        result.messageIds.push(currentMsgId);
-      }
-    }
-  };
-
   const editCurrent = async (): Promise<void> => {
-    if (!currentMsgId || !accumulated.trim()) return;
+    if (!currentMsgId || !hasContent(segments)) return;
 
-    const html = markdownToTelegramHtml(accumulated);
+    const html = renderSegments(segments);
     if (html.length > MAX_MSG_LEN) {
-      const splitPoint = findSplitPoint(accumulated, MAX_MSG_LEN * 0.8);
-      const first = accumulated.slice(0, splitPoint);
-      const rest = accumulated.slice(splitPoint).trimStart();
+      // Finalize current message with what fits, start new one
+      await telegram.editMessageFinal(chatId, currentMsgId, html.slice(0, MAX_MSG_LEN));
+      currentMsgId = null;
 
-      await finalizeAndStartNew(first);
-      accumulated = rest;
-      if (rest) {
-        await sendNewMessage(rest);
+      const overflow = html.slice(MAX_MSG_LEN);
+      if (overflow.trim()) {
+        const chunks = chunkMessage(overflow, MAX_MSG_LEN);
+        for (const chunk of chunks) {
+          const sent = await telegram.sendMessage(chatId, chunk);
+          if (sent) {
+            currentMsgId = sent.message_id;
+            result.messageIds.push(currentMsgId);
+          }
+        }
       }
+      // Reset segments — only keep any un-rendered text
+      segments.length = 0;
       return;
     }
 
     await telegram.editMessage(chatId, currentMsgId, html);
   };
 
-  // Process event stream
+  // Process event stream with timeout
+  const streamStart = Date.now();
   try {
     for await (const event of events) {
+      if (Date.now() - streamStart > STREAM_TIMEOUT_MS) {
+        appendHtml(segments, "\n\n⏱️ <i>Response timed out.</i>");
+        break;
+      }
       await refreshTyping();
 
       switch (event.type) {
         case "text": {
-          accumulated += event.content;
+          appendMd(segments, event.content);
           await editCurrent();
           break;
         }
 
         case "thinking": {
           if (config.showThinking && event.content) {
-            accumulated += `\n<i>${escapeHtml(event.content)}</i>\n`;
+            appendHtml(segments, `\n<i>💭 ${escapeHtml(event.content)}</i>\n`);
             await editCurrent();
           }
           break;
@@ -127,7 +149,10 @@ export async function streamToTelegram(
           if (config.showToolCalls) {
             const toolName = event.tool;
             const inputPreview = formatToolInput(event.input);
-            accumulated += `\n🔧 <code>${escapeHtml(toolName)}</code>(${escapeHtml(inputPreview)})\n`;
+            appendHtml(
+              segments,
+              `\n🔧 <code>${escapeHtml(toolName)}</code>(${escapeHtml(inputPreview)})\n`,
+            );
             await editCurrent();
           }
           break;
@@ -135,14 +160,17 @@ export async function streamToTelegram(
 
         case "tool_result": {
           if (config.showToolCalls && event.isError) {
-            accumulated += `\n⚠️ <code>${escapeHtml(event.output.slice(0, 200))}</code>\n`;
+            appendHtml(
+              segments,
+              `\n⚠️ <code>${escapeHtml(event.output.slice(0, 200))}</code>\n`,
+            );
             await editCurrent();
           }
           break;
         }
 
         case "error": {
-          accumulated += `\n\n❌ <b>Error:</b> ${escapeHtml(event.message)}`;
+          appendHtml(segments, `\n\n❌ <b>Error:</b> ${escapeHtml(event.message)}`);
           await editCurrent();
           break;
         }
@@ -159,23 +187,28 @@ export async function streamToTelegram(
         }
 
         case "account_retry": {
-          accumulated += `\n⏳ <i>Switching account: ${escapeHtml(event.reason)}</i>\n`;
+          appendHtml(
+            segments,
+            `\n⏳ <i>Switching account: ${escapeHtml(event.reason)}</i>\n`,
+          );
           await editCurrent();
           break;
         }
 
         default:
-          // Ignore unknown events (system, team_detected, account_info, etc.)
           break;
       }
     }
   } catch (err) {
-    accumulated += `\n\n❌ <b>Stream error:</b> ${escapeHtml((err as Error).message)}`;
+    appendHtml(
+      segments,
+      `\n\n❌ <b>Stream error:</b> ${escapeHtml((err as Error).message)}`,
+    );
   }
 
   // Final edit with complete content
-  if (currentMsgId && accumulated.trim()) {
-    const html = markdownToTelegramHtml(accumulated);
+  if (currentMsgId && hasContent(segments)) {
+    const html = renderSegments(segments);
     const chunks = chunkMessage(html, MAX_MSG_LEN);
 
     if (chunks.length === 1) {
@@ -187,7 +220,7 @@ export async function streamToTelegram(
         if (sent) result.messageIds.push(sent.message_id);
       }
     }
-  } else if (currentMsgId && !accumulated.trim()) {
+  } else if (currentMsgId && !hasContent(segments)) {
     await telegram.editMessageFinal(
       chatId,
       currentMsgId,
@@ -200,7 +233,6 @@ export async function streamToTelegram(
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-/** Format tool input for compact display */
 function formatToolInput(input: unknown): string {
   if (!input) return "";
   if (typeof input === "string") return input.slice(0, 80);
@@ -221,25 +253,4 @@ function formatToolInput(input: unknown): string {
   } catch {
     return "";
   }
-}
-
-/**
- * Find a good split point in text, aiming for targetLen.
- * Prefers double newline > single newline > space.
- */
-function findSplitPoint(text: string, targetLen: number): number {
-  if (text.length <= targetLen) return text.length;
-
-  const window = text.slice(0, Math.floor(targetLen));
-
-  let point = window.lastIndexOf("\n\n");
-  if (point > targetLen * 0.3) return point;
-
-  point = window.lastIndexOf("\n");
-  if (point > targetLen * 0.3) return point;
-
-  point = window.lastIndexOf(" ");
-  if (point > targetLen * 0.3) return point;
-
-  return Math.floor(targetLen);
 }

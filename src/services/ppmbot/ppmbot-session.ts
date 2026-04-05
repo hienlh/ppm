@@ -1,19 +1,19 @@
 import { chatService } from "../chat.service.ts";
 import { configService } from "../config.service.ts";
 import {
-  getActiveClawBotSession,
-  createClawBotSession,
-  deactivateClawBotSession,
-  touchClawBotSession,
-  getRecentClawBotSessions,
+  getActivePPMBotSession,
+  createPPMBotSession,
+  deactivatePPMBotSession,
+  touchPPMBotSession,
+  getRecentPPMBotSessions,
   setSessionTitle,
 } from "../db.service.ts";
-import type { ClawBotActiveSession, ClawBotSessionRow } from "../../types/clawbot.ts";
-import type { ClawBotConfig, ProjectConfig } from "../../types/config.ts";
+import type { PPMBotActiveSession, PPMBotSessionRow } from "../../types/ppmbot.ts";
+import type { PPMBotConfig, ProjectConfig } from "../../types/config.ts";
 
-export class ClawBotSessionManager {
+export class PPMBotSessionManager {
   /** In-memory cache: telegramChatId → active session */
-  private activeSessions = new Map<string, ClawBotActiveSession>();
+  private activeSessions = new Map<string, PPMBotActiveSession>();
 
   /**
    * Get active session for chatId. If none exists, create one for the
@@ -22,10 +22,10 @@ export class ClawBotSessionManager {
   async getOrCreateSession(
     chatId: string,
     projectName?: string,
-  ): Promise<ClawBotActiveSession> {
+  ): Promise<PPMBotActiveSession> {
     const cached = this.activeSessions.get(chatId);
     if (cached && (!projectName || cached.projectName === projectName)) {
-      touchClawBotSession(cached.sessionId);
+      touchPPMBotSession(cached.sessionId);
       return cached;
     }
 
@@ -36,7 +36,7 @@ export class ClawBotSessionManager {
       throw new Error(`Project not found: "${projectName || "(default)"}"`);
     }
 
-    const dbSession = getActiveClawBotSession(chatId, resolvedProject.name);
+    const dbSession = getActivePPMBotSession(chatId, resolvedProject.name);
     if (dbSession) {
       return this.resumeFromDb(chatId, dbSession, resolvedProject);
     }
@@ -48,7 +48,7 @@ export class ClawBotSessionManager {
   async switchProject(
     chatId: string,
     projectName: string,
-  ): Promise<ClawBotActiveSession> {
+  ): Promise<PPMBotActiveSession> {
     await this.closeSession(chatId);
     return this.getOrCreateSession(chatId, projectName);
   }
@@ -57,27 +57,27 @@ export class ClawBotSessionManager {
   async closeSession(chatId: string): Promise<void> {
     const active = this.activeSessions.get(chatId);
     if (active) {
-      deactivateClawBotSession(active.sessionId);
+      deactivatePPMBotSession(active.sessionId);
       this.activeSessions.delete(chatId);
     }
   }
 
   /** Get active session from cache (no DB hit) */
-  getActiveSession(chatId: string): ClawBotActiveSession | null {
+  getActiveSession(chatId: string): PPMBotActiveSession | null {
     return this.activeSessions.get(chatId) ?? null;
   }
 
   /** List recent sessions for a chat (from DB) */
-  listRecentSessions(chatId: string, limit = 10): ClawBotSessionRow[] {
-    return getRecentClawBotSessions(chatId, limit);
+  listRecentSessions(chatId: string, limit = 10): PPMBotSessionRow[] {
+    return getRecentPPMBotSessions(chatId, limit);
   }
 
   /** Resume a specific session by 1-indexed position in history */
   async resumeSessionById(
     chatId: string,
     sessionIndex: number,
-  ): Promise<ClawBotActiveSession | null> {
-    const sessions = getRecentClawBotSessions(chatId, 20);
+  ): Promise<PPMBotActiveSession | null> {
+    const sessions = getRecentPPMBotSessions(chatId, 20);
     const target = sessions[sessionIndex - 1];
     if (!target) return null;
 
@@ -111,7 +111,7 @@ export class ClawBotSessionManager {
   /** Update session title (e.g. after first message) */
   updateSessionTitle(sessionId: string, firstMessage: string): void {
     const preview = firstMessage.slice(0, 60).replace(/\n/g, " ");
-    const title = `[Claw] ${preview}`;
+    const title = `[PPM] ${preview}`;
     setSessionTitle(sessionId, title);
   }
 
@@ -124,30 +124,30 @@ export class ClawBotSessionManager {
   // ── Private ─────────────────────────────────────────────────────
 
   private getDefaultProject(): string {
-    const clawbot = configService.get("clawbot") as ClawBotConfig | undefined;
-    return clawbot?.default_project || "";
+    const cfg = configService.get("clawbot") as PPMBotConfig | undefined;
+    return cfg?.default_project || "";
   }
 
   private getDefaultProvider(): string {
-    const clawbot = configService.get("clawbot") as ClawBotConfig | undefined;
-    return clawbot?.default_provider || configService.get("ai").default_provider;
+    const cfg = configService.get("clawbot") as PPMBotConfig | undefined;
+    return cfg?.default_provider || configService.get("ai").default_provider;
   }
 
   private async createNewSession(
     chatId: string,
     project: { name: string; path: string },
-  ): Promise<ClawBotActiveSession> {
+  ): Promise<PPMBotActiveSession> {
     const providerId = this.getDefaultProvider();
 
     const session = await chatService.createSession(providerId, {
       projectName: project.name,
       projectPath: project.path,
-      title: `[Claw] New session`,
+      title: `[PPM] New session`,
     });
 
-    createClawBotSession(chatId, session.id, providerId, project.name, project.path);
+    createPPMBotSession(chatId, session.id, providerId, project.name, project.path);
 
-    const active: ClawBotActiveSession = {
+    const active: PPMBotActiveSession = {
       telegramChatId: chatId,
       sessionId: session.id,
       providerId,
@@ -161,20 +161,20 @@ export class ClawBotSessionManager {
 
   private async resumeFromDb(
     chatId: string,
-    dbSession: ClawBotSessionRow,
+    dbSession: PPMBotSessionRow,
     project: { name: string; path: string },
-  ): Promise<ClawBotActiveSession> {
+  ): Promise<PPMBotActiveSession> {
     try {
       await chatService.resumeSession(dbSession.provider_id, dbSession.session_id);
     } catch {
-      console.warn(`[clawbot] Failed to resume session ${dbSession.session_id}, creating new`);
-      deactivateClawBotSession(dbSession.session_id);
+      console.warn(`[ppmbot] Failed to resume session ${dbSession.session_id}, creating new`);
+      deactivatePPMBotSession(dbSession.session_id);
       return this.createNewSession(chatId, project);
     }
 
-    touchClawBotSession(dbSession.session_id);
+    touchPPMBotSession(dbSession.session_id);
 
-    const active: ClawBotActiveSession = {
+    const active: PPMBotActiveSession = {
       telegramChatId: chatId,
       sessionId: dbSession.session_id,
       providerId: dbSession.provider_id,

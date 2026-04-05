@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api-client";
 import { Trash2, CheckCircle, Clock } from "lucide-react";
 
-interface ClawBotConfig {
+interface PPMBotConfig {
   enabled: boolean;
   default_provider: string;
   default_project: string;
@@ -27,8 +27,8 @@ interface PairedChat {
   approved_at: number | null;
 }
 
-export function ClawBotSettingsSection() {
-  const [config, setConfig] = useState<ClawBotConfig | null>(null);
+export function PPMBotSettingsSection() {
+  const [config, setConfig] = useState<PPMBotConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
 
@@ -51,7 +51,7 @@ export function ClawBotSettingsSection() {
   }, []);
 
   useEffect(() => {
-    api.get<ClawBotConfig>("/api/settings/clawbot").then((data) => {
+    api.get<PPMBotConfig>("/api/settings/clawbot").then((data) => {
       setConfig(data);
       setEnabled(data.enabled);
       setDefaultProject(data.default_project);
@@ -67,7 +67,7 @@ export function ClawBotSettingsSection() {
     setSaving(true);
     setStatus(null);
     try {
-      const body: Partial<ClawBotConfig> = {
+      const body: Partial<PPMBotConfig> = {
         enabled,
         default_project: defaultProject.trim(),
         system_prompt: systemPrompt,
@@ -75,7 +75,7 @@ export function ClawBotSettingsSection() {
         show_thinking: showThinking,
         debounce_ms: debounceMs,
       };
-      const data = await api.put<ClawBotConfig>("/api/settings/clawbot", body);
+      const data = await api.put<PPMBotConfig>("/api/settings/clawbot", body);
       setConfig(data);
       setStatus({ type: "ok", msg: enabled ? "Saved — bot started" : "Saved — bot stopped" });
     } catch (e) {
@@ -117,7 +117,7 @@ export function ClawBotSettingsSection() {
       {/* Enable/Disable */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs font-medium">Enable ClawBot</p>
+          <p className="text-xs font-medium">Enable PPMBot</p>
           <p className="text-[10px] text-muted-foreground">
             Telegram bot that chats with your AI providers
           </p>

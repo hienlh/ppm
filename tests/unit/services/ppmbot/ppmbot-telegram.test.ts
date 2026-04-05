@@ -1,8 +1,8 @@
 import { describe, it, expect } from "bun:test";
-import { ClawBotTelegram } from "../../../../src/services/clawbot/clawbot-telegram.ts";
-import type { TelegramMessage } from "../../../../src/types/clawbot.ts";
+import { PPMBotTelegram } from "../../../../src/services/ppmbot/ppmbot-telegram.ts";
+import type { TelegramMessage } from "../../../../src/types/ppmbot.ts";
 
-describe("ClawBot Telegram — parseCommand", () => {
+describe("PPMBot Telegram — parseCommand", () => {
   const makeMessage = (text: string): TelegramMessage => ({
     message_id: 1,
     chat: { id: 123, type: "private" },
@@ -12,41 +12,41 @@ describe("ClawBot Telegram — parseCommand", () => {
   });
 
   it("should parse /start command", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("/start"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/start"));
     expect(cmd?.command).toBe("start");
     expect(cmd?.args).toBe("");
   });
 
   it("should parse /project with args", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("/project my-app"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/project my-app"));
     expect(cmd?.command).toBe("project");
     expect(cmd?.args).toBe("my-app");
   });
 
   it("should parse /resume with number", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("/resume 3"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/resume 3"));
     expect(cmd?.command).toBe("resume");
     expect(cmd?.args).toBe("3");
   });
 
   it("should parse /remember with multi-word fact", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("/remember the API uses REST not GraphQL"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/remember the API uses REST not GraphQL"));
     expect(cmd?.command).toBe("remember");
     expect(cmd?.args).toBe("the API uses REST not GraphQL");
   });
 
   it("should handle @botname suffix", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("/status@clawbot"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/status@ppmbot"));
     expect(cmd?.command).toBe("status");
   });
 
   it("should return null for non-command messages", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("hello world"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("hello world"));
     expect(cmd).toBeNull();
   });
 
   it("should return null for unknown commands", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("/unknown"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/unknown"));
     expect(cmd).toBeNull();
   });
 
@@ -56,26 +56,26 @@ describe("ClawBot Telegram — parseCommand", () => {
       "status", "stop", "memory", "forget", "remember", "help",
     ];
     for (const name of commands) {
-      const cmd = ClawBotTelegram.parseCommand(makeMessage(`/${name}`));
+      const cmd = PPMBotTelegram.parseCommand(makeMessage(`/${name}`));
       expect(cmd?.command).toBe(name);
     }
   });
 
   it("should extract chatId and userId", () => {
-    const cmd = ClawBotTelegram.parseCommand(makeMessage("/start"));
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/start"));
     expect(cmd?.chatId).toBe(123);
     expect(cmd?.userId).toBe(456);
     expect(cmd?.username).toBe("testuser");
   });
 });
 
-describe("ClawBot Telegram — constructor", () => {
+describe("PPMBot Telegram — constructor", () => {
   it("should reject invalid bot token", () => {
-    expect(() => new ClawBotTelegram("invalid")).toThrow("Invalid Telegram bot token");
+    expect(() => new PPMBotTelegram("invalid")).toThrow("Invalid Telegram bot token");
   });
 
   it("should accept valid bot token", () => {
-    const tg = new ClawBotTelegram("123456:ABCDEFghijklmnopqrstuvwxyz1234567890");
+    const tg = new PPMBotTelegram("123456:ABCDEFghijklmnopqrstuvwxyz1234567890");
     expect(tg).toBeTruthy();
   });
 });

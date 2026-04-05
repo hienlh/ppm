@@ -1,17 +1,17 @@
 import {
-  insertClawBotMemory,
-  searchClawBotMemories,
-  getClawBotMemories,
-  supersedeClawBotMemory,
-  deleteClawBotMemoriesByTopic,
-  decayClawBotMemories,
+  insertPPMBotMemory,
+  searchPPMBotMemories,
+  getPPMBotMemories,
+  supersedePPMBotMemory,
+  deletePPMBotMemoriesByTopic,
+  decayPPMBotMemories,
   getDb,
 } from "../db.service.ts";
 import { configService } from "../config.service.ts";
 import type {
-  ClawBotMemoryCategory,
+  PPMBotMemoryCategory,
   MemoryRecallResult,
-} from "../../types/clawbot.ts";
+} from "../../types/ppmbot.ts";
 import type { ProjectConfig } from "../../types/config.ts";
 
 /** Max memories per project before pruning */
@@ -20,11 +20,11 @@ const MAX_MEMORIES_PER_PROJECT = 500;
 /** Fact extracted from AI response */
 interface ExtractedFact {
   content: string;
-  category: ClawBotMemoryCategory;
+  category: PPMBotMemoryCategory;
   importance?: number;
 }
 
-export class ClawBotMemory {
+export class PPMBotMemory {
   /**
    * Recall relevant memories for a project.
    * If query provided, use FTS5 search. Otherwise return top by importance.
@@ -34,7 +34,7 @@ export class ClawBotMemory {
       const sanitized = this.sanitizeFtsQuery(query);
       if (sanitized) {
         try {
-          const results = searchClawBotMemories(project, sanitized, limit);
+          const results = searchPPMBotMemories(project, sanitized, limit);
           return results.map((r) => ({
             id: r.id,
             content: r.content,
@@ -49,7 +49,7 @@ export class ClawBotMemory {
       }
     }
 
-    const rows = getClawBotMemories(project, limit);
+    const rows = getPPMBotMemories(project, limit);
     return rows.map((r) => ({
       id: r.id,
       content: r.content,
@@ -94,7 +94,7 @@ export class ClawBotMemory {
 
       const existingId = this.findSimilar(project, fact.content);
 
-      const newId = insertClawBotMemory(
+      const newId = insertPPMBotMemory(
         project,
         fact.content.trim(),
         fact.category || "fact",
@@ -103,7 +103,7 @@ export class ClawBotMemory {
       );
 
       if (existingId) {
-        supersedeClawBotMemory(existingId, newId);
+        supersedePPMBotMemory(existingId, newId);
       }
 
       inserted++;
@@ -117,13 +117,13 @@ export class ClawBotMemory {
   saveOne(
     project: string,
     content: string,
-    category: ClawBotMemoryCategory = "fact",
+    category: PPMBotMemoryCategory = "fact",
     sessionId?: string,
   ): number {
     const existingId = this.findSimilar(project, content);
-    const newId = insertClawBotMemory(project, content.trim(), category, 1.0, sessionId);
+    const newId = insertPPMBotMemory(project, content.trim(), category, 1.0, sessionId);
     if (existingId) {
-      supersedeClawBotMemory(existingId, newId);
+      supersedePPMBotMemory(existingId, newId);
     }
     return newId;
   }
@@ -132,12 +132,12 @@ export class ClawBotMemory {
   forget(project: string, topic: string): number {
     const sanitized = this.sanitizeFtsQuery(topic);
     if (!sanitized) return 0;
-    return deleteClawBotMemoriesByTopic(project, sanitized);
+    return deletePPMBotMemoriesByTopic(project, sanitized);
   }
 
   /** Get summary of all active memories for a project */
   getSummary(project: string, limit = 30): MemoryRecallResult[] {
-    const rows = getClawBotMemories(project, limit);
+    const rows = getPPMBotMemories(project, limit);
     return rows.map((r) => ({
       id: r.id,
       content: r.content,
@@ -214,7 +214,7 @@ If nothing worth remembering, return []`;
         }))
         .filter((f) => f.content.length > 0);
     } catch {
-      console.warn("[clawbot-memory] Failed to parse extraction response");
+      console.warn("[ppmbot-memory] Failed to parse extraction response");
       return [];
     }
   }
@@ -225,7 +225,7 @@ If nothing worth remembering, return []`;
    */
   extractiveMemoryFallback(conversationText: string): ExtractedFact[] {
     const facts: ExtractedFact[] = [];
-    const patterns: Array<{ re: RegExp; category: ClawBotMemoryCategory }> = [
+    const patterns: Array<{ re: RegExp; category: PPMBotMemoryCategory }> = [
       { re: /(?:decided|chose|went with|picked|selected)\s+(.{10,100})/gi, category: "decision" },
       { re: /(?:prefer|always use|like to|rather)\s+(.{10,80})/gi, category: "preference" },
       { re: /(?:uses?|built with|stack is|powered by|database is)\s+(.{5,80})/gi, category: "architecture" },
@@ -246,9 +246,9 @@ If nothing worth remembering, return []`;
   /** Run importance decay on old memories */
   runDecay(): void {
     try {
-      decayClawBotMemories();
+      decayPPMBotMemories();
     } catch (err) {
-      console.error("[clawbot-memory] Decay error:", (err as Error).message);
+      console.error("[ppmbot-memory] Decay error:", (err as Error).message);
     }
   }
 
@@ -272,7 +272,7 @@ If nothing worth remembering, return []`;
          )`,
       ).run(project, excess);
     } catch (err) {
-      console.error("[clawbot-memory] Prune error:", (err as Error).message);
+      console.error("[ppmbot-memory] Prune error:", (err as Error).message);
     }
   }
 
@@ -301,7 +301,7 @@ If nothing worth remembering, return []`;
     if (!query) return null;
 
     try {
-      const results = searchClawBotMemories(project, query, 3);
+      const results = searchPPMBotMemories(project, query, 3);
       if (results.length > 0 && results[0]!.rank < -5) {
         return results[0]!.id;
       }
@@ -322,12 +322,12 @@ If nothing worth remembering, return []`;
   }
 
   /** Validate category string against known values */
-  private validateCategory(cat: string): ClawBotMemoryCategory {
-    const valid: ClawBotMemoryCategory[] = [
+  private validateCategory(cat: string): PPMBotMemoryCategory {
+    const valid: PPMBotMemoryCategory[] = [
       "fact", "decision", "preference", "architecture", "issue",
     ];
-    return valid.includes(cat as ClawBotMemoryCategory)
-      ? (cat as ClawBotMemoryCategory)
+    return valid.includes(cat as PPMBotMemoryCategory)
+      ? (cat as PPMBotMemoryCategory)
       : "fact";
   }
 }

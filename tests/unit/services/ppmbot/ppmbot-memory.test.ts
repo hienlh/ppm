@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { openTestDb, setDb } from "../../../../src/services/db.service.ts";
-import { ClawBotMemory } from "../../../../src/services/clawbot/clawbot-memory.ts";
+import { PPMBotMemory } from "../../../../src/services/ppmbot/ppmbot-memory.ts";
 
-describe("ClawBot Memory", () => {
-  let memory: ClawBotMemory;
+describe("PPMBot Memory", () => {
+  let memory: PPMBotMemory;
 
   beforeEach(() => {
     const testDb = openTestDb();
     setDb(testDb);
-    memory = new ClawBotMemory();
+    memory = new PPMBotMemory();
   });
 
   describe("saveOne + recall", () => {

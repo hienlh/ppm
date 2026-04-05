@@ -400,10 +400,10 @@ export function ChatHistoryBar({
                         onClick={() => openSession(session)}
                         className="text-[11px] truncate flex-1 text-left flex items-center gap-1"
                       >
-                        {session.title?.startsWith("[Claw]") && (
+                        {session.title?.startsWith("[PPM]") && (
                           <Bot className="size-3 text-muted-foreground shrink-0" />
                         )}
-                        {session.title?.startsWith("[Claw]")
+                        {session.title?.startsWith("[PPM]")
                           ? session.title.slice(7)
                           : session.title || "Untitled"}
                       </button>

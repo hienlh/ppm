@@ -21,8 +21,8 @@ export interface TelegramSentMessage {
   date: number;
 }
 
-/** ClawBot session row from SQLite */
-export interface ClawBotSessionRow {
+/** PPMBot session row from SQLite */
+export interface PPMBotSessionRow {
   id: number;
   telegram_chat_id: string;
   session_id: string;
@@ -34,12 +34,12 @@ export interface ClawBotSessionRow {
   last_message_at: number;
 }
 
-/** ClawBot memory row from SQLite */
-export interface ClawBotMemoryRow {
+/** PPMBot memory row from SQLite */
+export interface PPMBotMemoryRow {
   id: number;
   project: string;
   content: string;
-  category: ClawBotMemoryCategory;
+  category: PPMBotMemoryCategory;
   importance: number;
   created_at: number;
   updated_at: number;
@@ -47,7 +47,7 @@ export interface ClawBotMemoryRow {
   superseded_by: number | null;
 }
 
-export type ClawBotMemoryCategory =
+export type PPMBotMemoryCategory =
   | "fact"
   | "decision"
   | "preference"
@@ -55,7 +55,7 @@ export type ClawBotMemoryCategory =
   | "issue";
 
 /** Active session state tracked in memory (not DB) */
-export interface ClawBotActiveSession {
+export interface PPMBotActiveSession {
   telegramChatId: string;
   sessionId: string;
   providerId: string;
@@ -70,7 +70,7 @@ export interface ClawBotActiveSession {
 }
 
 /** Parsed command from Telegram message */
-export interface ClawBotCommand {
+export interface PPMBotCommand {
   command: string;
   args: string;
   chatId: number;
@@ -83,7 +83,7 @@ export interface ClawBotCommand {
 export interface MemoryRecallResult {
   id: number;
   content: string;
-  category: ClawBotMemoryCategory;
+  category: PPMBotMemoryCategory;
   importance: number;
   project: string;
   /** FTS5 rank score (lower = more relevant) */
@@ -91,7 +91,7 @@ export interface MemoryRecallResult {
 }
 
 /** Paired chat row from SQLite */
-export interface ClawBotPairedChat {
+export interface PPMBotPairedChat {
   id: number;
   telegram_chat_id: string;
   telegram_user_id: string | null;

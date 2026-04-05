@@ -8,7 +8,7 @@ import {
   DEFAULT_CONFIG,
   type AIProviderConfig,
   type TelegramConfig,
-  type ClawBotConfig,
+  type PPMBotConfig,
   type ThemeConfig,
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
@@ -319,11 +319,11 @@ settingsRoutes.put("/proxy", async (c) => {
   }
 });
 
-// ── ClawBot ─────────────────────────────────────────────────────
+// ── PPMBot ─────────────────────────────────────────────────────
 
 /** GET /settings/clawbot — return current clawbot config */
 settingsRoutes.get("/clawbot", (c) => {
-  const config = configService.get("clawbot") as ClawBotConfig | undefined;
+  const config = configService.get("clawbot") as PPMBotConfig | undefined;
   if (!config) return c.json(ok(DEFAULT_CONFIG.clawbot));
   return c.json(ok(config));
 });
@@ -331,10 +331,10 @@ settingsRoutes.get("/clawbot", (c) => {
 /** PUT /settings/clawbot — update clawbot config */
 settingsRoutes.put("/clawbot", async (c) => {
   try {
-    const body = await c.req.json<Partial<ClawBotConfig>>();
-    const current = (configService.get("clawbot") as ClawBotConfig | undefined)
+    const body = await c.req.json<Partial<PPMBotConfig>>();
+    const current = (configService.get("clawbot") as PPMBotConfig | undefined)
       ?? structuredClone(DEFAULT_CONFIG.clawbot!);
-    const updated: ClawBotConfig = { ...current, ...body };
+    const updated: PPMBotConfig = { ...current, ...body };
 
     if (updated.debounce_ms < 0 || updated.debounce_ms > 30000) {
       return c.json(err("debounce_ms must be 0-30000"), 400);
@@ -345,13 +345,13 @@ settingsRoutes.put("/clawbot", async (c) => {
 
     // Restart clawbot if running state changed
     try {
-      const { clawbotService } = await import("../../services/clawbot/clawbot-service.ts");
-      if (updated.enabled && !clawbotService.isRunning) {
-        await clawbotService.start();
-      } else if (!updated.enabled && clawbotService.isRunning) {
-        clawbotService.stop();
+      const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
+      if (updated.enabled && !ppmbotService.isRunning) {
+        await ppmbotService.start();
+      } else if (!updated.enabled && ppmbotService.isRunning) {
+        ppmbotService.stop();
       }
-    } catch { /* ClawBot module not loaded yet — OK */ }
+    } catch { /* PPMBot module not loaded yet — OK */ }
 
     return c.json(ok(updated));
   } catch (e) {
@@ -373,8 +373,8 @@ settingsRoutes.post("/clawbot/paired/approve", async (c) => {
     approvePairing(pairing.telegram_chat_id);
     // Notify user on Telegram
     try {
-      const { clawbotService } = await import("../../services/clawbot/clawbot-service.ts");
-      await clawbotService.notifyPairingApproved(pairing.telegram_chat_id);
+      const { ppmbotService } = await import("../../services/ppmbot/ppmbot-service.ts");
+      await ppmbotService.notifyPairingApproved(pairing.telegram_chat_id);
     } catch { /* OK */ }
     return c.json(ok({ approved: pairing.telegram_chat_id }));
   } catch (e) {

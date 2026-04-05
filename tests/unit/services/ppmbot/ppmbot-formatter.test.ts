@@ -4,9 +4,9 @@ import {
   markdownToTelegramHtml,
   chunkMessage,
   truncateForPreview,
-} from "../../../../src/services/clawbot/clawbot-formatter.ts";
+} from "../../../../src/services/ppmbot/ppmbot-formatter.ts";
 
-describe("ClawBot Formatter", () => {
+describe("PPMBot Formatter", () => {
   describe("escapeHtml", () => {
     it("should escape angle brackets", () => {
       expect(escapeHtml("<script>alert(1)</script>")).toBe(

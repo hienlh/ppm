@@ -6,21 +6,21 @@ import {
   createPairingRequest,
   approvePairing,
 } from "../db.service.ts";
-import { ClawBotTelegram } from "./clawbot-telegram.ts";
-import { ClawBotSessionManager } from "./clawbot-session.ts";
-import { ClawBotMemory } from "./clawbot-memory.ts";
-import { streamToTelegram } from "./clawbot-streamer.ts";
-import { escapeHtml } from "./clawbot-formatter.ts";
-import type { TelegramUpdate, ClawBotCommand } from "../../types/clawbot.ts";
-import type { ClawBotConfig, TelegramConfig, PermissionMode } from "../../types/config.ts";
+import { PPMBotTelegram } from "./ppmbot-telegram.ts";
+import { PPMBotSessionManager } from "./ppmbot-session.ts";
+import { PPMBotMemory } from "./ppmbot-memory.ts";
+import { streamToTelegram } from "./ppmbot-streamer.ts";
+import { escapeHtml } from "./ppmbot-formatter.ts";
+import type { TelegramUpdate, PPMBotCommand } from "../../types/ppmbot.ts";
+import type { PPMBotConfig, TelegramConfig, PermissionMode } from "../../types/config.ts";
 import type { SendMessageOpts } from "../../types/chat.ts";
 
 const CONTEXT_WINDOW_THRESHOLD = 80;
 
-class ClawBotService {
-  private telegram: ClawBotTelegram | null = null;
-  private sessions = new ClawBotSessionManager();
-  private memory = new ClawBotMemory();
+class PPMBotService {
+  private telegram: PPMBotTelegram | null = null;
+  private sessions = new PPMBotSessionManager();
+  private memory = new PPMBotMemory();
   private running = false;
 
   /** Debounce timers per chatId */
@@ -39,20 +39,20 @@ class ClawBotService {
   // ── Lifecycle ─────────────────────────────────────────────────
 
   async start(): Promise<void> {
-    const clawbotConfig = this.getConfig();
-    if (!clawbotConfig?.enabled) {
-      console.log("[clawbot] Disabled in config");
+    const ppmbotConfig = this.getConfig();
+    if (!ppmbotConfig?.enabled) {
+      console.log("[ppmbot] Disabled in config");
       return;
     }
 
     const telegramConfig = configService.get("telegram") as TelegramConfig | undefined;
     if (!telegramConfig?.bot_token) {
-      console.log("[clawbot] No bot token configured");
+      console.log("[ppmbot] No bot token configured");
       return;
     }
 
     try {
-      this.telegram = new ClawBotTelegram(telegramConfig.bot_token);
+      this.telegram = new PPMBotTelegram(telegramConfig.bot_token);
       this.running = true;
 
       // Run memory decay on startup
@@ -61,9 +61,9 @@ class ClawBotService {
       // Start polling (non-blocking)
       this.telegram.startPolling((update) => this.handleUpdate(update));
 
-      console.log("[clawbot] Started");
+      console.log("[ppmbot] Started");
     } catch (err) {
-      console.error("[clawbot] Start failed:", (err as Error).message);
+      console.error("[ppmbot] Start failed:", (err as Error).message);
     }
   }
 
@@ -78,7 +78,7 @@ class ClawBotService {
     this.processing.clear();
     this.messageQueue.clear();
 
-    console.log("[clawbot] Stopped");
+    console.log("[ppmbot] Stopped");
   }
 
   get isRunning(): boolean {
@@ -89,7 +89,7 @@ class ClawBotService {
   async notifyPairingApproved(chatId: string): Promise<void> {
     await this.telegram?.sendMessage(
       Number(chatId),
-      "✅ Pairing approved! You can now chat with ClawBot.\n\nSend /start to begin.",
+      "✅ Pairing approved! You can now chat with PPMBot.\n\nSend /start to begin.",
     );
   }
 
@@ -113,14 +113,14 @@ class ClawBotService {
         createPairingRequest(chatId, String(userId), displayName, code);
         await this.telegram!.sendMessage(
           Number(chatId),
-          `🔐 Pairing required.\n\nYour pairing code: <code>${code}</code>\n\nEnter this code in PPM Settings → ClawBot → Pair Device to approve access.`,
+          `🔐 Pairing required.\n\nYour pairing code: <code>${code}</code>\n\nEnter this code in PPM Settings → PPMBot → Pair Device to approve access.`,
         );
         return;
       }
       if (pairing.status === "pending") {
         await this.telegram!.sendMessage(
           Number(chatId),
-          `⏳ Pairing pending approval.\n\nCode: <code>${pairing.pairing_code}</code>\nAsk the PPM owner to approve in Settings → ClawBot.`,
+          `⏳ Pairing pending approval.\n\nCode: <code>${pairing.pairing_code}</code>\nAsk the PPM owner to approve in Settings → PPMBot.`,
         );
         return;
       }
@@ -130,7 +130,7 @@ class ClawBotService {
     }
 
     // Try parsing as command
-    const command = ClawBotTelegram.parseCommand(message);
+    const command = PPMBotTelegram.parseCommand(message);
     if (command) {
       await this.handleCommand(command);
       return;
@@ -145,7 +145,7 @@ class ClawBotService {
 
   // ── Command Handlers ────────────────────────────────────────────
 
-  private async handleCommand(cmd: ClawBotCommand): Promise<void> {
+  private async handleCommand(cmd: PPMBotCommand): Promise<void> {
     const chatId = String(cmd.chatId);
     const tg = this.telegram!;
 
@@ -174,17 +174,19 @@ class ClawBotService {
 
   private async cmdStart(chatId: string): Promise<void> {
     const projects = this.sessions.getProjectNames();
-    let text = "<b>🤖 ClawBot</b>\n\nI'm your PPM assistant on Telegram.\n\n";
+    let text = "<b>🤖 PPMBot</b>\n\n";
+    text += "Hey! I'm your AI coding assistant, right here in Telegram.\n";
+    text += "Ask me anything — code questions, debugging, project tasks.\n\n";
     if (projects.length) {
-      text += "<b>Available projects:</b>\n";
+      text += "<b>Your projects:</b>\n";
       for (const name of projects) {
-        text += `• <code>${escapeHtml(name)}</code>\n`;
+        text += `  • <code>${escapeHtml(name)}</code>\n`;
       }
-      text += "\nSwitch project: /project &lt;name&gt;";
+      text += "\nSwitch: /project &lt;name&gt;";
     } else {
-      text += "No projects configured. Add projects in PPM settings.";
+      text += "⚠️ No projects yet. Add one in PPM Settings first.";
     }
-    text += "\n\nSend /help for all commands.";
+    text += "\n\nJust send a message to start chatting, or /help for commands.";
     await this.telegram!.sendMessage(Number(chatId), text);
   }
 
@@ -310,7 +312,7 @@ class ClawBotService {
   }
 
   private async cmdHelp(chatId: string): Promise<void> {
-    const text = `<b>ClawBot Commands</b>
+    const text = `<b>PPMBot Commands</b>
 
 /start — Greeting + list projects
 /project &lt;name&gt; — Switch project
@@ -421,7 +423,7 @@ class ClawBotService {
         await this.rotateSession(chatId, session.projectName);
       }
     } catch (err) {
-      console.error(`[clawbot] processMessage error for ${chatId}:`, (err as Error).message);
+      console.error(`[ppmbot] processMessage error for ${chatId}:`, (err as Error).message);
       await this.telegram?.sendMessage(
         Number(chatId),
         `❌ ${escapeHtml((err as Error).message)}`,
@@ -462,15 +464,15 @@ class ClawBotService {
       const facts = this.memory.parseExtractionResponse(responseText);
       if (facts.length > 0) {
         const count = this.memory.save(session.projectName, facts, session.sessionId);
-        console.log(`[clawbot] Saved ${count} memories for ${session.projectName}`);
+        console.log(`[ppmbot] Saved ${count} memories for ${session.projectName}`);
       } else {
         // Fallback: regex-based extraction
         // Note: we don't have conversation history text here easily,
         // so regex fallback only triggers when AI extraction fails
-        console.log("[clawbot] No memories extracted via AI");
+        console.log("[ppmbot] No memories extracted via AI");
       }
     } catch (err) {
-      console.warn("[clawbot] Memory save failed:", (err as Error).message);
+      console.warn("[ppmbot] Memory save failed:", (err as Error).message);
     }
   }
 
@@ -492,9 +494,9 @@ class ClawBotService {
     return Array.from(bytes, (b) => chars[b % chars.length]).join("");
   }
 
-  private getConfig(): ClawBotConfig | undefined {
-    return configService.get("clawbot") as ClawBotConfig | undefined;
+  private getConfig(): PPMBotConfig | undefined {
+    return configService.get("clawbot") as PPMBotConfig | undefined;
   }
 }
 
-export const clawbotService = new ClawBotService();
+export const ppmbotService = new PPMBotService();
