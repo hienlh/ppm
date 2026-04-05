@@ -1,6 +1,7 @@
 import { getConfigValue, setConfigValue } from "./db.service.ts";
 import { accountSelector } from "./account-selector.service.ts";
 import { accountService } from "./account.service.ts";
+import { forwardViaSdk } from "./proxy-sdk-bridge.ts";
 import { randomBytes } from "node:crypto";
 
 const PROXY_ENABLED_KEY = "proxy_enabled";
@@ -41,7 +42,8 @@ class ProxyService {
 
   /**
    * Forward a request to Anthropic API using account rotation.
-   * Returns a Response object (may be streaming SSE).
+   * OAuth accounts (sk-ant-oat-*) → SDK query() bridge.
+   * API key accounts → direct HTTP forward to api.anthropic.com.
    */
   async forward(
     path: string,
@@ -65,69 +67,75 @@ class ProxyService {
       if (fresh) token = fresh.accessToken;
     }
 
-    // Build upstream headers — forward relevant Anthropic headers
+    // OAuth tokens: route through SDK query() — direct API doesn't work for Claude Max/Pro
+    if (token.startsWith("sk-ant-oat") && body && path === "/v1/messages") {
+      try {
+        const parsed = JSON.parse(body);
+        this.requestCount++;
+        return await forwardViaSdk(parsed, { id: account.id, email: account.email, accessToken: token });
+      } catch (e) {
+        console.error(`[proxy] SDK bridge error:`, (e as Error).message);
+        return new Response(
+          JSON.stringify({ type: "error", error: { type: "api_error", message: (e as Error).message } }),
+          { status: 502, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
+    // API key accounts: direct HTTP forward to Anthropic API
+    return this.forwardDirect(path, method, headers, body, token, account);
+  }
+
+  /** Direct HTTP forward for API key accounts */
+  private async forwardDirect(
+    path: string,
+    method: string,
+    headers: Record<string, string>,
+    body: string | null,
+    token: string,
+    account: { id: string; email: string | null },
+  ): Promise<Response> {
     const upstreamHeaders: Record<string, string> = {
       "Content-Type": "application/json",
       "User-Agent": "ppm-proxy/1.0",
+      "x-api-key": token,
     };
-
-    // Set auth based on token type
-    if (token.startsWith("sk-ant-oat")) {
-      upstreamHeaders["Authorization"] = `Bearer ${token}`;
-      upstreamHeaders["anthropic-beta"] = headers["anthropic-beta"] || "oauth-2025-04-20";
-    } else {
-      upstreamHeaders["x-api-key"] = token;
-    }
-
-    // Forward anthropic-version header
-    if (headers["anthropic-version"]) {
-      upstreamHeaders["anthropic-version"] = headers["anthropic-version"];
-    }
-    // Forward anthropic-beta if present from client
-    if (headers["anthropic-beta"]) {
-      upstreamHeaders["anthropic-beta"] = headers["anthropic-beta"];
-    }
+    if (headers["anthropic-version"]) upstreamHeaders["anthropic-version"] = headers["anthropic-version"];
+    if (headers["anthropic-beta"]) upstreamHeaders["anthropic-beta"] = headers["anthropic-beta"];
 
     const url = `${ANTHROPIC_API_BASE}${path}`;
-    console.log(`[proxy] ${method} ${path} → account ${account.email ?? account.id}`);
+    console.log(`[proxy] ${method} ${path} → account ${account.email ?? account.id} (direct)`);
 
     try {
       const upstream = await fetch(url, {
         method,
         headers: upstreamHeaders,
         body: body || undefined,
-        signal: AbortSignal.timeout(300_000), // 5min timeout for long streaming
+        signal: AbortSignal.timeout(300_000),
       });
 
       this.requestCount++;
 
-      // Handle rate limit / auth errors for account rotation
       if (upstream.status === 429) {
         accountSelector.onRateLimit(account.id);
-        console.log(`[proxy] 429 from Anthropic — account ${account.email ?? account.id} rate limited`);
+        console.log(`[proxy] 429 — account ${account.email ?? account.id} rate limited`);
       } else if (upstream.status === 401) {
         accountSelector.onAuthError(account.id);
-        console.log(`[proxy] 401 from Anthropic — account ${account.email ?? account.id} auth error`);
+        console.log(`[proxy] 401 — account ${account.email ?? account.id} auth error`);
       } else if (upstream.status >= 200 && upstream.status < 300) {
         accountSelector.onSuccess(account.id);
       }
 
-      // Stream response back as-is (preserves SSE for streaming)
       const responseHeaders = new Headers();
-      // Forward key response headers
       for (const key of ["content-type", "x-request-id", "request-id"]) {
         const val = upstream.headers.get(key);
         if (val) responseHeaders.set(key, val);
       }
-      // CORS for external tools
       responseHeaders.set("Access-Control-Allow-Origin", "*");
 
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers: responseHeaders,
-      });
+      return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
     } catch (e) {
-      console.error(`[proxy] Error forwarding to Anthropic:`, (e as Error).message);
+      console.error(`[proxy] Error forwarding:`, (e as Error).message);
       return new Response(
         JSON.stringify({ type: "error", error: { type: "api_error", message: (e as Error).message } }),
         { status: 502, headers: { "Content-Type": "application/json" } },

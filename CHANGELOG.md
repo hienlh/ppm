@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.19] - 2026-04-05
+
+### Fixed
+- **Proxy for OAuth accounts**: OAuth tokens (Claude Max/Pro) now route through SDK `query()` bridge instead of direct API forwarding, which was returning rate_limit_error. API key accounts still use direct forwarding.
+
+### Added
+- **SDK proxy bridge** (`proxy-sdk-bridge.ts`): Translates Anthropic Messages API requests into Agent SDK calls for OAuth accounts, supporting both streaming SSE and non-streaming JSON responses with account rotation
+
 ## [0.9.16] - 2026-04-04
 
 ### Fixed
