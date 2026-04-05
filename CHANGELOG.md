@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.33] - 2026-04-06
+
+### Fixed
+- **CLI `config set telegram` fails**: `telegram` key missing from DEFAULT_CONFIG, so CLI rejects it as "not found". Added default empty telegram config.
+
 ## [0.9.32] - 2026-04-06
 
 ### Added
