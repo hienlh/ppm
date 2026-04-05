@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.35] - 2026-04-06
+
+### Fixed
+- **Stream hangs forever on stuck AI**: Replaced elapsed-time timeout with per-event `Promise.race` (60s per event). If `.next()` hangs, stream is terminated cleanly instead of blocking forever.
+- **"Project not found" when no default configured**: Added `~/.ppm/bot/` fallback project so bot works immediately without project setup.
+
+### Added
+- **Identity onboarding**: `/start` now prompts new users for name, role, stack, and language preference when no identity memories exist.
+
 ## [0.9.34] - 2026-04-06
 
 ### Changed
