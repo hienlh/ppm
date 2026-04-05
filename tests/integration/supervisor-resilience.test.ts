@@ -125,7 +125,7 @@ describe("Supervisor Resilience", () => {
         });
         return res.ok;
       } catch { return false; }
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     expect(ready).toBe(true);
 
@@ -157,7 +157,7 @@ describe("Supervisor Resilience", () => {
         });
         return res.ok;
       } catch { return false; }
-    }, 15_000);
+    }, TEST_TIMEOUT);
     expect(ready).toBe(true);
 
     const status = readStatus();
@@ -180,7 +180,7 @@ describe("Supervisor Resilience", () => {
         });
         return res.ok;
       } catch { return false; }
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     expect(restarted).toBe(true);
 
@@ -201,7 +201,7 @@ describe("Supervisor Resilience", () => {
         });
         return res.ok;
       } catch { return false; }
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     const status = readStatus();
     const serverPid = status!.pid as number;
@@ -229,7 +229,7 @@ describe("Supervisor Resilience", () => {
         });
         return res.ok;
       } catch { return false; }
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     const originalServerPid = (readStatus()!.pid) as number;
 
@@ -248,7 +248,7 @@ describe("Supervisor Resilience", () => {
         });
         return res.ok;
       } catch { return false; }
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     expect(restarted).toBe(true);
 
@@ -270,7 +270,7 @@ describe("Supervisor Resilience", () => {
         });
         return res.ok;
       } catch { return false; }
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     // Kill server 3 times rapidly
     for (let i = 0; i < 3; i++) {

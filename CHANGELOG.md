@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.28] - 2026-04-05
+
+### Fixed
+- **Tunnel URL lost on self-replace upgrade**: Server child's `stopTunnel()` killed the cloudflared process and wrote `tunnelPid: null` to status.json during SIGTERM — new supervisor couldn't adopt the tunnel. Now sets `.restarting` flag before killing server child so tunnel survives upgrade.
+- **Tunnel PID not set before status persist**: `setExternalUrl` called `persistToStatusFile` before `setExternalPid` was called, writing `tunnelPid: null` to status.json on server boot. Reordered to set PID first.
+
 ## [0.9.26] - 2026-04-05
 
 ### Fixed

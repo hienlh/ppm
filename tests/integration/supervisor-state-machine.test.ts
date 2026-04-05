@@ -89,7 +89,7 @@ async function waitForServerReady(): Promise<boolean> {
       });
       return res.ok;
     } catch { return false; }
-  }, 15_000);
+  }, TEST_TIMEOUT);
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ describe("Supervisor State Machine", () => {
       const s = readStatus();
       if (!s || !s.pid) return false;
       return (s.pid as number) !== originalServerPid && isAlive(s.pid as number);
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     expect(restarted).toBe(true);
     expect(isAlive(supPid)).toBe(true); // supervisor still alive
@@ -176,7 +176,7 @@ describe("Supervisor State Machine", () => {
     const restarted = await waitFor(async () => {
       const s = readStatus();
       return !!s && (s.pid as number) !== pid && isAlive(s.pid as number);
-    }, 15_000);
+    }, TEST_TIMEOUT);
 
     expect(restarted).toBe(true);
 

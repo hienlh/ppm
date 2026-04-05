@@ -10,7 +10,7 @@ setDefaultTimeout(60_000);
  * Requires internet + cloudflared binary (auto-downloaded on first run).
  */
 
-const TEST_PORT = 19876; // Uncommon port to avoid conflicts
+const TEST_PORT = 19880; // Unique port — avoid conflict with supervisor-resilience (19876)
 const TEST_RESPONSE = "ppm-browser-preview-integration-test-ok";
 
 let testServer: ReturnType<typeof Bun.serve> | null = null;

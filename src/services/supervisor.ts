@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 import {
   readFileSync, writeFileSync, existsSync, mkdirSync, openSync, appendFileSync,
+  unlinkSync,
 } from "node:fs";
 import { isCompiledBinary } from "./autostart-generator.ts";
 
@@ -30,6 +31,7 @@ const PPM_DIR = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"));
 const STATUS_FILE = resolve(PPM_DIR, "status.json");
 const PID_FILE = resolve(PPM_DIR, "ppm.pid");
 const LOG_FILE = resolve(PPM_DIR, "ppm.log");
+const RESTARTING_FLAG = resolve(PPM_DIR, ".restarting");
 
 // ─── State ─────────────────────────────────────────────────────────────
 let serverChild: Subprocess | null = null;
@@ -417,6 +419,9 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     supervisorState = "upgrading";
     updateStatus({ state: "upgrading" });
 
+    // Set restarting flag so server child's stopTunnel() skips killing the tunnel
+    try { writeFileSync(RESTARTING_FLAG, ""); } catch {}
+
     // Kill server child to free the port; keep tunnel alive for domain continuity
     log("INFO", "Stopping server before spawning new supervisor (tunnel kept alive)");
     if (serverChild) { try { serverChild.kill(); } catch {} serverChild = null; }
@@ -456,6 +461,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // Timeout — new supervisor didn't start, restore old supervisor
     log("ERROR", "Self-replace timeout: new supervisor did not start");
     try { child.kill(); } catch {}
+    try { unlinkSync(RESTARTING_FLAG); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
     supervisorState = "running";
@@ -463,6 +469,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     return { success: false, error: "New supervisor failed to start within 30s" };
   } catch (e) {
     log("ERROR", `Self-replace error: ${e}`);
+    try { unlinkSync(RESTARTING_FLAG); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
     supervisorState = "running";
@@ -630,6 +637,9 @@ export async function runSupervisor(opts: {
   share: boolean;
 }) {
   if (!existsSync(PPM_DIR)) mkdirSync(PPM_DIR, { recursive: true });
+
+  // Clean up restarting flag from previous upgrade/restart
+  try { unlinkSync(RESTARTING_FLAG); } catch {}
 
   // Save original argv for self-replace
   originalArgv = [...process.argv];
