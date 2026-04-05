@@ -705,6 +705,9 @@ class AccountService {
         if (acc.status === "disabled") continue;
         if (!acc.expiresAt) continue;
         if (acc.expiresAt - nowS > REFRESH_BUFFER_S) continue;
+        // Skip temporary accounts (no refresh token) — they can't be refreshed
+        const withTokens = this.getWithTokens(acc.id);
+        if (!withTokens?.refreshToken) continue;
         console.log(`[accounts] Auto-refreshing token for ${acc.email ?? acc.id}`);
         try {
           await this.refreshAccessToken(acc.id, false);

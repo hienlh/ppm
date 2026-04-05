@@ -816,6 +816,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             } catch (refreshErr) {
               console.error(`[sdk] session=${sessionId} early OAuth refresh failed:`, refreshErr);
               accountSelector.onAuthError(account.id);
+              // Refresh failed (e.g. temporary account with no refresh token).
+              // Abort the current query immediately and try switching to a different account.
+              const nextAcc = accountSelector.next();
+              if (nextAcc && nextAcc.id !== account.id) {
+                account = nextAcc;
+                const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
+                console.log(`[sdk] session=${sessionId} refresh failed — switching to ${nextAcc.id} (${label})`);
+                yield { type: "account_retry" as const, reason: "Switching account", accountId: nextAcc.id, accountLabel: label };
+                const switchEnv = this.buildQueryEnv(meta.projectPath, nextAcc);
+                streamCtrl.done();
+                q.close();
+                const { generator: switchGen, controller: switchCtrl } = createMessageChannel();
+                const currentSdkId = getSessionMapping(sessionId);
+                const canResume = currentSdkId && currentSdkId !== sessionId;
+                if (!canResume) switchCtrl.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: canResume ? currentSdkId : undefined, env: switchEnv };
+                const rq = query({
+                  prompt: switchGen,
+                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: switchCtrl });
+                this.activeQueries.set(sessionId, rq);
+                eventSource = rq;
+                continue retryLoop;
+              }
+              // No other account available — let SDK continue and eventually emit error
             }
           }
 

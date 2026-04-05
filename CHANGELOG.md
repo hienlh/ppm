@@ -1,9 +1,10 @@
 # Changelog
 
-## [0.9.21] - 2026-04-05
+## [0.9.22] - 2026-04-05
 
 ### Fixed
-- **SDK internal 401 retry loop stuck**: SDK retries 401 errors 10 times with exponential backoff using the same expired token, leaving user stuck at "Thinking..." for 2+ minutes. Now intercepts `api_retry` system events with 401 on first occurrence, refreshes OAuth token immediately, and restarts the query — cutting recovery from ~2 min to ~1 sec.
+- **SDK internal 401 retry loop stuck**: SDK retries 401 errors 10x with exponential backoff using same expired token (~2 min stuck at "Thinking..."). Now intercepts `api_retry` on first 401, refreshes token immediately, and if refresh fails (e.g. temporary account with no refresh token), switches to a different account instantly.
+- **Auto-refresh spam for temporary accounts**: Accounts without refresh token triggered auto-refresh every 5 min, failing every time. Now skips them in the auto-refresh loop.
 
 ## [0.9.20] - 2026-04-05
 
