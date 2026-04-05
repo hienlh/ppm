@@ -281,41 +281,35 @@ settingsRoutes.put("/auth/password", async (c) => {
 
 // ── Proxy ────────────────────────────────────────────────────────────
 
-/** GET /settings/proxy — proxy status */
-settingsRoutes.get("/proxy", async (c) => {
+/** Build proxy settings response with correct local/tunnel endpoints */
+async function buildProxyResponse() {
   const { tunnelService } = await import("../../services/tunnel.service.ts");
   const tunnelUrl = tunnelService.getTunnelUrl();
-  const authKey = proxyService.getAuthKey();
-  return c.json(ok({
+  const port = configService.get("port");
+  const localOrigin = `http://localhost:${port}`;
+  return {
     enabled: proxyService.isEnabled(),
-    authKey: authKey ?? null,
+    authKey: proxyService.getAuthKey() ?? null,
     requestCount: proxyService.getRequestCount(),
+    localEndpoint: `${localOrigin}/proxy/v1/messages`,
     tunnelUrl: tunnelUrl ?? null,
     proxyEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/messages` : null,
-  }));
+  };
+}
+
+/** GET /settings/proxy — proxy status */
+settingsRoutes.get("/proxy", async (c) => {
+  return c.json(ok(await buildProxyResponse()));
 });
 
 /** PUT /settings/proxy — update proxy settings */
 settingsRoutes.put("/proxy", async (c) => {
   try {
     const body = await c.req.json<{ enabled?: boolean; authKey?: string; generateKey?: boolean }>();
-    if (body.enabled !== undefined) {
-      proxyService.setEnabled(body.enabled);
-    }
-    if (body.generateKey) {
-      proxyService.generateAuthKey();
-    } else if (body.authKey !== undefined) {
-      proxyService.setAuthKey(body.authKey);
-    }
-    const { tunnelService } = await import("../../services/tunnel.service.ts");
-    const tunnelUrl = tunnelService.getTunnelUrl();
-    return c.json(ok({
-      enabled: proxyService.isEnabled(),
-      authKey: proxyService.getAuthKey() ?? null,
-      requestCount: proxyService.getRequestCount(),
-      tunnelUrl: tunnelUrl ?? null,
-      proxyEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/messages` : null,
-    }));
+    if (body.enabled !== undefined) proxyService.setEnabled(body.enabled);
+    if (body.generateKey) proxyService.generateAuthKey();
+    else if (body.authKey !== undefined) proxyService.setAuthKey(body.authKey);
+    return c.json(ok(await buildProxyResponse()));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }

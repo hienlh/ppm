@@ -190,6 +190,7 @@ export interface ProxySettings {
   enabled: boolean;
   authKey: string | null;
   requestCount: number;
+  localEndpoint: string;
   tunnelUrl: string | null;
   proxyEndpoint: string | null;
 }

@@ -1,9 +1,12 @@
 # Changelog
 
-## [0.9.25] - 2026-04-05
+## [0.9.26] - 2026-04-05
 
-### Added
-- **Proxy test UI**: Inline test panel in proxy settings — pick model, type a message (pre-filled default), hit Test and see raw SSE response to verify Anthropic format compatibility
+### Fixed
+- **Local endpoint showing tunnel URL**: Proxy settings now returns `localEndpoint` from server's actual port instead of relying on `window.location.origin` which shows the tunnel URL when accessed remotely
+
+### Changed
+- **Proxy test UI → dialog**: Moved test panel from inline section to a dialog (bottom-sheet on mobile) with endpoint format selector (Anthropic / OpenAI) for verifying response format
 
 ## [0.9.24] - 2026-04-05
 

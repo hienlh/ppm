@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getProxySettings, updateProxySettings, type ProxySettings } from "@/lib/api-settings";
-import { ProxyTestSection } from "./proxy-test-section";
+import { ProxyTestButton } from "./proxy-test-section";
 
 export function ProxySettingsSection() {
   const [settings, setSettings] = useState<ProxySettings | null>(null);
@@ -54,6 +54,9 @@ export function ProxySettingsSection() {
 
   const hasKey = !!settings.authKey;
   const hasTunnel = !!settings.tunnelUrl;
+  // Local endpoint from server (actual port), NOT window.location which may be tunnel
+  const localEndpoint = settings.localEndpoint;
+  const localBaseUrl = localEndpoint.replace(/\/proxy\/v1\/messages$/, "");
 
   return (
     <div className="space-y-4">
@@ -126,20 +129,23 @@ export function ProxySettingsSection() {
       {/* Endpoint info */}
       {settings.enabled && hasKey && (
         <div className="space-y-2 rounded-md border p-3 bg-muted/30">
-          <h4 className="text-[11px] font-medium">Connection Info</h4>
+          <div className="flex items-center justify-between">
+            <h4 className="text-[11px] font-medium">Connection Info</h4>
+            <ProxyTestButton authKey={settings.authKey!} baseUrl={localBaseUrl} />
+          </div>
 
           {/* Local endpoint */}
           <div className="space-y-1">
             <Label className="text-[10px] text-muted-foreground">Local Endpoint</Label>
             <div className="flex gap-1.5 items-center">
               <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded flex-1 truncate">
-                {`${window.location.origin}/proxy/v1/messages`}
+                {localEndpoint}
               </code>
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1.5 cursor-pointer shrink-0"
-                onClick={() => copyToClipboard(`${window.location.origin}/proxy/v1/messages`, "local")}
+                onClick={() => copyToClipboard(localEndpoint, "local")}
               >
                 {copied === "local" ? "Copied!" : <Copy className="size-3" />}
               </Button>
@@ -178,11 +184,11 @@ export function ProxySettingsSection() {
             <div className="relative">
               <pre className="text-[9px] font-mono bg-muted p-2 rounded overflow-x-auto whitespace-pre">
 {`# Set as base URL in your tool
-ANTHROPIC_BASE_URL=${hasTunnel && settings.proxyEndpoint ? settings.tunnelUrl + "/proxy" : window.location.origin + "/proxy"}
+ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}
 ANTHROPIC_API_KEY=${settings.authKey}
 
 # Or use curl
-curl ${hasTunnel && settings.proxyEndpoint ? settings.proxyEndpoint : window.location.origin + "/proxy/v1/messages"} \\
+curl ${hasTunnel ? settings.proxyEndpoint : localEndpoint} \\
   -H "x-api-key: ${settings.authKey}" \\
   -H "content-type: application/json" \\
   -H "anthropic-version: 2023-06-01" \\
@@ -193,7 +199,7 @@ curl ${hasTunnel && settings.proxyEndpoint ? settings.proxyEndpoint : window.loc
                 size="sm"
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
                 onClick={() => copyToClipboard(
-                  `ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : window.location.origin + "/proxy"}\nANTHROPIC_API_KEY=${settings.authKey}`,
+                  `ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}\nANTHROPIC_API_KEY=${settings.authKey}`,
                   "example",
                 )}
               >
@@ -209,14 +215,6 @@ curl ${hasTunnel && settings.proxyEndpoint ? settings.proxyEndpoint : window.loc
             </span>
           </div>
         </div>
-      )}
-
-      {/* Test section */}
-      {settings.enabled && hasKey && (
-        <ProxyTestSection
-          authKey={settings.authKey!}
-          baseUrl={hasTunnel && settings.tunnelUrl ? settings.tunnelUrl : window.location.origin}
-        />
       )}
 
       {saving && <p className="text-[11px] text-text-subtle">Saving...</p>}

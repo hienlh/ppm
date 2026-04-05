@@ -1,18 +1,49 @@
 import { useState, useRef, useEffect } from "react";
-import { Play, Loader2 } from "lucide-react";
+import { Play, Loader2, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger,
+} from "@/components/ui/dialog";
 
 const DEFAULT_MESSAGE = "Hello! Reply briefly.";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
-interface ProxyTestSectionProps {
+type EndpointFormat = "anthropic" | "openai";
+
+interface ProxyTestDialogProps {
   authKey: string;
+  /** Current page origin, e.g. http://localhost:3210 */
   baseUrl: string;
 }
 
-export function ProxyTestSection({ authKey, baseUrl }: ProxyTestSectionProps) {
+export function ProxyTestButton(props: ProxyTestDialogProps) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1.5 cursor-pointer">
+          <FlaskConical className="size-3" />
+          Test
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Test Proxy</DialogTitle>
+          <DialogDescription className="text-[11px]">
+            Send a test request and inspect the raw response.
+          </DialogDescription>
+        </DialogHeader>
+        <ProxyTestForm {...props} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
+  const [format, setFormat] = useState<EndpointFormat>("anthropic");
   const [message, setMessage] = useState(DEFAULT_MESSAGE);
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [testing, setTesting] = useState(false);
@@ -22,17 +53,14 @@ export function ProxyTestSection({ authKey, baseUrl }: ProxyTestSectionProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const outputRef = useRef<HTMLPreElement>(null);
 
-  // Auto-select input text on mount for quick override
+  useEffect(() => { inputRef.current?.select(); }, []);
   useEffect(() => {
-    inputRef.current?.select();
-  }, []);
-
-  // Auto-scroll output to bottom
-  useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
-    }
+    if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [output]);
+
+  const endpoint = format === "anthropic"
+    ? `${baseUrl}/proxy/v1/messages`
+    : `${baseUrl}/proxy/v1/chat/completions`;
 
   const runTest = async () => {
     setTesting(true);
@@ -41,24 +69,21 @@ export function ProxyTestSection({ authKey, baseUrl }: ProxyTestSectionProps) {
     setElapsed(null);
     const start = Date.now();
 
-    const endpoint = `${baseUrl}/proxy/v1/messages`;
-    const body = JSON.stringify({
-      model,
-      max_tokens: 256,
-      stream: true,
-      messages: [{ role: "user", content: message }],
-    });
+    const isAnthropic = format === "anthropic";
+    const body = isAnthropic
+      ? JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] })
+      : JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] });
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (isAnthropic) {
+      headers["x-api-key"] = authKey;
+      headers["anthropic-version"] = "2023-06-01";
+    } else {
+      headers["Authorization"] = `Bearer ${authKey}`;
+    }
 
     try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": authKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body,
-      });
+      const res = await fetch(endpoint, { method: "POST", headers, body });
 
       if (!res.ok) {
         const text = await res.text();
@@ -68,45 +93,56 @@ export function ProxyTestSection({ authKey, baseUrl }: ProxyTestSectionProps) {
         return;
       }
 
-      // Read SSE stream and append raw events
       const reader = res.body?.getReader();
-      if (!reader) {
-        setError("No response body");
-        setTesting(false);
-        return;
-      }
+      if (!reader) { setError("No response body"); setTesting(false); return; }
 
       const decoder = new TextDecoder();
       let raw = "";
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        raw += chunk;
+        raw += decoder.decode(value, { stream: true });
         setOutput(raw);
       }
-
       setElapsed(Date.now() - start);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setTesting(false);
-      if (!elapsed) setElapsed(Date.now() - start);
+      setElapsed((prev) => prev ?? Date.now() - start);
     }
   };
 
   return (
-    <div className="space-y-2 rounded-md border p-3 bg-muted/30">
-      <h4 className="text-[11px] font-medium">Test Proxy</h4>
-
-      {/* Model + Message */}
+    <div className="space-y-3">
+      {/* Endpoint format toggle */}
       <div className="space-y-1.5">
-        <Label className="text-[10px] text-muted-foreground">Model</Label>
+        <Label className="text-[11px]">Endpoint Format</Label>
+        <div className="flex gap-1">
+          {(["anthropic", "openai"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFormat(f)}
+              className={`flex-1 h-8 rounded-md text-[11px] font-medium border transition-colors cursor-pointer ${
+                format === f
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-muted text-muted-foreground border-transparent hover:bg-muted/80"
+              }`}
+            >
+              {f === "anthropic" ? "Anthropic" : "OpenAI"}
+            </button>
+          ))}
+        </div>
+        <code className="block text-[9px] font-mono text-muted-foreground truncate">{endpoint}</code>
+      </div>
+
+      {/* Model */}
+      <div className="space-y-1.5">
+        <Label className="text-[11px]">Model</Label>
         <select
           value={model}
           onChange={(e) => setModel(e.target.value)}
-          className="h-7 w-full rounded-md border bg-background px-2 text-[11px]"
+          className="h-8 w-full rounded-md border bg-background px-2 text-[11px]"
         >
           <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
           <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
@@ -114,25 +150,26 @@ export function ProxyTestSection({ authKey, baseUrl }: ProxyTestSectionProps) {
         </select>
       </div>
 
+      {/* Message + Test button */}
       <div className="space-y-1.5">
-        <Label className="text-[10px] text-muted-foreground">Message</Label>
+        <Label className="text-[11px]">Message</Label>
         <div className="flex gap-1.5">
           <Input
             ref={inputRef}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             placeholder="Type a test message..."
-            className="h-8 text-[11px] flex-1"
+            className="h-9 text-[11px] flex-1"
             onKeyDown={(e) => { if (e.key === "Enter" && !testing) runTest(); }}
           />
           <Button
             size="sm"
-            className="h-8 px-3 cursor-pointer shrink-0"
+            className="h-9 px-3 cursor-pointer shrink-0"
             onClick={runTest}
             disabled={testing || !message.trim()}
           >
-            {testing ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
-            <span className="ml-1 text-[11px]">{testing ? "Testing..." : "Test"}</span>
+            {testing ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+            <span className="ml-1 text-[11px]">{testing ? "..." : "Send"}</span>
           </Button>
         </div>
       </div>
@@ -147,13 +184,13 @@ export function ProxyTestSection({ authKey, baseUrl }: ProxyTestSectionProps) {
             )}
           </div>
           {error ? (
-            <pre className="text-[9px] font-mono bg-red-500/10 text-red-500 p-2 rounded overflow-auto max-h-48 whitespace-pre-wrap break-all">
+            <pre className="text-[9px] font-mono bg-red-500/10 text-red-500 p-2 rounded overflow-auto max-h-52 whitespace-pre-wrap break-all">
               {error}
             </pre>
           ) : (
             <pre
               ref={outputRef}
-              className="text-[9px] font-mono bg-muted p-2 rounded overflow-auto max-h-64 whitespace-pre-wrap break-all"
+              className="text-[9px] font-mono bg-muted p-2 rounded overflow-auto max-h-52 whitespace-pre-wrap break-all"
             >
               {output}
             </pre>
