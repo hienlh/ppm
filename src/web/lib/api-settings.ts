@@ -191,8 +191,10 @@ export interface ProxySettings {
   authKey: string | null;
   requestCount: number;
   localEndpoint: string;
+  localOpenAiEndpoint: string;
   tunnelUrl: string | null;
   proxyEndpoint: string | null;
+  openAiEndpoint: string | null;
 }
 
 export function getProxySettings(): Promise<ProxySettings> {

@@ -292,8 +292,10 @@ async function buildProxyResponse() {
     authKey: proxyService.getAuthKey() ?? null,
     requestCount: proxyService.getRequestCount(),
     localEndpoint: `${localOrigin}/proxy/v1/messages`,
+    localOpenAiEndpoint: `${localOrigin}/proxy/v1/chat/completions`,
     tunnelUrl: tunnelUrl ?? null,
     proxyEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/messages` : null,
+    openAiEndpoint: tunnelUrl ? `${tunnelUrl}/proxy/v1/chat/completions` : null,
   };
 }
 

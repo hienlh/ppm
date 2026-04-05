@@ -134,43 +134,43 @@ export function ProxySettingsSection() {
             <ProxyTestButton authKey={settings.authKey!} baseUrl={window.location.origin} />
           </div>
 
-          {/* Local endpoint */}
+          {/* Anthropic endpoint */}
           <div className="space-y-1">
-            <Label className="text-[10px] text-muted-foreground">Local Endpoint</Label>
+            <Label className="text-[10px] text-muted-foreground">Anthropic Endpoint</Label>
             <div className="flex gap-1.5 items-center">
               <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded flex-1 truncate">
-                {localEndpoint}
+                {hasTunnel ? settings.proxyEndpoint : localEndpoint}
               </code>
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1.5 cursor-pointer shrink-0"
-                onClick={() => copyToClipboard(localEndpoint, "local")}
+                onClick={() => copyToClipboard(hasTunnel ? settings.proxyEndpoint! : localEndpoint, "anthropic")}
               >
-                {copied === "local" ? "Copied!" : <Copy className="size-3" />}
+                {copied === "anthropic" ? "Copied!" : <Copy className="size-3" />}
               </Button>
             </div>
           </div>
 
-          {/* Tunnel endpoint */}
-          {hasTunnel && settings.proxyEndpoint && (
-            <div className="space-y-1">
-              <Label className="text-[10px] text-muted-foreground">Public Endpoint (Tunnel)</Label>
-              <div className="flex gap-1.5 items-center">
-                <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded flex-1 truncate">
-                  {settings.proxyEndpoint}
-                </code>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-1.5 cursor-pointer shrink-0"
-                  onClick={() => copyToClipboard(settings.proxyEndpoint!, "tunnel")}
-                >
-                  {copied === "tunnel" ? "Copied!" : <Copy className="size-3" />}
-                </Button>
-              </div>
+          {/* OpenAI endpoint */}
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">OpenAI-Compatible Endpoint</Label>
+            <div className="flex gap-1.5 items-center">
+              <code className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded flex-1 truncate">
+                {hasTunnel ? settings.openAiEndpoint : settings.localOpenAiEndpoint}
+              </code>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 cursor-pointer shrink-0"
+                onClick={() => copyToClipboard(
+                  hasTunnel ? settings.openAiEndpoint! : settings.localOpenAiEndpoint, "openai",
+                )}
+              >
+                {copied === "openai" ? "Copied!" : <Copy className="size-3" />}
+              </Button>
             </div>
-          )}
+          </div>
 
           {!hasTunnel && (
             <p className="text-[10px] text-muted-foreground">
@@ -178,21 +178,13 @@ export function ProxySettingsSection() {
             </p>
           )}
 
-          {/* Usage example */}
+          {/* Usage examples */}
           <div className="space-y-1 pt-1">
-            <Label className="text-[10px] text-muted-foreground">Usage Example</Label>
+            <Label className="text-[10px] text-muted-foreground">Anthropic Format</Label>
             <div className="relative">
               <pre className="text-[9px] font-mono bg-muted p-2 rounded overflow-x-auto whitespace-pre">
-{`# Set as base URL in your tool
-ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}
-ANTHROPIC_API_KEY=${settings.authKey}
-
-# Or use curl
-curl ${hasTunnel ? settings.proxyEndpoint : localEndpoint} \\
-  -H "x-api-key: ${settings.authKey}" \\
-  -H "content-type: application/json" \\
-  -H "anthropic-version: 2023-06-01" \\
-  -d '{"model":"claude-sonnet-4-6","max_tokens":1024,"messages":[{"role":"user","content":"Hello"}]}'`}
+{`ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}
+ANTHROPIC_API_KEY=${settings.authKey}`}
               </pre>
               <Button
                 variant="ghost"
@@ -200,10 +192,31 @@ curl ${hasTunnel ? settings.proxyEndpoint : localEndpoint} \\
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
                 onClick={() => copyToClipboard(
                   `ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}\nANTHROPIC_API_KEY=${settings.authKey}`,
-                  "example",
+                  "anthropic-env",
                 )}
               >
-                {copied === "example" ? "Copied!" : <Copy className="size-2.5" />}
+                {copied === "anthropic-env" ? "Copied!" : <Copy className="size-2.5" />}
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">OpenAI Format</Label>
+            <div className="relative">
+              <pre className="text-[9px] font-mono bg-muted p-2 rounded overflow-x-auto whitespace-pre">
+{`OPENAI_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy/v1" : localBaseUrl + "/proxy/v1"}
+OPENAI_API_KEY=${settings.authKey}`}
+              </pre>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
+                onClick={() => copyToClipboard(
+                  `OPENAI_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy/v1" : localBaseUrl + "/proxy/v1"}\nOPENAI_API_KEY=${settings.authKey}`,
+                  "openai-env",
+                )}
+              >
+                {copied === "openai-env" ? "Copied!" : <Copy className="size-2.5" />}
               </Button>
             </div>
           </div>

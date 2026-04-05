@@ -57,6 +57,21 @@ proxyRoutes.post("/v1/messages", async (c) => {
   return proxyService.forward("/v1/messages", "POST", headers, body);
 });
 
+/** POST /proxy/v1/chat/completions — OpenAI-compatible chat completions proxy */
+proxyRoutes.post("/v1/chat/completions", async (c) => {
+  if (!proxyService.isEnabled()) {
+    return c.json({ error: { message: "Proxy is disabled", type: "server_error" } }, 503);
+  }
+
+  const authHeader = c.req.header("authorization") || c.req.header("x-api-key");
+  if (!validateProxyAuth(authHeader)) {
+    return c.json({ error: { message: "Invalid proxy auth key", type: "authentication_error" } }, 401);
+  }
+
+  const body = await c.req.text();
+  return proxyService.forwardOpenAi(body);
+});
+
 /** POST /proxy/v1/messages/count_tokens — token counting proxy */
 proxyRoutes.post("/v1/messages/count_tokens", async (c) => {
   if (!proxyService.isEnabled()) {

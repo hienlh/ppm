@@ -65,9 +65,6 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
     setElapsed(null);
   };
 
-  // Both formats hit the same proxy endpoint — only request/response shape differs
-  const endpoint = `${baseUrl}/proxy/v1/messages`;
-
   const runTest = async () => {
     setTesting(true);
     setOutput(null);
@@ -75,20 +72,20 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
     setElapsed(null);
     const start = Date.now();
 
-    const body = JSON.stringify({
-      model,
-      max_tokens: 256,
-      stream: true,
-      messages: [{ role: "user", content: message }],
-    });
+    const isOpenAi = format === "openai";
+    const endpoint = isOpenAi
+      ? `${baseUrl}/proxy/v1/chat/completions`
+      : `${baseUrl}/proxy/v1/messages`;
+
+    const body = isOpenAi
+      ? JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] })
+      : JSON.stringify({ model, max_tokens: 256, stream: true, messages: [{ role: "user", content: message }] });
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (format === "anthropic") {
-      headers["x-api-key"] = authKey;
-      headers["anthropic-version"] = "2023-06-01";
-    } else {
-      // OpenAI-style: use Authorization Bearer
+    if (isOpenAi) {
       headers["Authorization"] = `Bearer ${authKey}`;
+    } else {
+      headers["x-api-key"] = authKey;
       headers["anthropic-version"] = "2023-06-01";
     }
 

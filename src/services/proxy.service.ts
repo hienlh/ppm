@@ -2,6 +2,7 @@ import { getConfigValue, setConfigValue } from "./db.service.ts";
 import { accountSelector } from "./account-selector.service.ts";
 import { accountService } from "./account.service.ts";
 import { forwardViaSdk } from "./proxy-sdk-bridge.ts";
+import { forwardOpenAiViaSdk } from "./proxy-openai-bridge.ts";
 import { randomBytes } from "node:crypto";
 
 const PROXY_ENABLED_KEY = "proxy_enabled";
@@ -84,6 +85,38 @@ class ProxyService {
 
     // API key accounts: direct HTTP forward to Anthropic API
     return this.forwardDirect(path, method, headers, body, token, account);
+  }
+
+  /**
+   * Forward an OpenAI-format chat completions request via SDK query().
+   * Always uses SDK bridge (works for both OAuth and API key accounts).
+   */
+  async forwardOpenAi(body: string): Promise<Response> {
+    const account = accountSelector.next();
+    if (!account) {
+      return new Response(
+        JSON.stringify({ error: { message: "No active accounts available", type: "server_error" } }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    let token = account.accessToken;
+    if (token.startsWith("sk-ant-oat")) {
+      const fresh = await accountService.ensureFreshToken(account.id);
+      if (fresh) token = fresh.accessToken;
+    }
+
+    try {
+      const parsed = JSON.parse(body);
+      this.requestCount++;
+      return await forwardOpenAiViaSdk(parsed, { id: account.id, email: account.email, accessToken: token });
+    } catch (e) {
+      console.error(`[proxy] OpenAI bridge error:`, (e as Error).message);
+      return new Response(
+        JSON.stringify({ error: { message: (e as Error).message, type: "server_error" } }),
+        { status: 502, headers: { "Content-Type": "application/json" } },
+      );
+    }
   }
 
   /** Direct HTTP forward for API key accounts */
