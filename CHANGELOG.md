@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.34] - 2026-04-06
+
+### Changed
+- **Renamed ClawBot → PPMBot**: All user-facing text, files, classes renamed. DB tables/config key remain `clawbot` for backward compat.
+
+### Fixed
+- **Bot unresponsive after first message**: Polling loop blocked on AI stream hangs — now uses fire-and-forget handler calls. All messages + commands stay responsive.
+- **Thinking shown but no answer**: Thinking events mixed raw HTML into markdown text, causing double-processing. Now tracks HTML and markdown segments separately.
+- **No stream timeout**: Added 5-minute timeout to prevent indefinite AI stream hangs.
+
+### Added
+- **Telegram command menu**: Bot registers commands via `setMyCommands` on startup — users see autocomplete when typing `/`
+- **Bot personality**: Default system prompt makes PPMBot concise and mobile-friendly. Welcoming `/start` greeting.
+
 ## [0.9.33] - 2026-04-06
 
 ### Fixed
