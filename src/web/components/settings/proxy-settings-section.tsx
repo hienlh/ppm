@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { Copy, RefreshCw, ExternalLink } from "lucide-react";
+import { Copy, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getProxySettings, updateProxySettings, type ProxySettings } from "@/lib/api-settings";
+import { ProxyTestSection } from "./proxy-test-section";
 
 export function ProxySettingsSection() {
   const [settings, setSettings] = useState<ProxySettings | null>(null);
@@ -208,6 +209,14 @@ curl ${hasTunnel && settings.proxyEndpoint ? settings.proxyEndpoint : window.loc
             </span>
           </div>
         </div>
+      )}
+
+      {/* Test section */}
+      {settings.enabled && hasKey && (
+        <ProxyTestSection
+          authKey={settings.authKey!}
+          baseUrl={hasTunnel && settings.tunnelUrl ? settings.tunnelUrl : window.location.origin}
+        />
       )}
 
       {saving && <p className="text-[11px] text-text-subtle">Saving...</p>}

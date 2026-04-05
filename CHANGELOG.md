@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.25] - 2026-04-05
+
+### Added
+- **Proxy test UI**: Inline test panel in proxy settings — pick model, type a message (pre-filled default), hit Test and see raw SSE response to verify Anthropic format compatibility
+
 ## [0.9.24] - 2026-04-05
 
 ### Fixed
