@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.21] - 2026-04-05
+
+### Fixed
+- **SDK internal 401 retry loop stuck**: SDK retries 401 errors 10 times with exponential backoff using the same expired token, leaving user stuck at "Thinking..." for 2+ minutes. Now intercepts `api_retry` system events with 401 on first occurrence, refreshes OAuth token immediately, and restarts the query — cutting recovery from ~2 min to ~1 sec.
+
 ## [0.9.20] - 2026-04-05
 
 ### Fixed

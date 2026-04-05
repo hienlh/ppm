@@ -784,6 +784,41 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             continue;
           }
 
+          // Intercept SDK's internal api_retry with 401 — the SDK will retry up to 10 times
+          // with exponential backoff using the same expired token, wasting 2+ minutes.
+          // Instead, refresh the OAuth token immediately and restart the query.
+          if (subtype === "api_retry" && (msg as any).error_status === 401 && account && !authRetried) {
+            authRetried = true;
+            try {
+              await accountService.refreshAccessToken(account.id, false);
+              const refreshedAccount = accountService.getWithTokens(account.id);
+              if (refreshedAccount) {
+                const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
+                console.log(`[sdk] session=${sessionId} intercepted api_retry 401 — refreshing token for ${account.id} (${label})`);
+                yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
+                const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
+                streamCtrl.done();
+                q.close();
+                const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
+                const currentSdkId = getSessionMapping(sessionId);
+                const canResume = currentSdkId && currentSdkId !== sessionId;
+                if (!canResume) earlyAuthCtrl.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: canResume ? currentSdkId : undefined, env: retryEnv };
+                const rq = query({
+                  prompt: earlyAuthGen,
+                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl });
+                this.activeQueries.set(sessionId, rq);
+                eventSource = rq;
+                continue retryLoop;
+              }
+            } catch (refreshErr) {
+              console.error(`[sdk] session=${sessionId} early OAuth refresh failed:`, refreshErr);
+              accountSelector.onAuthError(account.id);
+            }
+          }
+
           // Yield system events so streaming loop can transition phases
           // (e.g. connecting → thinking when hooks/init arrive)
           yield { type: "system" as any, subtype } as any;
