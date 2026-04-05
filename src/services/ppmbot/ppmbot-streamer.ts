@@ -149,8 +149,14 @@ export async function streamToTelegram(
   };
 
   // Process event stream with per-event timeout
+  let eventCount = 0;
   try {
     for await (const event of withEventTimeout(events, EVENT_TIMEOUT_MS)) {
+      eventCount++;
+      // Debug: log each event type to help diagnose streaming issues
+      if (event.type !== "text") {
+        console.log(`[ppmbot-stream] event #${eventCount}: ${event.type}${event.type === "tool_use" ? ` (${(event as any).tool})` : ""}`);
+      }
       await refreshTyping();
 
       switch (event.type) {
@@ -223,11 +229,14 @@ export async function streamToTelegram(
       }
     }
   } catch (err) {
+    console.error(`[ppmbot-stream] Stream ended with error after ${eventCount} events: ${(err as Error).message}`);
     appendHtml(
       segments,
       `\n\n❌ <b>Stream error:</b> ${escapeHtml((err as Error).message)}`,
     );
   }
+
+  console.log(`[ppmbot-stream] Complete: ${eventCount} events, ${segments.length} segments`);
 
   // Final edit with complete content
   if (currentMsgId && hasContent(segments)) {
