@@ -97,6 +97,10 @@ export const DEFAULT_CONFIG: PpmConfig = {
       },
     },
   },
+  telegram: {
+    bot_token: "",
+    chat_id: "",
+  },
   clawbot: {
     enabled: false,
     default_provider: "claude",
