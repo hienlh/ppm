@@ -131,7 +131,7 @@ export function ProxySettingsSection() {
         <div className="space-y-2 rounded-md border p-3 bg-muted/30">
           <div className="flex items-center justify-between">
             <h4 className="text-[11px] font-medium">Connection Info</h4>
-            <ProxyTestButton authKey={settings.authKey!} baseUrl={localBaseUrl} />
+            <ProxyTestButton authKey={settings.authKey!} baseUrl={window.location.origin} />
           </div>
 
           {/* Local endpoint */}
