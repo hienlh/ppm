@@ -179,10 +179,22 @@ describe("db.service", () => {
       expect(getSessionMapping("unknown")).toBeNull();
     });
 
-    it("upserts on conflict", () => {
-      setSessionMapping("ppm-1", "sdk-old");
-      setSessionMapping("ppm-1", "sdk-new");
-      expect(getSessionMapping("ppm-1")).toBe("sdk-new");
+    it("upserts placeholder (ppmId===sdkId) with real sdk id", () => {
+      setSessionMapping("ppm-1", "ppm-1");
+      setSessionMapping("ppm-1", "sdk-real");
+      expect(getSessionMapping("ppm-1")).toBe("sdk-real");
+    });
+
+    it("refuses to overwrite real sdk id with a different one", () => {
+      setSessionMapping("ppm-2", "sdk-old");
+      setSessionMapping("ppm-2", "sdk-new");
+      expect(getSessionMapping("ppm-2")).toBe("sdk-old");
+    });
+
+    it("allows overwrite with force=true", () => {
+      setSessionMapping("ppm-3", "sdk-old");
+      setSessionMapping("ppm-3", "sdk-new", undefined, undefined, true);
+      expect(getSessionMapping("ppm-3")).toBe("sdk-new");
     });
 
     it("getAllSessionMappings returns all", () => {
