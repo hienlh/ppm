@@ -36,6 +36,15 @@ class PPMBotService {
   /** Sessions that already had their title set */
   private titledSessions = new Set<string>();
 
+  /** Chat IDs that just received identity onboarding prompt */
+  private identityPending = new Set<string>();
+
+  /** Message count per session for periodic memory save */
+  private messageCount = new Map<string, number>();
+
+  /** Interval (messages) between automatic memory saves */
+  private readonly MEMORY_SAVE_INTERVAL = 5;
+
   // ── Lifecycle ─────────────────────────────────────────────────
 
   async start(): Promise<void> {
@@ -77,6 +86,8 @@ class PPMBotService {
     this.debouncedTexts.clear();
     this.processing.clear();
     this.messageQueue.clear();
+    this.identityPending.clear();
+    this.messageCount.clear();
 
     console.log("[ppmbot] Stopped");
   }
@@ -192,6 +203,7 @@ class PPMBotService {
     // Identity onboarding: if no identity memories exist, ask user
     const identityMemories = this.memory.recall("_global", "user identity name role");
     if (identityMemories.length === 0) {
+      this.identityPending.add(chatId);
       await this.telegram!.sendMessage(
         Number(chatId),
         "📝 <b>Quick intro?</b>\n\n" +
@@ -429,6 +441,22 @@ class PPMBotService {
           showThinking: config?.show_thinking ?? false,
         },
       );
+
+      // Capture identity if onboarding was just shown
+      if (this.identityPending.has(chatId)) {
+        this.identityPending.delete(chatId);
+        this.memory.saveOne("_global", `User identity: ${text}`, "preference", session.sessionId);
+        console.log("[ppmbot] Saved identity memory from onboarding");
+      }
+
+      // Periodic memory extraction — fire-and-forget every N messages
+      const count = (this.messageCount.get(session.sessionId) ?? 0) + 1;
+      this.messageCount.set(session.sessionId, count);
+      if (count % this.MEMORY_SAVE_INTERVAL === 0) {
+        this.saveSessionMemory(chatId).catch((err) =>
+          console.warn("[ppmbot] Periodic memory save failed:", (err as Error).message),
+        );
+      }
 
       // Check context window — auto-rotate if near limit
       if (
