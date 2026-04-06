@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.45] - 2026-04-06
+
+### Fixed
+- **Identity lost on server restart**: Identity save ran AFTER `streamToTelegram()` — if streaming timed out, the save was skipped. Moved identity persistence to before streaming so it writes to SQLite immediately.
+
+### Added
+- **Restart notification includes version**: `/restart` now sends "PPM v0.9.45 restarted successfully" instead of generic message.
+
 ## [0.9.42] - 2026-04-06
 
 ### Changed

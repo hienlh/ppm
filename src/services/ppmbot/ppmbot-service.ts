@@ -407,8 +407,16 @@ class PPMBotService {
       // Only notify if restart was recent (< 60s)
       if (Date.now() - data.ts > 60_000) return;
 
+      // Read version from package.json
+      let version = "";
+      try {
+        const pkgPath = join(import.meta.dir, "../../../package.json");
+        const pkg = await Bun.file(pkgPath).json();
+        version = pkg.version ? ` v${pkg.version}` : "";
+      } catch {}
+
       for (const cid of data.chatIds) {
-        await this.telegram?.sendMessage(Number(cid), "✅ PPM restarted successfully.");
+        await this.telegram?.sendMessage(Number(cid), `✅ PPM${version} restarted successfully.`);
       }
     } catch {}
   }
@@ -500,6 +508,20 @@ class PPMBotService {
         fullMessage = `<system-context>\n${systemPrompt}\n</system-context>\n\n${text}`;
       }
 
+      // Save identity BEFORE streaming — must persist even if streaming times out
+      if (this.identityPending.has(chatId)) {
+        this.identityPending.delete(chatId);
+        this.memory.saveOne("_global", `User identity: ${text}`, "preference", session.sessionId);
+        console.log("[ppmbot] Saved identity memory from onboarding");
+      } else if (!this.hasCheckedIdentity.has(chatId)) {
+        this.hasCheckedIdentity.add(chatId);
+        const globalMems = this.memory.getSummary("_global", 50);
+        if (!globalMems.some((m) => m.category === "preference" && /identity/i.test(m.content))) {
+          this.memory.saveOne("_global", `User identity: ${text}`, "preference", session.sessionId);
+          console.log("[ppmbot] Saved identity memory (first message, no identity found)");
+        }
+      }
+
       const events = chatService.sendMessage(
         session.providerId,
         session.sessionId,
@@ -517,21 +539,6 @@ class PPMBotService {
           showThinking: config?.show_thinking ?? false,
         },
       );
-
-      // Capture identity: save when onboarding was shown OR when no identity exists
-      // (handles server restarts losing the in-memory flag)
-      if (this.identityPending.has(chatId)) {
-        this.identityPending.delete(chatId);
-        this.memory.saveOne("_global", `User identity: ${text}`, "preference", session.sessionId);
-        console.log("[ppmbot] Saved identity memory from onboarding");
-      } else if (!this.hasCheckedIdentity.has(chatId)) {
-        this.hasCheckedIdentity.add(chatId);
-        const globalMems = this.memory.getSummary("_global", 50);
-        if (!globalMems.some((m) => m.category === "preference" && /identity/i.test(m.content))) {
-          this.memory.saveOne("_global", `User identity: ${text}`, "preference", session.sessionId);
-          console.log("[ppmbot] Saved identity memory (first message, no identity found)");
-        }
-      }
 
       // Periodic memory extraction — fire-and-forget every N messages
       const count = (this.messageCount.get(session.sessionId) ?? 0) + 1;
