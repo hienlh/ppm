@@ -1,9 +1,10 @@
 # Changelog
 
-## [0.9.38] - 2026-04-06
+## [0.9.39] - 2026-04-06
 
 ### Fixed
 - **Stream hangs 3 minutes after AI finishes**: `done` event was received but the `for-await` loop didn't break — `break` inside `switch` only exits the switch, not the loop. Used labeled `break eventLoop` to properly terminate on `done`.
+- **Identity never saved to memory**: Memory extraction only ran on session end. Now saves identity directly when user responds to onboarding prompt, and runs AI extraction every 5 messages.
 
 ## [0.9.36] - 2026-04-06
 
