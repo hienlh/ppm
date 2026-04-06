@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api-client";
-import { Trash2, CheckCircle, Clock, Send } from "lucide-react";
+import { Trash2, CheckCircle, Clock, Send, Brain, RefreshCw } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
 interface PPMBotConfig {
   enabled: boolean;
@@ -18,6 +19,14 @@ interface PPMBotConfig {
 
 interface TelegramConfig {
   bot_token: string;
+}
+
+interface MemoryRow {
+  id: number;
+  project: string;
+  content: string;
+  category: string;
+  importance: number;
 }
 
 interface PairedChat {
@@ -53,12 +62,29 @@ export function PPMBotSettingsSection() {
   const [approving, setApproving] = useState(false);
   const [testing, setTesting] = useState(false);
 
+  const [memories, setMemories] = useState<MemoryRow[]>([]);
+  const [memoryProject, setMemoryProject] = useState("_global");
+
   const fetchPairedChats = useCallback(async () => {
     try {
       const data = await api.get<PairedChat[]>("/api/settings/clawbot/paired");
       setPairedChats(data);
     } catch {}
   }, []);
+
+  const fetchMemories = useCallback(async (project = memoryProject) => {
+    try {
+      const data = await api.get<MemoryRow[]>(`/api/settings/clawbot/memories?project=${encodeURIComponent(project)}`);
+      setMemories(data);
+    } catch {}
+  }, [memoryProject]);
+
+  const deleteMemory = async (id: number) => {
+    try {
+      await api.del(`/api/settings/clawbot/memories/${id}`);
+      setMemories((prev) => prev.filter((m) => m.id !== id));
+    } catch {}
+  };
 
   useEffect(() => {
     api.get<PPMBotConfig>("/api/settings/clawbot").then((data) => {
@@ -74,7 +100,8 @@ export function PPMBotSettingsSection() {
       setTokenConfigured(!!data.bot_token);
     }).catch(() => {});
     fetchPairedChats();
-  }, [fetchPairedChats]);
+    fetchMemories("_global");
+  }, [fetchPairedChats, fetchMemories]);
 
   const saveToken = async () => {
     if (!tokenInput.trim()) return;
@@ -275,6 +302,61 @@ export function PPMBotSettingsSection() {
           </Button>
         )}
       </div>
+
+      <Separator />
+
+      {/* Memory & Identity */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Brain className="size-3.5 text-muted-foreground" />
+            <p className="text-xs font-medium">Memory & Identity</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 cursor-pointer"
+            onClick={() => fetchMemories(memoryProject)}
+          >
+            <RefreshCw className="size-3" />
+          </Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          Facts the bot remembers across sessions. Use /remember on Telegram to add, or delete here.
+        </p>
+
+        {memories.length === 0 ? (
+          <p className="text-[10px] text-muted-foreground italic">
+            No memories stored yet. Send /start on Telegram and introduce yourself.
+          </p>
+        ) : (
+          <div className="space-y-1 max-h-[200px] overflow-y-auto">
+            {memories.map((mem) => (
+              <div
+                key={mem.id}
+                className="flex items-start justify-between rounded-md border p-2 gap-1"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11px] break-words">{mem.content}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {mem.category} · {mem.project}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-destructive hover:text-destructive cursor-pointer shrink-0"
+                  onClick={() => deleteMemory(mem.id)}
+                >
+                  <Trash2 className="size-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Separator />
 
       {/* Default Project */}
       <div className="space-y-1.5">

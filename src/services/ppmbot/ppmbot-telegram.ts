@@ -13,7 +13,7 @@ const BOT_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{30,50}$/;
 /** Known PPMBot slash commands */
 const COMMANDS = new Set([
   "start", "project", "new", "sessions", "resume",
-  "status", "stop", "memory", "forget", "remember", "help",
+  "status", "stop", "memory", "forget", "remember", "restart", "help",
 ]);
 
 export type UpdateHandler = (update: TelegramUpdate) => Promise<void>;
@@ -43,7 +43,7 @@ export class PPMBotTelegram {
       await this.callApi("setMyCommands", {
         commands: [
           { command: "start", description: "Greeting + list projects" },
-          { command: "project", description: "Switch project" },
+          { command: "project", description: "Switch/list projects" },
           { command: "new", description: "Fresh session (current project)" },
           { command: "sessions", description: "List recent sessions" },
           { command: "resume", description: "Resume a previous session" },
@@ -52,6 +52,7 @@ export class PPMBotTelegram {
           { command: "memory", description: "Show project memories" },
           { command: "forget", description: "Remove matching memories" },
           { command: "remember", description: "Save a fact" },
+          { command: "restart", description: "Restart PPM server" },
           { command: "help", description: "Show all commands" },
         ],
       });

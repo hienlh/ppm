@@ -5,6 +5,8 @@ import {
   getPairingByChatId,
   createPairingRequest,
   approvePairing,
+  getSessionTitles,
+  getApprovedPairedChats,
 } from "../db.service.ts";
 import { PPMBotTelegram } from "./ppmbot-telegram.ts";
 import { PPMBotSessionManager } from "./ppmbot-session.ts";
@@ -69,6 +71,9 @@ class PPMBotService {
 
       // Start polling (non-blocking)
       this.telegram.startPolling((update) => this.handleUpdate(update));
+
+      // Check if this is a restart and notify users
+      await this.checkRestartNotification();
 
       console.log("[ppmbot] Started");
     } catch (err) {
@@ -172,6 +177,7 @@ class PPMBotService {
         case "memory": await this.cmdMemory(chatId); break;
         case "forget": await this.cmdForget(chatId, cmd.args); break;
         case "remember": await this.cmdRemember(chatId, cmd.args); break;
+        case "restart": await this.cmdRestart(chatId); break;
         case "help": await this.cmdHelp(chatId); break;
         default: await tg.sendMessage(Number(chatId), `Unknown command: /${cmd.command}`);
       }
@@ -201,8 +207,11 @@ class PPMBotService {
     await this.telegram!.sendMessage(Number(chatId), text);
 
     // Identity onboarding: if no identity memories exist, ask user
-    const identityMemories = this.memory.recall("_global", "user identity name role");
-    if (identityMemories.length === 0) {
+    const globalMemories = this.memory.getSummary("_global", 50);
+    const hasIdentity = globalMemories.some((m) =>
+      m.category === "preference" && /identity|name|role/i.test(m.content),
+    );
+    if (!hasIdentity) {
       this.identityPending.add(chatId);
       await this.telegram!.sendMessage(
         Number(chatId),
@@ -220,11 +229,20 @@ class PPMBotService {
   private async cmdProject(chatId: string, args: string): Promise<void> {
     if (!args) {
       const active = this.sessions.getActiveSession(chatId);
-      const current = active?.projectName ?? "(none)";
-      await this.telegram!.sendMessage(
-        Number(chatId),
-        `Current project: <b>${escapeHtml(current)}</b>\n\nUsage: /project &lt;name&gt;`,
-      );
+      const current = active?.projectName ?? "";
+      const projects = this.sessions.getProjectNames();
+      let text = "<b>Projects</b>\n\n";
+      if (projects.length === 0) {
+        text += "No projects configured.\nUsing default: <code>~/.ppm/bot/</code>\n";
+      } else {
+        for (const name of projects) {
+          const marker = name === current ? " ✓" : "";
+          text += `• <code>${escapeHtml(name)}</code>${marker}\n`;
+        }
+      }
+      text += `\nCurrent: <b>${escapeHtml(current || "bot (default)")}</b>`;
+      text += "\nSwitch: /project &lt;name&gt;";
+      await this.telegram!.sendMessage(Number(chatId), text);
       return;
     }
 
@@ -254,13 +272,23 @@ class PPMBotService {
       await this.telegram!.sendMessage(Number(chatId), "No recent sessions.");
       return;
     }
+
+    // Fetch titles for all sessions
+    const titles = getSessionTitles(sessions.map((s) => s.session_id));
+
     let text = "<b>Recent Sessions</b>\n\n";
     sessions.forEach((s, i) => {
       const active = s.is_active ? " ⬤" : "";
-      const date = new Date(s.last_message_at * 1000).toLocaleDateString();
-      text += `${i + 1}. <code>${escapeHtml(s.project_name)}</code> — ${date}${active}\n`;
+      const title = titles[s.session_id]?.replace(/^\[PPM\]\s*/, "") || "";
+      const preview = title ? ` — ${escapeHtml(title.slice(0, 40))}` : "";
+      const date = new Date(s.last_message_at * 1000).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+      const sid = s.session_id.slice(0, 8);
+      text += `${i + 1}. <b>${escapeHtml(s.project_name)}</b>${preview}${active}\n`;
+      text += `   <code>${sid}</code> · ${date}\n\n`;
     });
-    text += "\nResume: /resume &lt;number&gt;";
+    text += "Resume: /resume &lt;number&gt;";
     await this.telegram!.sendMessage(Number(chatId), text);
   }
 
@@ -338,11 +366,54 @@ class PPMBotService {
     await this.telegram!.sendMessage(Number(chatId), "Remembered ✓");
   }
 
+  private async cmdRestart(chatId: string): Promise<void> {
+    await this.telegram!.sendMessage(Number(chatId), "🔄 Restarting PPM...");
+
+    // Schedule restart after a short delay so the response is sent
+    setTimeout(async () => {
+      const { join } = await import("node:path");
+      const { writeFileSync } = await import("node:fs");
+      const { homedir } = await import("node:os");
+
+      const approvedChats = getApprovedPairedChats();
+      const chatIds = approvedChats.map((c) => c.telegram_chat_id);
+
+      // Write restart marker so we can notify after restart
+      const markerPath = join(homedir(), ".ppm", "restart-notify.json");
+      writeFileSync(markerPath, JSON.stringify({ chatIds, ts: Date.now() }));
+
+      console.log("[ppmbot] Restart requested via Telegram, exiting...");
+      process.exit(0);
+    }, 500);
+  }
+
+  /** Check for restart notification marker and send notification */
+  async checkRestartNotification(): Promise<void> {
+    try {
+      const { join } = await import("node:path");
+      const { existsSync, readFileSync, unlinkSync } = await import("node:fs");
+      const { homedir } = await import("node:os");
+
+      const markerPath = join(homedir(), ".ppm", "restart-notify.json");
+      if (!existsSync(markerPath)) return;
+
+      const data = JSON.parse(readFileSync(markerPath, "utf-8"));
+      unlinkSync(markerPath);
+
+      // Only notify if restart was recent (< 60s)
+      if (Date.now() - data.ts > 60_000) return;
+
+      for (const cid of data.chatIds) {
+        await this.telegram?.sendMessage(Number(cid), "✅ PPM restarted successfully.");
+      }
+    } catch {}
+  }
+
   private async cmdHelp(chatId: string): Promise<void> {
     const text = `<b>PPMBot Commands</b>
 
 /start — Greeting + list projects
-/project &lt;name&gt; — Switch project
+/project &lt;name&gt; — Switch/list projects
 /new — Fresh session (current project)
 /sessions — List recent sessions
 /resume &lt;n&gt; — Resume session #n
@@ -351,6 +422,7 @@ class PPMBotService {
 /memory — Show project memories
 /forget &lt;topic&gt; — Remove matching memories
 /remember &lt;fact&gt; — Save a fact
+/restart — Restart PPM server
 /help — This message`;
     await this.telegram!.sendMessage(Number(chatId), text);
   }

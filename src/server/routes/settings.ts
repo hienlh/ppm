@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { configService } from "../../services/config.service.ts";
-import { getConfigValue, setConfigValue, listPairedChats, getPairingByCode, approvePairing, revokePairing } from "../../services/db.service.ts";
+import { getConfigValue, setConfigValue, listPairedChats, getPairingByCode, approvePairing, revokePairing, getPPMBotMemories, getDb } from "../../services/db.service.ts";
 import {
   validateAIProviderConfig,
   validateDefaultProvider,
@@ -381,4 +381,23 @@ settingsRoutes.post("/clawbot/paired/approve", async (c) => {
 settingsRoutes.delete("/clawbot/paired/:chatId", (c) => {
   revokePairing(c.req.param("chatId"));
   return c.json(ok({ revoked: true }));
+});
+
+/** GET /settings/clawbot/memories?project=xxx — list memories for a project */
+settingsRoutes.get("/clawbot/memories", (c) => {
+  const project = c.req.query("project") || "_global";
+  const memories = getPPMBotMemories(project, 50);
+  return c.json(ok(memories));
+});
+
+/** DELETE /settings/clawbot/memories/:id — delete a specific memory */
+settingsRoutes.delete("/clawbot/memories/:id", (c) => {
+  const id = Number(c.req.param("id"));
+  if (!id) return c.json(err("Invalid memory ID"), 400);
+  try {
+    getDb().query("DELETE FROM clawbot_memories WHERE id = ?").run(id);
+    return c.json(ok({ deleted: id }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
 });
