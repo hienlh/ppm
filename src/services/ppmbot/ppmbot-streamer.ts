@@ -151,7 +151,7 @@ export async function streamToTelegram(
   // Process event stream with per-event timeout
   let eventCount = 0;
   try {
-    for await (const event of withEventTimeout(events, EVENT_TIMEOUT_MS)) {
+    eventLoop: for await (const event of withEventTimeout(events, EVENT_TIMEOUT_MS)) {
       eventCount++;
       // Debug: log each event type to help diagnose streaming issues
       if (event.type !== "text") {
@@ -207,7 +207,7 @@ export async function streamToTelegram(
         case "done": {
           result.contextWindowPct = event.contextWindowPct;
           result.resultSubtype = event.resultSubtype;
-          break;
+          break eventLoop; // break the for-await, not just the switch
         }
 
         case "session_migrated": {
