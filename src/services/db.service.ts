@@ -486,7 +486,23 @@ export function getSessionProjectPath(ppmId: string): string | null {
   return row?.project_path ?? null;
 }
 
-export function setSessionMapping(ppmId: string, sdkId: string, projectName?: string, projectPath?: string): void {
+/**
+ * Set session mapping. By default, refuses to overwrite an existing real SDK ID
+ * (one that differs from both ppmId and the new sdkId) to prevent orphaning JSONL history.
+ * Pass force=true to override (e.g. session delete + recreate).
+ */
+export function setSessionMapping(ppmId: string, sdkId: string, projectName?: string, projectPath?: string, force = false): void {
+  if (!force) {
+    const existing = getSessionMapping(ppmId);
+    if (existing && existing !== ppmId && existing !== sdkId) {
+      console.warn(`[db] Refusing to overwrite session mapping ${ppmId} → ${existing} with ${sdkId} (use force=true to override)`);
+      // Still update project metadata even when refusing sdk_id overwrite
+      getDb().query(
+        "UPDATE session_map SET project_name = COALESCE(?, session_map.project_name), project_path = COALESCE(?, session_map.project_path) WHERE ppm_id = ?",
+      ).run(projectName ?? null, projectPath ?? null, ppmId);
+      return;
+    }
+  }
   getDb().query(
     "INSERT INTO session_map (ppm_id, sdk_id, project_name, project_path) VALUES (?, ?, ?, ?) ON CONFLICT(ppm_id) DO UPDATE SET sdk_id = excluded.sdk_id, project_name = COALESCE(excluded.project_name, session_map.project_name), project_path = COALESCE(excluded.project_path, session_map.project_path)",
   ).run(ppmId, sdkId, projectName ?? null, projectPath ?? null);

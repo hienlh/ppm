@@ -717,6 +717,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let retryCount = 0;
       let rateLimitRetryCount = 0;
       let authRetried = false;
+      /** True after the first init event maps ppmId → sdkId. Prevents retry init events from overwriting the mapping. */
+      let initMappingDone = false;
 
       let hadAnyEvents = false;
       retryLoop: while (true) {
@@ -763,16 +765,22 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (subtype === "init") {
             const initMsg = msg as any;
             if (initMsg.session_id && initMsg.session_id !== sessionId) {
-              // Only update sdk_id mapping for brand-new sessions (first message).
-              // For resumed sessions the SDK may create a new session_id, but the
-              // old JSONL (keyed by the original sdk_id) still holds the full
-              // conversation history.  Overwriting the mapping would orphan it.
-              const existingSdkId = getSessionMapping(sessionId);
-              const isFirstMessage = existingSdkId === null || existingSdkId === sessionId;
-              if (isFirstMessage) {
-                setSessionMapping(sessionId, initMsg.session_id, meta.projectName, meta.projectPath);
+              // Only update sdk_id mapping once per session lifecycle.
+              // Retries (auth refresh, rate limit) create new SDK queries that
+              // emit fresh init events — overwriting would orphan the original JSONL.
+              if (!initMappingDone) {
+                const existingSdkId = getSessionMapping(sessionId);
+                const isFirstMapping = existingSdkId === null || existingSdkId === sessionId;
+                if (isFirstMapping) {
+                  setSessionMapping(sessionId, initMsg.session_id, meta.projectName, meta.projectPath);
+                  initMappingDone = true;
+                } else {
+                  // Already mapped to a real SDK id from a previous conversation
+                  initMappingDone = true;
+                  console.log(`[sdk] session=${sessionId} preserving existing mapping → ${existingSdkId}`);
+                }
               } else {
-                console.log(`[sdk] session=${sessionId} ignoring new sdk_id=${initMsg.session_id} to preserve existing mapping → ${existingSdkId}`);
+                console.log(`[sdk] session=${sessionId} ignoring retry init sdk_id=${initMsg.session_id} (mapping already set)`);
               }
               const oldMeta = this.activeSessions.get(sessionId);
               if (oldMeta) {
@@ -816,7 +824,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 q.close();
                 const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
                 const currentSdkId = getSessionMapping(sessionId);
-                const canResume = currentSdkId && currentSdkId !== sessionId;
+                const canResume = !!currentSdkId;
                 if (!canResume) earlyAuthCtrl.push(firstMsg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: canResume ? currentSdkId : undefined, env: retryEnv };
                 const rq = query({
@@ -844,7 +852,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 q.close();
                 const { generator: switchGen, controller: switchCtrl } = createMessageChannel();
                 const currentSdkId = getSessionMapping(sessionId);
-                const canResume = currentSdkId && currentSdkId !== sessionId;
+                const canResume = !!currentSdkId;
                 if (!canResume) switchCtrl.push(firstMsg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: canResume ? currentSdkId : undefined, env: switchEnv };
                 const rq = query({
@@ -995,7 +1003,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   q.close();
                   const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
                   const currentSdkId = getSessionMapping(sessionId);
-                  const canResume = currentSdkId && currentSdkId !== sessionId;
+                  const canResume = !!currentSdkId;
                   if (!canResume) authRetryCtrl.push(firstMsg);
                   const retryOpts = { ...queryOptions, sessionId: undefined, resume: canResume ? currentSdkId : undefined, env: retryEnv };
                   const rq = query({
@@ -1050,7 +1058,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
               const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
               const rlCurrentSdkId = getSessionMapping(sessionId);
-              const rlCanResume = rlCurrentSdkId && rlCurrentSdkId !== sessionId;
+              const rlCanResume = !!rlCurrentSdkId;
               if (!rlCanResume) rlRetryCtrl.push(firstMsg);
               const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlCanResume ? rlCurrentSdkId : undefined, env: rlRetryEnv };
               const rq = query({
@@ -1149,7 +1157,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
                 const rlCurrentSdkId2 = getSessionMapping(sessionId);
-                const rlCanResume2 = rlCurrentSdkId2 && rlCurrentSdkId2 !== sessionId;
+                const rlCanResume2 = !!rlCurrentSdkId2;
                 if (!rlCanResume2) rlRetryCtrl.push(firstMsg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlCanResume2 ? rlCurrentSdkId2 : undefined, env: rlRetryEnv };
                 const rq = query({
@@ -1180,7 +1188,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
                     const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
                     const authCurrentSdkId2 = getSessionMapping(sessionId);
-                    const authCanResume2 = authCurrentSdkId2 && authCurrentSdkId2 !== sessionId;
+                    const authCanResume2 = !!authCurrentSdkId2;
                     if (!authCanResume2) authRetryCtrl2.push(firstMsg);
                     const retryOpts = { ...queryOptions, sessionId: undefined, resume: authCanResume2 ? authCurrentSdkId2 : undefined, env: retryEnv };
                     const rq = query({
