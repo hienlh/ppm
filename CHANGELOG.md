@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.51] - 2026-04-07
+
+### Added
+- **`ppm bot memory` CLI command**: AI can now save cross-project memories via Bash tool — `ppm bot memory save/list/forget`. Stores to `_global` scope in SQLite, persists across all projects and sessions. GoClaw-inspired pattern (CLI tool, not MCP).
+- **System prompt instructs AI**: AI automatically knows to use `ppm bot memory save` when user asks to remember preferences, change address style, or save facts.
+
+### Changed
+- **/memory, /remember, /forget**: Now always use `_global` project scope (cross-project).
+- **ppmbot-memory tests updated**: Removed stale tests referencing deleted methods (`recall`, `save`, `parseExtractionResponse`, `extractiveMemoryFallback`).
+
 ## [0.9.50] - 2026-04-07
 
 ### Changed
