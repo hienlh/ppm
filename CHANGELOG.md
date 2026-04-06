@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.49] - 2026-04-07
+
+### Fixed
+- **/resume accepts session ID prefix**: `/resume fdc4ddaa` now works alongside `/resume 2` (index). Matches session by ID prefix from `/sessions` list.
+- **/restart actually restarts**: Server now exits with code 42 (restart signal) instead of 0 (clean exit). Supervisor recognizes code 42 and respawns immediately without backoff.
+- **Restart notification delivered**: Supervisor respawns after `/restart`, new server sends "PPM v0.9.49 restarted successfully." to all paired chats.
+- **/project lists all projects**: `getProjectNames()` now merges config projects + unique project names from session history. Previously returned empty when no projects in config.
+
 ## [0.9.48] - 2026-04-06
 
 ### Changed

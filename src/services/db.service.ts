@@ -1022,6 +1022,13 @@ export function getRecentPPMBotSessions(
   ).all(telegramChatId, limit) as PPMBotSessionRow[];
 }
 
+export function getDistinctPPMBotProjectNames(): string[] {
+  const rows = getDb().query(
+    "SELECT DISTINCT project_name FROM clawbot_sessions ORDER BY project_name",
+  ).all() as { project_name: string }[];
+  return rows.map((r) => r.project_name);
+}
+
 // ---------------------------------------------------------------------------
 // PPMBot memory helpers
 // ---------------------------------------------------------------------------

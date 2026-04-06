@@ -130,9 +130,15 @@ export async function spawnServer(
   const exitCode = await serverChild.exited;
   serverChild = null;
 
-  if (exitCode === 0 || shuttingDown) {
+  if (exitCode === 0 && shuttingDown) {
     log("INFO", `Server exited cleanly (code ${exitCode})`);
     return;
+  }
+
+  // Exit code 42 = restart requested (e.g. /restart from Telegram)
+  if (exitCode === 42 || (exitCode === 0 && !shuttingDown)) {
+    log("INFO", `Server restart requested (code ${exitCode}), respawning immediately`);
+    return spawnServer(serverArgs, logFd);
   }
 
   // SIGUSR2 restart — skip backoff, respawn immediately

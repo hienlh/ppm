@@ -281,12 +281,19 @@ class PPMBotService {
   }
 
   private async cmdResume(chatId: string, args: string): Promise<void> {
-    const index = parseInt(args, 10);
-    if (!index || index < 1) {
-      await this.telegram!.sendMessage(Number(chatId), "Usage: /resume &lt;number&gt;");
+    if (!args.trim()) {
+      await this.telegram!.sendMessage(Number(chatId), "Usage: /resume &lt;number or session-id&gt;");
       return;
     }
-    const session = await this.sessions.resumeSessionById(chatId, index);
+
+    // Support both index (e.g. "2") and session ID prefix (e.g. "fdc4ddaa")
+    const index = parseInt(args, 10);
+    const isIndex = !isNaN(index) && index >= 1 && String(index) === args.trim();
+
+    const session = isIndex
+      ? await this.sessions.resumeSessionById(chatId, index)
+      : await this.sessions.resumeSessionByIdPrefix(chatId, args.trim());
+
     if (!session) {
       await this.telegram!.sendMessage(Number(chatId), "Session not found.");
       return;
@@ -368,8 +375,8 @@ class PPMBotService {
       const markerPath = join(homedir(), ".ppm", "restart-notify.json");
       writeFileSync(markerPath, JSON.stringify({ chatIds, ts: Date.now() }));
 
-      console.log("[ppmbot] Restart requested via Telegram, exiting...");
-      process.exit(0);
+      console.log("[ppmbot] Restart requested via Telegram, exiting with code 42...");
+      process.exit(42);
     }, 500);
   }
 

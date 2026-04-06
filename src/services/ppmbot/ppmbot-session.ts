@@ -9,6 +9,7 @@ import {
   deactivatePPMBotSession,
   touchPPMBotSession,
   getRecentPPMBotSessions,
+  getDistinctPPMBotProjectNames,
   setSessionTitle,
 } from "../db.service.ts";
 import type { PPMBotActiveSession, PPMBotSessionRow } from "../../types/ppmbot.ts";
@@ -93,6 +94,23 @@ export class PPMBotSessionManager {
     return this.resumeFromDb(chatId, target, project);
   }
 
+  /** Resume a session by session ID prefix match */
+  async resumeSessionByIdPrefix(
+    chatId: string,
+    prefix: string,
+  ): Promise<PPMBotActiveSession | null> {
+    const sessions = getRecentPPMBotSessions(chatId, 20);
+    const target = sessions.find((s) => s.session_id.startsWith(prefix));
+    if (!target) return null;
+
+    await this.closeSession(chatId);
+
+    const project = this.resolveProject(target.project_name);
+    if (!project) return null;
+
+    return this.resumeFromDb(chatId, target, project);
+  }
+
   /**
    * Resolve a project name against configured projects.
    * Case-insensitive, supports prefix matching.
@@ -119,10 +137,12 @@ export class PPMBotSessionManager {
     setSessionTitle(sessionId, title);
   }
 
-  /** Get list of available project names (for /start greeting) */
+  /** Get list of available project names (config + sessions history) */
   getProjectNames(): string[] {
-    const projects = configService.get("projects") as ProjectConfig[];
-    return projects?.map((p) => p.name) ?? [];
+    const configured = (configService.get("projects") as ProjectConfig[])?.map((p) => p.name) ?? [];
+    const fromSessions = getDistinctPPMBotProjectNames();
+    const merged = new Set([...configured, ...fromSessions]);
+    return [...merged].sort();
   }
 
   // ── Private ─────────────────────────────────────────────────────
