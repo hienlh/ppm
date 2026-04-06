@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.47] - 2026-04-06
+
+### Fixed
+- **AI writes to Claude memory files**: Added core directive preventing AI from managing its own memory/identity files. Memory is handled by PPMBot externally.
+- **Garbage identity saved**: Removed `hasCheckedIdentity` fallback that saved random messages as identity. Identity only collected through `/start` onboarding flow.
+- **Identity onboarding context**: AI now gets a hint that the message is an identity intro, so it acknowledges warmly instead of treating it as a task.
+
 ## [0.9.46] - 2026-04-06
 
 ### Added

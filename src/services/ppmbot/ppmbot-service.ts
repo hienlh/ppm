@@ -41,9 +41,6 @@ class PPMBotService {
   /** Chat IDs that just received identity onboarding prompt */
   private identityPending = new Set<string>();
 
-  /** Chat IDs where we've already checked for identity (once per session) */
-  private hasCheckedIdentity = new Set<string>();
-
   /** Message count per session for periodic memory save */
   private messageCount = new Map<string, number>();
 
@@ -95,7 +92,6 @@ class PPMBotService {
     this.processing.clear();
     this.messageQueue.clear();
     this.identityPending.clear();
-    this.hasCheckedIdentity.clear();
     this.messageCount.clear();
 
     console.log("[ppmbot] Stopped");
@@ -504,8 +500,9 @@ class PPMBotService {
         text,
       );
 
-      // Build system prompt with memory
-      let systemPrompt = config?.system_prompt ?? "";
+      // Build system prompt with memory + core directives
+      const coreDirective = "IMPORTANT: Do NOT write files, save to MEMORY.md, or manage your own memory/identity files. Your memory is managed externally by PPMBot. Just respond naturally.";
+      let systemPrompt = coreDirective + "\n\n" + (config?.system_prompt ?? "");
       const memorySection = this.memory.buildRecallPrompt(memories);
       if (memorySection) {
         systemPrompt += memorySection;
@@ -516,23 +513,19 @@ class PPMBotService {
         permissionMode: (config?.permission_mode ?? "bypassPermissions") as PermissionMode,
       };
 
-      let fullMessage = text;
-      if (systemPrompt) {
-        fullMessage = `<system-context>\n${systemPrompt}\n</system-context>\n\n${text}`;
-      }
-
       // Save identity BEFORE streaming — must persist even if streaming times out
+      let messageForAI = text;
       if (this.identityPending.has(chatId)) {
         this.identityPending.delete(chatId);
         this.memory.saveOne("_global", `User identity: ${text}`, "preference", session.sessionId);
         console.log("[ppmbot] Saved identity memory from onboarding");
-      } else if (!this.hasCheckedIdentity.has(chatId)) {
-        this.hasCheckedIdentity.add(chatId);
-        const globalMems = this.memory.getSummary("_global", 50);
-        if (!globalMems.some((m) => m.category === "preference" && /identity/i.test(m.content))) {
-          this.memory.saveOne("_global", `User identity: ${text}`, "preference", session.sessionId);
-          console.log("[ppmbot] Saved identity memory (first message, no identity found)");
-        }
+        // Tell AI this is an identity intro so it acknowledges warmly
+        messageForAI = `[User just introduced themselves in response to onboarding prompt. Acknowledge warmly and briefly.]\n\n${text}`;
+      }
+
+      let fullMessage = messageForAI;
+      if (systemPrompt) {
+        fullMessage = `<system-context>\n${systemPrompt}\n</system-context>\n\n${messageForAI}`;
       }
 
       const events = chatService.sendMessage(
