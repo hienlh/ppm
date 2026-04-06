@@ -96,8 +96,8 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
       return `git-diff:${metadata?.filePath ?? "unknown"}`;
     case "settings":
       return "settings";
-    case "browser":
-      return `browser:${metadata?.url ?? "blank"}`;
+    case "ports":
+      return "ports";
     default:
       return `${type}:${randomId()}`;
   }

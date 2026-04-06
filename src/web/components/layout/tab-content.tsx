@@ -48,9 +48,9 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.SettingsTab,
     })),
   ),
-  browser: lazy(() =>
-    import("@/components/browser/browser-tab").then((m) => ({
-      default: m.BrowserTab,
+  ports: lazy(() =>
+    import("@/components/ports/port-forwarding-tab").then((m) => ({
+      default: m.PortForwardingTab,
     })),
   ),
   "extension-webview": lazy(() =>

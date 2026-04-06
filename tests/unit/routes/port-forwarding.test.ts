@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { Hono } from "hono";
-import { browserPreviewRoutes, activeTunnels, stopAllPreviewTunnels } from "../../../src/server/routes/browser-preview.ts";
+import { portForwardingRoutes, activeTunnels, stopAllPortTunnels } from "../../../src/server/routes/port-forwarding.ts";
 
 function createApp() {
-  return new Hono().route("/api/preview", browserPreviewRoutes);
+  return new Hono().route("/api/preview", portForwardingRoutes);
 }
 
 /** Create a fake tunnel entry for testing (no real process) */
@@ -20,7 +20,7 @@ beforeEach(() => {
   activeTunnels.clear();
 });
 
-describe("browser preview routes", () => {
+describe("port forwarding routes", () => {
   // --- POST /api/preview/tunnel (validation) ---
   describe("POST /api/preview/tunnel", () => {
     it("rejects missing port", async () => {
@@ -148,8 +148,8 @@ describe("browser preview routes", () => {
     });
   });
 
-  // --- stopAllPreviewTunnels ---
-  describe("stopAllPreviewTunnels", () => {
+  // --- stopAllPortTunnels ---
+  describe("stopAllPortTunnels", () => {
     it("kills all tunnels and clears the map", () => {
       const kills: number[] = [];
       activeTunnels.set(3000, {
@@ -163,7 +163,7 @@ describe("browser preview routes", () => {
         startedAt: Date.now(),
       });
 
-      stopAllPreviewTunnels();
+      stopAllPortTunnels();
       expect(activeTunnels.size).toBe(0);
       expect(kills).toContain(3000);
       expect(kills).toContain(5174);
@@ -176,7 +176,7 @@ describe("browser preview routes", () => {
         startedAt: Date.now(),
       });
 
-      expect(() => stopAllPreviewTunnels()).not.toThrow();
+      expect(() => stopAllPortTunnels()).not.toThrow();
       expect(activeTunnels.size).toBe(0);
     });
   });

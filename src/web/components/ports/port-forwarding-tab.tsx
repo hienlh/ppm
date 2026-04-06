@@ -9,7 +9,7 @@ interface TunnelInfo {
   startedAt: number;
 }
 
-export function BrowserTab() {
+export function PortForwardingTab() {
   const [portInput, setPortInput] = useState("");
   const [tunnels, setTunnels] = useState<TunnelInfo[]>([]);
   const [loading, setLoading] = useState(false);

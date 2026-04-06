@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll, beforeAll, setDefaultTimeout } from "bun:test";
 import { Hono } from "hono";
-import { browserPreviewRoutes, activeTunnels, stopAllPreviewTunnels } from "../../src/server/routes/browser-preview.ts";
+import { portForwardingRoutes, activeTunnels, stopAllPortTunnels } from "../../src/server/routes/port-forwarding.ts";
 
 setDefaultTimeout(60_000);
 
@@ -16,7 +16,7 @@ const TEST_RESPONSE = "ppm-browser-preview-integration-test-ok";
 let testServer: ReturnType<typeof Bun.serve> | null = null;
 
 function createApp() {
-  return new Hono().route("/api/preview", browserPreviewRoutes);
+  return new Hono().route("/api/preview", portForwardingRoutes);
 }
 
 beforeAll(() => {
@@ -33,11 +33,11 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  stopAllPreviewTunnels();
+  stopAllPortTunnels();
   testServer?.stop(true);
 });
 
-describe("browser preview tunnel integration", () => {
+describe("port forwarding tunnel integration", () => {
   let tunnelUrl: string | null = null;
 
   it("creates a tunnel for a running localhost port", async () => {

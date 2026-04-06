@@ -25,7 +25,7 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   "git-graph": lazy(() => import("@/components/git/git-graph").then((m) => ({ default: m.GitGraph }))),
   "git-diff": lazy(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
   settings: lazy(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
-  browser: lazy(() => import("@/components/browser/browser-tab").then((m) => ({ default: m.BrowserTab }))),
+  ports: lazy(() => import("@/components/ports/port-forwarding-tab").then((m) => ({ default: m.PortForwardingTab }))),
   "extension-webview": lazy(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
 };
 

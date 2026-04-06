@@ -11,7 +11,7 @@ export type TabType =
   | "git-graph"
   | "git-diff"
   | "settings"
-  | "browser"
+  | "ports"
   | "extension-webview";
 
 export interface Tab {

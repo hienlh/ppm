@@ -36,7 +36,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   "git-graph": GitBranch,
   "git-diff": FileDiff,
   settings: Settings,
-  browser: Globe,
+  ports: Globe,
   "extension-webview": Puzzle,
 };
 

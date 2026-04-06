@@ -3,14 +3,14 @@ import { ok, err } from "../../types/api.ts";
 import { ensureCloudflared } from "../../services/cloudflared.service.ts";
 
 /**
- * Browser preview API — starts per-port Cloudflare Quick Tunnels so the
- * frontend can iframe any localhost dev server without CORS/path issues.
+ * Port forwarding API — starts per-port Cloudflare Quick Tunnels so the
+ * frontend can open any localhost dev server via tunnel URL.
  *
  * POST /api/preview/tunnel { port: 3000 } → { url: "https://xxx.trycloudflare.com" }
  * DELETE /api/preview/tunnel/:port → stops tunnel for that port
  * GET /api/preview/tunnels → list active tunnels
  */
-export const browserPreviewRoutes = new Hono();
+export const portForwardingRoutes = new Hono();
 
 const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 
@@ -25,7 +25,7 @@ interface ActiveTunnel {
 export const activeTunnels = new Map<number, ActiveTunnel>();
 
 /** Start a tunnel for a localhost port */
-browserPreviewRoutes.post("/tunnel", async (c) => {
+portForwardingRoutes.post("/tunnel", async (c) => {
   const body = await c.req.json<{ port: number }>().catch(() => null);
   const port = body?.port;
   if (!port || port < 1 || port > 65535) {
@@ -95,7 +95,7 @@ browserPreviewRoutes.post("/tunnel", async (c) => {
 });
 
 /** Stop a tunnel */
-browserPreviewRoutes.delete("/tunnel/:port{[0-9]+}", (c) => {
+portForwardingRoutes.delete("/tunnel/:port{[0-9]+}", (c) => {
   const port = parseInt(c.req.param("port"), 10);
   const tunnel = activeTunnels.get(port);
   if (!tunnel) {
@@ -109,7 +109,7 @@ browserPreviewRoutes.delete("/tunnel/:port{[0-9]+}", (c) => {
 });
 
 /** List active tunnels */
-browserPreviewRoutes.get("/tunnels", (c) => {
+portForwardingRoutes.get("/tunnels", (c) => {
   const list = Array.from(activeTunnels.values()).map((t) => ({
     port: t.port,
     url: t.url,
@@ -151,7 +151,7 @@ async function cleanupGhostTunnels() {
 setInterval(cleanupGhostTunnels, 30_000);
 
 /** Cleanup all tunnels on server shutdown */
-export function stopAllPreviewTunnels() {
+export function stopAllPortTunnels() {
   for (const [port, tunnel] of activeTunnels) {
     try { tunnel.process.kill(); } catch {}
     activeTunnels.delete(port);

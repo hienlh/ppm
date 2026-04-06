@@ -25,7 +25,7 @@ const NEW_TAB_LABELS: Partial<Record<TabType, string>> = Object.fromEntries(NEW_
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal, chat: MessageSquare, editor: FileCode, database: Database, sqlite: Database, postgres: Database,
-  "git-graph": GitBranch, "git-diff": FileDiff, settings: Settings, browser: Globe,
+  "git-graph": GitBranch, "git-diff": FileDiff, settings: Settings, ports: Globe,
   "extension-webview": Puzzle,
 };
 

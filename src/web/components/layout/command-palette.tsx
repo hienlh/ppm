@@ -161,7 +161,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action", shortcut: formatShortcut(getBinding("open-chat")) },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
       { id: "git-graph", label: "Git Graph", icon: GitBranch, action: openNewTab("git-graph", "Git Graph"), keywords: "branch history log", group: "action", shortcut: formatShortcut(getBinding("open-git-graph")) },
-      { id: "browser", label: "Port Forwarding", icon: Globe, action: openNewTab("browser", "Ports"), keywords: "web preview localhost port forward tunnel url", group: "action" },
+      { id: "ports", label: "Port Forwarding", icon: Globe, action: openNewTab("ports", "Ports"), keywords: "web preview localhost port forward tunnel url", group: "action" },
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },
