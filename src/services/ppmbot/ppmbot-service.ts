@@ -5,6 +5,7 @@ import {
   getPairingByChatId,
   createPairingRequest,
   getSessionTitles,
+  getPinnedSessionIds,
   getApprovedPairedChats,
 } from "../db.service.ts";
 import { PPMBotTelegram } from "./ppmbot-telegram.ts";
@@ -159,7 +160,7 @@ class PPMBotService {
         case "start": await this.cmdStart(chatId); break;
         case "project": await this.cmdProject(chatId, cmd.args); break;
         case "new": await this.cmdNew(chatId); break;
-        case "sessions": await this.cmdSessions(chatId); break;
+        case "sessions": await this.cmdSessions(chatId, cmd.args); break;
         case "resume": await this.cmdResume(chatId, cmd.args); break;
         case "status": await this.cmdStatus(chatId); break;
         case "stop": await this.cmdStop(chatId); break;
@@ -254,29 +255,73 @@ class PPMBotService {
     );
   }
 
-  private async cmdSessions(chatId: string): Promise<void> {
-    const sessions = this.sessions.listRecentSessions(chatId, 10);
-    if (sessions.length === 0) {
-      await this.telegram!.sendMessage(Number(chatId), "No recent sessions.");
+  private async cmdSessions(chatId: string, args: string): Promise<void> {
+    const PAGE_SIZE = 8;
+    const page = Math.max(1, parseInt(args, 10) || 1);
+
+    const active = this.sessions.getActiveSession(chatId);
+    const project = active?.projectName;
+
+    // Fetch all sessions for this chat (enough for pagination)
+    const allSessions = this.sessions.listRecentSessions(chatId, 50);
+    // Filter by current project if one is active
+    const filtered = project
+      ? allSessions.filter((s) => s.project_name === project)
+      : allSessions;
+
+    if (filtered.length === 0) {
+      await this.telegram!.sendMessage(Number(chatId), "No sessions yet. Send a message to start.");
       return;
     }
 
-    // Fetch titles for all sessions
-    const titles = getSessionTitles(sessions.map((s) => s.session_id));
+    // Enrich with titles and pin status
+    const titles = getSessionTitles(filtered.map((s) => s.session_id));
+    const pinnedIds = getPinnedSessionIds();
 
-    let text = "<b>Recent Sessions</b>\n\n";
-    sessions.forEach((s, i) => {
-      const active = s.is_active ? " ⬤" : "";
-      const title = titles[s.session_id]?.replace(/^\[PPM\]\s*/, "") || "";
-      const preview = title ? ` — ${escapeHtml(title.slice(0, 40))}` : "";
+    // Sort: pinned first, then by last_message_at desc
+    const sorted = [...filtered].sort((a, b) => {
+      const aPin = pinnedIds.has(a.session_id) ? 1 : 0;
+      const bPin = pinnedIds.has(b.session_id) ? 1 : 0;
+      if (aPin !== bPin) return bPin - aPin;
+      return b.last_message_at - a.last_message_at;
+    });
+
+    const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+    const start = (page - 1) * PAGE_SIZE;
+    const pageItems = sorted.slice(start, start + PAGE_SIZE);
+
+    if (pageItems.length === 0) {
+      await this.telegram!.sendMessage(Number(chatId), `No sessions on page ${page}.`);
+      return;
+    }
+
+    const header = project ? escapeHtml(project) : "All Projects";
+    let text = `<b>Sessions — ${header}</b>`;
+    if (totalPages > 1) text += ` <i>(${page}/${totalPages})</i>`;
+    text += "\n\n";
+
+    pageItems.forEach((s, i) => {
+      const pin = pinnedIds.has(s.session_id) ? "📌 " : "";
+      const activeDot = s.is_active ? " ⬤" : "";
+      const rawTitle = titles[s.session_id]?.replace(/^\[PPM\]\s*/, "") || "";
+      const title = rawTitle
+        ? escapeHtml(rawTitle.slice(0, 45))
+        : "<i>untitled</i>";
       const date = new Date(s.last_message_at * 1000).toLocaleString(undefined, {
         month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
       });
       const sid = s.session_id.slice(0, 8);
-      text += `${i + 1}. <b>${escapeHtml(s.project_name)}</b>${preview}${active}\n`;
+      const num = start + i + 1;
+
+      text += `${pin}${num}. ${title}${activeDot}\n`;
       text += `   <code>${sid}</code> · ${date}\n\n`;
     });
-    text += "Resume: /resume &lt;number&gt;";
+
+    text += "Resume: /resume &lt;n&gt; or /resume &lt;id&gt;";
+    if (totalPages > 1 && page < totalPages) {
+      text += `\nNext: /sessions ${page + 1}`;
+    }
+
     await this.telegram!.sendMessage(Number(chatId), text);
   }
 
@@ -427,8 +472,8 @@ class PPMBotService {
 /start — Greeting + list projects
 /project &lt;name&gt; — Switch/list projects
 /new — Fresh session (current project)
-/sessions — List recent sessions
-/resume &lt;n&gt; — Resume session #n
+/sessions [page] — List sessions (current project)
+/resume &lt;n or id&gt; — Resume session
 /status — Current project/session info
 /stop — End current session
 /memory — Show project memories

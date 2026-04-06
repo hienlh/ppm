@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.50] - 2026-04-07
+
+### Changed
+- **/sessions redesigned**: Filters by current project, shows pinned sessions first with 📌 icon, displays session titles (not project names), supports pagination via `/sessions 2`. Matches PPM web UI behavior.
+
 ## [0.9.49] - 2026-04-07
 
 ### Fixed
