@@ -1,12 +1,14 @@
 # Changelog
 
-## [0.9.41] - 2026-04-06
+## [0.9.42] - 2026-04-06
 
 ### Changed
 - **Port Forwarding UI**: Replaced iframe-based browser preview with a Port Manager. Tunnels now open in a new browser tab instead of an iframe, fixing cross-origin rendering issues with Cloudflare tunnels. Tab renamed from "Browser" to "Ports".
+- **Renamed browser → ports**: All code references (files, components, routes, TabType, tests) renamed from "browser" to "ports" for consistency.
 
 ### Fixed
 - **Git worktree list**: Removed unsupported `-v` flag from `git worktree list --porcelain` command
+- **Light mode colors**: Fixed invisible UI elements by using `primary` tokens instead of `accent` (which is subtle gray in light mode)
 
 ## [0.9.40] - 2026-04-06
 
