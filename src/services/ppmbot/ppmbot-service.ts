@@ -4,7 +4,6 @@ import {
   isPairedChat,
   getPairingByChatId,
   createPairingRequest,
-  approvePairing,
   getSessionTitles,
   getApprovedPairedChats,
 } from "../db.service.ts";
@@ -41,12 +40,6 @@ class PPMBotService {
   /** Chat IDs that just received identity onboarding prompt */
   private identityPending = new Set<string>();
 
-  /** Message count per session for periodic memory save */
-  private messageCount = new Map<string, number>();
-
-  /** Interval (messages) between automatic memory saves */
-  private readonly MEMORY_SAVE_INTERVAL = 5;
-
   // ── Lifecycle ─────────────────────────────────────────────────
 
   async start(): Promise<void> {
@@ -65,9 +58,6 @@ class PPMBotService {
     try {
       this.telegram = new PPMBotTelegram(telegramConfig.bot_token);
       this.running = true;
-
-      // Run memory decay on startup
-      this.memory.runDecay();
 
       // Start polling (non-blocking)
       this.telegram.startPolling((update) => this.handleUpdate(update));
@@ -92,7 +82,6 @@ class PPMBotService {
     this.processing.clear();
     this.messageQueue.clear();
     this.identityPending.clear();
-    this.messageCount.clear();
 
     console.log("[ppmbot] Stopped");
   }
@@ -247,7 +236,6 @@ class PPMBotService {
       return;
     }
 
-    await this.saveSessionMemory(chatId);
     const session = await this.sessions.switchProject(chatId, args);
     await this.telegram!.sendMessage(
       Number(chatId),
@@ -256,7 +244,6 @@ class PPMBotService {
   }
 
   private async cmdNew(chatId: string): Promise<void> {
-    await this.saveSessionMemory(chatId);
     const active = this.sessions.getActiveSession(chatId);
     const projectName = active?.projectName;
     await this.sessions.closeSession(chatId);
@@ -299,7 +286,6 @@ class PPMBotService {
       await this.telegram!.sendMessage(Number(chatId), "Usage: /resume &lt;number&gt;");
       return;
     }
-    await this.saveSessionMemory(chatId);
     const session = await this.sessions.resumeSessionById(chatId, index);
     if (!session) {
       await this.telegram!.sendMessage(Number(chatId), "Session not found.");
@@ -325,7 +311,6 @@ class PPMBotService {
   }
 
   private async cmdStop(chatId: string): Promise<void> {
-    await this.saveSessionMemory(chatId);
     await this.sessions.closeSession(chatId);
     await this.telegram!.sendMessage(Number(chatId), "Session ended ✓");
   }
@@ -493,16 +478,11 @@ class PPMBotService {
         this.titledSessions.add(session.sessionId);
       }
 
-      // Recall memories (with cross-project detection)
-      const memories = this.memory.recallWithCrossProject(
-        session.projectName,
-        text,
-        text,
-      );
+      // Recall identity & preferences (global + project)
+      const memories = this.memory.getSummary(session.projectName);
 
-      // Build system prompt with memory + core directives
-      const coreDirective = "IMPORTANT: Do NOT write files, save to MEMORY.md, or manage your own memory/identity files. Your memory is managed externally by PPMBot. Just respond naturally.";
-      let systemPrompt = coreDirective + "\n\n" + (config?.system_prompt ?? "");
+      // Build system prompt with identity/preferences
+      let systemPrompt = config?.system_prompt ?? "";
       const memorySection = this.memory.buildRecallPrompt(memories);
       if (memorySection) {
         systemPrompt += memorySection;
@@ -546,15 +526,6 @@ class PPMBotService {
         },
       );
 
-      // Periodic memory extraction — fire-and-forget every N messages
-      const count = (this.messageCount.get(session.sessionId) ?? 0) + 1;
-      this.messageCount.set(session.sessionId, count);
-      if (count % this.MEMORY_SAVE_INTERVAL === 0) {
-        this.saveSessionMemory(chatId).catch((err) =>
-          console.warn("[ppmbot] Periodic memory save failed:", (err as Error).message),
-        );
-      }
-
       // Check context window — auto-rotate if near limit
       if (
         result.contextWindowPct != null &&
@@ -581,48 +552,14 @@ class PPMBotService {
     }
   }
 
-  // ── Memory Save / Session Rotate ────────────────────────────────
-
-  private async saveSessionMemory(chatId: string): Promise<void> {
-    const session = this.sessions.getActiveSession(chatId);
-    if (!session) return;
-
-    try {
-      const extractionPrompt = this.memory.buildExtractionPrompt();
-      const events = chatService.sendMessage(
-        session.providerId,
-        session.sessionId,
-        extractionPrompt,
-        { permissionMode: "bypassPermissions" },
-      );
-
-      let responseText = "";
-      for await (const event of events) {
-        if (event.type === "text") responseText += event.content;
-      }
-
-      const facts = this.memory.parseExtractionResponse(responseText);
-      if (facts.length > 0) {
-        const count = this.memory.save(session.projectName, facts, session.sessionId);
-        console.log(`[ppmbot] Saved ${count} memories for ${session.projectName}`);
-      } else {
-        // Fallback: regex-based extraction
-        // Note: we don't have conversation history text here easily,
-        // so regex fallback only triggers when AI extraction fails
-        console.log("[ppmbot] No memories extracted via AI");
-      }
-    } catch (err) {
-      console.warn("[ppmbot] Memory save failed:", (err as Error).message);
-    }
-  }
+  // ── Session Rotate ──────────────────────────────────────────────
 
   private async rotateSession(chatId: string, projectName: string): Promise<void> {
-    await this.saveSessionMemory(chatId);
     await this.sessions.closeSession(chatId);
     await this.sessions.getOrCreateSession(chatId, projectName);
     await this.telegram?.sendMessage(
       Number(chatId),
-      "<i>Context window near limit — starting fresh session. Memories saved.</i>",
+      "<i>Context window near limit — starting fresh session.</i>",
     );
   }
 

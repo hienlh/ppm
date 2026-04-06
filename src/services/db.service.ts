@@ -1097,19 +1097,6 @@ export function deletePPMBotMemoriesByTopic(
   return matches.length;
 }
 
-export function decayPPMBotMemories(): void {
-  getDb().query(
-    `UPDATE clawbot_memories
-     SET importance = importance * 0.95,
-         updated_at = unixepoch()
-     WHERE superseded_by IS NULL
-       AND category NOT IN ('preference', 'architecture')
-       AND updated_at < unixepoch() - 604800`,
-  ).run();
-  getDb().query(
-    `DELETE FROM clawbot_memories WHERE importance < 0.1 AND superseded_by IS NULL`,
-  ).run();
-}
 
 // ---------------------------------------------------------------------------
 // PPMBot pairing helpers

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.48] - 2026-04-06
+
+### Changed
+- **Memory → Identity layer**: Stripped custom memory extraction, decay, periodic AI extraction prompts. PPMBot now stores only identity/preferences + explicit `/remember` facts. Contextual memory delegated to provider's native system (Claude Code MEMORY.md). `ppmbot-memory.ts` 333→111 LOC.
+- **Removed "don't write memory" directive**: AI provider manages its own contextual memory naturally.
+
 ## [0.9.47] - 2026-04-06
 
 ### Fixed
