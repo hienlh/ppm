@@ -368,14 +368,12 @@ class PPMBotService {
   }
 
   private async cmdMemory(chatId: string): Promise<void> {
-    const active = this.sessions.getActiveSession(chatId);
-    const project = active?.projectName ?? "_global";
-    const memories = this.memory.getSummary(project);
+    const memories = this.memory.getSummary("_global");
     if (memories.length === 0) {
-      await this.telegram!.sendMessage(Number(chatId), "No memories stored for this project.");
+      await this.telegram!.sendMessage(Number(chatId), "No memories stored. Use /remember to add.");
       return;
     }
-    let text = `<b>Memory — ${escapeHtml(project)}</b>\n\n`;
+    let text = "<b>Memory</b> (cross-project)\n\n";
     for (const mem of memories) {
       text += `• [${mem.category}] ${escapeHtml(mem.content)}\n`;
     }
@@ -387,9 +385,7 @@ class PPMBotService {
       await this.telegram!.sendMessage(Number(chatId), "Usage: /forget &lt;topic&gt;");
       return;
     }
-    const active = this.sessions.getActiveSession(chatId);
-    const project = active?.projectName ?? "_global";
-    const count = this.memory.forget(project, args);
+    const count = this.memory.forget("_global", args);
     await this.telegram!.sendMessage(Number(chatId), `Forgot ${count} memor${count === 1 ? "y" : "ies"} ✓`);
   }
 
@@ -399,9 +395,8 @@ class PPMBotService {
       return;
     }
     const active = this.sessions.getActiveSession(chatId);
-    const project = active?.projectName ?? "_global";
-    this.memory.saveOne(project, args, "fact", active?.sessionId);
-    await this.telegram!.sendMessage(Number(chatId), "Remembered ✓");
+    this.memory.saveOne("_global", args, "fact", active?.sessionId);
+    await this.telegram!.sendMessage(Number(chatId), "Remembered ✓ (cross-project)");
   }
 
   private async cmdRestart(chatId: string): Promise<void> {
@@ -539,6 +534,15 @@ class PPMBotService {
       if (memorySection) {
         systemPrompt += memorySection;
       }
+
+      // Instruct AI to use CLI for cross-project memory persistence
+      systemPrompt += `\n\n## Cross-Project Memory Tool
+When the user asks you to remember something, change how you address them, or save any preference/fact that should persist across projects and sessions, use the Bash tool to run:
+  ppm bot memory save "<content>" --category <category>
+Categories: preference, fact, decision, architecture, issue
+To list saved memories: ppm bot memory list
+To forget: ppm bot memory forget "<topic>"
+This saves to a global store that persists across all projects and sessions.`;
 
       // Send message to AI (prepend system prompt + memory context)
       const opts: SendMessageOpts = {

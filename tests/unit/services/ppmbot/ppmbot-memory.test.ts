@@ -11,47 +11,46 @@ describe("PPMBot Memory", () => {
     memory = new PPMBotMemory();
   });
 
-  describe("saveOne + recall", () => {
-    it("should save and recall a fact", () => {
+  describe("saveOne + getSummary", () => {
+    it("should save and retrieve a fact", () => {
       memory.saveOne("myproject", "Uses PostgreSQL database", "architecture");
-      const results = memory.recall("myproject");
+      const results = memory.getSummary("myproject");
       expect(results.length).toBe(1);
       expect(results[0]!.content).toBe("Uses PostgreSQL database");
       expect(results[0]!.category).toBe("architecture");
     });
 
-    it("should recall by FTS query", () => {
-      memory.saveOne("myproject", "Uses PostgreSQL for persistence", "architecture");
-      memory.saveOne("myproject", "Frontend is React with Tailwind", "architecture");
-      const results = memory.recall("myproject", "PostgreSQL");
-      expect(results.length).toBeGreaterThanOrEqual(1);
-      expect(results[0]!.content).toContain("PostgreSQL");
-    });
-
-    it("should include _global memories in recall", () => {
+    it("should include _global memories in getSummary", () => {
       memory.saveOne("_global", "User prefers concise responses", "preference");
       memory.saveOne("myproject", "API uses REST", "architecture");
-      const results = memory.recall("myproject");
+      const results = memory.getSummary("myproject");
       expect(results.length).toBe(2);
     });
-  });
 
-  describe("save (batch)", () => {
-    it("should insert multiple facts", () => {
-      const count = memory.save("myproject", [
-        { content: "Fact one", category: "fact" },
-        { content: "Fact two", category: "decision" },
-      ]);
-      expect(count).toBe(2);
-      expect(memory.getSummary("myproject").length).toBe(2);
+    it("should save with default category fact", () => {
+      memory.saveOne("_global", "Some fact");
+      const results = memory.getSummary("_global");
+      expect(results[0]!.category).toBe("fact");
     });
 
-    it("should skip empty content", () => {
-      const count = memory.save("myproject", [
-        { content: "", category: "fact" },
-        { content: "Real fact", category: "fact" },
-      ]);
-      expect(count).toBe(1);
+    it("should save with session ID", () => {
+      const id = memory.saveOne("_global", "Saved with session", "preference", "sess-123");
+      expect(id).toBeGreaterThan(0);
+    });
+
+    it("should keep distinct memories separate", () => {
+      memory.saveOne("_global", "User prefers formal language", "preference");
+      memory.saveOne("_global", "Dark theme is preferred for UI", "preference");
+      const results = memory.getSummary("_global");
+      expect(results.length).toBe(2);
+    });
+
+    it("should respect limit parameter", () => {
+      for (let i = 0; i < 10; i++) {
+        memory.saveOne("_global", `Fact number ${i}`, "fact");
+      }
+      const results = memory.getSummary("_global", 5);
+      expect(results.length).toBe(5);
     });
   });
 
@@ -63,43 +62,23 @@ describe("PPMBot Memory", () => {
       expect(deleted).toBe(1);
       expect(memory.getSummary("myproject").length).toBe(1);
     });
-  });
 
-  describe("parseExtractionResponse", () => {
-    it("should parse valid JSON array", () => {
-      const input = '[{"content":"Uses Bun runtime","category":"architecture","importance":1.5}]';
-      const facts = memory.parseExtractionResponse(input);
-      expect(facts.length).toBe(1);
-      expect(facts[0]!.content).toBe("Uses Bun runtime");
-      expect(facts[0]!.importance).toBe(1.5);
+    it("should return 0 when no match", () => {
+      memory.saveOne("_global", "Uses Bun runtime", "architecture");
+      const deleted = memory.forget("_global", "nonexistent");
+      expect(deleted).toBe(0);
     });
 
-    it("should handle markdown-fenced JSON", () => {
-      const input = '```json\n[{"content":"test","category":"fact"}]\n```';
-      const facts = memory.parseExtractionResponse(input);
-      expect(facts.length).toBe(1);
+    it("should handle empty/invalid FTS query gracefully", () => {
+      const deleted = memory.forget("_global", "");
+      expect(deleted).toBe(0);
     });
 
-    it("should return empty for invalid JSON", () => {
-      const facts = memory.parseExtractionResponse("This is not JSON");
-      expect(facts).toEqual([]);
-    });
-
-    it("should return empty for empty array", () => {
-      const facts = memory.parseExtractionResponse("[]");
-      expect(facts).toEqual([]);
-    });
-
-    it("should clamp importance to 0-2 range", () => {
-      const input = '[{"content":"test","category":"fact","importance":5.0}]';
-      const facts = memory.parseExtractionResponse(input);
-      expect(facts[0]!.importance).toBe(2);
-    });
-
-    it("should default invalid category to fact", () => {
-      const input = '[{"content":"test","category":"invalid_category"}]';
-      const facts = memory.parseExtractionResponse(input);
-      expect(facts[0]!.category).toBe("fact");
+    it("should sanitize special characters in topic", () => {
+      memory.saveOne("_global", "Some fact about testing", "fact");
+      // These special chars should be stripped, not crash FTS
+      const deleted = memory.forget("_global", "testing (AND) OR 'quotes'");
+      expect(deleted).toBeGreaterThanOrEqual(0);
     });
   });
 
@@ -117,26 +96,12 @@ describe("PPMBot Memory", () => {
       expect(prompt).toContain("### Preferences");
       expect(prompt).toContain("Uses Bun");
     });
-  });
 
-  describe("extractiveMemoryFallback", () => {
-    it("should extract decisions from text", () => {
-      const text = "We decided to use PostgreSQL for the database";
-      const facts = memory.extractiveMemoryFallback(text);
-      expect(facts.length).toBeGreaterThanOrEqual(1);
-      expect(facts[0]!.category).toBe("decision");
-    });
-
-    it("should extract preferences from text", () => {
-      const text = "I prefer using TypeScript over JavaScript";
-      const facts = memory.extractiveMemoryFallback(text);
-      expect(facts.length).toBeGreaterThanOrEqual(1);
-      expect(facts[0]!.category).toBe("preference");
-    });
-
-    it("should return empty for text with no patterns", () => {
-      const facts = memory.extractiveMemoryFallback("Hello world");
-      expect(facts).toEqual([]);
+    it("should contain section header", () => {
+      const prompt = memory.buildRecallPrompt([
+        { id: 1, content: "test", category: "fact", importance: 1, project: "p" },
+      ]);
+      expect(prompt).toContain("## User Identity & Preferences");
     });
   });
 });
