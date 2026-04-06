@@ -86,11 +86,11 @@ export function BrowserTab() {
       {/* Header + form */}
       <div className="p-4 md:p-6 border-b border-border bg-surface">
         <div className="flex items-center gap-2 mb-3">
-          <Wifi className="size-5 text-accent" />
+          <Wifi className="size-5 text-primary" />
           <h2 className="text-base font-medium text-text-primary">Port Forwarding</h2>
         </div>
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
-          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-background border border-border focus-within:border-accent/50 transition-colors">
+          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-background border border-border focus-within:border-primary/50 transition-colors">
             <span className="text-sm text-text-subtle shrink-0">localhost:</span>
             <input
               type="number"
@@ -105,7 +105,7 @@ export function BrowserTab() {
           <button
             type="submit"
             disabled={loading || !portInput}
-            className="px-4 py-2.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors shrink-0 min-w-[72px] flex items-center justify-center"
+            className="px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0 min-w-[72px] flex items-center justify-center"
           >
             {loading ? <Loader2 className="size-4 animate-spin" /> : "Forward"}
           </button>
@@ -136,7 +136,7 @@ export function BrowserTab() {
                 className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-border"
               >
                 {/* Port badge */}
-                <div className="shrink-0 px-2 py-1 rounded bg-accent/10 text-accent text-xs font-mono font-medium">
+                <div className="shrink-0 px-2 py-1 rounded bg-primary/10 text-primary text-xs font-mono font-medium">
                   :{t.port}
                 </div>
 
