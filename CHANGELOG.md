@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.46] - 2026-04-06
+
+### Added
+- **/version command**: Shows current PPM version in Telegram.
+
 ## [0.9.45] - 2026-04-06
 
 ### Fixed

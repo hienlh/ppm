@@ -182,6 +182,7 @@ class PPMBotService {
         case "forget": await this.cmdForget(chatId, cmd.args); break;
         case "remember": await this.cmdRemember(chatId, cmd.args); break;
         case "restart": await this.cmdRestart(chatId); break;
+        case "version": await this.cmdVersion(chatId); break;
         case "help": await this.cmdHelp(chatId); break;
         default: await tg.sendMessage(Number(chatId), `Unknown command: /${cmd.command}`);
       }
@@ -421,6 +422,17 @@ class PPMBotService {
     } catch {}
   }
 
+  private async cmdVersion(chatId: string): Promise<void> {
+    let version = "unknown";
+    try {
+      const { join } = await import("node:path");
+      const pkgPath = join(import.meta.dir, "../../../package.json");
+      const pkg = await Bun.file(pkgPath).json();
+      version = pkg.version ?? "unknown";
+    } catch {}
+    await this.telegram!.sendMessage(Number(chatId), `<b>PPM</b> v${version}`);
+  }
+
   private async cmdHelp(chatId: string): Promise<void> {
     const text = `<b>PPMBot Commands</b>
 
@@ -435,6 +447,7 @@ class PPMBotService {
 /forget &lt;topic&gt; — Remove matching memories
 /remember &lt;fact&gt; — Save a fact
 /restart — Restart PPM server
+/version — Show PPM version
 /help — This message`;
     await this.telegram!.sendMessage(Number(chatId), text);
   }
