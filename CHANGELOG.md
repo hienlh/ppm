@@ -10,6 +10,19 @@
 - **Git worktree list**: Removed unsupported `-v` flag from `git worktree list --porcelain` command
 - **Light mode colors**: Fixed invisible UI elements by using `primary` tokens instead of `accent` (which is subtle gray in light mode)
 
+## [0.9.43] - 2026-04-06
+
+### Fixed
+- **Identity onboarding asks every /start**: FTS5 search with implicit AND missed keywords. Now checks memory category/content directly.
+- **/sessions shows useless list**: Now displays session title (first message preview), session ID snippet, and formatted date/time.
+
+### Changed
+- **/project without args**: Lists all projects with ✓ marker on current, instead of just showing current project name.
+
+### Added
+- **/restart command**: Exits PPM process (for process manager to restart), notifies all paired chats on successful restart.
+- **Memory & Identity section** in PPMBot settings: View and delete stored memories. API: GET/DELETE `/api/settings/clawbot/memories`.
+
 ## [0.9.40] - 2026-04-06
 
 ### Changed
