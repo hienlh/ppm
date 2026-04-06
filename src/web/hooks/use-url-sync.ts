@@ -134,7 +134,7 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
     case "database": return identifier ?? "Database";
     case "sqlite": return identifier?.split("/").pop() ?? "SQLite";
     case "postgres": return identifier ?? "PostgreSQL";
-    case "browser": return "Browser";
+    case "browser": return "Ports";
     default: return type;
   }
 }

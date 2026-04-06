@@ -1,45 +1,78 @@
-import { useState, useRef, useCallback } from "react";
-import { ExternalLink, Globe, Loader2, RefreshCw, X } from "lucide-react";
-import { useTabStore } from "@/stores/tab-store";
+import { useState, useEffect, useCallback } from "react";
+import { Check, Copy, ExternalLink, Globe, Loader2, Square, Wifi } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { toast } from "sonner";
 
-interface BrowserTabProps {
-  metadata?: Record<string, unknown>;
-  tabId?: string;
+interface TunnelInfo {
+  port: number;
+  url: string;
+  startedAt: number;
 }
 
-export function BrowserTab({ metadata, tabId }: BrowserTabProps) {
-  const initialPort = (metadata?.port as number) || 0;
-  const [portInput, setPortInput] = useState(initialPort ? String(initialPort) : "");
-  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+export function BrowserTab() {
+  const [portInput, setPortInput] = useState("");
+  const [tunnels, setTunnels] = useState<TunnelInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const updateTab = useTabStore((s) => s.updateTab);
+  const [copiedPort, setCopiedPort] = useState<number | null>(null);
 
-  const startTunnel = useCallback(async (port: number) => {
+  const fetchTunnels = useCallback(async () => {
+    try {
+      const list = await api.get<TunnelInfo[]>("/api/preview/tunnels");
+      setTunnels(list);
+    } catch (e) {
+      console.warn("[ports] failed to fetch tunnels", e);
+    }
+  }, []);
+
+  // Fetch tunnels on mount + poll every 10s
+  useEffect(() => {
+    fetchTunnels();
+    const interval = setInterval(fetchTunnels, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchTunnels]);
+
+  const startTunnel = async (port: number) => {
+    // Check if already forwarded
+    const existing = tunnels.find((t) => t.port === port);
+    if (existing) {
+      window.open(existing.url, "_blank");
+      setPortInput("");
+      return;
+    }
+
     setLoading(true);
     setError(null);
-    setTunnelUrl(null);
-
     try {
       const res = await api.post<{ port: number; url: string }>("/api/preview/tunnel", { port });
-      setTunnelUrl(res.url);
-      if (tabId) updateTab(tabId, { title: `localhost:${port}`, metadata: { ...metadata, port } });
+      window.open(res.url, "_blank");
+      setPortInput("");
+      await fetchTunnels();
     } catch (e: any) {
       setError(e.message || `Failed to start tunnel for port ${port}`);
     } finally {
       setLoading(false);
     }
-  }, [tabId, metadata, updateTab]);
+  };
 
-  const stopTunnel = useCallback(async () => {
-    const port = parseInt(portInput, 10);
-    if (!port) return;
-    try { await api.del(`/api/preview/tunnel/${port}`); } catch {}
-    setTunnelUrl(null);
-    if (tabId) updateTab(tabId, { title: "Browser" });
-  }, [portInput, tabId, updateTab]);
+  const stopTunnel = async (port: number) => {
+    try {
+      await api.del(`/api/preview/tunnel/${port}`);
+      await fetchTunnels();
+    } catch (e: any) {
+      toast.error(e.message || `Failed to stop tunnel for port ${port}`);
+    }
+  };
+
+  const copyUrl = (port: number, url: string) => {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedPort(port);
+      toast.success("URL copied");
+      setTimeout(() => setCopiedPort(null), 2000);
+    }).catch(() => {
+      toast.error("Failed to copy URL");
+    });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,100 +81,98 @@ export function BrowserTab({ metadata, tabId }: BrowserTabProps) {
     else setError("Port must be 1-65535");
   };
 
-  const reload = () => {
-    if (iframeRef.current) {
-      const src = iframeRef.current.src;
-      iframeRef.current.src = "";
-      requestAnimationFrame(() => { if (iframeRef.current) iframeRef.current.src = src; });
-    }
-  };
-
-  // No tunnel yet — show port input
-  if (!tunnelUrl) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 p-6">
-        <Globe className="size-12 text-text-subtle" />
-        <h2 className="text-lg font-medium text-text-primary">Open Localhost</h2>
-        <p className="text-sm text-text-secondary text-center max-w-sm">
-          Enter the port of your local dev server to preview it here.
-        </p>
-        <form onSubmit={handleSubmit} className="flex items-center gap-2 w-full max-w-xs">
-          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-surface border border-border focus-within:border-accent/50 transition-colors">
+  return (
+    <div className="flex flex-col h-full w-full bg-background">
+      {/* Header + form */}
+      <div className="p-4 md:p-6 border-b border-border bg-surface">
+        <div className="flex items-center gap-2 mb-3">
+          <Wifi className="size-5 text-accent" />
+          <h2 className="text-base font-medium text-text-primary">Port Forwarding</h2>
+        </div>
+        <form onSubmit={handleSubmit} className="flex items-center gap-2">
+          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-background border border-border focus-within:border-accent/50 transition-colors">
             <span className="text-sm text-text-subtle shrink-0">localhost:</span>
             <input
               type="number"
               value={portInput}
-              onChange={(e) => setPortInput(e.target.value)}
+              onChange={(e) => { setPortInput(e.target.value); setError(null); }}
               placeholder="3000"
               min={1}
               max={65535}
-              autoFocus
               className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-subtle min-w-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
           </div>
           <button
             type="submit"
             disabled={loading || !portInput}
-            className="px-4 py-2.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors shrink-0"
+            className="px-4 py-2.5 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors shrink-0 min-w-[72px] flex items-center justify-center"
           >
-            {loading ? <Loader2 className="size-4 animate-spin" /> : "Open"}
+            {loading ? <Loader2 className="size-4 animate-spin" /> : "Forward"}
           </button>
         </form>
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
         {loading && (
-          <div className="flex items-center gap-2 text-sm text-text-secondary">
-            <Loader2 className="size-4 animate-spin" />
-            <span>Starting tunnel... (may take a few seconds)</span>
+          <div className="flex items-center gap-2 text-sm text-text-secondary mt-2">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>Starting tunnel...</span>
           </div>
         )}
       </div>
-    );
-  }
 
-  // Tunnel active — show iframe
-  return (
-    <div className="flex flex-col h-full w-full bg-background">
-      {/* Toolbar */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border bg-surface shrink-0">
-        <Globe className="size-4 text-text-subtle shrink-0" />
-        <span className="text-xs text-text-primary font-medium">localhost:{portInput}</span>
-        <span className="text-xs text-text-subtle truncate ml-1">({tunnelUrl})</span>
-        <div className="flex-1" />
-        <button
-          onClick={reload}
-          className="p-1.5 rounded hover:bg-surface-elevated transition-colors"
-          title="Reload"
-        >
-          <RefreshCw className="size-3.5" />
-        </button>
-        <button
-          onClick={() => window.open(tunnelUrl, "_blank")}
-          className="p-1.5 rounded hover:bg-surface-elevated transition-colors"
-          title="Open in browser"
-        >
-          <ExternalLink className="size-3.5" />
-        </button>
-        <button
-          onClick={stopTunnel}
-          className="p-1.5 rounded hover:bg-surface-elevated text-red-400 transition-colors"
-          title="Stop tunnel"
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
+      {/* Tunnel list */}
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        {tunnels.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+            <Globe className="size-10 text-text-subtle" />
+            <p className="text-sm text-text-secondary max-w-xs">
+              No active ports. Forward a port to access your local dev server from anywhere.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {tunnels.map((t) => (
+              <div
+                key={t.port}
+                className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-border"
+              >
+                {/* Port badge */}
+                <div className="shrink-0 px-2 py-1 rounded bg-accent/10 text-accent text-xs font-mono font-medium">
+                  :{t.port}
+                </div>
 
-      {/* iframe */}
-      <div className="flex-1 relative min-h-0">
-        <iframe
-          ref={iframeRef}
-          src={tunnelUrl}
-          className="w-full h-full border-0"
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"
-          onLoad={() => setLoading(false)}
-        />
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/50">
-            <Loader2 className="size-5 animate-spin text-text-secondary" />
+                {/* URL - truncated */}
+                <span className="flex-1 text-xs text-text-secondary truncate min-w-0">
+                  {t.url}
+                </span>
+
+                {/* Actions — 44px touch targets */}
+                <div className="flex items-center shrink-0">
+                  <button
+                    onClick={() => window.open(t.url, "_blank")}
+                    className="p-2.5 rounded-md hover:bg-surface-elevated transition-colors"
+                    title="Open in browser"
+                  >
+                    <ExternalLink className="size-4 text-text-secondary" />
+                  </button>
+                  <button
+                    onClick={() => copyUrl(t.port, t.url)}
+                    className="p-2.5 rounded-md hover:bg-surface-elevated transition-colors"
+                    title="Copy URL"
+                  >
+                    {copiedPort === t.port
+                      ? <Check className="size-4 text-green-400" />
+                      : <Copy className="size-4 text-text-secondary" />}
+                  </button>
+                  <button
+                    onClick={() => stopTunnel(t.port)}
+                    className="p-2.5 rounded-md hover:bg-red-500/10 transition-colors"
+                    title="Stop tunnel"
+                  >
+                    <Square className="size-4 text-red-400" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

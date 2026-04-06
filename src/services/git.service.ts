@@ -404,10 +404,10 @@ class GitService {
   // Worktree operations
   // ---------------------------------------------------------------------------
 
-  /** Parse `git worktree list --porcelain -v` output into GitWorktree[]. */
+  /** Parse `git worktree list --porcelain` output into GitWorktree[]. */
   async listWorktrees(projectPath: string): Promise<GitWorktree[]> {
     const git = this.git(projectPath);
-    const raw = await git.raw(["worktree", "list", "--porcelain", "-v"]);
+    const raw = await git.raw(["worktree", "list", "--porcelain"]);
     const worktrees: GitWorktree[] = [];
     // Blocks are separated by blank lines
     const blocks = raw.trim().split(/\n\n+/);
