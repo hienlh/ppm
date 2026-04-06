@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.40] - 2026-04-06
+
+### Changed
+- **Merged Telegram settings into PPMBot**: Bot token now configured in PPMBot settings (single place). Removed separate Telegram section from Notifications.
+- **Notifications go to all paired devices**: Removed `chat_id` config — Telegram notifications now broadcast to all approved paired chats. No more manual chat ID entry.
+
+### Added
+- **Test Notification button** in PPMBot settings — sends test message to all approved paired devices.
+
 ## [0.9.39] - 2026-04-06
 
 ### Fixed
