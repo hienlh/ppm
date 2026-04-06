@@ -1165,6 +1165,12 @@ export function listPairedChats(): PPMBotPairedChat[] {
   ).all() as PPMBotPairedChat[];
 }
 
+export function getApprovedPairedChats(): PPMBotPairedChat[] {
+  return getDb().query(
+    "SELECT * FROM clawbot_paired_chats WHERE status = 'approved' ORDER BY created_at DESC",
+  ).all() as PPMBotPairedChat[];
+}
+
 export function isPairedChat(chatId: string): boolean {
   const row = getDb().query(
     "SELECT 1 FROM clawbot_paired_chats WHERE telegram_chat_id = ? AND status = 'approved'",

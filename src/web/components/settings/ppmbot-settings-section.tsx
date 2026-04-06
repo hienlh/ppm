@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api-client";
-import { Trash2, CheckCircle, Clock } from "lucide-react";
+import { Trash2, CheckCircle, Clock, Send } from "lucide-react";
 
 interface PPMBotConfig {
   enabled: boolean;
@@ -14,6 +14,10 @@ interface PPMBotConfig {
   show_thinking: boolean;
   permission_mode: string;
   debounce_ms: number;
+}
+
+interface TelegramConfig {
+  bot_token: string;
 }
 
 interface PairedChat {
@@ -32,6 +36,11 @@ export function PPMBotSettingsSection() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
 
+  // Bot token (from telegram config)
+  const [tokenInput, setTokenInput] = useState("");
+  const [tokenConfigured, setTokenConfigured] = useState(false);
+  const [tokenSaving, setTokenSaving] = useState(false);
+
   const [enabled, setEnabled] = useState(false);
   const [defaultProject, setDefaultProject] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
@@ -42,6 +51,7 @@ export function PPMBotSettingsSection() {
   const [pairedChats, setPairedChats] = useState<PairedChat[]>([]);
   const [approveCode, setApproveCode] = useState("");
   const [approving, setApproving] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   const fetchPairedChats = useCallback(async () => {
     try {
@@ -60,8 +70,27 @@ export function PPMBotSettingsSection() {
       setShowThinking(data.show_thinking);
       setDebounceMs(data.debounce_ms);
     }).catch(() => {});
+    api.get<TelegramConfig>("/api/settings/telegram").then((data) => {
+      setTokenConfigured(!!data.bot_token);
+    }).catch(() => {});
     fetchPairedChats();
   }, [fetchPairedChats]);
+
+  const saveToken = async () => {
+    if (!tokenInput.trim()) return;
+    setTokenSaving(true);
+    setStatus(null);
+    try {
+      await api.put<TelegramConfig>("/api/settings/telegram", { bot_token: tokenInput });
+      setTokenConfigured(true);
+      setTokenInput("");
+      setStatus({ type: "ok", msg: "Bot token saved" });
+    } catch (e) {
+      setStatus({ type: "err", msg: (e as Error).message });
+    } finally {
+      setTokenSaving(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -110,10 +139,51 @@ export function PPMBotSettingsSection() {
     }
   };
 
+  const handleTestNotification = async () => {
+    setTesting(true);
+    setStatus(null);
+    try {
+      await api.post("/api/settings/telegram/test", {});
+      setStatus({ type: "ok", msg: "Test notification sent to all paired devices!" });
+    } catch (e) {
+      setStatus({ type: "err", msg: (e as Error).message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   if (!config) return <p className="text-xs text-muted-foreground">Loading...</p>;
+
+  const approvedCount = pairedChats.filter((c) => c.status === "approved").length;
 
   return (
     <div className="space-y-4">
+      {/* Bot Token */}
+      <div className="space-y-1.5">
+        <label className="text-[11px] text-muted-foreground">Telegram Bot Token</label>
+        <div className="flex gap-1.5">
+          <Input
+            type="password"
+            placeholder={tokenConfigured ? "••••••  (saved)" : "123456:ABC-DEF..."}
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            className="h-7 text-xs flex-1"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs shrink-0 cursor-pointer"
+            disabled={tokenSaving || !tokenInput.trim()}
+            onClick={saveToken}
+          >
+            {tokenSaving ? "..." : "Save"}
+          </Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          Create a bot via <b>@BotFather</b> on Telegram. Used for both chat and notifications.
+        </p>
+      </div>
+
       {/* Enable/Disable */}
       <div className="flex items-center justify-between">
         <div>
@@ -130,6 +200,7 @@ export function PPMBotSettingsSection() {
         <p className="text-xs font-medium">Paired Devices</p>
         <p className="text-[10px] text-muted-foreground">
           Send any message to the bot on Telegram to get a pairing code. Enter it below to approve.
+          Notifications are sent to all approved devices.
         </p>
 
         <div className="flex gap-2">
@@ -189,6 +260,20 @@ export function PPMBotSettingsSection() {
             ))}
           </div>
         )}
+
+        {/* Test notification button */}
+        {tokenConfigured && approvedCount > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1 w-full cursor-pointer"
+            disabled={testing}
+            onClick={handleTestNotification}
+          >
+            <Send className="size-3" />
+            {testing ? "Sending..." : "Test Notification"}
+          </Button>
+        )}
       </div>
 
       {/* Default Project */}
@@ -201,7 +286,7 @@ export function PPMBotSettingsSection() {
           className="h-7 text-xs"
         />
         <p className="text-[10px] text-muted-foreground">
-          Project used when starting a new chat. Must match a project name in PPM.
+          Project used when starting a new chat. Leave empty for default workspace (~/.ppm/bot/).
         </p>
       </div>
 

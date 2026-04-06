@@ -11,7 +11,6 @@ import { useSettingsStore, type Theme } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
-import { TelegramSettingsSection } from "./telegram-settings-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
 import { McpSettingsSection } from "./mcp-settings-section";
 import { ExtensionManagerSection } from "./extension-manager-section";
@@ -276,10 +275,13 @@ function NotificationsContent({ isSubscribed, loading, permission, pushError, su
 
       <Separator />
 
-      {/* Telegram */}
-      <section className="space-y-2">
+      {/* Telegram — redirect to PPMBot */}
+      <section className="space-y-1">
         <h3 className="text-xs font-medium text-muted-foreground">Telegram</h3>
-        <TelegramSettingsSection />
+        <p className="text-[11px] text-muted-foreground">
+          Telegram notifications are sent to all approved devices in PPMBot settings.
+          Configure your bot token and pair devices there.
+        </p>
       </section>
     </div>
   );

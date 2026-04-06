@@ -203,50 +203,45 @@ settingsRoutes.put("/keybindings", async (c) => {
   }
 });
 
-// ── Telegram ──────────────────────────────────────────────────────────
+// ── Telegram (bot_token managed via PPMBot settings) ────────────────
 
 /** GET /settings/telegram — return current telegram config (masks bot_token) */
 settingsRoutes.get("/telegram", (c) => {
   const tg = configService.get("telegram") as TelegramConfig | undefined;
-  if (!tg) return c.json(ok({ bot_token: "", chat_id: "" }));
+  if (!tg) return c.json(ok({ bot_token: "" }));
   return c.json(ok({
     bot_token: tg.bot_token ? `${tg.bot_token.slice(0, 6)}...` : "",
-    chat_id: tg.chat_id,
   }));
 });
 
-/** PUT /settings/telegram — save telegram bot_token + chat_id */
+/** PUT /settings/telegram — save telegram bot_token */
 settingsRoutes.put("/telegram", async (c) => {
   try {
-    const body = await c.req.json<{ bot_token?: string; chat_id?: string }>();
-    const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "", chat_id: "" };
+    const body = await c.req.json<{ bot_token?: string }>();
+    const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "" };
     const updated: TelegramConfig = {
       bot_token: body.bot_token ?? current.bot_token,
-      chat_id: body.chat_id ?? current.chat_id,
     };
     configService.set("telegram", updated);
     configService.save();
     return c.json(ok({
       bot_token: updated.bot_token ? `${updated.bot_token.slice(0, 6)}...` : "",
-      chat_id: updated.chat_id,
     }));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
 });
 
-/** POST /settings/telegram/test — send a test message */
+/** POST /settings/telegram/test — send a test notification to all approved paired chats */
 settingsRoutes.post("/telegram/test", async (c) => {
   try {
-    const body = await c.req.json<{ bot_token?: string; chat_id?: string }>();
-    const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "", chat_id: "" };
-    const token = body.bot_token || current.bot_token;
-    const chatId = body.chat_id || current.chat_id;
-    if (!token || !chatId) {
-      return c.json(err("bot_token and chat_id are required"), 400);
+    const current = (configService.get("telegram") as TelegramConfig | undefined) ?? { bot_token: "" };
+    const token = current.bot_token;
+    if (!token) {
+      return c.json(err("Bot token not configured"), 400);
     }
     const { telegramService } = await import("../../services/telegram-notification.service.ts");
-    const result = await telegramService.sendTest(token, chatId);
+    const result = await telegramService.sendTest(token);
     if (!result.ok) return c.json(err(result.error ?? "Failed"), 500);
     return c.json(ok({ sent: true }));
   } catch (e) {

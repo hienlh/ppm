@@ -6,7 +6,6 @@ export interface PushConfig {
 
 export interface TelegramConfig {
   bot_token: string;
-  chat_id: string;
 }
 
 export interface PPMBotConfig {
@@ -99,7 +98,6 @@ export const DEFAULT_CONFIG: PpmConfig = {
   },
   telegram: {
     bot_token: "",
-    chat_id: "",
   },
   clawbot: {
     enabled: false,
