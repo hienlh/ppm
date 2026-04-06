@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.38] - 2026-04-06
+
+### Fixed
+- **Stream hangs 3 minutes after AI finishes**: `done` event was received but the `for-await` loop didn't break — `break` inside `switch` only exits the switch, not the loop. Used labeled `break eventLoop` to properly terminate on `done`.
+
 ## [0.9.36] - 2026-04-06
 
 ### Fixed
