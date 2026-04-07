@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.58] - 2026-04-07
+
+### Fixed
+- **OAuth refresh token races**: Per-account mutex prevents concurrent refresh calls from racing (Anthropic rotates refresh tokens). Skips refresh if token already fresh.
+
+### Added
+- **History panel pagination**: "Load more" button loads older sessions. Pinned sessions are always visible regardless of page. Backend supports `limit`/`offset` query params.
+
 ## [0.9.57] - 2026-04-07
 
 ### Fixed
