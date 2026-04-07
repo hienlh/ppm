@@ -56,12 +56,19 @@ export interface StreamResult {
  * - "md" = raw markdown from AI (needs conversion)
  * - "html" = pre-formatted HTML (tool calls, thinking, errors — already escaped)
  */
-type Segment = { type: "md"; text: string } | { type: "html"; text: string };
+type Segment =
+  | { type: "md"; text: string }
+  | { type: "html"; text: string }
+  | { type: "thinking"; text: string };
 
 /** Render segments into Telegram HTML */
 function renderSegments(segments: Segment[]): string {
   return segments
-    .map((s) => (s.type === "md" ? markdownToTelegramHtml(s.text) : s.text))
+    .map((s) => {
+      if (s.type === "md") return markdownToTelegramHtml(s.text);
+      if (s.type === "thinking") return `\n<i>💭 ${escapeHtml(s.text)}</i>\n`;
+      return s.text;
+    })
     .join("");
 }
 
@@ -168,7 +175,12 @@ export async function streamToTelegram(
 
         case "thinking": {
           if (config.showThinking && event.content) {
-            appendHtml(segments, `\n<i>💭 ${escapeHtml(event.content)}</i>\n`);
+            const last = segments[segments.length - 1];
+            if (last?.type === "thinking") {
+              last.text += event.content;
+            } else {
+              segments.push({ type: "thinking", text: event.content });
+            }
             await editCurrent();
           }
           break;

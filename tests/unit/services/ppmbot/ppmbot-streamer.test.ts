@@ -160,6 +160,26 @@ describe("PPMBot Streamer — streamToTelegram", () => {
     expect(allEdited).toContain("Let me think");
   });
 
+  it("should merge consecutive thinking chunks into one block", async () => {
+    await loadModule();
+    const tg = makeMockTelegram();
+    const events = makeEvents([
+      { type: "thinking", content: "Let me " },
+      { type: "thinking", content: "think about " },
+      { type: "thinking", content: "this carefully." },
+      { type: "text", content: "Answer" },
+      { type: "done", sessionId: "s1" },
+    ]);
+
+    await streamToTelegram(123, events, tg as any, { showToolCalls: false, showThinking: true });
+
+    // The final edit should have exactly one 💭 block with all text merged
+    const finalEdit = tg.edited[tg.edited.length - 1]!.text;
+    const thinkingCount = (finalEdit.match(/💭/g) || []).length;
+    expect(thinkingCount).toBe(1);
+    expect(finalEdit).toContain("Let me think about this carefully.");
+  });
+
   it("should handle account_retry events", async () => {
     await loadModule();
     const tg = makeMockTelegram();
