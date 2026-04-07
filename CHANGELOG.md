@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.60] - 2026-04-08
+
+### Fixed
+- **Usage chart clarity**: Added data summary, descriptive labels for each section, hover tooltips with sample counts, hour-axis on heatmap, and color legend (low-high + no data).
+
 ## [0.9.59] - 2026-04-07
 
 ### Added
