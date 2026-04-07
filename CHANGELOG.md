@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.52] - 2026-04-07
+
+### Added
+- **Full `ppm bot` CLI**: All 13 Telegram commands now have CLI equivalents — `project switch/list/current`, `session new/list/resume/stop`, `memory save/list/forget`, `status`, `version`, `restart`, `help`. AI can invoke any command via Bash tool from natural language (e.g. "chuyển sang project ppm" → `ppm bot project switch ppm`).
+- **Auto-detect chat ID**: `resolveChatId()` auto-detects single approved paired Telegram chat. Falls back to `--chat <id>` when multiple chats exist.
+- **System prompt with natural language mapping**: AI receives full CLI reference + Vietnamese/English intent examples, executes commands directly instead of describing actions.
+
 ## [0.9.51] - 2026-04-07
 
 ### Added
