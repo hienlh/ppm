@@ -480,6 +480,52 @@ class PPMBotService {
     await this.telegram!.sendMessage(Number(chatId), text);
   }
 
+  // ── System Prompt: CLI Tools ─────────────────────────────────────
+
+  private buildToolsPrompt(chatId: string): string {
+    return `\n\n## PPMBot CLI Tools (use via Bash tool)
+Your chat ID is: ${chatId}
+
+You can manage the user's session, project, and memories by running CLI commands via the Bash tool.
+The chat ID is auto-detected so you do NOT need --chat flag.
+
+### Project
+  ppm bot project list             — List available projects
+  ppm bot project switch <name>    — Switch to a project
+  ppm bot project current          — Show current project
+
+### Session
+  ppm bot session new              — Start fresh session (current project)
+  ppm bot session list             — List recent sessions
+  ppm bot session resume <n|id>    — Resume a session by index or ID prefix
+  ppm bot session stop             — End current session
+
+### Memory (cross-project, persists across all projects)
+  ppm bot memory save "<content>" --category <category>
+  Categories: preference, fact, decision, architecture, issue
+  ppm bot memory list              — List saved memories
+  ppm bot memory forget "<topic>"  — Delete matching memories
+
+### Server
+  ppm bot status                   — Current project/session info
+  ppm bot version                  — Show PPM version
+  ppm bot restart                  — Restart PPM server
+
+### Natural Language Understanding
+When the user says something like:
+- "chuyển sang project X" or "switch to X" → ppm bot project switch X
+- "tạo session mới" or "new session" → ppm bot session new
+- "liệt kê sessions" or "show sessions" → ppm bot session list
+- "quay lại session cũ" or "resume session 2" → ppm bot session resume 2
+- "kết thúc session" or "stop" → ppm bot session stop
+- "đang ở project nào?" or "current project?" → ppm bot project current
+- "nhớ rằng..." or "remember that..." → ppm bot memory save "..." --category preference
+- "quên đi..." or "forget about..." → ppm bot memory forget "..."
+- "restart server" or "khởi động lại" → ppm bot restart
+
+Always execute the appropriate CLI command — do NOT just describe what you would do.`;
+  }
+
   // ── Chat Message Pipeline ───────────────────────────────────────
 
   private async handleMessage(chatId: string, text: string): Promise<void> {
@@ -535,14 +581,8 @@ class PPMBotService {
         systemPrompt += memorySection;
       }
 
-      // Instruct AI to use CLI for cross-project memory persistence
-      systemPrompt += `\n\n## Cross-Project Memory Tool
-When the user asks you to remember something, change how you address them, or save any preference/fact that should persist across projects and sessions, use the Bash tool to run:
-  ppm bot memory save "<content>" --category <category>
-Categories: preference, fact, decision, architecture, issue
-To list saved memories: ppm bot memory list
-To forget: ppm bot memory forget "<topic>"
-This saves to a global store that persists across all projects and sessions.`;
+      // Instruct AI to use CLI tools for session/project/memory management
+      systemPrompt += this.buildToolsPrompt(chatId);
 
       // Send message to AI (prepend system prompt + memory context)
       const opts: SendMessageOpts = {
