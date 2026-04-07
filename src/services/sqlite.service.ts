@@ -137,6 +137,16 @@ class SqliteService {
     db.run(`UPDATE "${table}" SET "${column}" = ? WHERE "${pkColumn}" = ?`, [value as never, rowid]);
   }
 
+  /** Delete a row by primary key */
+  deleteRow(
+    projectPath: string, dbPath: string, table: string,
+    pkValue: unknown, pkColumn = "rowid",
+  ): void {
+    const abs = this.resolvePath(projectPath, dbPath);
+    const db = this.open(abs);
+    db.run(`DELETE FROM "${table}" WHERE "${pkColumn}" = ?`, [pkValue as never]);
+  }
+
   /** Close all cached databases (for shutdown) */
   closeAll() {
     for (const absPath of this.cache.keys()) this.close(absPath);

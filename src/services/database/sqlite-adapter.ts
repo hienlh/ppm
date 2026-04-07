@@ -51,4 +51,9 @@ export const sqliteAdapter: DatabaseAdapter = {
     if (!config.path) throw new Error("Missing path");
     sqliteService.updateCell(config.path, config.path, table, opts.pkValue as number, opts.column, opts.value, opts.pkColumn);
   },
+
+  async deleteRow(config: DbConnectionConfig, table: string, opts): Promise<void> {
+    if (!config.path) throw new Error("Missing path");
+    sqliteService.deleteRow(config.path, config.path, table, opts.pkValue, opts.pkColumn);
+  },
 };

@@ -161,6 +161,18 @@ class PostgresService {
     );
   }
 
+  /** Delete a row by primary key */
+  async deleteRow(
+    connectionString: string, table: string, schema = "public",
+    pkColumn: string, pkValue: unknown,
+  ): Promise<void> {
+    const sql = this.connect(connectionString);
+    await sql.unsafe(
+      `DELETE FROM "${schema}"."${table}" WHERE "${pkColumn}" = $1`,
+      [pkValue as never],
+    );
+  }
+
   /** Close all cached connections */
   async closeAll() {
     for (const key of this.cache.keys()) await this.disconnect(key);

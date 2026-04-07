@@ -47,4 +47,7 @@ export interface DatabaseAdapter {
   updateCell(config: DbConnectionConfig, table: string, opts: {
     schema?: string; pkColumn: string; pkValue: unknown; column: string; value: unknown;
   }): Promise<void>;
+  deleteRow(config: DbConnectionConfig, table: string, opts: {
+    schema?: string; pkColumn: string; pkValue: unknown;
+  }): Promise<void>;
 }

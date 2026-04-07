@@ -97,10 +97,25 @@ export function useSqlite(projectName: string, dbPath: string, connectionId?: nu
     }
   }, [base, unifiedBase, dbPath, selectedTable, fetchTableData]);
 
+  const deleteRow = useCallback(async (rowid: number) => {
+    if (!selectedTable) return;
+    try {
+      if (unifiedBase) {
+        await api.del(`${base}/row`, { table: selectedTable, pkColumn: "rowid", pkValue: rowid });
+      } else {
+        await api.del(`${base}/row`, { path: dbPath, table: selectedTable, rowid });
+      }
+      fetchTableData();
+      fetchTables(); // refresh row counts
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [base, unifiedBase, dbPath, selectedTable, fetchTableData, fetchTables]);
+
   return {
     tables, selectedTable, selectTable, tableData, schema,
     loading, error, page, setPage,
     queryResult, queryError, queryLoading, executeQuery,
-    updateCell, refreshTables: fetchTables, refreshData: fetchTableData,
+    updateCell, deleteRow, refreshTables: fetchTables, refreshData: fetchTableData,
   };
 }

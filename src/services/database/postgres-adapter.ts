@@ -39,4 +39,12 @@ export const postgresAdapter: DatabaseAdapter = {
       opts.pkColumn, opts.pkValue, opts.column, opts.value,
     );
   },
+
+  async deleteRow(config: DbConnectionConfig, table: string, opts): Promise<void> {
+    if (!config.connectionString) throw new Error("Missing connectionString");
+    await postgresService.deleteRow(
+      config.connectionString, table, opts.schema ?? "public",
+      opts.pkColumn, opts.pkValue,
+    );
+  },
 };

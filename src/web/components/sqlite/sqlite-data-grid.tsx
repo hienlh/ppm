@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
-import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Trash2 } from "lucide-react";
 import type { ColumnInfo } from "./use-sqlite";
 
 interface Props {
@@ -10,9 +10,10 @@ interface Props {
   page: number;
   onPageChange: (page: number) => void;
   onCellUpdate: (rowid: number, column: string, value: unknown) => void;
+  onRowDelete?: (rowid: number) => void;
 }
 
-export function SqliteDataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate }: Props) {
+export function SqliteDataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate, onRowDelete }: Props) {
   if (!tableData) {
     return (
       <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
@@ -31,6 +32,7 @@ export function SqliteDataGrid({ tableData, schema, loading, page, onPageChange,
           rows={tableData.rows}
           schema={schema}
           onCellUpdate={onCellUpdate}
+          onRowDelete={onRowDelete}
         />
       </div>
       {/* Pagination */}
@@ -53,14 +55,16 @@ export function SqliteDataGrid({ tableData, schema, loading, page, onPageChange,
 }
 
 /** Inner table component with TanStack */
-function DataTable({ columns, rows, schema, onCellUpdate }: {
+function DataTable({ columns, rows, schema, onCellUpdate, onRowDelete }: {
   columns: string[];
   rows: Record<string, unknown>[];
   schema: ColumnInfo[];
   onCellUpdate: (rowid: number, column: string, value: unknown) => void;
+  onRowDelete?: (rowid: number) => void;
 }) {
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null);
 
   const pkColumns = useMemo(() => new Set(schema.filter((c) => c.pk).map((c) => c.name)), [schema]);
 
@@ -84,8 +88,15 @@ function DataTable({ columns, rows, schema, onCellUpdate }: {
 
   const cancelEdit = useCallback(() => setEditingCell(null), []);
 
-  const columnDefs = useMemo<ColumnDef<Record<string, unknown>>[]>(() =>
-    columns.map((col) => ({
+  const handleDelete = useCallback((rowIdx: number) => {
+    const row = rows[rowIdx];
+    if (!row || !onRowDelete) return;
+    onRowDelete(row.rowid as number);
+    setConfirmDeleteIdx(null);
+  }, [rows, onRowDelete]);
+
+  const columnDefs = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
+    const dataCols: ColumnDef<Record<string, unknown>>[] = columns.map((col) => ({
       id: col,
       accessorFn: (row) => row[col],
       header: () => (
@@ -121,8 +132,44 @@ function DataTable({ columns, rows, schema, onCellUpdate }: {
           </span>
         );
       },
-    })),
-  [columns, pkColumns, editingCell, editValue, commitEdit, cancelEdit, startEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+    }));
+
+    if (onRowDelete) {
+      dataCols.push({
+        id: "_actions",
+        header: () => null,
+        cell: ({ row }) => {
+          const rowIdx = row.index;
+          const isConfirming = confirmDeleteIdx === rowIdx;
+          if (isConfirming) {
+            return (
+              <span className="flex items-center gap-1 whitespace-nowrap">
+                <button type="button" onClick={() => handleDelete(rowIdx)}
+                  className="text-destructive text-[10px] font-medium hover:underline">
+                  Confirm
+                </button>
+                <button type="button" onClick={() => setConfirmDeleteIdx(null)}
+                  className="text-muted-foreground text-[10px] hover:underline">
+                  Cancel
+                </button>
+              </span>
+            );
+          }
+          return (
+            <button type="button" onClick={() => setConfirmDeleteIdx(rowIdx)}
+              className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-opacity"
+              title="Delete row">
+              <Trash2 className="size-3" />
+            </button>
+          );
+        },
+        size: 60,
+      });
+    }
+
+    return dataCols;
+  },
+  [columns, pkColumns, editingCell, editValue, commitEdit, cancelEdit, startEdit, onRowDelete, confirmDeleteIdx, handleDelete]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const table = useReactTable({
     data: rows,
@@ -145,7 +192,7 @@ function DataTable({ columns, rows, schema, onCellUpdate }: {
       </thead>
       <tbody>
         {table.getRowModel().rows.map((row) => (
-          <tr key={row.id} className="hover:bg-muted/30 border-b border-border/50">
+          <tr key={row.id} className="group hover:bg-muted/30 border-b border-border/50">
             {row.getVisibleCells().map((cell) => (
               <td key={cell.id} className="px-2 py-1 max-w-[300px]">
                 {flexRender(cell.column.columnDef.cell, cell.getContext())}

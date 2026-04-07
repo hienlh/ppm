@@ -127,6 +127,7 @@ function SqliteViewerInner({
             page={sqlite.page}
             onPageChange={sqlite.setPage}
             onCellUpdate={sqlite.updateCell}
+            onRowDelete={sqlite.deleteRow}
           />
         </div>
 

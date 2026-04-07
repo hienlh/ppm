@@ -302,6 +302,37 @@ databaseRoutes.put("/connections/:id/cell", async (c) => {
   }
 });
 
+/** DELETE /api/db/connections/:id/row — body: { table, schema?, pkColumn, pkValue } — enforces readonly */
+databaseRoutes.delete("/connections/:id/row", async (c) => {
+  try {
+    const conn = resolveConn(c.req.param("id"));
+    if (!conn) return c.json(err("Connection not found"), 404);
+
+    if (conn.readonly) {
+      return c.json(err("Connection is readonly — row deletion is disabled. Change this in PPM web UI."), 403);
+    }
+
+    const body = await c.req.json<{
+      table: string; schema?: string;
+      pkColumn: string; pkValue: unknown;
+    }>();
+    if (!body.table || !body.pkColumn || body.pkValue == null) {
+      return c.json(err("table, pkColumn, and pkValue are required"), 400);
+    }
+
+    const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+    const adapter = getAdapter(conn.type);
+    await adapter.deleteRow(config, body.table, {
+      schema: body.schema,
+      pkColumn: body.pkColumn,
+      pkValue: body.pkValue,
+    });
+    return c.json(ok({ deleted: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------

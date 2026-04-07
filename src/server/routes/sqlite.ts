@@ -73,3 +73,17 @@ sqliteRoutes.put("/cell", async (c) => {
     return c.json(err((e as Error).message), 500);
   }
 });
+
+/** DELETE /sqlite/row — body: { path, table, rowid } */
+sqliteRoutes.delete("/row", async (c) => {
+  try {
+    const body = await c.req.json<{ path: string; table: string; rowid: number }>();
+    if (!body.path || !body.table || body.rowid == null) {
+      return c.json(err("Missing required fields: path, table, rowid"), 400);
+    }
+    sqliteService.deleteRow(c.get("projectPath"), body.path, body.table, body.rowid);
+    return c.json(ok({ deleted: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
