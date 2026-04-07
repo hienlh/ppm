@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.9.53] - 2026-04-07
+
+### Added
+- **Supervisor Always Alive**: `ppm stop` now does a soft stop — kills server only, supervisor stays alive with Cloud WS + tunnel. Use `ppm stop --kill` or `ppm down` for full shutdown.
+- **`ppm down` command**: Alias for `ppm stop --kill` (full shutdown).
+- **`ppm stop --kill` flag**: Full shutdown that kills supervisor + server + tunnel.
+- **Stopped page**: When server is stopped, tunnel URL serves a minimal HTML status page + 503 on `/api/health`.
+- **Supervisor detection**: `ppm start` detects existing supervisor and resumes/upgrades instead of spawning a new one.
+- **Cloud WS commands**: `start` (resume from stopped), `shutdown` (full kill), `stop` (now soft stop).
+- **Exception handlers**: Supervisor catches `uncaughtException`/`unhandledRejection` — never crashes.
+- **Lockfile**: Prevents concurrent `ppm start` races (`~/.ppm/.start-lock`).
+- **Windows command file polling**: Supervisor polls command file every 1s on Windows (no SIGUSR2).
+
+### Changed
+- **BREAKING**: `ppm stop` default behavior changed from full shutdown to soft stop.
+- **Autostart**: Generates `__supervise__` instead of `__serve__`. Existing users must run `ppm autostart disable && ppm autostart enable` to regenerate.
+- **Supervisor modularized**: Split into `supervisor.ts` (orchestrator), `supervisor-state.ts` (state machine + IPC), `supervisor-stopped-page.ts` (stopped HTML server).
+
 ## [0.9.52] - 2026-04-07
 
 ### Added
