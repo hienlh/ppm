@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.57] - 2026-04-07
+
+### Fixed
+- **Telegram bot thinking display**: Consecutive thinking chunks are now merged into a single `💭` block instead of rendering as multiple broken lines.
+
 ## [0.9.56] - 2026-04-07
 
 ### Fixed
