@@ -77,6 +77,8 @@ const acctHotState = ((globalThis as any)[ACCT_HOT_KEY] ??= {
 
 class AccountService {
   private pendingStates = new Map<string, { verifier: string; createdAt: number }>();
+  /** Per-account mutex: dedup concurrent refresh calls so only one OAuth request fires at a time. */
+  private pendingRefreshes = new Map<string, Promise<void>>();
 
   private toAccount(row: AccountRow): Account {
     let profileData: OAuthProfileData | null = null;
@@ -517,15 +519,41 @@ class AccountService {
 
   /**
    * Refresh an OAuth access token using the stored refresh token.
+   * Uses a per-account mutex to prevent concurrent refresh calls from racing
+   * (Anthropic rotates refresh tokens — only one call per token is valid).
+   * Also skips the OAuth call if the DB token was already refreshed by another session.
    * @param disableOnFail - if true, disable the account when refresh fails (default: true).
    *   Background/startup refresh should pass false to avoid disabling accounts prematurely.
    */
   async refreshAccessToken(accountId: string, disableOnFail = true): Promise<void> {
+    // Dedup: if a refresh is already in progress for this account, wait for it instead of racing
+    const pending = this.pendingRefreshes.get(accountId);
+    if (pending) {
+      console.log(`[accounts] Refresh already in progress for ${accountId} — waiting for it`);
+      return pending;
+    }
+
+    const promise = this._doRefreshAccessToken(accountId, disableOnFail);
+    this.pendingRefreshes.set(accountId, promise);
+    try {
+      await promise;
+    } finally {
+      this.pendingRefreshes.delete(accountId);
+    }
+  }
+
+  private async _doRefreshAccessToken(accountId: string, disableOnFail: boolean): Promise<void> {
     const account = this.getWithTokens(accountId);
     if (!account) throw new Error(`Account ${accountId} not found`);
     // Skip refresh for temporary accounts (no refresh token)
     if (!account.refreshToken || account.refreshToken === "") {
       throw new Error(`Account ${accountId} has no refresh token (temporary account)`);
+    }
+    // Skip if token was already refreshed by another session (still fresh)
+    const nowS = Math.floor(Date.now() / 1000);
+    if (account.expiresAt && account.expiresAt - nowS > 60) {
+      console.log(`[accounts] Token for ${account.email ?? accountId} is already fresh (expires in ${account.expiresAt - nowS}s) — skipping OAuth refresh`);
+      return;
     }
     const res = await fetch(OAUTH_TOKEN_URL, {
       method: "POST",
@@ -542,6 +570,12 @@ class AccountService {
       console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
       // invalid_grant or invalid_request = refresh token permanently dead → clear it so account becomes temporary
       if (errorBody.includes("invalid_grant") || errorBody.includes("invalid_request")) {
+        // Double-check: another session might have already refreshed between our read and the OAuth call
+        const recheckAccount = this.getWithTokens(accountId);
+        if (recheckAccount?.expiresAt && recheckAccount.expiresAt - Math.floor(Date.now() / 1000) > 60) {
+          console.log(`[accounts] Refresh failed with invalid_grant but DB token is now fresh — another session refreshed it`);
+          return;
+        }
         console.log(`[accounts] Clearing invalid refresh token for ${account.email ?? accountId} — account is now temporary`);
         updateAccount(accountId, { refresh_token: encrypt("") });
       }
