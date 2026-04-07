@@ -111,10 +111,22 @@ export function useDatabase(connectionId: number) {
     }
   }, [base, selectedTable, selectedSchema, fetchTableData]);
 
+  const deleteRow = useCallback(async (pkColumn: string, pkValue: unknown) => {
+    if (!selectedTable) return;
+    const t = selectedTable;
+    const s = selectedSchema;
+    try {
+      await api.del(`${base}/row`, { table: t, schema: s, pkColumn, pkValue });
+      fetchTableData(t, s);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [base, selectedTable, selectedSchema, fetchTableData]);
+
   return {
     selectedTable, selectTable, tableData, schema,
     loading, error, page, setPage: changePage,
     queryResult, queryError, queryLoading, executeQuery,
-    updateCell, refreshData: fetchTableData,
+    updateCell, deleteRow, refreshData: fetchTableData,
   };
 }

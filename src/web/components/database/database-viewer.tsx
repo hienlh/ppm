@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { Database, Loader2, Play, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Database, Loader2, Play, ChevronLeft, ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
 import CodeMirror from "@uiw/react-codemirror";
 import { sql, PostgreSQL, SQLite } from "@codemirror/lang-sql";
@@ -51,7 +51,7 @@ export function DatabaseViewer({ metadata }: Props) {
         {/* Data grid */}
         <div className={`flex-1 overflow-hidden ${queryPanelOpen ? "max-h-[60%]" : ""}`}>
           <DataGrid tableData={db.tableData} schema={db.schema} loading={db.loading}
-            page={db.page} onPageChange={db.setPage} onCellUpdate={db.updateCell} />
+            page={db.page} onPageChange={db.setPage} onCellUpdate={db.updateCell} onRowDelete={db.deleteRow} />
         </div>
 
         {/* Query editor */}
@@ -67,14 +67,16 @@ export function DatabaseViewer({ metadata }: Props) {
 }
 
 /* ---------- Data Grid ---------- */
-function DataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate }: {
+function DataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate, onRowDelete }: {
   tableData: { columns: string[]; rows: Record<string, unknown>[]; total: number; limit: number } | null;
   schema: DbColumnInfo[]; loading: boolean; page: number;
   onPageChange: (p: number) => void;
   onCellUpdate: (pkCol: string, pkVal: unknown, col: string, val: unknown) => void;
+  onRowDelete?: (pkCol: string, pkVal: unknown) => void;
 }) {
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null);
 
   const pkCol = useMemo(() => schema.find((c) => c.pk)?.name ?? null, [schema]);
 
@@ -96,8 +98,16 @@ function DataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate
 
   const cancelEdit = useCallback(() => setEditingCell(null), []);
 
-  const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() =>
-    (tableData?.columns ?? []).map((col) => ({
+  const handleDelete = useCallback((rowIdx: number) => {
+    if (!tableData || !pkCol || !onRowDelete) return;
+    const row = tableData.rows[rowIdx];
+    if (!row) return;
+    onRowDelete(pkCol, row[pkCol]);
+    setConfirmDeleteIdx(null);
+  }, [tableData, pkCol, onRowDelete]);
+
+  const columns = useMemo<ColumnDef<Record<string, unknown>>[]>(() => {
+    const dataCols: ColumnDef<Record<string, unknown>>[] = (tableData?.columns ?? []).map((col) => ({
       id: col,
       accessorFn: (row) => row[col],
       header: () => <span className={schema.find((c) => c.name === col)?.pk ? "font-bold" : ""}>{col}</span>,
@@ -118,8 +128,40 @@ function DataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate
           </span>
         );
       },
-    })),
-  [tableData?.columns, schema, editingCell, editValue, commitEdit, cancelEdit, startEdit, pkCol]);
+    }));
+
+    if (onRowDelete && pkCol) {
+      dataCols.push({
+        id: "_actions",
+        header: () => null,
+        cell: ({ row }) => {
+          const rowIdx = row.index;
+          const isConfirming = confirmDeleteIdx === rowIdx;
+          if (isConfirming) {
+            return (
+              <span className="flex items-center gap-1 whitespace-nowrap">
+                <button type="button" onClick={() => handleDelete(rowIdx)}
+                  className="text-destructive text-[10px] font-medium hover:underline">Confirm</button>
+                <button type="button" onClick={() => setConfirmDeleteIdx(null)}
+                  className="text-muted-foreground text-[10px] hover:underline">Cancel</button>
+              </span>
+            );
+          }
+          return (
+            <button type="button" onClick={() => setConfirmDeleteIdx(rowIdx)}
+              className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-opacity"
+              title="Delete row">
+              <Trash2 className="size-3" />
+            </button>
+          );
+        },
+        size: 60,
+      });
+    }
+
+    return dataCols;
+  },
+  [tableData?.columns, schema, editingCell, editValue, commitEdit, cancelEdit, startEdit, pkCol, onRowDelete, confirmDeleteIdx, handleDelete]);
 
   const table = useReactTable({ data: tableData?.rows ?? [], columns, getCoreRowModel: getCoreRowModel() });
 
@@ -150,7 +192,7 @@ function DataGrid({ tableData, schema, loading, page, onPageChange, onCellUpdate
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="hover:bg-muted/30 border-b border-border/50">
+              <tr key={row.id} className="group hover:bg-muted/30 border-b border-border/50">
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-2 py-1 max-w-[300px]">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
