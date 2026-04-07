@@ -193,14 +193,21 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **AccountService** | Account CRUD, token encryption/decryption | getAccounts, createAccount, updateAccount, deleteAccount |
 | **AccountSelectorService** | Select active account based on config | getActiveAccount, setActiveAccount, selectByProject |
 | **UpgradeService** | Version checking, installation, self-replace signaling | checkForUpdate, applyUpgrade, getInstallMethod, compareSemver |
-| **ClawBotService** | Telegram bot orchestrator | start, stop, handleMessage, routeToChat |
-| **ClawBotTelegramService** | Telegram long-polling, message ops | getUpdates, sendMessage, editMessage, setTyping, handleCommands |
-| **ClawBotSessionService** | chatID → PPM sessionID mapping | mapSession, getSession, deleteSession |
-| **ClawBotMemoryService** | FTS5 memory persistence | saveMemory, recallMemories, decayMemories, searchByProject |
-| **ClawBotFormatterService** | Markdown → Telegram HTML + chunking | formatMarkdown, chunkMessage |
-| **ClawBotStreamerService** | ChatEvent → progressive Telegram edits | streamMessageEdits |
+| **PPMBotService** | Coordinator orchestrator (team leader, delegation mgmt) | start, stop, handleUpdate, checkPendingTasks |
+| **PPMBotSessionManager** | Coordinator session per chat, project resolver | getCoordinatorSession, rotateCoordinatorSession, resolveProject |
+| **PPMBotTelegramService** | Telegram long-polling, message ops | getUpdates, sendMessage, editMessage, setTyping, handleCommands |
+| **PPMBotMemoryService** | SQLite project memory persistence | saveMemory, recallMemories, searchByProject |
+| **executeDelegation()** | Task execution in isolated session, result capture | (async function, manages ChatService + result storage) |
+| **PPMBotFormatterService** | Markdown → Telegram HTML + chunking | formatMarkdown, chunkMessage |
+| **PPMBotStreamerService** | ChatEvent → progressive Telegram edits | streamMessageEdits |
+| **ClawBotService** | LEGACY Telegram bot (deprecated v0.9.11) | (direct-chat model, replaced by coordinator) |
+| **ClawBotTelegramService** | LEGACY Telegram API | (deprecated v0.9.11) |
+| **ClawBotSessionService** | LEGACY chatID mapping | (deprecated v0.9.11) |
+| **ClawBotMemoryService** | LEGACY FTS5 memory | (deprecated v0.9.11) |
+| **ClawBotFormatterService** | LEGACY formatter | (deprecated v0.9.11) |
+| **ClawBotStreamerService** | LEGACY streamer | (deprecated v0.9.11) |
 
-**Key Files:** `src/services/*.service.ts`, `src/services/clawbot/*.ts`
+**Key Files:** `src/services/*.service.ts`, `src/services/ppmbot/*.ts`, `src/cli/commands/bot-cmd.ts`
 
 ---
 
@@ -269,7 +276,112 @@ PPM supports multiple AI providers through a generic `AIProvider` interface and 
 
 ---
 
-### ClawBot Service Layer (Telegram Bot Integration)
+### PPMBot Coordinator Service Layer (Telegram-based Team Leader)
+**Component:** PPMBot coordinator orchestrator + delegation executor
+
+**Responsibilities:**
+- Manage single persistent coordinator session per Telegram chat in `~/.ppm/bot/` workspace
+- Route incoming Telegram messages to coordinator (ask/answer) or delegation tracking
+- Decide when to answer directly vs. delegate to subagents (based on project context)
+- Execute delegated tasks in isolated project sessions
+- Track task status and report results back to Telegram
+- Format responses as Telegram HTML with progressive message editing
+
+**Architecture:**
+```
+Telegram → PPMBotTelegramService (polling) → PPMBotService (orchestrator)
+                                                 ↓
+                            PPMBotSessionManager (coordinator session per chat)
+                            coordinatorSession.id → chatService.sendMessage()
+                            Task Poller (5s interval)
+                            ↓
+                    executeDelegation(taskId, telegram, providerId)
+                    ├─ getBotTask(taskId) → prompt
+                    ├─ chatService.createSession(providerId, projectPath)
+                    ├─ run async generator (abort, 900s timeout)
+                    └─ updateBotTaskStatus(taskId, "completed", {result})
+                    ↓
+                    telegram.sendMessage(chatId, result summary)
+```
+
+**Services (src/services/ppmbot/):**
+- **PPMBotService** — Lifecycle (start/stop), message queue, Telegram polling loop, task poller loop
+- **PPMBotSessionManager** — Coordinator session cache per chatID, project resolver (case-insensitive, prefix match)
+- **PPMBotTelegramService** — Telegram Bot API (getUpdates polling, sendMessage, editMessage, setTyping)
+- **PPMBotMemoryService** — SQLite project memories, contextual recall
+- **executeDelegation()** — Task execution in isolated session, result capture, timeout/abort handling
+- **PPMBotFormatterService** — Markdown → Telegram HTML, 4096-char chunking
+- **PPMBotStreamerService** — ChatEvent → progressive Telegram message edits (1s throttle)
+
+**Coordinator Identity (Persistent Cross-Provider):**
+- Location: `~/.ppm/bot/coordinator.md` (loaded on startup, cached in `coordinatorIdentity`)
+- Role definition: Team leader, project coordinator, decision-maker
+- Decision framework: Answer directly (no project context) vs. Delegate (file access needed)
+- Coordination tools: Bash-safe CLI commands (`ppm bot delegate`, `ppm bot task-status`, etc.)
+- Cross-provider: Identity text injected as XML context block, works with Claude SDK + CLI providers
+
+**Delegation Flow:**
+1. User asks task in Telegram
+2. Coordinator decides: delegate? → yes
+3. Coordinator calls bash: `ppm bot delegate --chat <chatId> --project <name> --prompt "<enriched>"`
+4. CLI creates `bot_tasks` row, returns taskId
+5. Service tells user: "Working on it, I'll notify you when done"
+6. Background poller (5s) detects pending task
+7. Executes: `chatService.createSession()` in target project
+8. Streams response, captures summary + full output
+9. Updates task status → "completed"
+10. Sends Telegram notification with result
+
+**Task Execution (Isolation & Safety):**
+- Each task = fresh isolated session (no shared context)
+- Timeout: 900s default (configurable per task)
+- Abort: AbortController on timeout, can be canceled mid-execution
+- Result capture: Both summary (for notification) and full text (for detailed review)
+- Error handling: Task status → "failed", error message stored, user notified
+
+**Database Schema (v14):**
+- `bot_tasks` — id (UUID), chatId, projectName, projectPath, prompt, status, resultSummary, resultFull, sessionId, error, reported, timeoutMs, createdAt, startedAt, completedAt
+- Indexes: `idx_bot_tasks_status` (fast poller lookup), `idx_bot_tasks_chat` (history queries)
+
+**Key Design Decisions:**
+1. **Single coordinator session** — Per chat, persistent, one identity (vs. per-task sessions in ClawBot)
+2. **Delegation via CLI** — Coordinator calls bash commands (safer than direct DB writes, auditable)
+3. **Isolated task execution** — Each delegated task spawns fresh session (no context bleed)
+4. **Background polling** — Task execution decoupled from message handler (non-blocking)
+5. **Result summary + full** — Notification shows short summary; user can fetch full output via CLI
+6. **Cross-provider identity** — Single `coordinator.md` works with any AI provider
+7. **Bash-safe tools only** — Coordinator restricted to Bash, Read, Write, Edit, Glob, Grep (safe delegation)
+
+**CLI Expansion (ppm bot commands):**
+```
+ppm bot delegate --chat <id> --project <name> --prompt "<text>"  # Create task
+ppm bot task-status <id>                                          # Check status
+ppm bot task-result <id>                                          # Get full output
+ppm bot tasks [--chat <id>]                                       # List recent
+ppm bot project list                                              # Available projects
+ppm bot project current                                           # Active project
+ppm bot project switch <name>                                     # Switch project
+ppm bot session new <title>                                       # Create session
+ppm bot session list                                              # List sessions
+ppm bot session resume <id>                                       # Resume session
+ppm bot session stop <id>                                         # Stop session
+ppm bot status                                                    # Bot health
+ppm bot version                                                   # PPM version
+ppm bot restart                                                   # Restart service
+ppm bot help                                                      # Help
+```
+
+**Settings UI (ppmbot-settings-section.tsx):**
+- Enable/disable PPMBot
+- Paired Telegram chats (approval management)
+- Default project selection
+- System prompt customization
+- Task auto-refresh (poll interval, max history)
+- Delegated tasks panel (status, result preview, delete)
+
+---
+
+### ClawBot Service Layer (Telegram Bot Integration) — LEGACY (v0.9.10)
 **Component:** Telegram bot service + subsidiary services
 
 **Responsibilities:**

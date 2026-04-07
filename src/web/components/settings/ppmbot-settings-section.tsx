@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ChangeEvent } from "react";
+import { useState, useEffect, useCallback, useRef, type ChangeEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -9,7 +9,6 @@ import { Separator } from "@/components/ui/separator";
 interface PPMBotConfig {
   enabled: boolean;
   default_provider: string;
-  default_project: string;
   system_prompt: string;
   show_tool_calls: boolean;
   show_thinking: boolean;
@@ -40,18 +39,28 @@ interface PairedChat {
   approved_at: number | null;
 }
 
+interface BotTaskRow {
+  id: string;
+  chat_id: string;
+  project_name: string;
+  prompt: string;
+  status: string;
+  result_summary: string | null;
+  error: string | null;
+  created_at: number;
+  completed_at: number | null;
+}
+
 export function PPMBotSettingsSection() {
   const [config, setConfig] = useState<PPMBotConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
 
-  // Bot token (from telegram config)
   const [tokenInput, setTokenInput] = useState("");
   const [tokenConfigured, setTokenConfigured] = useState(false);
   const [tokenSaving, setTokenSaving] = useState(false);
 
   const [enabled, setEnabled] = useState(false);
-  const [defaultProject, setDefaultProject] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [showToolCalls, setShowToolCalls] = useState(true);
   const [showThinking, setShowThinking] = useState(false);
@@ -64,6 +73,9 @@ export function PPMBotSettingsSection() {
 
   const [memories, setMemories] = useState<MemoryRow[]>([]);
   const [memoryProject, setMemoryProject] = useState("_global");
+
+  const [tasks, setTasks] = useState<BotTaskRow[]>([]);
+  const taskPollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const fetchPairedChats = useCallback(async () => {
     try {
@@ -79,6 +91,13 @@ export function PPMBotSettingsSection() {
     } catch {}
   }, [memoryProject]);
 
+  const fetchTasks = useCallback(async () => {
+    try {
+      const data = await api.get<BotTaskRow[]>("/api/settings/clawbot/tasks?limit=20");
+      setTasks(data);
+    } catch {}
+  }, []);
+
   const deleteMemory = async (id: number) => {
     try {
       await api.del(`/api/settings/clawbot/memories/${id}`);
@@ -90,7 +109,6 @@ export function PPMBotSettingsSection() {
     api.get<PPMBotConfig>("/api/settings/clawbot").then((data) => {
       setConfig(data);
       setEnabled(data.enabled);
-      setDefaultProject(data.default_project);
       setSystemPrompt(data.system_prompt);
       setShowToolCalls(data.show_tool_calls);
       setShowThinking(data.show_thinking);
@@ -101,7 +119,12 @@ export function PPMBotSettingsSection() {
     }).catch(() => {});
     fetchPairedChats();
     fetchMemories("_global");
-  }, [fetchPairedChats, fetchMemories]);
+    fetchTasks();
+
+    // Auto-refresh tasks every 10s
+    taskPollRef.current = setInterval(fetchTasks, 10000);
+    return () => { if (taskPollRef.current) clearInterval(taskPollRef.current); };
+  }, [fetchPairedChats, fetchMemories, fetchTasks]);
 
   const saveToken = async () => {
     if (!tokenInput.trim()) return;
@@ -125,7 +148,6 @@ export function PPMBotSettingsSection() {
     try {
       const body: Partial<PPMBotConfig> = {
         enabled,
-        default_project: defaultProject.trim(),
         system_prompt: systemPrompt,
         show_tool_calls: showToolCalls,
         show_thinking: showThinking,
@@ -183,6 +205,13 @@ export function PPMBotSettingsSection() {
 
   const approvedCount = pairedChats.filter((c) => c.status === "approved").length;
 
+  const statusIcon: Record<string, string> = {
+    pending: "⏳", running: "🔄", completed: "✅", failed: "❌", timeout: "⏱",
+  };
+  const statusColor: Record<string, string> = {
+    running: "text-blue-500", completed: "text-green-500", failed: "text-destructive", timeout: "text-yellow-500",
+  };
+
   return (
     <div className="space-y-4">
       {/* Bot Token */}
@@ -216,7 +245,7 @@ export function PPMBotSettingsSection() {
         <div>
           <p className="text-xs font-medium">Enable PPMBot</p>
           <p className="text-[10px] text-muted-foreground">
-            Telegram bot that chats with your AI providers
+            AI coordinator on Telegram — delegates tasks to your projects
           </p>
         </div>
         <Switch checked={enabled} onCheckedChange={setEnabled} />
@@ -305,6 +334,52 @@ export function PPMBotSettingsSection() {
 
       <Separator />
 
+      {/* Delegated Tasks */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-medium">Delegated Tasks</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 cursor-pointer"
+            onClick={fetchTasks}
+          >
+            <RefreshCw className="size-3" />
+          </Button>
+        </div>
+
+        {tasks.length === 0 ? (
+          <p className="text-[10px] text-muted-foreground italic">
+            No delegated tasks yet. The coordinator will create tasks when you ask it to work on a project.
+          </p>
+        ) : (
+          <div className="space-y-1 max-h-[200px] overflow-y-auto">
+            {tasks.map((t) => {
+              const elapsed = t.completed_at
+                ? `${Math.round((t.completed_at - t.created_at) / 60)}m`
+                : `${Math.round((Date.now() / 1000 - t.created_at) / 60)}m`;
+              return (
+                <div
+                  key={t.id}
+                  className="flex items-center gap-2 rounded-md border p-2 text-[11px]"
+                >
+                  <span className={statusColor[t.status] ?? ""}>
+                    {statusIcon[t.status] ?? "?"}
+                  </span>
+                  <span className="font-medium shrink-0">{t.project_name}</span>
+                  <span className="truncate text-muted-foreground flex-1">
+                    {t.prompt.slice(0, 60)}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{elapsed}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <Separator />
+
       {/* Memory & Identity */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -358,32 +433,18 @@ export function PPMBotSettingsSection() {
 
       <Separator />
 
-      {/* Default Project */}
+      {/* System Prompt (coordinator override) */}
       <div className="space-y-1.5">
-        <label className="text-[11px] text-muted-foreground">Default Project</label>
-        <Input
-          placeholder="my-project"
-          value={defaultProject}
-          onChange={(e) => setDefaultProject(e.target.value)}
-          className="h-7 text-xs"
-        />
-        <p className="text-[10px] text-muted-foreground">
-          Project used when starting a new chat. Leave empty for default workspace (~/.ppm/bot/).
-        </p>
-      </div>
-
-      {/* System Prompt */}
-      <div className="space-y-1.5">
-        <label className="text-[11px] text-muted-foreground">System Prompt</label>
+        <label className="text-[11px] text-muted-foreground">Custom Instructions</label>
         <textarea
-          placeholder="You are a helpful assistant..."
+          placeholder="Additional instructions for the coordinator (optional)..."
           value={systemPrompt}
           onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setSystemPrompt(e.target.value)}
           className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-xs min-h-[60px] resize-y ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           rows={3}
         />
         <p className="text-[10px] text-muted-foreground">
-          Custom personality/instructions prepended to each session.
+          Extra instructions added to the coordinator identity. Leave empty to use defaults from coordinator.md.
         </p>
       </div>
 

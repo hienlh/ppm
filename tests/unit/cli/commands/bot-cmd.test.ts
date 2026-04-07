@@ -8,6 +8,9 @@ import {
   getSessionTitles,
   getPinnedSessionIds,
   getApprovedPairedChats,
+  createBotTask,
+  getBotTask,
+  getRecentBotTasks,
 } from "../../../../src/services/db.service.ts";
 import { PPMBotMemory } from "../../../../src/services/ppmbot/ppmbot-memory.ts";
 import { resolveChatId } from "../../../../src/cli/commands/bot-cmd.ts";
@@ -30,7 +33,6 @@ describe("resolveChatId", () => {
   });
 
   it("should auto-detect single approved chat", async () => {
-    // Insert a paired chat directly
     const db = (await import("../../../../src/services/db.service.ts")).getDb();
     db.query(
       `INSERT INTO clawbot_paired_chats (telegram_chat_id, telegram_user_id, display_name, status, approved_at)
@@ -189,7 +191,6 @@ describe("ppm bot session/project CLI", () => {
       const sessions = getRecentPPMBotSessions(CHAT_ID, 10);
       const titles = getSessionTitles(sessions.map((s) => s.session_id));
       const pinnedIds = getPinnedSessionIds();
-      // Just verify these functions don't crash — titles/pins may be empty
       expect(typeof titles).toBe("object");
       expect(pinnedIds instanceof Set).toBe(true);
     });
@@ -217,9 +218,33 @@ describe("ppm bot session/project CLI", () => {
       const names = getDistinctPPMBotProjectNames();
       expect(names).toContain("alpha");
       expect(names).toContain("beta");
-      // No duplicates
       expect(names.filter((n: string) => n === "alpha").length).toBe(1);
     });
+  });
+});
+
+// ── Delegation CLI (unit) ─────────────────────────────────────────
+
+describe("ppm bot delegation DB operations", () => {
+  beforeEach(() => {
+    const testDb = openTestDb();
+    setDb(testDb);
+  });
+
+  it("should create and retrieve a task via DB helpers", () => {
+    createBotTask("task-cli-1", "chat-100", "ppm", "/p/ppm", "fix login");
+    const task = getBotTask("task-cli-1");
+    expect(task).toBeTruthy();
+    expect(task!.status).toBe("pending");
+    expect(task!.prompt).toBe("fix login");
+  });
+
+  it("should list tasks for a specific chat", () => {
+    createBotTask("t1", "chat-100", "ppm", "/p", "task 1");
+    createBotTask("t2", "chat-100", "app", "/a", "task 2");
+    createBotTask("t3", "chat-200", "ppm", "/p", "other chat");
+    const tasks = getRecentBotTasks("chat-100", 10);
+    expect(tasks.length).toBe(2);
   });
 });
 
@@ -270,8 +295,8 @@ describe("ppm bot CLI integration", () => {
     const stdout = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
     expect(stdout).toContain("PPMBot CLI Commands");
-    expect(stdout).toContain("ppm bot project");
-    expect(stdout).toContain("ppm bot session");
+    expect(stdout).toContain("Delegation");
+    expect(stdout).toContain("ppm bot delegate");
     expect(stdout).toContain("ppm bot memory");
   });
 
@@ -287,40 +312,12 @@ describe("ppm bot CLI integration", () => {
     );
     const stdout = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
-    // New DB has no projects, so "No projects" is expected
     expect(stdout).toContain("No projects");
   });
 
-  it("should execute status via CLI (no active session)", async () => {
-    const tmpDir = await createTempDir();
-    const env = { ...process.env, PPM_HOME: tmpDir };
-
-    // Insert a paired chat so resolveChatId works
-    const { Database } = await import("bun:sqlite");
-    const { resolve } = await import("node:path");
-    const dbPath = resolve(tmpDir, "ppm.db");
-    const db = new Database(dbPath);
-    db.exec("PRAGMA journal_mode = WAL");
-    // Need to run migrations — just use the CLI which auto-inits
-    db.close();
-
+  it("should execute status via CLI", async () => {
     const proc = Bun.spawn(
       ["bun", "run", "src/index.ts", "bot", "status", "--chat", "99999"],
-      {
-        cwd: "/Users/hienlh/Projects/ppm",
-        stdout: "pipe",
-        stderr: "pipe",
-        env,
-      },
-    );
-    const stdout = await new Response(proc.stdout).text();
-    expect(await proc.exited).toBe(0);
-    expect(stdout).toContain("No active session");
-  });
-
-  it("should execute session list via CLI (empty)", async () => {
-    const proc = Bun.spawn(
-      ["bun", "run", "src/index.ts", "bot", "session", "list", "--chat", "99999"],
       {
         cwd: "/Users/hienlh/Projects/ppm",
         stdout: "pipe",
@@ -330,7 +327,8 @@ describe("ppm bot CLI integration", () => {
     );
     const stdout = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
-    expect(stdout).toContain("No sessions");
+    expect(stdout).toContain("Chat: 99999");
+    expect(stdout).toContain("Active tasks:");
   });
 
   it("should output JSON with --json flag on memory list", async () => {

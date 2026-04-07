@@ -114,9 +114,9 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 | Feature | Priority | Status | Description |
 |---------|----------|--------|-------------|
+| **Telegram Bot (PPMBot Coordinator)** | High | ✅ Done (v0.9.11) | Redesigned: Coordinator session per chat delegates project tasks to subagents. Single persistent identity in `~/.ppm/bot/coordinator.md`. Task execution in isolation. CLI-driven delegation via `ppm bot` commands. Cross-provider support. **Completed in v0.9.11**. |
 | **Hooks system** | High | — | Event hooks for PPM lifecycle (file save, git commit, chat message, etc.). Foundation for Skills API and deeper extension integration. |
 | **PPM Skills API** | High | — | Stable internal API for AI to control PPM: file.read/write/search, terminal.run, git.status/commit/diff, db.query, editor.open/goto, project.switch. Skills are the bridge between AI and PPM features. |
-| **Telegram Bot (ClawBot)** | High | ✅ Done (v0.9.10) | Long-polling Telegram bot with session routing, FTS5 memory system, progressive message editing, pairing-based security. Routes through existing providers (Claude SDK, Cursor). No external bot infrastructure. |
 | **Built-in Clawbot** | High | — | Lightweight AI agent built into PPM using Anthropic Messages API (not Agent SDK). Uses Skills API + MCP tools. Instant response, no external CLI deps. For quick tasks: file search, code explanation, simple refactors. |
 | **More providers** | Medium | — | Gemini CLI (Tier 2), OpenAI Codex (Tier 2), Tier 3 chat-only (any OpenAI-compatible API). Provider interface already clean from v0.9. |
 

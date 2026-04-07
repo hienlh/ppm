@@ -10,10 +10,9 @@ const POLL_TIMEOUT = 25;
 const MIN_EDIT_INTERVAL = 1000;
 const BOT_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{30,50}$/;
 
-/** Known PPMBot slash commands */
+/** Known PPMBot slash commands (coordinator: 3 public + 1 hidden) */
 const COMMANDS = new Set([
-  "start", "project", "new", "sessions", "resume",
-  "status", "stop", "memory", "forget", "remember", "restart", "version", "help",
+  "start", "status", "help", "restart",
 ]);
 
 export type UpdateHandler = (update: TelegramUpdate) => Promise<void>;
@@ -42,19 +41,9 @@ export class PPMBotTelegram {
     try {
       await this.callApi("setMyCommands", {
         commands: [
-          { command: "start", description: "Greeting + list projects" },
-          { command: "project", description: "Switch/list projects" },
-          { command: "new", description: "Fresh session (current project)" },
-          { command: "sessions", description: "List recent sessions" },
-          { command: "resume", description: "Resume a previous session" },
-          { command: "status", description: "Current project/session info" },
-          { command: "stop", description: "End current session" },
-          { command: "memory", description: "Show project memories" },
-          { command: "forget", description: "Remove matching memories" },
-          { command: "remember", description: "Save a fact" },
-          { command: "restart", description: "Restart PPM server" },
-          { command: "version", description: "Show PPM version" },
-          { command: "help", description: "Show all commands" },
+          { command: "start", description: "Welcome + list projects" },
+          { command: "status", description: "Running tasks + delegations" },
+          { command: "help", description: "Show commands" },
         ],
       });
       console.log("[ppmbot] Commands registered");

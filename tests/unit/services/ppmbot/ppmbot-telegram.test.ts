@@ -17,22 +17,19 @@ describe("PPMBot Telegram — parseCommand", () => {
     expect(cmd?.args).toBe("");
   });
 
-  it("should parse /project with args", () => {
-    const cmd = PPMBotTelegram.parseCommand(makeMessage("/project my-app"));
-    expect(cmd?.command).toBe("project");
-    expect(cmd?.args).toBe("my-app");
+  it("should parse /status command", () => {
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/status"));
+    expect(cmd?.command).toBe("status");
   });
 
-  it("should parse /resume with number", () => {
-    const cmd = PPMBotTelegram.parseCommand(makeMessage("/resume 3"));
-    expect(cmd?.command).toBe("resume");
-    expect(cmd?.args).toBe("3");
+  it("should parse /help command", () => {
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/help"));
+    expect(cmd?.command).toBe("help");
   });
 
-  it("should parse /remember with multi-word fact", () => {
-    const cmd = PPMBotTelegram.parseCommand(makeMessage("/remember the API uses REST not GraphQL"));
-    expect(cmd?.command).toBe("remember");
-    expect(cmd?.args).toBe("the API uses REST not GraphQL");
+  it("should parse /restart command (hidden)", () => {
+    const cmd = PPMBotTelegram.parseCommand(makeMessage("/restart"));
+    expect(cmd?.command).toBe("restart");
   });
 
   it("should handle @botname suffix", () => {
@@ -45,16 +42,16 @@ describe("PPMBot Telegram — parseCommand", () => {
     expect(cmd).toBeNull();
   });
 
-  it("should return null for unknown commands", () => {
-    const cmd = PPMBotTelegram.parseCommand(makeMessage("/unknown"));
-    expect(cmd).toBeNull();
+  it("should return null for removed commands (now handled by coordinator NL)", () => {
+    const removedCommands = ["project", "new", "sessions", "resume", "stop", "memory", "forget", "remember", "version"];
+    for (const name of removedCommands) {
+      const cmd = PPMBotTelegram.parseCommand(makeMessage(`/${name}`));
+      expect(cmd).toBeNull();
+    }
   });
 
-  it("should parse all 11 known commands", () => {
-    const commands = [
-      "start", "project", "new", "sessions", "resume",
-      "status", "stop", "memory", "forget", "remember", "help",
-    ];
+  it("should parse all 4 known commands", () => {
+    const commands = ["start", "status", "help", "restart"];
     for (const name of commands) {
       const cmd = PPMBotTelegram.parseCommand(makeMessage(`/${name}`));
       expect(cmd?.command).toBe(name);

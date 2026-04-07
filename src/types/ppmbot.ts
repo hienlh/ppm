@@ -90,6 +90,27 @@ export interface MemoryRecallResult {
   rank?: number;
 }
 
+/** Bot task row from SQLite */
+export interface BotTask {
+  id: string;
+  chatId: string;
+  projectName: string;
+  projectPath: string;
+  prompt: string;
+  status: BotTaskStatus;
+  resultSummary: string | null;
+  resultFull: string | null;
+  sessionId: string | null;
+  error: string | null;
+  reported: boolean;
+  timeoutMs: number;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+}
+
+export type BotTaskStatus = "pending" | "running" | "completed" | "failed" | "timeout";
+
 /** Paired chat row from SQLite */
 export interface PPMBotPairedChat {
   id: number;

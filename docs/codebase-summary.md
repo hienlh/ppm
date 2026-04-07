@@ -66,13 +66,17 @@ src/
 │   ├── extension-rpc.ts         # RPC channel (request/response/events)
 │   ├── extension-host-worker.ts # Worker-side extension loading
 │   ├── contribution-registry.ts # Central registry for commands, views, config
-│   ├── clawbot/                 # Telegram bot service layer
-│   │   ├── clawbot.service.ts   # Main orchestrator (poller lifecycle, routing)
-│   │   ├── clawbot-telegram.ts  # Telegram API (long-polling, send, edit, typing)
-│   │   ├── clawbot-session.ts   # Session mapping (chatID → PPM sessionID)
-│   │   ├── clawbot-memory.ts    # FTS5 memory (save, recall, decay, supersede)
-│   │   ├── clawbot-formatter.ts # Markdown → Telegram HTML, chunking
-│   │   └── clawbot-streamer.ts  # ChatEvent → progressive message edits
+│   ├── ppmbot/                  # PPMBot coordinator service layer
+│   │   ├── ppmbot-service.ts    # Main orchestrator (poller lifecycle, message routing)
+│   │   ├── ppmbot-session.ts    # Coordinator session manager, project resolver
+│   │   ├── ppmbot-telegram.ts   # Telegram API (long-polling, send, edit, typing)
+│   │   ├── ppmbot-memory.ts     # SQLite memory (project memories, context recall)
+│   │   ├── ppmbot-delegation.ts # Task execution (creates isolated session per project)
+│   │   ├── ppmbot-formatter.ts  # Markdown → Telegram HTML, chunking
+│   │   └── ppmbot-streamer.ts   # ChatEvent → progressive message edits
+│   ├── clawbot/                 # Legacy: Telegram bot service layer (deprecated v0.9.11)
+│   │   ├── clawbot.service.ts   # (Original direct-chat model, replaced by coordinator)
+│   │   └── ... (other files)
 │   ├── database/
 │   │   ├── adapter-registry.ts  # SQLite/Postgres adapter registry
 │   │   ├── sqlite-adapter.ts
@@ -90,6 +94,7 @@ src/
 │   ├── git.ts
 │   ├── mcp.ts                   # McpServerConfig, McpTransportType, validation
 │   ├── extension.ts             # ExtensionManifest, ExtensionInfo, RpcMessage, ExtensionContext
+│   ├── ppmbot.ts                # BotTask, TelegramUpdate, PPMBotCommand (coordinator types)
 │   ├── project.ts
 │   └── terminal.ts
 └── web/                         # React frontend (Vite + React 18)
@@ -276,12 +281,19 @@ src/
   - **DatabaseAdapterRegistry** — Register/retrieve DatabaseAdapter implementations (extensible pattern)
   - **SQLiteAdapter** — SQLite connection/query execution with readonly checks
   - **PostgresAdapter** — PostgreSQL connection/query execution with readonly checks
-  - **ClawBotService** — Telegram bot orchestrator (startup, shutdown, message routing)
-  - **ClawBotTelegramService** — Telegram API (long-polling, send, edit, typing, command handling)
-  - **ClawBotSessionService** — chatID → PPM sessionID mapping, session state tracking
-  - **ClawBotMemoryService** — FTS5 persistent memory (save, recall, decay, project-aware search)
-  - **ClawBotFormatterService** — Markdown → Telegram HTML, message chunking (4096 char limit)
-  - **ClawBotStreamerService** — ChatEvent streaming → progressive Telegram message editing
+  - **PPMBotService** — Coordinator orchestrator (startup, shutdown, message routing, task polling)
+  - **PPMBotSessionManager** — Coordinator session per chat in ~/.ppm/bot/, project resolver
+  - **PPMBotTelegramService** — Telegram API (long-polling, send, edit, typing, command handling)
+  - **PPMBotMemoryService** — SQLite memory persistence (save, recall, project-aware search)
+  - **executeDelegation()** — Task execution (creates isolated session, runs prompt, captures result)
+  - **PPMBotFormatterService** — Markdown → Telegram HTML, message chunking (4096 char limit)
+  - **PPMBotStreamerService** — ChatEvent streaming → progressive Telegram message editing
+  - **ClawBotService** — Legacy Telegram bot (deprecated v0.9.11, replaced by PPMBot coordinator)
+  - **ClawBotTelegramService** — Legacy Telegram API
+  - **ClawBotSessionService** — Legacy session mapping
+  - **ClawBotMemoryService** — Legacy memory service
+  - **ClawBotFormatterService** — Legacy formatter
+  - **ClawBotStreamerService** — Legacy streamer
 - **Pattern:** Singleton services, dependency injection via imports, adapter registry for extensibility
 
 ### Provider Layer (src/providers/)
@@ -605,6 +617,33 @@ ppm ext dev /path/to/src          # Dev symlink
 ---
 
 ## Recent Changes (v0.9.0+)
+
+### v0.9.11 (PPMBot Coordinator Redesign)
+- **Architecture Shift** — PPMBot transformed from direct AI chat executor to intelligent coordinator/team leader
+  - Single persistent coordinator session per chat in `~/.ppm/bot/` workspace
+  - Delegates project-specific tasks to subagents (spawns fresh PPM sessions per project)
+  - Decision framework: Answer directly if no project context needed, delegate if file access required
+  - Telegram commands reduced from 13 to 3 public (/start, /help, /status) + 1 hidden (/restart)
+- **Delegation Flow**
+  - CLI: `ppm bot delegate --chat <id> --project <name> --prompt "<enriched>"` creates task
+  - Background task poller (5s interval) executes pending tasks
+  - Task execution: Creates isolated session, runs async generator, captures result summary
+  - UI: Settings panel shows delegated tasks with auto-refresh
+  - Abort/timeout handling: 900s default timeout per task
+- **Database Schema v14** — New `bot_tasks` table (taskId, chatId, projectName, prompt, status, result, error, timeout)
+- **Coordinator Identity** — `coordinator.md` replaces per-session identity, loaded from `~/.ppm/bot/coordinator.md`
+  - Cross-provider identity via XML context block injected into SDK subprocess
+  - Coordinator tools: bash-accessible `ppm bot` CLI commands (delegate, task-status, task-result, tasks)
+- **CLI Expansion** — New `ppm bot` command group
+  - Delegation: `delegate`, `task-status`, `task-result`, `tasks`
+  - Project management: `project list`, `project current`, `project switch`
+  - Session mgmt: `session new`, `session list`, `session resume`, `session stop`
+  - Status/help: `status`, `version`, `restart`, `help`
+- **Files Created:**
+  - `src/services/ppmbot/ppmbot-delegation.ts` — Delegation execution + result capture
+  - Updated: `src/services/ppmbot/ppmbot-service.ts` (task poller lifecycle)
+  - Updated: `src/cli/commands/bot-cmd.ts` (delegation + project/session commands)
+  - Updated: `src/services/db.service.ts` (bot_tasks table, schema v14 migration)
 
 ### v0.9.10 (ClawBot Telegram Integration)
 - **Telegram Bot Service** — Long-polling Telegram bot with message routing

@@ -32,18 +32,131 @@ export async function resolveChatId(chatOpt?: string): Promise<string> {
 }
 
 /**
- * `ppm bot` CLI — allows AI (via Bash tool) to manage PPMBot sessions,
- * projects, memories, and server operations through natural language.
- *
- * All session/project commands auto-detect the paired Telegram chat.
+ * `ppm bot` CLI — coordinator-era commands: delegation, memory, project list, status.
  */
 export function registerBotCommands(program: Command): void {
   const bot = program.command("bot").description("PPMBot utilities");
 
+  registerDelegationCommands(bot);
   registerMemoryCommands(bot);
   registerProjectCommands(bot);
-  registerSessionCommands(bot);
   registerMiscCommands(bot);
+}
+
+// ── Delegation ─────────────────────────────────────────────────────
+
+function registerDelegationCommands(bot: Command): void {
+  bot
+    .command("delegate")
+    .description("Delegate a task to a project subagent")
+    .requiredOption("--chat <id>", "Telegram chat ID")
+    .requiredOption("--project <name>", "Project name")
+    .requiredOption("--prompt <text>", "Enriched task prompt")
+    .option("--timeout <ms>", "Timeout in milliseconds", "900000")
+    .action(async (opts: { chat: string; project: string; prompt: string; timeout: string }) => {
+      try {
+        const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
+        const sessions = new PPMBotSessionManager();
+        const project = sessions.resolveProject(opts.project);
+        if (!project) {
+          console.error(`${C.red}✗${C.reset} Project not found: ${opts.project}`);
+          process.exit(1);
+        }
+
+        const taskId = crypto.randomUUID();
+        const { createBotTask } = await import("../../services/db.service.ts");
+        createBotTask(taskId, opts.chat, project.name, project.path, opts.prompt, Number(opts.timeout) || 900000);
+
+        console.log(JSON.stringify({ taskId, project: project.name, status: "pending" }));
+      } catch (e) {
+        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
+      }
+    });
+
+  bot
+    .command("task-status <id>")
+    .description("Get status of a delegated task")
+    .action(async (id: string) => {
+      try {
+        const { getBotTask } = await import("../../services/db.service.ts");
+        const task = getBotTask(id);
+        if (!task) {
+          console.error(`${C.red}✗${C.reset} Task not found: ${id}`);
+          process.exit(1);
+        }
+        const elapsed = task.startedAt
+          ? Math.round((Date.now() / 1000 - task.startedAt) / 60)
+          : 0;
+        console.log(JSON.stringify({
+          id: task.id,
+          status: task.status,
+          project: task.projectName,
+          prompt: task.prompt.slice(0, 100),
+          elapsed: `${elapsed}m`,
+          summary: task.resultSummary?.slice(0, 200) ?? null,
+        }));
+      } catch (e) {
+        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
+      }
+    });
+
+  bot
+    .command("task-result <id>")
+    .description("Get full result of a completed task")
+    .action(async (id: string) => {
+      try {
+        const { getBotTask } = await import("../../services/db.service.ts");
+        const task = getBotTask(id);
+        if (!task) {
+          console.error(`${C.red}✗${C.reset} Task not found: ${id}`);
+          process.exit(1);
+        }
+        if (task.status === "completed") {
+          console.log(task.resultFull ?? "(no output)");
+        } else if (task.status === "failed") {
+          console.error(`Task failed: ${task.error ?? "unknown error"}`);
+        } else {
+          console.log(`Task status: ${task.status} (not completed yet)`);
+        }
+      } catch (e) {
+        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
+      }
+    });
+
+  bot
+    .command("tasks")
+    .description("List recent delegated tasks")
+    .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
+    .action(async (opts: { chat?: string }) => {
+      try {
+        const chatId = await resolveChatId(opts.chat);
+        const { getRecentBotTasks } = await import("../../services/db.service.ts");
+        const tasks = getRecentBotTasks(chatId, 20);
+
+        if (tasks.length === 0) {
+          console.log(`${C.dim}No delegated tasks found.${C.reset}`);
+          return;
+        }
+
+        const statusIcon: Record<string, string> = {
+          pending: "⏳", running: "🔄", completed: "✅", failed: "❌", timeout: "⏱",
+        };
+
+        for (const t of tasks) {
+          const icon = statusIcon[t.status] ?? "?";
+          const sid = t.id.slice(0, 8);
+          const prompt = t.prompt.slice(0, 50);
+          console.log(`  ${icon} ${C.dim}${sid}${C.reset} ${C.bold}${t.projectName}${C.reset} — ${prompt}`);
+        }
+        console.log(`\n${C.dim}${tasks.length} tasks${C.reset}`);
+      } catch (e) {
+        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
+        process.exit(1);
+      }
+    });
 }
 
 // ── Memory ──────────────────────────────────────────────────────────
@@ -147,202 +260,9 @@ function registerProjectCommands(bot: Command): void {
           return;
         }
 
-        // Show current project if possible
-        let current = "";
-        try {
-          const chatId = await resolveChatId();
-          const active = sessions.getActiveSession(chatId);
-          current = active?.projectName ?? "";
-        } catch { /* no chat — skip marker */ }
-
         for (const name of projects) {
-          const marker = name === current ? ` ${C.green}✓${C.reset}` : "";
-          console.log(`  ${name}${marker}`);
+          console.log(`  ${name}`);
         }
-      } catch (e) {
-        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
-    });
-
-  proj
-    .command("switch <name>")
-    .description("Switch to a different project")
-    .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
-    .action(async (name: string, opts: { chat?: string }) => {
-      try {
-        const chatId = await resolveChatId(opts.chat);
-        const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
-        const sessions = new PPMBotSessionManager();
-        const session = await sessions.switchProject(chatId, name);
-        console.log(`${C.green}✓${C.reset} Switched to ${C.bold}${session.projectName}${C.reset}`);
-      } catch (e) {
-        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
-    });
-
-  proj
-    .command("current")
-    .description("Show current project")
-    .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
-    .action(async (opts: { chat?: string }) => {
-      try {
-        const chatId = await resolveChatId(opts.chat);
-        const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
-        const sessions = new PPMBotSessionManager();
-        const active = sessions.getActiveSession(chatId);
-
-        // Fallback: check DB for active session
-        if (!active) {
-          const { getActivePPMBotSession } = await import("../../services/db.service.ts");
-          const { configService } = await import("../../services/config.service.ts");
-          const projects = (configService.get("projects") as any[]) ?? [];
-          for (const p of projects) {
-            const dbSession = getActivePPMBotSession(chatId, p.name);
-            if (dbSession) {
-              console.log(dbSession.project_name);
-              return;
-            }
-          }
-          console.log(`${C.dim}No active project. Use: ppm bot project switch <name>${C.reset}`);
-          return;
-        }
-        console.log(active.projectName);
-      } catch (e) {
-        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
-    });
-}
-
-// ── Session ─────────────────────────────────────────────────────────
-
-function registerSessionCommands(bot: Command): void {
-  const sess = bot.command("session").description("Manage chat sessions");
-
-  sess
-    .command("new")
-    .description("Start a fresh session (current project)")
-    .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
-    .action(async (opts: { chat?: string }) => {
-      try {
-        const chatId = await resolveChatId(opts.chat);
-        const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
-        const sessions = new PPMBotSessionManager();
-
-        // Get current project before closing
-        const active = sessions.getActiveSession(chatId);
-        const projectName = active?.projectName;
-        await sessions.closeSession(chatId);
-        const session = await sessions.getOrCreateSession(chatId, projectName ?? undefined);
-        console.log(`${C.green}✓${C.reset} New session for ${C.bold}${session.projectName}${C.reset} (${session.sessionId.slice(0, 8)})`);
-      } catch (e) {
-        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
-    });
-
-  sess
-    .command("list")
-    .description("List recent sessions")
-    .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
-    .option("-l, --limit <n>", "Max results", "20")
-    .option("--json", "Output as JSON")
-    .action(async (opts: { chat?: string; limit: string; json?: boolean }) => {
-      try {
-        const chatId = await resolveChatId(opts.chat);
-        const { getRecentPPMBotSessions, getSessionTitles, getPinnedSessionIds } = await import("../../services/db.service.ts");
-        const allSessions = getRecentPPMBotSessions(chatId, Number(opts.limit) || 20);
-
-        if (allSessions.length === 0) {
-          console.log(`${C.dim}No sessions found.${C.reset}`);
-          return;
-        }
-
-        const titles = getSessionTitles(allSessions.map((s) => s.session_id));
-        const pinnedIds = getPinnedSessionIds();
-
-        // Sort: pinned first, then by last_message_at desc
-        const sorted = [...allSessions].sort((a, b) => {
-          const aPin = pinnedIds.has(a.session_id) ? 1 : 0;
-          const bPin = pinnedIds.has(b.session_id) ? 1 : 0;
-          if (aPin !== bPin) return bPin - aPin;
-          return b.last_message_at - a.last_message_at;
-        });
-
-        if (opts.json) {
-          const jsonData = sorted.map((s, i) => ({
-            index: i + 1,
-            sessionId: s.session_id,
-            project: s.project_name,
-            title: titles[s.session_id]?.replace(/^\[PPM\]\s*/, "") || "",
-            pinned: pinnedIds.has(s.session_id),
-            active: !!s.is_active,
-            lastMessage: new Date(s.last_message_at * 1000).toISOString(),
-          }));
-          console.log(JSON.stringify(jsonData, null, 2));
-          return;
-        }
-
-        for (const [i, s] of sorted.entries()) {
-          const pin = pinnedIds.has(s.session_id) ? "📌 " : "   ";
-          const activeDot = s.is_active ? ` ${C.green}⬤${C.reset}` : "";
-          const rawTitle = titles[s.session_id]?.replace(/^\[PPM\]\s*/, "") || "";
-          const title = rawTitle ? rawTitle.slice(0, 50) : `${C.dim}untitled${C.reset}`;
-          const sid = s.session_id.slice(0, 8);
-          const date = new Date(s.last_message_at * 1000).toLocaleString(undefined, {
-            month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-          });
-
-          console.log(`${pin}${i + 1}. ${title}${activeDot}`);
-          console.log(`      ${C.dim}${sid} · ${s.project_name} · ${date}${C.reset}`);
-        }
-      } catch (e) {
-        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
-    });
-
-  sess
-    .command("resume <target>")
-    .description("Resume a session by index number or session ID prefix")
-    .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
-    .action(async (target: string, opts: { chat?: string }) => {
-      try {
-        const chatId = await resolveChatId(opts.chat);
-        const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
-        const sessions = new PPMBotSessionManager();
-
-        const index = parseInt(target, 10);
-        const isIndex = !isNaN(index) && index >= 1 && String(index) === target.trim();
-
-        const session = isIndex
-          ? await sessions.resumeSessionById(chatId, index)
-          : await sessions.resumeSessionByIdPrefix(chatId, target.trim());
-
-        if (!session) {
-          console.log(`${C.yellow}Session not found: ${target}${C.reset}`);
-          process.exit(1);
-        }
-        console.log(`${C.green}✓${C.reset} Resumed session ${C.dim}${session.sessionId.slice(0, 8)}${C.reset} (${C.bold}${session.projectName}${C.reset})`);
-      } catch (e) {
-        console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
-        process.exit(1);
-      }
-    });
-
-  sess
-    .command("stop")
-    .description("End the current session")
-    .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
-    .action(async (opts: { chat?: string }) => {
-      try {
-        const chatId = await resolveChatId(opts.chat);
-        const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
-        const sessions = new PPMBotSessionManager();
-        await sessions.closeSession(chatId);
-        console.log(`${C.green}✓${C.reset} Session ended`);
       } catch (e) {
         console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
         process.exit(1);
@@ -355,45 +275,32 @@ function registerSessionCommands(bot: Command): void {
 function registerMiscCommands(bot: Command): void {
   bot
     .command("status")
-    .description("Show current project and session info")
+    .description("Show current status and running tasks")
     .option("--chat <id>", "Telegram chat ID (auto-detected if single)")
     .option("--json", "Output as JSON")
     .action(async (opts: { chat?: string; json?: boolean }) => {
       try {
         const chatId = await resolveChatId(opts.chat);
-        const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
-        const sessions = new PPMBotSessionManager();
-        const active = sessions.getActiveSession(chatId);
-
-        // Fallback: check DB for any active session
-        let project = active?.projectName ?? "";
-        let provider = active?.providerId ?? "";
-        let sessionId = active?.sessionId ?? "";
-
-        if (!active) {
-          const { getRecentPPMBotSessions } = await import("../../services/db.service.ts");
-          const recent = getRecentPPMBotSessions(chatId, 1);
-          if (recent.length > 0 && recent[0]!.is_active) {
-            project = recent[0]!.project_name;
-            provider = recent[0]!.provider_id;
-            sessionId = recent[0]!.session_id;
-          }
-        }
+        const { getRecentBotTasks } = await import("../../services/db.service.ts");
+        const tasks = getRecentBotTasks(chatId, 10);
+        const active = tasks.filter((t) => t.status === "running" || t.status === "pending");
 
         if (opts.json) {
-          console.log(JSON.stringify({ chatId, project, provider, sessionId }));
+          console.log(JSON.stringify({ chatId, activeTasks: active.length, recentTasks: tasks.length }));
           return;
         }
 
-        if (!project) {
-          console.log(`${C.dim}No active session. Use: ppm bot project switch <name>${C.reset}`);
-          return;
-        }
+        console.log(`Chat: ${chatId}`);
+        console.log(`Active tasks: ${active.length}`);
+        console.log(`Recent tasks: ${tasks.length}`);
 
-        console.log(`Project:  ${C.bold}${project}${C.reset}`);
-        console.log(`Provider: ${provider}`);
-        console.log(`Session:  ${C.dim}${sessionId.slice(0, 12)}…${C.reset}`);
-        console.log(`Chat:     ${chatId}`);
+        if (active.length) {
+          console.log(`\n${C.cyan}Running:${C.reset}`);
+          for (const t of active) {
+            const elapsed = Math.round((Date.now() / 1000 - t.createdAt) / 60);
+            console.log(`  🔄 ${C.dim}${t.id.slice(0, 8)}${C.reset} ${C.bold}${t.projectName}${C.reset} — ${t.prompt.slice(0, 50)} (${elapsed}m)`);
+          }
+        }
       } catch (e) {
         console.error(`${C.red}✗${C.reset} ${e instanceof Error ? e.message : String(e)}`);
         process.exit(1);
@@ -442,28 +349,25 @@ function registerMiscCommands(bot: Command): void {
     .action(() => {
       console.log(`${C.bold}PPMBot CLI Commands${C.reset}
 
-${C.cyan}Project:${C.reset}
-  ppm bot project list             List available projects
-  ppm bot project switch <name>    Switch to a project
-  ppm bot project current          Show current project
-
-${C.cyan}Session:${C.reset}
-  ppm bot session new              Start fresh session
-  ppm bot session list             List recent sessions
-  ppm bot session resume <n|id>    Resume a session
-  ppm bot session stop             End current session
+${C.cyan}Delegation:${C.reset}
+  ppm bot delegate --chat <id> --project <name> --prompt "<task>"
+  ppm bot task-status <id>         Check task status
+  ppm bot task-result <id>         Get task result
+  ppm bot tasks                    List recent tasks
 
 ${C.cyan}Memory (cross-project):${C.reset}
   ppm bot memory save "<text>"     Save a memory (-c category)
   ppm bot memory list              List saved memories
   ppm bot memory forget "<topic>"  Delete matching memories
 
+${C.cyan}Project:${C.reset}
+  ppm bot project list             List available projects
+
 ${C.cyan}Server:${C.reset}
-  ppm bot status                   Current project/session info
+  ppm bot status                   Current status + running tasks
   ppm bot version                  Show PPM version
   ppm bot restart                  Restart PPM server
 
-${C.dim}Session/project commands auto-detect your Telegram chat.
-Use --chat <id> if multiple chats are paired.${C.reset}`);
+${C.dim}Use --chat <id> if multiple chats are paired.${C.reset}`);
     });
 }

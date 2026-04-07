@@ -401,3 +401,16 @@ settingsRoutes.delete("/clawbot/memories/:id", (c) => {
     return c.json(err((e as Error).message), 500);
   }
 });
+
+/** GET /settings/clawbot/tasks — list recent delegated tasks */
+settingsRoutes.get("/clawbot/tasks", (c) => {
+  const limit = Number(c.req.query("limit")) || 20;
+  try {
+    const rows = getDb().query(
+      "SELECT * FROM bot_tasks ORDER BY created_at DESC LIMIT ?",
+    ).all(limit);
+    return c.json(ok(rows));
+  } catch (e) {
+    return c.json(ok([]));
+  }
+});

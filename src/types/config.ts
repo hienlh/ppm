@@ -11,7 +11,6 @@ export interface TelegramConfig {
 export interface PPMBotConfig {
   enabled: boolean;
   default_provider: string;
-  default_project: string;
   system_prompt: string;
   show_tool_calls: boolean;
   show_thinking: boolean;
@@ -102,8 +101,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   clawbot: {
     enabled: false,
     default_provider: "claude",
-    default_project: "",
-    system_prompt: "You are PPMBot, a helpful AI coding assistant on Telegram. Keep responses concise and mobile-friendly. Use short paragraphs. When showing code, use compact examples. Be direct and helpful.",
+    system_prompt: "",
     show_tool_calls: true,
     show_thinking: false,
     permission_mode: "bypassPermissions",

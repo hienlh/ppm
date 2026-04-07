@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 13;
+const CURRENT_SCHEMA_VERSION = 14;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -385,6 +385,33 @@ function runMigrations(database: Database): void {
         ON clawbot_paired_chats(status);
 
       PRAGMA user_version = 13;
+    `);
+  }
+
+  if (current < 14) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS bot_tasks (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        project_path TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        result_summary TEXT,
+        result_full TEXT,
+        session_id TEXT,
+        error TEXT,
+        reported INTEGER NOT NULL DEFAULT 0,
+        timeout_ms INTEGER DEFAULT 900000,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        started_at INTEGER,
+        completed_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_bot_tasks_status ON bot_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_bot_tasks_chat ON bot_tasks(chat_id, created_at DESC);
+
+      PRAGMA user_version = 14;
     `);
   }
 }
@@ -1186,6 +1213,87 @@ export function isPairedChat(chatId: string): boolean {
     "SELECT 1 FROM clawbot_paired_chats WHERE telegram_chat_id = ? AND status = 'approved'",
   ).get(chatId);
   return row != null;
+}
+
+// ---------------------------------------------------------------------------
+// Bot Tasks helpers
+// ---------------------------------------------------------------------------
+
+import type { BotTask, BotTaskStatus } from "../types/ppmbot.ts";
+
+export function createBotTask(
+  id: string, chatId: string, projectName: string, projectPath: string,
+  prompt: string, timeoutMs = 900000,
+): void {
+  getDb().query(
+    `INSERT INTO bot_tasks (id, chat_id, project_name, project_path, prompt, timeout_ms)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, chatId, projectName, projectPath, prompt, timeoutMs);
+}
+
+export function updateBotTaskStatus(
+  id: string, status: BotTaskStatus,
+  updates?: { sessionId?: string; resultSummary?: string; resultFull?: string; error?: string },
+): void {
+  const sets = ["status = ?"];
+  const params: (string | number | null)[] = [status];
+
+  if (status === "running") {
+    sets.push("started_at = unixepoch()");
+  }
+  if (status === "completed" || status === "failed" || status === "timeout") {
+    sets.push("completed_at = unixepoch()");
+  }
+  if (updates?.sessionId != null) { sets.push("session_id = ?"); params.push(updates.sessionId); }
+  if (updates?.resultSummary != null) { sets.push("result_summary = ?"); params.push(updates.resultSummary); }
+  if (updates?.resultFull != null) { sets.push("result_full = ?"); params.push(updates.resultFull); }
+  if (updates?.error != null) { sets.push("error = ?"); params.push(updates.error); }
+
+  params.push(id);
+  getDb().query(`UPDATE bot_tasks SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+}
+
+export function markBotTaskReported(id: string): void {
+  getDb().query("UPDATE bot_tasks SET reported = 1 WHERE id = ?").run(id);
+}
+
+export function getBotTask(id: string): BotTask | null {
+  const row = getDb().query("SELECT * FROM bot_tasks WHERE id = ?").get(id) as Record<string, any> | null;
+  return row ? mapBotTaskRow(row) : null;
+}
+
+export function getRecentBotTasks(chatId: string, limit = 20): BotTask[] {
+  const rows = getDb().query(
+    "SELECT * FROM bot_tasks WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?",
+  ).all(chatId, limit) as Record<string, any>[];
+  return rows.map(mapBotTaskRow);
+}
+
+export function getRunningBotTasks(): BotTask[] {
+  const rows = getDb().query(
+    "SELECT * FROM bot_tasks WHERE status IN ('pending', 'running') ORDER BY created_at ASC",
+  ).all() as Record<string, any>[];
+  return rows.map(mapBotTaskRow);
+}
+
+function mapBotTaskRow(row: Record<string, any>): BotTask {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    projectName: row.project_name,
+    projectPath: row.project_path,
+    prompt: row.prompt,
+    status: row.status,
+    resultSummary: row.result_summary,
+    resultFull: row.result_full,
+    sessionId: row.session_id,
+    error: row.error,
+    reported: !!row.reported,
+    timeoutMs: row.timeout_ms,
+    createdAt: row.created_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+  };
 }
 
 // Auto-close on process exit

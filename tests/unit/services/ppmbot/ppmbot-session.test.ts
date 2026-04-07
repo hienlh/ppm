@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach } from "bun:test";
 import { openTestDb, setDb } from "../../../../src/services/db.service.ts";
 import { configService } from "../../../../src/services/config.service.ts";
 import { PPMBotSessionManager } from "../../../../src/services/ppmbot/ppmbot-session.ts";
@@ -88,34 +88,6 @@ describe("PPMBot SessionManager", () => {
 
       const names = manager.getProjectNames();
       expect(names).toEqual([]);
-    });
-  });
-
-  describe("getActiveSession", () => {
-    it("should return null when no session exists", () => {
-      const result = manager.getActiveSession("12345");
-      expect(result).toBeNull();
-    });
-  });
-
-  describe("updateSessionTitle", () => {
-    it("should truncate long messages to 60 chars", () => {
-      // We test indirectly by verifying no error thrown
-      const longText = "a".repeat(200);
-      expect(() => manager.updateSessionTitle("sess-1", longText)).not.toThrow();
-    });
-  });
-
-  describe("listRecentSessions", () => {
-    it("should return empty array for new chat", () => {
-      const sessions = manager.listRecentSessions("99999");
-      expect(sessions).toEqual([]);
-    });
-  });
-
-  describe("closeSession", () => {
-    it("should not throw when no active session", async () => {
-      await expect(manager.closeSession("nonexistent")).resolves.toBeUndefined();
     });
   });
 });

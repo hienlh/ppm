@@ -2,11 +2,55 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.10
+**Current Version:** v0.9.11
 
 ---
 
 ## [0.9.11] — 2026-04-07
+
+### Added
+- **PPMBot Coordinator Redesign** — Transform from direct AI chat executor to intelligent team leader delegating to subagents
+  - Single persistent coordinator session per Telegram chat in `~/.ppm/bot/` workspace
+  - Decision framework: Answer directly if no project context needed; delegate for file access, project-specific tasks
+  - Delegation via bash: `ppm bot delegate --chat <id> --project <name> --prompt "<enriched>"` creates task
+  - Background task poller (5s interval) executes pending tasks in isolation
+  - Each task execution: Creates fresh PPM session in target project, runs async generator, captures result summary
+  - Abort/timeout handling: AbortController-based task cancellation, 900s default timeout
+  - UI: Settings panel displays delegated tasks with auto-refresh
+  - CLI expansion: `ppm bot` commands for delegation, project management, session control, status queries
+  - Telegram commands reduced: 3 public (/start, /help, /status) + 1 hidden (/restart)
+  - Coordinator identity: `~/.ppm/bot/coordinator.md` replaces per-session identity, loaded via XML context block
+  - Cross-provider support: Coordinator identity works with any provider (Claude SDK, Cursor, etc.)
+
+### Technical Details
+- **Database Migration (v14):**
+  - `bot_tasks` — taskId, chatId, projectName, projectPath, prompt, status, resultSummary, resultFull, error, timeoutMs, createdAt, startedAt, completedAt
+  - Indexes: `idx_bot_tasks_status`, `idx_bot_tasks_chat` for fast polling + history queries
+- **Files Created:**
+  - `src/services/ppmbot/ppmbot-delegation.ts` — executeDelegation() function with task lifecycle management
+- **Files Modified:**
+  - `src/services/ppmbot/ppmbot-service.ts` — Task poller loop, lifecycle management (start/stop)
+  - `src/services/ppmbot/ppmbot-session.ts` — PPMBotSessionManager with coordinator session cache
+  - `src/services/db.service.ts` — Schema v14 migration, bot_tasks CRUD functions
+  - `src/cli/commands/bot-cmd.ts` — Expanded with delegation, project, session, status, help commands
+  - `src/server/routes/settings.ts` — Bot tasks endpoints for UI refresh
+  - `src/web/components/settings/ppmbot-settings-section.tsx` — Delegated tasks panel with auto-refresh
+- **Type Changes:**
+  - New: `BotTask`, `BotTaskStatus` ("pending" | "running" | "completed" | "failed" | "timeout")
+  - New: `PPMBotCommand` with chatId, messageId, userId
+- **API Changes:** New endpoints for bot task management
+- **Breaking Changes:** None (coordinator coexists with legacy ClawBot; migration transparent)
+
+### Key Design Principles
+- **Coordinator per chat** — Single session manages delegation, not direct chat
+- **Project isolation** — Each delegated task spawns fresh isolated session
+- **CLI-driven delegation** — Coordinator calls bash `ppm bot` commands (bash-safe tools only)
+- **Background execution** — Task polling decoupled from message handler
+- **Result capture** — Store both summary (notification) and full output (detailed review)
+
+---
+
+## [0.9.10] — 2026-04-06
 
 ### Added
 - **Supervisor Always Alive Feature** — Distinguish between soft stop (server shutdown) and full shutdown (supervisor shutdown)
