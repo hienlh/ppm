@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.59] - 2026-04-07
+
+### Added
+- **Usage pattern charts**: Account profile view (eye icon) now shows day-of-week bars, hour-of-day heatmap, and 7x24 grid to identify peak usage times. Toggle between 5-hour and weekly metrics.
+
 ## [0.9.58] - 2026-04-07
 
 ### Fixed
