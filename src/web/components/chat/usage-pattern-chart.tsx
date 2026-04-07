@@ -110,6 +110,9 @@ export function UsagePatternChart({ accountId }: { accountId: string }) {
     );
   }
 
+  const dataPoints = snapshots.length;
+  const daysWithData = new Set(snapshots.map((s) => new Date(s.recorded_at + (s.recorded_at.endsWith("Z") ? "" : "Z")).toDateString())).size;
+
   return (
     <div className="mt-2 space-y-2">
       <div className="flex items-center justify-between">
@@ -118,21 +121,28 @@ export function UsagePatternChart({ accountId }: { accountId: string }) {
           <button
             onClick={() => setMode("5h")}
             className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${mode === "5h" ? "bg-primary/15 text-primary" : "text-text-subtle hover:text-text-secondary"}`}
+            title="5-hour rolling window limit — resets every 5 hours"
           >
             5h
           </button>
           <button
             onClick={() => setMode("weekly")}
             className={`px-1.5 py-0.5 rounded cursor-pointer transition-colors ${mode === "weekly" ? "bg-primary/15 text-primary" : "text-text-subtle hover:text-text-secondary"}`}
+            title="Weekly limit — resets every 7 days"
           >
             Wk
           </button>
         </div>
       </div>
 
+      {/* Explanation */}
+      <p className="text-[9px] text-text-subtle leading-tight">
+        Avg {mode === "5h" ? "5-hour" : "weekly"} limit usage over {daysWithData}d ({dataPoints} samples). Higher % = closer to rate limit. Hover cells for details.
+      </p>
+
       {/* Day of week bars */}
       <div>
-        <span className="text-[9px] text-text-subtle">By Day</span>
+        <span className="text-[9px] text-text-subtle">Avg usage by day of week</span>
         <div className="flex flex-col gap-[2px] mt-0.5">
           {DAY_LABELS.map((label, i) => {
             const val = dayAvg[i] ?? 0;
@@ -156,7 +166,7 @@ export function UsagePatternChart({ accountId }: { accountId: string }) {
 
       {/* Hour of day heatmap */}
       <div>
-        <span className="text-[9px] text-text-subtle">By Hour</span>
+        <span className="text-[9px] text-text-subtle">Avg usage by hour (0h-23h)</span>
         <div className="flex gap-[1px] mt-0.5">
           {HOUR_LABELS.map((h) => {
             const val = hourAvg[h] ?? 0;
@@ -164,7 +174,7 @@ export function UsagePatternChart({ accountId }: { accountId: string }) {
               <div key={h} className="flex-1 flex flex-col items-center gap-[1px]">
                 <div
                   className={`w-full aspect-square rounded-[2px] ${cellColor(val)}`}
-                  title={`${h}:00 — ${Math.round(val * 100)}%`}
+                  title={`${h}:00 — avg ${Math.round(val * 100)}% usage`}
                 />
                 {h % 6 === 0 && (
                   <span className="text-[7px] text-text-subtle tabular-nums">{h}</span>
@@ -178,7 +188,7 @@ export function UsagePatternChart({ accountId }: { accountId: string }) {
       {/* Heatmap: day × hour grid */}
       {grid && (
         <div>
-          <span className="text-[9px] text-text-subtle">Heatmap</span>
+          <span className="text-[9px] text-text-subtle">Day x Hour heatmap</span>
           <div className="flex flex-col gap-[1px] mt-0.5">
             {DAY_LABELS.map((label, d) => (
               <div key={label} className="flex items-center gap-[1px]">
@@ -189,15 +199,40 @@ export function UsagePatternChart({ accountId }: { accountId: string }) {
                     <div
                       key={h}
                       className={`flex-1 aspect-square rounded-[1px] ${cellColor(cell.avg)}`}
-                      title={`${label} ${h}:00 — ${cell.count > 0 ? Math.round(cell.avg * 100) + "%" : "no data"}`}
+                      title={`${label} ${h}:00 — ${cell.count > 0 ? `avg ${Math.round(cell.avg * 100)}% (${cell.count} samples)` : "no data"}`}
                     />
                   );
                 })}
               </div>
             ))}
+            {/* Hour axis labels for heatmap */}
+            <div className="flex items-center gap-[1px]">
+              <span className="w-4 shrink-0" />
+              {HOUR_LABELS.map((h) => (
+                <div key={h} className="flex-1 text-center">
+                  {h % 6 === 0 && <span className="text-[7px] text-text-subtle tabular-nums">{h}</span>}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
+
+      {/* Color legend */}
+      <div className="flex items-center gap-1.5 text-[8px] text-text-subtle">
+        <span>Low</span>
+        <div className="flex gap-[2px]">
+          <div className="size-2 rounded-[1px] bg-green-500/30" />
+          <div className="size-2 rounded-[1px] bg-green-500/60" />
+          <div className="size-2 rounded-[1px] bg-amber-500/50" />
+          <div className="size-2 rounded-[1px] bg-amber-500/80" />
+          <div className="size-2 rounded-[1px] bg-red-500/80" />
+        </div>
+        <span>High</span>
+        <span className="ml-1">|</span>
+        <div className="size-2 rounded-[1px] bg-surface-elevated border border-border/30" />
+        <span>No data</span>
+      </div>
     </div>
   );
 }
