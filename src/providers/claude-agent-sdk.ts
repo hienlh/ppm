@@ -1,6 +1,7 @@
 import {
   query,
   listSessions as sdkListSessions,
+  getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -318,9 +319,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return this.listSessionsByDir();
   }
 
-  async listSessionsByDir(dir?: string): Promise<SessionInfo[]> {
+  async listSessionsByDir(dir?: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]> {
     try {
-      const sdkSessions = await sdkListSessions({ dir, limit: 50 });
+      const limit = opts?.limit ?? 50;
+      const offset = opts?.offset ?? 0;
+      const sdkSessions = await sdkListSessions({ dir, limit, offset });
       // Overlay DB titles (user-set) over SDK titles
       const ids = sdkSessions.map((s) => s.sessionId);
       const dbTitles = getSessionTitles(ids);
@@ -339,6 +342,23 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         projectName: s.projectName,
         createdAt: s.createdAt,
       }));
+    }
+  }
+
+  async getSessionInfoById(sessionId: string, dir?: string): Promise<SessionInfo | null> {
+    try {
+      const info = await sdkGetSessionInfo(sessionId, { dir });
+      if (!info) return null;
+      const dbTitles = getSessionTitles([info.sessionId]);
+      return {
+        id: info.sessionId,
+        providerId: this.id,
+        title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? info.firstPrompt ?? "Chat",
+        createdAt: new Date(info.lastModified).toISOString(),
+        updatedAt: new Date(info.lastModified).toISOString(),
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -813,6 +833,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (subtype === "api_retry" && (msg as any).error_status === 401 && account && !authRetried) {
             authRetried = true;
             try {
+              // refreshAccessToken has mutex + skip-if-fresh: if another session already
+              // refreshed, it returns immediately without calling OAuth again.
               await accountService.refreshAccessToken(account.id, false);
               const refreshedAccount = accountService.getWithTokens(account.id);
               if (refreshedAccount) {
@@ -988,6 +1010,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (assistantError === "authentication_failed" && account && !authRetried) {
               authRetried = true;
               try {
+                // refreshAccessToken has mutex + skip-if-fresh: if another session already
+                // refreshed, it returns immediately without calling OAuth again.
                 await accountService.refreshAccessToken(account.id, false);
                 const refreshedAccount = accountService.getWithTokens(account.id);
                 if (refreshedAccount) {
@@ -1176,6 +1200,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (!authRetried) {
                 authRetried = true;
                 try {
+                  // refreshAccessToken has mutex + skip-if-fresh: if another session already
+                  // refreshed, it returns immediately without calling OAuth again.
                   await accountService.refreshAccessToken(account.id, false);
                   const refreshedAccount = accountService.getWithTokens(account.id);
                   if (refreshedAccount) {

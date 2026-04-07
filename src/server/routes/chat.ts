@@ -75,17 +75,44 @@ chatRoutes.get("/sessions", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const providerId = c.req.query("providerId");
-    const sessions = await chatService.listSessions(providerId, projectPath);
-    // Enrich with pin status
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
+    const offset = parseInt(c.req.query("offset") ?? "0", 10) || 0;
+
+    const sessions = await chatService.listSessions(providerId, projectPath, { limit, offset });
     const pinnedIds = getPinnedSessionIds();
-    const enriched = sessions.map((s) => ({ ...s, pinned: pinnedIds.has(s.id) }));
-    // Sort: pinned first (by pinned_at implicit via Set order), then unpinned by createdAt
+
+    // On first page, fetch pinned sessions that may be outside the current page
+    let pinnedSessions: typeof sessions = [];
+    if (offset === 0 && pinnedIds.size > 0) {
+      const pageIds = new Set(sessions.map((s) => s.id));
+      const missingPinnedIds = [...pinnedIds].filter((id) => !pageIds.has(id));
+      if (missingPinnedIds.length > 0) {
+        // Fetch individual pinned sessions by ID via SDK
+        const claudeProvider = providerRegistry.get("claude") as any;
+        if (claudeProvider?.getSessionInfoById) {
+          const results = await Promise.all(
+            missingPinnedIds.map((id) => claudeProvider.getSessionInfoById(id, projectPath)),
+          );
+          pinnedSessions = results.filter((s: any): s is NonNullable<typeof s> => s != null);
+        }
+      }
+    }
+
+    // Merge and enrich with pin status
+    const merged = [...pinnedSessions, ...sessions];
+    const seen = new Set<string>();
+    const deduped = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
+    const enriched = deduped.map((s) => ({ ...s, pinned: pinnedIds.has(s.id) }));
+
+    // Sort: pinned first, then by createdAt desc
     enriched.sort((a, b) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-    return c.json(ok(enriched));
+
+    const hasMore = sessions.length >= limit;
+    return c.json(ok({ sessions: enriched, hasMore }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

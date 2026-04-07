@@ -26,7 +26,7 @@ export interface AIProvider {
   onToolApproval?: (callback: ToolApprovalHandler) => void;
   abortQuery?(sessionId: string): void;
   getMessages?(sessionId: string): Promise<ChatMessage[]>;
-  listSessionsByDir?(dir: string): Promise<SessionInfo[]>;
+  listSessionsByDir?(dir: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]>;
   ensureProjectPath?(sessionId: string, path: string): void;
   setForkSource?(sessionId: string, sourceSessionId: string): void;
   forkAtMessage?(sessionId: string, messageId: string, opts?: { title?: string; dir?: string }): Promise<{ sessionId: string }>;
@@ -64,6 +64,11 @@ export interface SessionInfo {
   createdAt: string;
   updatedAt?: string;
   pinned?: boolean;
+}
+
+export interface SessionListResponse {
+  sessions: SessionInfo[];
+  hasMore: boolean;
 }
 
 export interface LimitBucket {

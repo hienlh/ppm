@@ -29,12 +29,12 @@ class ChatService {
     return provider.resumeSession(sessionId);
   }
 
-  async listSessions(providerId?: string, dir?: string): Promise<SessionInfo[]> {
+  async listSessions(providerId?: string, dir?: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]> {
     if (providerId) {
       const provider = providerRegistry.get(providerId);
       if (!provider) throw new Error(`Provider "${providerId}" not found`);
       if (dir && provider.listSessionsByDir) {
-        return provider.listSessionsByDir(dir);
+        return provider.listSessionsByDir(dir, opts);
       }
       return provider.listSessions();
     }
@@ -44,7 +44,7 @@ class ChatService {
       const provider = providerRegistry.get(info.id);
       if (provider) {
         if (dir && provider.listSessionsByDir) {
-          all.push(...await provider.listSessionsByDir(dir));
+          all.push(...await provider.listSessionsByDir(dir, opts));
         } else {
           all.push(...await provider.listSessions());
         }

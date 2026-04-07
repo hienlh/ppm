@@ -38,8 +38,8 @@ export function ChatWelcome({ projectName, onSelectSession }: ChatWelcomeProps) 
     if (!projectName) return;
     setLoading(true);
     try {
-      const data = await api.get<SessionInfo[]>(`${projectUrl(projectName)}/chat/sessions`);
-      setSessions(data.slice(0, FETCH_SESSIONS_LIMIT));
+      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions?limit=${FETCH_SESSIONS_LIMIT}`);
+      setSessions(data.sessions.slice(0, FETCH_SESSIONS_LIMIT));
     } catch {
       // silently ignore
     } finally {

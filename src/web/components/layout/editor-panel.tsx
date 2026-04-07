@@ -108,8 +108,8 @@ function EmptyPanel({ panelId }: { panelId: string }) {
     if (!activeProject?.name) return;
     setLoadingSessions(true);
     try {
-      const data = await api.get<SessionInfo[]>(`${projectUrl(activeProject.name)}/chat/sessions`);
-      setSessions(data.slice(0, FETCH_SESSIONS_LIMIT));
+      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(activeProject.name)}/chat/sessions?limit=${FETCH_SESSIONS_LIMIT}`);
+      setSessions(data.sessions.slice(0, FETCH_SESSIONS_LIMIT));
     } catch {
       // silently ignore — empty state still functional without sessions
     } finally {

@@ -8,7 +8,7 @@ import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { UsageDetailPanel } from "./usage-badge";
 import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
-import type { SessionInfo } from "../../../types/chat";
+import type { SessionInfo, SessionListResponse } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 
@@ -107,8 +107,11 @@ export function ChatHistoryBar({
   const [searchQuery, setSearchQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const openTab = useTabStore((s) => s.openTab);
+  const PAGE_SIZE = 50;
 
   const togglePanel = (panel: PanelType) => {
     setActivePanel((prev) => prev === panel ? null : panel);
@@ -118,14 +121,35 @@ export function ChatHistoryBar({
     if (!projectName) return;
     setLoading(true);
     try {
-      const data = await api.get<SessionInfo[]>(`${projectUrl(projectName)}/chat/sessions`);
-      setSessions(data);
+      const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?limit=${PAGE_SIZE}&offset=0`);
+      setSessions(data.sessions);
+      setHasMore(data.hasMore);
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
   }, [projectName]);
+
+  const loadMore = useCallback(async () => {
+    if (!projectName || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      // Offset by count of non-pinned sessions (pinned are injected separately by backend)
+      const unpinnedCount = sessions.filter((s) => !s.pinned).length;
+      const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?limit=${PAGE_SIZE}&offset=${unpinnedCount}`);
+      setSessions((prev) => {
+        const existingIds = new Set(prev.map((s) => s.id));
+        const newSessions = data.sessions.filter((s) => !existingIds.has(s.id));
+        return [...prev, ...newSessions];
+      });
+      setHasMore(data.hasMore);
+    } catch {
+      // silent
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [projectName, loadingMore, hasMore, sessions]);
 
   // Load sessions when history panel opens
   useEffect(() => {
@@ -367,78 +391,90 @@ export function ChatHistoryBar({
                 {searchQuery ? "No matching sessions" : "No sessions yet"}
               </div>
             ) : (
-              filteredSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group"
-                >
-                  <ProviderBadge providerId={session.providerId} />
-                  {editingId === session.id ? (
-                    <form
-                      className="flex items-center gap-1 flex-1 min-w-0"
-                      onSubmit={(e) => { e.preventDefault(); saveTitle(); }}
-                    >
-                      <input
-                        ref={editInputRef}
-                        value={editingTitle}
-                        onChange={(e) => setEditingTitle(e.target.value)}
-                        onBlur={saveTitle}
-                        onKeyDown={(e) => { if (e.key === "Escape") cancelEditing(); }}
-                        className="flex-1 min-w-0 bg-surface-elevated text-[11px] text-text-primary px-1 py-0.5 rounded border border-border outline-none focus:border-primary"
-                        autoFocus
-                      />
-                      <button type="submit" className="p-0.5 text-green-500 hover:text-green-400" onClick={(e) => e.stopPropagation()}>
-                        <Check className="size-3" />
-                      </button>
-                      <button type="button" className="p-0.5 text-text-subtle hover:text-text-secondary" onClick={(e) => { e.stopPropagation(); cancelEditing(); }}>
-                        <X className="size-3" />
-                      </button>
-                    </form>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => openSession(session)}
-                        className="text-[11px] truncate flex-1 text-left flex items-center gap-1"
+              <>
+                {filteredSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group"
+                  >
+                    <ProviderBadge providerId={session.providerId} />
+                    {editingId === session.id ? (
+                      <form
+                        className="flex items-center gap-1 flex-1 min-w-0"
+                        onSubmit={(e) => { e.preventDefault(); saveTitle(); }}
                       >
-                        {session.title?.startsWith("[PPM]") && (
-                          <Bot className="size-3 text-muted-foreground shrink-0" />
-                        )}
-                        {session.title?.startsWith("[PPM]")
-                          ? session.title.slice(7)
-                          : session.title || "Untitled"}
-                      </button>
-                      <button
-                        onClick={(e) => togglePin(e, session)}
-                        className={`p-0.5 rounded transition-all ${
-                          session.pinned
-                            ? "text-primary hover:text-primary/70"
-                            : "text-text-subtle hover:text-text-secondary can-hover:opacity-0 can-hover:group-hover:opacity-100"
-                        }`}
-                        title={session.pinned ? "Unpin session" : "Pin session"}
-                      >
-                        {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-                      </button>
-                      <button
-                        onClick={(e) => startEditing(session, e)}
-                        className="p-0.5 rounded text-text-subtle hover:text-text-secondary can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
-                        title="Rename session"
-                      >
-                        <Pencil className="size-3" />
-                      </button>
-                      <button
-                        onClick={(e) => deleteSession(e, session)}
-                        className="p-0.5 rounded text-text-subtle hover:text-red-400 hover:bg-red-500/20 can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
-                        title="Delete session"
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
-                    </>
-                  )}
-                  {editingId !== session.id && session.updatedAt && (
-                    <span className="text-[10px] text-text-subtle shrink-0 w-10 text-right">{formatDate(session.updatedAt)}</span>
-                  )}
-                </div>
-              ))
+                        <input
+                          ref={editInputRef}
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onBlur={saveTitle}
+                          onKeyDown={(e) => { if (e.key === "Escape") cancelEditing(); }}
+                          className="flex-1 min-w-0 bg-surface-elevated text-[11px] text-text-primary px-1 py-0.5 rounded border border-border outline-none focus:border-primary"
+                          autoFocus
+                        />
+                        <button type="submit" className="p-0.5 text-green-500 hover:text-green-400" onClick={(e) => e.stopPropagation()}>
+                          <Check className="size-3" />
+                        </button>
+                        <button type="button" className="p-0.5 text-text-subtle hover:text-text-secondary" onClick={(e) => { e.stopPropagation(); cancelEditing(); }}>
+                          <X className="size-3" />
+                        </button>
+                      </form>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => openSession(session)}
+                          className="text-[11px] truncate flex-1 text-left flex items-center gap-1"
+                        >
+                          {session.title?.startsWith("[PPM]") && (
+                            <Bot className="size-3 text-muted-foreground shrink-0" />
+                          )}
+                          {session.title?.startsWith("[PPM]")
+                            ? session.title.slice(7)
+                            : session.title || "Untitled"}
+                        </button>
+                        <button
+                          onClick={(e) => togglePin(e, session)}
+                          className={`p-0.5 rounded transition-all ${
+                            session.pinned
+                              ? "text-primary hover:text-primary/70"
+                              : "text-text-subtle hover:text-text-secondary can-hover:opacity-0 can-hover:group-hover:opacity-100"
+                          }`}
+                          title={session.pinned ? "Unpin session" : "Pin session"}
+                        >
+                          {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+                        </button>
+                        <button
+                          onClick={(e) => startEditing(session, e)}
+                          className="p-0.5 rounded text-text-subtle hover:text-text-secondary can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
+                          title="Rename session"
+                        >
+                          <Pencil className="size-3" />
+                        </button>
+                        <button
+                          onClick={(e) => deleteSession(e, session)}
+                          className="p-0.5 rounded text-text-subtle hover:text-red-400 hover:bg-red-500/20 can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
+                          title="Delete session"
+                        >
+                          <Trash2 className="size-3" />
+                        </button>
+                      </>
+                    )}
+                    {editingId !== session.id && session.updatedAt && (
+                      <span className="text-[10px] text-text-subtle shrink-0 w-10 text-right">{formatDate(session.updatedAt)}</span>
+                    )}
+                  </div>
+                ))}
+                {hasMore && !searchQuery && (
+                  <button
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="flex items-center justify-center gap-1 w-full py-1.5 text-[11px] text-text-subtle hover:text-text-secondary hover:bg-surface-elevated transition-colors"
+                  >
+                    {loadingMore ? <Loader2 className="size-3 animate-spin" /> : null}
+                    {loadingMore ? "Loading..." : "Load more"}
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>

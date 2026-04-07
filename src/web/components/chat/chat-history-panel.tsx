@@ -27,8 +27,8 @@ export function ChatHistoryPanel({ projectName }: ChatHistoryPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get<SessionInfo[]>(`${projectUrl(projectName)}/chat/sessions`);
-      setSessions(data);
+      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions`);
+      setSessions(data.sessions);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load sessions");
     } finally {

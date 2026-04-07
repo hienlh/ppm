@@ -25,8 +25,8 @@ export function SessionPicker({
     if (!projectName) return;
     setLoading(true);
     try {
-      const data = await api.get<SessionInfo[]>(`${projectUrl(projectName)}/chat/sessions`);
-      setSessions(data);
+      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions`);
+      setSessions(data.sessions);
     } catch {
       // Silently fail — sessions list is non-critical
     } finally {
