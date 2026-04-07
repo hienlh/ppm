@@ -10,6 +10,7 @@ ppm.yaml
 .DS_Store
 .playwright-mcp
 .cursor/
+.claude/
 repomix-output.xml
 test-claude-oauth*.mjs
 test-verify-oat.mjs
