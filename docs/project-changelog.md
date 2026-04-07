@@ -2,7 +2,37 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.9
+**Current Version:** v0.9.10
+
+---
+
+## [0.9.11] — 2026-04-07
+
+### Added
+- **Supervisor Always Alive Feature** — Distinguish between soft stop (server shutdown) and full shutdown (supervisor shutdown)
+  - `ppm stop` now performs SOFT STOP: kills server only, supervisor remains alive with Cloud WS + tunnel connectivity
+  - `ppm stop --kill` or `ppm down` performs FULL SHUTDOWN: kills everything (old `ppm stop` behavior)
+  - Supervisor now has new `stopped` state (in addition to running, paused, upgrading)
+  - When stopped, minimal HTML page served on the port (503 status on /api/health)
+  - `ppm start` detects existing supervisor and handles resume/upgrade scenarios
+  - Autostart now uses `__supervise__` instead of `__serve__` for consistency
+  - Cloud WS has new commands: `start`, `shutdown` (stop is now soft stop, separate from shutdown)
+  - Supervisor has uncaughtException/unhandledRejection handlers (never crashes)
+  - Supervisor logic modularized into 3 files: supervisor.ts (orchestrator), supervisor-state.ts (state machine), supervisor-stopped-page.ts (503 page)
+
+### Technical Details
+- **Files Created:**
+  - `src/services/supervisor-state.ts` — State machine, IPC command file handling
+  - `src/services/supervisor-stopped-page.ts` — Minimal 503 HTML response
+  - Enhanced `src/services/supervisor.ts` — Orchestrator with stopped state support
+- **Files Modified:**
+  - `src/cli/commands/stop.ts` — Added --kill flag, soft stop default, ppm down alias
+  - `src/cli/commands/start.ts` — Resume detection for existing supervisor
+  - `src/cli/autostart-generator.ts` — Uses __supervise__ entry point
+  - Cloud WS endpoints updated with new commands
+- **Type Changes:** SupervisorState = "running" | "paused" | "stopped" | "upgrading"
+- **API Changes:** GET /api/health returns 503 when server stopped (supervisor still running)
+- **Breaking Changes:** None (backward compatible, graceful fallback)
 
 ---
 

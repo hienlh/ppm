@@ -39,11 +39,20 @@ program
 
 program
   .command("stop")
-  .description("Stop the PPM daemon")
+  .description("Stop the PPM server (supervisor stays alive)")
   .option("-a, --all", "Kill all PPM and cloudflared processes (including untracked)")
+  .option("--kill", "Full shutdown (kills supervisor too)")
   .action(async (options) => {
     const { stopServer } = await import("./cli/commands/stop.ts");
     await stopServer(options);
+  });
+
+program
+  .command("down")
+  .description("Fully shut down PPM (supervisor + server + tunnel)")
+  .action(async () => {
+    const { stopServer } = await import("./cli/commands/stop.ts");
+    await stopServer({ kill: true });
   });
 
 program

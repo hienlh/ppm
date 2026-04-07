@@ -42,6 +42,35 @@ export async function restartServer(options: { config?: string; force?: boolean 
       process.exit(1);
     }
 
+    // Stopped state: treat restart as resume (send resume command)
+    if (state === "stopped") {
+      console.log("\n  Server is stopped. Resuming via supervisor...\n");
+      const cmdFile = resolve(PPM_DIR, ".supervisor-cmd");
+      writeFileSync(cmdFile, JSON.stringify({ action: "resume" }));
+      // Signal supervisor (Windows: polling picks up command file)
+      if (process.platform !== "win32") {
+        try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
+          console.error(`  ✗  Failed to signal supervisor: ${e}`);
+          process.exit(1);
+        }
+      }
+      // Wait for state to change back to running
+      const rStart = Date.now();
+      while (Date.now() - rStart < 15_000) {
+        await Bun.sleep(500);
+        try {
+          const newStatus = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+          if (newStatus.state === "running" && newStatus.pid) {
+            console.log(`  ✓  Server resumed (PID: ${newStatus.pid})`);
+            if (newStatus.shareUrl) console.log(`  ➜  Share:   ${newStatus.shareUrl}`);
+            process.exit(0);
+          }
+        } catch {}
+      }
+      console.error("  ⚠  Resume timed out. Check: ppm logs");
+      process.exit(1);
+    }
+
     const oldServerPid = status.pid as number | undefined;
     console.log("\n  Restarting PPM server via supervisor...");
     console.log("  If you're using PPM terminal, wait a few seconds for auto-reconnect.\n");

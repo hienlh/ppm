@@ -12,6 +12,13 @@ import {
   unlinkSync,
 } from "node:fs";
 import { isCompiledBinary } from "./autostart-generator.ts";
+import {
+  type SupervisorState,
+  getState, setState, waitForResume, triggerResume,
+  readAndDeleteCmd, readStatus, updateStatus,
+  STATUS_FILE, PID_FILE,
+} from "./supervisor-state.ts";
+import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -28,8 +35,6 @@ const UPGRADE_SKIP_INITIAL_MS = 300_000;    // 5min delay before first check
 const SELF_REPLACE_TIMEOUT_MS = 30_000;     // 30s to wait for new supervisor
 
 const PPM_DIR = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"));
-const STATUS_FILE = resolve(PPM_DIR, "status.json");
-const PID_FILE = resolve(PPM_DIR, "ppm.pid");
 const LOG_FILE = resolve(PPM_DIR, "ppm.log");
 const RESTARTING_FLAG = resolve(PPM_DIR, ".restarting");
 
@@ -40,23 +45,10 @@ let tunnelUrl: string | null = null;
 let adoptedTunnelPid: number | null = null; // PID of tunnel kept alive across upgrade
 let shuttingDown = false;
 
-type SupervisorState = "running" | "paused" | "upgrading";
-let supervisorState: SupervisorState = "running";
-
-let resumeResolve: (() => void) | null = null;
-
-function waitForResume(): Promise<void> {
-  return new Promise((resolve) => {
-    resumeResolve = resolve;
-  });
-}
-
-function triggerResume(): void {
-  if (resumeResolve) {
-    resumeResolve();
-    resumeResolve = null;
-  }
-}
+// Module-level refs for softStop (needs access to respawn args)
+let _serverArgs: string[] = [];
+let _logFd: number = -1;
+let _opts: { port: number; host: string; share: boolean } = { port: 8080, host: "0.0.0.0", share: false };
 
 let serverRestarts = 0;
 let lastServerCrash = 0;
@@ -87,21 +79,6 @@ function log(level: string, msg: string) {
   }
 }
 
-// ─── Status management ─────────────────────────────────────────────────
-function readStatus(): Record<string, unknown> {
-  try {
-    if (existsSync(STATUS_FILE)) return JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
-  } catch {}
-  return {};
-}
-
-function updateStatus(patch: Record<string, unknown>) {
-  try {
-    const data = { ...readStatus(), ...patch };
-    writeFileSync(STATUS_FILE, JSON.stringify(data));
-  } catch {}
-}
-
 // ─── Backoff calc ──────────────────────────────────────────────────────
 function backoffDelay(restartCount: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (restartCount - 1), BACKOFF_MAX_MS);
@@ -129,6 +106,12 @@ export async function spawnServer(
 
   const exitCode = await serverChild.exited;
   serverChild = null;
+
+  // Don't respawn if in stopped state (soft stop)
+  if (getState() === "stopped") {
+    log("INFO", "Server exited, supervisor in stopped state — not respawning");
+    return;
+  }
 
   if (exitCode === 0 && shuttingDown) {
     log("INFO", `Server exited cleanly (code ${exitCode})`);
@@ -158,7 +141,7 @@ export async function spawnServer(
   if (serverRestarts > MAX_RESTARTS) {
     log("WARN", `Server exceeded ${MAX_RESTARTS} restarts, pausing`);
     notifyStateChange("running", "paused", "max_restarts_exceeded");
-    supervisorState = "paused";
+    setState("paused");
     updateStatus({
       state: "paused",
       pid: null,
@@ -170,7 +153,7 @@ export async function spawnServer(
     await waitForResume();
     // Resumed — reset and respawn
     notifyStateChange("paused", "running", "user_resume");
-    supervisorState = "running";
+    setState("running");
     serverRestarts = 0;
     updateStatus({ state: "running", pausedAt: null, pauseReason: null });
     log("INFO", "Resuming server after pause");
@@ -301,7 +284,7 @@ export async function spawnTunnel(port: number): Promise<void> {
 // ─── Health checks ─────────────────────────────────────────────────────
 function startServerHealthCheck(port: number) {
   healthTimer = setInterval(async () => {
-    if (shuttingDown || !serverChild) return;
+    if (shuttingDown || !serverChild || getState() === "stopped") return;
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
         signal: AbortSignal.timeout(5000),
@@ -322,6 +305,8 @@ function startTunnelProbe(port: number) {
   tunnelProbeTimer = setInterval(async () => {
     if (shuttingDown || !tunnelUrl) { tunnelFailCount = 0; return; }
     if (!tunnelChild && !adoptedTunnelPid) { tunnelFailCount = 0; return; }
+    // Don't probe when server is intentionally stopped (stopped page serves 503)
+    if (getState() === "stopped") { tunnelFailCount = 0; return; }
 
     // Check if adopted tunnel process is still alive
     if (adoptedTunnelPid && !tunnelChild) {
@@ -421,8 +406,8 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
   try {
     // Prevent spawnServer crash-restart loop from respawning killed children
     shuttingDown = true;
-    notifyStateChange(supervisorState, "upgrading", "self_replace");
-    supervisorState = "upgrading";
+    notifyStateChange(getState(), "upgrading", "self_replace");
+    setState("upgrading");
     updateStatus({ state: "upgrading" });
 
     // Set restarting flag so server child's stopTunnel() skips killing the tunnel
@@ -470,7 +455,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     try { unlinkSync(RESTARTING_FLAG); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
-    supervisorState = "running";
+    setState("running");
     updateStatus({ state: "running" });
     return { success: false, error: "New supervisor failed to start within 30s" };
   } catch (e) {
@@ -478,7 +463,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     try { unlinkSync(RESTARTING_FLAG); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
-    supervisorState = "running";
+    setState("running");
     updateStatus({ state: "running" });
     return { success: false, error: (e as Error).message };
   }
@@ -524,7 +509,7 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
         return {
           type: "heartbeat" as const,
           tunnelUrl,
-          state: supervisorState,
+          state: getState(),
           // Use server-reported version (source of truth) with supervisor fallback
           appVersion: (status.serverVersion as string) || VERSION,
           availableVersion: (status.availableVersion as string) || null,
@@ -560,12 +545,21 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
       });
 
       switch (cmd.action) {
+        case "start":
+          if (getState() === "stopped") {
+            triggerResume();
+            sendResult(true, undefined, { state: "running" });
+          } else {
+            sendResult(false, `Server already in ${getState()} state`);
+          }
+          break;
+
         case "restart":
           if (serverChild) {
             serverRestartRequested = true;
             try { serverChild.kill(); } catch {}
             sendResult(true);
-          } else if (supervisorState === "paused") {
+          } else if (getState() === "paused" || getState() === "stopped") {
             triggerResume();
             sendResult(true);
           } else {
@@ -574,17 +568,25 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           break;
 
         case "resume":
-          if (supervisorState === "paused") {
+          if (getState() === "paused" || getState() === "stopped") {
             triggerResume();
             sendResult(true);
           } else {
-            sendResult(false, "Not in paused state");
+            sendResult(false, `Not in paused/stopped state (current: ${getState()})`);
           }
           break;
 
         case "stop":
+          if (getState() === "stopped") {
+            sendResult(false, "Already stopped");
+          } else {
+            sendResult(true);
+            softStop();
+          }
+          break;
+
+        case "shutdown":
           sendResult(true);
-          // Delay exit to allow WS buffer to flush
           setTimeout(() => {
             shutdown();
             process.exit(0);
@@ -593,10 +595,13 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
 
         case "status":
           sendResult(true, undefined, {
-            state: supervisorState,
+            state: getState(),
             serverPid: serverChild?.pid ?? null,
             tunnelUrl,
             serverRestarts,
+            stoppedAt: getState() === "stopped"
+              ? readStatus().stoppedAt
+              : null,
           });
           break;
 
@@ -607,6 +612,47 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
   } catch (e) {
     log("WARN", `Cloud WS setup failed: ${e}`);
   }
+}
+
+// ─── Soft stop (server only, supervisor stays alive) ──────────────────
+let _softStopRunning = false;
+export async function softStop() {
+  if (getState() === "stopped" || _softStopRunning) return;
+  _softStopRunning = true;
+
+  log("INFO", "Soft stop: killing server, supervisor stays alive");
+  notifyStateChange(getState(), "stopped", "user_stop");
+  setState("stopped");
+
+  // Kill server child
+  if (serverChild) {
+    try { serverChild.kill(); } catch {}
+    serverChild = null;
+  }
+
+  // Stop health checks (no server to check)
+  if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+
+  // Keep: tunnel, Cloud WS, upgrade checks, tunnel probe
+  updateStatus({ state: "stopped", pid: null, stoppedAt: new Date().toISOString() });
+
+  // Start stopped page on the server port so tunnel URL still works
+  await Bun.sleep(500); // brief wait for port release
+  startStoppedPage(_opts.port, _opts.host);
+
+  // Wait for resume signal
+  await waitForResume();
+
+  // Resumed — restart server
+  stopStoppedPage();
+  await Bun.sleep(200); // brief wait for port release
+  notifyStateChange("stopped", "running", "user_start");
+  setState("running");
+  updateStatus({ state: "running", stoppedAt: null });
+  startServerHealthCheck(_opts.port);
+  log("INFO", "Resuming server from stopped state");
+  _softStopRunning = false;
+  spawnServer(_serverArgs, _logFd);
 }
 
 // ─── Shutdown ──────────────────────────────────────────────────────────
@@ -653,6 +699,14 @@ export async function runSupervisor(opts: {
   const logFd = openSync(LOG_FILE, "a");
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
 
+  // Global exception handlers — supervisor must never crash
+  process.on("uncaughtException", (err) => {
+    log("ERROR", `Uncaught exception: ${err.stack || err.message}`);
+  });
+  process.on("unhandledRejection", (reason) => {
+    log("ERROR", `Unhandled rejection: ${reason}`);
+  });
+
   // Write supervisor PID + clear stale availableVersion from previous run
   writeFileSync(PID_FILE, String(process.pid));
   updateStatus({
@@ -668,14 +722,42 @@ export async function runSupervisor(opts: {
   // Strip trailing empty args
   while (serverArgs.length > 0 && serverArgs[serverArgs.length - 1] === "") serverArgs.pop();
 
+  // Save module-level refs for softStop()
+  _serverArgs = serverArgs;
+  _logFd = logFd;
+  _opts = { port: opts.port, host: opts.host, share: opts.share };
+
   // Signal handlers
   process.on("SIGTERM", () => { shutdown(); process.exit(0); });
   process.on("SIGINT", () => { shutdown(); process.exit(0); });
 
-  // SIGUSR2 = graceful server restart (tunnel stays alive) or resume from paused
+  // SIGUSR2 = command file dispatch OR graceful server restart
   process.on("SIGUSR2", () => {
-    if (supervisorState === "paused") {
+    // Check for command file first (soft_stop, resume)
+    const cmd = readAndDeleteCmd();
+    if (cmd) {
+      if (cmd.action === "soft_stop") {
+        log("INFO", "SIGUSR2: soft_stop command received");
+        softStop();
+        return;
+      }
+      if (cmd.action === "resume") {
+        log("INFO", "SIGUSR2: resume command received");
+        if (getState() === "stopped" || getState() === "paused") {
+          triggerResume();
+        }
+        return;
+      }
+    }
+
+    // Default: restart server (existing behavior)
+    if (getState() === "paused") {
       log("INFO", "SIGUSR2 received while paused, resuming server");
+      triggerResume();
+      return;
+    }
+    if (getState() === "stopped") {
+      log("INFO", "SIGUSR2 received while stopped, resuming server");
       triggerResume();
       return;
     }
@@ -707,6 +789,18 @@ export async function runSupervisor(opts: {
     upgradeCheckTimer = setInterval(checkAvailableVersion, UPGRADE_CHECK_INTERVAL_MS);
   }, UPGRADE_SKIP_INITIAL_MS);
 
+  // Windows: poll command file since SIGUSR2 is not available
+  if (process.platform === "win32") {
+    setInterval(() => {
+      const cmd = readAndDeleteCmd();
+      if (!cmd) return;
+      if (cmd.action === "soft_stop") { softStop(); }
+      else if (cmd.action === "resume") {
+        if (getState() === "stopped" || getState() === "paused") triggerResume();
+      }
+    }, 1000);
+  }
+
   // Connect to Cloud via WebSocket (if device is linked)
   connectCloud(opts, serverArgs, logFd);
 
@@ -725,7 +819,7 @@ export async function runSupervisor(opts: {
   await Promise.all(promises);
 
   // If upgrading, selfReplace handles process.exit — wait for it
-  if (supervisorState === "upgrading") {
+  if (getState() === "upgrading") {
     log("INFO", "Server loop exited during upgrade, waiting for selfReplace to finish");
     await new Promise(() => {}); // selfReplace will call process.exit()
   }

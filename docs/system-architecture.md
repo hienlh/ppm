@@ -1628,12 +1628,80 @@ $ ppm upgrade
   → Works in headless environments (no OS autostart dependency)
 
 $ ppm stop
-  → Reads ~/.ppm/status.json first (new format)
-  → Falls back to ppm.pid (compat)
-  → Sends SIGTERM to daemon
+  → SOFT STOP: kills server only, supervisor stays alive with Cloud WS + tunnel
+  → Supervisor transitions to "stopped" state
+  → Minimal HTML page served on port (503 status on /api/health)
+  → Tunnel and Cloud connectivity remain active
+  → `ppm start` resumes without restarting supervisor process
+
+$ ppm stop --kill OR ppm down
+  → FULL SHUTDOWN: kills everything (supervisor + server + tunnel)
+  → Supervisor transitions to "upgrading" then terminates
   → Cleans up status.json and ppm.pid
-  → Graceful shutdown (close WS, cleanup PTY, stop tunnel)
+  → Graceful cleanup (close WS, cleanup PTY, stop tunnel)
 ```
+
+### Supervisor Architecture (v0.9.11+)
+
+The supervisor is a long-lived parent process that manages server + tunnel children with resilience and state management.
+
+**Architecture:**
+```
+Supervisor Process (parent)
+  ├── Server Child (Hono HTTP server)
+  │   ├── Health checks every 30s (/api/health)
+  │   ├── Auto-restart on crash (exponential backoff, max 10 restarts)
+  │   └── If in "stopped" state, serves minimal 503 page instead of restarting
+  │
+  ├── Tunnel Child (Cloudflare Quick Tunnel, if --share)
+  │   ├── URL probe every 2min
+  │   ├── Auto-reconnect on failure
+  │   └── URL persisted to status.json
+  │
+  ├── State Machine: "running" | "paused" | "stopped" | "upgrading"
+  │   ├── running — Server spawned, tunnel optional, serving requests
+  │   ├── paused — Supervisor paused (resume via signal)
+  │   ├── stopped — Server stopped (soft stop), tunnel alive, Cloud WS active
+  │   └── upgrading — Self-replace in progress
+  │
+  ├── Upgrade Check (every 15min)
+  │   └── npm registry poll → availableVersion written to status.json
+  │
+  ├── Stopped Page Server
+  │   ├── Lightweight HTTP handler on same port as server
+  │   ├── Returns 503 on /api/health
+  │   └── Tunnels Cloud WS calls through to PPM Cloud
+  │
+  └── Error Resilience
+      ├── uncaughtException → log + exit gracefully
+      ├── unhandledRejection → log + continue
+      └── Signal handlers: SIGTERM (full shutdown), SIGUSR1 (self-replace), SIGUSR2 (restart skip backoff)
+```
+
+**Soft Stop vs Full Shutdown:**
+| Command | Server | Supervisor | Tunnel | Use Case |
+|---------|--------|------------|--------|----------|
+| `ppm stop` | Killed | Stays alive | Stays alive | Restart later with `ppm start` |
+| `ppm stop --kill` | Killed | Killed | Killed | Full cleanup, exit |
+| `ppm down` | Killed | Killed | Killed | Full cleanup, exit |
+
+**State Persistence:**
+- Status file: `~/.ppm/status.json` — PID, port, host, shareUrl, supervisorPid, availableVersion, state
+- Lock file: `~/.ppm/.start-lock` — Prevent concurrent starts
+- Command file: `~/.ppm/.supervisor-cmd` — IPC for soft_stop, resume, self_replace
+
+**Stopped Page Implementation:**
+- Minimal HTTP server on same port as main server
+- Serves `503 Service Unavailable` on /api/health
+- Proxies Cloud WS calls to PPM Cloud (if tunnel configured)
+- Allows `ppm start` to resume without supervisor restart
+
+**Files (Modular Design):**
+- `src/services/supervisor.ts` — Main orchestrator (spawn, health checks, upgrade checks)
+- `src/services/supervisor-state.ts` — State machine, IPC command handling, signal routing
+- `src/services/supervisor-stopped-page.ts` — Minimal 503 page + Cloud WS proxy
+
+---
 
 ### Future: Multi-Machine (Not in v2)
 Would require:

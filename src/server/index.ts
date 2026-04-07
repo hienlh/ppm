@@ -169,6 +169,49 @@ app.route("/api/cloud", cloudRoutes);
 // Static files / SPA fallback (non-API routes)
 app.route("/", staticRoutes);
 
+// ─── Helpers for supervisor detection ───────────────────────────────────
+async function waitForNewSupervisor(statusFile: string, oldPid: number) {
+  const { readFileSync } = await import("node:fs");
+  const start = Date.now();
+  while (Date.now() - start < 30_000) {
+    await Bun.sleep(1000);
+    try {
+      const data = JSON.parse(readFileSync(statusFile, "utf-8"));
+      if (data.supervisorPid && data.supervisorPid !== oldPid && data.state === "running") {
+        console.log(`  Upgrade complete (new PID: ${data.supervisorPid})`);
+        process.exit(0);
+      }
+    } catch {}
+  }
+  console.error("  Upgrade timed out (30s). Check: ppm logs");
+  process.exit(1);
+}
+
+async function waitForServerReady(statusFile: string, port: number) {
+  const { readFileSync } = await import("node:fs");
+  const start = Date.now();
+  while (Date.now() - start < 10_000) {
+    await Bun.sleep(500);
+    try {
+      const data = JSON.parse(readFileSync(statusFile, "utf-8"));
+      if (data.state === "running" && data.pid) {
+        // Verify server is responding
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+            signal: AbortSignal.timeout(2000),
+          });
+          if (res.ok) {
+            console.log(`  Server is ready (PID: ${data.pid}).`);
+            process.exit(0);
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+  console.log("  Resume signal sent. Check: ppm status");
+  process.exit(0);
+}
+
 export async function startServer(options: {
   port?: string;
   share?: boolean;
@@ -189,36 +232,105 @@ export async function startServer(options: {
   const { bootstrapProviders } = await import("../providers/registry.ts");
   await bootstrapProviders();
 
-  // Check if port is already in use before spawning supervisor
-  const portInUse = await new Promise<boolean>((resolve) => {
-    const net = require("node:net") as typeof import("node:net");
-    const tester = net.createServer()
-      .once("error", (err: NodeJS.ErrnoException) => {
-        resolve(err.code === "EADDRINUSE");
-      })
-      .once("listening", () => {
-        tester.close(() => resolve(false));
-      })
-      .listen(port, host);
-  });
-  if (portInUse) {
-    console.error(`\n  ✗  Port ${port} is already in use.`);
-    console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
-    process.exit(1);
-  }
-
   {
     const { resolve } = await import("node:path");
     const { homedir } = await import("node:os");
     const { writeFileSync, readFileSync, mkdirSync, existsSync, openSync } = await import("node:fs");
     const { isCompiledBinary } = await import("../services/autostart-generator.ts");
+    const { writeCmd, acquireLock, releaseLock } = await import("../services/supervisor-state.ts");
 
     const ppmDir = process.env.PPM_HOME || resolve(homedir(), ".ppm");
     if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
     const pidFile = resolve(ppmDir, "ppm.pid");
     const statusFile = resolve(ppmDir, "status.json");
 
-    // Kill any leftover processes from previous run
+    // Prevent concurrent ppm start races
+    if (!acquireLock()) {
+      console.log("\n  Another 'ppm start' is already in progress. Exiting.\n");
+      process.exit(1);
+    }
+    // Release lock on exit (normal or error)
+    process.on("exit", releaseLock);
+
+    // ── Check for existing supervisor ──────────────────────────────────
+    if (existsSync(statusFile)) {
+      try {
+        const status = JSON.parse(readFileSync(statusFile, "utf-8"));
+        const supervisorPid = status.supervisorPid as number;
+
+        if (supervisorPid) {
+          try {
+            process.kill(supervisorPid, 0); // throws if dead
+
+            // Supervisor is alive — handle based on state
+            const state = status.state as string;
+            const runningVersion = status.serverVersion as string;
+
+            if (state === "stopped") {
+              console.log("  Supervisor is alive (stopped state). Resuming server...");
+              if (runningVersion !== VERSION) {
+                console.log(`  Upgrading: ${runningVersion} -> ${VERSION}`);
+                process.kill(supervisorPid, "SIGUSR1");
+                await waitForNewSupervisor(statusFile, supervisorPid);
+              } else {
+                writeCmd("resume");
+                process.kill(supervisorPid, "SIGUSR2");
+                await waitForServerReady(statusFile, port);
+              }
+              return;
+            }
+
+            if (state === "running") {
+              if (runningVersion !== VERSION) {
+                console.log(`  Supervisor running (v${runningVersion}). Upgrading to v${VERSION}...`);
+                process.kill(supervisorPid, "SIGUSR1");
+                await waitForNewSupervisor(statusFile, supervisorPid);
+              } else {
+                console.log(`\n  PPM is already running (PID: ${supervisorPid}).`);
+                console.log(`  Use 'ppm restart' to reload or 'ppm stop' first.\n`);
+                process.exit(0);
+              }
+              return;
+            }
+
+            if (state === "paused") {
+              console.log("  Supervisor is paused (max restarts). Sending resume...");
+              writeCmd("resume");
+              process.kill(supervisorPid, "SIGUSR2");
+              await waitForServerReady(statusFile, port);
+              return;
+            }
+
+            if (state === "upgrading") {
+              console.log("  Supervisor is currently upgrading. Please wait...");
+              process.exit(0);
+            }
+          } catch {
+            // Supervisor PID is dead, continue with fresh start
+          }
+        }
+      } catch {}
+    }
+
+    // ── Check port availability ────────────────────────────────────────
+    const portInUse = await new Promise<boolean>((resolve) => {
+      const net = require("node:net") as typeof import("node:net");
+      const tester = net.createServer()
+        .once("error", (err: NodeJS.ErrnoException) => {
+          resolve(err.code === "EADDRINUSE");
+        })
+        .once("listening", () => {
+          tester.close(() => resolve(false));
+        })
+        .listen(port, host);
+    });
+    if (portInUse) {
+      console.error(`\n  ✗  Port ${port} is already in use.`);
+      console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
+      process.exit(1);
+    }
+
+    // Kill any leftover processes from previous run (stale status.json)
     if (existsSync(statusFile)) {
       try {
         const prev = JSON.parse(readFileSync(statusFile, "utf-8"));

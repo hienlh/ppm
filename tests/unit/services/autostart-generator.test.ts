@@ -76,7 +76,7 @@ describe("generatePlist", () => {
 
   test("includes ProgramArguments with port and host", () => {
     const plist = generatePlist(TEST_CONFIG);
-    expect(plist).toContain("<string>__serve__</string>");
+    expect(plist).toContain("<string>__supervise__</string>");
     expect(plist).toContain("<string>3210</string>");
     expect(plist).toContain("<string>0.0.0.0</string>");
   });
@@ -116,7 +116,7 @@ describe("generateSystemdService", () => {
     const service = generateSystemdService(TEST_CONFIG);
     expect(service).toContain("[Service]");
     expect(service).toContain("ExecStart=");
-    expect(service).toContain("__serve__");
+    expect(service).toContain("__supervise__");
     expect(service).toContain("3210");
   });
 
@@ -163,9 +163,9 @@ describe("generateVbsWrapper", () => {
     expect(vbs).toContain(", 0, False");
   });
 
-  test("includes __serve__ argument", () => {
+  test("includes __supervise__ argument", () => {
     const vbs = generateVbsWrapper(TEST_CONFIG);
-    expect(vbs).toContain("__serve__");
+    expect(vbs).toContain("__supervise__");
   });
 
   test("includes port in arguments", () => {
@@ -232,9 +232,9 @@ describe("buildRegQueryCommand", () => {
 // ─── buildExecCommand ───────────────────────────────────────────────────
 
 describe("buildExecCommand", () => {
-  test("includes __serve__ marker", () => {
+  test("includes __supervise__ marker", () => {
     const cmd = buildExecCommand(TEST_CONFIG);
-    expect(cmd).toContain("__serve__");
+    expect(cmd).toContain("__supervise__");
   });
 
   test("includes port and host", () => {
@@ -257,6 +257,30 @@ describe("buildExecCommand", () => {
     const cmd = buildExecCommand(TEST_CONFIG);
     // Unix: starts with /, Windows: starts with drive letter (C:\)
     expect(cmd[0]).toMatch(isWindows ? /^[A-Z]:\\/i : /^\//);
+  });
+
+  test("does not include __serve__", () => {
+    const cmd = buildExecCommand(TEST_CONFIG);
+    expect(cmd).not.toContain("__serve__");
+  });
+
+  test("includes --share flag when share is true", () => {
+    const cmd = buildExecCommand(TEST_CONFIG_WITH_SHARE);
+    expect(cmd).toContain("--share");
+  });
+
+  test("omits --share flag when share is false", () => {
+    const cmd = buildExecCommand(TEST_CONFIG);
+    expect(cmd).not.toContain("--share");
+  });
+
+  test("points to supervisor.ts script for bun runtime", () => {
+    // When running under bun test, isCompiledBinary() returns false
+    const cmd = buildExecCommand(TEST_CONFIG);
+    const scriptArg = cmd.find((a) => a.endsWith(".ts"));
+    expect(scriptArg).toBeDefined();
+    expect(scriptArg).toContain("supervisor.ts");
+    expect(scriptArg).not.toContain("server");
   });
 });
 

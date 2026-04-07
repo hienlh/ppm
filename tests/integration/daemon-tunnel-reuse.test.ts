@@ -96,7 +96,7 @@ describe("Daemon + Tunnel lifecycle", () => {
     expect(isAlive(status.supervisorPid)).toBe(true);
   });
 
-  it("ppm stop kills supervisor, server and cleans up files", async () => {
+  it("ppm stop (soft) kills server but keeps supervisor alive", async () => {
     if (!existsSync(STATUS_FILE)) {
       console.warn("[skip] status.json not found — start test likely failed");
       return;
@@ -106,9 +106,19 @@ describe("Daemon + Tunnel lifecycle", () => {
     const supPid = status.supervisorPid;
 
     await ppm("stop");
-    await Bun.sleep(2500); // Allow supervisor to gracefully kill children
+    await Bun.sleep(2500); // Allow supervisor to process soft stop
 
     expect(isAlive(serverPid)).toBe(false);
+    // Supervisor stays alive after soft stop
+    if (supPid) expect(isAlive(supPid)).toBe(true);
+    // status.json should still exist with state: "stopped"
+    expect(existsSync(STATUS_FILE)).toBe(true);
+    const newStatus = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+    expect(newStatus.state).toBe("stopped");
+
+    // Full cleanup via --kill
+    await ppm("stop --kill");
+    await Bun.sleep(2000);
     if (supPid) expect(isAlive(supPid)).toBe(false);
     if (existsSync(STATUS_FILE)) {
       cleanupAll();
@@ -177,9 +187,9 @@ describe("Tunnel survives server crash", () => {
     serverPid = newServerPid;
   });
 
-  it("ppm stop kills supervisor, server and tunnel", async () => {
+  it("ppm stop --kill kills supervisor, server and tunnel", async () => {
     if (!cloudflaredAvailable || !tunnelPid) return;
-    await ppm("stop");
+    await ppm("stop --kill");
     await Bun.sleep(2500); // Wait for supervisor to gracefully kill children
 
     expect(isAlive(serverPid)).toBe(false);

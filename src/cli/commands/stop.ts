@@ -1,10 +1,11 @@
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
 const PID_FILE = resolve(PPM_DIR, "ppm.pid");
 const STATUS_FILE = resolve(PPM_DIR, "status.json");
+const CMD_FILE = resolve(PPM_DIR, ".supervisor-cmd");
 
 function killPid(pid: number, label: string): boolean {
   try {
@@ -51,7 +52,7 @@ function killAllByName(name: string): number {
   return killed;
 }
 
-export async function stopServer(options?: { all?: boolean }) {
+export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
   if (options?.all) {
     console.log("  Stopping all PPM and cloudflared processes...\n");
     const cfKilled = killAllByName("cloudflared");
@@ -76,14 +77,76 @@ export async function stopServer(options?: { all?: boolean }) {
     return;
   }
 
-  let status: { pid?: number; tunnelPid?: number; supervisorPid?: number } | null = null;
+  // Full shutdown: --kill flag or `ppm down`
+  if (options?.kill) {
+    return hardStop();
+  }
 
-  // Read status.json
+  // Default: soft stop — kill server only, supervisor stays alive
+  return softStopCmd();
+}
+
+/** Soft stop: write command file + signal supervisor → kills server only */
+async function softStopCmd() {
+  let status: Record<string, unknown> | null = null;
   if (existsSync(STATUS_FILE)) {
     try { status = JSON.parse(readFileSync(STATUS_FILE, "utf-8")); } catch {}
   }
 
-  // Fallback to ppm.pid (now stores supervisor PID)
+  const supervisorPid = (status?.supervisorPid as number) ?? null;
+
+  if (!supervisorPid) {
+    // No supervisor — fall back to hard stop (legacy)
+    return hardStop();
+  }
+
+  // Check if supervisor is alive
+  try { process.kill(supervisorPid, 0); } catch {
+    console.log("Supervisor not running. Cleaning up.");
+    cleanup();
+    return;
+  }
+
+  // Already stopped?
+  if ((status?.state as string) === "stopped") {
+    console.log("PPM server is already stopped. Supervisor still alive.");
+    console.log("Use 'ppm stop --kill' or 'ppm down' to fully shut down.");
+    return;
+  }
+
+  // Write soft stop command file + signal supervisor (Windows: polling picks it up)
+  writeFileSync(CMD_FILE, JSON.stringify({ action: "soft_stop" }));
+  if (process.platform !== "win32") {
+    try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
+      console.error(`  Failed to signal supervisor: ${e}`);
+      return;
+    }
+  }
+
+  // Wait for state to change to "stopped" in status.json
+  const start = Date.now();
+  while (Date.now() - start < 5000) {
+    await Bun.sleep(500);
+    try {
+      const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+      if (data.state === "stopped") {
+        console.log("PPM server stopped. Supervisor still alive (Cloud WS + tunnel).");
+        console.log("Use 'ppm start' to restart or 'ppm stop --kill' to fully shut down.");
+        return;
+      }
+    } catch {}
+  }
+  console.log("PPM server stop requested.");
+}
+
+/** Hard stop: SIGTERM supervisor → everything dies (current behavior) */
+async function hardStop() {
+  let status: { pid?: number; tunnelPid?: number; supervisorPid?: number } | null = null;
+
+  if (existsSync(STATUS_FILE)) {
+    try { status = JSON.parse(readFileSync(STATUS_FILE, "utf-8")); } catch {}
+  }
+
   const pidFromFile = existsSync(PID_FILE)
     ? parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10)
     : NaN;
@@ -102,10 +165,8 @@ export async function stopServer(options?: { all?: boolean }) {
   // Kill supervisor first — its SIGTERM handler kills server + tunnel children
   if (supervisorPid) {
     killPid(supervisorPid, "supervisor");
-    // Give supervisor 2s to gracefully kill children
     await Bun.sleep(2000);
   } else if (fallbackPid) {
-    // Legacy: ppm.pid might be server PID (pre-supervisor) or supervisor PID
     killPid(fallbackPid, "supervisor/server (pidfile)");
     await Bun.sleep(1000);
   }

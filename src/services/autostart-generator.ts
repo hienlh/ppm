@@ -39,24 +39,26 @@ export function resolveBunPath(): string {
   throw new Error("Could not resolve bun binary. Install Bun or add it to PATH.");
 }
 
-/** Build the command array for the PPM server process */
+/** Build the command array for the PPM supervisor process */
 export function buildExecCommand(config: AutoStartConfig): string[] {
   if (isCompiledBinary()) {
-    // Compiled binary: just run self with __serve__ args
-    const args = [process.execPath, "__serve__", String(config.port), config.host];
+    // Compiled binary: just run self with __supervise__ args
+    const args = [process.execPath, "__supervise__", String(config.port), config.host];
     if (config.configPath) args.push(config.configPath);
     if (config.profile) args.push(config.profile);
+    if (config.share) args.push("--share");
     return args;
   }
 
-  // Bun runtime: bun run <script> __serve__ <port> <host> [config] [profile]
+  // Bun runtime: bun run <script> __supervise__ <port> <host> [config] [profile]
   const bunPath = resolveBunPath();
-  const scriptPath = resolve(import.meta.dir, "..", "server", "index.ts");
-  const args = [bunPath, "run", scriptPath, "__serve__", String(config.port), config.host];
+  const scriptPath = resolve(import.meta.dir, "supervisor.ts");
+  const args = [bunPath, "run", scriptPath, "__supervise__", String(config.port), config.host];
   if (config.configPath) args.push(config.configPath);
   else args.push(""); // placeholder
   if (config.profile) args.push(config.profile);
   else args.push(""); // placeholder
+  if (config.share) args.push("--share");
   return args;
 }
 
