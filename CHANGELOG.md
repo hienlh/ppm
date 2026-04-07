@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.56] - 2026-04-07
+
+### Fixed
+- **Usage panel shows all accounts**: Expired temporary accounts are no longer hidden from Usage & Accounts panel. Users can delete them manually.
+
 ## [0.9.55] - 2026-04-07
 
 ### Added

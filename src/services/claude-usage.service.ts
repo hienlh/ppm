@@ -282,8 +282,6 @@ export function getAllAccountUsages(): AccountUsageEntry[] {
   const result: AccountUsageEntry[] = [];
   for (const acc of accounts) {
     const withTokens = accountService.getWithTokens(acc.id);
-    // Skip expired accounts without refresh token (temporary/disposable)
-    if (acc.expiresAt && acc.expiresAt < nowS && !withTokens?.refreshToken) continue;
     const isOAuth = withTokens?.accessToken.startsWith("sk-ant-oat") ?? false;
     const row = snapshotMap.get(acc.id);
     result.push({
