@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.54] - 2026-04-07
+
+### Added
+- **Database row deletion**: Delete rows from SQLite and PostgreSQL tables via data grid UI. Hover row to reveal trash icon, click to confirm/cancel inline. Works for both project-scoped SQLite files and unified database connections.
+- **Delete row API**: `DELETE /sqlite/row` (project-scoped) and `DELETE /api/db/connections/:id/row` (unified) endpoints with readonly enforcement.
+
 ## [0.9.53] - 2026-04-07
 
 ### Added
