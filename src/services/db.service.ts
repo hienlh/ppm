@@ -758,6 +758,15 @@ export function deleteSnapshotsForAccount(accountId: string): void {
   getDb().query("DELETE FROM claude_limit_snapshots WHERE account_id = ?").run(accountId);
 }
 
+/** Get all snapshots for an account within the last N hours (default 7 days = 168h) */
+export function getSnapshotHistory(accountId: string, hours = 168): LimitSnapshotRow[] {
+  return getDb().query(
+    `SELECT * FROM claude_limit_snapshots
+     WHERE account_id = ? AND recorded_at > datetime('now', '-' || ? || ' hours')
+     ORDER BY recorded_at ASC`,
+  ).all(accountId, hours) as LimitSnapshotRow[];
+}
+
 export function cleanupOldLimitSnapshots(): void {
   getDb().query(
     "DELETE FROM claude_limit_snapshots WHERE recorded_at < datetime('now', '-7 days')",

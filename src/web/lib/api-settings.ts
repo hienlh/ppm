@@ -115,6 +115,20 @@ export function getAllAccountUsages(): Promise<AccountUsageEntry[]> {
   return api.get<AccountUsageEntry[]>("/api/accounts/usage");
 }
 
+export interface UsageSnapshot {
+  id: number;
+  account_id: string | null;
+  five_hour_util: number | null;
+  weekly_util: number | null;
+  weekly_opus_util: number | null;
+  weekly_sonnet_util: number | null;
+  recorded_at: string;
+}
+
+export function getUsageHistory(accountId: string): Promise<UsageSnapshot[]> {
+  return api.get<UsageSnapshot[]>(`/api/accounts/${accountId}/usage-history`);
+}
+
 export function importAccounts(params: { data: string; password: string }): Promise<{ imported: number; refreshed: number }> {
   return api.post<{ imported: number; refreshed: number }>("/api/accounts/import", params);
 }

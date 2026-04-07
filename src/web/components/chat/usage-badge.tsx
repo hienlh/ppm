@@ -14,6 +14,7 @@ import {
 } from "../../lib/api-settings";
 import { AddAccountDialog, ExportAccountsDialog, ImportAccountsDialog } from "./account-dialogs";
 import { AccountRotationSettings } from "./account-rotation-settings";
+import { UsagePatternChart } from "./usage-pattern-chart";
 
 interface UsageBadgeProps {
   usage: UsageInfo;
@@ -160,7 +161,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
   onToggle?: (id: string, status: string) => void;
   onDelete?: (id: string, display: string) => void;
   onExport?: (id: string) => void;
-  onViewProfile?: (profile: OAuthProfileData) => void;
+  onViewProfile?: (profile: OAuthProfileData, accountId: string) => void;
   flash?: boolean;
   fullscreen?: boolean;
 }) {
@@ -187,7 +188,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
           {!isExpired && onViewProfile && accountInfo?.profileData && (
             <button
               className="p-1 rounded cursor-pointer text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors"
-              onClick={() => onViewProfile(accountInfo.profileData!)}
+              onClick={() => onViewProfile(accountInfo.profileData!, entry.accountId)}
               title="View profile"
             >
               <Eye className="size-3" />
@@ -259,7 +260,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
-  const [profileView, setProfileView] = useState<OAuthProfileData | null>(null);
+  const [profileView, setProfileView] = useState<{ profile: OAuthProfileData; accountId: string } | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -441,7 +442,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
                 onToggle={handleToggle}
                 onDelete={(id, display) => setDeleteTarget({ id, display })}
                 onExport={(id) => { setExportPreselect(id); setShowExportDialog(true); }}
-                onViewProfile={setProfileView}
+                onViewProfile={(profile, accountId) => setProfileView({ profile, accountId })}
                 flash={flashIds.has(entry.accountId)}
                 fullscreen={isFullscreen}
               />
@@ -494,13 +495,14 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
             </button>
           </div>
           <div className="grid grid-cols-[70px_1fr] gap-x-2 gap-y-0.5 text-[10px]">
-            {profileView.account?.display_name && <><span className="text-text-subtle">Name</span><span>{profileView.account.display_name}</span></>}
-            {profileView.account?.email && <><span className="text-text-subtle">Email</span><span>{profileView.account.email}</span></>}
-            {profileView.organization?.name && <><span className="text-text-subtle">Org</span><span>{profileView.organization.name}</span></>}
-            {profileView.organization?.organization_type && <><span className="text-text-subtle">Type</span><span>{profileView.organization.organization_type}</span></>}
-            {profileView.organization?.rate_limit_tier && <><span className="text-text-subtle">Tier</span><span>{profileView.organization.rate_limit_tier}</span></>}
-            {profileView.organization?.subscription_status && <><span className="text-text-subtle">Status</span><span>{profileView.organization.subscription_status}</span></>}
+            {profileView.profile.account?.display_name && <><span className="text-text-subtle">Name</span><span>{profileView.profile.account.display_name}</span></>}
+            {profileView.profile.account?.email && <><span className="text-text-subtle">Email</span><span>{profileView.profile.account.email}</span></>}
+            {profileView.profile.organization?.name && <><span className="text-text-subtle">Org</span><span>{profileView.profile.organization.name}</span></>}
+            {profileView.profile.organization?.organization_type && <><span className="text-text-subtle">Type</span><span>{profileView.profile.organization.organization_type}</span></>}
+            {profileView.profile.organization?.rate_limit_tier && <><span className="text-text-subtle">Tier</span><span>{profileView.profile.organization.rate_limit_tier}</span></>}
+            {profileView.profile.organization?.subscription_status && <><span className="text-text-subtle">Status</span><span>{profileView.profile.organization.subscription_status}</span></>}
           </div>
+          <UsagePatternChart accountId={profileView.accountId} />
         </div>
       )}
 

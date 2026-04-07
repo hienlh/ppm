@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import { accountService } from "../../services/account.service.ts";
 import { accountSelector } from "../../services/account-selector.service.ts";
-import { updateAccount } from "../../services/db.service.ts";
+import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts";
 import { getAllAccountUsages, getUsageForAccount } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -191,6 +191,14 @@ accountsRoutes.get("/usage", (c) => {
 accountsRoutes.get("/:id/usage", (c) => {
   const { id } = c.req.param();
   return c.json(ok(getUsageForAccount(id)));
+});
+
+/** GET /api/accounts/:id/usage-history — snapshot history for charts */
+accountsRoutes.get("/:id/usage-history", (c) => {
+  const { id } = c.req.param();
+  const hours = Math.min(parseInt(c.req.query("hours") ?? "168", 10) || 168, 168);
+  const snapshots = getSnapshotHistory(id, hours);
+  return c.json(ok(snapshots));
 });
 
 /** POST /api/accounts/:id/verify — re-verify token & refresh profile */
