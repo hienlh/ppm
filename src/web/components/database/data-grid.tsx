@@ -219,24 +219,13 @@ export function DataGrid({
     return () => el.removeEventListener("keydown", handler);
   }, [tableData, selectedRows]);
 
-  if (!tableData) {
-    return (
-      <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
-        {loading ? <Loader2 className="size-4 animate-spin" /> : "Select a table"}
-      </div>
-    );
-  }
-
-  const totalPages = Math.ceil(tableData.total / tableData.limit) || 1;
-  const hasSelection = selectedRows.size > 0;
-  const allSelected = selectedRows.size === tableData.rows.length && tableData.rows.length > 0;
-
   // Build ordered column list: pinned first, then unpinned
   const orderedCols = useMemo(() => {
+    if (!tableData) return [];
     const pinned = tableData.columns.filter((c) => pinnedCols.has(c));
     const unpinned = tableData.columns.filter((c) => !pinnedCols.has(c));
     return [...pinned, ...unpinned];
-  }, [tableData.columns, pinnedCols]);
+  }, [tableData?.columns, pinnedCols]);
 
   // Measure actual column widths and header height from DOM
   const theadRef = useRef<HTMLTableSectionElement>(null);
@@ -248,12 +237,10 @@ export function DataGrid({
     if (!thead) return;
     const measure = () => {
       setHeaderHeight(thead.offsetHeight);
-      // Measure each <th> by data-col attribute
       const widths = new Map<string, number>();
       thead.querySelectorAll<HTMLElement>("th[data-col]").forEach((th) => {
         widths.set(th.dataset.col!, th.offsetWidth);
       });
-      // Also measure checkbox th
       const cbTh = thead.querySelector<HTMLElement>("th[data-col='_cb']");
       if (cbTh) widths.set("_cb", cbTh.offsetWidth);
       setColWidths(widths);
@@ -262,7 +249,7 @@ export function DataGrid({
     const obs = new ResizeObserver(measure);
     obs.observe(thead);
     return () => obs.disconnect();
-  }, [tableData?.columns, pinnedCols]); // re-measure when columns or pins change
+  }, [tableData?.columns, pinnedCols]);
 
   // Compute sticky left offsets from measured widths
   const pinnedColOffsets = useMemo(() => {
@@ -290,13 +277,11 @@ export function DataGrid({
     else pinnedRowRefs.current.delete(idx);
   }, []);
 
-  // Measure pinned rows after render
   useEffect(() => {
     if (pinnedRowData.length === 0) {
       if (pinnedRowHeights.size > 0) setPinnedRowHeights(new Map());
       return;
     }
-    // Use rAF to measure after browser layout
     const id = requestAnimationFrame(() => {
       const heights = new Map<number, number>();
       for (const { idx } of pinnedRowData) {
@@ -308,16 +293,27 @@ export function DataGrid({
     return () => cancelAnimationFrame(id);
   }, [pinnedRowData, tableData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Compute cumulative sticky top for each pinned row
   const pinnedRowTops = useMemo(() => {
     const tops = new Map<number, number>();
     let cumTop = headerHeight;
     for (const { idx } of pinnedRowData) {
       tops.set(idx, cumTop);
-      cumTop += pinnedRowHeights.get(idx) ?? 28; // fallback 28 for first render
+      cumTop += pinnedRowHeights.get(idx) ?? 28;
     }
     return tops;
   }, [headerHeight, pinnedRowData, pinnedRowHeights]);
+
+  if (!tableData) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
+        {loading ? <Loader2 className="size-4 animate-spin" /> : "Select a table"}
+      </div>
+    );
+  }
+
+  const totalPages = Math.ceil(tableData.total / tableData.limit) || 1;
+  const hasSelection = selectedRows.size > 0;
+  const allSelected = selectedRows.size === tableData.rows.length && tableData.rows.length > 0;
 
   return (
     <div ref={containerRef} tabIndex={0} className="flex flex-col h-full overflow-hidden outline-none">
