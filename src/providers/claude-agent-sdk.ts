@@ -702,6 +702,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         includePartialMessages: true,
       };
 
+      // Crash retry: if subprocess exits with non-zero code before producing events,
+      // clean up and retry once with a fresh query before surfacing the error.
+      const MAX_CRASH_RETRIES = 1;
+      let crashRetryCount = 0;
+
+      crashRetryLoop: for (;;) {
+      try {
       // Streaming input: create message channel and persistent query
       const { generator: streamGen, controller: streamCtrl } = createMessageChannel();
       const firstMsg = {
@@ -1373,28 +1380,45 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       break; // Exit retryLoop — normal completion
       } // end retryLoop
-    } catch (e) {
-      const msg = (e as Error).message ?? String(e);
-      console.error(`[sdk] session=${sessionId} cwd=${meta.projectPath} error: ${msg}`);
-      if (msg.includes("abort") || msg.includes("closed")) {
+      break crashRetryLoop; // Normal completion — exit crash retry loop
+    } catch (crashErr) {
+      const crashMsg = (crashErr as Error).message ?? String(crashErr);
+      console.error(`[sdk] session=${sessionId} cwd=${meta.projectPath} error: ${crashMsg}`);
+
+      // Clean up crashed subprocess before retry or error
+      this.activeQueries.delete(sessionId);
+      const ss = this.streamingSessions.get(sessionId);
+      if (ss) { ss.controller.done(); ss.query.close(); this.streamingSessions.delete(sessionId); }
+      console.log(`[sdk] session=${sessionId} streaming session ended`);
+
+      if (crashMsg.includes("abort") || crashMsg.includes("closed")) {
         // User-initiated abort or WS closed — nothing to report
-      } else if (msg.includes("exited with code")) {
-        // Subprocess crashed — session will auto-recover on next message
-        console.warn(`[sdk] session=${sessionId} subprocess crashed: ${msg}`);
+      } else if (crashMsg.includes("exited with code") && crashRetryCount < MAX_CRASH_RETRIES) {
+        // Subprocess crashed — auto-retry once before surfacing the error
+        crashRetryCount++;
+        console.warn(`[sdk] session=${sessionId} subprocess crashed: ${crashMsg} — auto-retrying (attempt ${crashRetryCount}/${MAX_CRASH_RETRIES})`);
+        await new Promise((r) => setTimeout(r, 1000));
+        continue crashRetryLoop;
+      } else if (crashMsg.includes("exited with code")) {
+        console.warn(`[sdk] session=${sessionId} subprocess crashed after retry: ${crashMsg}`);
         yield { type: "error", message: `SDK subprocess crashed. Send another message to auto-recover.` };
       } else {
-        yield { type: "error", message: `SDK error: ${msg}` };
+        yield { type: "error", message: `SDK error: ${crashMsg}` };
       }
+      break crashRetryLoop; // Exit after error handling (non-retryable)
+    }
+    } // end crashRetryLoop
+
+    } catch (outerErr) {
+      // Setup errors (account auth, env) — not retryable
+      const msg = (outerErr as Error).message ?? String(outerErr);
+      console.error(`[sdk] session=${sessionId} setup error: ${msg}`);
+      yield { type: "error", message: `SDK error: ${msg}` };
     } finally {
+      // Final cleanup — ensure no leaked streaming session
       this.activeQueries.delete(sessionId);
-      // Properly close streaming session: terminate subprocess + generator
       const ss = this.streamingSessions.get(sessionId);
-      if (ss) {
-        ss.controller.done();
-        ss.query.close();
-        this.streamingSessions.delete(sessionId);
-      }
-      console.log(`[sdk] session=${sessionId} streaming session ended`);
+      if (ss) { ss.controller.done(); ss.query.close(); this.streamingSessions.delete(sessionId); }
     }
 
     // Final done event when query ends (crash, close, generator done)
