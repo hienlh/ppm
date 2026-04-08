@@ -14,7 +14,7 @@ import {
   markBotTaskReported,
 } from "../db.service.ts";
 import { PPMBotTelegram } from "./ppmbot-telegram.ts";
-import { PPMBotSessionManager, ensureCoordinatorWorkspace, DEFAULT_COORDINATOR_IDENTITY } from "./ppmbot-session.ts";
+import { PPMBotSessionManager, ensureCoordinatorWorkspace, readCliReference, DEFAULT_COORDINATOR_IDENTITY } from "./ppmbot-session.ts";
 import { PPMBotMemory } from "./ppmbot-memory.ts";
 import { streamToTelegram } from "./ppmbot-streamer.ts";
 import { escapeHtml } from "./ppmbot-formatter.ts";
@@ -284,6 +284,13 @@ I'll answer directly or delegate to your project's AI.`;
     if (identity) {
       parts.push("## Identity");
       parts.push(identity);
+    }
+
+    // CLI reference (from cli-reference.md)
+    const cliRef = readCliReference();
+    if (cliRef) {
+      parts.push(`\n## CLI Reference`);
+      parts.push(cliRef);
     }
 
     // Session info

@@ -19,8 +19,6 @@ import { homedir } from "node:os";
 const ROOT = resolve(import.meta.dir, "..");
 const INDEX_PATH = join(ROOT, "src", "index.ts");
 const CMD_DIR = join(ROOT, "src", "cli", "commands");
-const SESSION_PATH = join(ROOT, "src", "services", "ppmbot", "ppmbot-session.ts");
-const COORDINATOR_MD = join(homedir(), ".ppm", "bot", "coordinator.md");
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -297,51 +295,15 @@ function formatCommand(group: string, cmd: CliCommand): string {
   return line;
 }
 
-function generateCoordinatorMd(groups: CommandGroup[]): string {
+/** Generate CLI-only reference (for cli-reference.md) */
+function generateCliReference(groups: CommandGroup[]): string {
   const sections: string[] = [];
-
-  sections.push(`# PPMBot — AI Project Coordinator
-
-You are PPMBot, a personal AI project coordinator and team leader. You communicate with users via Telegram and have full control over PPM through CLI commands.
-
-## Role
-- Answer direct questions immediately (coding, general knowledge, quick advice)
-- Delegate project-specific tasks to subagents using \`ppm bot delegate\`
-- Track delegated task status and report results proactively
-- Manage PPM server, projects, config, git, cloud, extensions, and databases
-- Remember user preferences across conversations
-
-## Decision Framework
-1. Can I answer this directly without project context? → Answer now
-2. Does this reference a specific project or need file access? → Delegate with \`ppm bot delegate\`
-3. Is this about PPM management (server/config/projects/git/db/cloud/ext)? → Use CLI commands directly
-4. Is this a destructive operation? → Confirm with user first
-5. Ambiguous project? → Ask user to clarify
-
-## Safety Rules (CRITICAL)
-Before executing destructive commands, ALWAYS confirm with the user:
-- \`ppm stop\` / \`ppm down\` / \`ppm restart\` → "Are you sure you want to stop/restart PPM?"
-- \`ppm db query <name> <sql>\` with writes → warn about data modification risk
-- \`ppm projects remove\` → confirm project name, warn it removes from registry
-- \`ppm config set\` → show current value with \`ppm config get\` BEFORE changing
-- \`ppm cloud logout\` / \`ppm cloud unlink\` → confirm, warn about losing cloud sync
-- \`ppm git reset\` → warn about potential data loss
-- \`ppm ext remove\` → confirm extension name
-
-## Operational Patterns
-- Before restart: check \`ppm status\` first
-- Before config change: read current value with \`ppm config get <key>\`
-- Before git push: check \`ppm git status --project <name>\` first
-- For DB operations: always specify connection name
-- For git operations: always use \`--project <name>\` flag`);
-
-  // CLI Reference
-  sections.push(`\n## CLI Command Reference`);
+  sections.push(`# PPM CLI Reference`);
 
   for (const group of groups) {
     const heading = group.name === "core"
-      ? `### Core Commands (${group.description})`
-      : `### ppm ${group.name} — ${group.description}`;
+      ? `## Core Commands (${group.description})`
+      : `## ppm ${group.name} — ${group.description}`;
     sections.push(heading);
 
     const cmdLines = group.commands.map((c) => formatCommand(group.name, c));
@@ -350,103 +312,86 @@ Before executing destructive commands, ALWAYS confirm with the user:
     sections.push("```");
   }
 
-  // Delegation section (always present, emphasized as primary tool)
   sections.push(`
-## Task Delegation (Primary Tool)
-
-### Delegate a task to a project
+## Quick Reference — Task Delegation
 \`\`\`
-ppm bot delegate --chat <chatId> --project <name> --prompt "<enriched task description>"
-\`\`\`
-Returns task ID in JSON. Tell user you're working on it.
-
-### Check task status
-\`\`\`
-ppm bot task-status <task-id>
-\`\`\`
-
-### Get task result
-\`\`\`
-ppm bot task-result <task-id>
-\`\`\`
-
-### List recent tasks
-\`\`\`
+ppm bot delegate --chat <chatId> --project <name> --prompt "<enriched task>"
+ppm bot task-status <id>
+ppm bot task-result <id>
 ppm bot tasks
 \`\`\`
 
-## Memory Management
+## Quick Reference — Memory
 \`\`\`
-ppm bot memory save "<content>" -c <category>    # categories: fact|preference|decision|architecture|issue
-ppm bot memory list                               # list saved memories
-ppm bot memory forget "<topic>"                   # delete matching memories
+ppm bot memory save "<content>" -c <category>
+ppm bot memory list
+ppm bot memory forget "<topic>"
 \`\`\`
 
-## Response Style
-- Keep responses concise (Telegram context — mobile-friendly)
-- Use short paragraphs, no walls of text
-- When delegating: acknowledge immediately, notify on completion
-- Support Vietnamese and English naturally
-- When showing CLI output: format for readability
-
-## Important
-- When delegating, write an enriched prompt with full context — not just the raw user message
-- Include relevant details: what the user wants, which files/features, acceptance criteria
-- Each delegation creates a fresh AI session in the target project workspace
-- Use \`--json\` flag when you need to parse command output programmatically`);
+## Tips
+- Use \`--json\` flag when parsing command output programmatically
+- For git/chat/db operations: always specify \`--project <name>\` or connection name`);
 
   return sections.join("\n");
 }
 
 // ── Source Code Update ────────────────────────────────────────────────
 
-function updateSourceDefault(content: string): void {
-  const src = readFileSync(SESSION_PATH, "utf-8");
+const CLI_DEFAULT_PATH = join(ROOT, "src", "services", "ppmbot", "cli-reference-default.ts");
 
-  const startMarker = "export const DEFAULT_COORDINATOR_IDENTITY = `";
+function updateBundledDefault(cliRef: string): void {
+  const escaped = cliRef
+    .replace(/\\/g, "\\\\")
+    .replace(/`/g, "\\`")
+    .replace(/\$\{/g, "\\${");
+
+  const src = readFileSync(CLI_DEFAULT_PATH, "utf-8");
+  const startMarker = "export const DEFAULT_CLI_REFERENCE = `";
   const startIdx = src.indexOf(startMarker);
   if (startIdx === -1) {
-    console.error("Could not find DEFAULT_COORDINATOR_IDENTITY in source");
+    console.error("Could not find DEFAULT_CLI_REFERENCE in cli-reference-default.ts");
     process.exit(1);
   }
 
   const afterStart = startIdx + startMarker.length;
   const endIdx = src.indexOf("\n`;\n", afterStart);
   if (endIdx === -1) {
-    console.error("Could not find closing backtick for DEFAULT_COORDINATOR_IDENTITY");
+    console.error("Could not find closing backtick for DEFAULT_CLI_REFERENCE");
     process.exit(1);
   }
 
-  // Escape backticks and ${} for template literal safety
-  const escaped = content
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/\$\{/g, "\\${");
-
   const updated = src.slice(0, afterStart) + escaped + src.slice(endIdx);
-  writeFileSync(SESSION_PATH, updated);
-  console.log(`Updated: ${SESSION_PATH}`);
+  writeFileSync(CLI_DEFAULT_PATH, updated);
+  console.log(`Updated: ${CLI_DEFAULT_PATH}`);
 }
 
-function writeCoordinatorMd(content: string): void {
+function writeCliReferenceMd(cliRef: string): void {
   const dir = join(homedir(), ".ppm", "bot");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(COORDINATOR_MD, content);
-  console.log(`Written: ${COORDINATOR_MD}`);
+  const cliRefPath = join(dir, "cli-reference.md");
+  // Read version from package.json
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8"));
+  writeFileSync(cliRefPath, `<!-- ppm-version: ${pkg.version} -->\n${cliRef}`);
+  console.log(`Written: ${cliRefPath}`);
 }
 
 // ── Main ───────────────────────────────────────────────────────────────
 
 const cliArgs = process.argv.slice(2);
 const groups = buildGroups();
-const output = generateCoordinatorMd(groups);
+const cliRef = generateCliReference(groups);
 
-if (cliArgs.includes("--update")) {
-  writeCoordinatorMd(output);
-  updateSourceDefault(output);
+if (cliArgs.includes("--cli-only")) {
+  // Runtime mode: just output CLI reference to stdout (used by ensureCliReference)
+  console.log(cliRef);
+} else if (cliArgs.includes("--update")) {
+  // Dev mode: write cli-reference.md + update bundled default
+  writeCliReferenceMd(cliRef);
+  updateBundledDefault(cliRef);
   console.log("\nDone. Review the changes and test with PPMBot.");
 } else if (cliArgs.includes("--write-md")) {
-  writeCoordinatorMd(output);
+  writeCliReferenceMd(cliRef);
 } else {
-  console.log(output);
+  // Default: stdout
+  console.log(cliRef);
 }
