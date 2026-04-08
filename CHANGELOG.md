@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.61] - 2026-04-08
+
+### Fixed
+- **Telegram message clarity**: Thinking blocks now wrapped in `<blockquote>` (indented with vertical bar), tool calls in `<pre>` blocks (monospace background). Much easier to distinguish from actual response text.
+
 ## [0.9.60] - 2026-04-08
 
 ### Fixed
