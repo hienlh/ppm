@@ -88,6 +88,21 @@ export function ConnectionList({
     return a.localeCompare(b);
   });
 
+  // Pre-compute schemas for all connections (hooks can't be inside .map())
+  const schemasPerConn = useMemo(() => {
+    const result = new Map<number, Map<string, CachedTable[]>>();
+    for (const conn of connections) {
+      const tables = cachedTables.get(conn.id) ?? [];
+      const map = new Map<string, CachedTable[]>();
+      for (const t of tables) {
+        const key = t.schemaName;
+        (map.get(key) ?? map.set(key, []).get(key)!).push(t);
+      }
+      result.set(conn.id, map);
+    }
+    return result;
+  }, [connections, cachedTables]);
+
   if (connections.length === 0) {
     return (
       <p className="px-4 py-6 text-xs text-text-subtle text-center">
@@ -123,16 +138,7 @@ export function ConnectionList({
                   const tables = cachedTables.get(conn.id) ?? [];
                   const isRefreshing = refreshingIds.has(conn.id);
 
-                  // Group tables by schema for postgres
-                  const schemas = useMemo(() => {
-                    const map = new Map<string, CachedTable[]>();
-                    for (const t of tables) {
-                      const key = t.schemaName;
-                      (map.get(key) ?? map.set(key, []).get(key)!).push(t);
-                    }
-                    return map;
-                  }, [tables]);
-
+                  const schemas = schemasPerConn.get(conn.id) ?? new Map();
                   const isSingleSchema = schemas.size <= 1;
                   const filter = tableFilter.get(conn.id) ?? "";
 
