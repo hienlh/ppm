@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.68] - 2026-04-08
+
+### Fixed
+- **ConnectionList hooks crash**: Moved `useMemo` out of `.map()` loop to fix React hook order violation (error #310).
+- **CodeEditor hooks crash**: Moved `useState`/`useCallback` before early returns to fix React hook count mismatch (error #310).
+
 ## [0.9.67] - 2026-04-08
 
 ### Changed
