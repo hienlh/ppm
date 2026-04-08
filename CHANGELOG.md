@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.65] - 2026-04-08
+
+### Changed
+- **Removed `ppm cloud link`/`unlink` CLI commands**: Login auto-links, logout auto-unlinks — separate commands no longer needed. API routes remain for web UI.
+
 ## [0.9.63] - 2026-04-08
 
 ### Fixed
