@@ -52,9 +52,8 @@ export function DatabaseViewer({ metadata }: Props) {
     if (!db.selectedTable || Object.keys(columnFilters).length === 0) return;
     clearTimeout(filterTimerRef.current);
     filterTimerRef.current = setTimeout(() => {
-      // Execute the current defaultQuery which already includes filters
-      db.executeQuery(defaultQuery);
-      setShowingQueryResult(true);
+      // Execute filter query into tableData — stays in table grid mode
+      db.queryAsTable(defaultQuery);
     }, 500);
     return () => clearTimeout(filterTimerRef.current);
   }, [columnFilters]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -173,12 +173,27 @@ export function useDatabase(connectionId: number) {
     }
   }, [base, selectedTable, selectedSchema, fetchTableData]);
 
+  /** Execute SQL but put results into tableData (for column filters) */
+  const queryAsTable = useCallback(async (sqlText: string) => {
+    setLoading(true);
+    try {
+      const result = await api.post<DbQueryResult>(`${base}/query`, { sql: sqlText });
+      if (result.changeType === "select") {
+        setTableData({ columns: result.columns, rows: result.rows, total: result.rows.length, page: 1, limit: result.rows.length });
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [base]);
+
   return {
     selectedTable, selectedSchema, selectTable, tableData, schema,
     loading, error, page, setPage: changePage,
     orderBy, orderDir, toggleSort,
     queryResult, queryError, queryLoading, executeQuery,
     updateCell, deleteRow, bulkDelete, insertRow,
-    refreshData: fetchTableData,
+    refreshData: fetchTableData, queryAsTable,
   };
 }
