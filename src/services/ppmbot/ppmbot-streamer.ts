@@ -66,7 +66,7 @@ function renderSegments(segments: Segment[]): string {
   return segments
     .map((s) => {
       if (s.type === "md") return markdownToTelegramHtml(s.text);
-      if (s.type === "thinking") return `\n<i>💭 ${escapeHtml(s.text)}</i>\n`;
+      if (s.type === "thinking") return `\n<blockquote>💭 <i>${escapeHtml(s.text)}</i></blockquote>\n`;
       return s.text;
     })
     .join("");
@@ -192,7 +192,7 @@ export async function streamToTelegram(
             const inputPreview = formatToolInput(event.input);
             appendHtml(
               segments,
-              `\n🔧 <code>${escapeHtml(toolName)}</code>(${escapeHtml(inputPreview)})\n`,
+              `\n<pre>🔧 ${escapeHtml(toolName)}: ${escapeHtml(inputPreview)}</pre>\n`,
             );
             await editCurrent();
           }
@@ -203,7 +203,7 @@ export async function streamToTelegram(
           if (config.showToolCalls && event.isError) {
             appendHtml(
               segments,
-              `\n⚠️ <code>${escapeHtml(event.output.slice(0, 200))}</code>\n`,
+              `\n<pre>⚠️ ${escapeHtml(event.output.slice(0, 200))}</pre>\n`,
             );
             await editCurrent();
           }
