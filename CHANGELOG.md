@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.62] - 2026-04-08
+
+### Fixed
+- **SDK subprocess crash auto-retry**: When the Claude Code subprocess crashes (exit code 1), PPM now automatically retries once with a fresh subprocess after a 1s delay, instead of immediately showing the error. Only surfaces the crash message if the retry also fails.
+
 ## [0.9.61] - 2026-04-08
 
 ### Fixed
