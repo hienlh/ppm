@@ -28,7 +28,21 @@ export function registerCloudCommands(program: Command): void {
       const existing = getCloudAuth();
       if (existing) {
         console.log(`  Already logged in as ${existing.email}`);
-        console.log(`  Run 'ppm cloud logout' to switch accounts.\n`);
+
+        // Auto-link if not yet linked
+        const { getCloudDevice, linkDevice } = await import("../../services/cloud.service.ts");
+        if (!getCloudDevice()) {
+          try {
+            const device = await linkDevice();
+            console.log(`  ✓  Machine linked: ${device.name}\n`);
+          } catch (linkErr: unknown) {
+            const linkMsg = linkErr instanceof Error ? linkErr.message : String(linkErr);
+            console.warn(`  ⚠  Auto-link failed: ${linkMsg}`);
+          }
+        } else {
+          console.log(`  Run 'ppm cloud logout' to switch accounts.`);
+        }
+        console.log();
         return;
       }
 
@@ -51,8 +65,19 @@ export function registerCloudCommands(program: Command): void {
           }
         }
 
-        console.log(`\n  ✓  Logged in as ${auth.email}\n`);
-        console.log(`  Next: run 'ppm cloud link' to register this machine.\n`);
+        console.log(`\n  ✓  Logged in as ${auth.email}`);
+
+        // Auto-link device after login
+        try {
+          const { linkDevice } = await import("../../services/cloud.service.ts");
+          const device = await linkDevice();
+          console.log(`  ✓  Machine linked: ${device.name}`);
+        } catch (linkErr: unknown) {
+          const linkMsg = linkErr instanceof Error ? linkErr.message : String(linkErr);
+          console.warn(`  ⚠  Auto-link failed: ${linkMsg}`);
+          console.log(`  Run 'ppm cloud link' manually to register this machine.`);
+        }
+        console.log();
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`  ✗  Login failed: ${msg}\n`);
@@ -64,17 +89,28 @@ export function registerCloudCommands(program: Command): void {
     .command("logout")
     .description("Sign out from PPM Cloud")
     .action(async () => {
-      const { removeCloudAuth, getCloudAuth } = await import(
+      const { removeCloudAuth, getCloudAuth, unlinkDevice, getCloudDevice } = await import(
         "../../services/cloud.service.ts"
       );
 
       const auth = getCloudAuth();
-      removeCloudAuth();
-      if (auth) {
-        console.log(`  ✓  Logged out (was: ${auth.email})\n`);
-      } else {
+      if (!auth) {
         console.log(`  Not logged in.\n`);
+        return;
       }
+
+      // Auto-unlink device before removing auth
+      if (getCloudDevice()) {
+        try {
+          await unlinkDevice();
+          console.log(`  ✓  Machine unlinked`);
+        } catch {
+          // Non-blocking — still logout even if unlink fails
+        }
+      }
+
+      removeCloudAuth();
+      console.log(`  ✓  Logged out (was: ${auth.email})\n`);
     });
 
   cmd

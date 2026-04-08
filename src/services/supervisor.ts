@@ -65,6 +65,8 @@ let tunnelProbeTimer: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let upgradeCheckTimer: ReturnType<typeof setInterval> | null = null;
 let upgradeDelayTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudMonitorTimer: ReturnType<typeof setInterval> | null = null;
+let cloudConnected = false; // tracks whether we've initiated a cloud WS connection
 
 // Saved at startup for self-replace
 let originalArgv: string[] = [];
@@ -488,11 +490,11 @@ async function notifyStateChange(from: string, to: string, reason: string) {
 }
 
 /** Connect supervisor to Cloud via WebSocket (if device is linked) */
-async function connectCloud(opts: { port: number }, serverArgs: string[], logFd: number) {
+async function connectCloud(opts: { port: number }, serverArgs: string[], logFd: number): Promise<boolean> {
   try {
     const { getCloudDevice } = await import("./cloud.service.ts");
     const device = getCloudDevice();
-    if (!device) return; // not linked to cloud
+    if (!device) return false; // not linked to cloud
 
     const { connect, onCommand } = await import("./cloud-ws.service.ts");
     const { VERSION } = await import("../version.ts");
@@ -609,9 +611,46 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
           sendResult(false, `Unknown action: ${cmd.action}`);
       }
     });
+    cloudConnected = true;
+    return true;
   } catch (e) {
     log("WARN", `Cloud WS setup failed: ${e}`);
+    return false;
   }
+}
+
+/** Periodically check if cloud-device.json appeared/disappeared and connect/disconnect */
+function startCloudMonitor(opts: { port: number }, serverArgs: string[], logFd: number) {
+  const CLOUD_MONITOR_INTERVAL_MS = 60_000; // check every 60s
+  cloudMonitorTimer = setInterval(async () => {
+    if (shuttingDown) return;
+    try {
+      const { getCloudDevice } = await import("./cloud.service.ts");
+      const device = getCloudDevice();
+      const { isConnected } = await import("./cloud-ws.service.ts");
+
+      if (device && !cloudConnected) {
+        // Device linked but WS not connected — connect now
+        log("INFO", "Cloud monitor: device linked detected, connecting to cloud");
+        await connectCloud(opts, serverArgs, logFd);
+      } else if (device && cloudConnected && !isConnected()) {
+        // Device linked, we attempted connection but WS is dead — reconnect
+        log("WARN", "Cloud monitor: WS disconnected, reconnecting");
+        const { disconnect } = await import("./cloud-ws.service.ts");
+        disconnect();
+        cloudConnected = false;
+        await connectCloud(opts, serverArgs, logFd);
+      } else if (!device && cloudConnected) {
+        // Device unlinked — disconnect
+        log("INFO", "Cloud monitor: device unlinked, disconnecting from cloud");
+        const { disconnect } = await import("./cloud-ws.service.ts");
+        disconnect();
+        cloudConnected = false;
+      }
+    } catch (e) {
+      log("WARN", `Cloud monitor error: ${e}`);
+    }
+  }, CLOUD_MONITOR_INTERVAL_MS);
 }
 
 // ─── Soft stop (server only, supervisor stays alive) ──────────────────
@@ -674,6 +713,7 @@ export function shutdown() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
   if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
+  if (cloudMonitorTimer) clearInterval(cloudMonitorTimer);
 
   if (serverChild) { try { serverChild.kill(); } catch {} }
   if (tunnelChild) { try { tunnelChild.kill(); } catch {} }
@@ -801,8 +841,9 @@ export async function runSupervisor(opts: {
     }, 1000);
   }
 
-  // Connect to Cloud via WebSocket (if device is linked)
+  // Connect to Cloud via WebSocket (if device is linked) + start monitoring
   connectCloud(opts, serverArgs, logFd);
+  startCloudMonitor(opts, serverArgs, logFd);
 
   // Spawn server + tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];
