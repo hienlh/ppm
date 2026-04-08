@@ -1,8 +1,6 @@
 import { useState, useCallback, useMemo, useRef, memo, useEffect } from "react";
 import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, Filter, Pin, PinOff } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import Editor from "@monaco-editor/react";
-import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { useTabStore } from "@/stores/tab-store";
 import type { DbColumnInfo } from "./use-database";
 import { ExportButton } from "./export-button";
 
@@ -42,7 +40,16 @@ export function DataGrid({
   const [insertValues, setInsertValues] = useState<Record<string, string>>({});
   const [insertError, setInsertError] = useState<string | null>(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
-  const [viewerCell, setViewerCell] = useState<{ col: string; value: string } | null>(null);
+  const { openTab } = useTabStore();
+  const openCellViewer = useCallback((cell: { col: string; value: string }) => {
+    openTab({
+      type: "editor",
+      title: cell.col,
+      projectId: null,
+      closable: true,
+      metadata: { inlineContent: cell.value, inlineLanguage: detectLang(cell.value) },
+    });
+  }, [openTab]);
   const [pinnedCols, setPinnedCols] = useState<Set<string>>(new Set());
   const [pinnedRows, setPinnedRows] = useState<Set<number>>(new Set());
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
@@ -457,7 +464,7 @@ export function DataGrid({
                 onSetEditValue={setEditValue} showDelete={!!onRowDelete}
                 confirmingDelete={confirmDeleteIdx === idx}
                 onDelete={handleDelete} onConfirmDelete={setConfirmDeleteIdx}
-                onViewCell={setViewerCell}
+                onViewCell={openCellViewer}
                 pinned onTogglePin={togglePinRow}
                 pinnedCols={pinnedCols} pinnedColOffsets={pinnedColOffsets}
                 stickyTop={pinnedRowTops.get(idx) ?? headerHeight}
@@ -474,7 +481,7 @@ export function DataGrid({
                   onSetEditValue={setEditValue} showDelete={!!onRowDelete}
                   confirmingDelete={confirmDeleteIdx === rowIdx}
                   onDelete={handleDelete} onConfirmDelete={setConfirmDeleteIdx}
-                  onViewCell={setViewerCell}
+                  onViewCell={openCellViewer}
                   pinned={false} onTogglePin={togglePinRow}
                   pinnedCols={pinnedCols} pinnedColOffsets={pinnedColOffsets} />
               );
@@ -500,10 +507,6 @@ export function DataGrid({
         </div>
       </div>
 
-      {viewerCell && (
-        <CellViewerDialog value={viewerCell.value} column={viewerCell.col}
-          open={true} onOpenChange={(v) => { if (!v) setViewerCell(null); }} />
-      )}
     </div>
   );
 }
@@ -529,32 +532,6 @@ function needsViewer(val: unknown): boolean {
   return false;
 }
 
-/** Try to detect format and beautify */
-function beautify(text: string): string {
-  const trimmed = text.trimStart();
-  // JSON
-  if (trimmed[0] === "{" || trimmed[0] === "[") {
-    try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch { /* not valid json */ }
-  }
-  // XML — simple indent
-  if (trimmed.startsWith("<")) {
-    try {
-      let indent = 0;
-      return trimmed.replace(/(>)(<)(\/*)/g, "$1\n$2$3")
-        .split("\n")
-        .map((line) => {
-          const l = line.trim();
-          if (l.startsWith("</")) indent = Math.max(0, indent - 1);
-          const padded = "  ".repeat(indent) + l;
-          if (l.startsWith("<") && !l.startsWith("</") && !l.endsWith("/>") && !l.includes("</")) indent++;
-          return padded;
-        })
-        .join("\n");
-    } catch { /* not valid xml */ }
-  }
-  return text;
-}
-
 /** Detect language from content for syntax highlighting */
 function detectLang(text: string): string {
   const t = text.trimStart();
@@ -564,63 +541,6 @@ function detectLang(text: string): string {
   if (t.startsWith("<?xml") || (t.startsWith("<") && /<\/\w+>/.test(t))) return "xml";
   if (t.startsWith("---") || /^\w+:\s/m.test(t)) return "yaml";
   return "plaintext";
-}
-
-/** Dialog for viewing large / structured cell data */
-function CellViewerDialog({ value, column, open, onOpenChange }: {
-  value: string; column: string; open: boolean; onOpenChange: (v: boolean) => void;
-}) {
-  const [text, setText] = useState(value);
-  const [beautified, setBeautified] = useState(false);
-  const monacoTheme = useMonacoTheme();
-  const lang = useMemo(() => detectLang(text), [text]);
-  const canBeautify = lang === "json" || lang === "xml";
-
-  useEffect(() => { setText(value); setBeautified(false); }, [value]);
-
-  const handleBeautify = () => {
-    if (beautified) { setText(value); setBeautified(false); }
-    else { setText(beautify(value)); setBeautified(true); }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex flex-col p-4 gap-3
-        max-md:fixed max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:translate-x-0 max-md:translate-y-0 max-md:h-[75dvh] max-md:max-w-full max-md:rounded-b-none max-md:rounded-t-xl
-        md:max-w-4xl md:h-[80vh]">
-        <DialogHeader>
-          <DialogTitle className="text-sm font-medium">{column}</DialogTitle>
-        </DialogHeader>
-        <div className="flex items-center gap-2 shrink-0">
-          {canBeautify && (
-            <button type="button" onClick={handleBeautify}
-              className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${beautified ? "bg-primary text-primary-foreground border-primary" : "border-border text-muted-foreground hover:text-foreground hover:border-foreground/30"}`}>
-              {beautified ? "Raw" : "Beautify"}
-            </button>
-          )}
-          <button type="button" onClick={() => navigator.clipboard.writeText(text)}
-            className="text-[11px] px-2 py-0.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors">
-            Copy
-          </button>
-          <span className="text-[10px] text-muted-foreground ml-auto">{lang} · {text.length.toLocaleString()} chars</span>
-        </div>
-        <div className="flex-1 min-h-0 rounded border border-border overflow-hidden">
-          <Editor
-            value={text}
-            language={lang}
-            theme={monacoTheme}
-            options={{
-              readOnly: true, minimap: { enabled: false }, lineNumbers: "on",
-              scrollBeyondLastLine: false, wordWrap: "on", fontSize: 12,
-              renderLineHighlight: "none", overviewRulerLanes: 0,
-              scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-              padding: { top: 8, bottom: 8 },
-            }}
-          />
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 /** Memoized row — only re-renders when its own props change */

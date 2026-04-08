@@ -48,7 +48,10 @@ interface CodeEditorProps {
 export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const filePath = metadata?.filePath as string | undefined;
   const projectName = metadata?.projectName as string | undefined;
-  const [content, setContent] = useState<string | null>(null);
+  // Inline content mode: read-only Monaco with pre-loaded content (e.g. cell viewer)
+  const inlineContent = metadata?.inlineContent as string | undefined;
+  const inlineLanguage = metadata?.inlineLanguage as string | undefined;
+  const [content, setContent] = useState<string | null>(inlineContent ?? null);
   const [encoding, setEncoding] = useState<string>("utf-8");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +159,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
 
   // Load file content
   useEffect(() => {
+    if (inlineContent != null) { setLoading(false); return; }
     if (!filePath) return;
     if (!isExternalFile && !projectName) return;
     if (isImage || isPdf) { setLoading(false); return; }
@@ -297,7 +301,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     }
   }, [sqlSchemaInfo]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!filePath || (!isExternalFile && !projectName)) {
+  if (!inlineContent && (!filePath || (!isExternalFile && !projectName))) {
     return (
       <div className="flex items-center justify-center h-full text-text-secondary text-sm">
         No file selected.
@@ -358,8 +362,47 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     </div>
   ) : null;
 
+  // Beautify for inline content
+  const canBeautifyInline = inlineContent != null && (inlineLanguage === "json" || inlineLanguage === "xml");
+  const [isBeautified, setIsBeautified] = useState(false);
+  const handleBeautifyInline = useCallback(() => {
+    if (!inlineContent) return;
+    if (isBeautified) {
+      setContent(inlineContent);
+      setIsBeautified(false);
+    } else {
+      const trimmed = inlineContent.trimStart();
+      if (inlineLanguage === "json") {
+        try { setContent(JSON.stringify(JSON.parse(trimmed), null, 2)); setIsBeautified(true); } catch { /* not valid */ }
+      } else if (inlineLanguage === "xml") {
+        let indent = 0;
+        const formatted = trimmed.replace(/(>)(<)(\/*)/g, "$1\n$2$3")
+          .split("\n")
+          .map((line) => {
+            const l = line.trim();
+            if (l.startsWith("</")) indent = Math.max(0, indent - 1);
+            const padded = "  ".repeat(indent) + l;
+            if (l.startsWith("<") && !l.startsWith("</") && !l.endsWith("/>") && !l.includes("</")) indent++;
+            return padded;
+          })
+          .join("\n");
+        setContent(formatted);
+        setIsBeautified(true);
+      }
+    }
+  }, [inlineContent, inlineLanguage, isBeautified]);
+
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
+      {/* Inline content toolbar (cell viewer mode) */}
+      {inlineContent != null && canBeautifyInline && (
+        <div className="flex items-center h-7 border-b border-border bg-background shrink-0 px-2 gap-2">
+          <button type="button" onClick={handleBeautifyInline}
+            className="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-muted transition-colors text-foreground">
+            {isBeautified ? "Raw" : "Beautify"}
+          </button>
+        </div>
+      )}
       {/* Breadcrumb + Toolbar bar — desktop only */}
       {filePath && projectName && tabId && (
         <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0">
@@ -404,9 +447,9 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
         <div className="flex-1 overflow-hidden">
           <Editor
             height="100%"
-            language={getMonacoLanguage(filePath)}
+            language={inlineLanguage ?? getMonacoLanguage(filePath ?? "")}
             value={content ?? ""}
-            onChange={handleChange}
+            onChange={inlineContent != null ? undefined : handleChange}
             onMount={handleEditorMount}
             theme={monacoTheme}
             options={{
@@ -419,6 +462,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
               lineNumbers: "on",
               folding: true,
               bracketPairColorization: { enabled: true },
+              readOnly: inlineContent != null,
             }}
             loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
           />
