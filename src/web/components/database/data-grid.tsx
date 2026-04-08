@@ -387,7 +387,12 @@ export function DataGrid({
       )}
 
       {/* Table */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto relative">
+        {loading && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/60">
+            <Loader2 className="size-5 animate-spin text-primary" />
+          </div>
+        )}
         <table className="w-full text-xs" style={{ borderCollapse: "separate", borderSpacing: 0 }}>
           <thead ref={theadRef} className="sticky top-0 z-20 bg-muted">
             <tr>
