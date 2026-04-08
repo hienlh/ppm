@@ -75,7 +75,6 @@ export function registerCloudCommands(program: Command): void {
         } catch (linkErr: unknown) {
           const linkMsg = linkErr instanceof Error ? linkErr.message : String(linkErr);
           console.warn(`  ⚠  Auto-link failed: ${linkMsg}`);
-          console.log(`  Run 'ppm cloud link' manually to register this machine.`);
         }
         console.log();
       } catch (err: unknown) {
@@ -111,69 +110,6 @@ export function registerCloudCommands(program: Command): void {
 
       removeCloudAuth();
       console.log(`  ✓  Logged out (was: ${auth.email})\n`);
-    });
-
-  cmd
-    .command("link")
-    .description("Register this machine with PPM Cloud")
-    .option("-n, --name <name>", "Machine display name")
-    .action(async (options) => {
-      const { linkDevice } = await import("../../services/cloud.service.ts");
-
-      try {
-        const device = await linkDevice(options.name);
-        console.log(`  ✓  Machine linked`);
-        console.log(`     Name: ${device.name}`);
-        console.log(`     ID: ${device.device_id}`);
-
-        // Auto-detect running tunnel and start heartbeat immediately
-        try {
-          const { resolve } = await import("node:path");
-          const { homedir } = await import("node:os");
-          const { existsSync, readFileSync } = await import("node:fs");
-          const statusFile = resolve(homedir(), ".ppm", "status.json");
-          if (existsSync(statusFile)) {
-            const status = JSON.parse(readFileSync(statusFile, "utf-8"));
-            if (status.shareUrl) {
-              const { sendHeartbeat } = await import("../../services/cloud.service.ts");
-              const ok = await sendHeartbeat(status.shareUrl);
-              if (ok) {
-                console.log(`\n  ➜  Cloud:   synced tunnel URL (${status.shareUrl})`);
-              }
-            }
-          }
-        } catch { /* non-blocking */ }
-
-        console.log();
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`  ✗  Link failed: ${msg}\n`);
-        process.exit(1);
-      }
-    });
-
-  cmd
-    .command("unlink")
-    .description("Remove this machine from PPM Cloud")
-    .action(async () => {
-      const { unlinkDevice, getCloudDevice } = await import(
-        "../../services/cloud.service.ts"
-      );
-
-      const device = getCloudDevice();
-      if (!device) {
-        console.log(`  Not linked to cloud.\n`);
-        return;
-      }
-
-      try {
-        await unlinkDevice();
-        console.log(`  ✓  Machine unlinked (was: ${device.name})\n`);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`  ✗  Unlink failed: ${msg}\n`);
-        process.exit(1);
-      }
     });
 
   cmd
@@ -217,7 +153,7 @@ export function registerCloudCommands(program: Command): void {
         console.log(`  Linked at:  ${device.linked_at}`);
       } else {
         console.log(`  Machine:    not linked`);
-        if (auth) console.log(`  Run 'ppm cloud link' to register this machine.`);
+        if (auth) console.log(`  Run 'ppm cloud login' to re-link this machine.`);
       }
 
       console.log();
