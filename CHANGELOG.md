@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.9.66] - 2026-04-08
+
+### Added
+- **Database viewer overhaul**: Full-featured DataGrid with inline editing, row selection (Cmd+A select all, Cmd+C copy as TSV), bulk delete, insert row, and export (CSV/JSON) for both table view and custom query results.
+- **SQL autocomplete**: Context-aware completion for keywords, table names, column names (with alias/dot support), operators, and aggregate functions. Async column fetching with client-side cache.
+- **Cell viewer dialog**: Large/structured data (JSON, XML) opens in a Monaco editor with syntax highlighting and beautify toggle. Responsive: large dialog on desktop, 75% bottom sheet on mobile.
+- **Column filter (ILIKE)**: Per-column filter inputs with debounced auto-execution via WHERE ILIKE clauses.
+- **Pin columns/rows**: Sticky horizontal pinning for columns, sticky vertical pinning for rows. DOM-measured offsets for accurate positioning.
+- **Export button**: Export current page or full table as CSV/JSON, with selected-rows-only export.
+- **SQL query editor**: Monaco-based with run button, Cmd+Enter execution, and `getStatementAtCursor` for multi-statement files.
+- **.sql file run button**: Execute SQL files directly from the code editor against a connected database.
+
+### Fixed
+- **PostgreSQL SSL errors**: Parse `sslmode` from connection string; `no-verify`/`require` sets `rejectUnauthorized: false`.
+- **PK detection**: Boolean coercion from postgres library (`"t"`/`"f"` strings) now handled correctly.
+- **[object Object] in cells**: Objects/arrays now JSON-stringified instead of using `String()`.
+- **Selection performance**: Replaced @tanstack/react-table with plain HTML + `memo(DataRow)` for lag-free row selection.
+- **Mobile touch support**: Pin/filter/delete buttons visible without hover (`md:opacity-0 md:group-hover:opacity-100` pattern).
+- **Sticky positioning gaps**: `border-collapse: separate` + ResizeObserver for accurate header/column/row measurements.
+- **Autocomplete z-index**: `fixedOverflowWidgets: true` for Monaco suggest widget.
+
 ## [0.9.65] - 2026-04-08
 
 ### Changed
