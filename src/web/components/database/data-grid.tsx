@@ -21,6 +21,8 @@ interface DataGridProps {
   selectedTable?: string | null;
   selectedSchema?: string;
   connectionName?: string;
+  /** Controlled column ILIKE filters — parent owns state */
+  columnFilters?: Record<string, string>;
   /** Called when column ILIKE filters change — parent builds WHERE clause */
   onColumnFilter?: (filters: Record<string, string>) => void;
 }
@@ -29,7 +31,7 @@ export function DataGrid({
   tableData, schema, loading, page, onPageChange, onCellUpdate, onRowDelete,
   orderBy, orderDir, onToggleSort,
   onBulkDelete, onInsertRow,
-  connectionId, selectedTable, selectedSchema, connectionName, onColumnFilter,
+  connectionId, selectedTable, selectedSchema, connectionName, columnFilters: colFilters = {}, onColumnFilter,
 }: DataGridProps) {
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; col: string } | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -52,7 +54,6 @@ export function DataGrid({
   }, [openTab]);
   const [pinnedCols, setPinnedCols] = useState<Set<string>>(new Set());
   const [pinnedRows, setPinnedRows] = useState<Set<number>>(new Set());
-  const [colFilters, setColFilters] = useState<Record<string, string>>({});
   const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null);
 
   const pkCol = useMemo(() => {
@@ -118,20 +119,9 @@ export function DataGrid({
   }, []);
 
   const updateColFilter = useCallback((col: string, val: string) => {
-    setColFilters((prev) => {
-      const next = { ...prev };
-      if (val) next[col] = val; else delete next[col];
-      return next;
-    });
-  }, []);
-
-  // Notify parent when column filters change
-  const colFiltersRef = useRef(colFilters);
-  useEffect(() => {
-    if (colFiltersRef.current !== colFilters) {
-      colFiltersRef.current = colFilters;
-      onColumnFilter?.(colFilters);
-    }
+    const next = { ...colFilters };
+    if (val) next[col] = val; else delete next[col];
+    onColumnFilter?.(next);
   }, [colFilters, onColumnFilter]);
 
   const toggleRowSelection = useCallback((idx: number) => {

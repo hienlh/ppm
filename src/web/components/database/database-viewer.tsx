@@ -7,6 +7,17 @@ import { ExportButton } from "./export-button";
 import { DataGrid } from "./data-grid";
 import type { SchemaInfo } from "./sql-completion-provider";
 
+/** Parse WHERE "col" ILIKE '%val%' clauses from SQL */
+function parseSqlFilters(sql: string): Record<string, string> {
+  const filters: Record<string, string> = {};
+  const re = /"(\w+)"\s+ILIKE\s+'%([^']*?)%'/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    filters[m[1]!] = m[2]!.replace(/''/g, "'");
+  }
+  return filters;
+}
+
 interface Props { metadata?: Record<string, unknown>; tabId?: string }
 
 /** Generic database viewer — works for any DB type via unified API */
@@ -108,16 +119,21 @@ export function DatabaseViewer({ metadata }: Props) {
 
   // Track whether user ran a custom query (show results instead of table grid)
   const [showingQueryResult, setShowingQueryResult] = useState(!!initialSql);
-  const defaultQueryRef = useRef(defaultQuery);
-  defaultQueryRef.current = defaultQuery;
   const handleExecuteQuery = useCallback((sql: string) => {
-    // If query matches current table query (with filters), stay in table grid mode
-    if (db.selectedTable && sql.trim() === defaultQueryRef.current.trim()) {
-      db.queryAsTable(sql);
-    } else {
-      setShowingQueryResult(true);
-      db.executeQuery(sql);
+    const trimmed = sql.trim();
+    // Check if query is a simple SELECT on the current table — stay in table grid mode
+    if (db.selectedTable) {
+      const tablePattern = new RegExp(`^SELECT\\s+\\*\\s+FROM\\s+"?${db.selectedTable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"?\\b`, "i");
+      if (tablePattern.test(trimmed)) {
+        // Parse ILIKE filters from SQL and sync to columnFilters
+        const parsed = parseSqlFilters(trimmed);
+        setColumnFilters(parsed);
+        db.queryAsTable(trimmed);
+        return;
+      }
     }
+    setShowingQueryResult(true);
+    db.executeQuery(sql);
   }, [db.executeQuery, db.queryAsTable, db.selectedTable]);
 
   // When user interacts with DataGrid (sort/page), switch back to table view
@@ -179,7 +195,7 @@ export function DatabaseViewer({ metadata }: Props) {
               orderBy={db.orderBy} orderDir={db.orderDir} onToggleSort={handleToggleSort}
               onBulkDelete={db.bulkDelete} onInsertRow={db.insertRow}
               connectionId={connectionId} selectedTable={db.selectedTable} selectedSchema={db.selectedSchema}
-              connectionName={connectionName} onColumnFilter={handleColumnFilter} />
+              connectionName={connectionName} columnFilters={columnFilters} onColumnFilter={handleColumnFilter} />
           )}
 
           {showQueryResults && (
