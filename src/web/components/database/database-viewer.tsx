@@ -108,10 +108,17 @@ export function DatabaseViewer({ metadata }: Props) {
 
   // Track whether user ran a custom query (show results instead of table grid)
   const [showingQueryResult, setShowingQueryResult] = useState(!!initialSql);
+  const defaultQueryRef = useRef(defaultQuery);
+  defaultQueryRef.current = defaultQuery;
   const handleExecuteQuery = useCallback((sql: string) => {
-    setShowingQueryResult(true);
-    db.executeQuery(sql);
-  }, [db.executeQuery]);
+    // If query matches current table query (with filters), stay in table grid mode
+    if (db.selectedTable && sql.trim() === defaultQueryRef.current.trim()) {
+      db.queryAsTable(sql);
+    } else {
+      setShowingQueryResult(true);
+      db.executeQuery(sql);
+    }
+  }, [db.executeQuery, db.queryAsTable, db.selectedTable]);
 
   // When user interacts with DataGrid (sort/page), switch back to table view
   const handleToggleSort = useCallback((col: string) => {
