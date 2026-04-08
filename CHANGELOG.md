@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.63] - 2026-04-08
+
+### Fixed
+- **Cloud auto-link**: `ppm cloud login` now auto-links device (no separate `ppm cloud link` needed). `ppm cloud logout` auto-unlinks.
+- **Supervisor cloud monitor**: Supervisor periodically checks cloud-device.json and auto-connects/disconnects/reconnects WS as needed. Fixes "stuck offline" after upgrade or file loss.
+- **Stale tests**: Aligned usage-cache and chat-routes tests with current API response shapes.
+
 ## [0.9.62] - 2026-04-08
 
 ### Fixed
