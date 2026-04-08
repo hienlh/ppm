@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.67] - 2026-04-08
+
+### Changed
+- **Cell viewer**: Large/structured cell data now opens in a new editor tab (with syntax highlighting + beautify) instead of a popup dialog.
+
 ## [0.9.66] - 2026-04-08
 
 ### Added
