@@ -157,8 +157,8 @@ describe("getAllAccountUsages", () => {
 
     const entries = getAllAccountUsages();
     const ids = entries.map(e => e.accountId);
-    // Expired without refresh should be excluded
-    expect(ids).not.toContain(expired.id);
+    // All accounts returned (expired included — UI handles filtering)
+    expect(ids).toContain(expired.id);
     // Active account should be present
     expect(ids).toContain(activeId);
   });

@@ -60,8 +60,8 @@ describe("Chat REST API", () => {
     const json = await res.json() as any;
 
     expect(json.ok).toBe(true);
-    expect(Array.isArray(json.data)).toBe(true);
-    expect(json.data.length).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(json.data.sessions)).toBe(true);
+    expect(json.data.sessions.length).toBeGreaterThanOrEqual(1);
   });
 
   it("GET /chat/sessions?providerId=mock filters by provider", async () => {
@@ -69,7 +69,7 @@ describe("Chat REST API", () => {
     const json = await res.json() as any;
 
     expect(json.ok).toBe(true);
-    expect(json.data.every((s: any) => s.providerId === "mock")).toBe(true);
+    expect(json.data.sessions.every((s: any) => s.providerId === "mock")).toBe(true);
   });
 
   it("GET /chat/sessions/:id/messages returns history", async () => {
