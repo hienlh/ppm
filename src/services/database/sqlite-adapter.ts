@@ -31,6 +31,7 @@ export const sqliteAdapter: DatabaseAdapter = {
       nullable: !c.notnull,
       pk: !!c.pk,
       defaultValue: c.dflt_value,
+      fk: c.fk,
     }));
   },
 

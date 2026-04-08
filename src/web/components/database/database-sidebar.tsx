@@ -7,7 +7,7 @@ import { ConnectionImportExport } from "./connection-import-export";
 import { useConnections, type Connection, type CreateConnectionData, type UpdateConnectionData } from "./use-connections";
 
 export function DatabaseSidebar() {
-  const { connections, loading, cachedTables, createConnection, updateConnection, deleteConnection, testConnection, refreshTables, exportConnections, importConnections } = useConnections();
+  const { connections, loading, cachedTables, columnCache, createConnection, updateConnection, deleteConnection, testConnection, testRawConnection, refreshTables, fetchColumns, exportConnections, importConnections } = useConnections();
   const openTab = useTabStore((s) => s.openTab);
   const [addOpen, setAddOpen] = useState(false);
   const [editConn, setEditConn] = useState<Connection | null>(null);
@@ -66,6 +66,8 @@ export function DatabaseSidebar() {
             onRefreshTables={refreshTables}
             onEdit={setEditConn}
             onDelete={handleDelete}
+            onFetchColumns={fetchColumns}
+            columnCache={columnCache}
           />
         )}
       </div>
@@ -76,6 +78,7 @@ export function DatabaseSidebar() {
         onClose={() => setAddOpen(false)}
         onSave={handleCreate}
         onTest={() => Promise.resolve({ ok: false, error: "Save connection first" })}
+        onTestRaw={testRawConnection}
       />
 
       {/* Edit dialog */}

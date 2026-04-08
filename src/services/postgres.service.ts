@@ -12,6 +12,7 @@ export interface PgColumnInfo {
   nullable: boolean;
   pk: boolean;
   defaultValue: string | null;
+  fk: { table: string; column: string } | null;
 }
 
 export interface PgQueryResult {
@@ -19,6 +20,7 @@ export interface PgQueryResult {
   rows: Record<string, unknown>[];
   rowsAffected: number;
   changeType: "select" | "modify";
+  executionTimeMs: number;
 }
 
 /** Auto-close idle connections after 5 minutes */
@@ -40,7 +42,13 @@ class PostgresService {
       cached.timer = setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS);
       return cached.sql;
     }
-    const sql = postgres(connectionString, { max: 3, idle_timeout: 60 });
+    // Parse sslmode from connection string to configure SSL properly
+    const url = new URL(connectionString);
+    const sslmode = url.searchParams.get("sslmode");
+    const sslOpts = sslmode === "no-verify" || sslmode === "require"
+      ? { rejectUnauthorized: false }
+      : sslmode === "disable" ? false : undefined;
+    const sql = postgres(connectionString, { max: 3, idle_timeout: 60, ssl: sslOpts as any });
     const timer = setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS);
     this.cache.set(connectionString, { sql, timer });
     return sql;
@@ -82,7 +90,7 @@ class PostgresService {
     }));
   }
 
-  /** Get column schema for a table */
+  /** Get column schema for a table (with FK metadata) */
   async getTableSchema(connectionString: string, table: string, schema = "public"): Promise<PgColumnInfo[]> {
     const sql = this.connect(connectionString);
     const cols = await sql`
@@ -97,12 +105,32 @@ class PostgresService {
       WHERE c.table_schema = ${schema} AND c.table_name = ${table}
       ORDER BY c.ordinal_position
     `;
+
+    // Query FK references
+    const fkRows = await sql`
+      SELECT kcu.column_name as from_col,
+             ccu.table_name as ref_table,
+             ccu.column_name as ref_col
+      FROM information_schema.table_constraints tc
+      JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+      JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = ${schema} AND tc.table_name = ${table}
+    `;
+    const fkMap = new Map<string, { table: string; column: string }>();
+    for (const fk of fkRows) {
+      fkMap.set(fk.from_col as string, { table: fk.ref_table as string, column: fk.ref_col as string });
+    }
+
     return cols.map((c) => ({
       name: c.name as string,
       type: c.type as string,
-      nullable: c.nullable as boolean,
-      pk: c.pk as boolean,
+      nullable: c.nullable === true || c.nullable === "true" || c.nullable === "t",
+      pk: c.pk === true || c.pk === "true" || c.pk === "t",
       defaultValue: c.default_value as string | null,
+      fk: fkMap.get(c.name as string) ?? null,
     }));
   }
 
@@ -139,14 +167,17 @@ class PostgresService {
     const isSelect = trimmed.startsWith("SELECT") || trimmed.startsWith("EXPLAIN") ||
       trimmed.startsWith("SHOW") || trimmed.startsWith("\\D");
 
+    const start = performance.now();
     if (isSelect) {
       const rows = await sql.unsafe(sqlText);
+      const executionTimeMs = Math.round(performance.now() - start);
       const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
-      return { columns, rows: rows as unknown as Record<string, unknown>[], rowsAffected: 0, changeType: "select" };
+      return { columns, rows: rows as unknown as Record<string, unknown>[], rowsAffected: 0, changeType: "select", executionTimeMs };
     }
 
     const result = await sql.unsafe(sqlText);
-    return { columns: [], rows: [], rowsAffected: result.count ?? 0, changeType: "modify" };
+    const executionTimeMs = Math.round(performance.now() - start);
+    return { columns: [], rows: [], rowsAffected: result.count ?? 0, changeType: "modify", executionTimeMs };
   }
 
   /** Update a single cell value */

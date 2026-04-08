@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
@@ -7,10 +7,12 @@ import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { Loader2, FileWarning, ExternalLink } from "lucide-react";
+import { Loader2, FileWarning, ExternalLink, Play, Database } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
 import { lazy, Suspense } from "react";
+import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
+import { useConnections, type Connection } from "../database/use-connections";
 
 const CsvPreview = lazy(() => import("./csv-preview").then((m) => ({ default: m.CsvPreview })));
 
@@ -33,6 +35,7 @@ function getMonacoLanguage(filename: string): string {
     json: "json", md: "markdown", mdx: "markdown",
     yaml: "yaml", yml: "yaml",
     sh: "shell", bash: "shell",
+    sql: "sql",
   };
   return map[ext] ?? "plaintext";
 }
@@ -64,8 +67,84 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
   const isCsv = ext === "csv";
+  const isSql = ext === "sql";
   const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
   const [csvMode, setCsvMode] = useState<"table" | "raw">("table");
+
+  // SQL file: connection picker + autocomplete + run in DB viewer
+  const { connections, cachedTables, refreshTables } = useConnections();
+  const [sqlConnId, setSqlConnId] = useState<number | null>(() => {
+    if (!isSql || !filePath) return null;
+    const stored = localStorage.getItem(`ppm:sql-conn:${filePath}`);
+    return stored ? Number(stored) : null;
+  });
+  const monacoInstanceRef = useRef<typeof MonacoType | null>(null);
+  const completionDisposable = useRef<MonacoType.IDisposable | null>(null);
+
+  const selectedSqlConn = useMemo(() => connections.find((c) => c.id === sqlConnId) ?? null, [connections, sqlConnId]);
+
+  // Persist selected connection per file
+  const handleSqlConnChange = useCallback((connId: number) => {
+    setSqlConnId(connId);
+    if (filePath) localStorage.setItem(`ppm:sql-conn:${filePath}`, String(connId));
+    // Refresh tables for autocomplete
+    refreshTables(connId).catch(() => {});
+  }, [filePath, refreshTables]);
+
+  // Build SchemaInfo for .sql file autocomplete
+  const sqlSchemaInfo = useMemo<SchemaInfo | undefined>(() => {
+    if (!isSql || !sqlConnId) return undefined;
+    const tables = (cachedTables.get(sqlConnId) ?? []).map((t) => ({ name: t.tableName, schema: t.schemaName }));
+    if (tables.length === 0) return undefined;
+    return {
+      tables,
+      getColumns: async (table: string, schema?: string) => {
+        return api.get<{ name: string; type: string }[]>(
+          `/api/db/connections/${sqlConnId}/schema?table=${encodeURIComponent(table)}${schema ? `&schema=${encodeURIComponent(schema)}` : ""}`,
+        );
+      },
+    };
+  }, [isSql, sqlConnId, cachedTables]);
+
+  // Register/dispose completion provider when connection changes
+  useEffect(() => {
+    if (!monacoInstanceRef.current || !sqlSchemaInfo) return;
+    completionDisposable.current?.dispose();
+    clearCompletionCache();
+    completionDisposable.current = monacoInstanceRef.current.languages.registerCompletionItemProvider(
+      "sql",
+      createSqlCompletionProvider(monacoInstanceRef.current, sqlSchemaInfo),
+    );
+    return () => { completionDisposable.current?.dispose(); };
+  }, [sqlSchemaInfo]);
+
+  // Run in DB Viewer
+  const openTab = useTabStore((s) => s.openTab);
+  const runSqlInViewer = useCallback((sqlText: string) => {
+    if (!selectedSqlConn) return;
+    openTab({
+      type: "database",
+      title: `${selectedSqlConn.name} · Query`,
+      projectId: null,
+      closable: true,
+      metadata: { connectionId: selectedSqlConn.id, connectionName: selectedSqlConn.name, dbType: selectedSqlConn.type, initialSql: sqlText },
+    });
+  }, [selectedSqlConn, openTab]);
+
+  const handleRunInDbViewer = useCallback(() => {
+    if (!editorRef.current || !selectedSqlConn) return;
+    const editor = editorRef.current;
+    const selection = editor.getSelection();
+    const sqlText = selection && !selection.isEmpty()
+      ? editor.getModel()?.getValueInRange(selection) ?? editor.getValue()
+      : editor.getValue();
+    runSqlInViewer(sqlText);
+  }, [selectedSqlConn, runSqlInViewer]);
+
+  // CodeLens: inline Run buttons between SQL statements
+  const codeLensDisposable = useRef<MonacoType.IDisposable[]>([]);
+  const runSqlRef = useRef(runSqlInViewer);
+  runSqlRef.current = runSqlInViewer;
 
   // Redirect .db files to sqlite viewer by changing tab type
   useEffect(() => {
@@ -141,31 +220,82 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const lineNumber = metadata?.lineNumber as number | undefined;
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
+    monacoInstanceRef.current = monaco;
     if (lineNumber && lineNumber > 0) {
-      // Defer until content is rendered
       setTimeout(() => {
         editor.revealLineInCenter(lineNumber);
         editor.setPosition({ lineNumber, column: 1 });
         editor.focus();
       }, 100);
     }
-    // Alt+Z → toggle word wrap
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
       () => useSettingsStore.getState().toggleWordWrap(),
     );
-    // Disable all diagnostics — PPM is a lightweight editor, not a full IDE
     monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true,
-      noSyntaxValidation: true,
-      noSuggestionDiagnostics: true,
+      noSemanticValidation: true, noSyntaxValidation: true, noSuggestionDiagnostics: true,
     });
     monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true,
-      noSyntaxValidation: true,
-      noSuggestionDiagnostics: true,
+      noSemanticValidation: true, noSyntaxValidation: true, noSuggestionDiagnostics: true,
     });
-  }, []);
+    // Register SQL completion if schema available
+    if (sqlSchemaInfo) {
+      completionDisposable.current?.dispose();
+      completionDisposable.current = monaco.languages.registerCompletionItemProvider(
+        "sql", createSqlCompletionProvider(monaco, sqlSchemaInfo),
+      );
+    }
+
+    // Register CodeLens for inline Run buttons on .sql files
+    if (isSql) {
+      codeLensDisposable.current.forEach((d) => d.dispose());
+      codeLensDisposable.current = [];
+
+      const cmdId = editor.addCommand(0, (_accessor: unknown, sql: string) => {
+        if (sql) runSqlRef.current(sql);
+      });
+
+      if (cmdId) {
+        const provider = monaco.languages.registerCodeLensProvider("sql", {
+          provideCodeLenses: (model: MonacoType.editor.ITextModel) => {
+            const lenses: MonacoType.languages.CodeLens[] = [];
+            const lines = model.getValue().split("\n");
+            let stmtStartLine = -1;
+            let stmtLines: string[] = [];
+
+            const addLens = (line: number, stmt: string) => {
+              const trimmed = stmt.trim();
+              if (!trimmed || trimmed.startsWith("--")) return;
+              lenses.push({
+                range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
+                command: { id: cmdId, title: "\u25B7 Run", arguments: [trimmed] },
+              });
+            };
+
+            for (let i = 0; i < lines.length; i++) {
+              const trimmed = lines[i]!.trim();
+              if (stmtStartLine === -1) {
+                if (!trimmed || trimmed.startsWith("--")) continue;
+                stmtStartLine = i + 1;
+                stmtLines = [];
+              }
+              stmtLines.push(lines[i]!);
+              if (trimmed.endsWith(";")) {
+                addLens(stmtStartLine, stmtLines.join("\n"));
+                stmtStartLine = -1;
+                stmtLines = [];
+              }
+            }
+            if (stmtStartLine > 0 && stmtLines.join("").trim()) {
+              addLens(stmtStartLine, stmtLines.join("\n"));
+            }
+            return { lenses, dispose: () => {} };
+          },
+        });
+        codeLensDisposable.current.push(provider);
+      }
+    }
+  }, [sqlSchemaInfo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!filePath || (!isExternalFile && !projectName)) {
     return (
@@ -203,6 +333,31 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     );
   }
 
+  /** SQL connection picker bar (shared between breadcrumb and standalone) */
+  const sqlPickerBar = isSql ? (
+    <div className="shrink-0 flex items-center gap-1 px-2 border-l border-border">
+      <Database className="size-3 text-muted-foreground" />
+      <select
+        value={sqlConnId ?? ""}
+        onChange={(e) => { const v = Number(e.target.value); if (v) handleSqlConnChange(v); }}
+        className="h-5 text-[10px] bg-transparent border border-border rounded px-1 text-foreground outline-none max-w-[140px]"
+        title="Select connection for autocomplete"
+      >
+        <option value="">Connection…</option>
+        {connections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      <button
+        type="button"
+        onClick={handleRunInDbViewer}
+        disabled={!selectedSqlConn}
+        className="p-0.5 rounded text-muted-foreground hover:text-primary disabled:opacity-30 transition-colors"
+        title="Run all in DB Viewer"
+      >
+        <Play className="size-3.5" />
+      </button>
+    </div>
+  ) : null;
+
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
       {/* Breadcrumb + Toolbar bar — desktop only */}
@@ -214,6 +369,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
             tabId={tabId}
             className="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none px-2 gap-0.5"
           />
+          {sqlPickerBar}
           <EditorToolbar
             ext={ext}
             mdMode={mdMode}
@@ -226,6 +382,14 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
             projectName={projectName}
             className="shrink-0 flex items-center gap-1 px-2"
           />
+        </div>
+      )}
+
+      {/* Standalone SQL toolbar for external files (no breadcrumb available) */}
+      {isSql && (!projectName || !tabId) && (
+        <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0 px-2">
+          <span className="text-xs text-muted-foreground truncate flex-1">{filePath ? basename(filePath) : "SQL"}</span>
+          {sqlPickerBar}
         </div>
       )}
 

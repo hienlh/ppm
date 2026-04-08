@@ -3,7 +3,7 @@ import { api } from "@/lib/api-client";
 
 export interface DbTableInfo { name: string; schema: string; rowCount: number }
 export interface DbColumnInfo { name: string; type: string; nullable: boolean; pk: boolean; defaultValue: string | null }
-export interface DbQueryResult { columns: string[]; rows: Record<string, unknown>[]; rowsAffected: number; changeType: "select" | "modify" }
+export interface DbQueryResult { columns: string[]; rows: Record<string, unknown>[]; rowsAffected: number; changeType: "select" | "modify"; executionTimeMs?: number }
 interface DbTableData { columns: string[]; rows: Record<string, unknown>[]; total: number; page: number; limit: number }
 
 /** SessionStorage cache key for table data */
@@ -33,22 +33,28 @@ export function useDatabase(connectionId: number) {
   const [selectedSchema, setSelectedSchema] = useState("public");
   const [tableData, setTableData] = useState<DbTableData | null>(null);
   const [schema, setSchema] = useState<DbColumnInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPageState] = useState(1);
   const [queryResult, setQueryResult] = useState<DbQueryResult | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
+  // Sort state
+  const [orderBy, setOrderBy] = useState<string | null>(null);
+  const [orderDir, setOrderDir] = useState<"ASC" | "DESC">("ASC");
 
   // Fetch table data + schema for current selection
-  const fetchTableData = useCallback(async (table?: string, tableSchema?: string, p?: number) => {
+  const fetchTableData = useCallback(async (table?: string, tableSchema?: string, p?: number, sortCol?: string | null, sortDir?: "ASC" | "DESC") => {
     const t = table ?? selectedTable;
     const s = tableSchema ?? selectedSchema;
     if (!t) return;
     setLoading(true);
+    const ob = sortCol !== undefined ? sortCol : orderBy;
+    const od = sortDir ?? orderDir;
     try {
+      const orderParams = ob ? `&orderBy=${encodeURIComponent(ob)}&orderDir=${od}` : "";
       const [data, cols] = await Promise.all([
-        api.get<DbTableData>(`${base}/data?table=${encodeURIComponent(t)}&schema=${s}&page=${p ?? page}&limit=100`),
+        api.get<DbTableData>(`${base}/data?table=${encodeURIComponent(t)}&schema=${s}&page=${p ?? page}&limit=100${orderParams}`),
         api.get<DbColumnInfo[]>(`${base}/schema?table=${encodeURIComponent(t)}&schema=${s}`),
       ]);
       setTableData(data);
@@ -59,7 +65,7 @@ export function useDatabase(connectionId: number) {
     } finally {
       setLoading(false);
     }
-  }, [base, connectionId, selectedTable, selectedSchema, page]);
+  }, [base, connectionId, selectedTable, selectedSchema, page, orderBy, orderDir]);
 
   const selectTable = useCallback((name: string, tableSchema = "public") => {
     setSelectedTable(name);
@@ -123,10 +129,56 @@ export function useDatabase(connectionId: number) {
     }
   }, [base, selectedTable, selectedSchema, fetchTableData]);
 
+  /** Toggle sort: none → ASC → DESC → none */
+  const toggleSort = useCallback((column: string) => {
+    let newCol: string | null;
+    let newDir: "ASC" | "DESC" = "ASC";
+    if (orderBy !== column) {
+      newCol = column; newDir = "ASC";
+    } else if (orderDir === "ASC") {
+      newCol = column; newDir = "DESC";
+    } else {
+      newCol = null; newDir = "ASC";
+    }
+    setOrderBy(newCol);
+    setOrderDir(newDir);
+    setPageState(1);
+    fetchTableData(undefined, undefined, 1, newCol, newDir);
+  }, [orderBy, orderDir, fetchTableData]);
+
+  /** Bulk delete rows */
+  const bulkDelete = useCallback(async (pkColumn: string, pkValues: unknown[]) => {
+    if (!selectedTable) return;
+    const t = selectedTable;
+    const s = selectedSchema;
+    try {
+      await api.post(`${base}/rows/delete`, { table: t, schema: s, pkColumn, pkValues });
+      fetchTableData(t, s);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [base, selectedTable, selectedSchema, fetchTableData]);
+
+  /** Insert a new row */
+  const insertRow = useCallback(async (values: Record<string, unknown>) => {
+    if (!selectedTable) return;
+    const t = selectedTable;
+    const s = selectedSchema;
+    try {
+      await api.post(`${base}/row`, { table: t, schema: s, values });
+      fetchTableData(t, s);
+    } catch (e) {
+      setError((e as Error).message);
+      throw e;
+    }
+  }, [base, selectedTable, selectedSchema, fetchTableData]);
+
   return {
-    selectedTable, selectTable, tableData, schema,
+    selectedTable, selectedSchema, selectTable, tableData, schema,
     loading, error, page, setPage: changePage,
+    orderBy, orderDir, toggleSort,
     queryResult, queryError, queryLoading, executeQuery,
-    updateCell, deleteRow, refreshData: fetchTableData,
+    updateCell, deleteRow, bulkDelete, insertRow,
+    refreshData: fetchTableData,
   };
 }

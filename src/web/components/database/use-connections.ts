@@ -76,6 +76,13 @@ export function useConnections() {
     return api.post(`/api/db/connections/${id}/test`);
   }, []);
 
+  const testRawConnection = useCallback(async (
+    type: "sqlite" | "postgres",
+    connectionConfig: { type: string; path?: string; connectionString?: string },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    return api.post("/api/db/test", { type, connectionConfig });
+  }, []);
+
   const refreshTables = useCallback(async (id: number): Promise<void> => {
     const raw = await api.get<{ name: string; schema: string; rowCount: number }[]>(`/api/db/connections/${id}/tables`);
     const tables: CachedTable[] = raw.map((t) => ({
@@ -87,6 +94,19 @@ export function useConnections() {
     }));
     setCachedTables((prev) => new Map(prev).set(id, tables));
   }, []);
+
+  /** Fetch column metadata for a table (lazy loaded for schema tree) */
+  const [columnCache, setColumnCache] = useState<Map<string, { name: string; type: string; nullable: boolean; pk: boolean; fk: { table: string; column: string } | null }[]>>(new Map());
+  const fetchColumns = useCallback(async (connId: number, table: string, schema?: string): Promise<{ name: string; type: string; nullable: boolean; pk: boolean; fk: { table: string; column: string } | null }[]> => {
+    const cacheKey = `${connId}:${schema ?? "main"}.${table}`;
+    const cached = columnCache.get(cacheKey);
+    if (cached) return cached;
+    const cols = await api.get<{ name: string; type: string; nullable: boolean; pk: boolean; fk: { table: string; column: string } | null }[]>(
+      `/api/db/connections/${connId}/schema?table=${encodeURIComponent(table)}${schema ? `&schema=${encodeURIComponent(schema)}` : ""}`,
+    );
+    setColumnCache((prev) => new Map(prev).set(cacheKey, cols));
+    return cols;
+  }, [columnCache]);
 
   const exportConnections = useCallback(async () => {
     return api.get<{ version: number; exported_at: string; connections: unknown[] }>("/api/db/connections/export");
@@ -100,5 +120,5 @@ export function useConnections() {
     return result;
   }, [fetchConnections]);
 
-  return { connections, loading, cachedTables, createConnection, updateConnection, deleteConnection, testConnection, refreshTables, exportConnections, importConnections };
+  return { connections, loading, cachedTables, columnCache, createConnection, updateConnection, deleteConnection, testConnection, testRawConnection, refreshTables, fetchColumns, exportConnections, importConnections };
 }

@@ -3,7 +3,7 @@ import { api, projectUrl } from "@/lib/api-client";
 
 export interface TableInfo { name: string; rowCount: number }
 export interface ColumnInfo { cid: number; name: string; type: string; notnull: boolean; pk: boolean; dflt_value: string | null }
-export interface QueryResult { columns: string[]; rows: Record<string, unknown>[]; rowsAffected: number; changeType: "select" | "modify" }
+export interface QueryResult { columns: string[]; rows: Record<string, unknown>[]; rowsAffected: number; changeType: "select" | "modify"; executionTimeMs?: number }
 interface TableData { columns: string[]; rows: Record<string, unknown>[]; total: number; page: number; limit: number }
 
 export function useSqlite(projectName: string, dbPath: string, connectionId?: number) {

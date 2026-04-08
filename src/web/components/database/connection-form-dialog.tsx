@@ -15,6 +15,8 @@ interface ConnectionFormDialogProps {
   onSave?: (data: CreateConnectionData) => Promise<void>;
   onUpdate?: (id: number, data: UpdateConnectionData) => Promise<void>;
   onTest: (id: number) => Promise<{ ok: boolean; error?: string }>;
+  /** Test raw (unsaved) connection config — enables Test button in create mode */
+  onTestRaw?: (type: "sqlite" | "postgres", config: { type: string; path?: string; connectionString?: string }) => Promise<{ ok: boolean; error?: string }>;
 }
 
 interface FormState {
@@ -28,7 +30,7 @@ interface FormState {
 }
 
 export function ConnectionFormDialog({
-  open, onClose, connection, onSave, onUpdate, onTest,
+  open, onClose, connection, onSave, onUpdate, onTest, onTestRaw,
 }: ConnectionFormDialogProps) {
   const isEdit = !!connection;
   const [form, setForm] = useState<FormState>({
@@ -63,11 +65,20 @@ export function ConnectionFormDialog({
   };
 
   const handleTest = async () => {
-    if (!isEdit) return;
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await onTest(connection!.id);
+      let result: { ok: boolean; error?: string };
+      if (isEdit) {
+        result = await onTest(connection!.id);
+      } else if (onTestRaw) {
+        const config = form.type === "postgres"
+          ? { type: "postgres" as const, connectionString: form.connectionString }
+          : { type: "sqlite" as const, path: form.path };
+        result = await onTestRaw(form.type, config);
+      } else {
+        result = { ok: false, error: "Save connection first" };
+      }
       setTestResult(result);
     } finally {
       setTesting(false);
@@ -227,11 +238,9 @@ export function ConnectionFormDialog({
         </div>
 
         <DialogFooter>
-          {isEdit && (
-            <Button variant="outline" size="sm" onClick={handleTest} disabled={testing} className="mr-auto">
-              {testing ? "Testing…" : "Test Connection"}
-            </Button>
-          )}
+          <Button variant="outline" size="sm" onClick={handleTest} disabled={testing} className="mr-auto">
+            {testing ? "Testing…" : "Test Connection"}
+          </Button>
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
           <Button size="sm" onClick={handleSave} disabled={saving}>
             {saving ? "Saving…" : isEdit ? "Save" : "Add"}

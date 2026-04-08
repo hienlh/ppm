@@ -136,8 +136,6 @@ function SqliteViewerInner({
           <div className="border-t border-border h-[40%] shrink-0">
             <SqliteQueryEditor
               onExecute={sqlite.executeQuery}
-              result={sqlite.queryResult}
-              error={sqlite.queryError}
               loading={sqlite.queryLoading}
             />
           </div>

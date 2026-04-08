@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import {
   getConnections, getConnectionById, insertConnection, updateConnection, deleteConnection,
+  decryptConfig, getConnectionConfig,
   type ConnectionConfig, type ConnectionRow,
 } from "../../services/db.service.ts";
 import { getAdapter } from "../../services/database/adapter-registry.ts";
 import { syncTables, searchTables, getTablesFromCache } from "../../services/table-cache.service.ts";
 import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
 import { ok, err } from "../../types/api.ts";
-import type { DbConnectionConfig } from "../../types/database.ts";
 
 export const databaseRoutes = new Hono();
 
@@ -43,11 +43,14 @@ databaseRoutes.get("/connections", (c) => {
   }
 });
 
-/** GET /api/db/connections/export — full connection data including credentials */
+/** GET /api/db/connections/export — full connection data including credentials (decrypted) */
 databaseRoutes.get("/connections/export", (c) => {
   try {
     const conns = getConnections();
-    const exported = conns.map(({ id, sort_order, created_at, updated_at, ...rest }) => rest);
+    const exported = conns.map(({ id, sort_order, created_at, updated_at, connection_config, ...rest }) => ({
+      ...rest,
+      connection_config: JSON.stringify(decryptConfig(connection_config)),
+    }));
     return c.json(ok({ version: 1, exported_at: new Date().toISOString(), connections: exported }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -181,12 +184,25 @@ databaseRoutes.delete("/connections/:id", (c) => {
 // Connection operations
 // ---------------------------------------------------------------------------
 
+/** POST /api/db/test — test a raw (unsaved) connection config */
+databaseRoutes.post("/test", async (c) => {
+  try {
+    const body = await c.req.json<{ type: "sqlite" | "postgres"; connectionConfig: { type: string; path?: string; connectionString?: string } }>();
+    if (!body.type || !body.connectionConfig) return c.json(err("type and connectionConfig required"), 400);
+    const adapter = getAdapter(body.type);
+    const result = await adapter.testConnection(body.connectionConfig as import("../../types/database.ts").DbConnectionConfig);
+    return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** POST /api/db/connections/:id/test */
 databaseRoutes.post("/connections/:id/test", async (c) => {
   try {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
-    const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+    const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
     const result = await adapter.testConnection(config);
     return c.json(ok(result));
@@ -217,7 +233,7 @@ databaseRoutes.get("/connections/:id/schema", async (c) => {
     const table = c.req.query("table");
     const schema = c.req.query("schema");
     if (!table) return c.json(err("table query param required"), 400);
-    const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+    const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
     const cols = await adapter.getTableSchema(config, table, schema);
     return c.json(ok(cols));
@@ -233,7 +249,7 @@ databaseRoutes.get("/connections/:id/data", async (c) => {
     if (!conn) return c.json(err("Connection not found"), 404);
     const table = c.req.query("table");
     if (!table) return c.json(err("table query param required"), 400);
-    const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+    const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
     const data = await adapter.getTableData(config, table, {
       schema: c.req.query("schema"),
@@ -260,7 +276,7 @@ databaseRoutes.post("/connections/:id/query", async (c) => {
       return c.json(err("Connection is readonly — only SELECT queries allowed. Change this in PPM web UI."), 403);
     }
 
-    const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+    const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
     const result = await adapter.executeQuery(config, body.sql);
     return c.json(ok(result));
@@ -287,7 +303,7 @@ databaseRoutes.put("/connections/:id/cell", async (c) => {
       return c.json(err("table, pkColumn, and column are required"), 400);
     }
 
-    const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+    const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
     await adapter.updateCell(config, body.table, {
       schema: body.schema,
@@ -320,7 +336,7 @@ databaseRoutes.delete("/connections/:id/row", async (c) => {
       return c.json(err("table, pkColumn, and pkValue are required"), 400);
     }
 
-    const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+    const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
     await adapter.deleteRow(config, body.table, {
       schema: body.schema,
@@ -328,6 +344,107 @@ databaseRoutes.delete("/connections/:id/row", async (c) => {
       pkValue: body.pkValue,
     });
     return c.json(ok({ deleted: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Bulk operations
+// ---------------------------------------------------------------------------
+
+/** POST /api/db/connections/:id/rows/delete — bulk delete by PK values */
+databaseRoutes.post("/connections/:id/rows/delete", async (c) => {
+  try {
+    const conn = resolveConn(c.req.param("id"));
+    if (!conn) return c.json(err("Connection not found"), 404);
+    if (conn.readonly) return c.json(err("Connection is readonly — bulk delete is disabled."), 403);
+
+    const body = await c.req.json<{ table: string; schema?: string; pkColumn: string; pkValues: unknown[] }>();
+    if (!body.table || !body.pkColumn || !Array.isArray(body.pkValues) || body.pkValues.length === 0) {
+      return c.json(err("table, pkColumn, and pkValues[] are required"), 400);
+    }
+
+    const config = decryptConfig(conn.connection_config);
+    const adapter = getAdapter(conn.type);
+    for (const pkValue of body.pkValues) {
+      await adapter.deleteRow(config, body.table, { schema: body.schema, pkColumn: body.pkColumn, pkValue });
+    }
+    return c.json(ok({ deleted: body.pkValues.length }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /api/db/connections/:id/row — insert a new row */
+databaseRoutes.post("/connections/:id/row", async (c) => {
+  try {
+    const conn = resolveConn(c.req.param("id"));
+    if (!conn) return c.json(err("Connection not found"), 404);
+    if (conn.readonly) return c.json(err("Connection is readonly — insert is disabled."), 403);
+
+    const body = await c.req.json<{ table: string; schema?: string; values: Record<string, unknown> }>();
+    if (!body.table || !body.values || Object.keys(body.values).length === 0) {
+      return c.json(err("table and values are required"), 400);
+    }
+
+    const config = decryptConfig(conn.connection_config);
+    const adapter = getAdapter(conn.type);
+    // Build and execute INSERT query
+    const cols = Object.keys(body.values);
+    const vals = Object.values(body.values);
+    const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+    const schema = body.schema && conn.type === "postgres" ? `"${body.schema}".` : "";
+    const sql = `INSERT INTO ${schema}"${body.table}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`;
+    await adapter.executeQuery(config, sql.replace(/\$(\d+)/g, (_, n) => {
+      const v = vals[Number(n) - 1];
+      if (v === null || v === undefined) return "NULL";
+      if (typeof v === "number") return String(v);
+      return `'${String(v).replace(/'/g, "''")}'`;
+    }));
+    return c.json(ok({ inserted: true }), 201);
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+/** GET /api/db/connections/:id/export?table=X&schema=Y&format=csv|json&limit=10000 */
+databaseRoutes.get("/connections/:id/export", async (c) => {
+  try {
+    const conn = resolveConn(c.req.param("id"));
+    if (!conn) return c.json(err("Connection not found"), 404);
+    const table = c.req.query("table");
+    if (!table) return c.json(err("table query param required"), 400);
+    const schema = c.req.query("schema");
+    const format = c.req.query("format") === "json" ? "json" : "csv";
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "10000", 10), 10000);
+
+    const config = decryptConfig(conn.connection_config);
+    const adapter = getAdapter(conn.type);
+    const data = await adapter.getTableData(config, table, { schema, page: 1, limit });
+
+    if (format === "json") {
+      return new Response(JSON.stringify(data.rows, null, 2), {
+        headers: { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="${table}.json"` },
+      });
+    }
+
+    // CSV
+    const escape = (val: string): string => {
+      if (val.includes(",") || val.includes('"') || val.includes("\n")) return `"${val.replace(/"/g, '""')}"`;
+      return val;
+    };
+    const lines = [data.columns.map(escape).join(",")];
+    for (const row of data.rows) {
+      lines.push(data.columns.map((col) => escape(String(row[col] ?? ""))).join(","));
+    }
+    return new Response(lines.join("\n"), {
+      headers: { "Content-Type": "text/csv", "Content-Disposition": `attachment; filename="${table}.csv"` },
+    });
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

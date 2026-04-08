@@ -2,9 +2,10 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
+import { encrypt, decrypt } from "../lib/account-crypto.ts";
 
 const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const CURRENT_SCHEMA_VERSION = 14;
+const CURRENT_SCHEMA_VERSION = 15;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -414,6 +415,22 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 14;
     `);
   }
+
+  if (current < 15) {
+    // Encrypt all existing plaintext connection_config values
+    const rows = database.query("SELECT id, connection_config FROM connections").all() as { id: number; connection_config: string }[];
+    for (const row of rows) {
+      try {
+        // Try decrypting — if it works, already encrypted
+        decrypt(row.connection_config);
+      } catch {
+        // Plaintext — encrypt it
+        const encrypted = encrypt(row.connection_config);
+        database.query("UPDATE connections SET connection_config = ? WHERE id = ?").run(encrypted, row.id);
+      }
+    }
+    database.exec("PRAGMA user_version = 15");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -796,6 +813,28 @@ export type ConnectionConfig =
   | { type: "sqlite"; path: string }
   | { type: "postgres"; connectionString: string };
 
+/** Encrypt a connection config object for storage */
+function encryptConfig(config: ConnectionConfig): string {
+  return encrypt(JSON.stringify(config));
+}
+
+/** Decrypt a stored connection_config string, with fallback for pre-migration plaintext */
+export function decryptConfig(encrypted: string): ConnectionConfig {
+  try {
+    return JSON.parse(decrypt(encrypted));
+  } catch {
+    // Fallback: might be plaintext (pre-migration or test DB)
+    return JSON.parse(encrypted);
+  }
+}
+
+/** Get decrypted connection config by connection ID */
+export function getConnectionConfig(id: number): ConnectionConfig | null {
+  const conn = getConnectionById(id);
+  if (!conn) return null;
+  return decryptConfig(conn.connection_config);
+}
+
 export function getConnections(): ConnectionRow[] {
   return getDb().query(
     "SELECT * FROM connections ORDER BY sort_order, id",
@@ -826,7 +865,7 @@ export function insertConnection(
   const maxOrder = (getDb().query("SELECT COALESCE(MAX(sort_order), -1) as m FROM connections").get() as { m: number }).m;
   getDb().query(
     "INSERT INTO connections (type, name, connection_config, group_name, color, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(type, name, JSON.stringify(config), groupName ?? null, color ?? null, maxOrder + 1);
+  ).run(type, name, encryptConfig(config), groupName ?? null, color ?? null, maxOrder + 1);
   return getConnectionByName(name)!;
 }
 
@@ -843,7 +882,7 @@ export function updateConnection(
   const sets: string[] = [];
   const vals: unknown[] = [];
   if (updates.name !== undefined) { sets.push("name = ?"); vals.push(updates.name); }
-  if (updates.config !== undefined) { sets.push("connection_config = ?"); vals.push(JSON.stringify(updates.config)); }
+  if (updates.config !== undefined) { sets.push("connection_config = ?"); vals.push(encryptConfig(updates.config)); }
   if (updates.groupName !== undefined) { sets.push("group_name = ?"); vals.push(updates.groupName); }
   if (updates.color !== undefined) { sets.push("color = ?"); vals.push(updates.color); }
   if (updates.readonly !== undefined) { sets.push("readonly = ?"); vals.push(updates.readonly); }

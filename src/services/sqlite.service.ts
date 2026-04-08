@@ -14,6 +14,7 @@ export interface ColumnInfo {
   notnull: boolean;
   pk: boolean;
   dflt_value: string | null;
+  fk: { table: string; column: string } | null;
 }
 
 export interface QueryResult {
@@ -21,6 +22,7 @@ export interface QueryResult {
   rows: Record<string, unknown>[];
   rowsAffected: number;
   changeType: "select" | "modify";
+  executionTimeMs: number;
 }
 
 /** Auto-close idle databases after 5 minutes */
@@ -81,11 +83,20 @@ class SqliteService {
     });
   }
 
-  /** Get column schema for a table */
+  /** Get column schema for a table (with FK metadata) */
   getTableSchema(projectPath: string, dbPath: string, table: string): ColumnInfo[] {
     const abs = this.resolvePath(projectPath, dbPath);
     const db = this.open(abs);
-    return db.query(`PRAGMA table_info("${table}")`).all() as ColumnInfo[];
+    const cols = db.query(`PRAGMA table_info("${table}")`).all() as Omit<ColumnInfo, "fk">[];
+
+    // Build FK map from PRAGMA foreign_key_list
+    const fkRows = db.query(`PRAGMA foreign_key_list("${table}")`).all() as { from: string; table: string; to: string }[];
+    const fkMap = new Map<string, { table: string; column: string }>();
+    for (const fk of fkRows) {
+      fkMap.set(fk.from, { table: fk.table, column: fk.to });
+    }
+
+    return cols.map((c) => ({ ...c, fk: fkMap.get(c.name) ?? null }));
   }
 
   /** Get paginated rows from a table */
@@ -115,15 +126,18 @@ class SqliteService {
     const trimmed = sql.trim().toUpperCase();
     const isSelect = trimmed.startsWith("SELECT") || trimmed.startsWith("PRAGMA") || trimmed.startsWith("EXPLAIN");
 
+    const start = performance.now();
     if (isSelect) {
       const stmt = db.query(sql);
       const rows = stmt.all() as Record<string, unknown>[];
+      const executionTimeMs = Math.round(performance.now() - start);
       const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
-      return { columns, rows, rowsAffected: 0, changeType: "select" };
+      return { columns, rows, rowsAffected: 0, changeType: "select", executionTimeMs };
     }
 
     const result = db.run(sql);
-    return { columns: [], rows: [], rowsAffected: result.changes, changeType: "modify" };
+    const executionTimeMs = Math.round(performance.now() - start);
+    return { columns: [], rows: [], rowsAffected: result.changes, changeType: "modify", executionTimeMs };
   }
 
   /** Update a single cell value */

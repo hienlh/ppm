@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
+import { decryptConfig } from "../../services/db.service.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -48,10 +49,10 @@ function formatRows(columns: string[], rows: Record<string, unknown>[], limit = 
   }
 }
 
-/** Parse connection_config JSON and return the connection string or path */
+/** Parse connection_config (encrypted or plaintext) and return the connection string or path */
 function parseConfig(row: { type: string; connection_config: string }): { type: string; path?: string; connectionString?: string } {
-  const cfg = JSON.parse(row.connection_config);
-  return { type: row.type, ...cfg };
+  const cfg = decryptConfig(row.connection_config);
+  return { ...cfg, type: row.type };
 }
 
 /** Mask password in postgres connection string: postgresql://user:pass@host → postgresql://user:***@host */

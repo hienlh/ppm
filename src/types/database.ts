@@ -19,6 +19,7 @@ export interface DbColumnInfo {
   nullable: boolean;
   pk: boolean;
   defaultValue: string | null;
+  fk: { table: string; column: string } | null;
 }
 
 export interface DbQueryResult {
@@ -26,6 +27,7 @@ export interface DbQueryResult {
   rows: Record<string, unknown>[];
   rowsAffected: number;
   changeType: "select" | "modify";
+  executionTimeMs: number;
 }
 
 export interface DbPagedData {

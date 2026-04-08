@@ -1,9 +1,8 @@
 import {
   getCachedTables, upsertTableCache, deleteTableCache, searchTableCache,
-  getConnectionById, type TableCacheRow,
+  getConnectionById, decryptConfig, type TableCacheRow,
 } from "./db.service.ts";
 import { getAdapter } from "./database/adapter-registry.ts";
-import type { DbConnectionConfig } from "../types/database.ts";
 
 export interface CachedTable {
   connectionId: number;
@@ -42,7 +41,7 @@ export async function syncTables(connectionId: number): Promise<CachedTable[]> {
   const conn = getConnectionById(connectionId);
   if (!conn) throw new Error(`Connection not found: ${connectionId}`);
 
-  const config = JSON.parse(conn.connection_config) as DbConnectionConfig;
+  const config = decryptConfig(conn.connection_config);
   const adapter = getAdapter(conn.type);
   const tables = await adapter.getTables(config);
 
