@@ -55,6 +55,8 @@ function registerDelegationCommands(bot: Command): void {
     .option("--timeout <ms>", "Timeout in milliseconds", "900000")
     .action(async (opts: { chat: string; project: string; prompt: string; timeout: string }) => {
       try {
+        const { configService } = await import("../../services/config.service.ts");
+        configService.load();
         const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
         const sessions = new PPMBotSessionManager();
         const project = sessions.resolveProject(opts.project);
@@ -246,6 +248,8 @@ function registerProjectCommands(bot: Command): void {
     .option("--json", "Output as JSON")
     .action(async (opts: { json?: boolean }) => {
       try {
+        const { configService } = await import("../../services/config.service.ts");
+        configService.load();
         const { PPMBotSessionManager } = await import("../../services/ppmbot/ppmbot-session.ts");
         const sessions = new PPMBotSessionManager();
         const projects = sessions.getProjectNames();

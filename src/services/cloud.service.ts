@@ -3,6 +3,7 @@ import { homedir, hostname } from "node:os";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { VERSION } from "../version.ts";
+import { configService } from "./config.service.ts";
 
 const PPM_DIR = resolve(homedir(), ".ppm");
 const AUTH_FILE = resolve(PPM_DIR, "cloud-auth.json");
@@ -284,7 +285,7 @@ export async function linkDevice(name?: string): Promise<CloudDevice> {
   if (!auth) throw new Error("Not logged in. Run 'ppm cloud login' first.");
 
   const machineId = getMachineId();
-  const deviceName = name || hostname() || "Unknown Machine";
+  const deviceName = name || (configService.get("device_name") as string) || hostname() || "Unknown Machine";
 
   const res = await cloudFetch("/api/devices", {
     method: "POST",
