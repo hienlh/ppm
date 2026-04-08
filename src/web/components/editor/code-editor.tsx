@@ -86,6 +86,36 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
 
   const selectedSqlConn = useMemo(() => connections.find((c) => c.id === sqlConnId) ?? null, [connections, sqlConnId]);
 
+  // Beautify for inline content (must be before early returns to maintain hook order)
+  const canBeautifyInline = inlineContent != null && (inlineLanguage === "json" || inlineLanguage === "xml");
+  const [isBeautified, setIsBeautified] = useState(false);
+  const handleBeautifyInline = useCallback(() => {
+    if (!inlineContent) return;
+    if (isBeautified) {
+      setContent(inlineContent);
+      setIsBeautified(false);
+    } else {
+      const trimmed = inlineContent.trimStart();
+      if (inlineLanguage === "json") {
+        try { setContent(JSON.stringify(JSON.parse(trimmed), null, 2)); setIsBeautified(true); } catch { /* not valid */ }
+      } else if (inlineLanguage === "xml") {
+        let indent = 0;
+        const formatted = trimmed.replace(/(>)(<)(\/*)/g, "$1\n$2$3")
+          .split("\n")
+          .map((line) => {
+            const l = line.trim();
+            if (l.startsWith("</")) indent = Math.max(0, indent - 1);
+            const padded = "  ".repeat(indent) + l;
+            if (l.startsWith("<") && !l.startsWith("</") && !l.endsWith("/>") && !l.includes("</")) indent++;
+            return padded;
+          })
+          .join("\n");
+        setContent(formatted);
+        setIsBeautified(true);
+      }
+    }
+  }, [inlineContent, inlineLanguage, isBeautified]);
+
   // Persist selected connection per file
   const handleSqlConnChange = useCallback((connId: number) => {
     setSqlConnId(connId);
@@ -361,36 +391,6 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
       </button>
     </div>
   ) : null;
-
-  // Beautify for inline content
-  const canBeautifyInline = inlineContent != null && (inlineLanguage === "json" || inlineLanguage === "xml");
-  const [isBeautified, setIsBeautified] = useState(false);
-  const handleBeautifyInline = useCallback(() => {
-    if (!inlineContent) return;
-    if (isBeautified) {
-      setContent(inlineContent);
-      setIsBeautified(false);
-    } else {
-      const trimmed = inlineContent.trimStart();
-      if (inlineLanguage === "json") {
-        try { setContent(JSON.stringify(JSON.parse(trimmed), null, 2)); setIsBeautified(true); } catch { /* not valid */ }
-      } else if (inlineLanguage === "xml") {
-        let indent = 0;
-        const formatted = trimmed.replace(/(>)(<)(\/*)/g, "$1\n$2$3")
-          .split("\n")
-          .map((line) => {
-            const l = line.trim();
-            if (l.startsWith("</")) indent = Math.max(0, indent - 1);
-            const padded = "  ".repeat(indent) + l;
-            if (l.startsWith("<") && !l.startsWith("</") && !l.endsWith("/>") && !l.includes("</")) indent++;
-            return padded;
-          })
-          .join("\n");
-        setContent(formatted);
-        setIsBeautified(true);
-      }
-    }
-  }, [inlineContent, inlineLanguage, isBeautified]);
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden">
