@@ -40,10 +40,10 @@ class AccountSelectorService {
   }
 
   /** Reason for the last null return from next() */
-  private _lastFailReason: "none" | "no_active" | "all_decrypt_failed" = "none";
+  private _lastFailReason: "none" | "no_active" | "all_decrypt_failed" | "all_excluded" = "none";
 
   /** Why the last next() call returned null */
-  get lastFailReason(): "none" | "no_active" | "all_decrypt_failed" {
+  get lastFailReason(): "none" | "no_active" | "all_decrypt_failed" | "all_excluded" {
     return this._lastFailReason;
   }
 
@@ -51,7 +51,7 @@ class AccountSelectorService {
    * Pick next available account (skips cooldown/disabled).
    * Returns null if no active accounts available.
    */
-  next(): AccountWithTokens | null {
+  next(excludeIds?: Set<string>): AccountWithTokens | null {
     this._lastFailReason = "none";
     const now = Math.floor(Date.now() / 1000);
     const allAccounts = accountService.list();
@@ -71,17 +71,19 @@ class AccountSelectorService {
     }
 
     const active = accountService.list().filter((a) => a.status === "active");
-    if (active.length === 0) {
-      this._lastFailReason = "no_active";
+    // Skip accounts excluded by caller (e.g., pre-flight loop)
+    const notExcluded = excludeIds?.size ? active.filter((a) => !excludeIds.has(a.id)) : active;
+    if (notExcluded.length === 0) {
+      this._lastFailReason = active.length > 0 ? "all_excluded" : "no_active";
       return null;
     }
 
     // Proactive: skip accounts whose 5-hour utilization >= 95%
-    const usable = active.filter((a) => {
+    const usable = notExcluded.filter((a) => {
       const snap = getLatestSnapshotForAccount(a.id);
       return !snap || (snap.five_hour_util ?? 0) < FIVE_HOUR_SKIP_THRESHOLD;
     });
-    const candidates = usable.length > 0 ? usable : active; // fallback to all if every account is near limit
+    const candidates = usable.length > 0 ? usable : notExcluded; // fallback to all if every account is near limit
 
     let pickedId: string;
     const strategy = this.getStrategy();
@@ -193,6 +195,22 @@ class AccountSelectorService {
     const backoffMs = Math.min(AUTH_BACKOFF_BASE_MS * Math.pow(2, retries - 1), BACKOFF_MAX_MS);
     accountService.setCooldown(accountId, Date.now() + backoffMs);
     console.log(`[accounts] ${accountId} auth error — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
+  }
+
+  private static readonly PREFLIGHT_BACKOFF_BASE_MS = 60_000; // 1 minute
+  private static readonly PREFLIGHT_BACKOFF_MAX_MS = 5 * 60_000; // 5 minutes
+
+  /** Called when pre-flight token refresh fails — short cooldown.
+   *  Shares retryCounts with onRateLimit/onAuthError (cumulative penalty by design). */
+  onPreflightFail(accountId: string): void {
+    const retries = (this.retryCounts.get(accountId) ?? 0) + 1;
+    this.retryCounts.set(accountId, retries);
+    const backoffMs = Math.min(
+      AccountSelectorService.PREFLIGHT_BACKOFF_BASE_MS * Math.pow(2, retries - 1),
+      AccountSelectorService.PREFLIGHT_BACKOFF_MAX_MS,
+    );
+    accountService.setCooldown(accountId, Date.now() + backoffMs);
+    console.log(`[accounts] ${accountId} preflight refresh failed — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
   }
 
   /** Called on successful request — reset retry count + track usage */

@@ -618,6 +618,11 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
       groups.push({ kind: "thinking", content: thinkingBuffer });
       thinkingBuffer = "";
     }
+    if (event.type === "status_update") {
+      if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
+      groups.push({ kind: "text", content: `\n\n> ⟳ ${event.message}\n\n` });
+      continue;
+    }
     if (event.type === "account_retry") {
       if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
       const label = (event as any).accountLabel ?? "another account";

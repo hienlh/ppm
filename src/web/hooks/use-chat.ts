@@ -185,6 +185,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         break;
       }
 
+      case "status_update": {
+        // Surface status as a transient event in the stream
+        streamingEventsRef.current.push(ev as ChatEvent);
+        syncMessages();
+        break;
+      }
+
       case "text": {
         const pid = ev.parentToolUseId as string | undefined;
         if (pid && routeToParent(ev as ChatEvent, pid)) {

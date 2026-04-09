@@ -2,7 +2,28 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.11
+**Current Version:** v0.9.72
+
+---
+
+## [0.9.72] — 2026-04-09
+
+### Added
+- **Account Selection Pre-flight Loop** — Intelligent account fallback during token refresh
+  - AccountSelector.next() now accepts excludeIds Set to skip previously failed accounts
+  - Pre-flight token refresh loop tries all accounts before final failure (was linear before)
+  - New AccountSelector.onPreflightFail() method handles preflight failure with 1-5min backoff
+  - Status updates streamed to UI as blockquotes during routing/refreshing/switching phases
+  - Cumulative penalty: preflight failures counted with rate-limit and auth-error retries
+
+### Technical Details
+- **Files Modified:**
+  - `src/providers/claude-agent-sdk.ts` — Pre-flight loop with excludeIds exclusion set
+  - `src/services/account-selector.service.ts` — excludeIds parameter, onPreflightFail() method
+  - `src/types/chat.ts` — New status_update ChatEvent type
+  - `src/web/components/chat/message-list.tsx` — Render status_update as blockquote
+- **Type Changes:** status_update event = { type: "status_update", phase: "routing" | "refreshing" | "switching", message, accountLabel? }
+- **Breaking Changes:** None (backward compatible)
 
 ---
 

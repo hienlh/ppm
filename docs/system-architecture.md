@@ -191,7 +191,7 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **SQLiteAdapter** | SQLite connection, query execution, readonly checks | testConnection, getTables, getTableSchema, getTableData, executeQuery, updateCell |
 | **PostgresAdapter** | PostgreSQL connection, query execution, readonly checks | testConnection, getTables, getTableSchema, getTableData, executeQuery, updateCell |
 | **AccountService** | Account CRUD, token encryption/decryption | getAccounts, createAccount, updateAccount, deleteAccount |
-| **AccountSelectorService** | Select active account based on config | getActiveAccount, setActiveAccount, selectByProject |
+| **AccountSelectorService** | Select active account based on config + pre-flight retry loop | next(excludeIds?), peek(), onPreflightFail(), onRateLimit(), onAuthError(), onSuccess() |
 | **UpgradeService** | Version checking, installation, self-replace signaling | checkForUpdate, applyUpgrade, getInstallMethod, compareSemver |
 | **PPMBotService** | Coordinator orchestrator (team leader, delegation mgmt) | start, stop, handleUpdate, checkPendingTasks |
 | **PPMBotSessionManager** | Coordinator session per chat, project resolver | getCoordinatorSession, rotateCoordinatorSession, resolveProject |

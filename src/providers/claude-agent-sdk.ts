@@ -18,7 +18,7 @@ import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionMapping, getSessionProjectPath, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
-import { accountService } from "../services/account.service.ts";
+import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { resolve } from "node:path";
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
@@ -657,28 +657,65 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Account-based auth injection (multi-account mode)
       // Fallback to existing env (ANTHROPIC_API_KEY) when no accounts configured.
       const accountsEnabled = accountSelector.isEnabled();
-      let account = accountsEnabled ? accountSelector.next() : null;
-      if (accountsEnabled && !account) {
-        // All accounts in DB but none usable
-        const reason = accountSelector.lastFailReason;
-        const hint = reason === "all_decrypt_failed"
-          ? "Account tokens were encrypted with a different machine key. Re-add your accounts in Settings, or copy ~/.ppm/account.key from the original machine."
-          : "All accounts are disabled or in cooldown. Check Settings → Accounts.";
-        console.error(`[sdk] session=${sessionId} account auth failed (${reason}): ${hint}`);
-        yield { type: "error" as const, message: `Authentication failed: ${hint}` };
-        yield { type: "done" as const, sessionId, resultSubtype: "error_auth" };
-        return;
-      }
-      // Pre-flight: ensure OAuth token is fresh before sending to SDK
-      if (account) {
-        const nowS = Math.floor(Date.now() / 1000);
-        const expiresIn = account.expiresAt ? account.expiresAt - nowS : null;
-        console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"}) token_expires_in=${expiresIn}s`);
-        const fresh = await accountService.ensureFreshToken(account.id);
-        if (fresh) {
-          account = fresh;
+      let account: AccountWithTokens | null = null;
+
+      if (accountsEnabled) {
+        const excludeIds = new Set<string>();
+
+        // Pre-flight loop: select account → refresh token → retry with next if refresh fails
+        while (true) {
+          yield { type: "status_update" as const, phase: "routing" as const, message: "Selecting account..." };
+          account = accountSelector.next(excludeIds);
+
+          if (!account) {
+            const reason = accountSelector.lastFailReason;
+            let hint: string;
+            if (reason === "all_decrypt_failed") {
+              hint = "Account tokens were encrypted with a different machine key. Re-add your accounts in Settings, or copy ~/.ppm/account.key from the original machine.";
+            } else if (reason === "all_excluded") {
+              hint = "All accounts failed token refresh. Check Settings → Accounts.";
+            } else {
+              hint = "All accounts are disabled or in cooldown. Check Settings → Accounts.";
+            }
+            console.error(`[sdk] session=${sessionId} account auth failed (${reason}): ${hint}`);
+            yield { type: "error" as const, message: `Authentication failed: ${hint}` };
+            yield { type: "done" as const, sessionId, resultSubtype: "error_auth" };
+            return;
+          }
+
+          const accountLabel = account.label ?? account.email ?? "Unknown";
+          const nowS = Math.floor(Date.now() / 1000);
+          const expiresIn = account.expiresAt ? account.expiresAt - nowS : null;
+          console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"}) token_expires_in=${expiresIn}s`);
+
+          // Check if token needs refresh
+          const isOAuth = account.accessToken.startsWith("sk-ant-oat");
+          const needsRefresh = isOAuth && account.expiresAt && (account.expiresAt - nowS <= 3600);
+
+          if (!needsRefresh) {
+            // Token fresh or API key — proceed
+            yield { type: "account_info" as const, accountId: account.id, accountLabel };
+            break;
+          }
+
+          // Token expiring — attempt refresh
+          yield { type: "status_update" as const, phase: "refreshing" as const, message: `Refreshing token for ${accountLabel}...`, accountLabel };
+          const fresh = await accountService.ensureFreshToken(account.id);
+
+          if (fresh) {
+            account = fresh;
+            const freshLabel = account.label ?? account.email ?? "Unknown";
+            yield { type: "account_info" as const, accountId: account.id, accountLabel: freshLabel };
+            break;
+          }
+
+          // Refresh failed — cooldown this account, try next
+          console.warn(`[sdk] session=${sessionId} pre-flight refresh failed for ${account.id} — trying next account`);
+          yield { type: "status_update" as const, phase: "switching" as const, message: `Token expired for ${accountLabel}, trying next account...`, accountLabel };
+          accountSelector.onPreflightFail(account.id);
+          excludeIds.add(account.id);
+          // continue loop → pick next account
         }
-        yield { type: "account_info" as const, accountId: account.id, accountLabel: account.label ?? account.email ?? "Unknown" };
       }
       const queryEnv = this.buildQueryEnv(meta.projectPath, account);
 

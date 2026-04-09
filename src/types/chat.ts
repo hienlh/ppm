@@ -120,6 +120,7 @@ export type ChatEvent =
   | { type: "session_migrated"; oldSessionId: string; newSessionId: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }
+  | { type: "status_update"; phase: "routing" | "refreshing" | "switching"; message: string; accountLabel?: string }
   | { type: "system"; subtype: string }
   | { type: "team_detected"; teamName: string }
   | { type: "team_updated"; teamName: string; team: unknown }
