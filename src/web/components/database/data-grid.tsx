@@ -186,20 +186,20 @@ export function DataGrid({
       // Escape closes column search from anywhere
       if (e.key === "Escape") { setColSearchOpen(false); setColSearchQuery(""); return; }
 
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod || !tableData) return;
+      // Skip if focus is in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-      // Cmd+Shift+J → open column jump (works even in inputs)
-      if (e.key === "j" && e.shiftKey) {
+      // "/" → open column jump (like VSCode list filter)
+      if (e.key === "/") {
         e.preventDefault();
         setColSearchOpen(true);
         setColSearchQuery("");
         return;
       }
 
-      // Skip if focus is in an input/textarea for remaining shortcuts
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod || !tableData) return;
 
       if (e.key === "a") {
         e.preventDefault();
