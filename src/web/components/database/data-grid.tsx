@@ -66,6 +66,18 @@ export function DataGrid({
     return idCol?.name ?? null;
   }, [schema]);
 
+  const openRowViewer = useCallback((row: Record<string, unknown>) => {
+    const json = JSON.stringify(row, null, 2);
+    const pk = pkCol ? String(row[pkCol] ?? "") : "";
+    openTab({
+      type: "editor",
+      title: pk ? `Row ${pk}` : "Row",
+      projectId: null,
+      closable: true,
+      metadata: { inlineContent: json, inlineLanguage: "json" },
+    });
+  }, [openTab, pkCol]);
+
   // Refs for cell renderers — avoid column memo rebuild on every state change
   const editingRef = useRef(editingCell);
   editingRef.current = editingCell;
@@ -520,7 +532,7 @@ export function DataGrid({
                 onSetEditValue={setEditValue} showDelete={!!onRowDelete}
                 confirmingDelete={confirmDeleteIdx === idx}
                 onDelete={handleDelete} onConfirmDelete={setConfirmDeleteIdx}
-                onViewCell={openCellViewer}
+                onViewCell={openCellViewer} onViewRow={openRowViewer}
                 pinned onTogglePin={togglePinRow}
                 pinnedCols={pinnedCols} pinnedColOffsets={pinnedColOffsets}
                 stickyTop={pinnedRowTops.get(idx) ?? headerHeight}
@@ -537,7 +549,7 @@ export function DataGrid({
                   onSetEditValue={setEditValue} showDelete={!!onRowDelete}
                   confirmingDelete={confirmDeleteIdx === rowIdx}
                   onDelete={handleDelete} onConfirmDelete={setConfirmDeleteIdx}
-                  onViewCell={openCellViewer}
+                  onViewCell={openCellViewer} onViewRow={openRowViewer}
                   pinned={false} onTogglePin={togglePinRow}
                   pinnedCols={pinnedCols} pinnedColOffsets={pinnedColOffsets} />
               );
@@ -608,7 +620,7 @@ function detectLang(text: string): string {
 /** Memoized row — only re-renders when its own props change */
 const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggleSelect, pkCol,
   editingCell, editValue, onStartEdit, onCommitEdit, onCancelEdit, onSetEditValue,
-  showDelete, confirmingDelete, onDelete, onConfirmDelete, onViewCell,
+  showDelete, confirmingDelete, onDelete, onConfirmDelete, onViewCell, onViewRow,
   pinned, onTogglePin, pinnedCols, pinnedColOffsets, stickyTop, trRef,
 }: {
   row: Record<string, unknown>; rowIdx: number; columns: string[];
@@ -621,6 +633,7 @@ const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggle
   showDelete: boolean; confirmingDelete: boolean;
   onDelete: (i: number) => void; onConfirmDelete: (i: number | null) => void;
   onViewCell: (cell: { col: string; value: string }) => void;
+  onViewRow: (row: Record<string, unknown>) => void;
   pinned: boolean; onTogglePin: (i: number) => void;
   pinnedCols: Set<string>; pinnedColOffsets: Map<string, number>;
   stickyTop?: number;
@@ -636,6 +649,10 @@ const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggle
           style={{ position: "sticky", left: 0, zIndex: 12 }}>
           <span className="flex items-center gap-0.5">
             <input type="checkbox" checked={selected} onChange={() => onToggleSelect(rowIdx)} className="size-3 accent-primary" />
+            <button type="button" title="View row as JSON" onClick={() => onViewRow(row)}
+              className="p-0.5 rounded transition-colors text-muted-foreground/30 md:opacity-0 md:group-hover:opacity-100 hover:text-foreground">
+              <Eye className="size-2.5" />
+            </button>
             <button type="button" title={pinned ? "Unpin row" : "Pin row"} onClick={() => onTogglePin(rowIdx)}
               className={`p-0.5 rounded transition-colors ${pinned ? "text-primary" : "text-muted-foreground/30 md:opacity-0 md:group-hover:opacity-100 hover:text-foreground"}`}>
               {pinned ? <PinOff className="size-2.5" /> : <Pin className="size-2.5" />}
