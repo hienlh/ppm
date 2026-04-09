@@ -320,7 +320,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         }
         // Finalize the streaming message
         const finalContent = streamingContentRef.current;
-        const finalEvents = [...streamingEventsRef.current];
+        const finalEvents = streamingEventsRef.current.filter((e) => e.type !== "status_update");
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -519,7 +519,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       if (isFollowUp) {
         // Streaming follow-up: finalize current assistant message, then send
         const finalContent = streamingContentRef.current;
-        const finalEvents = [...streamingEventsRef.current];
+        const finalEvents = streamingEventsRef.current.filter((e) => e.type !== "status_update");
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
