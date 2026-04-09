@@ -125,7 +125,9 @@ class AccountService {
 
   /**
    * Ensure the access token for an OAuth account is still fresh.
-   * If it's expired or about to expire (within 60s), refresh it proactively.
+   * If it's expired or about to expire (within 1 hour), refresh it proactively.
+   * The generous buffer prevents 401 errors mid-conversation — the SDK subprocess
+   * may run for a long time before the token is actually sent to the API.
    * Returns the refreshed account with fresh tokens, or null if refresh failed.
    */
   async ensureFreshToken(id: string): Promise<AccountWithTokens | null> {
@@ -135,9 +137,10 @@ class AccountService {
     if (!acc.accessToken.startsWith("sk-ant-oat")) return acc;
     if (!acc.expiresAt) return acc;
     const nowS = Math.floor(Date.now() / 1000);
-    if (acc.expiresAt - nowS > 60) return acc; // still fresh
+    const REFRESH_BUFFER_S = 3600; // 1 hour — refresh proactively before expiry
+    if (acc.expiresAt - nowS > REFRESH_BUFFER_S) return acc; // still fresh
     try {
-      console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s)`);
+      console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s, buffer=${REFRESH_BUFFER_S}s)`);
       await this.refreshAccessToken(id, false);
       return this.getWithTokens(id);
     } catch (e) {
