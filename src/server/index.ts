@@ -491,12 +491,15 @@ if (process.argv.includes("__serve__")) {
   try {
     const { resolve: r } = await import("node:path");
     const { homedir: h } = await import("node:os");
-    const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
+    const { readFileSync: rf, writeFileSync: wf, renameSync: rn } = await import("node:fs");
     const statusFile = r(h(), ".ppm", "status.json");
     const status = JSON.parse(rf(statusFile, "utf-8"));
     // Write running server version — source of truth for heartbeat
     status.serverVersion = VERSION;
-    wf(statusFile, JSON.stringify(status));
+    // Atomic write: tmp + rename to avoid cross-process partial-read races
+    const tmp = statusFile + ".tmp." + process.pid;
+    wf(tmp, JSON.stringify(status));
+    rn(tmp, statusFile);
     if (status.shareUrl) {
       const { tunnelService } = await import("../services/tunnel.service.ts");
       if (status.tunnelPid) tunnelService.setExternalPid(status.tunnelPid);

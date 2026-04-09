@@ -27,8 +27,8 @@ const BACKOFF_MAX_MS = 60_000;
 const STABLE_WINDOW_MS = 300_000;       // 5min stable → reset restart counter
 const SERVER_HEALTH_INTERVAL_MS = 30_000;
 const SERVER_HEALTH_FAIL_THRESHOLD = 3;
-const TUNNEL_PROBE_INTERVAL_MS = 120_000;
-const TUNNEL_PROBE_FAIL_THRESHOLD = 2;
+const TUNNEL_PROBE_INTERVAL_MS = 30_000;    // 30s — adopted tunnels have no `exited` promise
+const TUNNEL_PROBE_FAIL_THRESHOLD = 3;      // 3 HTTP failures before regenerating (PID check is instant)
 const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 const UPGRADE_CHECK_INTERVAL_MS = 900_000;  // 15min
 const UPGRADE_SKIP_INITIAL_MS = 300_000;    // 5min delay before first check
@@ -415,12 +415,25 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // Set restarting flag so server child's stopTunnel() skips killing the tunnel
     try { writeFileSync(RESTARTING_FLAG, ""); } catch {}
 
+    // Clear probe timer FIRST to prevent race between flush check and queued callback
+    if (tunnelProbeTimer) { clearInterval(tunnelProbeTimer); tunnelProbeTimer = null; }
+
+    // Final tunnel liveness check before handing off to new supervisor —
+    // if the adopted tunnel died since the last probe, clear status so the
+    // new supervisor spawns fresh instead of discovering ESRCH.
+    if (adoptedTunnelPid && !tunnelChild) {
+      try { process.kill(adoptedTunnelPid, 0); } catch {
+        log("WARN", "Pre-upgrade: adopted tunnel dead, clearing for new supervisor to spawn fresh");
+        adoptedTunnelPid = null;
+        tunnelUrl = null;
+        updateStatus({ shareUrl: null, tunnelPid: null });
+      }
+    }
+
     // Kill server child to free the port; keep tunnel alive for domain continuity
     log("INFO", "Stopping server before spawning new supervisor (tunnel kept alive)");
     if (serverChild) { try { serverChild.kill(); } catch {} serverChild = null; }
-    // Clear health timers so we don't try to respawn killed children
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
-    if (tunnelProbeTimer) { clearInterval(tunnelProbeTimer); tunnelProbeTimer = null; }
     // Brief wait for port release
     await Bun.sleep(500);
 

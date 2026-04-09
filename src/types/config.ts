@@ -90,7 +90,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
         api_key_env: "ANTHROPIC_API_KEY",
         model: "claude-sonnet-4-6",
         effort: "high",
-        max_turns: 100,
+        max_turns: 1000,
         permission_mode: "bypassPermissions",
       },
     },

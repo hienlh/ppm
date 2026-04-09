@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { existsSync, unlinkSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { ensureCloudflared } from "./cloudflared.service.ts";
 
 const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
@@ -19,6 +19,8 @@ class TunnelService {
   private externalPid: number | null = null;
   private url: string | null = null;
   private cleanupHandler: (() => void) | null = null;
+  /** True when tunnel is owned by the supervisor (adopted), not by this server process */
+  private supervisorManaged = false;
 
   /** Spawn cloudflared Quick Tunnel and return public URL */
   async startTunnel(port: number): Promise<string> {
@@ -81,12 +83,13 @@ class TunnelService {
     });
 
     this.url = url;
+    this.supervisorManaged = false; // this process owns the tunnel now
     this.persistToStatusFile();
     this.syncToCloud();
     return url;
   }
 
-  /** Kill the cloudflared child process (skipped during restart) */
+  /** Kill the cloudflared child process (skipped during restart or when supervisor-managed) */
   stopTunnel(): void {
     if (this.cleanupHandler) {
       process.off("SIGINT", this.cleanupHandler);
@@ -101,16 +104,22 @@ class TunnelService {
       this.url = null;
       return;
     }
+    // Only kill tunnels this process spawned; externally-managed tunnels (set via
+    // setExternalPid) belong to the supervisor — killing them causes silent URL resets
     if (this.childProcess) {
       try { this.childProcess.kill(); } catch {}
       this.childProcess = null;
     }
     if (this.externalPid) {
-      try { process.kill(this.externalPid); } catch {}
+      // Don't kill — supervisor owns this process and monitors it via probe
       this.externalPid = null;
     }
     this.url = null;
-    this.persistToStatusFile();
+    // Don't persist nulls to status.json when tunnel is supervisor-managed;
+    // the supervisor is the source of truth for tunnel state
+    if (!this.supervisorManaged) {
+      this.persistToStatusFile();
+    }
     this.stopCloudSync();
   }
 
@@ -131,12 +140,13 @@ class TunnelService {
     this.syncToCloud();
   }
 
-  /** Adopt an externally-started tunnel by PID (for stop management after restart) */
+  /** Adopt an externally-started tunnel by PID (supervisor-managed, don't kill on exit) */
   setExternalPid(pid: number): void {
     this.externalPid = pid;
+    this.supervisorManaged = true;
   }
 
-  /** Persist shareUrl + tunnelPid to status.json (central write point) */
+  /** Persist shareUrl + tunnelPid to status.json (atomic write to avoid cross-process races) */
   private persistToStatusFile(): void {
     const statusFile = resolve(homedir(), ".ppm", "status.json");
     if (!existsSync(statusFile)) return;
@@ -144,7 +154,9 @@ class TunnelService {
       const data = JSON.parse(readFileSync(statusFile, "utf-8"));
       data.shareUrl = this.url;
       data.tunnelPid = this.getTunnelPid() ?? null;
-      writeFileSync(statusFile, JSON.stringify(data));
+      const tmp = statusFile + ".tmp." + process.pid;
+      writeFileSync(tmp, JSON.stringify(data));
+      renameSync(tmp, statusFile);
     } catch {}
   }
 

@@ -37,6 +37,14 @@ export function triggerResume(): void {
 }
 
 // ─── Status file helpers ───────────────────────────────────────────────
+
+/** Atomic write: write to tmp file then rename (prevents partial-read races across processes) */
+function atomicWriteJson(filePath: string, data: unknown) {
+  const tmp = filePath + ".tmp." + process.pid;
+  writeFileSync(tmp, JSON.stringify(data));
+  renameSync(tmp, filePath);
+}
+
 export function readStatus(): Record<string, unknown> {
   try {
     if (existsSync(STATUS_FILE)) return JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
@@ -47,7 +55,7 @@ export function readStatus(): Record<string, unknown> {
 export function updateStatus(patch: Record<string, unknown>) {
   try {
     const data = { ...readStatus(), ...patch };
-    writeFileSync(STATUS_FILE, JSON.stringify(data));
+    atomicWriteJson(STATUS_FILE, data);
   } catch {}
 }
 

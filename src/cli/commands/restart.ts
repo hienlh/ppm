@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync, renameSync } from "node:fs";
 
 const PPM_DIR = resolve(homedir(), ".ppm");
 const STATUS_FILE = resolve(PPM_DIR, "status.json");
@@ -237,12 +237,14 @@ async function main() {
     childPid = child.pid;
   }
 
-  // Update status.json with new PID, keep tunnel info
+  // Update status.json with new PID, keep tunnel info (atomic write to avoid cross-process races)
   try {
     const status = JSON.parse(readFileSync(P.statusFile, "utf-8"));
     status.pid = childPid;
     status.serverScript = P.serverScript;
-    writeFileSync(P.statusFile, JSON.stringify(status));
+    const tmp = P.statusFile + ".tmp." + process.pid;
+    writeFileSync(tmp, JSON.stringify(status));
+    renameSync(tmp, P.statusFile);
     writeFileSync(P.pidFile, String(childPid));
   } catch {}
 
