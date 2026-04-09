@@ -42,6 +42,7 @@ interface MessageListProps {
   isStreaming: boolean;
   phase?: SessionPhase;
   connectingElapsed?: number;
+  statusMessage?: string | null;
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
   onFork?: (userMessage: string, messageId?: string) => void;
@@ -58,6 +59,7 @@ export function MessageList({
   phase,
   onSelectSession,
   connectingElapsed,
+  statusMessage,
   projectName,
   onFork,
 }: MessageListProps) {
@@ -114,7 +116,7 @@ export function MessageList({
             : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
         )}
 
-        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} />}
+        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={statusMessage} />}
       </StickToBottom.Content>
       <ScrollToBottomButton />
     </StickToBottom>
@@ -618,12 +620,6 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
       groups.push({ kind: "thinking", content: thinkingBuffer });
       thinkingBuffer = "";
     }
-    if (event.type === "status_update") {
-      if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
-      const label = event.accountLabel ? ` (${event.accountLabel})` : "";
-      groups.push({ kind: "text", content: `\n\n> ⟳ ${event.message}${label}\n\n` });
-      continue;
-    }
     if (event.type === "account_retry") {
       if (textBuffer) { groups.push({ kind: "text", content: textBuffer }); textBuffer = ""; }
       const label = (event as any).accountLabel ?? "another account";
@@ -772,10 +768,11 @@ function StreamingText({ content, animate: isStreaming, projectName }: { content
  * - After tool: "Processing..."
  * - Text streaming: hidden
  */
-function ThinkingIndicator({ lastMessage, phase, elapsed }: { lastMessage?: ChatMessage; phase?: SessionPhase; elapsed?: number }) {
+function ThinkingIndicator({ lastMessage, phase, elapsed, statusMessage }: { lastMessage?: ChatMessage; phase?: SessionPhase; elapsed?: number; statusMessage?: string | null }) {
   // Show indicator when:
   // 1. No assistant message yet (waiting for first response)
   // 2. Last event is tool_result (Claude thinking after tool execution)
+  // 3. statusMessage is active (account routing/refreshing)
   // Hide when text is actively streaming (text itself is the indicator)
 
   const isWaiting = !lastMessage || lastMessage.role !== "assistant";
@@ -785,9 +782,11 @@ function ThinkingIndicator({ lastMessage, phase, elapsed }: { lastMessage?: Chat
     return last.type === "tool_result";
   })();
 
-  if (!isWaiting && !isAfterTool) return null;
+  if (!statusMessage && !isWaiting && !isAfterTool) return null;
 
-  const label = phase === "initializing" ? "Initializing"
+  const label = statusMessage
+    ? statusMessage
+    : phase === "initializing" ? "Initializing"
     : phase === "connecting" ? "Connecting"
     : phase === "thinking" ? "Thinking"
     : "Processing";

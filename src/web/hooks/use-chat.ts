@@ -42,6 +42,7 @@ interface UseChatReturn {
   pendingApproval: ApprovalRequest | null;
   contextWindowPct: number | null;
   compactStatus: "compacting" | null;
+  statusMessage: string | null;
   sessionTitle: string | null;
   /** When CLI provider assigns a different session ID, this holds the new ID */
   migratedSessionId: string | null;
@@ -78,6 +79,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [compactStatus, setCompactStatus] = useState<"compacting" | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [migratedSessionId, setMigratedSessionId] = useState<string | null>(null);
@@ -171,6 +173,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     switch (evType) {
       case "account_info": {
         streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
+        setStatusMessage(null);
         break;
       }
 
@@ -186,9 +189,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }
 
       case "status_update": {
-        // Surface status as a transient event in the stream
-        streamingEventsRef.current.push(ev as ChatEvent);
-        syncMessages();
+        const label = ev.accountLabel ? ` (${ev.accountLabel})` : "";
+        setStatusMessage(`${ev.message}${label}`);
         break;
       }
 
@@ -320,7 +322,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         }
         // Finalize the streaming message
         const finalContent = streamingContentRef.current;
-        const finalEvents = streamingEventsRef.current.filter((e) => e.type !== "status_update");
+        const finalEvents = [...streamingEventsRef.current];
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -336,6 +338,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
         streamingAccountRef.current = null;
+        setStatusMessage(null);
         // Phase transition to idle comes from BE via phase_changed
         break;
       }
@@ -519,7 +522,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       if (isFollowUp) {
         // Streaming follow-up: finalize current assistant message, then send
         const finalContent = streamingContentRef.current;
-        const finalEvents = streamingEventsRef.current.filter((e) => e.type !== "status_update");
+        const finalEvents = [...streamingEventsRef.current];
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -666,6 +669,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     pendingApproval,
     contextWindowPct,
     compactStatus,
+    statusMessage,
     sessionTitle,
     migratedSessionId,
     teamActivity,

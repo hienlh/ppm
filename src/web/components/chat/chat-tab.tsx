@@ -90,6 +90,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     pendingApproval,
     contextWindowPct,
     compactStatus,
+    statusMessage,
     sessionTitle,
     migratedSessionId,
     sendMessage,
@@ -342,6 +343,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         isStreaming={isStreaming}
         phase={phase}
         connectingElapsed={connectingElapsed}
+        statusMessage={statusMessage}
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
         onSelectSession={handleSelectSession}
