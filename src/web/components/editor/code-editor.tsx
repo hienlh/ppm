@@ -179,6 +179,14 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const runSqlRef = useRef(runSqlInViewer);
   runSqlRef.current = runSqlInViewer;
 
+  // Cleanup CodeLens providers on unmount to prevent duplicate "Run" buttons
+  useEffect(() => {
+    return () => {
+      codeLensDisposable.current.forEach((d) => d.dispose());
+      codeLensDisposable.current = [];
+    };
+  }, []);
+
   // Redirect .db files to sqlite viewer by changing tab type
   useEffect(() => {
     if (isSqlite && tabId) updateTab(tabId, { type: "sqlite" });
