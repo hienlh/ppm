@@ -710,16 +710,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       crashRetryLoop: for (;;) {
       try {
       // Streaming input: create message channel and persistent query
-      const { generator: streamGen, controller: streamCtrl } = createMessageChannel();
       const firstMsg = {
         type: 'user' as const,
         message: buildMessageParam(message),
         parent_tool_use_id: null,
         session_id: sessionId,
       };
-      streamCtrl.push(firstMsg);
 
-      const q = query({
+      const { generator: streamGen, controller: initialCtrl } = createMessageChannel();
+      initialCtrl.push(firstMsg);
+
+      const initialQuery = query({
         prompt: streamGen,
         options: {
           ...queryOptions,
@@ -727,9 +728,19 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           canUseTool,
         } as any,
       });
-      this.streamingSessions.set(sessionId, { meta, query: q, controller: streamCtrl });
-      this.activeQueries.set(sessionId, q);
-      let eventSource: AsyncIterable<any> = q;
+      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl });
+      this.activeQueries.set(sessionId, initialQuery);
+      let eventSource: AsyncIterable<any> = initialQuery;
+
+      // Helper: close the CURRENT streaming session (not stale closure refs).
+      // All retry paths must use this instead of closing captured variables directly.
+      const closeCurrentStream = () => {
+        const ss = this.streamingSessions.get(sessionId);
+        if (ss) {
+          ss.controller.done();
+          ss.query.close();
+        }
+      };
 
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
@@ -759,9 +770,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if ((msg as any).type === "result" && (msg as any).subtype === "error_during_execution" && ((msg as any).num_turns ?? 0) === 0 && retryCount < MAX_RETRIES) {
             retryCount++;
             console.warn(`[sdk] transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
-            // Close failed query and old channel, create new channel + query for retry
-            streamCtrl.done();
-            q.close();
+            // Close current streaming session (uses streamingSessions, not stale closure refs)
+            closeCurrentStream();
             const { generator: retryGen, controller: retryCtrl } = createMessageChannel();
             retryCtrl.push(firstMsg);
             const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
@@ -809,9 +819,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               } else {
                 console.log(`[sdk] session=${sessionId} ignoring retry init sdk_id=${initMsg.session_id} (mapping already set)`);
               }
-              const oldMeta = this.activeSessions.get(sessionId);
-              if (oldMeta) {
-                this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
+              // Only create activeSessions alias for first-time SDK id mapping.
+              // Retry init events create phantom entries that pollute the map.
+              if (isFirstMessage) {
+                const oldMeta = this.activeSessions.get(sessionId);
+                if (oldMeta) {
+                  this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
+                }
               }
             }
           }
@@ -849,8 +863,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 console.log(`[sdk] session=${sessionId} intercepted api_retry 401 — refreshing token for ${account.id} (${label})`);
                 yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                 const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                streamCtrl.done();
-                q.close();
+                closeCurrentStream();
                 const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
                 const currentSdkId = getSessionMapping(sessionId);
                 const canResume = !!currentSdkId;
@@ -877,8 +890,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 console.log(`[sdk] session=${sessionId} refresh failed — switching to ${nextAcc.id} (${label})`);
                 yield { type: "account_retry" as const, reason: "Switching account", accountId: nextAcc.id, accountLabel: label };
                 const switchEnv = this.buildQueryEnv(meta.projectPath, nextAcc);
-                streamCtrl.done();
-                q.close();
+                closeCurrentStream();
                 const { generator: switchGen, controller: switchCtrl } = createMessageChannel();
                 const currentSdkId = getSessionMapping(sessionId);
                 const canResume = !!currentSdkId;
@@ -1030,8 +1042,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   // Re-resolve sdkId: the init event may have mapped ppmId → real SDK session_id
                   // after sdkId was originally resolved. Using the stale value would try to
                   // resume a non-existent session, causing the SDK to hang forever.
-                  streamCtrl.done();
-                  q.close();
+                  closeCurrentStream();
                   const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
                   const currentSdkId = getSessionMapping(sessionId);
                   const canResume = !!currentSdkId;
@@ -1082,10 +1093,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
               yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
               await new Promise((r) => setTimeout(r, backoff));
-              // Close failed query and recreate with (potentially new) account env.
+              // Close current streaming session and recreate with (potentially new) account env.
               // Re-resolve sdkId to pick up init-event mapping (see auth retry comment).
-              streamCtrl.done();
-              q.close();
+              closeCurrentStream();
               const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
               const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
               const rlCurrentSdkId = getSessionMapping(sessionId);
@@ -1183,8 +1193,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
                 await new Promise((r) => setTimeout(r, backoff));
                 // Re-resolve sdkId to pick up init-event mapping (see auth retry comment).
-                streamCtrl.done();
-                q.close();
+                closeCurrentStream();
                 const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
                 const rlCurrentSdkId2 = getSessionMapping(sessionId);
@@ -1216,8 +1225,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     console.log(`[sdk] 401 in result on account ${account.id} (${label}) — token refreshed, retrying`);
                     yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                     // Re-resolve sdkId to pick up init-event mapping (see auth retry comment).
-                    streamCtrl.done();
-                    q.close();
+                    closeCurrentStream();
                     const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
                     const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
                     const authCurrentSdkId2 = getSessionMapping(sessionId);
