@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.69] - 2026-04-09
+
+### Fixed
+- **Cloud WS replaced loop**: `isConnected()` now returns true during 500ms auth handshake, preventing Cloud monitor from killing valid connections. Fixed `disconnect()` not resetting `reconnecting` flag.
+- **Token refresh buffer**: Increased OAuth token refresh buffer from 60s to 1 hour to prevent 401 errors mid-conversation.
+- **SDK retry stale closures**: Extracted `closeCurrentStream()` helper that reads from session map instead of captured variables, preventing retry paths from closing already-replaced streams. Fixed phantom session entries from retry init events.
+
 ## [0.9.68] - 2026-04-08
 
 ### Fixed
