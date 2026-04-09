@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.76] - 2026-04-09
+
+### Fixed
+- **Concurrent token refresh race**: Multiple sessions starting near-simultaneously all refreshed the same token. Removed redundant in-memory freshness check — `ensureFreshToken()` now re-reads from DB, so concurrent sessions see the already-refreshed token.
+
 ## [0.9.75] - 2026-04-09
 
 ### Fixed
