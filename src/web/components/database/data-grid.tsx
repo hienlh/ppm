@@ -189,8 +189,8 @@ export function DataGrid({
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || !tableData) return;
 
-      // Cmd+G → open column jump (works even in inputs)
-      if (e.key === "g") {
+      // Cmd+J → open column jump (works even in inputs)
+      if (e.key === "j") {
         e.preventDefault();
         setColSearchOpen(true);
         setColSearchQuery("");
