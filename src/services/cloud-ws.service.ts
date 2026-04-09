@@ -99,6 +99,7 @@ export function connect(opts: {
 
 export function disconnect(): void {
   shouldConnect = false;
+  reconnecting = false; // prevent stale flag from blocking future doConnect()
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
   if (ws) {
@@ -122,8 +123,12 @@ export function onCommand(handler: CommandHandler): void {
   commandHandler = handler;
 }
 
+/** Returns true if WS is authenticated and ready, or still in auth handshake */
 export function isConnected(): boolean {
-  return connected;
+  // Also treat "connecting/open but auth pending" as connected to prevent
+  // external monitors from killing a valid WS during the 500ms auth delay.
+  if (connected) return true;
+  return ws !== null && ws.readyState <= WebSocket.OPEN;
 }
 
 // ─── Internal ───────────────────────────────────────
