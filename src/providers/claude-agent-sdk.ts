@@ -280,18 +280,33 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     // Restore project_path from DB so resumed sessions can find JSONL
     const dbProjectPath = getSessionProjectPath(sessionId) ?? undefined;
 
+    // Try targeted lookup first (searches all project dirs), then fall back to list scan
     try {
-      const sdkSessions = await sdkListSessions({ limit: 100 });
-      const found = sdkSessions.find(
-        (s) => s.sessionId === sessionId || s.sessionId === mappedSdkId,
-      );
-      if (found) {
+      const lookupId = mappedSdkId ?? sessionId;
+      const info = await sdkGetSessionInfo(lookupId, { dir: dbProjectPath });
+      if (!info && mappedSdkId) {
+        // Try the original PPM session ID as well
+        const info2 = await sdkGetSessionInfo(sessionId, { dir: dbProjectPath });
+        if (info2) {
+          const meta: Session = {
+            id: sessionId,
+            providerId: this.id,
+            title: info2.customTitle ?? info2.summary ?? "Resumed Chat",
+            projectPath: dbProjectPath,
+            createdAt: new Date(info2.lastModified).toISOString(),
+          };
+          this.activeSessions.set(sessionId, meta);
+          this.messageCount.set(sessionId, 1);
+          return meta;
+        }
+      }
+      if (info) {
         const meta: Session = {
           id: sessionId,
           providerId: this.id,
-          title: found.customTitle ?? found.summary ?? "Resumed Chat",
+          title: info.customTitle ?? info.summary ?? "Resumed Chat",
           projectPath: dbProjectPath,
-          createdAt: new Date(found.lastModified).toISOString(),
+          createdAt: new Date(info.lastModified).toISOString(),
         };
         this.activeSessions.set(sessionId, meta);
         this.messageCount.set(sessionId, 1);
@@ -301,8 +316,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // SDK not available
     }
 
-    // Session not found in SDK history — treat as new so first message
-    // creates a fresh SDK session instead of trying to resume.
+    // Session not found in SDK list — it may still have a JSONL on disk
+    // (sdkListSessions may not search the correct project directory).
+    // Use messageCount=1 so sendMessage uses --resume instead of --session-id.
+    // --resume gracefully fails if no JSONL exists, while --session-id crashes
+    // when a JSONL file for the same ID is already present on disk.
     const meta: Session = {
       id: sessionId,
       providerId: this.id,
@@ -311,7 +329,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       createdAt: new Date().toISOString(),
     };
     this.activeSessions.set(sessionId, meta);
-    this.messageCount.set(sessionId, 0);
+    this.messageCount.set(sessionId, 1);
     return meta;
   }
 
@@ -677,6 +695,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const mcpServers = mcpConfigService.list();
       const hasMcp = Object.keys(mcpServers).length > 0;
 
+      // Buffer subprocess stderr for crash diagnostics
+      let stderrBuffer = "";
+      const stderrCallback = (chunk: string) => {
+        stderrBuffer += chunk;
+        // Keep only last 2KB to avoid unbounded growth
+        if (stderrBuffer.length > 2048) stderrBuffer = stderrBuffer.slice(-2048);
+      };
+
       const queryOptions: Record<string, any> = {
         // On Windows, child_process.spawn("bun") fails with ENOENT — force node
         ...(process.platform === "win32" && { executable: "node" }),
@@ -697,9 +723,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         maxTurns: providerConfig.max_turns ?? 1000,
         ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
         ...(providerConfig.thinking_budget_tokens != null && {
-          thinkingBudgetTokens: providerConfig.thinking_budget_tokens,
+          maxThinkingTokens: providerConfig.thinking_budget_tokens,
         }),
         includePartialMessages: true,
+        stderr: stderrCallback,
       };
 
       // Crash retry: if subprocess exits with non-zero code before producing events,
@@ -1391,7 +1418,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       break crashRetryLoop; // Normal completion — exit crash retry loop
     } catch (crashErr) {
       const crashMsg = (crashErr as Error).message ?? String(crashErr);
-      console.error(`[sdk] session=${sessionId} cwd=${meta.projectPath} error: ${crashMsg}`);
+      const stderrInfo = stderrBuffer.trim() ? ` stderr: ${stderrBuffer.trim().slice(-500)}` : "";
+      console.error(`[sdk] session=${sessionId} cwd=${meta.projectPath} error: ${crashMsg}${stderrInfo}`);
 
       // Clean up crashed subprocess before retry or error
       this.activeQueries.delete(sessionId);
@@ -1404,12 +1432,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       } else if (crashMsg.includes("exited with code") && crashRetryCount < MAX_CRASH_RETRIES) {
         // Subprocess crashed — auto-retry once before surfacing the error
         crashRetryCount++;
-        console.warn(`[sdk] session=${sessionId} subprocess crashed: ${crashMsg} — auto-retrying (attempt ${crashRetryCount}/${MAX_CRASH_RETRIES})`);
+        console.warn(`[sdk] session=${sessionId} subprocess crashed: ${crashMsg} — auto-retrying (attempt ${crashRetryCount}/${MAX_CRASH_RETRIES})${stderrInfo}`);
+        stderrBuffer = ""; // Reset for retry
         await new Promise((r) => setTimeout(r, 1000));
         continue crashRetryLoop;
       } else if (crashMsg.includes("exited with code")) {
-        console.warn(`[sdk] session=${sessionId} subprocess crashed after retry: ${crashMsg}`);
-        yield { type: "error", message: `SDK subprocess crashed. Send another message to auto-recover.` };
+        console.warn(`[sdk] session=${sessionId} subprocess crashed after retry: ${crashMsg}${stderrInfo}`);
+        const userHint = stderrInfo ? ` (${stderrBuffer.trim().slice(-200)})` : "";
+        yield { type: "error", message: `SDK subprocess crashed.${userHint} Send another message to auto-recover.` };
       } else {
         yield { type: "error", message: `SDK error: ${crashMsg}` };
       }
