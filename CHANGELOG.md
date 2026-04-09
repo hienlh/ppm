@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.75] - 2026-04-09
+
+### Fixed
+- **Duplicate Run buttons in SQL editor**: CodeLens providers were registered globally but never disposed on tab close, causing "▷ Run" buttons to multiply with each .sql tab opened.
+
 ## [0.9.74] - 2026-04-09
 
 ### Changed
