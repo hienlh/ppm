@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.74] - 2026-04-09
+
+### Changed
+- **Status update display**: `status_update` events now show as thinking-style indicator (spinner + status text) instead of blockquotes in message body. Transient — not persisted in message history.
+
 ## [0.9.73] - 2026-04-09
 
 ### Added
