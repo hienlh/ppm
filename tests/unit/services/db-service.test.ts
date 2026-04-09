@@ -334,6 +334,159 @@ describe("db.service", () => {
     });
   });
 
+  describe("connection CRUD", () => {
+    // Lazy imports to avoid circular ref at module level
+    const getConnectionFns = () => {
+      const mod = require("../../../src/services/db.service.ts");
+      return {
+        insertConnection: mod.insertConnection as typeof import("../../../src/services/db.service.ts").insertConnection,
+        getConnections: mod.getConnections as typeof import("../../../src/services/db.service.ts").getConnections,
+        getConnectionById: mod.getConnectionById as typeof import("../../../src/services/db.service.ts").getConnectionById,
+        getConnectionByName: mod.getConnectionByName as typeof import("../../../src/services/db.service.ts").getConnectionByName,
+        resolveConnection: mod.resolveConnection as typeof import("../../../src/services/db.service.ts").resolveConnection,
+        deleteConnection: mod.deleteConnection as typeof import("../../../src/services/db.service.ts").deleteConnection,
+        updateConnection: mod.updateConnection as typeof import("../../../src/services/db.service.ts").updateConnection,
+        decryptConfig: mod.decryptConfig as typeof import("../../../src/services/db.service.ts").decryptConfig,
+      };
+    };
+
+    it("inserts and retrieves a sqlite connection", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "my-sqlite", { type: "sqlite", path: "/tmp/test.db" });
+      expect(conn.name).toBe("my-sqlite");
+      expect(conn.type).toBe("sqlite");
+      expect(conn.readonly).toBe(1);
+      expect(conn.sort_order).toBe(0);
+    });
+
+    it("inserts a postgres connection", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("postgres", "my-pg", { type: "postgres", connectionString: "postgresql://localhost" });
+      expect(conn.type).toBe("postgres");
+    });
+
+    it("auto-increments sort_order", () => {
+      const fns = getConnectionFns();
+      fns.insertConnection("sqlite", "a", { type: "sqlite", path: "/tmp/a.db" });
+      fns.insertConnection("sqlite", "b", { type: "sqlite", path: "/tmp/b.db" });
+      const all = fns.getConnections();
+      expect(all[0]!.sort_order).toBe(0);
+      expect(all[1]!.sort_order).toBe(1);
+    });
+
+    it("getConnectionById returns correct connection", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "by-id", { type: "sqlite", path: "/tmp/id.db" });
+      const found = fns.getConnectionById(conn.id);
+      expect(found).not.toBeNull();
+      expect(found!.name).toBe("by-id");
+    });
+
+    it("getConnectionById returns null for unknown id", () => {
+      const fns = getConnectionFns();
+      expect(fns.getConnectionById(999)).toBeNull();
+    });
+
+    it("getConnectionByName returns correct connection", () => {
+      const fns = getConnectionFns();
+      fns.insertConnection("sqlite", "by-name", { type: "sqlite", path: "/tmp/name.db" });
+      const found = fns.getConnectionByName("by-name");
+      expect(found).not.toBeNull();
+      expect(found!.name).toBe("by-name");
+    });
+
+    it("getConnectionByName returns null for unknown name", () => {
+      const fns = getConnectionFns();
+      expect(fns.getConnectionByName("nonexistent")).toBeNull();
+    });
+
+    it("resolveConnection by numeric id", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "resolve-id", { type: "sqlite", path: "/tmp/r.db" });
+      const found = fns.resolveConnection(String(conn.id));
+      expect(found).not.toBeNull();
+      expect(found!.name).toBe("resolve-id");
+    });
+
+    it("resolveConnection by name", () => {
+      const fns = getConnectionFns();
+      fns.insertConnection("sqlite", "resolve-name", { type: "sqlite", path: "/tmp/r.db" });
+      const found = fns.resolveConnection("resolve-name");
+      expect(found).not.toBeNull();
+    });
+
+    it("resolveConnection returns null for unknown", () => {
+      const fns = getConnectionFns();
+      expect(fns.resolveConnection("ghost")).toBeNull();
+      expect(fns.resolveConnection("9999")).toBeNull();
+    });
+
+    it("deleteConnection by name", () => {
+      const fns = getConnectionFns();
+      fns.insertConnection("sqlite", "to-delete", { type: "sqlite", path: "/tmp/del.db" });
+      expect(fns.deleteConnection("to-delete")).toBe(true);
+      expect(fns.getConnections()).toHaveLength(0);
+    });
+
+    it("deleteConnection by id", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "del-by-id", { type: "sqlite", path: "/tmp/d.db" });
+      expect(fns.deleteConnection(String(conn.id))).toBe(true);
+    });
+
+    it("deleteConnection returns false for unknown", () => {
+      const fns = getConnectionFns();
+      expect(fns.deleteConnection("nonexistent")).toBe(false);
+    });
+
+    it("updateConnection changes name", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "old-name", { type: "sqlite", path: "/tmp/u.db" });
+      fns.updateConnection(conn.id, { name: "new-name" });
+      const updated = fns.getConnectionById(conn.id);
+      expect(updated!.name).toBe("new-name");
+    });
+
+    it("updateConnection toggles readonly", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "ro-toggle", { type: "sqlite", path: "/tmp/ro.db" });
+      expect(conn.readonly).toBe(1);
+      fns.updateConnection(conn.id, { readonly: 0 });
+      expect(fns.getConnectionById(conn.id)!.readonly).toBe(0);
+    });
+
+    it("updateConnection changes group and color", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "style", { type: "sqlite", path: "/tmp/s.db" }, "grp", "#aaa");
+      fns.updateConnection(conn.id, { groupName: "new-grp", color: "#bbb" });
+      const updated = fns.getConnectionById(conn.id);
+      expect(updated!.group_name).toBe("new-grp");
+      expect(updated!.color).toBe("#bbb");
+    });
+
+    it("updateConnection with no fields is a no-op", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "noop", { type: "sqlite", path: "/tmp/n.db" });
+      fns.updateConnection(conn.id, {});
+      const same = fns.getConnectionById(conn.id);
+      expect(same!.name).toBe("noop");
+    });
+
+    it("encrypted config round-trips correctly", () => {
+      const fns = getConnectionFns();
+      const conn = fns.insertConnection("sqlite", "enc-test", { type: "sqlite", path: "/tmp/enc.db" });
+      const decrypted = fns.decryptConfig(conn.connection_config);
+      expect(decrypted.type).toBe("sqlite");
+      expect((decrypted as any).path).toBe("/tmp/enc.db");
+    });
+
+    it("rejects duplicate connection name", () => {
+      const fns = getConnectionFns();
+      fns.insertConnection("sqlite", "unique-name", { type: "sqlite", path: "/tmp/u1.db" });
+      expect(() => fns.insertConnection("sqlite", "unique-name", { type: "sqlite", path: "/tmp/u2.db" })).toThrow();
+    });
+  });
+
   describe("usage history", () => {
     it("inserts a usage record", () => {
       insertUsageRecord({

@@ -502,6 +502,536 @@ describe("POST /db/connections/import", () => {
   });
 });
 
+describe("PUT /db/connections/:id — readonly toggle", () => {
+  it("toggles readonly off and on", async () => {
+    const app = createApp();
+
+    // Create (default readonly=1)
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "ro-test",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+    expect(created.readonly).toBe(1);
+
+    // Toggle to writable
+    const res = await app.request(`/db/connections/${created.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ readonly: 0 }),
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json() as any).data;
+    expect(json.readonly).toBe(0);
+
+    // Toggle back to readonly
+    const res2 = await app.request(`/db/connections/${created.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ readonly: 1 }),
+    });
+    expect(res2.status).toBe(200);
+    const json2 = (await res2.json() as any).data;
+    expect(json2.readonly).toBe(1);
+  });
+
+  it("updates group name and clears it with null", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "group-test",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+        groupName: "initial-group",
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+    expect(created.group_name).toBe("initial-group");
+
+    // Clear group
+    const res = await app.request(`/db/connections/${created.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ groupName: null }),
+    });
+    const json = (await res.json() as any).data;
+    expect(json.group_name).toBeNull();
+  });
+});
+
+describe("PUT /db/connections/:id/cell — readonly enforcement", () => {
+  it("blocks cell edit on readonly connection", async () => {
+    const app = createApp();
+
+    // Create readonly connection (default)
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "ro-cell",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    // Try cell edit
+    const res = await app.request(`/db/connections/${created.id}/cell`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "users",
+        pkColumn: "id",
+        pkValue: 1,
+        column: "name",
+        value: "test",
+      }),
+    });
+    expect(res.status).toBe(403);
+    const json = await res.json() as any;
+    expect(json.ok).toBe(false);
+    expect(json.error).toContain("readonly");
+  });
+
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/cell", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        table: "users",
+        pkColumn: "id",
+        pkValue: 1,
+        column: "name",
+        value: "test",
+      }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for missing required fields", async () => {
+    const app = createApp();
+
+    // Create writable connection
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "rw-cell",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+    // Toggle writable
+    await app.request(`/db/connections/${created.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ readonly: 0 }),
+    });
+
+    // Missing table
+    const res = await app.request(`/db/connections/${created.id}/cell`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pkColumn: "id", pkValue: 1, column: "name", value: "x" }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("DELETE /db/connections/:id/row — readonly enforcement", () => {
+  it("blocks row delete on readonly connection", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "ro-row",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/row`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", pkColumn: "id", pkValue: 1 }),
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json() as any).error).toContain("readonly");
+  });
+
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/row", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", pkColumn: "id", pkValue: 1 }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for missing pkValue", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "rw-row",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+    await app.request(`/db/connections/${created.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ readonly: 0 }),
+    });
+
+    const res = await app.request(`/db/connections/${created.id}/row`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", pkColumn: "id" }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /db/connections/:id/rows/delete — bulk delete readonly", () => {
+  it("blocks bulk delete on readonly connection", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "ro-bulk",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/rows/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", pkColumn: "id", pkValues: [1, 2] }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 400 for empty pkValues", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "rw-bulk",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+    await app.request(`/db/connections/${created.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ readonly: 0 }),
+    });
+
+    const res = await app.request(`/db/connections/${created.id}/rows/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", pkColumn: "id", pkValues: [] }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/rows/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", pkColumn: "id", pkValues: [1] }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /db/connections/:id/row — insert readonly", () => {
+  it("blocks insert on readonly connection", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "ro-insert",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/row`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", values: { name: "test" } }),
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json() as any).error).toContain("readonly");
+  });
+
+  it("returns 400 for empty values", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "rw-insert",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+    await app.request(`/db/connections/${created.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ readonly: 0 }),
+    });
+
+    const res = await app.request(`/db/connections/${created.id}/row`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", values: {} }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/row", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ table: "users", values: { name: "test" } }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /db/connections/:id/query — readonly enforcement", () => {
+  it("blocks write query on readonly connection", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "ro-query",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sql: "DELETE FROM users WHERE id = 1" }),
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json() as any).error).toContain("readonly");
+  });
+
+  it("returns 400 for missing sql", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "query-no-sql",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sql: "SELECT 1" }),
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /db/test — raw connection test", () => {
+  it("returns 400 for missing fields", async () => {
+    const app = createApp();
+    const res = await app.request("/db/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /db/connections/:id/test", () => {
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/test", {
+      method: "POST",
+    });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /db/connections/:id/tables", () => {
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/tables");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("GET /db/connections/:id/schema", () => {
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/schema?table=users");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for missing table param", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "schema-test",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/schema`);
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /db/connections/:id/data", () => {
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/data?table=users");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for missing table param", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "data-test",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/data`);
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /db/connections/:id/export", () => {
+  it("returns 404 for nonexistent connection", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/999/export?table=users");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for missing table param", async () => {
+    const app = createApp();
+    const createRes = await app.request("/db/connections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "sqlite",
+        name: "export-test",
+        connectionConfig: { type: "sqlite", path: "/tmp/test.db" },
+      }),
+    });
+    const created = (await createRes.json() as any).data;
+
+    const res = await app.request(`/db/connections/${created.id}/export`);
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /db/connections/import — edge cases", () => {
+  it("rejects non-array connections", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ connections: "not-an-array" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("skips entries with invalid type", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        connections: [
+          { type: "mongodb", name: "bad-type", connection_config: JSON.stringify({ type: "mongodb" }) },
+        ],
+      }),
+    });
+    expect(res.status).toBe(201);
+    const json = (await res.json() as any).data;
+    expect(json.imported).toBe(0);
+    expect(json.skipped).toBe(1);
+  });
+
+  it("skips entries with invalid JSON in connection_config", async () => {
+    const app = createApp();
+    const res = await app.request("/db/connections/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        connections: [
+          { type: "sqlite", name: "bad-json", connection_config: "not-json{" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(201);
+    const json = (await res.json() as any).data;
+    expect(json.imported).toBe(0);
+    expect(json.skipped).toBe(1);
+  });
+});
+
 describe("GET /db/search", () => {
   it("returns empty for no query", async () => {
     const app = createApp();

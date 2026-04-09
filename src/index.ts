@@ -148,6 +148,9 @@ registerCloudCommands(program);
 const { registerExtCommands } = await import("./cli/commands/ext-cmd.ts");
 registerExtCommands(program);
 
+const { registerDbCommands } = await import("./cli/commands/db-cmd.ts");
+registerDbCommands(program);
+
 const { registerBotCommands } = await import("./cli/commands/bot-cmd.ts");
 registerBotCommands(program);
 
