@@ -204,6 +204,12 @@ function doConnect(): void {
     reconnecting = false;
     ws = null;
     if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    // 4010 = server replaced this connection (another is already active) or reconnecting
+    // too fast — do NOT reconnect to avoid feedback loop
+    if (event.code === 4010) {
+      log("INFO", "Cloud WS closed with 4010 (replaced/throttled), not reconnecting");
+      return;
+    }
     if (shouldConnect) scheduleReconnect("onclose");
   };
 
