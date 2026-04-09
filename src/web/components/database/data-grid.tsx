@@ -121,13 +121,6 @@ export function DataGrid({
     });
   }, []);
 
-  const jumpToColumn = useCallback((col: string) => {
-    const th = scrollRef.current?.querySelector<HTMLElement>(`th[data-col="${col}"]`);
-    if (th) th.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "start" });
-    setColSearchOpen(false);
-    setColSearchQuery("");
-  }, []);
-
   const updateColFilter = useCallback((col: string, val: string) => {
     const next = { ...colFilters };
     if (val) next[col] = val; else delete next[col];
@@ -314,6 +307,23 @@ export function DataGrid({
     }
     return tops;
   }, [headerHeight, pinnedRowData, pinnedRowHeights]);
+
+  const jumpToColumn = useCallback((col: string) => {
+    const container = scrollRef.current;
+    const th = container?.querySelector<HTMLElement>(`th[data-col="${col}"]`);
+    if (!container || !th) return;
+    // Calculate sticky left offset (checkbox + pinned columns)
+    let stickyWidth = 0;
+    const cbTh = container.querySelector<HTMLElement>(`th[data-col="_cb"]`);
+    if (cbTh) stickyWidth += cbTh.offsetWidth;
+    for (const [pc, offset] of pinnedColOffsets) {
+      if (pc !== col) stickyWidth = Math.max(stickyWidth, offset + (colWidths.get(pc) ?? 0));
+    }
+    const targetLeft = th.offsetLeft - stickyWidth;
+    container.scrollTo({ left: targetLeft, behavior: "smooth" });
+    setColSearchOpen(false);
+    setColSearchQuery("");
+  }, [pinnedColOffsets, colWidths]);
 
   if (!tableData) {
     return (
