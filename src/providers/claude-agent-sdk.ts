@@ -688,18 +688,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const expiresIn = account.expiresAt ? account.expiresAt - nowS : null;
           console.log(`[sdk] Using account ${account.id} (${account.email ?? "no-email"}) token_expires_in=${expiresIn}s`);
 
-          // Check if token needs refresh
-          const isOAuth = account.accessToken.startsWith("sk-ant-oat");
-          const needsRefresh = isOAuth && account.expiresAt && (account.expiresAt - nowS <= 3600);
-
-          if (!needsRefresh) {
-            // Token fresh or API key — proceed
-            yield { type: "account_info" as const, accountId: account.id, accountLabel };
-            break;
-          }
-
-          // Token expiring — attempt refresh
-          yield { type: "status_update" as const, phase: "refreshing" as const, message: `Refreshing token for ${accountLabel}...`, accountLabel };
+          // ensureFreshToken re-reads DB (picks up concurrent refreshes) and
+          // only refreshes if truly needed — safe to call unconditionally.
+          yield { type: "status_update" as const, phase: "refreshing" as const, message: `Checking token for ${accountLabel}...`, accountLabel };
           const fresh = await accountService.ensureFreshToken(account.id);
 
           if (fresh) {
