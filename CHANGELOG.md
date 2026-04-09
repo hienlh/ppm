@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.71] - 2026-04-09
+
+### Fixed
+- **CLI db commands**: `ppm db` subcommands (list, add, remove, test, tables, schema, data, query) were implemented but not registered in CLI entry point — now accessible.
+
+### Added
+- Unit tests for CLI db command registration and option structure.
+- Unit tests for `isReadOnlyQuery` utility (18 cases including CTE attack patterns).
+- Unit tests for database routes: readonly enforcement, validation, edge cases (+30 tests).
+- Unit tests for db.service connection CRUD: insert, resolve, update, delete, encryption round-trip (+17 tests).
+
 ## [0.9.70] - 2026-04-09
 
 ### Fixed
