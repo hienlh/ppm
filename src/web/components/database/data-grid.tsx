@@ -374,32 +374,13 @@ export function DataGrid({
             title="Jump to column ( / )">
             <Columns3 className="size-3.5" />
           </button>
-          {colSearchOpen && (() => {
-            const filtered = tableData.columns.filter((c) => !colSearchQuery || c.toLowerCase().includes(colSearchQuery.toLowerCase()));
-            return (
-              <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 bg-popover border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
-                <input autoFocus type="text" value={colSearchQuery}
-                  onChange={(e) => { setColSearchQuery(e.target.value); setColSearchIdx(0); }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") { setColSearchOpen(false); setColSearchQuery(""); }
-                    else if (e.key === "ArrowDown") { e.preventDefault(); setColSearchIdx((i) => Math.min(i + 1, filtered.length - 1)); }
-                    else if (e.key === "ArrowUp") { e.preventDefault(); setColSearchIdx((i) => Math.max(i - 1, 0)); }
-                    else if (e.key === "Enter" && filtered[colSearchIdx]) { jumpToColumn(filtered[colSearchIdx]); }
-                  }}
-                  placeholder="Search columns…"
-                  className="px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border text-foreground placeholder:text-muted-foreground" />
-                <div className="overflow-auto flex-1">
-                  {filtered.map((col, i) => (
-                    <button key={col} type="button" onClick={() => jumpToColumn(col)}
-                      ref={(el) => { if (i === colSearchIdx && el) el.scrollIntoView({ block: "nearest" }); }}
-                      className={`w-full text-left px-2 py-1 text-xs transition-colors truncate ${i === colSearchIdx ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}>
-                      {col}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
+          {colSearchOpen && (
+            <ColumnSearchDropdown columns={tableData.columns} query={colSearchQuery} activeIdx={colSearchIdx}
+              onQueryChange={(q) => { setColSearchQuery(q); setColSearchIdx(0); }}
+              onIdxChange={setColSearchIdx}
+              onSelect={jumpToColumn}
+              onClose={() => { setColSearchOpen(false); setColSearchQuery(""); }} />
+          )}
         </div>
 
         {hasSelection && (
@@ -620,6 +601,46 @@ function detectLang(text: string): string {
   if (t.startsWith("---") || /^\w+:\s/m.test(t)) return "yaml";
   return "plaintext";
 }
+
+/** Memoized column search dropdown — avoids re-rendering parent DataGrid on keystrokes */
+const ColumnSearchDropdown = memo(function ColumnSearchDropdown({ columns, query, activeIdx, onQueryChange, onIdxChange, onSelect, onClose }: {
+  columns: string[]; query: string; activeIdx: number;
+  onQueryChange: (q: string) => void; onIdxChange: (i: number) => void;
+  onSelect: (col: string) => void; onClose: () => void;
+}) {
+  const filtered = useMemo(() => {
+    if (!query) return columns;
+    const lq = query.toLowerCase();
+    return columns.filter((c) => c.toLowerCase().includes(lq));
+  }, [columns, query]);
+
+  const activeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { activeRef.current?.scrollIntoView({ block: "nearest" }); }, [activeIdx]);
+
+  return (
+    <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 bg-popover border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
+      <input autoFocus type="text" value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+          else if (e.key === "ArrowDown") { e.preventDefault(); onIdxChange(Math.min(activeIdx + 1, filtered.length - 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); onIdxChange(Math.max(activeIdx - 1, 0)); }
+          else if (e.key === "Enter" && filtered[activeIdx]) onSelect(filtered[activeIdx]);
+        }}
+        placeholder="Search columns…"
+        className="px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border text-foreground placeholder:text-muted-foreground" />
+      <div className="overflow-auto flex-1">
+        {filtered.map((col, i) => (
+          <button key={col} type="button" onClick={() => onSelect(col)}
+            ref={i === activeIdx ? activeRef : undefined}
+            className={`w-full text-left px-2 py-1 text-xs truncate ${i === activeIdx ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}>
+            {col}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+});
 
 /** Memoized row — only re-renders when its own props change */
 const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggleSelect, pkCol,
