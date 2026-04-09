@@ -719,11 +719,19 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
 /** Collapsible thinking block — shows Claude's reasoning, collapsed by default when done */
 function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming: boolean }) {
   const [expanded, setExpanded] = useState(isStreaming);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-collapse when streaming finishes
   useEffect(() => {
     if (!isStreaming && content.length > 0) setExpanded(false);
   }, [isStreaming, content.length]);
+
+  // Auto-scroll to bottom during streaming
+  useEffect(() => {
+    if (isStreaming && expanded && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [content, isStreaming, expanded]);
 
   return (
     <div className="rounded border border-border/50 bg-surface/30 text-xs">
@@ -736,11 +744,11 @@ function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming:
         {!isStreaming && <span className="text-text-subtle/50 ml-auto">{content.length > 100 ? `${Math.round(content.length / 4)} tokens` : ""}</span>}
       </button>
       {expanded && (
-        <StickToBottom className="max-h-60 overflow-y-auto" resize="smooth" initial="instant">
-          <StickToBottom.Content className="px-2 pb-2 text-text-subtle/80 whitespace-pre-wrap text-[11px] leading-relaxed">
+        <div ref={scrollRef} className="max-h-60 overflow-y-auto">
+          <div className="px-2 pb-2 text-text-subtle/80 whitespace-pre-wrap text-[11px] leading-relaxed">
             {content}
-          </StickToBottom.Content>
-        </StickToBottom>
+          </div>
+        </div>
       )}
     </div>
   );
