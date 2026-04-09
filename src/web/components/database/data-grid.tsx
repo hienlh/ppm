@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, memo, useEffect } from "react";
-import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, Filter, Pin, PinOff } from "lucide-react";
+import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, Filter, Pin, PinOff, Columns3 } from "lucide-react";
 import { useTabStore } from "@/stores/tab-store";
 import type { DbColumnInfo } from "./use-database";
 import { ExportButton } from "./export-button";
@@ -55,6 +55,9 @@ export function DataGrid({
   const [pinnedCols, setPinnedCols] = useState<Set<string>>(new Set());
   const [pinnedRows, setPinnedRows] = useState<Set<number>>(new Set());
   const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null);
+  const [colSearchOpen, setColSearchOpen] = useState(false);
+  const [colSearchQuery, setColSearchQuery] = useState("");
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const pkCol = useMemo(() => {
     const explicit = schema.find((c) => c.pk)?.name;
@@ -116,6 +119,13 @@ export function DataGrid({
       if (next.has(idx)) next.delete(idx); else next.add(idx);
       return next;
     });
+  }, []);
+
+  const jumpToColumn = useCallback((col: string) => {
+    const th = scrollRef.current?.querySelector<HTMLElement>(`th[data-col="${col}"]`);
+    if (th) th.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "start" });
+    setColSearchOpen(false);
+    setColSearchQuery("");
   }, []);
 
   const updateColFilter = useCallback((col: string, val: string) => {
@@ -180,9 +190,21 @@ export function DataGrid({
     const el = containerRef.current;
     if (!el) return;
     const handler = (e: KeyboardEvent) => {
+      // Escape closes column search from anywhere
+      if (e.key === "Escape") { setColSearchOpen(false); setColSearchQuery(""); return; }
+
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || !tableData) return;
-      // Skip if focus is in an input/textarea
+
+      // Cmd+G → open column jump (works even in inputs)
+      if (e.key === "g") {
+        e.preventDefault();
+        setColSearchOpen(true);
+        setColSearchQuery("");
+        return;
+      }
+
+      // Skip if focus is in an input/textarea for remaining shortcuts
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
@@ -321,6 +343,39 @@ export function DataGrid({
           )}
         </div>
 
+        {/* Column jump */}
+        <div className="relative">
+          <button type="button" onClick={() => { setColSearchOpen(!colSearchOpen); setColSearchQuery(""); }}
+            className={`p-0.5 rounded transition-colors ${colSearchOpen ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+            title="Jump to column">
+            <Columns3 className="size-3.5" />
+          </button>
+          {colSearchOpen && (
+            <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 bg-popover border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
+              <input autoFocus type="text" value={colSearchQuery} onChange={(e) => setColSearchQuery(e.target.value)}
+                placeholder="Search columns…"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { setColSearchOpen(false); setColSearchQuery(""); }
+                  if (e.key === "Enter") {
+                    const match = tableData.columns.find((c) => c.toLowerCase().includes(colSearchQuery.toLowerCase()));
+                    if (match) jumpToColumn(match);
+                  }
+                }}
+                className="px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border text-foreground placeholder:text-muted-foreground" />
+              <div className="overflow-auto flex-1">
+                {tableData.columns
+                  .filter((c) => !colSearchQuery || c.toLowerCase().includes(colSearchQuery.toLowerCase()))
+                  .map((col) => (
+                    <button key={col} type="button" onClick={() => jumpToColumn(col)}
+                      className="w-full text-left px-2 py-1 text-xs hover:bg-muted transition-colors truncate text-foreground">
+                      {col}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         {hasSelection && (
           <div className="flex items-center gap-1.5 text-xs">
             <span className="text-muted-foreground">{selectedRows.size} selected</span>
@@ -377,7 +432,7 @@ export function DataGrid({
       )}
 
       {/* Table */}
-      <div className="flex-1 overflow-auto relative">
+      <div ref={scrollRef} className="flex-1 overflow-auto relative">
         {loading && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/60">
             <Loader2 className="size-5 animate-spin text-primary" />
