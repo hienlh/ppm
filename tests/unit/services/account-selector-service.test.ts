@@ -365,6 +365,104 @@ describe("lowest-usage weighted sustainability strategy", () => {
   });
 });
 
+describe("next(excludeIds) — pre-flight loop support", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+    accountSelector.setStrategy("round-robin");
+  });
+
+  afterEach(() => {
+    setDb(openTestDb());
+  });
+
+  it("skips accounts in excludeIds set", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    const exclude = new Set([a.id]);
+
+    for (let i = 0; i < 3; i++) {
+      const acc = accountSelector.next(exclude);
+      expect(acc).not.toBeNull();
+      expect(acc!.id).toBe(b.id);
+    }
+  });
+
+  it("returns null with all_excluded when all active accounts are excluded", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    const exclude = new Set([a.id, b.id]);
+
+    const acc = accountSelector.next(exclude);
+    expect(acc).toBeNull();
+    expect(accountSelector.lastFailReason).toBe("all_excluded");
+  });
+
+  it("returns no_active when no active accounts exist (not all_excluded)", () => {
+    const a = addAccount("a@test.com");
+    accountService.setDisabled(a.id);
+
+    const acc = accountSelector.next(new Set());
+    expect(acc).toBeNull();
+    expect(accountSelector.lastFailReason).toBe("no_active");
+  });
+
+  it("excludeIds works with lowest-usage strategy", () => {
+    accountSelector.setStrategy("lowest-usage");
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+
+    // a has better usage but is excluded
+    insertUsage(a.id, { fiveHour: 0.10, weekly: 0.10, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.80, weekly: 0.80, weeklyResetsAt: hoursFromNow(100) });
+
+    const acc = accountSelector.next(new Set([a.id]));
+    expect(acc).not.toBeNull();
+    expect(acc!.id).toBe(b.id);
+  });
+});
+
+describe("onPreflightFail()", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+  });
+
+  afterEach(() => {
+    setDb(openTestDb());
+  });
+
+  it("puts account into cooldown", () => {
+    const a = addAccount("a@test.com");
+    accountSelector.onPreflightFail(a.id);
+    const updated = accountService.list().find((x) => x.id === a.id)!;
+    expect(updated.status).toBe("cooldown");
+    expect(updated.cooldownUntil).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  it("applies exponential backoff on repeated failures", () => {
+    const a = addAccount("a@test.com");
+    accountSelector.onPreflightFail(a.id);
+    const cd1 = accountService.list().find((x) => x.id === a.id)!.cooldownUntil!;
+    accountService.setEnabled(a.id);
+    accountSelector.onPreflightFail(a.id);
+    const cd2 = accountService.list().find((x) => x.id === a.id)!.cooldownUntil!;
+    // Second cooldown should be longer (2x base)
+    expect(cd2).toBeGreaterThan(cd1);
+  });
+
+  it("cooldown is capped at 5 minutes", () => {
+    const a = addAccount("a@test.com");
+    // Trigger many failures to exceed cap
+    for (let i = 0; i < 10; i++) {
+      accountService.setEnabled(a.id);
+      accountSelector.onPreflightFail(a.id);
+    }
+    const updated = accountService.list().find((x) => x.id === a.id)!;
+    const cooldownMs = (updated.cooldownUntil! - Math.floor(Date.now() / 1000)) * 1000;
+    // Should not exceed 5 minutes + small tolerance
+    expect(cooldownMs).toBeLessThanOrEqual(5 * 60_000 + 2000);
+  });
+});
+
 describe("peek()", () => {
   beforeEach(() => {
     setDb(openTestDb());
