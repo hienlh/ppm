@@ -56,8 +56,6 @@ export function DataGrid({
   const [pinnedRows, setPinnedRows] = useState<Set<number>>(new Set());
   const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null);
   const [colSearchOpen, setColSearchOpen] = useState(false);
-  const [colSearchQuery, setColSearchQuery] = useState("");
-  const [colSearchIdx, setColSearchIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const pkCol = useMemo(() => {
@@ -197,7 +195,7 @@ export function DataGrid({
     if (!el) return;
     const handler = (e: KeyboardEvent) => {
       // Escape closes column search from anywhere
-      if (e.key === "Escape") { setColSearchOpen(false); setColSearchQuery(""); return; }
+      if (e.key === "Escape") { setColSearchOpen(false); return; }
 
       // Skip if focus is in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
@@ -207,8 +205,6 @@ export function DataGrid({
       if (e.key === "/") {
         e.preventDefault();
         setColSearchOpen(true);
-        setColSearchQuery("");
-        setColSearchIdx(0);
         return;
       }
 
@@ -336,7 +332,6 @@ export function DataGrid({
     const targetLeft = th.offsetLeft - stickyWidth;
     container.scrollTo({ left: targetLeft, behavior: "smooth" });
     setColSearchOpen(false);
-    setColSearchQuery("");
   }, [pinnedColOffsets, colWidths]);
 
   if (!tableData) {
@@ -369,17 +364,15 @@ export function DataGrid({
 
         {/* Column jump */}
         <div className="relative">
-          <button type="button" onClick={() => { setColSearchOpen(!colSearchOpen); setColSearchQuery(""); setColSearchIdx(0); }}
+          <button type="button" onClick={() => setColSearchOpen(!colSearchOpen)}
             className={`p-0.5 rounded transition-colors ${colSearchOpen ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
             title="Jump to column ( / )">
             <Columns3 className="size-3.5" />
           </button>
           {colSearchOpen && (
-            <ColumnSearchDropdown columns={tableData.columns} query={colSearchQuery} activeIdx={colSearchIdx}
-              onQueryChange={(q) => { setColSearchQuery(q); setColSearchIdx(0); }}
-              onIdxChange={setColSearchIdx}
+            <ColumnSearchDropdown columns={tableData.columns}
               onSelect={jumpToColumn}
-              onClose={() => { setColSearchOpen(false); setColSearchQuery(""); }} />
+              onClose={() => setColSearchOpen(false)} />
           )}
         </div>
 
@@ -602,12 +595,12 @@ function detectLang(text: string): string {
   return "plaintext";
 }
 
-/** Memoized column search dropdown — avoids re-rendering parent DataGrid on keystrokes */
-const ColumnSearchDropdown = memo(function ColumnSearchDropdown({ columns, query, activeIdx, onQueryChange, onIdxChange, onSelect, onClose }: {
-  columns: string[]; query: string; activeIdx: number;
-  onQueryChange: (q: string) => void; onIdxChange: (i: number) => void;
-  onSelect: (col: string) => void; onClose: () => void;
+/** Column search dropdown — owns query/index state internally to avoid re-rendering DataGrid */
+function ColumnSearchDropdown({ columns, onSelect, onClose }: {
+  columns: string[]; onSelect: (col: string) => void; onClose: () => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [idx, setIdx] = useState(0);
   const filtered = useMemo(() => {
     if (!query) return columns;
     const lq = query.toLowerCase();
@@ -615,32 +608,32 @@ const ColumnSearchDropdown = memo(function ColumnSearchDropdown({ columns, query
   }, [columns, query]);
 
   const activeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => { activeRef.current?.scrollIntoView({ block: "nearest" }); }, [activeIdx]);
+  useEffect(() => { activeRef.current?.scrollIntoView({ block: "nearest" }); }, [idx]);
 
   return (
     <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 bg-popover border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
       <input autoFocus type="text" value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
+        onChange={(e) => { setQuery(e.target.value); setIdx(0); }}
         onKeyDown={(e) => {
           if (e.key === "Escape") onClose();
-          else if (e.key === "ArrowDown") { e.preventDefault(); onIdxChange(Math.min(activeIdx + 1, filtered.length - 1)); }
-          else if (e.key === "ArrowUp") { e.preventDefault(); onIdxChange(Math.max(activeIdx - 1, 0)); }
-          else if (e.key === "Enter" && filtered[activeIdx]) onSelect(filtered[activeIdx]);
+          else if (e.key === "ArrowDown") { e.preventDefault(); setIdx((i) => Math.min(i + 1, filtered.length - 1)); }
+          else if (e.key === "ArrowUp") { e.preventDefault(); setIdx((i) => Math.max(i - 1, 0)); }
+          else if (e.key === "Enter" && filtered[idx]) onSelect(filtered[idx]);
         }}
         placeholder="Search columns…"
         className="px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border text-foreground placeholder:text-muted-foreground" />
       <div className="overflow-auto flex-1">
         {filtered.map((col, i) => (
           <button key={col} type="button" onClick={() => onSelect(col)}
-            ref={i === activeIdx ? activeRef : undefined}
-            className={`w-full text-left px-2 py-1 text-xs truncate ${i === activeIdx ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}>
+            ref={i === idx ? activeRef : undefined}
+            className={`w-full text-left px-2 py-1 text-xs truncate ${i === idx ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}>
             {col}
           </button>
         ))}
       </div>
     </div>
   );
-});
+}
 
 /** Memoized row — only re-renders when its own props change */
 const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggleSelect, pkCol,
