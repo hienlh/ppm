@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.72] - 2026-04-09
+
+### Added
+- **Column search/jump**: Columns button + `/` shortcut opens filterable dropdown with arrow key navigation. Scrolls to column accounting for sticky pinned columns.
+- **Row viewer**: Eye icon per row opens full row data as formatted JSON in a new editor tab.
+- **Shortcut hints**: Footer shows keyboard shortcuts (`/` columns, `⌘A` select all, `⌘C` copy) on desktop.
+
+### Changed
+- **Cell viewer**: Opens in a new editor tab (with syntax highlight + beautify) instead of a popup dialog.
+- **Column filters**: Now controlled from parent and synced bidirectionally with SQL editor. Editing ILIKE in SQL and pressing Ctrl+Enter reflects filters in table header.
+
+### Fixed
+- **Loading overlay**: Spinner now shows on table during query execution (both filter and manual queries).
+- **Filter query mode**: Column filter queries and matching Ctrl+Enter queries stay in table grid mode instead of switching to read-only query result panel.
+- **Hooks order**: Moved hooks above early return to fix React Rules of Hooks violation.
+- **Column search perf**: All search state (query, index) lives inside the dropdown — no DataGrid re-renders on keystrokes.
+
 ## [0.9.71] - 2026-04-09
 
 ### Fixed
