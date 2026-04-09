@@ -57,6 +57,7 @@ export function DataGrid({
   const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null);
   const [colSearchOpen, setColSearchOpen] = useState(false);
   const [colSearchQuery, setColSearchQuery] = useState("");
+  const [colSearchIdx, setColSearchIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const pkCol = useMemo(() => {
@@ -207,6 +208,7 @@ export function DataGrid({
         e.preventDefault();
         setColSearchOpen(true);
         setColSearchQuery("");
+        setColSearchIdx(0);
         return;
       }
 
@@ -367,35 +369,37 @@ export function DataGrid({
 
         {/* Column jump */}
         <div className="relative">
-          <button type="button" onClick={() => { setColSearchOpen(!colSearchOpen); setColSearchQuery(""); }}
+          <button type="button" onClick={() => { setColSearchOpen(!colSearchOpen); setColSearchQuery(""); setColSearchIdx(0); }}
             className={`p-0.5 rounded transition-colors ${colSearchOpen ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
             title="Jump to column ( / )">
             <Columns3 className="size-3.5" />
           </button>
-          {colSearchOpen && (
-            <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 bg-popover border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
-              <input autoFocus type="text" value={colSearchQuery} onChange={(e) => setColSearchQuery(e.target.value)}
-                placeholder="Search columns…"
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") { setColSearchOpen(false); setColSearchQuery(""); }
-                  if (e.key === "Enter") {
-                    const match = tableData.columns.find((c) => c.toLowerCase().includes(colSearchQuery.toLowerCase()));
-                    if (match) jumpToColumn(match);
-                  }
-                }}
-                className="px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border text-foreground placeholder:text-muted-foreground" />
-              <div className="overflow-auto flex-1">
-                {tableData.columns
-                  .filter((c) => !colSearchQuery || c.toLowerCase().includes(colSearchQuery.toLowerCase()))
-                  .map((col) => (
+          {colSearchOpen && (() => {
+            const filtered = tableData.columns.filter((c) => !colSearchQuery || c.toLowerCase().includes(colSearchQuery.toLowerCase()));
+            return (
+              <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 bg-popover border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
+                <input autoFocus type="text" value={colSearchQuery}
+                  onChange={(e) => { setColSearchQuery(e.target.value); setColSearchIdx(0); }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { setColSearchOpen(false); setColSearchQuery(""); }
+                    else if (e.key === "ArrowDown") { e.preventDefault(); setColSearchIdx((i) => Math.min(i + 1, filtered.length - 1)); }
+                    else if (e.key === "ArrowUp") { e.preventDefault(); setColSearchIdx((i) => Math.max(i - 1, 0)); }
+                    else if (e.key === "Enter" && filtered[colSearchIdx]) { jumpToColumn(filtered[colSearchIdx]); }
+                  }}
+                  placeholder="Search columns…"
+                  className="px-2 py-1.5 text-xs bg-transparent outline-none border-b border-border text-foreground placeholder:text-muted-foreground" />
+                <div className="overflow-auto flex-1">
+                  {filtered.map((col, i) => (
                     <button key={col} type="button" onClick={() => jumpToColumn(col)}
-                      className="w-full text-left px-2 py-1 text-xs hover:bg-muted transition-colors truncate text-foreground">
+                      ref={(el) => { if (i === colSearchIdx && el) el.scrollIntoView({ block: "nearest" }); }}
+                      className={`w-full text-left px-2 py-1 text-xs transition-colors truncate ${i === colSearchIdx ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"}`}>
                       {col}
                     </button>
                   ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {hasSelection && (
@@ -645,7 +649,7 @@ const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggle
     <tr ref={trRef} className={`group ${pinned ? "" : "hover:bg-muted/30"}`}
       style={pinned ? { position: "sticky", top: stickyTop, zIndex: 15 } : undefined}>
       {pkCol && (
-        <td className={`px-1 py-1 border-b border-border/50 ${cellBg}`}
+        <td className={`px-2 py-1 border-b border-border/50 ${cellBg}`}
           style={{ position: "sticky", left: 0, zIndex: 12 }}>
           <span className="flex items-center gap-0.5">
             <input type="checkbox" checked={selected} onChange={() => onToggleSelect(rowIdx)} className="size-3 accent-primary" />
