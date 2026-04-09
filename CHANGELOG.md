@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.70] - 2026-04-09
+
+### Fixed
+- **SDK subprocess crash on resume**: Resumed sessions with existing JSONL files would crash (exit code 1) because `--session-id` was used instead of `--resume`. Now always uses `--resume` for resumed sessions.
+- **Session lookup**: Use targeted `getSessionInfo()` with correct project dir instead of listing all sessions.
+- **SDK stderr capture**: Subprocess stderr is now logged on crash for diagnostics.
+- **Thinking budget option**: Fixed `thinkingBudgetTokens` → `maxThinkingTokens` (correct SDK option name).
+
 ## [0.9.69] - 2026-04-09
 
 ### Fixed
