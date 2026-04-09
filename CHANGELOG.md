@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.73] - 2026-04-09
+
+### Added
+- **Pre-flight token refresh loop**: Account selection now retries all available accounts when OAuth token refresh fails, instead of failing immediately.
+- **`status_update` ChatEvent**: Frontend shows real-time status during account routing, token refresh, and account switching phases.
+- **`onPreflightFail()` method**: Failed accounts enter 60s–5min exponential cooldown during pre-flight.
+- **`excludeIds` param for `next()`**: Account selector can skip specific accounts (used by pre-flight loop).
+- Unit tests for `next(excludeIds)`, `onPreflightFail()`, and `all_excluded` fail reason (+7 tests).
+
 ## [0.9.72] - 2026-04-09
 
 ### Added
