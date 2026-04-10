@@ -5,11 +5,44 @@ import { Loader2, ArrowUpCircle, X } from "lucide-react";
 
 const POLL_INTERVAL_MS = 60_000;
 const DISMISS_KEY_PREFIX = "ppm-upgrade-dismissed-";
+const RESTART_POLL_MS = 1_500;
+const RESTART_TIMEOUT_MS = 60_000;
 
 interface UpgradeStatus {
   currentVersion: string;
   availableVersion: string | null;
   installMethod: string;
+}
+
+interface UpgradeResult {
+  success: boolean;
+  newVersion?: string;
+  restart: boolean;
+  message?: string;
+}
+
+/** Poll /api/health aggressively until server goes down then back up, then reload. */
+async function waitForServerRestart(): Promise<boolean> {
+  let serverWentDown = false;
+  const start = Date.now();
+
+  while (Date.now() - start < RESTART_TIMEOUT_MS) {
+    await new Promise((r) => setTimeout(r, RESTART_POLL_MS));
+    try {
+      const res = await fetch("/api/health", { cache: "no-store" });
+      if (res.ok && serverWentDown) {
+        if ("caches" in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((k) => caches.delete(k)));
+        }
+        window.location.reload();
+        return true;
+      }
+    } catch {
+      serverWentDown = true;
+    }
+  }
+  return false;
 }
 
 interface UpgradeBannerProps {
@@ -50,8 +83,21 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
   const handleUpgrade = useCallback(async () => {
     setUpgrading(true);
     try {
-      await api.post("/api/upgrade/apply");
-      // useServerReload in app.tsx handles the actual page reload after restart
+      const data = await api.post<UpgradeResult>("/api/upgrade/apply");
+
+      if (data.restart) {
+        // Server will restart — poll aggressively until it comes back
+        const restarted = await waitForServerRestart();
+        if (!restarted) {
+          toast.warning("Upgrade installed but server hasn't restarted. Try refreshing manually.");
+          setUpgrading(false);
+        }
+      } else {
+        // No supervisor — manual restart needed
+        toast.info(data.message || "Upgrade installed. Restart PPM manually.");
+        setUpgrading(false);
+        setDismissed(true);
+      }
     } catch (e) {
       toast.error(`Upgrade failed: ${(e as Error).message}`);
       setUpgrading(false);
