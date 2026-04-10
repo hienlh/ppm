@@ -347,6 +347,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         phase={phase}
         connectingElapsed={connectingElapsed}
         statusMessage={statusMessage}
+        compactStatus={compactStatus}
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
         onSelectSession={handleSelectSession}
@@ -358,7 +359,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         <ChatHistoryBar
           projectName={projectName}
           usageInfo={usageInfo}
-          compactStatus={compactStatus}
           usageLoading={usageLoading}
           refreshUsage={refreshUsage}
           lastFetchedAt={lastFetchedAt}

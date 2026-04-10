@@ -24,7 +24,6 @@ interface TeamActivityState {
 interface ChatHistoryBarProps {
   projectName: string;
   usageInfo: UsageInfo;
-  compactStatus?: "compacting" | null;
   usageLoading?: boolean;
   refreshUsage?: () => void;
   lastFetchedAt?: string | null;
@@ -95,7 +94,7 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
 }
 
 export function ChatHistoryBar({
-  projectName, usageInfo, compactStatus, usageLoading, refreshUsage, lastFetchedAt,
+  projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
   sessionId, providerId, onSelectSession, onBugReport, isConnected, onReconnect,
   teamActivity, teamMessages, onTeamOpen,
 }: ChatHistoryBarProps) {
@@ -290,20 +289,8 @@ export function ChatHistoryBar({
             <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
             <span className="text-text-subtle">·</span>
             <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
-            {compactStatus === "compacting" && (
-              <>
-                <span className="text-text-subtle">·</span>
-                <span className="text-blue-400 animate-pulse">compacting...</span>
-              </>
-            )}
           </button>
-        ) : (
-          compactStatus === "compacting" ? (
-            <span className="text-[11px] px-1.5 py-0.5 text-blue-400 animate-pulse">
-              compacting...
-            </span>
-          ) : null
-        )}
+        ) : null}
 
         {/* Team activity */}
         {teamActivity?.hasTeams && (

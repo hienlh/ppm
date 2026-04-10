@@ -43,6 +43,7 @@ interface MessageListProps {
   phase?: SessionPhase;
   connectingElapsed?: number;
   statusMessage?: string | null;
+  compactStatus?: "compacting" | null;
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
   onFork?: (userMessage: string, messageId?: string) => void;
@@ -60,6 +61,7 @@ export function MessageList({
   onSelectSession,
   connectingElapsed,
   statusMessage,
+  compactStatus,
   projectName,
   onFork,
 }: MessageListProps) {
@@ -117,6 +119,7 @@ export function MessageList({
         )}
 
         {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={statusMessage} />}
+        {!isStreaming && compactStatus === "compacting" && <ThinkingIndicator lastMessage={undefined} phase="thinking" elapsed={undefined} statusMessage="Compacting messages..." />}
       </StickToBottom.Content>
       <ScrollToBottomButton />
     </StickToBottom>
