@@ -105,9 +105,9 @@ export function MessageList({
                 isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                 projectName={projectName}
                 onFork={msg.role === "user" && onFork ? () => {
-                  // Pass the previous message ID so the fork includes history up to (but not including) this user message
+                  // Pass the SDK UUID of the previous assistant message for fork (JSONL-level message ID)
                   const prevMsg = idx > 0 ? filtered[idx - 1] : undefined;
-                  onFork(msg.content, prevMsg?.id);
+                  onFork(msg.content, prevMsg?.sdkUuid ?? prevMsg?.id);
                 } : undefined}
               />
             ))}

@@ -343,9 +343,10 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           useNotificationStore.getState().addNotification(sessionIdRef.current, "done", projectNameRef.current);
           playNotificationSound("done");
         }
-        // Finalize the streaming message
+        // Finalize the streaming message — preserve SDK UUID for fork/rewind
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
+        const doneUuid = ev.lastMessageUuid as string | undefined;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -354,6 +355,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
               id: `final-${Date.now()}`,
               content: finalContent || last.content,
               events: finalEvents.length > 0 ? finalEvents : last.events,
+              ...(doneUuid && { sdkUuid: doneUuid }),
             }];
           }
           return prev;

@@ -116,7 +116,7 @@ export type ChatEvent =
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
-  | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number }
+  | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; lastMessageUuid?: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }
   | { type: "status_update"; phase: "routing" | "refreshing" | "switching"; message: string; accountLabel?: string }
@@ -139,4 +139,6 @@ export interface ChatMessage {
   /** Account used to generate this assistant message */
   accountId?: string;
   accountLabel?: string;
+  /** SDK message UUID — used for fork/rewind (maps to JSONL message IDs) */
+  sdkUuid?: string;
 }

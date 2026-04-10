@@ -479,10 +479,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   async *sendMessage(
-    sessionId: string,
+    _sessionId: string,
     message: string,
     opts?: import("./provider.interface.ts").SendMessageOpts & { forkSession?: boolean; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> },
   ): AsyncIterable<ChatEvent> {
+    // SDK requires valid UUID session IDs. Short/random IDs can leak from
+    // tab derivation or URL parsing — migrate to a real UUID early.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let sessionId = _sessionId;
+    if (!UUID_RE.test(sessionId)) {
+      const newId = crypto.randomUUID();
+      console.warn(`[sdk] session=${sessionId} is not a valid UUID — migrating to ${newId}`);
+      // Migrate internal maps
+      const oldMeta = this.activeSessions.get(sessionId);
+      if (oldMeta) {
+        this.activeSessions.delete(sessionId);
+        oldMeta.id = newId;
+        this.activeSessions.set(newId, oldMeta);
+      }
+      const oldCount = this.messageCount.get(sessionId);
+      if (oldCount != null) { this.messageCount.set(newId, oldCount); this.messageCount.delete(sessionId); }
+      const oldStream = this.streamingSessions.get(sessionId);
+      if (oldStream) { this.streamingSessions.set(newId, oldStream); this.streamingSessions.delete(sessionId); }
+      yield { type: "session_migrated" as const, oldSessionId: sessionId, newSessionId: newId };
+      sessionId = newId;
+    }
+
     // Follow-up: push into existing streaming session, yield nothing
     const existingStream = this.streamingSessions.get(sessionId);
     if (existingStream) {
@@ -617,6 +639,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultSubtype: string | undefined;
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
+    let lastAssistantUuid: string | undefined;
     let yieldedDone = false;
     try {
       // Session ID is the canonical ID for both PPM and SDK (no dual-ID mapping).
@@ -977,6 +1000,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // Partial assistant message — streaming text deltas
         if ((msg as any).type === "partial" || (msg as any).type === "stream_event") {
           const partial = msg as any;
+          // Track assistant UUID from top-level messages (not subagent children)
+          if (!parentId && partial.uuid) lastAssistantUuid = partial.uuid;
           // Handle stream_event (raw API events) for text deltas
           if ((msg as any).type === "stream_event") {
             const event = partial.event;
@@ -1014,6 +1039,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
         // Full assistant message
         if (msg.type === "assistant") {
+          // Track assistant UUID from top-level messages (not subagent children)
+          if (!parentId && (msg as any).uuid) lastAssistantUuid = (msg as any).uuid;
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
           let assistantError = (msg as any).error as string | undefined;
 
@@ -1361,6 +1388,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             resultSubtype: resultSubtype as any,
             numTurns: resultNumTurns,
             contextWindowPct: resultContextWindowPct,
+            lastMessageUuid: lastAssistantUuid,
           };
 
           // Reset per-turn state for next turn
@@ -1370,6 +1398,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           resultSubtype = undefined;
           resultNumTurns = undefined;
           resultContextWindowPct = undefined;
+          lastAssistantUuid = undefined;
           sdkEventCount = 0;
           continue; // Wait for next turn from generator
         }
@@ -1438,6 +1467,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         resultSubtype: resultSubtype as any,
         numTurns: resultNumTurns,
         contextWindowPct: resultContextWindowPct,
+        lastMessageUuid: lastAssistantUuid,
       };
     }
   }
@@ -1551,6 +1581,7 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
     content: textContent,
     events: events.length > 0 ? events : undefined,
     timestamp: new Date().toISOString(),
+    sdkUuid: msg.uuid,
   };
 }
 
