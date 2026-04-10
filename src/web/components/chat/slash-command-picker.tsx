@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { Sparkles, Terminal } from "lucide-react";
+import { Sparkles, Terminal, Zap } from "lucide-react";
 
 export interface SlashItem {
-  type: "skill" | "command";
+  type: "skill" | "command" | "builtin";
   name: string;
   description: string;
   argumentHint?: string;
-  scope?: "project" | "user";
+  scope?: "project" | "user" | "bundled";
+  category?: string;
+  aliases?: string[];
 }
 
 interface SlashCommandPickerProps {
@@ -15,6 +17,8 @@ interface SlashCommandPickerProps {
   onSelect: (item: SlashItem) => void;
   onClose: () => void;
   visible: boolean;
+  /** When true, items are pre-ranked by server — skip client-side filtering */
+  ranked?: boolean;
 }
 
 export function SlashCommandPicker({
@@ -23,17 +27,20 @@ export function SlashCommandPicker({
   onSelect,
   onClose,
   visible,
+  ranked,
 }: SlashCommandPickerProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const filtered = items.filter((item) => {
-    const q = filter.toLowerCase();
-    return (
-      item.name.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q)
-    );
-  });
+  const filtered = ranked
+    ? items
+    : items.filter((item) => {
+        const q = filter.toLowerCase();
+        return (
+          item.name.toLowerCase().includes(q) ||
+          item.description.toLowerCase().includes(q)
+        );
+      });
 
   // Reset selection when filter changes
   useEffect(() => {
@@ -105,7 +112,9 @@ export function SlashCommandPicker({
             onClick={() => onSelect(item)}
           >
             <span className="shrink-0 mt-0.5">
-              {item.type === "skill" ? (
+              {item.type === "builtin" ? (
+                <Zap className="size-4 text-emerald-500" />
+              ) : item.type === "skill" ? (
                 <Sparkles className="size-4 text-amber-500" />
               ) : (
                 <Terminal className="size-4 text-blue-500" />
@@ -118,7 +127,7 @@ export function SlashCommandPicker({
                   <span className="text-xs text-text-subtle">{item.argumentHint}</span>
                 )}
                 <span className="text-xs text-text-subtle capitalize ml-auto">
-                  {item.scope === "user" ? "global" : item.type}
+                  {item.scope === "bundled" ? "PPM" : item.scope === "user" ? "global" : item.type}
                 </span>
               </div>
               {item.description && (

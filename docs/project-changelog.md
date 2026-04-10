@@ -6,6 +6,35 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
+## [Unreleased] — Slash-Discovery Module (in progress)
+
+### Added
+- **Modular Slash-Discovery Engine** — Composable, testable command discovery replacing monolithic `slash-items.service.ts`
+  - Skill root discovery: user-global (`~/.claude/skills/`), env vars, bundled assets
+  - SKILL.md parsing + loose `.md` file + command registry support
+  - Shadowing resolution: project > user > bundled priority hierarchy
+  - Fuzzy search via Levenshtein distance with configurable tolerance
+  - Built-in command registry (9 commands: /skills, /version, /help, etc.)
+  - CLI tool: `ppm skills list|search|info` with JSON output and project filtering
+  - API endpoint: `GET /chat/slash-items?q=<query>` for server-side search
+  - WebSocket interception for /skills and /version commands (execute locally before SDK)
+  - Auto-generated bundled guide skill from docs (`assets/skills/ppm-guide/SKILL.md`)
+
+### Technical Details
+- **Files Created:**
+  - `src/services/slash-discovery/` — 9 modular files (types, discovery, loading, searching, handlers)
+  - `src/cli/commands/skills-cmd.ts` — CLI command handler
+  - `scripts/generate-ppm-guide.ts` — Guide skill generator
+  - `assets/skills/ppm-guide/SKILL.md` — Auto-generated from docs
+- **Files Modified:**
+  - `src/server/routes/chat.ts` — Integrated discovery module for slash-items endpoint
+  - `src/server/ws/chat.ts` — Intercept /skills, /version before SDK dispatch
+  - `src/cli/index.ts` — Registered skills command
+  - `package.json` — Added `generate:guide` script
+- **Breaking Changes:** None (existing `/chat/slash-items` endpoint preserved, new response includes `type` field)
+
+---
+
 ## [0.9.72] — 2026-04-09
 
 ### Added

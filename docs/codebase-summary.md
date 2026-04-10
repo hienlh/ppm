@@ -66,6 +66,16 @@ src/
 │   ├── extension-rpc.ts         # RPC channel (request/response/events)
 │   ├── extension-host-worker.ts # Worker-side extension loading
 │   ├── contribution-registry.ts # Central registry for commands, views, config
+│   ├── slash-discovery/         # Modular slash command discovery engine
+│   │   ├── types.ts             # DefinitionSource, SkillRoot, SlashItem, DiscoveryResult types
+│   │   ├── definition-source.ts # Priority ranking + scope mapping
+│   │   ├── discover-skill-roots.ts # Ancestor walking, env vars, user-global, bundled roots
+│   │   ├── skill-loader.ts      # SKILL.md + loose .md + commands parsing
+│   │   ├── resolve-overrides.ts # Shadowing resolution
+│   │   ├── fuzzy-search.ts      # Levenshtein-based fuzzy matching
+│   │   ├── builtin-commands.ts  # Built-in command registry (9 commands)
+│   │   ├── builtin-handlers.ts  # PPM-executed handlers (/skills, /version)
+│   │   └── index.ts             # Main pipeline + exports
 │   ├── ppmbot/                  # PPMBot coordinator service layer
 │   │   ├── ppmbot-service.ts    # Main orchestrator (poller lifecycle, message routing)
 │   │   ├── ppmbot-session.ts    # Coordinator session manager, project resolver
@@ -613,6 +623,74 @@ ppm ext enable @ppm/ext-db        # Enable
 ppm ext disable @ppm/ext-db       # Disable
 ppm ext dev /path/to/src          # Dev symlink
 ```
+
+---
+
+## Slash-Discovery Module (Modular Command Engine)
+
+### Overview
+Modular discovery engine for slash commands and skills. Replaces monolithic `slash-items.service.ts` with composable, testable modules. Supports:
+- Skill roots: user-global (`~/.claude/skills/`), env vars, bundled assets
+- SKILL.md parsing + loose `.md` files + command registry
+- Shadowing resolution (project > user > bundled)
+- Fuzzy search via Levenshtein distance
+- Built-in commands (9 commands: /skills, /version, /help, etc.)
+- Server-side + client-side search
+
+### Architecture
+**Location:** `src/services/slash-discovery/`
+
+**Core Modules:**
+- `types.ts` — DefinitionSource, SkillRoot, SlashItem, DiscoveryResult
+- `definition-source.ts` — Priority ranking (project > user > bundled), scope mapping
+- `discover-skill-roots.ts` — Ancestor walking, env var expansion, root discovery
+- `skill-loader.ts` — SKILL.md extraction, loose .md + commands parsing
+- `resolve-overrides.ts` — Shadowing resolution logic
+- `fuzzy-search.ts` — Levenshtein-based matching with configurable threshold
+- `builtin-commands.ts` — 9 built-in commands + descriptions
+- `builtin-handlers.ts` — PPM-side handlers (/skills list, /version)
+- `index.ts` — Main pipeline, exports
+
+### Key Features
+**Skill Discovery:**
+```
+~/.claude/skills/ppm-guide/SKILL.md → Parse [ppm-guide] commands
+$CLAUDE_SKILLS_PATH/custom/ → Env-var roots
+assets/skills/bundled/ → Built-in (ppm-guide)
+```
+
+**Shadowing Resolution:**
+- Project-level overrides user-level overrides bundled defaults
+- Prevents duplicate entries, maintains priority order
+
+**Fuzzy Matching:**
+- Levenshtein distance algorithm
+- Configurable tolerance for typo handling
+- Powers `/skills search <query>`
+
+### API & CLI
+
+**REST API:**
+- `GET /chat/slash-items?q=<query>` — Optional server-side fuzzy search
+- Response includes `type: "builtin"` items
+
+**CLI Commands:**
+```
+ppm skills list              # List discovered skills with source info
+ppm skills search <query>    # Fuzzy search skills
+ppm skills info <name>       # Detail view (name, description, source)
+ppm skills --json            # Machine-readable output
+ppm skills --project <path>  # Custom project scope
+```
+
+**WebSocket Interception:**
+- Messages starting with `/skills` or `/version` intercepted by PPM before SDK
+- Builtin handlers execute locally, reducing SDK subprocess overhead
+
+### Bundled Guide Skill
+- `assets/skills/ppm-guide/SKILL.md` — Auto-generated from `docs/`
+- `scripts/generate-ppm-guide.ts` — Generator script
+- `bun run generate:guide` — npm script to regenerate
 
 ---
 

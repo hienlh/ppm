@@ -19,7 +19,8 @@
     "start": "bun run src/index.ts start",
     "typecheck": "bunx tsc --noEmit",
     "generate:bot": "bun scripts/generate-bot-coordinator.ts --update",
-    "prepublishOnly": "bun run build:web"
+    "generate:guide": "bun scripts/generate-ppm-guide.ts",
+    "prepublishOnly": "bun run generate:guide && bun run build:web"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",

@@ -32,7 +32,7 @@ interface MessageInputProps {
   projectName?: string;
   /** Slash picker state change */
   onSlashStateChange?: (visible: boolean, filter: string) => void;
-  onSlashItemsLoaded?: (items: SlashItem[]) => void;
+  onSlashItemsLoaded?: (items: SlashItem[], ranked?: boolean) => void;
   slashSelected?: SlashItem | null;
   /** File picker state change */
   onFileStateChange?: (visible: boolean, filter: string) => void;
@@ -83,6 +83,9 @@ export const MessageInput = memo(function MessageInput({
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
+  const slashRankedRef = useRef(false);
+  const slashDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const slashSearchIdRef = useRef(0);
   const fileItemsRef = useRef<FileNode[]>([]);
 
   // Voice input (Web Speech API)
@@ -147,20 +150,28 @@ export const MessageInput = memo(function MessageInput({
   useEffect(() => {
     if (!projectName) {
       slashItemsRef.current = [];
-      onSlashItemsLoaded?.([]);
+      onSlashItemsLoaded?.([], false);
       return;
     }
     api
       .get<SlashItem[]>(`${projectUrl(projectName)}/chat/slash-items`)
       .then((items) => {
         slashItemsRef.current = items;
-        onSlashItemsLoaded?.(items);
+        slashRankedRef.current = false;
+        onSlashItemsLoaded?.(items, false);
       })
       .catch(() => {
         slashItemsRef.current = [];
-        onSlashItemsLoaded?.([]);
+        onSlashItemsLoaded?.([], false);
       });
   }, [projectName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
+    };
+  }, []);
 
   // Fetch file tree when projectName changes
   useEffect(() => {
@@ -387,6 +398,30 @@ export const MessageInput = memo(function MessageInput({
     [handleSend, permissionMode, onModeChange],
   );
 
+  /** Debounced server-side fuzzy search for slash items */
+  const fetchSlashSearch = useCallback(
+    (query: string) => {
+      if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
+      if (!projectName || !query) return;
+      const requestId = ++slashSearchIdRef.current;
+      slashDebounceRef.current = setTimeout(() => {
+        api
+          .get<SlashItem[]>(`${projectUrl(projectName)}/chat/slash-items?q=${encodeURIComponent(query)}`)
+          .then((items) => {
+            if (requestId !== slashSearchIdRef.current) return; // stale response
+            slashItemsRef.current = items;
+            slashRankedRef.current = true;
+            onSlashItemsLoaded?.(items, true);
+          })
+          .catch(() => {
+            if (requestId !== slashSearchIdRef.current) return;
+            slashRankedRef.current = false;
+          });
+      }, 150);
+    },
+    [projectName, onSlashItemsLoaded],
+  );
+
   const updatePickerState = useCallback(
     (text: string, cursorPos: number) => {
       const textBefore = text.slice(0, cursorPos);
@@ -394,10 +429,17 @@ export const MessageInput = memo(function MessageInput({
       // Check for slash anywhere in text (after whitespace or at start)
       const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
       if (slashMatch && slashItemsRef.current.length > 0) {
-        onSlashStateChange?.(true, slashMatch[1] ?? "");
+        const filter = slashMatch[1] ?? "";
+        onSlashStateChange?.(true, filter);
         onFileStateChange?.(false, "");
+        // Trigger server-side search for non-empty filter
+        if (filter) fetchSlashSearch(filter);
         return;
       }
+
+      // Cancel pending search when slash picker closes
+      if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
+      if (slashRankedRef.current) slashRankedRef.current = false;
 
       // Check for @ anywhere in text (after whitespace or at start)
       const atMatch = textBefore.match(/@(\S*)$/);
@@ -411,7 +453,7 @@ export const MessageInput = memo(function MessageInput({
       onSlashStateChange?.(false, "");
       onFileStateChange?.(false, "");
     },
-    [onSlashStateChange, onFileStateChange],
+    [onSlashStateChange, onFileStateChange, fetchSlashSearch],
   );
 
   const handleChange = useCallback(

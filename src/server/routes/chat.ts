@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
-import { listSlashItems } from "../../services/slash-items.service.ts";
+import { listSlashItems, searchSlashItems } from "../../services/slash-items.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle } from "../../services/db.service.ts";
@@ -19,7 +19,9 @@ export const chatRoutes = new Hono<Env>();
 chatRoutes.get("/slash-items", (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const items = listSlashItems(projectPath);
+    const q = c.req.query("q");
+    let items = listSlashItems(projectPath);
+    if (q) items = searchSlashItems(items, q);
     return c.json(ok(items));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

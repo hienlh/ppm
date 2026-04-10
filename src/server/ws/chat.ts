@@ -582,6 +582,22 @@ export const chatWebSocket = {
         entry.permissionMode = parsed.permissionMode;
       }
 
+      // Intercept PPM-handled built-in commands (e.g. /skills, /version)
+      const content = parsed.content.trim();
+      const slashMatch = content.match(/^\/(\S+)/);
+      if (slashMatch) {
+        const { isPpmHandled, executeBuiltin } = await import("../../services/slash-discovery/index.ts");
+        const cmdName = slashMatch[1]!;
+        if (isPpmHandled(cmdName)) {
+          const response = executeBuiltin(cmdName, entry.projectPath ?? "");
+          if (response) {
+            broadcast(sessionId, { type: "text", content: response });
+            broadcast(sessionId, { type: "done", resultSubtype: "builtin", numTurns: 0 });
+            return;
+          }
+        }
+      }
+
       const provider = providerRegistry.get(providerId);
 
       if (!entry.isStreamingActive) {

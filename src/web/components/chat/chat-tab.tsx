@@ -36,6 +36,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
+  const [slashRanked, setSlashRanked] = useState(false);
   const [slashSelected, setSlashSelected] = useState<SlashItem | null>(null);
 
   // File picker state
@@ -243,6 +244,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleSlashStateChange = useCallback((visible: boolean, filter: string) => {
     setShowSlashPicker(visible);
     setSlashFilter(filter);
+    if (!visible || !filter) setSlashRanked(false);
   }, []);
 
   const handleSlashSelect = useCallback((item: SlashItem) => {
@@ -383,6 +385,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onSelect={handleSlashSelect}
           onClose={handleSlashClose}
           visible={showSlashPicker}
+          ranked={slashRanked}
         />
         <FilePicker
           items={fileItems}
@@ -404,7 +407,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           initialValue={forkDraft}
           projectName={projectName}
           onSlashStateChange={handleSlashStateChange}
-          onSlashItemsLoaded={setSlashItems}
+          onSlashItemsLoaded={(items, ranked) => { setSlashItems(items); if (ranked !== undefined) setSlashRanked(ranked); }}
           slashSelected={slashSelected}
           onFileStateChange={handleFileStateChange}
           onFileItemsLoaded={setFileItems}

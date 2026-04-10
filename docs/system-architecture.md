@@ -142,6 +142,7 @@ GET    /api/upgrade/status                        → Get current + available ve
 POST   /api/upgrade/apply                         → Install new version, trigger supervisor self-replace
 GET    /api/project/:name/workspace               → Get saved workspace layout + metadata
 PUT    /api/project/:name/workspace               → Save workspace layout (layout JSON)
+GET    /api/project/:name/chat/slash-items        → List slash commands/skills (optional ?q=<query> for fuzzy search)
 WS     /ws/project/:name/chat/:sessionId          → Chat streaming
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
 ```
@@ -193,6 +194,7 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **AccountService** | Account CRUD, token encryption/decryption | getAccounts, createAccount, updateAccount, deleteAccount |
 | **AccountSelectorService** | Select active account based on config + pre-flight retry loop | next(excludeIds?), peek(), onPreflightFail(), onRateLimit(), onAuthError(), onSuccess() |
 | **UpgradeService** | Version checking, installation, self-replace signaling | checkForUpdate, applyUpgrade, getInstallMethod, compareSemver |
+| **SlashDiscoveryService** | Modular command discovery (skills, builtin commands) | discoverSkillRoots, loadSkills, searchSkills, resolveOverrides, fuzzySearch |
 | **PPMBotService** | Coordinator orchestrator (team leader, delegation mgmt) | start, stop, handleUpdate, checkPendingTasks |
 | **PPMBotSessionManager** | Coordinator session per chat, project resolver | getCoordinatorSession, rotateCoordinatorSession, resolveProject |
 | **PPMBotTelegramService** | Telegram long-polling, message ops | getUpdates, sendMessage, editMessage, setTyping, handleCommands |
