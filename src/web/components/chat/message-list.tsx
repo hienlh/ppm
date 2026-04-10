@@ -678,6 +678,17 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
     }
   }
 
+  // Third pass: fallback to embedded result from buffer enrichment (reconnect).
+  // When BE buffers tool_result, it also attaches result onto the matching tool_use event.
+  for (const g of groups) {
+    if (g.kind === "tool" && !g.result && g.tool.type === "tool_use") {
+      const embedded = (g.tool as any).result;
+      if (embedded) {
+        g.result = { type: "tool_result", output: embedded.output, isError: embedded.isError } as ChatEvent;
+      }
+    }
+  }
+
   // Mark tool groups without explicit tool_result as completed when:
   // 1. It's a Read and a later Edit on the same file has a result (Edit implies Read finished)
   // 2. Streaming is fully finished

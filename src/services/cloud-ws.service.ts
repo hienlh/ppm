@@ -152,7 +152,9 @@ function doConnect(): void {
   sock.onopen = () => {
     if (ws !== sock) return; // stale — newer connection replaced us
     reconnecting = false;
-    reconnectAttempt = 0;
+    // Don't reset reconnectAttempt here — only after auth succeeds.
+    // Resetting on open causes tight reconnect loops when the server
+    // keeps closing immediately after connect (backoff never builds up).
     log("INFO", "Cloud WS connected, sending auth");
 
     // Send auth as first message — server must process this before any other msg
@@ -170,6 +172,7 @@ function doConnect(): void {
     setTimeout(() => {
       if (ws !== sock) return; // replaced during delay
       connected = true;
+      reconnectAttempt = 0; // Auth succeeded — reset backoff
 
       // Flush queued messages
       while (outboundQueue.length > 0 && connected) {

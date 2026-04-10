@@ -123,9 +123,27 @@ class TunnelService {
     this.stopCloudSync();
   }
 
-  /** Get current tunnel URL (null if not running) */
+  /** Get current tunnel URL (null if not running).
+   *  Falls back to status.json if the supervisor set the URL after this process started. */
   getTunnelUrl(): string | null {
+    if (this.url) return this.url;
+    // Lazy sync: supervisor may have written shareUrl after server startup
+    this.syncFromStatusFile();
     return this.url;
+  }
+
+  /** Re-read tunnel state from status.json (supervisor may have updated it after server started) */
+  private syncFromStatusFile(): void {
+    if (this.url) return; // already have a URL
+    try {
+      const statusFile = resolve(homedir(), ".ppm", "status.json");
+      const status = JSON.parse(readFileSync(statusFile, "utf-8"));
+      if (status.shareUrl) {
+        this.url = status.shareUrl;
+        this.supervisorManaged = true;
+        if (status.tunnelPid) this.externalPid = status.tunnelPid;
+      }
+    } catch {}
   }
 
   /** Get cloudflared PID (child process or external) */

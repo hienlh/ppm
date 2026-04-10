@@ -85,6 +85,21 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
     if (entry.turnEvents.length < MAX_TURN_EVENTS) {
       entry.turnEvents.push({ ...(event as Record<string, unknown>) });
     }
+    // Enrich: embed tool_result onto matching tool_use for reconnect reliability.
+    // Reconnecting clients may miss separate tool_result events — this ensures
+    // the tool_use event itself carries the result as a fallback.
+    if (evType === "tool_result") {
+      const toolUseId = (event as any)?.toolUseId;
+      if (toolUseId) {
+        for (let i = entry.turnEvents.length - 1; i >= 0; i--) {
+          const buffered = entry.turnEvents[i] as any;
+          if (buffered.type === "tool_use" && buffered.toolUseId === toolUseId) {
+            buffered.result = { output: (event as any).output, isError: (event as any).isError };
+            break;
+          }
+        }
+      }
+    }
   }
   broadcast(sessionId, event);
 }
