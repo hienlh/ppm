@@ -1,14 +1,14 @@
 import { resolve } from "node:path";
-import { homedir, hostname } from "node:os";
+import { hostname } from "node:os";
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, chmodSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { VERSION } from "../version.ts";
 import { configService } from "./config.service.ts";
+import { getPpmDir } from "./ppm-dir.ts";
 
-const PPM_DIR = resolve(homedir(), ".ppm");
-const AUTH_FILE = resolve(PPM_DIR, "cloud-auth.json");
-const DEVICE_FILE = resolve(PPM_DIR, "cloud-device.json");
-const MACHINE_ID_FILE = resolve(PPM_DIR, "machine-id");
+const authFile = () => resolve(getPpmDir(), "cloud-auth.json");
+const deviceFile = () => resolve(getPpmDir(), "cloud-device.json");
+const machineIdFile = () => resolve(getPpmDir(), "machine-id");
 
 const DEFAULT_CLOUD_URL = "https://ppm.hienle.tech";
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -47,12 +47,12 @@ interface DeviceInfo {
 
 /** Get or generate a stable machine ID (random UUID, persists across reboots) */
 export function getMachineId(): string {
-  if (existsSync(MACHINE_ID_FILE)) {
-    return readFileSync(MACHINE_ID_FILE, "utf-8").trim();
+  if (existsSync(machineIdFile())) {
+    return readFileSync(machineIdFile(), "utf-8").trim();
   }
   const id = randomBytes(16).toString("hex");
   ensurePpmDir();
-  writeFileSync(MACHINE_ID_FILE, id);
+  writeFileSync(machineIdFile(), id);
   return id;
 }
 
@@ -61,8 +61,8 @@ export function getMachineId(): string {
 /** Read saved cloud auth credentials */
 export function getCloudAuth(): CloudAuth | null {
   try {
-    if (!existsSync(AUTH_FILE)) return null;
-    return JSON.parse(readFileSync(AUTH_FILE, "utf-8"));
+    if (!existsSync(authFile())) return null;
+    return JSON.parse(readFileSync(authFile(), "utf-8"));
   } catch {
     return null;
   }
@@ -71,13 +71,13 @@ export function getCloudAuth(): CloudAuth | null {
 /** Save cloud auth credentials (restricted permissions) */
 export function saveCloudAuth(auth: CloudAuth): void {
   ensurePpmDir();
-  writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2));
-  try { chmodSync(AUTH_FILE, 0o600); } catch {}
+  writeFileSync(authFile(), JSON.stringify(auth, null, 2));
+  try { chmodSync(authFile(), 0o600); } catch {}
 }
 
 /** Remove cloud auth credentials */
 export function removeCloudAuth(): void {
-  try { if (existsSync(AUTH_FILE)) unlinkSync(AUTH_FILE); } catch {}
+  try { if (existsSync(authFile())) unlinkSync(authFile()); } catch {}
 }
 
 // ─── Device ─────────────────────────────────────────────────────────────
@@ -85,8 +85,8 @@ export function removeCloudAuth(): void {
 /** Read saved cloud device info */
 export function getCloudDevice(): CloudDevice | null {
   try {
-    if (!existsSync(DEVICE_FILE)) return null;
-    return JSON.parse(readFileSync(DEVICE_FILE, "utf-8"));
+    if (!existsSync(deviceFile())) return null;
+    return JSON.parse(readFileSync(deviceFile(), "utf-8"));
   } catch {
     return null;
   }
@@ -95,13 +95,13 @@ export function getCloudDevice(): CloudDevice | null {
 /** Save cloud device info (restricted permissions) */
 export function saveCloudDevice(device: CloudDevice): void {
   ensurePpmDir();
-  writeFileSync(DEVICE_FILE, JSON.stringify(device, null, 2));
-  try { chmodSync(DEVICE_FILE, 0o600); } catch {}
+  writeFileSync(deviceFile(), JSON.stringify(device, null, 2));
+  try { chmodSync(deviceFile(), 0o600); } catch {}
 }
 
 /** Remove cloud device info */
 export function removeCloudDevice(): void {
-  try { if (existsSync(DEVICE_FILE)) unlinkSync(DEVICE_FILE); } catch {}
+  try { if (existsSync(deviceFile())) unlinkSync(deviceFile()); } catch {}
 }
 
 // ─── API Client ─────────────────────────────────────────────────────────
@@ -398,7 +398,8 @@ export function stopHeartbeat(): void {
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function ensurePpmDir(): void {
-  if (!existsSync(PPM_DIR)) mkdirSync(PPM_DIR, { recursive: true });
+  const dir = getPpmDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
 function openBrowser(url: string): void {

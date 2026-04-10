@@ -1,12 +1,11 @@
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { existsSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { ensureCloudflared } from "./cloudflared.service.ts";
+import { getPpmDir } from "./ppm-dir.ts";
 
 const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 const decoder = new TextDecoder();
-const RESTARTING_FLAG = resolve(homedir(), ".ppm", ".restarting");
 
 /** Extract tunnel URL from cloudflared stderr output */
 export function extractTunnelUrl(text: string): string | null {
@@ -98,7 +97,7 @@ class TunnelService {
       this.cleanupHandler = null;
     }
     // If server is restarting, keep tunnel alive
-    if (existsSync(RESTARTING_FLAG)) {
+    if (existsSync(resolve(getPpmDir(), ".restarting"))) {
       this.childProcess = null;
       this.externalPid = null;
       this.url = null;
@@ -136,7 +135,7 @@ class TunnelService {
   private syncFromStatusFile(): void {
     if (this.url) return; // already have a URL
     try {
-      const statusFile = resolve(homedir(), ".ppm", "status.json");
+      const statusFile = resolve(getPpmDir(), "status.json");
       const status = JSON.parse(readFileSync(statusFile, "utf-8"));
       if (status.shareUrl) {
         this.url = status.shareUrl;
@@ -166,7 +165,7 @@ class TunnelService {
 
   /** Persist shareUrl + tunnelPid to status.json (atomic write to avoid cross-process races) */
   private persistToStatusFile(): void {
-    const statusFile = resolve(homedir(), ".ppm", "status.json");
+    const statusFile = resolve(getPpmDir(), "status.json");
     if (!existsSync(statusFile)) return;
     try {
       const data = JSON.parse(readFileSync(statusFile, "utf-8"));

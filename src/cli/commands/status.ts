@@ -1,9 +1,6 @@
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { readFileSync, existsSync } from "node:fs";
-
-const STATUS_FILE = resolve(homedir(), ".ppm", "status.json");
-const PID_FILE = resolve(homedir(), ".ppm", "ppm.pid");
+import { getPpmDir } from "../../services/ppm-dir.ts";
 
 interface DaemonStatus {
   running: boolean;
@@ -33,9 +30,10 @@ function getDaemonStatus(): DaemonStatus {
     state: null, pausedAt: null, pauseReason: null, lastCrashError: null,
   };
 
-  if (existsSync(STATUS_FILE)) {
+  const statusFile = resolve(getPpmDir(), "status.json");
+  if (existsSync(statusFile)) {
     try {
-      const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+      const data = JSON.parse(readFileSync(statusFile, "utf-8"));
       const pid = data.pid as number;
       const tunnelPid = (data.tunnelPid as number) ?? null;
       const tunnelAlive = tunnelPid ? isAlive(tunnelPid) : false;
@@ -59,9 +57,10 @@ function getDaemonStatus(): DaemonStatus {
     } catch { return dead; }
   }
 
-  if (existsSync(PID_FILE)) {
+  const pidFile = resolve(getPpmDir(), "ppm.pid");
+  if (existsSync(pidFile)) {
     try {
-      const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+      const pid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
       return { ...dead, running: isAlive(pid), pid };
     } catch { return dead; }
   }

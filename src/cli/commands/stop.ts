@@ -1,11 +1,10 @@
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { getPpmDir } from "../../services/ppm-dir.ts";
 
-const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const PID_FILE = resolve(PPM_DIR, "ppm.pid");
-const STATUS_FILE = resolve(PPM_DIR, "status.json");
-const CMD_FILE = resolve(PPM_DIR, ".supervisor-cmd");
+const pidFile = () => resolve(getPpmDir(), "ppm.pid");
+const statusFile = () => resolve(getPpmDir(), "status.json");
+const cmdFile = () => resolve(getPpmDir(), ".supervisor-cmd");
 
 function killPid(pid: number, label: string): boolean {
   try {
@@ -57,18 +56,18 @@ export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
     console.log("  Stopping all PPM and cloudflared processes...\n");
     const cfKilled = killAllByName("cloudflared");
     let killed = 0;
-    if (existsSync(STATUS_FILE)) {
+    if (existsSync(statusFile())) {
       try {
-        const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+        const data = JSON.parse(readFileSync(statusFile(), "utf-8"));
         // Kill supervisor first (cascades to server + tunnel children)
         if (data.supervisorPid) { killPid(data.supervisorPid, "supervisor"); killed++; }
         if (data.pid) { killPid(data.pid, "server"); killed++; }
         if (data.tunnelPid) { killPid(data.tunnelPid, "tunnel"); killed++; }
       } catch {}
     }
-    if (existsSync(PID_FILE)) {
+    if (existsSync(pidFile())) {
       try {
-        const pid = parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10);
+        const pid = parseInt(readFileSync(pidFile(), "utf-8").trim(), 10);
         if (!isNaN(pid)) { killPid(pid, "supervisor/server (pidfile)"); killed++; }
       } catch {}
     }
@@ -89,8 +88,8 @@ export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
 /** Soft stop: write command file + signal supervisor → kills server only */
 async function softStopCmd() {
   let status: Record<string, unknown> | null = null;
-  if (existsSync(STATUS_FILE)) {
-    try { status = JSON.parse(readFileSync(STATUS_FILE, "utf-8")); } catch {}
+  if (existsSync(statusFile())) {
+    try { status = JSON.parse(readFileSync(statusFile(), "utf-8")); } catch {}
   }
 
   const supervisorPid = (status?.supervisorPid as number) ?? null;
@@ -115,7 +114,7 @@ async function softStopCmd() {
   }
 
   // Write soft stop command file + signal supervisor (Windows: polling picks it up)
-  writeFileSync(CMD_FILE, JSON.stringify({ action: "soft_stop" }));
+  writeFileSync(cmdFile(), JSON.stringify({ action: "soft_stop" }));
   if (process.platform !== "win32") {
     try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
       console.error(`  Failed to signal supervisor: ${e}`);
@@ -128,7 +127,7 @@ async function softStopCmd() {
   while (Date.now() - start < 5000) {
     await Bun.sleep(500);
     try {
-      const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+      const data = JSON.parse(readFileSync(statusFile(), "utf-8"));
       if (data.state === "stopped") {
         console.log("PPM server stopped. Supervisor still alive (Cloud WS + tunnel).");
         console.log("Use 'ppm start' to restart or 'ppm stop --kill' to fully shut down.");
@@ -143,12 +142,12 @@ async function softStopCmd() {
 async function hardStop() {
   let status: { pid?: number; tunnelPid?: number; supervisorPid?: number } | null = null;
 
-  if (existsSync(STATUS_FILE)) {
-    try { status = JSON.parse(readFileSync(STATUS_FILE, "utf-8")); } catch {}
+  if (existsSync(statusFile())) {
+    try { status = JSON.parse(readFileSync(statusFile(), "utf-8")); } catch {}
   }
 
-  const pidFromFile = existsSync(PID_FILE)
-    ? parseInt(readFileSync(PID_FILE, "utf-8").trim(), 10)
+  const pidFromFile = existsSync(pidFile())
+    ? parseInt(readFileSync(pidFile(), "utf-8").trim(), 10)
     : NaN;
 
   const supervisorPid = status?.supervisorPid ?? null;
@@ -191,6 +190,6 @@ async function hardStop() {
 }
 
 function cleanup() {
-  if (existsSync(STATUS_FILE)) unlinkSync(STATUS_FILE);
-  if (existsSync(PID_FILE)) unlinkSync(PID_FILE);
+  if (existsSync(statusFile())) unlinkSync(statusFile());
+  if (existsSync(pidFile())) unlinkSync(pidFile());
 }

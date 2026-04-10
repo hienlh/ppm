@@ -3,14 +3,13 @@
  * detects install method, runs install command.
  */
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { readFileSync } from "node:fs";
 import { VERSION } from "../version.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
+import { getPpmDir } from "./ppm-dir.ts";
 
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@hienlh/ppm/latest";
 const FETCH_TIMEOUT_MS = 10_000;
-const STATUS_FILE = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"), "status.json");
 
 export type InstallMethod = "bun" | "npm" | "binary";
 
@@ -103,7 +102,7 @@ export async function applyUpgrade(): Promise<{
 /** Send SIGUSR1 to supervisor to trigger self-replace after upgrade */
 export function signalSupervisorUpgrade(): { sent: boolean; error?: string } {
   try {
-    const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+    const data = JSON.parse(readFileSync(resolve(getPpmDir(), "status.json"), "utf-8"));
     const pid = data.supervisorPid;
     if (!pid) return { sent: false, error: "No supervisor PID" };
     process.kill(pid, 0); // check alive

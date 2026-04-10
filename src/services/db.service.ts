@@ -1,10 +1,8 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
-
-const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
+import { getPpmDir } from "./ppm-dir.ts";
 const CURRENT_SCHEMA_VERSION = 15;
 
 let db: Database | null = null;
@@ -17,14 +15,15 @@ export function setDbProfile(profile: string | null): void {
 }
 
 function getDbPath(): string {
-  if (dbProfile) return resolve(PPM_DIR, `ppm.${dbProfile}.db`);
-  return resolve(PPM_DIR, "ppm.db");
+  if (dbProfile) return resolve(getPpmDir(), `ppm.${dbProfile}.db`);
+  return resolve(getPpmDir(), "ppm.db");
 }
 
 /** Get or create the singleton DB instance (lazy init) */
 export function getDb(): Database {
   if (db) return db;
-  if (!existsSync(PPM_DIR)) mkdirSync(PPM_DIR, { recursive: true });
+  const ppmDir = getPpmDir();
+  if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
   db = new Database(getDbPath());
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");

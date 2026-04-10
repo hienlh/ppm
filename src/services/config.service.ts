@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import type { PpmConfig, ProjectConfig } from "../types/config.ts";
 import { DEFAULT_CONFIG, sanitizeConfig } from "../types/config.ts";
@@ -14,8 +13,7 @@ import {
   getDb,
   getDbFilePath,
 } from "./db.service.ts";
-
-const PPM_DIR = resolve(homedir(), ".ppm");
+import { getPpmDir } from "./ppm-dir.ts";
 
 /** Top-level config keys stored in the config table (not projects) */
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
@@ -148,8 +146,8 @@ class ConfigService {
 
   private migrateYamlIfNeeded(): void {
     const yamlPaths = [
-      resolve(PPM_DIR, "config.yaml"),
-      resolve(PPM_DIR, "config.dev.yaml"),
+      resolve(getPpmDir(), "config.yaml"),
+      resolve(getPpmDir(), "config.dev.yaml"),
     ];
     for (const yamlPath of yamlPaths) {
       if (!existsSync(yamlPath)) continue;
@@ -187,7 +185,7 @@ class ConfigService {
   }
 
   private migrateSessionMapIfNeeded(): void {
-    const mapPath = resolve(PPM_DIR, "session-map.json");
+    const mapPath = resolve(getPpmDir(), "session-map.json");
     if (!existsSync(mapPath)) return;
     try {
       const { setSessionMetadata } = require("./db.service.ts");
@@ -202,7 +200,7 @@ class ConfigService {
   }
 
   private migratePushSubsIfNeeded(): void {
-    const subsPath = resolve(PPM_DIR, "push-subscriptions.json");
+    const subsPath = resolve(getPpmDir(), "push-subscriptions.json");
     if (!existsSync(subsPath)) return;
     try {
       const { upsertPushSubscription } = require("./db.service.ts");

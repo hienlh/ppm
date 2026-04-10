@@ -4,13 +4,11 @@
  */
 import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
-
-const LOG_FILE = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"), "ppm.log");
+import { getPpmDir } from "./ppm-dir.ts";
 
 function log(level: string, msg: string) {
   const ts = new Date().toISOString();
-  try { appendFileSync(LOG_FILE, `[${ts}] [${level}] [stopped-page] ${msg}\n`); } catch {}
+  try { appendFileSync(resolve(getPpmDir(), "ppm.log"), `[${ts}] [${level}] [stopped-page] ${msg}\n`); } catch {}
 }
 
 const STOPPED_HTML = `<!DOCTYPE html>

@@ -6,11 +6,11 @@
  */
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import {
   readFileSync, writeFileSync, existsSync, mkdirSync, openSync, appendFileSync,
   unlinkSync,
 } from "node:fs";
+import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import {
   type SupervisorState,
@@ -34,9 +34,8 @@ const UPGRADE_CHECK_INTERVAL_MS = 900_000;  // 15min
 const UPGRADE_SKIP_INITIAL_MS = 300_000;    // 5min delay before first check
 const SELF_REPLACE_TIMEOUT_MS = 30_000;     // 30s to wait for new supervisor
 
-const PPM_DIR = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"));
-const LOG_FILE = resolve(PPM_DIR, "ppm.log");
-const RESTARTING_FLAG = resolve(PPM_DIR, ".restarting");
+const logFile = () => resolve(getPpmDir(), "ppm.log");
+const restartingFlag = () => resolve(getPpmDir(), ".restarting");
 
 // ─── State ─────────────────────────────────────────────────────────────
 let serverChild: Subprocess | null = null;
@@ -75,7 +74,7 @@ let originalArgv: string[] = [];
 function log(level: string, msg: string) {
   const ts = new Date().toISOString();
   const line = `[${ts}] [${level}] [supervisor] ${msg}\n`;
-  try { appendFileSync(LOG_FILE, line); } catch {}
+  try { appendFileSync(logFile(), line); } catch {}
   if (level === "ERROR" || level === "FATAL") {
     process.stderr.write(line);
   }
@@ -103,7 +102,7 @@ export async function spawnServer(
 
   const childPid = serverChild.pid;
   updateStatus({ pid: childPid });
-  writeFileSync(PID_FILE, String(process.pid)); // supervisor PID for stop
+  writeFileSync(PID_FILE(), String(process.pid)); // supervisor PID for stop
   log("INFO", `Server started (PID: ${childPid})`);
 
   const exitCode = await serverChild.exited;
@@ -413,7 +412,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     updateStatus({ state: "upgrading" });
 
     // Set restarting flag so server child's stopTunnel() skips killing the tunnel
-    try { writeFileSync(RESTARTING_FLAG, ""); } catch {}
+    try { writeFileSync(restartingFlag(), ""); } catch {}
 
     // Clear probe timer FIRST to prevent race between flush check and queued callback
     if (tunnelProbeTimer) { clearInterval(tunnelProbeTimer); tunnelProbeTimer = null; }
@@ -439,7 +438,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
 
     // Spawn new supervisor using saved argv
     const cmd = originalArgv.slice();
-    const logFd = openSync(LOG_FILE, "a");
+    const logFd = openSync(logFile(), "a");
     const child = Bun.spawn({
       cmd,
       stdio: ["ignore", logFd, logFd],
@@ -452,7 +451,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     while (Date.now() - start < SELF_REPLACE_TIMEOUT_MS) {
       await Bun.sleep(1000);
       try {
-        const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+        const data = JSON.parse(readFileSync(STATUS_FILE(), "utf-8"));
         if (data.supervisorPid && data.supervisorPid !== currentSupervisorPid) {
           log("INFO", `New supervisor detected (PID: ${data.supervisorPid}), old exiting`);
           // Children already killed, just clear remaining timers and exit
@@ -467,7 +466,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // Timeout — new supervisor didn't start, restore old supervisor
     log("ERROR", "Self-replace timeout: new supervisor did not start");
     try { child.kill(); } catch {}
-    try { unlinkSync(RESTARTING_FLAG); } catch {}
+    try { unlinkSync(restartingFlag()); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
     setState("running");
@@ -475,7 +474,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     return { success: false, error: "New supervisor failed to start within 30s" };
   } catch (e) {
     log("ERROR", `Self-replace error: ${e}`);
-    try { unlinkSync(RESTARTING_FLAG); } catch {}
+    try { unlinkSync(restartingFlag()); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
     setState("running");
@@ -741,15 +740,16 @@ export async function runSupervisor(opts: {
   profile?: string;
   share: boolean;
 }) {
-  if (!existsSync(PPM_DIR)) mkdirSync(PPM_DIR, { recursive: true });
+  const ppmDir = getPpmDir();
+  if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
 
   // Clean up restarting flag from previous upgrade/restart
-  try { unlinkSync(RESTARTING_FLAG); } catch {}
+  try { unlinkSync(restartingFlag()); } catch {}
 
   // Save original argv for self-replace
   originalArgv = [...process.argv];
 
-  const logFd = openSync(LOG_FILE, "a");
+  const logFd = openSync(logFile(), "a");
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
 
   // Global exception handlers — supervisor must never crash
@@ -761,7 +761,7 @@ export async function runSupervisor(opts: {
   });
 
   // Write supervisor PID + clear stale availableVersion from previous run
-  writeFileSync(PID_FILE, String(process.pid));
+  writeFileSync(PID_FILE(), String(process.pid));
   updateStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
     state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,

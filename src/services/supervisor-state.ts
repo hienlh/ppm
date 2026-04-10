@@ -3,17 +3,16 @@
  * Extracted from supervisor.ts to keep the orchestrator lean.
  */
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import {
   readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, openSync, closeSync,
 } from "node:fs";
 import { constants } from "node:fs";
+import { getPpmDir } from "./ppm-dir.ts";
 
-const PPM_DIR = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"));
-export const CMD_FILE = resolve(PPM_DIR, ".supervisor-cmd");
-export const STATUS_FILE = resolve(PPM_DIR, "status.json");
-export const PID_FILE = resolve(PPM_DIR, "ppm.pid");
-export const LOCK_FILE = resolve(PPM_DIR, ".start-lock");
+export const CMD_FILE = () => resolve(getPpmDir(), ".supervisor-cmd");
+export const STATUS_FILE = () => resolve(getPpmDir(), "status.json");
+export const PID_FILE = () => resolve(getPpmDir(), "ppm.pid");
+export const LOCK_FILE = () => resolve(getPpmDir(), ".start-lock");
 
 // ─── State ─────────────────────────────────────────────────────────────
 export type SupervisorState = "running" | "paused" | "stopped" | "upgrading";
@@ -47,7 +46,7 @@ function atomicWriteJson(filePath: string, data: unknown) {
 
 export function readStatus(): Record<string, unknown> {
   try {
-    if (existsSync(STATUS_FILE)) return JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+    if (existsSync(STATUS_FILE())) return JSON.parse(readFileSync(STATUS_FILE(), "utf-8"));
   } catch {}
   return {};
 }
@@ -55,7 +54,7 @@ export function readStatus(): Record<string, unknown> {
 export function updateStatus(patch: Record<string, unknown>) {
   try {
     const data = { ...readStatus(), ...patch };
-    atomicWriteJson(STATUS_FILE, data);
+    atomicWriteJson(STATUS_FILE(), data);
   } catch {}
 }
 
@@ -64,9 +63,9 @@ export type CmdAction = "soft_stop" | "resume";
 
 /** Atomically claim + read command file (rename to .claimed, read, delete) */
 export function readAndDeleteCmd(): { action: CmdAction } | null {
-  const claimed = CMD_FILE + ".claimed";
+  const claimed = CMD_FILE() + ".claimed";
   try {
-    renameSync(CMD_FILE, claimed); // atomic claim — second caller gets ENOENT
+    renameSync(CMD_FILE(), claimed); // atomic claim — second caller gets ENOENT
     const cmd = JSON.parse(readFileSync(claimed, "utf-8"));
     unlinkSync(claimed);
     return cmd;
@@ -78,31 +77,31 @@ export function readAndDeleteCmd(): { action: CmdAction } | null {
 }
 
 export function writeCmd(action: CmdAction) {
-  writeFileSync(CMD_FILE, JSON.stringify({ action }));
+  writeFileSync(CMD_FILE(), JSON.stringify({ action }));
 }
 
 // ─── Lockfile ──────────────────────────────────────────────────────────
 export function acquireLock(): boolean {
   try {
     // Try exclusive create — fails if file already exists (atomic)
-    const fd = openSync(LOCK_FILE, "wx");
+    const fd = openSync(LOCK_FILE(), "wx");
     writeFileSync(fd, String(process.pid));
     closeSync(fd);
     return true;
   } catch {
     // File exists — check if holding process is alive
     try {
-      const pid = parseInt(readFileSync(LOCK_FILE, "utf-8").trim(), 10);
+      const pid = parseInt(readFileSync(LOCK_FILE(), "utf-8").trim(), 10);
       if (!isNaN(pid)) {
         try { process.kill(pid, 0); return false; } catch {} // stale lock
       }
       // Stale lock — overwrite
-      writeFileSync(LOCK_FILE, String(process.pid));
+      writeFileSync(LOCK_FILE(), String(process.pid));
       return true;
     } catch { return false; }
   }
 }
 
 export function releaseLock() {
-  try { unlinkSync(LOCK_FILE); } catch {}
+  try { unlinkSync(LOCK_FILE()); } catch {}
 }

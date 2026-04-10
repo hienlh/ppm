@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/extension.ts";
 import { getExtensions, getExtensionById, insertExtension, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
@@ -8,9 +7,7 @@ import { RpcChannel } from "./extension-rpc.ts";
 import { parseManifest, discoverManifests } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
-
-const PPM_DIR = process.env.PPM_HOME || resolve(homedir(), ".ppm");
-const EXTENSIONS_DIR = resolve(PPM_DIR, "extensions");
+import { getPpmDir } from "./ppm-dir.ts";
 
 class ExtensionService {
   private worker: Worker | null = null;
@@ -67,15 +64,15 @@ class ExtensionService {
   }
 
   async discover(): Promise<ExtensionManifest[]> {
-    ensureExtensionsDir(EXTENSIONS_DIR);
-    return discoverManifests(EXTENSIONS_DIR);
+    ensureExtensionsDir(resolve(getPpmDir(), "extensions"));
+    return discoverManifests(resolve(getPpmDir(), "extensions"));
   }
 
   async install(name: string): Promise<ExtensionManifest> {
     if (this.installing.has(name)) throw new Error(`Already installing ${name}`);
     this.installing.add(name);
     try {
-      return await installExtension(name, EXTENSIONS_DIR);
+      return await installExtension(name, resolve(getPpmDir(), "extensions"));
     } finally {
       this.installing.delete(name);
     }
@@ -83,7 +80,7 @@ class ExtensionService {
 
   async remove(id: string): Promise<void> {
     if (this.activatedIds.has(id)) await this.deactivate(id);
-    await removeExtension(id, EXTENSIONS_DIR);
+    await removeExtension(id, resolve(getPpmDir(), "extensions"));
     contributionRegistry.unregister(id);
   }
 
@@ -95,7 +92,7 @@ class ExtensionService {
     if (!row.enabled) throw new Error(`Extension ${id} is disabled`);
 
     const manifest: ExtensionManifest = JSON.parse(row.manifest);
-    const extDir = resolve(EXTENSIONS_DIR, "node_modules", id);
+    const extDir = resolve(resolve(getPpmDir(), "extensions"), "node_modules", id);
     const entryPath = resolve(extDir, manifest.main);
     if (!existsSync(entryPath)) throw new Error(`Entry point not found: ${entryPath}`);
 
@@ -176,7 +173,7 @@ class ExtensionService {
   }
 
   async devLink(localPath: string): Promise<ExtensionManifest> {
-    const manifest = devLinkExtension(localPath, EXTENSIONS_DIR);
+    const manifest = devLinkExtension(localPath, resolve(getPpmDir(), "extensions"));
     // Auto-activate after dev-link (DB record is created with enabled=1)
     if (!this.activatedIds.has(manifest.id)) {
       try { await this.activate(manifest.id); } catch (e) {
@@ -187,7 +184,7 @@ class ExtensionService {
   }
 
   async startup(): Promise<void> {
-    ensureExtensionsDir(EXTENSIONS_DIR);
+    ensureExtensionsDir(resolve(getPpmDir(), "extensions"));
     const manifests = await this.discover();
     for (const m of manifests) {
       if (!getExtensionById(m.id)) {
@@ -214,7 +211,7 @@ class ExtensionService {
   }
 
   isActivated(id: string): boolean { return this.activatedIds.has(id); }
-  getExtensionsDir(): string { return EXTENSIONS_DIR; }
+  getExtensionsDir(): string { return resolve(getPpmDir(), "extensions"); }
 
   /** Push current contributions to all connected browser clients */
   private broadcastContributions(): void {

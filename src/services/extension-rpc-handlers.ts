@@ -156,8 +156,8 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     const { resolve, relative } = await import("node:path");
     const resolved = resolve(filePath);
     // Allow: CWD (project root) and ~/.ppm/extensions/ (extension storage)
-    const { homedir } = await import("node:os");
-    const allowedRoots = [resolve(process.cwd()), resolve(homedir(), ".ppm", "extensions")];
+    const { getPpmDir } = await import("./ppm-dir.ts");
+    const allowedRoots = [resolve(process.cwd()), resolve(getPpmDir(), "extensions")];
     const isSafe = allowedRoots.some((root) => {
       const rel = relative(root, resolved);
       return !rel.startsWith("..") && !rel.startsWith("/");

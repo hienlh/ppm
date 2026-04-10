@@ -1,26 +1,25 @@
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { readFileSync, writeFileSync, existsSync, openSync, unlinkSync, renameSync } from "node:fs";
+import { getPpmDir } from "../../services/ppm-dir.ts";
 
-const PPM_DIR = resolve(homedir(), ".ppm");
-const STATUS_FILE = resolve(PPM_DIR, "status.json");
-const PID_FILE = resolve(PPM_DIR, "ppm.pid");
-const RESTARTING_FLAG = resolve(PPM_DIR, ".restarting");
-const RESTART_RESULT = resolve(PPM_DIR, ".restart-result");
+const statusFile = () => resolve(getPpmDir(), "status.json");
+const pidFile = () => resolve(getPpmDir(), "ppm.pid");
+const restartingFlag = () => resolve(getPpmDir(), ".restarting");
+const restartResult = () => resolve(getPpmDir(), ".restart-result");
 
 /** Restart only the server process, keeping the tunnel alive */
 export async function restartServer(options: { config?: string; force?: boolean }) {
   // Ignore SIGHUP so this process survives when PPM terminal dies
   process.on("SIGHUP", () => {});
 
-  if (!existsSync(STATUS_FILE)) {
+  if (!existsSync(statusFile())) {
     console.log("No PPM daemon running. Use 'ppm start' instead.");
     process.exit(1);
   }
 
   let status: Record<string, unknown>;
   try {
-    status = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+    status = JSON.parse(readFileSync(statusFile(), "utf-8"));
   } catch {
     console.log("Corrupt status file. Use 'ppm stop && ppm start' instead.");
     process.exit(1);
@@ -45,7 +44,7 @@ export async function restartServer(options: { config?: string; force?: boolean 
     // Stopped state: treat restart as resume (send resume command)
     if (state === "stopped") {
       console.log("\n  Server is stopped. Resuming via supervisor...\n");
-      const cmdFile = resolve(PPM_DIR, ".supervisor-cmd");
+      const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
       writeFileSync(cmdFile, JSON.stringify({ action: "resume" }));
       // Signal supervisor (Windows: polling picks up command file)
       if (process.platform !== "win32") {
@@ -59,7 +58,7 @@ export async function restartServer(options: { config?: string; force?: boolean 
       while (Date.now() - rStart < 15_000) {
         await Bun.sleep(500);
         try {
-          const newStatus = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+          const newStatus = JSON.parse(readFileSync(statusFile(), "utf-8"));
           if (newStatus.state === "running" && newStatus.pid) {
             console.log(`  ✓  Server resumed (PID: ${newStatus.pid})`);
             if (newStatus.shareUrl) console.log(`  ➜  Share:   ${newStatus.shareUrl}`);
@@ -85,7 +84,7 @@ export async function restartServer(options: { config?: string; force?: boolean 
     while (Date.now() - start < 15_000) {
       await Bun.sleep(500);
       try {
-        const newStatus = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+        const newStatus = JSON.parse(readFileSync(statusFile(), "utf-8"));
         const newPid = newStatus.pid as number | undefined;
         if (newPid && newPid !== oldServerPid) {
           // Verify it's alive
@@ -120,10 +119,10 @@ export async function restartServer(options: { config?: string; force?: boolean 
   const host = status.host as string ?? configService.get("host");
 
   // Write restarting flag so tunnel cleanup handler skips killing cloudflared
-  writeFileSync(RESTARTING_FLAG, "");
+  writeFileSync(restartingFlag(), "");
 
   // Clear previous result
-  try { unlinkSync(RESTART_RESULT); } catch {}
+  try { unlinkSync(restartResult()); } catch {}
 
   // Pre-restart message — user sees this before terminal dies (if running inside PPM)
   console.log("\n  Restarting PPM server...");
@@ -135,14 +134,14 @@ export async function restartServer(options: { config?: string; force?: boolean 
   const params = JSON.stringify({
     serverPid, port, host, serverScript,
     config: options.config ?? "",
-    statusFile: STATUS_FILE,
-    pidFile: PID_FILE,
-    restartingFlag: RESTARTING_FLAG,
-    resultFile: RESTART_RESULT,
-    ppmDir: PPM_DIR,
+    statusFile: statusFile(),
+    pidFile: pidFile(),
+    restartingFlag: restartingFlag(),
+    resultFile: restartResult(),
+    ppmDir: getPpmDir(),
   });
 
-  const workerPath = resolve(PPM_DIR, ".restart-worker.ts");
+  const workerPath = resolve(getPpmDir(), ".restart-worker.ts");
   writeFileSync(workerPath, `
 import { readFileSync, writeFileSync, openSync, unlinkSync, appendFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -299,7 +298,7 @@ main();
 `);
 
   // Spawn worker as a fully detached process
-  const logFile = resolve(PPM_DIR, "ppm.log");
+  const logFile = resolve(getPpmDir(), "ppm.log");
   const logFd = openSync(logFile, "a");
   const worker = Bun.spawn({
     cmd: [process.execPath, "run", workerPath],
@@ -313,15 +312,15 @@ main();
   const pollStart = Date.now();
   while (Date.now() - pollStart < 20000) {
     await Bun.sleep(500);
-    if (existsSync(RESTART_RESULT)) {
+    if (existsSync(restartResult())) {
       try {
-        const result = JSON.parse(readFileSync(RESTART_RESULT, "utf-8"));
+        const result = JSON.parse(readFileSync(restartResult(), "utf-8"));
         if (result.ok) {
           console.log(`  ✓  ${result.message}`);
         } else {
           console.error(`  ✗  ${result.message}`);
         }
-        unlinkSync(RESTART_RESULT);
+        unlinkSync(restartResult());
       } catch {}
       process.exit(0);
     }

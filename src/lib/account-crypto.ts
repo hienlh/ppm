@@ -1,25 +1,30 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
+import { getPpmDir } from "../services/ppm-dir.ts";
 
 const ALGO = "aes-256-gcm";
 
-let keyPath = resolve(homedir(), ".ppm", "account.key");
+let _keyPathOverride: string | null = null;
+
+function getKeyPath(): string {
+  return _keyPathOverride ?? resolve(getPpmDir(), "account.key");
+}
 
 /** Override key path (for tests) */
 export function setKeyPath(path: string): void {
-  keyPath = path;
+  _keyPathOverride = path;
   _key = null; // invalidate cached key
 }
 
 function loadOrCreateKey(): Buffer {
-  if (existsSync(keyPath)) {
-    return Buffer.from(readFileSync(keyPath, "utf-8").trim(), "hex");
+  const kp = getKeyPath();
+  if (existsSync(kp)) {
+    return Buffer.from(readFileSync(kp, "utf-8").trim(), "hex");
   }
   const key = randomBytes(32);
-  mkdirSync(resolve(keyPath, ".."), { recursive: true });
-  writeFileSync(keyPath, key.toString("hex"), { mode: 0o600 });
+  mkdirSync(resolve(kp, ".."), { recursive: true });
+  writeFileSync(kp, key.toString("hex"), { mode: 0o600 });
   return key;
 }
 

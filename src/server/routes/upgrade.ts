@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { readFileSync, existsSync } from "node:fs";
 import { VERSION } from "../../version.ts";
 import {
@@ -10,8 +9,7 @@ import {
   signalSupervisorUpgrade,
 } from "../../services/upgrade.service.ts";
 import { ok, err } from "../../types/api.ts";
-
-const STATUS_FILE = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"), "status.json");
+import { getPpmDir } from "../../services/ppm-dir.ts";
 
 export const upgradeRoutes = new Hono();
 
@@ -19,8 +17,8 @@ export const upgradeRoutes = new Hono();
 upgradeRoutes.get("/", (c) => {
   let availableVersion: string | null = null;
   try {
-    if (existsSync(STATUS_FILE)) {
-      const data = JSON.parse(readFileSync(STATUS_FILE, "utf-8"));
+    if (existsSync(resolve(getPpmDir(), "status.json"))) {
+      const data = JSON.parse(readFileSync(resolve(getPpmDir(), "status.json"), "utf-8"));
       const candidate = data.availableVersion ?? null;
       // Only report if actually newer than current version
       if (candidate && compareSemver(VERSION, candidate) < 0) {

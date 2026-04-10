@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import { homedir } from "node:os";
 import { existsSync, mkdirSync, chmodSync, renameSync, unlinkSync } from "node:fs";
+import { getPpmDir } from "./ppm-dir.ts";
 
-const CLOUDFLARED_DIR = resolve(homedir(), ".ppm", "bin");
 const isWindows = process.platform === "win32";
-const CLOUDFLARED_PATH = resolve(CLOUDFLARED_DIR, isWindows ? "cloudflared.exe" : "cloudflared");
+const cloudflaredDir = () => resolve(getPpmDir(), "bin");
+const cloudflaredPath = () => resolve(cloudflaredDir(), isWindows ? "cloudflared.exe" : "cloudflared");
 
 const OS_MAP: Record<string, string> = { darwin: "darwin", linux: "linux", win32: "windows" };
 const ARCH_MAP: Record<string, string> = { x64: "amd64", arm64: "arm64" };
@@ -67,40 +67,40 @@ async function extractTgz(tgzPath: string, destDir: string): Promise<void> {
  * Downloads from GitHub releases if missing. Returns path to binary.
  */
 export async function ensureCloudflared(): Promise<string> {
-  if (existsSync(CLOUDFLARED_PATH)) return CLOUDFLARED_PATH;
+  if (existsSync(cloudflaredPath())) return cloudflaredPath();
 
-  if (!existsSync(CLOUDFLARED_DIR)) {
-    mkdirSync(CLOUDFLARED_DIR, { recursive: true });
+  if (!existsSync(cloudflaredDir())) {
+    mkdirSync(cloudflaredDir(), { recursive: true });
   }
 
   const url = getDownloadUrl();
   const isTgz = url.endsWith(".tgz");
   const isExe = url.endsWith(".exe");
-  const tmpPath = resolve(CLOUDFLARED_DIR, isTgz ? "cloudflared.tgz" : isExe ? "cloudflared.exe.tmp" : "cloudflared.tmp");
+  const tmpPath = resolve(cloudflaredDir(), isTgz ? "cloudflared.tgz" : isExe ? "cloudflared.exe.tmp" : "cloudflared.tmp");
 
   try {
     const data = await downloadWithProgress(url);
     await Bun.write(tmpPath, data);
 
     if (isTgz) {
-      await extractTgz(tmpPath, CLOUDFLARED_DIR);
+      await extractTgz(tmpPath, cloudflaredDir());
       unlinkSync(tmpPath);
     } else {
-      renameSync(tmpPath, CLOUDFLARED_PATH);
+      renameSync(tmpPath, cloudflaredPath());
     }
     if (!isWindows) {
-      chmodSync(CLOUDFLARED_PATH, 0o755);
+      chmodSync(cloudflaredPath(), 0o755);
     }
   } catch (err) {
     try { unlinkSync(tmpPath); } catch {}
-    try { unlinkSync(CLOUDFLARED_PATH); } catch {}
+    try { unlinkSync(cloudflaredPath()); } catch {}
     throw err;
   }
 
-  return CLOUDFLARED_PATH;
+  return cloudflaredPath();
 }
 
 /** Get path where cloudflared binary is/will be stored */
 export function getCloudflaredPath(): string {
-  return CLOUDFLARED_PATH;
+  return cloudflaredPath();
 }

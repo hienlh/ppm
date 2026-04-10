@@ -4,7 +4,7 @@
  */
 import { appendFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
+import { getPpmDir } from "./ppm-dir.ts";
 
 // ─── Types (must match Cloud's ws-types.ts) ─────────
 interface WsMessage {
@@ -237,6 +237,6 @@ function scheduleReconnect(source = "unknown"): void {
 
 function log(level: string, msg: string): void {
   const ts = new Date().toISOString();
-  const logFile = resolve(process.env.PPM_HOME || resolve(homedir(), ".ppm"), "ppm.log");
+  const logFile = resolve(getPpmDir(), "ppm.log");
   try { appendFileSync(logFile, `[${ts}] [${level}] [cloud-ws] ${msg}\n`); } catch {}
 }

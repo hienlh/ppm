@@ -49,6 +49,18 @@ bun test-tool.mjs /path/to/project "dùng thử tool bash"  # custom prompt
 
 This uses `ClaudeAgentSdkProvider` directly — same env/settings overrides as production.
 
+## PPM Directory
+
+**Never** use `resolve(homedir(), ".ppm")`, `join(homedir(), ".ppm")`, or `process.env.PPM_HOME || resolve(homedir(), ".ppm")` directly in service code.
+Always import `getPpmDir()` from `src/services/ppm-dir.ts`. This ensures test isolation via `PPM_HOME` env var.
+
+Exceptions (intentionally use real `homedir()`):
+- `autostart-generator.ts` / `autostart-register.ts` — system service paths (launchd, systemd)
+- `claude-usage.service.ts` — reads `~/.claude/` credentials (different dir)
+- `fs-browse.service.ts`, `git-dirs.service.ts` — file browser starting from real home
+- `ppmbot/` — bot files in real home
+- `slash-discovery/` — discovers skills from real home
+
 ## Known Gotchas
 
 - **SDK .env poisoning**: Projects with `ANTHROPIC_API_KEY` in `.env` break SDK tool execution. Provider neutralizes these vars. See `docs/lessons-learned.md`.
