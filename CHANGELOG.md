@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.81] - 2026-04-10
+
+### Added
+- **Persistent toast notification for pending approvals**: When an approval request or AI question arrives on a non-active session tab, a Sonner toast with "Go to session" action appears and persists until dismissed or resolved.
+
+### Fixed
+- **Approval timeout removed**: `waitForApproval` no longer auto-rejects after 5 minutes. Approvals wait indefinitely until user responds or session is cleaned up.
+- **`deleteSession` approval cleanup bug**: Was using wrong key (`sessionId` on a `requestId`-keyed map) — now properly iterates and resolves all pending approvals for the deleted session.
+- **Reconnect tool_result reliability**: Tool results are now embedded onto matching tool_use events in the buffer, so reconnecting clients don't lose tool output.
+- **Cloud WS reconnect backoff**: Reconnect attempt counter only resets after auth succeeds, preventing tight reconnect loops when server closes immediately after connect.
+- **Tunnel URL lazy sync**: `getTunnelUrl()` now falls back to reading `status.json` when supervisor sets the URL after server startup.
+
 ## [0.9.80] - 2026-04-10
 
 ### Fixed
