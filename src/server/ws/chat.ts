@@ -241,7 +241,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       }
 
       // First content event — stop heartbeat, transition phase
-      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status";
+      // status_update is PPM's pre-flight account selection — not actual SDK content
+      const isMetadataEvent = evType === "account_info" || evType === "account_retry" || evType === "streaming_status" || evType === "status_update";
       if (!firstEventReceived && !isMetadataEvent) {
         firstEventReceived = true;
         const waitMs = Date.now() - startTime;

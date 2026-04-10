@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.77] - 2026-04-10
+
+### Fixed
+- **Streaming hang with no timeout**: `status_update` events (account routing) were treated as real SDK content, prematurely cancelling the 120s heartbeat timeout. If the SDK subprocess hung after account selection, the UI showed "streaming" forever with no error. Now `status_update` is correctly classified as metadata so the timeout still fires.
+
 ## [0.9.76] - 2026-04-09
 
 ### Fixed
