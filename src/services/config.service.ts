@@ -190,10 +190,11 @@ class ConfigService {
     const mapPath = resolve(PPM_DIR, "session-map.json");
     if (!existsSync(mapPath)) return;
     try {
-      const { setSessionMapping } = require("./db.service.ts");
+      const { setSessionMetadata } = require("./db.service.ts");
       const map = JSON.parse(readFileSync(mapPath, "utf-8")) as Record<string, string>;
-      for (const [ppmId, sdkId] of Object.entries(map)) {
-        setSessionMapping(ppmId, sdkId);
+      for (const [_ppmId, sdkId] of Object.entries(map)) {
+        // Use SDK ID as canonical session ID (ppmId is legacy)
+        setSessionMetadata(sdkId);
       }
       renameSync(mapPath, mapPath + ".bak");
       console.log("[config] Migrated session-map.json → SQLite");

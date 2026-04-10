@@ -11,10 +11,10 @@ import {
   upsertProject,
   deleteProject,
   updateProject,
-  getSessionMapping,
-  setSessionMapping,
-  getAllSessionMappings,
   deleteSessionMapping,
+  getSessionProjectPath,
+  setSessionMetadata,
+  deleteSessionMetadata,
   getSessionTitle,
   setSessionTitle,
   deleteSessionTitle,
@@ -45,18 +45,18 @@ describe("db.service", () => {
       const tables = getAllTables();
       expect(tables).toContain("config");
       expect(tables).toContain("projects");
-      expect(tables).toContain("session_map");
+      expect(tables).toContain("session_metadata");
       expect(tables).toContain("push_subscriptions");
       expect(tables).toContain("session_logs");
       expect(tables).toContain("usage_history");
       expect(tables).toContain("accounts");
     });
 
-    it("sets user_version to 15 after all migrations", () => {
+    it("sets user_version to 16 after all migrations", () => {
       const { openTestDb: open } = require("../../../src/services/db.service.ts");
       const db = open();
       const row = db.query("PRAGMA user_version").get() as { user_version: number };
-      expect(row.user_version).toBe(15);
+      expect(row.user_version).toBe(16);
       db.close();
     });
 
@@ -169,56 +169,34 @@ describe("db.service", () => {
     });
   });
 
-  describe("session map CRUD", () => {
-    it("set and get mapping", () => {
-      setSessionMapping("ppm-1", "sdk-abc");
-      expect(getSessionMapping("ppm-1")).toBe("sdk-abc");
+  describe("session metadata CRUD", () => {
+    it("set and get project path", () => {
+      setSessionMetadata("sess-1", "my-project", "/home/user/proj");
+      expect(getSessionProjectPath("sess-1")).toBe("/home/user/proj");
     });
 
-    it("returns null for unknown ppmId", () => {
-      expect(getSessionMapping("unknown")).toBeNull();
+    it("returns null for unknown session", () => {
+      expect(getSessionProjectPath("unknown")).toBeNull();
     });
 
-    it("upserts placeholder (ppmId===sdkId) with real sdk id", () => {
-      setSessionMapping("ppm-1", "ppm-1");
-      setSessionMapping("ppm-1", "sdk-real");
-      expect(getSessionMapping("ppm-1")).toBe("sdk-real");
+    it("upserts on conflict", () => {
+      setSessionMetadata("sess-1", "proj-a", "/path/a");
+      setSessionMetadata("sess-1", "proj-b", "/path/b");
+      expect(getSessionProjectPath("sess-1")).toBe("/path/b");
     });
 
-    it("refuses to overwrite real sdk id with a different one", () => {
-      setSessionMapping("ppm-2", "sdk-old");
-      setSessionMapping("ppm-2", "sdk-new");
-      expect(getSessionMapping("ppm-2")).toBe("sdk-old");
+    it("deleteSessionMetadata removes metadata", () => {
+      setSessionMetadata("sess-del", "proj", "/path");
+      expect(getSessionProjectPath("sess-del")).toBe("/path");
+      deleteSessionMetadata("sess-del");
+      expect(getSessionProjectPath("sess-del")).toBeNull();
     });
 
-    it("allows overwrite with force=true", () => {
-      setSessionMapping("ppm-3", "sdk-old");
-      setSessionMapping("ppm-3", "sdk-new", undefined, undefined, true);
-      expect(getSessionMapping("ppm-3")).toBe("sdk-new");
+    it("deleteSessionMetadata is safe on nonexistent key", () => {
+      expect(() => deleteSessionMetadata("nonexistent")).not.toThrow();
     });
 
-    it("getAllSessionMappings returns all", () => {
-      setSessionMapping("a", "1");
-      setSessionMapping("b", "2");
-      const all = getAllSessionMappings();
-      expect(all.a).toBe("1");
-      expect(all.b).toBe("2");
-    });
-
-    it("stores project name", () => {
-      setSessionMapping("ppm-1", "sdk-1", "my-project");
-      // project_name is stored but not returned by getSessionMapping
-      expect(getSessionMapping("ppm-1")).toBe("sdk-1");
-    });
-
-    it("deleteSessionMapping removes a mapping", () => {
-      setSessionMapping("ppm-del", "sdk-del");
-      expect(getSessionMapping("ppm-del")).toBe("sdk-del");
-      deleteSessionMapping("ppm-del");
-      expect(getSessionMapping("ppm-del")).toBeNull();
-    });
-
-    it("deleteSessionMapping is safe on nonexistent key", () => {
+    it("deleteSessionMapping (legacy) is safe on nonexistent key", () => {
       expect(() => deleteSessionMapping("nonexistent")).not.toThrow();
     });
   });

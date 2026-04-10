@@ -227,7 +227,7 @@ describe("YAML → SQLite migration", () => {
     const testDb = openTestDb();
 
     const row = testDb.query("PRAGMA user_version").get() as { user_version: number };
-    expect(row.user_version).toBe(15);
+    expect(row.user_version).toBe(16);
 
     // All tables should exist (v1–v13 migrations)
     const tables = testDb.query(
@@ -237,6 +237,7 @@ describe("YAML → SQLite migration", () => {
     expect(names).toContain("config");
     expect(names).toContain("projects");
     expect(names).toContain("session_map");
+    expect(names).toContain("session_metadata");
     expect(names).toContain("push_subscriptions");
     expect(names).toContain("session_logs");
     expect(names).toContain("usage_history");

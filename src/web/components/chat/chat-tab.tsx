@@ -49,6 +49,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     (metadata?.permissionMode as string) ?? undefined,
   );
 
+  // Pending message to send after WS connects (replaces unreliable setTimeout)
+  const pendingSendRef = useRef<{ content: string; permissionMode?: string } | null>(null);
+
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
   const [externalFiles, setExternalFiles] = useState<File[] | null>(null);
@@ -92,7 +95,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     compactStatus,
     statusMessage,
     sessionTitle,
-    migratedSessionId,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -104,12 +106,14 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     markTeamRead,
   } = useChat(sessionId, providerId, projectName);
 
-  // When CLI provider assigns a different session ID, update our state
+  // Flush pending message once WS connects (replaces unreliable setTimeout)
   useEffect(() => {
-    if (migratedSessionId && migratedSessionId !== sessionId) {
-      setSessionId(migratedSessionId);
+    if (isConnected && pendingSendRef.current) {
+      const { content, permissionMode: pm } = pendingSendRef.current;
+      pendingSendRef.current = null;
+      sendMessage(content, { permissionMode: pm });
     }
-  }, [migratedSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isConnected, sendMessage]);
 
   // Auto-clear notification badge when this tab is active and document is visible.
   // Handles the case where notification arrived while browser tab was hidden.
@@ -222,9 +226,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           });
           setSessionId(session.id);
           setProviderId(session.providerId);
-          setTimeout(() => {
-            sendMessage(fullContent, { permissionMode });
-          }, 500);
+          // Queue message — will be sent by effect when WS reports isConnected
+          pendingSendRef.current = { content: fullContent, permissionMode };
           return;
         } catch (e) {
           console.error("Failed to create session:", e);

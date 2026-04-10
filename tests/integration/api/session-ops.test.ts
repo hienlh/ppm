@@ -5,8 +5,9 @@ import { app } from "../../../src/server/index.ts";
 import {
   setDb,
   openTestDb,
-  setSessionMapping,
-  getSessionMapping,
+  setSessionMetadata,
+  getSessionProjectPath,
+  deleteSessionMapping,
   setSessionTitle,
   getSessionTitle,
   pinSession,
@@ -37,17 +38,17 @@ async function req(path: string, init?: RequestInit) {
 }
 
 describe("Session Delete — DB cleanup", () => {
-  it("cleans up session_map on delete", async () => {
+  it("cleans up session_metadata on delete", async () => {
     // Create session via mock provider
     const createRes = await req("/chat/sessions", {
       method: "POST",
-      body: JSON.stringify({ providerId: "mock", title: "Del Map" }),
+      body: JSON.stringify({ providerId: "mock", title: "Del Meta" }),
     });
     const { data: session } = (await createRes.json()) as any;
 
-    // Simulate a mapping (as SDK provider would create)
-    setSessionMapping(session.id, "sdk-id-123");
-    expect(getSessionMapping(session.id)).toBe("sdk-id-123");
+    // Simulate metadata (as SDK provider would create)
+    setSessionMetadata(session.id, "test-project", "/home/user/proj");
+    expect(getSessionProjectPath(session.id)).toBe("/home/user/proj");
 
     // Delete
     const delRes = await req(`/chat/sessions/${session.id}?providerId=mock`, {
@@ -56,8 +57,8 @@ describe("Session Delete — DB cleanup", () => {
     const json = (await delRes.json()) as any;
     expect(json.ok).toBe(true);
 
-    // Mapping should be gone
-    expect(getSessionMapping(session.id)).toBeNull();
+    // Metadata should be gone
+    expect(getSessionProjectPath(session.id)).toBeNull();
   });
 
   it("cleans up session_titles on delete", async () => {
@@ -98,27 +99,26 @@ describe("Session Delete — DB cleanup", () => {
     expect(getPinnedSessionIds().has(session.id)).toBe(false);
   });
 
-  it("cleans up mapped sdkId title + pin", async () => {
+  it("cleans up metadata + title + pin on delete", async () => {
     const createRes = await req("/chat/sessions", {
       method: "POST",
-      body: JSON.stringify({ providerId: "mock", title: "Mapped" }),
+      body: JSON.stringify({ providerId: "mock", title: "Full Cleanup" }),
     });
     const { data: session } = (await createRes.json()) as any;
 
-    // Simulate SDK mapping — title/pin are keyed by sdkId
-    const sdkId = "sdk-mapped-456";
-    setSessionMapping(session.id, sdkId);
-    setSessionTitle(sdkId, "SDK Title");
-    pinSession(sdkId);
+    // Simulate all DB artifacts for a session
+    setSessionMetadata(session.id, "proj", "/path");
+    setSessionTitle(session.id, "Custom Title");
+    pinSession(session.id);
 
     const delRes = await req(`/chat/sessions/${session.id}?providerId=mock`, {
       method: "DELETE",
     });
     expect(((await delRes.json()) as any).ok).toBe(true);
 
-    expect(getSessionMapping(session.id)).toBeNull();
-    expect(getSessionTitle(sdkId)).toBeNull();
-    expect(getPinnedSessionIds().has(sdkId)).toBe(false);
+    expect(getSessionProjectPath(session.id)).toBeNull();
+    expect(getSessionTitle(session.id)).toBeNull();
+    expect(getPinnedSessionIds().has(session.id)).toBe(false);
   });
 });
 

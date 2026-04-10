@@ -431,6 +431,53 @@ function runMigrations(database: Database): void {
     }
     database.exec("PRAGMA user_version = 15");
   }
+
+  if (current < 16) {
+    // Create session_metadata table — replaces dual-ID session_map system.
+    // Session ID is now always the SDK session ID (no more ppmId vs sdkId).
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_metadata (
+        session_id TEXT PRIMARY KEY,
+        project_name TEXT,
+        project_path TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+    `);
+    // Migrate existing data from session_map: use sdk_id as the canonical session_id.
+    // Also migrate session_titles and session_pins that used old ppm_id keys.
+    try {
+      const rows = database.query("SELECT ppm_id, sdk_id, project_name, project_path FROM session_map").all() as
+        { ppm_id: string; sdk_id: string; project_name: string | null; project_path: string | null }[];
+      for (const row of rows) {
+        const canonicalId = row.sdk_id || row.ppm_id;
+        // Insert into session_metadata using canonical SDK ID
+        database.query(
+          "INSERT OR IGNORE INTO session_metadata (session_id, project_name, project_path) VALUES (?, ?, ?)",
+        ).run(canonicalId, row.project_name, row.project_path);
+        // Migrate session_titles from ppm_id to sdk_id if they differ
+        if (row.ppm_id !== row.sdk_id) {
+          const titleRow = database.query("SELECT title FROM session_titles WHERE session_id = ?").get(row.ppm_id) as { title: string } | null;
+          if (titleRow) {
+            database.query(
+              "INSERT OR IGNORE INTO session_titles (session_id, title, updated_at) VALUES (?, ?, datetime('now'))",
+            ).run(canonicalId, titleRow.title);
+            // Remove orphaned ppm_id entry
+            database.query("DELETE FROM session_titles WHERE session_id = ?").run(row.ppm_id);
+          }
+          // Migrate session_pins from ppm_id to sdk_id
+          const pinRow = database.query("SELECT 1 FROM session_pins WHERE session_id = ?").get(row.ppm_id);
+          if (pinRow) {
+            database.query("INSERT OR IGNORE INTO session_pins (session_id) VALUES (?)").run(canonicalId);
+            // Remove orphaned ppm_id entry
+            database.query("DELETE FROM session_pins WHERE session_id = ?").run(row.ppm_id);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[db] session_map migration warning: ${(e as Error).message}`);
+    }
+    database.exec("PRAGMA user_version = 16");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -517,46 +564,28 @@ export function updateProject(currentName: string, newName: string, newPath: str
 }
 
 // ---------------------------------------------------------------------------
-// Session map helpers
+// Session project metadata helpers (replaced session_map dual-ID system)
 // ---------------------------------------------------------------------------
 
-export function getSessionMapping(ppmId: string): string | null {
-  const row = getDb().query("SELECT sdk_id FROM session_map WHERE ppm_id = ?").get(ppmId) as { sdk_id: string } | null;
-  return row?.sdk_id ?? null;
+export function getSessionProjectPath(sessionId: string): string | null {
+  const row = getDb().query("SELECT project_path FROM session_metadata WHERE session_id = ?").get(sessionId) as { project_path: string } | null;
+  if (row?.project_path) return row.project_path;
+  // Legacy fallback: session_map.sdk_id is indexed (PRIMARY KEY is ppm_id, so try both)
+  const legacy = getDb().query("SELECT project_path FROM session_map WHERE ppm_id = ?").get(sessionId) as { project_path: string } | null;
+  if (legacy?.project_path) return legacy.project_path;
+  const legacySdk = getDb().query("SELECT project_path FROM session_map WHERE sdk_id = ?").get(sessionId) as { project_path: string } | null;
+  return legacySdk?.project_path ?? null;
 }
 
-export function getSessionProjectPath(ppmId: string): string | null {
-  const row = getDb().query("SELECT project_path FROM session_map WHERE ppm_id = ?").get(ppmId) as { project_path: string } | null;
-  return row?.project_path ?? null;
-}
-
-/**
- * Set session mapping. By default, refuses to overwrite an existing real SDK ID
- * (one that differs from both ppmId and the new sdkId) to prevent orphaning JSONL history.
- * Pass force=true to override (e.g. session delete + recreate).
- */
-export function setSessionMapping(ppmId: string, sdkId: string, projectName?: string, projectPath?: string, force = false): void {
-  if (!force) {
-    const existing = getSessionMapping(ppmId);
-    if (existing && existing !== ppmId && existing !== sdkId) {
-      console.warn(`[db] Refusing to overwrite session mapping ${ppmId} → ${existing} with ${sdkId} (use force=true to override)`);
-      // Still update project metadata even when refusing sdk_id overwrite
-      getDb().query(
-        "UPDATE session_map SET project_name = COALESCE(?, session_map.project_name), project_path = COALESCE(?, session_map.project_path) WHERE ppm_id = ?",
-      ).run(projectName ?? null, projectPath ?? null, ppmId);
-      return;
-    }
-  }
+/** Store project metadata for a session */
+export function setSessionMetadata(sessionId: string, projectName?: string, projectPath?: string): void {
   getDb().query(
-    "INSERT INTO session_map (ppm_id, sdk_id, project_name, project_path) VALUES (?, ?, ?, ?) ON CONFLICT(ppm_id) DO UPDATE SET sdk_id = excluded.sdk_id, project_name = COALESCE(excluded.project_name, session_map.project_name), project_path = COALESCE(excluded.project_path, session_map.project_path)",
-  ).run(ppmId, sdkId, projectName ?? null, projectPath ?? null);
+    "INSERT INTO session_metadata (session_id, project_name, project_path) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET project_name = COALESCE(excluded.project_name, session_metadata.project_name), project_path = COALESCE(excluded.project_path, session_metadata.project_path)",
+  ).run(sessionId, projectName ?? null, projectPath ?? null);
 }
 
-export function getAllSessionMappings(): Record<string, string> {
-  const rows = getDb().query("SELECT ppm_id, sdk_id FROM session_map").all() as { ppm_id: string; sdk_id: string }[];
-  const result: Record<string, string> = {};
-  for (const r of rows) result[r.ppm_id] = r.sdk_id;
-  return result;
+export function deleteSessionMetadata(sessionId: string): void {
+  getDb().query("DELETE FROM session_metadata WHERE session_id = ?").run(sessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -605,8 +634,9 @@ export function getPinnedSessionIds(): Set<string> {
   return new Set(rows.map((r) => r.session_id));
 }
 
-export function deleteSessionMapping(ppmId: string): void {
-  getDb().query("DELETE FROM session_map WHERE ppm_id = ?").run(ppmId);
+/** @deprecated Legacy cleanup — removes from old session_map if present */
+export function deleteSessionMapping(sessionId: string): void {
+  getDb().query("DELETE FROM session_map WHERE ppm_id = ? OR sdk_id = ?").run(sessionId, sessionId);
 }
 
 export function deleteSessionTitle(sessionId: string): void {

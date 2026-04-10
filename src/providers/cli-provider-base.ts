@@ -152,7 +152,7 @@ export abstract class CliProvider implements AIProvider {
               this.messageCount.delete(processKey);
               this.messageCount.set(capturedSessionId, cnt);
               // Notify frontend about the session ID change
-              yield { type: "session_migrated", oldSessionId: processKey, newSessionId: capturedSessionId } as ChatEvent;
+              yield { type: "session_migrated", oldSessionId: processKey, newSessionId: capturedSessionId } as unknown as ChatEvent;
             }
           }
         }

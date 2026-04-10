@@ -208,23 +208,6 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       const ev = event as any;
       const evType = ev.type ?? "unknown";
 
-      // Session ID migrated: CLI provider assigned a different ID than PPM generated.
-      // Migrate activeSessions key so all subsequent events use the real ID.
-      if (evType === "session_migrated") {
-        const { oldSessionId, newSessionId } = ev;
-        const migrated = activeSessions.get(oldSessionId);
-        if (migrated) {
-          activeSessions.delete(oldSessionId);
-          activeSessions.set(newSessionId, migrated);
-          sessionId = newSessionId; // update local ref for subsequent setPhase/broadcast calls
-          // Notify frontend to update its sessionId state
-          broadcast(newSessionId, { type: "session_migrated", oldSessionId, newSessionId });
-          console.log(`[chat] session migrated: ${oldSessionId} → ${newSessionId}`);
-          logSessionEvent(newSessionId, "INFO", `Session ID migrated from ${oldSessionId}`);
-        }
-        continue;
-      }
-
       // System events → transition connecting → thinking, forward compact events
       if (evType === "system") {
         const sub = (ev as any).subtype;
@@ -339,6 +322,17 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
             : `${project} — ${ev.tool} needs permission`;
           notificationService.broadcast(nType as any, { title, body, project, sessionId, sessionTitle: sTitle, tool: ev.tool });
         }).catch(() => {});
+      } else if (evType === "session_migrated") {
+        // CLI providers discover real session ID from CLI output — migrate WS tracking
+        const newId = ev.newSessionId as string;
+        if (newId && newId !== sessionId) {
+          console.log(`[chat] session_migrated: ${sessionId} → ${newId}`);
+          const oldEntry = activeSessions.get(sessionId);
+          if (oldEntry) {
+            activeSessions.delete(sessionId);
+            activeSessions.set(newId, oldEntry);
+          }
+        }
       } else {
         logSessionEvent(sessionId, evType.toUpperCase(), JSON.stringify(ev).slice(0, 200));
       }

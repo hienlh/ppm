@@ -8,7 +8,7 @@ import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sd
 import { listSlashItems } from "../../services/slash-items.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
-import { getSessionMapping, getSessionProjectPath, setSessionMapping, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionTitle } from "../../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -152,13 +152,13 @@ chatRoutes.delete("/sessions/:id", async (c) => {
   try {
     const id = c.req.param("id");
     const providerId = c.req.query("providerId") ?? "claude";
-    const sdkId = getSessionMapping(id) ?? id;
     // Provider-specific cleanup (JSONL, process, etc.)
     await chatService.deleteSession(providerId, id);
     // Shared DB cleanup
-    deleteSessionMapping(id);
-    deleteSessionTitle(sdkId);
-    unpinSession(sdkId);
+    deleteSessionMapping(id); // legacy cleanup
+    deleteSessionMetadata(id);
+    deleteSessionTitle(id);
+    unpinSession(id);
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 404);
@@ -172,13 +172,11 @@ chatRoutes.patch("/sessions/:id", async (c) => {
     const body = await c.req.json<{ title?: string }>();
     if (!body.title?.trim()) return c.json(err("title is required"), 400);
     const title = body.title.trim();
-    // Resolve PPM UUID → SDK session ID if mapped
-    const sdkId = getSessionMapping(id) ?? id;
     const projectPath = c.get("projectPath");
     // Persist to PPM DB (authoritative source for user-set titles)
-    setSessionTitle(sdkId, title);
+    setSessionTitle(id, title);
     // Also persist to SDK so Claude Code CLI sees the custom title
-    await sdkRenameSession(sdkId, title, { dir: projectPath });
+    await sdkRenameSession(id, title, { dir: projectPath });
     // Also update in-memory session
     const session = chatService.getSession(id);
     if (session) session.title = title;
@@ -229,12 +227,19 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
       const result = await provider.forkAtMessage(sourceId, body.messageId, {
         title: "Forked Chat", dir: projectPath,
       });
-      const session = await chatService.createSession(providerId, {
-        projectName, projectPath, title: "Forked Chat",
-      });
-      setSessionMapping(session.id, result.sessionId);
-      provider.markAsResumed?.(session.id);
-      return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
+      // Register forked session with provider + DB so it's tracked in memory
+      setSessionMetadata(result.sessionId, projectName, projectPath);
+      await provider.resumeSession(result.sessionId);
+      provider.markAsResumed?.(result.sessionId);
+      const forkedSession = {
+        id: result.sessionId,
+        providerId,
+        title: "Forked Chat",
+        projectName,
+        projectPath,
+        createdAt: new Date().toISOString(),
+      };
+      return c.json(ok({ ...forkedSession, forkedFrom: sourceId }), 201);
     } else {
       // No messageId (fork at first message) — create a fresh empty session
       const session = await chatService.createSession(providerId, {
@@ -261,20 +266,19 @@ chatRoutes.get("/sessions/:id/logs", (c) => {
 
 /** GET /chat/sessions/:id/debug — session debug info (IDs, JSONL path) */
 chatRoutes.get("/sessions/:id/debug", (c) => {
-  const ppmId = c.req.param("id");
-  const sdkId = getSessionMapping(ppmId) ?? ppmId;
-  // Resolve JSONL path: ~/.claude/projects/<encoded-cwd>/<sdkId>.jsonl
+  const sessionId = c.req.param("id");
+  // Resolve JSONL path: ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl
   const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
   const provider = providerRegistry.get("claude") as any;
   // Try in-memory first, fall back to DB-persisted project_path
-  const projectPath = provider?.activeSessions?.get(ppmId)?.projectPath
-    ?? getSessionProjectPath(ppmId)
+  const projectPath = provider?.activeSessions?.get(sessionId)?.projectPath
+    ?? getSessionProjectPath(sessionId)
     ?? "";
   const encodedCwd = projectPath ? projectPath.replace(/\//g, "-") : "";
   const jsonlDir = encodedCwd ? resolve(homedir, ".claude", "projects", encodedCwd) : "";
-  const jsonlPath = jsonlDir ? resolve(jsonlDir, `${sdkId}.jsonl`) : "";
+  const jsonlPath = jsonlDir ? resolve(jsonlDir, `${sessionId}.jsonl`) : "";
   const jsonlExists = jsonlPath ? existsSync(jsonlPath) : false;
-  return c.json(ok({ ppmSessionId: ppmId, sdkSessionId: sdkId, jsonlPath: jsonlExists ? jsonlPath : null, jsonlDir, projectPath }));
+  return c.json(ok({ sessionId, jsonlPath: jsonlExists ? jsonlPath : null, jsonlDir, projectPath }));
 });
 
 /** POST /chat/upload — upload files for chat attachments, returns server-side paths */

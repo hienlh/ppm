@@ -48,7 +48,6 @@ export interface StreamResult {
   contextWindowPct?: number;
   resultSubtype?: ResultSubtype;
   messageIds: number[];
-  newSessionId?: string;
 }
 
 /**
@@ -220,11 +219,6 @@ export async function streamToTelegram(
           result.contextWindowPct = event.contextWindowPct;
           result.resultSubtype = event.resultSubtype;
           break eventLoop; // break the for-await, not just the switch
-        }
-
-        case "session_migrated": {
-          result.newSessionId = event.newSessionId;
-          break;
         }
 
         case "account_retry": {

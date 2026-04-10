@@ -119,19 +119,6 @@ describe("PPMBot Streamer — streamToTelegram", () => {
     expect(allEdited).toContain("Something broke");
   });
 
-  it("should capture session_migrated newSessionId", async () => {
-    await loadModule();
-    const tg = makeMockTelegram();
-    const events = makeEvents([
-      { type: "session_migrated", oldSessionId: "s1", newSessionId: "s2" },
-      { type: "text", content: "Continued" },
-      { type: "done", sessionId: "s2" },
-    ]);
-
-    const result = await streamToTelegram(123, events, tg as any, defaultConfig);
-    expect(result.newSessionId).toBe("s2");
-  });
-
   it("should show 'No response generated' for empty stream", async () => {
     await loadModule();
     const tg = makeMockTelegram();

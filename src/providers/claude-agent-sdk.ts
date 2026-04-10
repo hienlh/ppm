@@ -16,7 +16,7 @@ import type {
 import { configService } from "../services/config.service.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionMapping, getSessionProjectPath, setSessionMapping, getSessionTitles } from "../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { resolve } from "node:path";
@@ -24,10 +24,6 @@ import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
-
-function getSdkSessionId(ppmId: string): string {
-  return getSessionMapping(ppmId) ?? ppmId;
-}
 
 // ── Streaming Input: message channel for persistent query ──
 
@@ -266,8 +262,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     };
     this.activeSessions.set(id, meta);
     this.messageCount.set(id, 0);
-    // Pre-persist mapping so project_path survives server restarts
-    setSessionMapping(id, id, config.projectName, config.projectPath);
+    // Persist project metadata so project_path survives server restarts
+    setSessionMetadata(id, config.projectName, config.projectPath);
     return meta;
   }
 
@@ -275,31 +271,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     const existing = this.activeSessions.get(sessionId);
     if (existing) return existing;
 
-    // Check if we have a mapped SDK session ID (from a previous query)
-    const mappedSdkId = getSdkSessionId(sessionId);
     // Restore project_path from DB so resumed sessions can find JSONL
     const dbProjectPath = getSessionProjectPath(sessionId) ?? undefined;
 
-    // Try targeted lookup first (searches all project dirs), then fall back to list scan
+    // Try targeted lookup first (searches all project dirs)
     try {
-      const lookupId = mappedSdkId ?? sessionId;
-      const info = await sdkGetSessionInfo(lookupId, { dir: dbProjectPath });
-      if (!info && mappedSdkId) {
-        // Try the original PPM session ID as well
-        const info2 = await sdkGetSessionInfo(sessionId, { dir: dbProjectPath });
-        if (info2) {
-          const meta: Session = {
-            id: sessionId,
-            providerId: this.id,
-            title: info2.customTitle ?? info2.summary ?? "Resumed Chat",
-            projectPath: dbProjectPath,
-            createdAt: new Date(info2.lastModified).toISOString(),
-          };
-          this.activeSessions.set(sessionId, meta);
-          this.messageCount.set(sessionId, 1);
-          return meta;
-        }
-      }
+      const info = await sdkGetSessionInfo(sessionId, { dir: dbProjectPath });
       if (info) {
         const meta: Session = {
           id: sessionId,
@@ -316,11 +293,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // SDK not available
     }
 
-    // Session not found in SDK list — it may still have a JSONL on disk
-    // (sdkListSessions may not search the correct project directory).
-    // Use messageCount=1 so sendMessage uses --resume instead of --session-id.
-    // --resume gracefully fails if no JSONL exists, while --session-id crashes
-    // when a JSONL file for the same ID is already present on disk.
+    // Session not found in SDK list — it may still have a JSONL on disk.
+    // Use messageCount=1 so sendMessage uses resume instead of sessionId.
+    // resume gracefully handles missing JSONL, while sessionId crashes
+    // when a JSONL file for the same ID already exists on disk.
     const meta: Session = {
       id: sessionId,
       providerId: this.id,
@@ -388,13 +364,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.forkSources.delete(sessionId);
 
     // Best-effort: delete JSONL from ~/.claude/projects/
-    const sdkId = getSessionMapping(sessionId) ?? sessionId;
     try {
       if (existsSync(CLAUDE_PROJECTS_DIR)) {
         const projectDirs = readdirSync(CLAUDE_PROJECTS_DIR);
         for (const dir of projectDirs) {
           if (dir.includes("..") || dir.includes("/")) continue; // safety
-          const jsonlPath = resolve(CLAUDE_PROJECTS_DIR, dir, `${sdkId}.jsonl`);
+          const jsonlPath = resolve(CLAUDE_PROJECTS_DIR, dir, `${sessionId}.jsonl`);
           if (existsSync(jsonlPath)) { unlinkSync(jsonlPath); break; }
         }
       }
@@ -423,11 +398,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     messageId: string,
     opts?: { title?: string; dir?: string },
   ): Promise<{ sessionId: string }> {
-    const sdkId = getSessionMapping(sessionId) ?? sessionId;
     // Dynamic import: Bun's ESM linker fails to resolve forkSession as a static named export
     // in certain test configurations. Lazy import avoids the module linking issue.
     const { forkSession } = await import("@anthropic-ai/claude-agent-sdk");
-    const result = await forkSession(sdkId, {
+    const result = await forkSession(sessionId, {
       upToMessageId: messageId,
       title: opts?.title,
       dir: opts?.dir,
@@ -645,17 +619,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultContextWindowPct: number | undefined;
     let yieldedDone = false;
     try {
-      // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
-      // For fork: use the source session's SDK id
-      const sdkId = shouldFork ? getSdkSessionId(forkSourceId!) : getSdkSessionId(sessionId);
-      // If messageCount > 0 (resumeSession ran) but no real SDK mapping exists,
-      // the session never received an init event (prior attempt hung/crashed).
-      // Treat as first message to avoid resuming a non-existent JSONL → silent hang.
-      const hasRealSdkMapping = getSessionMapping(sessionId) !== null && getSessionMapping(sessionId) !== sessionId;
-      const effectiveIsFirst = isFirstMessage || (!shouldFork && !hasRealSdkMapping);
-      if (effectiveIsFirst && !isFirstMessage) {
-        console.warn(`[sdk] session=${sessionId} no SDK mapping found — treating as new session (was isFirst=false)`);
-      }
+      // Session ID is the canonical ID for both PPM and SDK (no dual-ID mapping).
+      // First message creates a new session; subsequent messages resume.
       // Fallback cwd: SDK needs a valid working directory even when no project is selected.
       // On Windows daemons, undefined cwd can cause the subprocess to fail silently.
       // Resolve path and validate existence — invalid cwd causes spawn to hang on Windows.
@@ -725,7 +690,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           console.warn(`[sdk] session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
         }
       }
-      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} effectiveIsFirst=${effectiveIsFirst} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
+      console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
       // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats)
       const mcpServers = mcpConfigService.list();
@@ -746,8 +711,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const queryOptions: Record<string, any> = {
         // On Windows, child_process.spawn("bun") fails with ENOENT — force node
         ...(process.platform === "win32" && { executable: "node" }),
-        sessionId: effectiveIsFirst && !shouldFork ? sessionId : undefined,
-        resume: (effectiveIsFirst && !shouldFork) ? undefined : sdkId,
+        // First message: create session with this ID. Subsequent: resume by same ID.
+        sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
+        resume: (isFirstMessage && !shouldFork) ? undefined : (shouldFork ? forkSourceId : sessionId),
         ...(shouldFork && { forkSession: true }),
         cwd: effectiveCwd,
         systemPrompt: systemPromptOpt,
@@ -823,9 +789,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let retryCount = 0;
       let rateLimitRetryCount = 0;
       let authRetried = false;
-      /** True after the first init event maps ppmId → sdkId. Prevents retry init events from overwriting the mapping. */
-      let initMappingDone = false;
-
       let hadAnyEvents = false;
       retryLoop: while (true) {
       let sdkEventCount = 0;
@@ -842,7 +805,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             closeCurrentStream();
             const { generator: retryGen, controller: retryCtrl } = createMessageChannel();
             retryCtrl.push(firstMsg);
-            const retryOpts = { ...queryOptions, sessionId: undefined, resume: undefined };
+            // Retry with resume (safe even if JSONL doesn't exist yet — SDK handles gracefully)
+            const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId };
             const rq = query({
               prompt: retryGen,
               options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -866,35 +830,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const subtype = (msg as any).subtype ?? "none";
           console.log(`[sdk] session=${sessionId} system: subtype=${subtype} ${JSON.stringify(msg).slice(0, 500)}`);
 
-          // Capture SDK session metadata from init message
           if (subtype === "init") {
-            const initMsg = msg as any;
-            if (initMsg.session_id && initMsg.session_id !== sessionId) {
-              // Only update sdk_id mapping once per session lifecycle.
-              // Retries (auth refresh, rate limit) create new SDK queries that
-              // emit fresh init events — overwriting would orphan the original JSONL.
-              if (!initMappingDone) {
-                const existingSdkId = getSessionMapping(sessionId);
-                const isFirstMapping = existingSdkId === null || existingSdkId === sessionId;
-                if (isFirstMapping) {
-                  setSessionMapping(sessionId, initMsg.session_id, meta.projectName, meta.projectPath);
-                  initMappingDone = true;
-                } else {
-                  // Already mapped to a real SDK id from a previous conversation
-                  initMappingDone = true;
-                  console.log(`[sdk] session=${sessionId} preserving existing mapping → ${existingSdkId}`);
-                }
-              } else {
-                console.log(`[sdk] session=${sessionId} ignoring retry init sdk_id=${initMsg.session_id} (mapping already set)`);
-              }
-              // Only create activeSessions alias for first-time SDK id mapping.
-              // Retry init events create phantom entries that pollute the map.
-              if (isFirstMessage) {
-                const oldMeta = this.activeSessions.get(sessionId);
-                if (oldMeta) {
-                  this.activeSessions.set(initMsg.session_id, { ...oldMeta, id: initMsg.session_id });
-                }
-              }
+            const sdkSid = (msg as any).session_id;
+            if (sdkSid && sdkSid !== sessionId) {
+              console.warn(`[sdk] session=${sessionId} SDK returned different session_id=${sdkSid} — JSONL may be orphaned`);
+            } else {
+              console.log(`[sdk] session=${sessionId} init: sdk_session_id=${sdkSid}`);
             }
           }
 
@@ -935,7 +876,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
                 const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
                 if (!hasHistory) earlyAuthCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? getSdkSessionId(sessionId) : undefined, env: retryEnv };
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
                 const rq = query({
                   prompt: earlyAuthGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -961,7 +902,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const { generator: switchGen, controller: switchCtrl } = createMessageChannel();
                 const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
                 if (!hasHistory) switchCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? getSdkSessionId(sessionId) : undefined, env: switchEnv };
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: switchEnv };
                 const rq = query({
                   prompt: switchGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1008,7 +949,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // Skip this for child messages (parentId set) — subagent internals don't mean parent tools finished.
         if (pendingToolCount > 0 && !parentId && (msg.type === "assistant" || (msg as any).type === "partial" || (msg as any).type === "stream_event")) {
           try {
-            const sessionMsgs = await getSessionMessages(sdkId);
+            const sessionMsgs = await getSessionMessages(sessionId);
             // Find the last user message — it contains tool_result blocks
             const lastUserMsg = [...sessionMsgs].reverse().find(
               (m: any) => m.type === "user",
@@ -1105,14 +1046,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
                   const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
                   // Close failed query and old channel, create new channel + query with refreshed token.
-                  // Re-resolve sdkId: the init event may have mapped ppmId → real SDK session_id
-                  // after sdkId was originally resolved. Using the stale value would try to
-                  // resume a non-existent session, causing the SDK to hang forever.
                   closeCurrentStream();
                   const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
                   const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
                   if (!hasHistory) authRetryCtrl.push(firstMsg);
-                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? getSdkSessionId(sessionId) : undefined, env: retryEnv };
+                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
                   const rq = query({
                     prompt: authRetryGen,
                     options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1159,13 +1097,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
               await new Promise((r) => setTimeout(r, backoff));
               // Close current streaming session and recreate with (potentially new) account env.
-              // Re-resolve sdkId to pick up init-event mapping (see auth retry comment).
               closeCurrentStream();
               const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
               const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
               const rlHasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
               if (!rlHasHistory) rlRetryCtrl.push(firstMsg);
-              const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlHasHistory ? getSdkSessionId(sessionId) : undefined, env: rlRetryEnv };
+              const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlHasHistory ? sessionId : undefined, env: rlRetryEnv };
               const rq = query({
                 prompt: rlRetryGen,
                 options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1256,13 +1193,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 }
                 yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
                 await new Promise((r) => setTimeout(r, backoff));
-                // Re-resolve sdkId to pick up init-event mapping (see auth retry comment).
                 closeCurrentStream();
                 const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
                 const rlHasHistory2 = (this.messageCount.get(sessionId) ?? 0) > 0;
                 if (!rlHasHistory2) rlRetryCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlHasHistory2 ? getSdkSessionId(sessionId) : undefined, env: rlRetryEnv };
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlHasHistory2 ? sessionId : undefined, env: rlRetryEnv };
                 const rq = query({
                   prompt: rlRetryGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1287,13 +1223,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
                     console.log(`[sdk] 401 in result on account ${account.id} (${label}) — token refreshed, retrying`);
                     yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
-                    // Re-resolve sdkId to pick up init-event mapping (see auth retry comment).
                     closeCurrentStream();
                     const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
                     const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
                     const authHasHistory2 = (this.messageCount.get(sessionId) ?? 0) > 0;
                     if (!authHasHistory2) authRetryCtrl2.push(firstMsg);
-                    const retryOpts = { ...queryOptions, sessionId: undefined, resume: authHasHistory2 ? getSdkSessionId(sessionId) : undefined, env: retryEnv };
+                    const retryOpts = { ...queryOptions, sessionId: undefined, resume: authHasHistory2 ? sessionId : undefined, env: retryEnv };
                     const rq = query({
                       prompt: authRetryGen2,
                       options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1317,7 +1252,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Flush any remaining pending tool_results before finishing
           if (pendingToolCount > 0) {
             try {
-              const sessionMsgs = await getSessionMessages(sdkId);
+              const sessionMsgs = await getSessionMessages(sessionId);
               const lastUserMsg = [...sessionMsgs].reverse().find(
                 (m: any) => m.type === "user",
               );
@@ -1530,8 +1465,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
     try {
-      const sdkId = getSdkSessionId(sessionId);
-      const messages = await getSessionMessages(sdkId);
+      const messages = await getSessionMessages(sessionId);
       const parsed = messages.map((msg) => parseSessionMessage(msg));
 
       // Merge tool_result user messages into the preceding assistant message
