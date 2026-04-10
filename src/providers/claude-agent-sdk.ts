@@ -109,6 +109,7 @@ interface StreamingSession {
  */
 interface PendingApproval {
   resolve: (result: { approved: boolean; data?: unknown }) => void;
+  sessionId: string;
 }
 
 /**
@@ -360,7 +361,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     this.closeStreamingSession(sessionId);
     this.activeSessions.delete(sessionId);
     this.messageCount.delete(sessionId);
-    this.pendingApprovals.delete(sessionId);
+    // Resolve and clean up all pending approvals for this session
+    for (const [reqId, pending] of this.pendingApprovals) {
+      if (pending.sessionId === sessionId) {
+        pending.resolve({ approved: false });
+        this.pendingApprovals.delete(reqId);
+      }
+    }
     this.forkSources.delete(sessionId);
 
     // Best-effort: delete JSONL from ~/.claude/projects/
@@ -543,15 +550,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
      */
     const waitForApproval = (toolName: string, input: unknown): Promise<{ approved: boolean; data?: unknown }> => {
       const requestId = crypto.randomUUID();
-      const APPROVAL_TIMEOUT_MS = 5 * 60_000;
+      // No timeout — approval waits indefinitely until user responds or session cleanup resolves it.
       const promise = new Promise<{ approved: boolean; data?: unknown }>((resolve) => {
-        this.pendingApprovals.set(requestId, { resolve });
-        setTimeout(() => {
-          if (this.pendingApprovals.has(requestId)) {
-            this.pendingApprovals.delete(requestId);
-            resolve({ approved: false });
-          }
-        }, APPROVAL_TIMEOUT_MS);
+        this.pendingApprovals.set(requestId, { resolve, sessionId });
       });
       approvalEvents.push({ type: "approval_request", requestId, tool: toolName, input });
       approvalNotify?.();
@@ -609,7 +610,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       PreToolUse: [{
         matcher: ".*",  // Match all tools — our hook checks internally
         hooks: [preToolUseHook],
-        timeout: 300,  // 5min for user approval
       }],
     };
 

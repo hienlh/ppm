@@ -4,6 +4,7 @@ import { api, getAuthToken, projectUrl } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { playNotificationSound } from "@/lib/notification-sounds";
+import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
 import type { ChatWsServerMessage, SessionPhase } from "../../types/api";
 
@@ -91,6 +92,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   sessionIdRef.current = sessionId;
   const projectNameRef = useRef(projectName);
   projectNameRef.current = projectName;
+  /** Toast ID for the current pending approval notification */
+  const approvalToastRef = useRef<string | number | null>(null);
 
   // Team activity tracking
   const teamActivityRef = useRef<{
@@ -247,6 +250,29 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           const nType = ev.tool === "AskUserQuestion" ? "question" : "approval_request";
           useNotificationStore.getState().addNotification(sessionIdRef.current, nType, projectNameRef.current);
           playNotificationSound(nType);
+          // Persistent toast with action to navigate to the waiting session
+          const sid = sessionIdRef.current;
+          const isQuestion = ev.tool === "AskUserQuestion";
+          approvalToastRef.current = toast[isQuestion ? "info" : "warning"](
+            isQuestion ? "AI has a question" : `${ev.tool} needs permission`,
+            {
+              description: projectNameRef.current || `Session ${sid.slice(0, 8)}`,
+              duration: Infinity,
+              action: {
+                label: "Go to session",
+                onClick: () => {
+                  const { panels } = usePanelStore.getState();
+                  for (const [panelId, panel] of Object.entries(panels)) {
+                    const tab = panel.tabs.find((t) => t.metadata?.sessionId === sid);
+                    if (tab) {
+                      usePanelStore.getState().setActiveTab(tab.id, panelId);
+                      break;
+                    }
+                  }
+                },
+              },
+            },
+          );
         }
         break;
       }
@@ -464,6 +490,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setPhase("idle");
     phaseRef.current = "idle";
     setPendingApproval(null);
+    if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     setCompactStatus(null);
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
@@ -548,6 +575,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         phaseRef.current = "thinking";
       }
       setPendingApproval(null);
+    if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
 
       send(JSON.stringify({
         type: "message",
@@ -590,6 +618,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }
 
       setPendingApproval(null);
+    if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     },
     [send],
   );
@@ -620,6 +649,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setPhase("idle");
     phaseRef.current = "idle";
     setPendingApproval(null);
+    if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
   }, [send]);
 
   const reconnect = useCallback(() => {
