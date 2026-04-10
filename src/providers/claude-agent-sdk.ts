@@ -723,13 +723,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const mcpServers = mcpConfigService.list();
       const hasMcp = Object.keys(mcpServers).length > 0;
 
-      // Buffer subprocess stderr for crash diagnostics
+      // Buffer subprocess stderr for crash diagnostics + log in real-time
       let stderrBuffer = "";
       const stderrCallback = (chunk: string) => {
         stderrBuffer += chunk;
-        // Keep only last 2KB to avoid unbounded growth
         if (stderrBuffer.length > 2048) stderrBuffer = stderrBuffer.slice(-2048);
+        const trimmed = chunk.trim();
+        if (trimmed) console.log(`[sdk] session=${sessionId} stderr: ${trimmed.slice(0, 500)}`);
       };
+      if (hasMcp) {
+        console.log(`[sdk] session=${sessionId} mcpServers: ${Object.keys(mcpServers).join(", ")}`);
+      }
 
       const queryOptions: Record<string, any> = {
         // On Windows, child_process.spawn("bun") fails with ENOENT — force node
@@ -786,6 +790,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl });
       this.activeQueries.set(sessionId, initialQuery);
       let eventSource: AsyncIterable<any> = initialQuery;
+      console.log(`[sdk] session=${sessionId} query() created, waiting for first SDK event...`);
 
       // Helper: close the CURRENT streaming session (not stale closure refs).
       // All retry paths must use this instead of closing captured variables directly.

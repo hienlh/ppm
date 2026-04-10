@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.78] - 2026-04-10
+
+### Added
+- **SDK subprocess stderr logging**: Real-time stderr output from Claude CLI subprocess is now logged to server console for debugging hangs and crashes.
+- **MCP servers diagnostic log**: Log which MCP servers are being passed to SDK query.
+- **Query creation log**: Log when `query()` async iterator is created to confirm subprocess started.
+
 ## [0.9.77] - 2026-04-10
 
 ### Fixed
