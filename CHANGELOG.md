@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.80] - 2026-04-10
+
+### Fixed
+- **"Session ID already in use" error**: Removed dual-ID system (ppmId/sdkId mapping via `session_map` table). PPM UUID is now used directly as SDK session ID, eliminating the `effectiveIsFirst` heuristic that caused resume vs new-session misclassification.
+- **Non-deterministic message timing**: Replaced `setTimeout(500ms)` with `isConnected`-based pending message flush using `useRef` + `useEffect` for reliable first-message delivery after WS connect.
+- **Legacy JSON migration crash**: `config.service.ts` called removed `setSessionMapping` — replaced with `setSessionMetadata`.
+- **CLI provider session migration**: Restored `session_migrated` WS handler for CLI providers that discover session IDs from CLI output.
+- **Fork session not tracked**: Fork route now calls `resumeSession` to register forked session with provider in-memory state.
+
+### Changed
+- DB migration v16: creates `session_metadata` table, migrates data from `session_map`, cleans up orphaned ppm_id entries in `session_titles`/`session_pins`.
+- Removed `session_migrated` from `ChatEvent` type (SDK provider no longer needs it).
+- Removed `migratedSessionId` state from frontend `use-chat` hook.
+- Net deletion of ~86 lines of complexity.
+
 ## [0.9.79] - 2026-04-10
 
 ### Fixed
