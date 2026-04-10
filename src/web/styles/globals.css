@@ -259,3 +259,17 @@ html, body {
 .animate-blink {
   animation: blink 0.8s ease-in-out infinite;
 }
+
+/* Streaming text fade-in — last element slides in as tokens arrive */
+@keyframes streamFadeIn {
+  from { opacity: 0.6; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.markdown-content.is-streaming > *:last-child {
+  animation: streamFadeIn 0.25s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown-content.is-streaming > *:last-child { animation: none; }
+}

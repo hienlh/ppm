@@ -41,6 +41,7 @@ interface MarkdownRendererProps {
   projectName?: string;
   className?: string;
   codeActions?: boolean;
+  isStreaming?: boolean;
 }
 
 /**
@@ -93,7 +94,7 @@ function transformHtml(raw: string): string {
   return html;
 }
 
-export function MarkdownRenderer({ content, projectName, className = "", codeActions = false }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false }: MarkdownRendererProps) {
   const html = useMemo(() => {
     try {
       const raw = marked.parse(content) as string;
@@ -321,7 +322,7 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
   return (
     <div
       ref={containerRef}
-      className={`markdown-content prose-sm ${className}`}
+      className={`markdown-content prose-sm ${isStreaming ? "is-streaming" : ""} ${className}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

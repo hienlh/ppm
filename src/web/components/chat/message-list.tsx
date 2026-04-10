@@ -765,7 +765,7 @@ function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming:
 function StreamingText({ content, animate: isStreaming, projectName }: { content: string; animate: boolean; projectName?: string }) {
   return (
     <>
-      <MarkdownContent content={content} projectName={projectName} />
+      <MarkdownContent content={content} projectName={projectName} isStreaming={isStreaming} />
       {isStreaming && (
         <span className="text-text-subtle text-sm animate-pulse">Thinking...</span>
       )}
@@ -829,10 +829,10 @@ function stripTeammateMessages(text: string): string {
 }
 
 /** Wrapper: delegates to shared MarkdownRenderer with code actions enabled */
-function MarkdownContent({ content, projectName }: { content: string; projectName?: string }) {
+function MarkdownContent({ content, projectName, isStreaming }: { content: string; projectName?: string; isStreaming?: boolean }) {
   const cleaned = stripTeammateMessages(content);
   if (!cleaned) return null;
-  return <MarkdownRenderer content={cleaned} projectName={projectName} codeActions />;
+  return <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} />;
 }
 
 /* ToolCard, ToolSummary, ToolDetails extracted to ./tool-cards.tsx */
