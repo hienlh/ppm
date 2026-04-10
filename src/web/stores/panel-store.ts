@@ -209,7 +209,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     },
 
     openTab: (tabDef, panelId?) => {
-      const pid = resolvePanel(panelId);
+      const mobile = get().isMobile();
+      // On mobile, always open in first panel (tabs merged in mobile nav)
+      const pid = mobile
+        ? (get().grid[0]?.[0] ?? resolvePanel(panelId))
+        : resolvePanel(panelId);
       const panel = get().panels[pid];
       if (!panel) return "";
 
@@ -242,6 +246,26 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
                   activeTabId: existing.id,
                   tabHistory: pushHistory(p.tabHistory, existing.id),
                 },
+              },
+            }));
+            persist();
+            return existing.id;
+          }
+        }
+      }
+
+      // Mobile: dedup across all panels (merged tab bar shows all tabs)
+      if (mobile) {
+        for (const gpid of get().grid.flat()) {
+          const p = get().panels[gpid];
+          if (!p) continue;
+          const existing = p.tabs.find((t) => t.id === baseId || t.id.startsWith(`${baseId}@`));
+          if (existing) {
+            set((s) => ({
+              focusedPanelId: p.id,
+              panels: {
+                ...s.panels,
+                [p.id]: { ...p, activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
               },
             }));
             persist();

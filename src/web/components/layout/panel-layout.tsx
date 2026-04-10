@@ -3,6 +3,7 @@ import { Panel, Group, Separator } from "react-resizable-panels";
 import { GripVertical, GripHorizontal } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { createPanel } from "@/stores/panel-utils";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { EditorPanel } from "./editor-panel";
 
 interface PanelLayoutProps {
@@ -10,9 +11,11 @@ interface PanelLayoutProps {
 }
 
 export function PanelLayout({ projectName }: PanelLayoutProps) {
+  const isDesktop = useMediaQuery("(min-width: 768px)");
   const grid = usePanelStore((s) =>
     s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? [[]]),
   );
+  const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
   const panelCount = grid.flat().length;
 
   // Recover from empty grid (corrupt persisted state or edge-case bug)
@@ -28,6 +31,14 @@ export function PanelLayout({ projectName }: PanelLayoutProps) {
   }, [panelCount]);
 
   if (panelCount === 0) return null;
+
+  // Mobile: render only the focused panel (tabs are merged in MobileNav)
+  if (!isDesktop) {
+    const allPanelIds = grid.flat();
+    const panelId = allPanelIds.includes(focusedPanelId) ? focusedPanelId : allPanelIds[0];
+    if (!panelId) return null;
+    return <EditorPanel panelId={panelId} projectName={projectName} />;
+  }
 
   if (panelCount === 1 && grid[0]?.[0]) {
     return <EditorPanel panelId={grid[0][0]} projectName={projectName} />;

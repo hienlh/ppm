@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Terminal, MessageSquare, GitBranch, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
@@ -9,7 +9,7 @@ import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
 import { resolveProjectColor } from "@/lib/project-palette";
 import { getProjectInitials } from "@/lib/project-avatar";
-import type { TabType } from "@/stores/tab-store";
+import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
@@ -33,11 +33,27 @@ interface MobileNavProps { onMenuPress: () => void; onProjectsPress: () => void;
 
 export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
-  const panel = usePanelStore((s) => s.panels[s.focusedPanelId]);
-  const panelCount = usePanelStore((s) => Object.keys(s.panels).length);
+  const panels = usePanelStore((s) => s.panels);
   const grid = usePanelStore((s) => s.grid);
-  const tabs = panel?.tabs ?? [];
-  const activeTabId = panel?.activeTabId ?? null;
+
+  // Merge tabs from all panels in grid (mobile shows single merged tab bar)
+  const { tabs, tabPanelMap } = useMemo(() => {
+    const panelIds = grid.flat();
+    const allTabs: Tab[] = [];
+    const map: Record<string, string> = {};
+    for (const pid of panelIds) {
+      const p = panels[pid];
+      if (p) {
+        for (const t of p.tabs) {
+          allTabs.push(t);
+          map[t.id] = pid;
+        }
+      }
+    }
+    return { tabs: allTabs, tabPanelMap: map };
+  }, [panels, grid]);
+
+  const activeTabId = panels[focusedPanelId]?.activeTabId ?? null;
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const prevTabCount = useRef(tabs.length);
@@ -65,36 +81,46 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
   }, []);
 
-  // Context menu actions
-  const pos = findPanelPosition(grid, focusedPanelId);
+  // Context menu actions — use the tab's actual panel (not always focused)
+  const menuTab = menuTabId ? tabs.find((t) => t.id === menuTabId) : null;
+  const menuTabPanelId = menuTabId ? tabPanelMap[menuTabId] ?? focusedPanelId : focusedPanelId;
+  const menuTabPanelTabs = panels[menuTabPanelId]?.tabs ?? [];
+  const menuTabIdx = menuTabId ? menuTabPanelTabs.findIndex((t) => t.id === menuTabId) : -1;
+
+  const pos = findPanelPosition(grid, menuTabPanelId);
   const canSplitDown = pos ? grid.length < MAX_ROWS : false;
-  const otherPanelIds = Object.keys(usePanelStore.getState().panels).filter((id) => id !== focusedPanelId);
+  const otherPanelIds = grid.flat().filter((id) => id !== menuTabPanelId);
 
   function moveTabLeft(tabId: string) {
-    const idx = tabs.findIndex((t) => t.id === tabId);
-    if (idx > 0) usePanelStore.getState().reorderTab(tabId, focusedPanelId, idx - 1);
+    const pid = tabPanelMap[tabId] ?? focusedPanelId;
+    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
+    const idx = pTabs.findIndex((t) => t.id === tabId);
+    if (idx > 0) usePanelStore.getState().reorderTab(tabId, pid, idx - 1);
   }
   function moveTabRight(tabId: string) {
-    const idx = tabs.findIndex((t) => t.id === tabId);
-    if (idx < tabs.length - 1) usePanelStore.getState().reorderTab(tabId, focusedPanelId, idx + 1);
+    const pid = tabPanelMap[tabId] ?? focusedPanelId;
+    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
+    const idx = pTabs.findIndex((t) => t.id === tabId);
+    if (idx < pTabs.length - 1) usePanelStore.getState().reorderTab(tabId, pid, idx + 1);
   }
   function splitDown(tabId: string) {
-    usePanelStore.getState().splitPanel("down", tabId, focusedPanelId);
+    const pid = tabPanelMap[tabId] ?? focusedPanelId;
+    usePanelStore.getState().splitPanel("down", tabId, pid);
   }
   function moveToPanel(tabId: string, targetPanelId: string) {
-    usePanelStore.getState().moveTab(tabId, focusedPanelId, targetPanelId);
+    const pid = tabPanelMap[tabId] ?? focusedPanelId;
+    usePanelStore.getState().moveTab(tabId, pid, targetPanelId);
   }
-
-  const menuTab = menuTabId ? tabs.find((t) => t.id === menuTabId) : null;
-  const menuTabIdx = menuTabId ? tabs.findIndex((t) => t.id === menuTabId) : -1;
 
   const { activeProject: activeProjectForTab } = useProjectStore.getState();
   function handleNewTab(type: TabType) {
+    const state = usePanelStore.getState();
+    const firstPanelId = state.grid[0]?.[0] ?? state.focusedPanelId;
     const needsProject = type === "git-graph" || type === "git-diff" || type === "terminal" || type === "chat";
     const metadata = needsProject ? { projectName: activeProjectForTab?.name } : undefined;
-    usePanelStore.getState().openTab(
+    state.openTab(
       { type, title: NEW_TAB_LABELS[type] ?? type, metadata, projectId: activeProjectForTab?.name ?? null, closable: true },
-      focusedPanelId,
+      firstPanelId,
     );
     setNewTabSheetOpen(false);
   }
@@ -255,7 +281,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
                 <ArrowRight className="size-4" /> Move Right
               </button>
             )}
-            {canSplitDown && tabs.length > 1 && (
+            {canSplitDown && menuTabPanelTabs.length > 1 && (
               <button onClick={() => { splitDown(menuTabId!); setMenuTabId(null); }}
                 className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
                 <SplitSquareVertical className="size-4" /> Split to Bottom
