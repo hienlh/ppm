@@ -1,6 +1,7 @@
 import { resolve, basename } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
+import { getPpmDir } from "../../services/ppm-dir.ts";
 import { input, confirm, select, password } from "@inquirer/prompts";
 import { configService } from "../../services/config.service.ts";
 import { projectService } from "../../services/project.service.ts";
@@ -25,7 +26,7 @@ export function hasConfig(): boolean {
     const dbConfig = getAllConfig();
     if (Object.keys(dbConfig).length > 0) return true;
   } catch {}
-  const globalConfig = resolve(homedir(), ".ppm", "config.yaml");
+  const globalConfig = resolve(getPpmDir(), "config.yaml");
   return existsSync(globalConfig);
 }
 

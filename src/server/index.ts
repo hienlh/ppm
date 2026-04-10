@@ -29,10 +29,10 @@ async function setupLogFile() {
   (globalThis as any).__PPM_LOG_SETUP__ = true;
 
   const { resolve } = await import("node:path");
-  const { homedir } = await import("node:os");
   const { appendFileSync, mkdirSync, existsSync } = await import("node:fs");
+  const { getPpmDir } = await import("../services/ppm-dir.ts");
 
-  const ppmDir = process.env.PPM_HOME || resolve(homedir(), ".ppm");
+  const ppmDir = getPpmDir();
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
   const logPath = resolve(ppmDir, "ppm.log");
 
@@ -104,9 +104,9 @@ app.get("/api/info", (c) => c.json(ok({
 // Public: recent logs for bug reports (last 30 lines)
 app.get("/api/logs/recent", async (c) => {
   const { resolve } = await import("node:path");
-  const { homedir } = await import("node:os");
   const { existsSync, readFileSync } = await import("node:fs");
-  const logFile = resolve(homedir(), ".ppm", "ppm.log");
+  const { getPpmDir } = await import("../services/ppm-dir.ts");
+  const logFile = resolve(getPpmDir(), "ppm.log");
   if (!existsSync(logFile)) return c.json(ok({ logs: "" }));
   const content = readFileSync(logFile, "utf-8");
   const lines = content.split("\n").slice(-30).join("\n").trim();
@@ -234,12 +234,12 @@ export async function startServer(options: {
 
   {
     const { resolve } = await import("node:path");
-    const { homedir } = await import("node:os");
     const { writeFileSync, readFileSync, mkdirSync, existsSync, openSync } = await import("node:fs");
     const { isCompiledBinary } = await import("../services/autostart-generator.ts");
     const { writeCmd, acquireLock, releaseLock } = await import("../services/supervisor-state.ts");
+    const { getPpmDir } = await import("../services/ppm-dir.ts");
 
-    const ppmDir = process.env.PPM_HOME || resolve(homedir(), ".ppm");
+    const ppmDir = getPpmDir();
     if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
     const pidFile = resolve(ppmDir, "ppm.pid");
     const statusFile = resolve(ppmDir, "status.json");
@@ -490,9 +490,9 @@ if (process.argv.includes("__serve__")) {
   // Also write server version to status.json so supervisor heartbeat reports the actual running version.
   try {
     const { resolve: r } = await import("node:path");
-    const { homedir: h } = await import("node:os");
     const { readFileSync: rf, writeFileSync: wf, renameSync: rn } = await import("node:fs");
-    const statusFile = r(h(), ".ppm", "status.json");
+    const { getPpmDir: gd } = await import("../services/ppm-dir.ts");
+    const statusFile = r(gd(), "status.json");
     const status = JSON.parse(rf(statusFile, "utf-8"));
     // Write running server version — source of truth for heartbeat
     status.serverVersion = VERSION;

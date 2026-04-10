@@ -1,14 +1,15 @@
-import { homedir, platform, arch, release } from "node:os";
+import { platform, arch, release } from "node:os";
 import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { getRecentLogs } from "./logs.ts";
+import { getPpmDir } from "../../services/ppm-dir.ts";
 
 const REPO = "hienlh/ppm";
 
 export async function reportBug() {
   const { VERSION: version } = await import("../../version.ts");
   const logs = getRecentLogs(30);
-  const statusFile = resolve(homedir(), ".ppm", "status.json");
+  const statusFile = resolve(getPpmDir(), "status.json");
   let statusInfo = "(not running)";
   if (existsSync(statusFile)) {
     try { statusInfo = readFileSync(statusFile, "utf-8"); } catch {}
