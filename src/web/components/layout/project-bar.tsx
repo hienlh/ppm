@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Settings, Pencil, Trash2, Palette, Bug, Cloud, X } from "lucide-react";
+import { Plus, Settings, Pencil, Trash2, Palette, Bug, Cloud, X, Copy } from "lucide-react";
 import { CloudSharePopover } from "./cloud-share-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
@@ -23,7 +23,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { AddProjectForm } from "@/components/layout/add-project-form";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNotificationStore, selectProjectUrgentType, notificationColor } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
 
@@ -110,6 +109,45 @@ export function ProjectBar() {
   const [colorValue, setColorValue] = useState("");
   const [colorSaving, setColorSaving] = useState(false);
 
+  // Hover expand (desktop only — ignored on touch devices)
+  const [expanded, setExpanded] = useState(false);
+  const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mouseInsideRef = useRef(false);
+  const contextMenuOpenRef = useRef(false);
+  const canHoverRef = useRef(
+    typeof window !== "undefined" && window.matchMedia("(hover: hover) and (pointer: fine)").matches,
+  );
+
+  useEffect(() => {
+    return () => {
+      if (enterTimerRef.current) clearTimeout(enterTimerRef.current);
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    };
+  }, []);
+
+  const handleBarMouseEnter = useCallback(() => {
+    if (!canHoverRef.current) return;
+    mouseInsideRef.current = true;
+    if (leaveTimerRef.current) { clearTimeout(leaveTimerRef.current); leaveTimerRef.current = null; }
+    enterTimerRef.current = setTimeout(() => setExpanded(true), 150);
+  }, []);
+
+  const handleBarMouseLeave = useCallback(() => {
+    if (!canHoverRef.current) return;
+    mouseInsideRef.current = false;
+    if (enterTimerRef.current) { clearTimeout(enterTimerRef.current); enterTimerRef.current = null; }
+    if (contextMenuOpenRef.current) return;
+    leaveTimerRef.current = setTimeout(() => setExpanded(false), 300);
+  }, []);
+
+  const handleCtxMenuChange = useCallback((open: boolean) => {
+    contextMenuOpenRef.current = open;
+    if (!open && !mouseInsideRef.current) {
+      leaveTimerRef.current = setTimeout(() => setExpanded(false), 300);
+    }
+  }, []);
+
   const openRename = useCallback((name: string) => {
     setRenameTarget(name);
     setRenameValue(name);
@@ -172,7 +210,15 @@ export function ProjectBar() {
   }
 
   return (
-    <aside className="hidden md:flex flex-col w-[52px] min-w-[52px] bg-background border-r border-border overflow-hidden">
+    <div
+      className="hidden md:block relative w-[52px] min-w-[52px]"
+      onMouseEnter={handleBarMouseEnter}
+      onMouseLeave={handleBarMouseLeave}
+    >
+    <aside className={cn(
+      "absolute inset-y-0 left-0 flex flex-col bg-background border-r border-border overflow-hidden transition-[width] duration-200 ease-out",
+      expanded ? "w-[240px] shadow-lg z-30" : "w-[52px]",
+    )}>
       {/* Logo + version */}
       <div className="shrink-0 flex flex-col items-center justify-center h-[41px] border-b border-border gap-0.5">
         <span className="text-[11px] font-bold text-primary leading-none">PPM</span>
@@ -182,53 +228,58 @@ export function ProjectBar() {
       </div>
 
       {/* Project avatar list */}
-      <div className="flex-1 overflow-y-auto py-2 flex flex-col items-center gap-2 min-h-0">
+      <div className={cn("flex-1 overflow-y-auto py-2 flex flex-col gap-2 min-h-0", expanded ? "items-stretch px-1.5" : "items-center")}>
         {ordered.map((project, idx) => {
           const color = resolveProjectColor(project.color, idx);
           const isActive = activeProject?.name === project.name;
           const isDragging = dragIdx === idx;
           const isDropTarget = dropIdx === idx && dragIdx !== idx;
           return (
-            <ContextMenu key={project.name}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ContextMenuTrigger asChild>
-                    <button
-                      draggable
-                      onDragStart={() => setDragIdx(idx)}
-                      onDragOver={(e) => { e.preventDefault(); setDropIdx(idx); }}
-                      onDragLeave={() => setDropIdx(null)}
-                      onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
-                      onDrop={() => {
-                        if (dragIdx != null && dragIdx !== idx) {
-                          const names = ordered.map((p) => p.name);
-                          const [moved] = names.splice(dragIdx, 1);
-                          names.splice(idx, 0, moved!);
-                          reorderProjects(names);
-                        }
-                        setDragIdx(null);
-                        setDropIdx(null);
-                      }}
-                      onClick={() => setActiveProject(project)}
-                      className={`p-1 rounded-lg hover:bg-surface-elevated transition-all ${
-                        isDragging ? "opacity-40 scale-90" : ""
-                      } ${isDropTarget ? "ring-2 ring-accent" : ""}`}
-                    >
-                      <ProjectAvatar name={project.name} color={color} active={isActive} allNames={allNames} />
-                    </button>
-                  </ContextMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-[200px]">
-                  <p className="font-medium">{project.name}</p>
-                  <p className="text-xs text-text-subtle truncate">{project.path}</p>
-                </TooltipContent>
-              </Tooltip>
+            <ContextMenu key={project.name} onOpenChange={handleCtxMenuChange}>
+              <ContextMenuTrigger asChild>
+                <button
+                  draggable
+                  onDragStart={() => setDragIdx(idx)}
+                  onDragOver={(e) => { e.preventDefault(); setDropIdx(idx); }}
+                  onDragLeave={() => setDropIdx(null)}
+                  onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                  onDrop={() => {
+                    if (dragIdx != null && dragIdx !== idx) {
+                      const names = ordered.map((p) => p.name);
+                      const [moved] = names.splice(dragIdx, 1);
+                      names.splice(idx, 0, moved!);
+                      reorderProjects(names);
+                    }
+                    setDragIdx(null);
+                    setDropIdx(null);
+                  }}
+                  onClick={() => setActiveProject(project)}
+                  className={cn(
+                    "p-1 rounded-lg transition-all",
+                    !expanded && "hover:bg-surface-elevated",
+                    isDragging && "opacity-40 scale-90",
+                    isDropTarget && "ring-2 ring-accent",
+                    expanded && "w-full flex items-center gap-2 px-2 hover:bg-muted/50",
+                  )}
+                >
+                  <ProjectAvatar name={project.name} color={color} active={isActive} allNames={allNames} />
+                  {expanded && (
+                    <div className="min-w-0 text-left">
+                      <p className="text-sm font-medium truncate">{project.name}</p>
+                      <p className="text-[11px] text-text-subtle truncate [direction:rtl] text-left">{project.path}</p>
+                    </div>
+                  )}
+                </button>
+              </ContextMenuTrigger>
               <ContextMenuContent>
                 <ContextMenuItem onClick={() => openRename(project.name)}>
                   <Pencil className="size-3.5 mr-2" /> Rename
                 </ContextMenuItem>
                 <ContextMenuItem onClick={() => openColor(project.name, color)}>
                   <Palette className="size-3.5 mr-2" /> Change Color
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => navigator.clipboard.writeText(project.path)}>
+                  <Copy className="size-3.5 mr-2" /> Copy Path
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem
@@ -243,36 +294,32 @@ export function ProjectBar() {
         })}
 
         {/* Add project button */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={handleAddProject}
-              className="size-10 rounded-full border-2 border-dashed border-border flex items-center justify-center text-text-subtle hover:border-primary hover:text-primary transition-colors"
-            >
-              <Plus className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Add Project</TooltipContent>
-        </Tooltip>
+        <button
+          onClick={handleAddProject}
+          className={cn(
+            "border-2 border-dashed border-border flex items-center justify-center text-text-subtle hover:border-primary hover:text-primary transition-colors",
+            expanded ? "w-full h-10 gap-2 rounded-lg px-2" : "size-10 rounded-full",
+          )}
+        >
+          <Plus className="size-4 shrink-0" />
+          {expanded && <span className="text-sm whitespace-nowrap">Add Project</span>}
+        </button>
       </div>
 
       {/* Footer: cloud + report bug + settings */}
-      <div className="shrink-0 flex flex-col items-center gap-1 py-2 border-t border-border">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              ref={cloudBtnRef}
-              onClick={() => setCloudOpen(!cloudOpen)}
-              className={cn(
-                "flex items-center justify-center size-8 rounded-md transition-colors",
-                cloudOpen ? "text-primary bg-primary/10" : "text-text-subtle hover:text-foreground hover:bg-surface-elevated",
-              )}
-            >
-              <Cloud className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Cloud & Share</TooltipContent>
-        </Tooltip>
+      <div className={cn("shrink-0 flex flex-col gap-1 py-2 border-t border-border", expanded ? "items-stretch px-1.5" : "items-center")}>
+        <button
+          ref={cloudBtnRef}
+          onClick={() => setCloudOpen(!cloudOpen)}
+          className={cn(
+            "flex items-center rounded-md transition-colors",
+            expanded ? "w-full h-8 gap-2 px-2 justify-start" : "justify-center size-8",
+            cloudOpen ? "text-primary bg-primary/10" : "text-text-subtle hover:text-foreground hover:bg-surface-elevated",
+          )}
+        >
+          <Cloud className="size-4 shrink-0" />
+          {expanded && <span className="text-xs whitespace-nowrap">Cloud & Share</span>}
+        </button>
 
         {/* Cloud popover — rendered via portal to escape overflow-hidden */}
         {cloudOpen && popoverPos && createPortal(
@@ -288,28 +335,26 @@ export function ProjectBar() {
           document.body,
         )}
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={handleReportBug}
-              className="flex items-center justify-center size-8 rounded-md text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors"
-            >
-              <Bug className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Report Bug</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={handleSettings}
-              className="flex items-center justify-center size-8 rounded-md text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors"
-            >
-              <Settings className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Settings</TooltipContent>
-        </Tooltip>
+        <button
+          onClick={handleReportBug}
+          className={cn(
+            "flex items-center rounded-md text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors",
+            expanded ? "w-full h-8 gap-2 px-2 justify-start" : "justify-center size-8",
+          )}
+        >
+          <Bug className="size-4 shrink-0" />
+          {expanded && <span className="text-xs whitespace-nowrap">Report Bug</span>}
+        </button>
+        <button
+          onClick={handleSettings}
+          className={cn(
+            "flex items-center rounded-md text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors",
+            expanded ? "w-full h-8 gap-2 px-2 justify-start" : "justify-center size-8",
+          )}
+        >
+          <Settings className="size-4 shrink-0" />
+          {expanded && <span className="text-xs whitespace-nowrap">Settings</span>}
+        </button>
       </div>
 
       {/* Add project dialog */}
@@ -388,5 +433,6 @@ export function ProjectBar() {
         </DialogContent>
       </Dialog>
     </aside>
+    </div>
   );
 }
