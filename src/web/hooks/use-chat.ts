@@ -575,7 +575,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         phaseRef.current = "thinking";
       }
       setPendingApproval(null);
-    if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
+      if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
 
       send(JSON.stringify({
         type: "message",
@@ -618,7 +618,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }
 
       setPendingApproval(null);
-    if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
+      if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     },
     [send],
   );
