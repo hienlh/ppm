@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.79] - 2026-04-10
+
+### Fixed
+- **Silent hang on resume of never-completed sessions**: When a session's first attempt hung (no SDK `init` event received), subsequent messages tried to `resume` a non-existent JSONL file, causing the SDK subprocess to silently hang. Now detects missing SDK mapping and treats as a new session.
+
 ## [0.9.78] - 2026-04-10
 
 ### Added

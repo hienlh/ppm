@@ -648,6 +648,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Resolve SDK's actual session ID for resume (may differ from PPM's UUID)
       // For fork: use the source session's SDK id
       const sdkId = shouldFork ? getSdkSessionId(forkSourceId!) : getSdkSessionId(sessionId);
+      // If messageCount > 0 (resumeSession ran) but no real SDK mapping exists,
+      // the session never received an init event (prior attempt hung/crashed).
+      // Treat as first message to avoid resuming a non-existent JSONL → silent hang.
+      const hasRealSdkMapping = getSessionMapping(sessionId) !== null && getSessionMapping(sessionId) !== sessionId;
+      const effectiveIsFirst = isFirstMessage || (!shouldFork && !hasRealSdkMapping);
+      if (effectiveIsFirst && !isFirstMessage) {
+        console.warn(`[sdk] session=${sessionId} no SDK mapping found — treating as new session (was isFirst=false)`);
+      }
       // Fallback cwd: SDK needs a valid working directory even when no project is selected.
       // On Windows daemons, undefined cwd can cause the subprocess to fail silently.
       // Resolve path and validate existence — invalid cwd causes spawn to hang on Windows.
@@ -717,7 +725,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           console.warn(`[sdk] session=${sessionId} no account and no API key in env — Claude CLI will use its own auth (if any)`);
         }
       }
-      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
+      console.log(`[sdk] query: session=${sessionId} sdkId=${sdkId} isFirst=${isFirstMessage} effectiveIsFirst=${effectiveIsFirst} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
       // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats)
       const mcpServers = mcpConfigService.list();
@@ -738,8 +746,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const queryOptions: Record<string, any> = {
         // On Windows, child_process.spawn("bun") fails with ENOENT — force node
         ...(process.platform === "win32" && { executable: "node" }),
-        sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
-        resume: (isFirstMessage && !shouldFork) ? undefined : sdkId,
+        sessionId: effectiveIsFirst && !shouldFork ? sessionId : undefined,
+        resume: (effectiveIsFirst && !shouldFork) ? undefined : sdkId,
         ...(shouldFork && { forkSession: true }),
         cwd: effectiveCwd,
         systemPrompt: systemPromptOpt,
