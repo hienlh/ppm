@@ -1,5 +1,6 @@
 import { useMemo, useRef, useEffect } from "react";
 import { marked } from "marked";
+import markedKatex from "marked-katex-extension";
 import { useTabStore } from "@/stores/tab-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useImageOverlay } from "@/stores/image-overlay-store";
@@ -29,6 +30,7 @@ const LOCAL_PATH_RE = /^(\/|[A-Za-z]:[/\\])/;
 
 // Configure marked globally
 marked.use({ gfm: true, breaks: true });
+marked.use(markedKatex({ throwOnError: false }));
 
 /** Common text file extensions that PPM can open as editor tabs */
 const FILE_EXTS = "ts|tsx|js|jsx|mjs|cjs|py|json|md|mdx|yaml|yml|toml|css|scss|less|html|htm|sh|bash|zsh|go|rs|sql|rb|java|kt|swift|c|cpp|h|hpp|cs|vue|svelte|txt|env|cfg|conf|ini|xml|csv|log|dockerfile|makefile|gradle";

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.82] - 2026-04-11
+
+### Added
+- **Math formula rendering in markdown**: LaTeX math expressions now render in chat and markdown preview using KaTeX. Supports inline `$...$` and block `$$...$$` notation. Malformed LaTeX degrades gracefully to raw text.
+
 ## [0.9.81] - 2026-04-10
 
 ### Added
