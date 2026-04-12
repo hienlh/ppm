@@ -20,7 +20,7 @@ import { getSessionProjectPath, setSessionMetadata, getSessionTitles } from "../
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { resolve } from "node:path";
-import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
@@ -322,13 +322,30 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Overlay DB titles (user-set) over SDK titles
       const ids = sdkSessions.map((s) => s.sessionId);
       const dbTitles = getSessionTitles(ids);
-      return sdkSessions.map((s) => ({
+      const sessions: SessionInfo[] = sdkSessions.map((s) => ({
         id: s.sessionId,
         providerId: this.id,
         title: dbTitles[s.sessionId] ?? s.customTitle ?? s.summary ?? s.firstPrompt ?? "Chat",
         createdAt: new Date(s.lastModified).toISOString(),
         updatedAt: new Date(s.lastModified).toISOString(),
       }));
+
+      // SDK's listSessions drops sessions whose first user message exceeds its
+      // 64KB head buffer (e.g. large pasted docs). Scan JSONL dir to recover them.
+      if (dir && offset === 0) {
+        const knownIds = new Set(sessions.map((s) => s.id));
+        const missing = findMissingSessions(dir, knownIds, this.id);
+        if (missing.length > 0) {
+          const missingIds = missing.map((s) => s.id);
+          const missingDbTitles = getSessionTitles(missingIds);
+          for (const s of missing) {
+            s.title = missingDbTitles[s.id] ?? s.title;
+          }
+          sessions.push(...missing);
+        }
+      }
+
+      return sessions;
     } catch {
       return Array.from(this.activeSessions.values()).map((s) => ({
         id: s.id,
@@ -343,15 +360,28 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   async getSessionInfoById(sessionId: string, dir?: string): Promise<SessionInfo | null> {
     try {
       const info = await sdkGetSessionInfo(sessionId, { dir });
-      if (!info) return null;
-      const dbTitles = getSessionTitles([info.sessionId]);
-      return {
-        id: info.sessionId,
-        providerId: this.id,
-        title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? info.firstPrompt ?? "Chat",
-        createdAt: new Date(info.lastModified).toISOString(),
-        updatedAt: new Date(info.lastModified).toISOString(),
-      };
+      if (info) {
+        const dbTitles = getSessionTitles([info.sessionId]);
+        return {
+          id: info.sessionId,
+          providerId: this.id,
+          title: dbTitles[info.sessionId] ?? info.customTitle ?? info.summary ?? info.firstPrompt ?? "Chat",
+          createdAt: new Date(info.lastModified).toISOString(),
+          updatedAt: new Date(info.lastModified).toISOString(),
+        };
+      }
+      // SDK can't find the session (large first message, active session, etc.)
+      // — try direct JSONL lookup
+      if (dir) {
+        const missing = findMissingSessions(dir, new Set(), this.id);
+        const match = missing.find((s) => s.id === sessionId);
+        if (match) {
+          const dbTitles = getSessionTitles([sessionId]);
+          match.title = dbTitles[sessionId] ?? match.title;
+          return match;
+        }
+      }
+      return null;
     } catch {
       return null;
     }
@@ -1631,6 +1661,81 @@ function extractText(message: unknown): string {
       .join("");
   }
   return "";
+}
+
+/**
+ * Scan a JSONL project directory for sessions that the SDK's listSessions missed.
+ * The SDK uses a 64KB head buffer; sessions with very large first messages
+ * (e.g., pasted API docs) can't be parsed and are silently dropped.
+ * We extract title from queue-operation content or first user message.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function findMissingSessions(
+  dir: string,
+  knownIds: Set<string>,
+  providerId: string,
+): SessionInfo[] {
+  let resolvedDir: string;
+  try { resolvedDir = require("node:fs").realpathSync(dir).normalize("NFC"); } catch { resolvedDir = dir; }
+  // Match SDK's path encoding: replace all non-alphanumeric chars with "-"
+  const encodedDir = resolvedDir.replace(/[^a-zA-Z0-9]/g, "-");
+  let jsonlDir = resolve(CLAUDE_PROJECTS_DIR, encodedDir);
+  // SDK truncates to 200 chars + hash for long paths; try prefix match as fallback
+  if (!existsSync(jsonlDir) && encodedDir.length > 200) {
+    const prefix = encodedDir.slice(0, 200);
+    try {
+      const match = readdirSync(CLAUDE_PROJECTS_DIR).find((d) => d.startsWith(prefix + "-"));
+      if (match) jsonlDir = resolve(CLAUDE_PROJECTS_DIR, match);
+      else return [];
+    } catch { return []; }
+  }
+  if (!existsSync(jsonlDir)) return [];
+
+  const results: SessionInfo[] = [];
+  for (const file of readdirSync(jsonlDir)) {
+    if (!file.endsWith(".jsonl")) continue;
+    const id = file.slice(0, -6);
+    if (!UUID_RE.test(id) || knownIds.has(id)) continue;
+
+    try {
+      const filePath = resolve(jsonlDir, file);
+      const stat = statSync(filePath);
+      // Read first 512 bytes — enough to extract title from queue-operation content
+      const buf = Buffer.alloc(512);
+      const { openSync, readSync, closeSync } = require("node:fs") as typeof import("node:fs");
+      const fd = openSync(filePath, "r");
+      const bytesRead = readSync(fd, buf, 0, 512, 0);
+      closeSync(fd);
+      const head = buf.toString("utf-8", 0, bytesRead);
+
+      let title = "Chat";
+      // Extract "content" value via string search (JSON may be truncated)
+      const idx = head.indexOf('"content":"');
+      if (idx >= 0) {
+        const start = idx + 11; // length of '"content":"'
+        // Read up to 120 chars or next unescaped quote
+        let end = start;
+        while (end < head.length && end - start < 200) {
+          if (head[end] === "\\" ) { end += 2; continue; }
+          if (head[end] === '"') break;
+          end++;
+        }
+        const raw = head.slice(start, end).replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
+        if (raw.length > 0) {
+          title = raw.length > 120 ? raw.slice(0, 120) + "…" : raw;
+        }
+      }
+
+      results.push({
+        id,
+        providerId,
+        title,
+        createdAt: new Date(stat.mtime).toISOString(),
+        updatedAt: new Date(stat.mtime).toISOString(),
+      });
+    } catch { /* skip unreadable files */ }
+  }
+  return results;
 }
 
 /** Strip SDK teammate-message XML tags from assistant text */
