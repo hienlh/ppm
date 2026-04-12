@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.83] - 2026-04-12
+
+### Fixed
+- **Sessions with large first messages now appear in history**: SDK's `listSessions` silently drops sessions whose first message exceeds its 64KB head buffer (e.g. pasted API docs). PPM now scans the JSONL directory as fallback to recover these sessions.
+- **Cloud CLI config not loaded**: `ppm cloud` commands now call `configService.load()` before reading `cloud_url`, so saved config is properly picked up.
+- **Supervisor device name sync**: Cloud heartbeat now syncs device name from PPM config to cloud device file when user changes it in settings.
+- **Port-forwarding tunnel resilience**: Refactored tunnel spawning with probe failure tracking and auto-respawn for dead tunnels.
+- **URL sync UUID validation**: Chat tab URLs now validate session ID format, preventing short/random tab-derived IDs from being treated as session IDs.
+- **Test suite fully passing**: Added missing SDK mock exports (`getSessionInfo`, `forkSession`, `renameSession`) and updated `maxTurns` assertions to match current default (1000).
+
 ## [0.9.82] - 2026-04-11
 
 ### Added
