@@ -19,6 +19,7 @@ export function registerCloudCommands(program: Command): void {
       } = await import("../../services/cloud.service.ts");
       const { configService } = await import("../../services/config.service.ts");
 
+      configService.load();
       const cloudUrl =
         options.url ||
         configService.get("cloud_url") ||

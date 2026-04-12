@@ -100,10 +100,12 @@ function buildMetadataFromUrl(
     case "chat": {
       if (!identifier) return null;
       const slashIdx = identifier.indexOf("/");
-      if (slashIdx === -1) return { sessionId: identifier, projectName };
-      const providerId = identifier.slice(0, slashIdx);
-      const sessionId = identifier.slice(slashIdx + 1);
-      return sessionId ? { sessionId, providerId, projectName } : null;
+      const rawSessionId = slashIdx === -1 ? identifier : identifier.slice(slashIdx + 1);
+      const providerId = slashIdx === -1 ? undefined : identifier.slice(0, slashIdx);
+      // Validate UUID format — short/random IDs from tab derivation must not be used as session IDs
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawSessionId);
+      const sessionId = isUuid ? rawSessionId : undefined;
+      return { ...(sessionId && { sessionId }), ...(providerId && { providerId }), projectName };
     }
     case "terminal": return { terminalIndex: parseInt(identifier ?? "1", 10), projectName };
     case "git-graph": return { projectName };

@@ -504,7 +504,8 @@ async function notifyStateChange(from: string, to: string, reason: string) {
 /** Connect supervisor to Cloud via WebSocket (if device is linked) */
 async function connectCloud(opts: { port: number }, serverArgs: string[], logFd: number): Promise<boolean> {
   try {
-    const { getCloudDevice } = await import("./cloud.service.ts");
+    const { getCloudDevice, saveCloudDevice } = await import("./cloud.service.ts");
+    const { configService } = await import("./config.service.ts");
     const device = getCloudDevice();
     if (!device) return false; // not linked to cloud
 
@@ -520,6 +521,12 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
         const status = readStatus();
         // Re-read device file each heartbeat to pick up name changes
         const currentDevice = getCloudDevice();
+        // Sync device name from config if user changed it in settings
+        const configName = configService.get("device_name") as string;
+        if (configName && currentDevice && configName !== currentDevice.name) {
+          currentDevice.name = configName;
+          saveCloudDevice(currentDevice);
+        }
         return {
           type: "heartbeat" as const,
           tunnelUrl,
