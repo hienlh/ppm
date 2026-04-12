@@ -27,7 +27,7 @@ describe("GET /settings/ai", () => {
     expect(json.data.providers.claude.type).toBe("agent-sdk");
     expect(json.data.providers.claude.model).toBe("claude-sonnet-4-6");
     expect(json.data.providers.claude.effort).toBe("high");
-    expect(json.data.providers.claude.max_turns).toBe(100);
+    expect(json.data.providers.claude.max_turns).toBe(1000);
     // api_key_env should be stripped from GET response
     expect(json.data.providers.claude.api_key_env).toBeUndefined();
   });

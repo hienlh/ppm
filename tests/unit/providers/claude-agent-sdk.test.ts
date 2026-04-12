@@ -54,7 +54,10 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => {
   return {
     query: (...args: any[]) => mockQueryFn(...args),
     listSessions: mock(() => Promise.resolve([])),
+    getSessionInfo: mock(() => Promise.resolve(undefined)),
     getSessionMessages: mock(() => Promise.resolve([])),
+    forkSession: mock(() => Promise.resolve({ sessionId: "mock-fork-id" })),
+    renameSession: mock(() => Promise.resolve()),
   };
 });
 
@@ -242,13 +245,13 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(opts.allowedTools).toContain("ToolSearch");
     });
 
-    it("sets maxTurns to 100", async () => {
+    it("sets maxTurns to 1000", async () => {
       mockQueryFn.mockReturnValue(createMockQueryIterator([{ type: "result" }]));
       const session = await provider.createSession({});
       for await (const _ of provider.sendMessage(session.id, "hi")) { /* consume */ }
 
       const opts = mockQueryFn.mock.calls[0]![0].options;
-      expect(opts.maxTurns).toBe(100);
+      expect(opts.maxTurns).toBe(1000);
     });
 
     it("sets cwd to projectPath from session", async () => {
