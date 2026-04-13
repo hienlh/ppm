@@ -96,15 +96,7 @@ export function TabBar({ panelId }: TabBarProps) {
 
   // New tab dropdown menu
   const [showNewMenu, setShowNewMenu] = useState(false);
-  const newMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showNewMenu) return;
-    const handler = (e: MouseEvent) => {
-      if (!newMenuRef.current?.contains(e.target as Node)) setShowNewMenu(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showNewMenu]);
+  const newMenuRef = useRef<HTMLButtonElement>(null);
 
   /** Handle context menu actions on a tab */
   const handleTabContextAction = useCallback((tab: Tab, action: string) => {
@@ -237,29 +229,15 @@ export function TabBar({ panelId }: TabBarProps) {
             <div className="w-0.5 h-6 bg-primary rounded-full" />
           )}
 
-          {/* + button with dropdown menu */}
-          <div className="relative shrink-0 sticky right-0" ref={newMenuRef}>
-            <button
-              onClick={() => setShowNewMenu((v) => !v)}
-              title="New tab"
-              className="flex items-center justify-center size-10 border-b-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
-            >
-              <Plus className="size-4" />
-            </button>
-            {showNewMenu && (
-              <div className="absolute right-0 top-full mt-0.5 z-50 min-w-[180px] bg-popover border border-border rounded-md shadow-lg py-1">
-                <NewMenuButton icon={MessageSquare} label="New Chat" shortcut="⌘L"
-                  onClick={() => { useTabStore.getState().openTab({ type: "chat", title: "AI Chat", projectId: activeProject?.name ?? null, metadata: activeProject ? { projectName: activeProject.name } : undefined, closable: true }); setShowNewMenu(false); }} />
-                <NewMenuButton icon={FilePlus} label="New File" shortcut="⌘N"
-                  onClick={() => { useTabStore.getState().openNewFile(); setShowNewMenu(false); }} />
-                <NewMenuButton icon={Terminal} label="Terminal" shortcut="⌘'"
-                  onClick={() => { useTabStore.getState().openTab({ type: "terminal", title: "Terminal", projectId: activeProject?.name ?? null, metadata: activeProject ? { projectName: activeProject.name } : undefined, closable: true }); setShowNewMenu(false); }} />
-                <div className="h-px bg-border my-1" />
-                <NewMenuButton icon={Search} label="Command Palette..." shortcut="⇧⇧"
-                  onClick={() => { openCommandPalette(); setShowNewMenu(false); }} />
-              </div>
-            )}
-          </div>
+          {/* + button — triggers dropdown rendered outside overflow container */}
+          <button
+            ref={newMenuRef}
+            onClick={() => setShowNewMenu((v) => !v)}
+            title="New tab"
+            className="flex items-center justify-center size-10 shrink-0 sticky right-0 border-b-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
+          >
+            <Plus className="size-4" />
+          </button>
         </div>
       </div>
 
@@ -279,6 +257,15 @@ export function TabBar({ panelId }: TabBarProps) {
       )}
     </div>
 
+    {/* New tab dropdown — rendered outside overflow container */}
+    {showNewMenu && (
+      <NewTabDropdown
+        anchorRef={newMenuRef as React.RefObject<HTMLButtonElement>}
+        onClose={() => setShowNewMenu(false)}
+        activeProject={activeProject}
+      />
+    )}
+
     {fileActionState && (
       <FileActions
         action={fileActionState.action}
@@ -295,6 +282,55 @@ export function TabBar({ panelId }: TabBarProps) {
       />
     )}
     </>
+  );
+}
+
+/** Dropdown positioned relative to the + button, rendered outside overflow container */
+function NewTabDropdown({ anchorRef, onClose, activeProject }: {
+  anchorRef: React.RefObject<HTMLButtonElement>;
+  onClose: () => void;
+  activeProject: { name: string; path: string } | null;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+  // Position dropdown below the + button
+  useEffect(() => {
+    const btn = anchorRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    setPos({ top: rect.bottom + 2, right: window.innerWidth - rect.right });
+  }, [anchorRef]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current?.contains(e.target as Node)) return;
+      if (anchorRef.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose, anchorRef]);
+
+  if (!pos) return null;
+
+  const projectId = activeProject?.name ?? null;
+  const meta = activeProject ? { projectName: activeProject.name } : undefined;
+
+  const item = (icon: React.ElementType, label: string, shortcut: string, action: () => void) => (
+    <NewMenuButton key={label} icon={icon} label={label} shortcut={shortcut} onClick={() => { action(); onClose(); }} />
+  );
+
+  return (
+    <div ref={menuRef} style={{ position: "fixed", top: pos.top, right: pos.right }}
+      className="z-50 min-w-[180px] bg-popover border border-border rounded-md shadow-lg py-1">
+      {item(MessageSquare, "New Chat", "⌘L", () => useTabStore.getState().openTab({ type: "chat", title: "AI Chat", projectId, metadata: meta, closable: true }))}
+      {item(FilePlus, "New File", "⌘N", () => useTabStore.getState().openNewFile())}
+      {item(Terminal, "Terminal", "⌘'", () => useTabStore.getState().openTab({ type: "terminal", title: "Terminal", projectId, metadata: meta, closable: true }))}
+      <div className="h-px bg-border my-1" />
+      {item(Search, "Command Palette...", "⇧⇧", () => openCommandPalette())}
+    </div>
   );
 }
 
