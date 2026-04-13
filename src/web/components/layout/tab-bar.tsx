@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import {
   Plus,
   Terminal,
@@ -16,6 +16,7 @@ import {
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
+import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useTabDrag } from "@/hooks/use-tab-drag";
 import { useTouchTabDrag, wasTouchDragRecent } from "@/hooks/use-touch-tab-drag";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
@@ -25,6 +26,8 @@ import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overfl
 import { DraggableTab } from "./draggable-tab";
 import { cn } from "@/lib/utils";
 import type { Tab } from "@/stores/tab-store";
+import { downloadFile } from "@/lib/file-download";
+import { FileActions } from "@/components/explorer/file-actions";
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal,
@@ -86,6 +89,56 @@ export function TabBar({ panelId }: TabBarProps) {
     }
   }, []);
 
+  // File action dialog state for tab context menu (rename/delete)
+  const [fileActionState, setFileActionState] = useState<{ action: string; node: FileNode; tabId: string } | null>(null);
+
+  /** Handle context menu actions on a tab */
+  const handleTabContextAction = useCallback((tab: Tab, action: string) => {
+    const panelState = usePanelStore.getState();
+    const pTabs = panelState.panels[effectivePanelId]?.tabs ?? [];
+
+    switch (action) {
+      case "close":
+        panelState.closeTab(tab.id, effectivePanelId);
+        break;
+      case "close-others":
+        for (const t of pTabs) {
+          if (t.id !== tab.id && t.closable) panelState.closeTab(t.id, effectivePanelId);
+        }
+        break;
+      case "close-right": {
+        const idx = pTabs.findIndex((t) => t.id === tab.id);
+        for (let i = idx + 1; i < pTabs.length; i++) {
+          if (pTabs[i]!.closable) panelState.closeTab(pTabs[i]!.id, effectivePanelId);
+        }
+        break;
+      }
+      case "copy-path": {
+        const filePath = tab.metadata?.filePath as string | undefined;
+        if (filePath) navigator.clipboard.writeText(filePath).catch(() => {});
+        break;
+      }
+      case "download": {
+        const filePath = tab.metadata?.filePath as string | undefined;
+        const projectName = tab.metadata?.projectName as string | undefined;
+        if (filePath && projectName) downloadFile(projectName, filePath);
+        break;
+      }
+      case "rename":
+      case "delete": {
+        const filePath = tab.metadata?.filePath as string | undefined;
+        if (filePath) {
+          setFileActionState({
+            action,
+            tabId: tab.id,
+            node: { name: tab.title, path: filePath, type: "file" },
+          });
+        }
+        break;
+      }
+    }
+  }, [effectivePanelId]);
+
   /** Double-click on empty bar area → open command palette */
   function handleBarDoubleClick(e: React.MouseEvent) {
     // Only trigger if clicking directly on the bar or scroll container (not on a tab)
@@ -103,6 +156,7 @@ export function TabBar({ panelId }: TabBarProps) {
   }
 
   return (
+    <>
     <div
       className="hidden md:flex items-center h-10 border-b border-border bg-background relative"
       onDragOver={handleDragOverBar}
@@ -160,6 +214,7 @@ export function TabBar({ panelId }: TabBarProps) {
                 else tabRefs.current.delete(tab.id);
               }}
               onRename={tab.type === "chat" ? (title) => handleRenameTab(tab, title) : undefined}
+              onContextAction={(action) => handleTabContextAction(tab, action)}
             />
             );
           })}
@@ -194,5 +249,22 @@ export function TabBar({ panelId }: TabBarProps) {
         </button>
       )}
     </div>
+
+    {fileActionState && (
+      <FileActions
+        action={fileActionState.action}
+        node={fileActionState.node}
+        projectName={activeProject?.name ?? ""}
+        onClose={() => setFileActionState(null)}
+        onRefresh={() => {
+          if (activeProject) useFileStore.getState().fetchTree(activeProject.name);
+          // Close tab after file deletion (onRefresh only called on success)
+          if (fileActionState.action === "delete") {
+            usePanelStore.getState().closeTab(fileActionState.tabId, effectivePanelId);
+          }
+        }}
+      />
+    )}
+    </>
   );
 }

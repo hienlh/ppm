@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Terminal, MessageSquare, GitBranch, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
-  ChevronRight, Globe, Puzzle,
+  ChevronRight, Globe, Puzzle, Copy, Download, Pencil, Trash2,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
+import { useFileStore, type FileNode } from "@/stores/file-store";
 import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
 import { resolveProjectColor } from "@/lib/project-palette";
 import { getProjectInitials } from "@/lib/project-avatar";
@@ -14,6 +15,8 @@ import { cn } from "@/lib/utils";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
+import { downloadFile } from "@/lib/file-download";
+import { FileActions } from "@/components/explorer/file-actions";
 
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
@@ -110,6 +113,28 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   function moveToPanel(tabId: string, targetPanelId: string) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
     usePanelStore.getState().moveTab(tabId, pid, targetPanelId);
+  }
+
+  const [fileActionState, setFileActionState] = useState<{ action: string; node: FileNode; tabId: string } | null>(null);
+
+  function handleFileAction(tab: Tab, action: string) {
+    const filePath = tab.metadata?.filePath as string | undefined;
+    const projectName = tab.metadata?.projectName as string | undefined;
+    switch (action) {
+      case "copy-path":
+        if (filePath) navigator.clipboard.writeText(filePath).catch(() => {});
+        break;
+      case "download":
+        if (filePath && projectName) downloadFile(projectName, filePath);
+        break;
+      case "rename":
+      case "delete":
+        if (filePath) {
+          setFileActionState({ action, tabId: tab.id, node: { name: tab.title, path: filePath, type: "file" } });
+        }
+        break;
+    }
+    setMenuTabId(null);
   }
 
   const { activeProject: activeProjectForTab } = useProjectStore.getState();
@@ -269,13 +294,40 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             <div className="px-3 py-2 text-xs text-text-secondary border-b border-border truncate">
               {menuTab.title}
             </div>
+            {menuTab.type === "editor" && (
+              <>
+                <button onClick={() => handleFileAction(menuTab, "copy-path")}
+                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+                  <Copy className="size-4" /> Copy Path
+                </button>
+                <button onClick={() => handleFileAction(menuTab, "download")}
+                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+                  <Download className="size-4" /> Download
+                </button>
+                <button onClick={() => handleFileAction(menuTab, "rename")}
+                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+                  <Pencil className="size-4" /> Rename
+                </button>
+                <button onClick={() => handleFileAction(menuTab, "delete")}
+                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-error active:bg-surface-elevated">
+                  <Trash2 className="size-4" /> Delete
+                </button>
+                <div className="h-px bg-border mx-2" />
+              </>
+            )}
+            {menuTab.closable && (
+              <button onClick={() => { usePanelStore.getState().closeTab(menuTabId!); setMenuTabId(null); }}
+                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+                <X className="size-4" /> Close
+              </button>
+            )}
             {menuTabIdx > 0 && (
               <button onClick={() => { moveTabLeft(menuTabId!); setMenuTabId(null); }}
                 className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
                 <ArrowLeft className="size-4" /> Move Left
               </button>
             )}
-            {menuTabIdx < tabs.length - 1 && (
+            {menuTabIdx < menuTabPanelTabs.length - 1 && (
               <button onClick={() => { moveTabRight(menuTabId!); setMenuTabId(null); }}
                 className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
                 <ArrowRight className="size-4" /> Move Right
@@ -295,6 +347,21 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             ))}
           </div>
         </>
+      )}
+
+      {fileActionState && (
+        <FileActions
+          action={fileActionState.action}
+          node={fileActionState.node}
+          projectName={activeProjectForTab?.name ?? ""}
+          onClose={() => setFileActionState(null)}
+          onRefresh={() => {
+            if (activeProjectForTab) useFileStore.getState().fetchTree(activeProjectForTab.name);
+            if (fileActionState.action === "delete") {
+              usePanelStore.getState().closeTab(fileActionState.tabId);
+            }
+          }}
+        />
       )}
     </nav>
   );
