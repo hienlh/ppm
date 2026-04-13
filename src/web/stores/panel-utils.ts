@@ -73,10 +73,23 @@ export function findPanelPosition(grid: string[][], panelId: string): { row: num
 // Deterministic tab IDs
 // ---------------------------------------------------------------------------
 
+/** Get next untitled number by scanning all panels */
+export function getNextUntitledNumber(panels: Record<string, Panel>): number {
+  let max = 0;
+  for (const panel of Object.values(panels)) {
+    for (const tab of panel.tabs) {
+      const match = tab.id.match(/^editor:untitled-(\d+)$/);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+  }
+  return max + 1;
+}
+
 /** Derive deterministic tab ID from type + metadata */
 export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): string {
   switch (type) {
     case "editor":
+      if (metadata?.isUntitled) return `editor:untitled-${metadata.untitledNumber ?? 1}`;
       return `editor:${metadata?.filePath ?? "untitled"}`;
     case "chat": {
       const provider = metadata?.providerId ?? "default";

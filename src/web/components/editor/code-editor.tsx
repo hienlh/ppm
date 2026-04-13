@@ -4,12 +4,14 @@ import type * as MonacoType from "monaco-editor";
 import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { Loader2, FileWarning, ExternalLink, Play, Database } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
+import { SaveAsDialog } from "./save-as-dialog";
 import { lazy, Suspense } from "react";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
 import { useConnections, type Connection } from "../database/use-connections";
@@ -62,6 +64,10 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const { tabs, updateTab } = useTabStore();
   const { wordWrap, toggleWordWrap } = useSettingsStore();
   const monacoTheme = useMonacoTheme();
+
+  const isUntitled = metadata?.isUntitled === true;
+  const savedContent = metadata?.unsavedContent as string | undefined;
+  const [showSaveAs, setShowSaveAs] = useState(false);
 
   const ownTab = tabs.find((t) => t.id === tabId);
   const ext = filePath ? getFileExt(filePath) : "";
@@ -198,6 +204,13 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   // Load file content
   useEffect(() => {
     if (inlineContent != null) { setLoading(false); return; }
+    if (isUntitled) {
+      setContent(savedContent ?? "");
+      latestContentRef.current = savedContent ?? "";
+      setLoading(false);
+      if (savedContent) setUnsaved(true);
+      return;
+    }
     if (!filePath) return;
     if (!isExternalFile && !projectName) return;
     if (isImage || isPdf) { setLoading(false); return; }
@@ -223,12 +236,14 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
       });
 
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [filePath, projectName, isImage, isPdf, isExternalFile]);
+  }, [filePath, projectName, isImage, isPdf, isExternalFile, isUntitled]);
 
   // Update tab title unsaved indicator
   useEffect(() => {
     if (!ownTab) return;
-    const baseName = filePath ? basename(filePath) : "Untitled";
+    const baseName = isUntitled
+      ? `Untitled-${metadata?.untitledNumber ?? 1}`
+      : (filePath ? basename(filePath) : "Untitled");
     const newTitle = unsaved ? `${baseName} \u25CF` : baseName;
     if (ownTab.title !== newTitle) updateTab(ownTab.id, { title: newTitle });
   }, [unsaved]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -255,8 +270,38 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     latestContentRef.current = val;
     setUnsaved(true);
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => saveFile(latestContentRef.current), 1000);
+    if (isUntitled) {
+      // Persist to metadata for localStorage survival
+      saveTimerRef.current = setTimeout(() => {
+        if (tabId) updateTab(tabId, { metadata: { ...metadata, unsavedContent: latestContentRef.current } });
+      }, 2000);
+    } else {
+      saveTimerRef.current = setTimeout(() => saveFile(latestContentRef.current), 1000);
+    }
   }
+
+  // Save As completion — transitions untitled → saved file
+  const handleSaveAs = useCallback(async (targetPath: string, savedText: string) => {
+    try {
+      // Clear any pending metadata persistence timer to prevent race condition
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      await api.put("/api/fs/write", { path: targetPath, content: savedText });
+      if (tabId) {
+        // Close old untitled tab and open as proper file tab
+        const { closeTab, openTab } = usePanelStore.getState();
+        closeTab(tabId);
+        openTab({
+          type: "editor",
+          title: basename(targetPath),
+          projectId: null,
+          metadata: { filePath: targetPath },
+          closable: true,
+        });
+      }
+      setUnsaved(false);
+      setShowSaveAs(false);
+    } catch { /* silent — user can retry */ }
+  }, [tabId]);
 
   // Jump to line when metadata.lineNumber is set (e.g. from search panel)
   const lineNumber = metadata?.lineNumber as number | undefined;
@@ -269,6 +314,13 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
         editor.setPosition({ lineNumber, column: 1 });
         editor.focus();
       }, 100);
+    }
+    // Ctrl+S → Save As for untitled tabs
+    if (isUntitled) {
+      editor.addCommand(
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+        () => setShowSaveAs(true),
+      );
     }
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
@@ -339,7 +391,7 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
     }
   }, [sqlSchemaInfo]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!inlineContent && (!filePath || (!isExternalFile && !projectName))) {
+  if (!inlineContent && !isUntitled && (!filePath || (!isExternalFile && !projectName))) {
     return (
       <div className="flex items-center justify-center h-full text-text-secondary text-sm">
         No file selected.
@@ -475,6 +527,17 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
             loading={<Loader2 className="size-5 animate-spin text-text-subtle" />}
           />
         </div>
+      )}
+
+      {/* Save As dialog for untitled tabs */}
+      {showSaveAs && (
+        <SaveAsDialog
+          open={showSaveAs}
+          defaultName={`Untitled-${metadata?.untitledNumber ?? 1}`}
+          content={latestContentRef.current}
+          onSave={handleSaveAs}
+          onCancel={() => setShowSaveAs(false)}
+        />
       )}
     </div>
   );

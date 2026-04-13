@@ -101,6 +101,13 @@ export function useGlobalKeybindings() {
         return;
       }
 
+      // New file
+      if (match(e, "new-file")) {
+        e.preventDefault();
+        useTabStore.getState().openNewFile();
+        return;
+      }
+
       // Open tab shortcuts
       const tabShortcuts: { action: string; type: string; title: string }[] = [
         { action: "open-chat", type: "chat", title: "AI Chat" },

@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { usePanelStore } from "./panel-store";
+import { getNextUntitledNumber } from "./panel-utils";
 
 export type TabType =
   | "terminal"
@@ -38,6 +39,7 @@ interface TabStore {
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTab: (id: string, updates: Partial<Omit<Tab, "id">>) => void;
+  openNewFile: () => string;
 }
 
 export const useTabStore = create<TabStore>()(() => ({
@@ -70,6 +72,20 @@ export const useTabStore = create<TabStore>()(() => ({
   updateTab: (id, updates) => {
     usePanelStore.getState().updateTab(id, updates);
     syncFromPanelStore();
+  },
+
+  openNewFile: () => {
+    const ps = usePanelStore.getState();
+    const num = getNextUntitledNumber(ps.panels);
+    const id = ps.openTab({
+      type: "editor",
+      title: `Untitled-${num}`,
+      projectId: null,
+      metadata: { isUntitled: true, untitledNumber: num },
+      closable: true,
+    });
+    syncFromPanelStore();
+    return id;
   },
 }));
 

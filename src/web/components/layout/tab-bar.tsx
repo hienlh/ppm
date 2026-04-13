@@ -7,11 +7,13 @@ import {
   FileDiff,
   Settings,
   FileCode,
+  FilePlus,
   Database,
   ChevronLeft,
   ChevronRight,
   Globe,
   Puzzle,
+  Search,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -91,6 +93,18 @@ export function TabBar({ panelId }: TabBarProps) {
 
   // File action dialog state for tab context menu (rename/delete)
   const [fileActionState, setFileActionState] = useState<{ action: string; node: FileNode; tabId: string } | null>(null);
+
+  // New tab dropdown menu
+  const [showNewMenu, setShowNewMenu] = useState(false);
+  const newMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!showNewMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (!newMenuRef.current?.contains(e.target as Node)) setShowNewMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showNewMenu]);
 
   /** Handle context menu actions on a tab */
   const handleTabContextAction = useCallback((tab: Tab, action: string) => {
@@ -223,14 +237,29 @@ export function TabBar({ panelId }: TabBarProps) {
             <div className="w-0.5 h-6 bg-primary rounded-full" />
           )}
 
-          {/* + button — inside flow, sticky when overflowing */}
-          <button
-            onClick={() => openCommandPalette()}
-            title="Open command palette (Shift+Shift)"
-            className="flex items-center justify-center size-10 shrink-0 sticky right-0 border-b-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
-          >
-            <Plus className="size-4" />
-          </button>
+          {/* + button with dropdown menu */}
+          <div className="relative shrink-0 sticky right-0" ref={newMenuRef}>
+            <button
+              onClick={() => setShowNewMenu((v) => !v)}
+              title="New tab"
+              className="flex items-center justify-center size-10 border-b-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
+            >
+              <Plus className="size-4" />
+            </button>
+            {showNewMenu && (
+              <div className="absolute right-0 top-full mt-0.5 z-50 min-w-[180px] bg-popover border border-border rounded-md shadow-lg py-1">
+                <NewMenuButton icon={MessageSquare} label="New Chat" shortcut="⌘L"
+                  onClick={() => { useTabStore.getState().openTab({ type: "chat", title: "AI Chat", projectId: activeProject?.name ?? null, metadata: activeProject ? { projectName: activeProject.name } : undefined, closable: true }); setShowNewMenu(false); }} />
+                <NewMenuButton icon={FilePlus} label="New File" shortcut="⌘N"
+                  onClick={() => { useTabStore.getState().openNewFile(); setShowNewMenu(false); }} />
+                <NewMenuButton icon={Terminal} label="Terminal" shortcut="⌘'"
+                  onClick={() => { useTabStore.getState().openTab({ type: "terminal", title: "Terminal", projectId: activeProject?.name ?? null, metadata: activeProject ? { projectName: activeProject.name } : undefined, closable: true }); setShowNewMenu(false); }} />
+                <div className="h-px bg-border my-1" />
+                <NewMenuButton icon={Search} label="Command Palette..." shortcut="⇧⇧"
+                  onClick={() => { openCommandPalette(); setShowNewMenu(false); }} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -266,5 +295,18 @@ export function TabBar({ panelId }: TabBarProps) {
       />
     )}
     </>
+  );
+}
+
+function NewMenuButton({ icon: Icon, label, shortcut, onClick }: {
+  icon: React.ElementType; label: string; shortcut?: string; onClick: () => void;
+}) {
+  return (
+    <button onClick={onClick}
+      className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-muted transition-colors">
+      <Icon className="size-4 text-text-secondary" />
+      <span className="flex-1 text-left">{label}</span>
+      {shortcut && <span className="text-xs text-text-subtle">{shortcut}</span>}
+    </button>
   );
 }

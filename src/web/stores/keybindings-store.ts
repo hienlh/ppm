@@ -30,6 +30,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   // Tabs
   { id: "next-tab", label: "Next Tab", category: "tabs", defaultKey: "Alt+]" },
   { id: "prev-tab", label: "Previous Tab", category: "tabs", defaultKey: "Alt+[" },
+  { id: "new-file", label: "New File", category: "tabs", defaultKey: "Mod+N" },
   { id: "open-chat", label: "Open Chat", category: "tabs", defaultKey: "Mod+L" },
   { id: "open-terminal", label: "Open Terminal", category: "tabs", defaultKey: "Mod+'" },
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
