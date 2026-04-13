@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.84] - 2026-04-13
+
+### Fixed
+- **Device rename now syncs to cloud**: Implemented JWT token auto-refresh so cloud API calls succeed after token expiry. Previously `refreshAccessToken` was a stub returning null.
+- **Cloud sync errors surfaced**: PUT /settings/device-name now returns `cloud_synced` and `cloud_error` fields instead of silently swallowing failures.
+- **Heartbeat propagates device name**: Cloud server now persists device name from both WS and HTTP heartbeats, providing eventual consistency even if JWT-based rename fails.
+
 ## [0.9.83] - 2026-04-12
 
 ### Fixed
