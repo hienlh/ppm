@@ -186,6 +186,12 @@ html, body {
   font-size: 0.75rem;
 }
 
+/* Override highlight.js background so pre's background takes precedence */
+.markdown-content pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
 .markdown-content :not(pre) > code {
   background: var(--color-background);
   padding: 0.125rem 0.25rem;
