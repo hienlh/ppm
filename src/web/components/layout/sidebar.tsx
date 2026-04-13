@@ -9,6 +9,7 @@ import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
+import { useGitStatusStore, useGitChangesPoller } from "@/stores/git-status-store";
 import { cn } from "@/lib/utils";
 
 const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
@@ -66,6 +67,10 @@ export function Sidebar() {
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
   const contributions = useExtensionStore((s) => s.contributions);
+  const gitChangesCount = useGitStatusStore((s) =>
+    activeProject?.name ? (s.counts.get(activeProject.name) ?? 0) : 0,
+  );
+  useGitChangesPoller(activeProject?.name, sidebarActiveTab === "git");
 
   // Build tabs list: built-in + extension-contributed sidebar views
   const TABS = useMemo(() => {
@@ -108,13 +113,18 @@ export function Sidebar() {
               key={tab.id}
               onClick={() => setSidebarActiveTab(tab.id)}
               className={cn(
-                "flex-1 flex items-center justify-center gap-1.5 h-full text-xs transition-colors border-b-2 -mb-px",
+                "flex-1 flex items-center justify-center gap-1.5 h-full text-xs transition-colors border-b-2 -mb-px relative",
                 isActive
                   ? "border-primary text-primary font-medium"
                   : "border-transparent text-text-secondary hover:text-foreground",
               )}
             >
               <Icon className="size-3.5" title={tab.label} />
+              {tab.id === "git" && gitChangesCount > 0 && (
+                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-medium leading-none">
+                  {gitChangesCount > 99 ? "99+" : gitChangesCount}
+                </span>
+              )}
             </button>
           );
         })}

@@ -18,6 +18,7 @@ import { basename } from "@/lib/utils";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
+import { useGitStatusStore } from "@/stores/git-status-store";
 import { GitWorktreePanel } from "./git-worktree-panel";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -122,6 +123,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
   const activeProjectPath = useProjectStore((s) =>
     s.projects.find((p) => p.name === projectName)?.path,
   );
+  const setGitChangesCount = useGitStatusStore((s) => s.setCount);
 
   const fetchStatus = useCallback(async () => {
     if (!projectName) return;
@@ -131,13 +133,17 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
         `${projectUrl(projectName)}/git/status`,
       );
       setStatus(data);
+      setGitChangesCount(
+        projectName,
+        data.staged.length + data.unstaged.length + data.untracked.length,
+      );
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch status");
     } finally {
       setLoading(false);
     }
-  }, [projectName]);
+  }, [projectName, setGitChangesCount]);
 
   useEffect(() => {
     fetchStatus();
