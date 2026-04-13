@@ -535,7 +535,7 @@ if (process.argv.includes("__serve__")) {
 
       if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
-        const projectName = parts[3] ?? "";
+        const projectName = decodeURIComponent(parts[3] ?? "");
         const wsType = parts[4] ?? "";
         const id = parts[5] ?? "";
 
