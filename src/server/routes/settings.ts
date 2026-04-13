@@ -50,6 +50,8 @@ settingsRoutes.put("/device-name", async (c) => {
     configService.save();
 
     // Update cloud device name if linked
+    let cloud_synced = false;
+    let cloud_error: string | undefined;
     try {
       const { getCloudDevice, saveCloudDevice, linkDevice } = await import("../../services/cloud.service.ts");
       const device = getCloudDevice();
@@ -59,13 +61,14 @@ settingsRoutes.put("/device-name", async (c) => {
         // Also update local cloud-device.json name
         if (updated) {
           saveCloudDevice({ ...updated, name: trimmed });
+          cloud_synced = true;
         }
       }
-    } catch {
-      // Cloud update is best-effort
+    } catch (e) {
+      cloud_error = (e as Error).message;
     }
 
-    return c.json(ok({ device_name: trimmed }));
+    return c.json(ok({ device_name: trimmed, cloud_synced, cloud_error }));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }

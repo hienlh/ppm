@@ -134,10 +134,41 @@ async function cloudFetch(
   return res;
 }
 
-/** Refresh access token — forces re-login for now (refresh endpoint uses cookies, not CLI-friendly) */
-async function refreshAccessToken(_auth: CloudAuth): Promise<CloudAuth | null> {
-  // TODO: extend cloud API /auth/refresh to return tokens in response body for CLI
-  return null;
+/** Refresh access token using refresh_token via POST /auth/refresh */
+async function refreshAccessToken(auth: CloudAuth): Promise<CloudAuth | null> {
+  if (!auth.refresh_token) return null;
+
+  try {
+    const res = await fetch(`${auth.cloud_url}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: auth.refresh_token }),
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json() as {
+      ok: boolean;
+      access_token?: string;
+      refresh_token?: string;
+      email?: string;
+    };
+
+    if (!data.ok || !data.access_token) return null;
+
+    const refreshed: CloudAuth = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token || auth.refresh_token,
+      email: data.email || auth.email,
+      cloud_url: auth.cloud_url,
+      saved_at: new Date().toISOString(),
+    };
+
+    saveCloudAuth(refreshed);
+    return refreshed;
+  } catch {
+    return null;
+  }
 }
 
 // ─── CLI Login ──────────────────────────────────────────────────────────
