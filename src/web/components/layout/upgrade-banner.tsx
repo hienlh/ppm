@@ -96,6 +96,9 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
         // No supervisor — manual restart needed
         toast.info(data.message || "Upgrade installed. Restart PPM manually.");
         setUpgrading(false);
+        if (availableVersion) {
+          sessionStorage.setItem(DISMISS_KEY_PREFIX + availableVersion, "1");
+        }
         setDismissed(true);
       }
     } catch (e) {
