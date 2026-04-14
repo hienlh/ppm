@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.85] - 2026-04-14
+
+### Added
+- **New file editor tabs**: Create untitled editor tabs (Untitled-1, Untitled-2...) via Ctrl+N or Command Palette. Content persists in localStorage across sessions. Save As dialog on first Ctrl+S using file browser picker.
+- **Right-click context menu on tabs**: Copy path, download, rename, delete files directly from tab context menu.
+
+### Changed
+- **Markdown rendering migrated to react-markdown**: Replaced `marked` with `react-markdown` for better extensibility and React integration.
+
+### Fixed
+- **Upgrade dismiss persisted to sessionStorage**: Dismissed upgrade banner no longer reappears during same session.
+- **WebSocket project path decoded for Windows**: Paths with special characters now work on Windows.
+
 ## [0.9.84] - 2026-04-13
 
 ### Fixed
