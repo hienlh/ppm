@@ -52,13 +52,28 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
 
   // On reload: if we have a viewType but no panel, trigger the extension command
   // Convention: command = "{viewType}.view" (e.g., "git-graph" → "git-graph.view")
+  // On reload: resolve project path from name, then trigger extension command
   useEffect(() => {
     if (panel || !viewType) return;
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
-    window.dispatchEvent(new CustomEvent("ext:command:execute", {
-      detail: { command, args: [] },
-    }));
-  }, [panel, viewType]);
+    const projectName = metadata?.projectName as string | undefined;
+
+    async function trigger() {
+      let args: unknown[] = [];
+      if (projectName) {
+        try {
+          const res = await fetch("/api/projects");
+          const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+          const match = json.data?.find((p) => p.name === projectName);
+          if (match) args = [match.path];
+        } catch { /* fallback to empty args */ }
+      }
+      window.dispatchEvent(new CustomEvent("ext:command:execute", {
+        detail: { command, args },
+      }));
+    }
+    trigger();
+  }, [panel, viewType, metadata?.projectName]);
 
   // Timeout: if panel doesn't appear within 10s, show error
   useEffect(() => {
