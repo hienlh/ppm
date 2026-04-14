@@ -40,6 +40,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   "git-diff": FileDiff,
   settings: Settings,
   ports: Globe,
+  extension: Puzzle,
   "extension-webview": Puzzle,
 };
 

@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { useExtensionStore } from "@/stores/extension-store";
+import { useTabStore } from "@/stores/tab-store";
 import { Loader2 } from "lucide-react";
 
 /** Inject acquireVsCodeApi() shim so extension webviews can postMessage to parent */
@@ -28,6 +29,8 @@ interface ExtensionWebviewProps {
 export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const panelId = metadata?.panelId as string | undefined;
   const viewType = metadata?.viewType as string | undefined;
+  const currentProject = useTabStore((s) => s.currentProject);
+  const projectName = (metadata?.projectName as string | undefined) || currentProject || undefined;
   const [timedOut, setTimedOut] = useState(false);
 
   // Match panel: prefer panelId (exact), fallback to viewType match (reload recovery)
@@ -50,30 +53,46 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const rawHtml = panel?.html ?? "";
   const html = injectVscodeApiShim(rawHtml);
 
-  // On reload: if we have a viewType but no panel, trigger the extension command
-  // Convention: command = "{viewType}.view" (e.g., "git-graph" → "git-graph.view")
-  // On reload: resolve project path from name, then trigger extension command
+  // On reload: resolve project path, then dispatch command with retry
+  // Retry needed because WS connection may not be ready on first attempt
   useEffect(() => {
     if (panel || !viewType) return;
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
-    const projectName = metadata?.projectName as string | undefined;
+    let cancelled = false;
+    let resolvedArgs: unknown[] | null = null;
 
-    async function trigger() {
-      let args: unknown[] = [];
-      if (projectName) {
-        try {
-          const res = await fetch("/api/projects");
-          const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
-          const match = json.data?.find((p) => p.name === projectName);
-          if (match) args = [match.path];
-        } catch { /* fallback to empty args */ }
+    async function resolveArgs(): Promise<unknown[]> {
+      if (resolvedArgs) return resolvedArgs;
+      if (!projectName) return [];
+      try {
+        const res = await fetch("/api/projects");
+        const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+        const match = json.data?.find((p) => p.name === projectName);
+        resolvedArgs = match ? [match.path] : [];
+      } catch {
+        resolvedArgs = [];
       }
+      return resolvedArgs;
+    }
+
+    async function attempt() {
+      const args = await resolveArgs();
+      if (cancelled) return;
       window.dispatchEvent(new CustomEvent("ext:command:execute", {
         detail: { command, args },
       }));
     }
-    trigger();
-  }, [panel, viewType, metadata?.projectName]);
+
+    // First attempt after short delay (let WS connect), then retry every 2s
+    const initialTimer = setTimeout(() => {
+      if (!cancelled) attempt();
+    }, 500);
+    const retryTimer = setInterval(() => {
+      if (!cancelled) attempt();
+    }, 2_000);
+
+    return () => { cancelled = true; clearTimeout(initialTimer); clearInterval(retryTimer); };
+  }, [panel, viewType, projectName]);
 
   // Timeout: if panel doesn't appear within 10s, show error
   useEffect(() => {

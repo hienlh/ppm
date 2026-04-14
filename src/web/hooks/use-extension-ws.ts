@@ -121,12 +121,14 @@ export function useExtensionWs(enabled = true) {
             html: "",
           });
           // Open a tab — use stable viewType slug as identifier (survives reload)
+          // Include projectName so reload can resolve project path for re-trigger
+          const currentProject = useTabStore.getState().currentProject;
           useTabStore.getState().openTab({
             type: "extension",
             title: msg.title,
             projectId: null,
             closable: true,
-            metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
+            metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(currentProject && { projectName: currentProject }) },
           });
           break;
         }
