@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Terminal,
   MessageSquare,
-  GitBranch,
   GitCommitHorizontal,
+  GitBranch,
+  Puzzle,
   Settings,
   Database,
   Search,
@@ -13,7 +14,8 @@ import {
   Loader2,
   Globe,
   Mic,
-  Puzzle,
+  RefreshCw,
+  Plus,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -37,6 +39,19 @@ interface CommandItem {
 }
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
+
+/** Map extension icon string names to lucide components */
+const EXT_ICON_MAP: Record<string, React.ElementType> = {
+  "git-branch": GitBranch,
+  "database": Database,
+  "refresh": RefreshCw,
+  "plus": Plus,
+  "terminal": Terminal,
+  "settings": Settings,
+  "search": Search,
+  "file-code": FileCode,
+  "globe": Globe,
+};
 
 /** Format a keybinding combo for display (e.g. "Mod+G" → "⌘G" on Mac, "Ctrl+G" on others) */
 function formatShortcut(combo: string): string {
@@ -162,7 +177,6 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action", shortcut: formatShortcut(getBinding("open-chat")) },
       { id: "new-file", label: "New File", icon: FilePlus, action: () => { useTabStore.getState().openNewFile(); onClose(); }, keywords: "create untitled blank empty", group: "action", shortcut: formatShortcut(getBinding("new-file")) },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
-      { id: "git-graph", label: "Git Graph", icon: GitBranch, action: () => { const p = useProjectStore.getState().activeProject; window.dispatchEvent(new CustomEvent("ext:command:execute", { detail: { command: "git-graph.view", args: p ? [p.path] : [] } })); onClose(); }, keywords: "branch history log", group: "action", shortcut: formatShortcut(getBinding("open-git-graph")) },
       { id: "ports", label: "Port Forwarding", icon: Globe, action: openNewTab("ports", "Ports"), keywords: "web preview localhost port forward tunnel url", group: "action" },
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
@@ -180,23 +194,30 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       },
     ];
 
-    // Append extension-contributed commands
-    const extCmds: CommandItem[] = (extContributions?.commands ?? []).map((cmd) => ({
-      id: `ext:${cmd.command}`,
-      label: cmd.title,
-      hint: cmd.category,
-      icon: Puzzle,
-      group: "action" as const,
-      keywords: `extension ${cmd.command} ${cmd.category ?? ""}`,
-      action: () => {
-        const args: unknown[] = [];
-        if (activeProject?.path) args.push(activeProject.path);
-        window.dispatchEvent(new CustomEvent("ext:command:execute", {
-          detail: { command: cmd.command, args },
-        }));
-        onClose();
-      },
-    }));
+    // Append extension-contributed commands (with keybinding shortcuts, respecting user overrides)
+    const extKbs = extContributions?.keybindings ?? [];
+    const extCmds: CommandItem[] = (extContributions?.commands ?? []).map((cmd) => {
+      const kb = extKbs.find((k) => k.command === cmd.command);
+      const overrideCombo = kb ? getBinding(`ext:${kb.command}`) : "";
+      const shortcutCombo = overrideCombo || (kb ? ((isMac && kb.mac) ? kb.mac : kb.key) : "");
+      return {
+        id: `ext:${cmd.command}`,
+        label: cmd.title,
+        hint: cmd.category,
+        icon: (cmd.icon && EXT_ICON_MAP[cmd.icon]) || Puzzle,
+        group: "action" as const,
+        keywords: `extension ${cmd.command} ${cmd.category ?? ""}`,
+        shortcut: shortcutCombo ? formatShortcut(shortcutCombo) : undefined,
+        action: () => {
+          const args: unknown[] = [];
+          if (activeProject?.path) args.push(activeProject.path);
+          window.dispatchEvent(new CustomEvent("ext:command:execute", {
+            detail: { command: cmd.command, args },
+          }));
+          onClose();
+        },
+      };
+    });
 
     return [...builtIn, ...extCmds];
   }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions]);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { RotateCcw, AlertTriangle, Lock } from "lucide-react";
+import { RotateCcw, AlertTriangle, Lock, Puzzle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   KEY_ACTIONS,
@@ -8,6 +8,7 @@ import {
   comboFromEvent,
   type KeyCategory,
 } from "@/stores/keybindings-store";
+import { useExtensionStore } from "@/stores/extension-store";
 
 const CATEGORIES: { key: KeyCategory; label: string }[] = [
   { key: "general", label: "General" },
@@ -104,6 +105,9 @@ function ShortcutBadge({
 
 export function KeyboardShortcutsSection() {
   const { getBinding, resetBinding, resetAll, overrides } = useKeybindingsStore();
+  const extContributions = useExtensionStore((s) => s.contributions);
+  const extKeybindings = extContributions?.keybindings ?? [];
+  const extCommands = extContributions?.commands ?? [];
 
   return (
     <div className="space-y-3">
@@ -177,6 +181,47 @@ export function KeyboardShortcutsSection() {
           </div>
         );
       })}
+
+      {/* Extension-contributed keybindings */}
+      {extKeybindings.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+            Extensions
+          </span>
+          <div className="space-y-0.5">
+            {extKeybindings.map((kb) => {
+              const cmd = extCommands.find((c) => c.command === kb.command);
+              const label = cmd?.title ?? kb.command;
+              const actionId = `ext:${kb.command}`;
+              const currentCombo = getBinding(actionId) || kb.key;
+              const isOverridden = actionId in overrides;
+              return (
+                <div
+                  key={actionId}
+                  className="flex items-center justify-between py-1 px-1 rounded hover:bg-surface-elevated/50 transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Puzzle className="size-3 text-muted-foreground shrink-0" />
+                    <span className="text-xs text-foreground">{label}</span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0 ml-2">
+                    <ShortcutBadge actionId={actionId} combo={currentCombo} />
+                    {isOverridden && (
+                      <button
+                        onClick={() => resetBinding(actionId)}
+                        className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-foreground hover:bg-surface-elevated transition-colors"
+                        title="Reset to default"
+                      >
+                        <RotateCcw className="size-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

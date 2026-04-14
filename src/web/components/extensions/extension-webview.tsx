@@ -94,6 +94,30 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     return () => { cancelled = true; clearTimeout(initialTimer); clearInterval(retryTimer); };
   }, [panel, viewType, projectName]);
 
+  // When project switches while panel exists, re-dispatch command with new project path
+  const prevProjectRef = useRef(currentProject);
+  useEffect(() => {
+    if (!panel || !viewType || !currentProject || currentProject === prevProjectRef.current) {
+      prevProjectRef.current = currentProject;
+      return;
+    }
+    prevProjectRef.current = currentProject;
+    // Resolve new project path and dispatch command
+    (async () => {
+      try {
+        const res = await fetch("/api/projects");
+        const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+        const match = json.data?.find((p: { name: string }) => p.name === currentProject);
+        if (match) {
+          const command = viewType.includes(".") ? viewType : `${viewType}.view`;
+          window.dispatchEvent(new CustomEvent("ext:command:execute", {
+            detail: { command, args: [match.path] },
+          }));
+        }
+      } catch {}
+    })();
+  }, [panel, viewType, currentProject]);
+
   // Timeout: if panel doesn't appear within 10s, show error
   useEffect(() => {
     if (panel) { setTimedOut(false); return; }

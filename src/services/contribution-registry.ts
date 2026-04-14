@@ -1,4 +1,4 @@
-import type { ExtensionContributes, ContributedCommand, ContributedView, ContributedMenu } from "../types/extension.ts";
+import type { ExtensionContributes, ContributedCommand, ContributedView, ContributedMenu, ContributedKeybinding } from "../types/extension.ts";
 
 /**
  * In-memory registry of all contribution points from enabled extensions.
@@ -9,6 +9,7 @@ class ContributionRegistry {
   private views = new Map<string, Map<string, ContributedView & { extId: string }>>();
   private configs = new Map<string, Record<string, unknown>>();
   private menus = new Map<string, Array<ContributedMenu & { extId: string }>>();
+  private keybindings: Array<ContributedKeybinding & { extId: string }> = [];
 
   register(extId: string, contributes: ExtensionContributes): void {
     if (contributes.commands) {
@@ -37,6 +38,11 @@ class ContributionRegistry {
         }
       }
     }
+    if (contributes.keybindings) {
+      for (const kb of contributes.keybindings) {
+        this.keybindings.push({ ...kb, extId });
+      }
+    }
   }
 
   unregister(extId: string): void {
@@ -51,6 +57,7 @@ class ContributionRegistry {
     for (const [location, items] of this.menus) {
       this.menus.set(location, items.filter((m) => m.extId !== extId));
     }
+    this.keybindings = this.keybindings.filter((kb) => kb.extId !== extId);
     this.configs.delete(extId);
   }
 
@@ -71,6 +78,10 @@ class ContributionRegistry {
 
   getViewLocations(): string[] {
     return [...this.views.keys()];
+  }
+
+  getKeybindings(): Array<ContributedKeybinding & { extId: string }> {
+    return [...this.keybindings];
   }
 
   getConfiguration(extId?: string): Record<string, Record<string, unknown>> {
@@ -95,6 +106,7 @@ class ContributionRegistry {
       commands: this.getCommands(),
       views: viewsByLocation,
       menus: menusByLocation,
+      keybindings: this.getKeybindings(),
       configuration: this.getConfiguration(),
     };
   }
@@ -104,6 +116,7 @@ class ContributionRegistry {
     this.views.clear();
     this.configs.clear();
     this.menus.clear();
+    this.keybindings = [];
   }
 }
 

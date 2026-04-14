@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/extension.ts";
-import { getExtensions, getExtensionById, insertExtension, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
+import { getExtensions, getExtensionById, insertExtension, updateExtension, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import { RpcChannel } from "./extension-rpc.ts";
 import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
@@ -196,7 +196,6 @@ class ExtensionService {
   async setEnabled(id: string, enabled: boolean): Promise<void> {
     const row = getExtensionById(id);
     if (!row) throw new Error(`Extension ${id} not found`);
-    const { updateExtension } = await import("./db.service.ts");
     updateExtension(id, { enabled: enabled ? 1 : 0 });
     if (enabled && !this.activatedIds.has(id)) await this.activate(id);
     else if (!enabled && this.activatedIds.has(id)) await this.deactivate(id);
@@ -217,11 +216,21 @@ class ExtensionService {
     ensureExtensionsDir(resolve(getPpmDir(), "extensions"));
     const manifests = await this.discover();
     for (const m of manifests) {
-      if (!getExtensionById(m.id)) {
+      const existing = getExtensionById(m.id);
+      if (!existing) {
         insertExtension({
           id: m.id, version: m.version,
           display_name: m.displayName ?? null, description: m.description ?? null,
           icon: m.icon ?? null, enabled: 1, manifest: JSON.stringify(m),
+        });
+      } else {
+        // Always sync manifest from disk so new contributes (keybindings, etc.) are picked up
+        updateExtension(m.id, {
+          version: m.version,
+          display_name: m.displayName ?? null,
+          description: m.description ?? null,
+          icon: m.icon ?? null,
+          manifest: JSON.stringify(m),
         });
       }
     }

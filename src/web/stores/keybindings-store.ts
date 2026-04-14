@@ -34,7 +34,6 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "open-chat", label: "Open Chat", category: "tabs", defaultKey: "Mod+L" },
   { id: "open-terminal", label: "Open Terminal", category: "tabs", defaultKey: "Mod+'" },
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
-  { id: "open-git-graph", label: "Git Graph", category: "tabs", defaultKey: "Mod+G" }, // triggers ext:command:execute git-graph.view
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
   { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
   { id: "voice-input", label: "Voice Input", category: "general", defaultKey: "Mod+Shift+V", note: "Toggle speech-to-text in chat" },
@@ -62,7 +61,7 @@ interface ParsedCombo {
   key: string; // lowercase
 }
 
-function parseCombo(combo: string): ParsedCombo {
+export function parseCombo(combo: string): ParsedCombo {
   const parts = combo.split("+");
   const result: ParsedCombo = { ctrl: false, meta: false, alt: false, shift: false, key: "" };
   for (const part of parts) {
@@ -82,7 +81,7 @@ function parseCombo(combo: string): ParsedCombo {
   return result;
 }
 
-function eventMatchesCombo(e: KeyboardEvent, combo: ParsedCombo): boolean {
+export function eventMatchesCombo(e: KeyboardEvent, combo: ParsedCombo): boolean {
   if (e.ctrlKey !== combo.ctrl) return false;
   if (e.metaKey !== combo.meta) return false;
   if (e.altKey !== combo.alt) return false;

@@ -473,6 +473,18 @@ window.addEventListener('message', (event) => {
         if (!msg.result.ok) {
           document.getElementById('status-text').textContent = 'Fetch failed: ' + (msg.result.error || 'Unknown error');
         }
+      } else if (!msg.result.ok && msg.action === 'createBranch' && msg.result.error && msg.result.error.includes('already exists')) {
+        // Extract branch name from error: "fatal: a branch named 'X' already exists"
+        const branchMatch = msg.result.error.match(/branch named '([^']+)'/);
+        const branchName = branchMatch ? branchMatch[1] : 'this branch';
+        showDialog({
+          title: 'Branch Already Exists',
+          message: 'A branch named <b>' + escHtml(branchName) + '</b> already exists, do you want to replace it with this new branch?',
+          rawMessage: true,
+          confirmLabel: 'Yes, replace the existing branch',
+          cancelLabel: 'No, choose another branch name',
+          onConfirm: () => gitAction('createBranch', { ...msg.args, force: true }),
+        });
       } else if (!msg.result.ok) {
         showToast('Git action failed: ' + (msg.result.error || 'Unknown error'), 'error');
       }
@@ -1550,7 +1562,10 @@ function showDialog(opts) {
   const dialog = document.createElement('div');
   dialog.className = 'dialog';
   dialog.innerHTML = '<h3>' + escHtml(opts.title || 'Dialog') + '</h3>';
-  if (opts.message) dialog.innerHTML += '<p' + (opts.destructive ? ' class="warning"' : '') + '>' + escHtml(opts.message) + '</p>';
+  if (opts.message) {
+    const msgHtml = opts.rawMessage ? opts.message : escHtml(opts.message);
+    dialog.innerHTML += '<p' + (opts.destructive ? ' class="warning"' : '') + '>' + msgHtml + '</p>';
+  }
 
   let inputEl = null;
   if (opts.input) {
@@ -1575,7 +1590,7 @@ function showDialog(opts) {
   const actions = document.createElement('div');
   actions.className = 'dialog-actions';
   const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'Cancel';
+  cancelBtn.textContent = opts.cancelLabel || 'Cancel';
   cancelBtn.className = 'secondary';
   cancelBtn.addEventListener('click', () => overlay.remove());
   const confirmBtn = document.createElement('button');

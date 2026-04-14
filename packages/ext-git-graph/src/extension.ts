@@ -33,6 +33,10 @@ interface VscodeApi {
 
 let baseUrl = "";
 
+// Track active panel state for reuse across project switches
+let activePanel: ReturnType<VscodeApi["window"]["createWebviewPanel"]> | null = null;
+let activeProjectPath = "";
+
 function getSettings(context: ExtensionContext): GitGraphSettings {
   return { ...DEFAULT_SETTINGS, ...(context.globalState.get<Partial<GitGraphSettings>>("settings") || {}) };
 }
@@ -119,40 +123,53 @@ function openGitGraph(
   context: ExtensionContext,
   projectPath: string,
 ): void {
+  // If panel exists and project changed, reload data in the existing panel
+  if (activePanel && activeProjectPath !== projectPath) {
+    activeProjectPath = projectPath;
+    reloadPanelData(vscode, activePanel, projectPath, context);
+    return;
+  }
+  // If panel exists with same project, nothing to do
+  if (activePanel) return;
+
+  activeProjectPath = projectPath;
   const dirName = projectPath.split(/[\\/]/).filter(Boolean).pop() || "Git Graph";
   const panel = vscode.window.createWebviewPanel(
     "git-graph.view",
     `Git Graph: ${dirName}`,
     vscode.ViewColumn.Active,
   );
+  activePanel = panel;
 
   panel.webview.html = getWebviewHtml();
 
   const msgDisposable = panel.webview.onDidReceiveMessage(async (raw: unknown) => {
     const msg = raw as WebviewToExt;
+    // Always use activeProjectPath (not closure) so project switches take effect
+    const pp = activeProjectPath;
     try {
       switch (msg.command) {
         case "ready":
-          await handleRepoInfo(vscode, panel, projectPath);
-          await handleRequestCommits(vscode, panel, projectPath, context);
-          handleUncommittedStatus(vscode, panel, projectPath); // fire-and-forget
+          await handleRepoInfo(vscode, panel, pp);
+          await handleRequestCommits(vscode, panel, pp, context);
+          handleUncommittedStatus(vscode, panel, pp); // fire-and-forget
           break;
         case "requestRepoInfo":
-          await handleRepoInfo(vscode, panel, projectPath);
+          await handleRepoInfo(vscode, panel, pp);
           break;
         case "requestCommits":
-          await handleRequestCommits(vscode, panel, projectPath, context, msg.maxCommits, msg.skip, msg.branch);
+          await handleRequestCommits(vscode, panel, pp, context, msg.maxCommits, msg.skip, msg.branch);
           break;
         case "requestCommitDetails":
-          await handleCommitDetails(vscode, panel, projectPath, msg.hash);
+          await handleCommitDetails(vscode, panel, pp, msg.hash);
           break;
         case "requestUncommitted":
-          await handleUncommittedStatus(vscode, panel, projectPath);
+          await handleUncommittedStatus(vscode, panel, pp);
           break;
         case "openDiff": {
-          assertSafeFilePaths([msg.filePath], projectPath);
+          assertSafeFilePaths([msg.filePath], pp);
           const fileName = msg.filePath.split(/[\\/]/).pop() || msg.filePath;
-          const projectName = await resolveProjectName(projectPath);
+          const projectName = await resolveProjectName(pp);
           await vscode.window.openTab("git-diff", `${fileName} (${msg.hash.substring(0, 7)})`, projectName, {
             projectName,
             filePath: msg.filePath,
@@ -168,14 +185,14 @@ function openGitGraph(
           const updated = await saveSetting(context, msg.key, msg.value);
           await panel.webview.postMessage({ command: "loadSettings", data: updated });
           if (["maxCommits", "firstParentOnly", "commitOrdering"].includes(msg.key)) {
-            await handleRequestCommits(vscode, panel, projectPath, context, updated.maxCommits);
+            await handleRequestCommits(vscode, panel, pp, context, updated.maxCommits);
           }
           break;
         }
         case "requestUserDetails": {
           const [nameResult, emailResult] = await Promise.all([
-            spawnGit(vscode, ["config", "user.name"], projectPath),
-            spawnGit(vscode, ["config", "user.email"], projectPath),
+            spawnGit(vscode, ["config", "user.name"], pp),
+            spawnGit(vscode, ["config", "user.email"], pp),
           ]);
           await panel.webview.postMessage({
             command: "loadUserDetails",
@@ -184,11 +201,11 @@ function openGitGraph(
           break;
         }
         case "updateUserDetails": {
-          if (msg.name !== undefined) await spawnGit(vscode, ["config", "user.name", msg.name], projectPath);
-          if (msg.email !== undefined) await spawnGit(vscode, ["config", "user.email", msg.email], projectPath);
+          if (msg.name !== undefined) await spawnGit(vscode, ["config", "user.name", msg.name], pp);
+          if (msg.email !== undefined) await spawnGit(vscode, ["config", "user.email", msg.email], pp);
           const [n, e] = await Promise.all([
-            spawnGit(vscode, ["config", "user.name"], projectPath),
-            spawnGit(vscode, ["config", "user.email"], projectPath),
+            spawnGit(vscode, ["config", "user.name"], pp),
+            spawnGit(vscode, ["config", "user.email"], pp),
           ]);
           await panel.webview.postMessage({ command: "loadUserDetails", data: { name: n.stdout.trim(), email: e.stdout.trim() } });
           break;
@@ -196,23 +213,23 @@ function openGitGraph(
         case "addRemote": {
           const remoteUrl = String(msg.url || "");
           if (!remoteUrl || remoteUrl.startsWith("-")) throw new Error("Invalid remote URL");
-          await spawnGit(vscode, ["remote", "add", assertValidRemote(msg.name), remoteUrl], projectPath);
-          await handleRepoInfo(vscode, panel, projectPath);
+          await spawnGit(vscode, ["remote", "add", assertValidRemote(msg.name), remoteUrl], pp);
+          await handleRepoInfo(vscode, panel, pp);
           break;
         }
         case "removeRemote":
-          await spawnGit(vscode, ["remote", "remove", assertValidRemote(msg.name)], projectPath);
-          await handleRepoInfo(vscode, panel, projectPath);
+          await spawnGit(vscode, ["remote", "remove", assertValidRemote(msg.name)], pp);
+          await handleRepoInfo(vscode, panel, pp);
           break;
         case "editRemoteUrl": {
           const editUrl = String(msg.url || "");
           if (!editUrl || editUrl.startsWith("-")) throw new Error("Invalid remote URL");
-          await spawnGit(vscode, ["remote", "set-url", assertValidRemote(msg.name), editUrl], projectPath);
-          await handleRepoInfo(vscode, panel, projectPath);
+          await spawnGit(vscode, ["remote", "set-url", assertValidRemote(msg.name), editUrl], pp);
+          await handleRepoInfo(vscode, panel, pp);
           break;
         }
         case "requestOwnerRepo": {
-          const result = await spawnGit(vscode, ["remote", "get-url", "origin"], projectPath);
+          const result = await spawnGit(vscode, ["remote", "get-url", "origin"], pp);
           const url = result.stdout.trim();
           const match = url.match(/[/:]([^/]+)\/([^/.]+?)(?:\.git)?$/);
           await panel.webview.postMessage({
@@ -223,17 +240,17 @@ function openGitGraph(
         }
         case "gitAction":
           if (msg.args?.files && Array.isArray(msg.args.files)) {
-            assertSafeFilePaths(msg.args.files as string[], projectPath);
+            assertSafeFilePaths(msg.args.files as string[], pp);
           }
           if (msg.action === "discard") {
-            await handleDiscard(vscode, panel, projectPath, context, msg.args);
+            await handleDiscard(vscode, panel, pp, context, msg.args);
           } else {
-            await handleGitAction(vscode, panel, projectPath, context, msg.action, msg.args);
+            await handleGitAction(vscode, panel, pp, context, msg.action, msg.args);
           }
           break;
         case "openFile": {
-          assertSafeFilePaths([msg.filePath], projectPath);
-          const projectName = await resolveProjectName(projectPath);
+          assertSafeFilePaths([msg.filePath], pp);
+          const projectName = await resolveProjectName(pp);
           await vscode.window.openTab("editor", msg.filePath, projectName, {
             projectName,
             filePath: msg.filePath,
@@ -256,14 +273,28 @@ function openGitGraph(
   // Poll uncommitted changes every 5 seconds
   let disposed = false;
   const uncommittedPollTimer = setInterval(() => {
-    if (!disposed) handleUncommittedStatus(vscode, panel, projectPath);
+    if (!disposed) handleUncommittedStatus(vscode, panel, activeProjectPath);
   }, 5_000);
 
   panel.onDidDispose(() => {
     disposed = true;
+    activePanel = null;
+    activeProjectPath = "";
     clearInterval(uncommittedPollTimer);
     msgDisposable.dispose();
   });
+}
+
+/** Reload all data in existing panel for a new project path */
+async function reloadPanelData(
+  vscode: VscodeApi,
+  panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
+  projectPath: string,
+  context: ExtensionContext,
+): Promise<void> {
+  await handleRepoInfo(vscode, panel, projectPath);
+  await handleRequestCommits(vscode, panel, projectPath, context);
+  handleUncommittedStatus(vscode, panel, projectPath);
 }
 
 async function handleRepoInfo(
@@ -404,6 +435,7 @@ async function handleGitAction(
   await panel.webview.postMessage({
     command: "actionResult",
     action,
+    args,
     result: { ok, error: ok ? undefined : result.stderr.trim() },
   });
 
@@ -590,7 +622,7 @@ function buildGitActionArgs(action: string, args: Record<string, unknown>): stri
 
   switch (action) {
     case "checkout": return ["checkout", assertValidRef(args.target, "target")];
-    case "createBranch": return ["branch", assertValidRef(args.name, "name"), ...(args.startPoint ? [assertValidHash(args.startPoint)] : [])];
+    case "createBranch": return ["branch", ...(args.force ? ["-f"] : []), assertValidRef(args.name, "name"), ...(args.startPoint ? [assertValidHash(args.startPoint)] : [])];
     case "deleteBranch": return ["branch", args.force ? "-D" : "-d", assertValidRef(args.name, "name")];
     case "merge": {
       const mergeArgs = ["merge", assertValidRef(args.branch, "branch")];

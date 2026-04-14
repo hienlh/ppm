@@ -23,6 +23,7 @@ export interface ExtensionContributes {
   views?: Record<string, ContributedView[]>;
   configuration?: { properties?: Record<string, ConfigProperty> };
   menus?: Record<string, ContributedMenu[]>;
+  keybindings?: ContributedKeybinding[];
 }
 
 export interface ContributedCommand {
@@ -50,6 +51,13 @@ export interface ContributedMenu {
   command: string;
   when?: string;
   group?: string;
+}
+
+export interface ContributedKeybinding {
+  command: string;
+  key: string;
+  mac?: string;
+  when?: string;
 }
 
 /** Runtime extension info returned by API */

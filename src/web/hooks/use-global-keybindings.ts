@@ -2,7 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
-import { useKeybindingsStore } from "@/stores/keybindings-store";
+import { useKeybindingsStore, parseCombo, eventMatchesCombo } from "@/stores/keybindings-store";
+import { useExtensionStore } from "@/stores/extension-store";
 
 /** Dispatch this event to open the command palette from anywhere, optionally with initial query */
 export function openCommandPalette(initialQuery?: string) {
@@ -128,16 +129,6 @@ export function useGlobalKeybindings() {
         }
       }
 
-      // Open Git Graph (extension)
-      if (match(e, "open-git-graph")) {
-        e.preventDefault();
-        const project = useProjectStore.getState().activeProject;
-        window.dispatchEvent(new CustomEvent("ext:command:execute", {
-          detail: { command: "git-graph.view", args: project ? [project.path] : [] },
-        }));
-        return;
-      }
-
       // Open settings (sidebar)
       if (match(e, "open-settings")) {
         e.preventDefault();
@@ -183,6 +174,28 @@ export function useGlobalKeybindings() {
             useTabStore.getState().switchProject(target.name);
           }
           return;
+        }
+      }
+
+      // Extension-contributed keybindings (with user override support)
+      const extKbs = useExtensionStore.getState().contributions?.keybindings;
+      if (extKbs) {
+        const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
+        const { getBinding: getBind } = useKeybindingsStore.getState();
+        for (const kb of extKbs) {
+          // User override via "ext:<command>" key, fallback to extension default
+          const overrideCombo = getBind(`ext:${kb.command}`);
+          const combo = overrideCombo || ((mac && kb.mac) ? kb.mac : kb.key);
+          if (combo && eventMatchesCombo(e, parseCombo(combo))) {
+            e.preventDefault();
+            const project = useProjectStore.getState().activeProject;
+            const args: unknown[] = [];
+            if (project?.path) args.push(project.path);
+            window.dispatchEvent(new CustomEvent("ext:command:execute", {
+              detail: { command: kb.command, args },
+            }));
+            return;
+          }
         }
       }
     }

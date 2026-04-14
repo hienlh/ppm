@@ -8,6 +8,9 @@
     "commands": [
       { "command": "git-graph.view", "title": "Git Graph: View Repository", "icon": "git-branch" }
     ],
+    "keybindings": [
+      { "command": "git-graph.view", "key": "Mod+G" }
+    ],
     "menus": {
       "commandPalette": [
         { "command": "git-graph.view" }
