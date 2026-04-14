@@ -63,6 +63,7 @@ export function registerExtCommands(program: Command): void {
     .description("List installed extensions")
     .action(async () => {
       const { extensionService } = await import("../../services/extension.service.ts");
+      await extensionService.discover(); // populate bundledIds for source column
       const extensions = extensionService.list();
       if (extensions.length === 0) {
         console.log(`${C.dim}No extensions installed.${C.reset}`);
@@ -71,10 +72,11 @@ export function registerExtCommands(program: Command): void {
       const rows = extensions.map((e) => [
         e.id,
         e.version,
+        extensionService.isBundled(e.id) ? `${C.cyan}bundled${C.reset}` : "user",
         e.enabled ? `${C.green}enabled${C.reset}` : `${C.dim}disabled${C.reset}`,
         e.activated ? `${C.green}active${C.reset}` : `${C.dim}inactive${C.reset}`,
       ]);
-      printTable(["ID", "Version", "Enabled", "Status"], rows);
+      printTable(["ID", "Version", "Source", "Enabled", "Status"], rows);
     });
 
   ext

@@ -1,13 +1,13 @@
 # PPM Codebase Summary
 
-**Last Updated:** 2026-04-06
-**Version:** 0.9.10
+**Last Updated:** 2026-04-14
+**Version:** 0.9.85
 **Repository:** PPM (Project & Process Manager) — Multi-provider web IDE/project manager with Claude Agent SDK
 
 **Core Statistics:**
-- **303 files** across CLI, server, web, and test layers
-- **490,667 tokens** total codebase size
-- **492 passing tests** (13 new tests for provider models API)
+- **375 files** across CLI, server, web, packages, and test layers
+- **875,671 tokens** total codebase size (repomix)
+- **500+ passing tests**
 - **Tech Stack:** Bun (runtime), Hono (HTTP), React (UI), Claude Agent SDK (AI)
 
 ---
@@ -60,9 +60,9 @@ src/
 │   ├── account.service.ts       # Account CRUD & encryption
 │   ├── upgrade.service.ts       # Version checking, installation
 │   ├── mcp-config.service.ts    # MCP server CRUD (list, get, set, remove, import)
-│   ├── extension.service.ts     # Extension lifecycle, activation, state management
+│   ├── extension.service.ts     # Extension lifecycle, activation, state management (bundled + user discovery)
 │   ├── extension-installer.ts   # npm install, symlink, removal
-│   ├── extension-manifest.ts    # Parse + discover manifests
+│   ├── extension-manifest.ts    # Parse manifests + bundled discovery from packages/ext-*
 │   ├── extension-rpc.ts         # RPC channel (request/response/events)
 │   ├── extension-host-worker.ts # Worker-side extension loading
 │   ├── contribution-registry.ts # Central registry for commands, views, config
@@ -182,17 +182,17 @@ src/
 │           │   └── git-placeholder.tsx
 │           ├── layout/              # Layout components (13 files)
 │           │   ├── panel-layout.tsx  # Main grid layout (react-resizable-panels)
-│           │   ├── editor-panel.tsx  # Wrapper for tab content within a panel
+│           │   ├── editor-panel.tsx  # Wrapper for tab content within a panel (v0.9.85+: fallback guards)
 │           │   ├── project-bar.tsx   # 52px sidebar with project avatars, share popover
 │           │   ├── project-bottom-sheet.tsx # Mobile project switcher
 │           │   ├── sidebar.tsx       # Left sidebar (Explorer/Git/Database/Settings tabs)
-│           │   ├── tab-bar.tsx       # Tab bar with icons, connection color display
+│           │   ├── tab-bar.tsx       # Tab bar with icons, connection color display (v0.9.85+: fallback guards)
 │           │   ├── draggable-tab.tsx  # Draggable tab with context menu, rename, connection color
-│           │   ├── tab-content.tsx    # Router for tab content
+│           │   ├── tab-content.tsx    # Router for tab content (v0.9.85+: fallback guards)
 │           │   ├── split-drop-overlay.tsx # Drop zone for tab splitting
 │           │   ├── command-palette.tsx # Global command palette (Shift+Shift, DB table search)
 │           │   ├── add-project-form.tsx # Modal form to add projects
-│           │   ├── mobile-nav.tsx    # Bottom navigation for mobile
+│           │   ├── mobile-nav.tsx    # Bottom navigation for mobile (v0.9.85+: fallback guards)
 │           │   └── mobile-drawer.tsx # Mobile overlay drawer
 │           ├── database/            # Database management (5 files, 300+ LOC)
 │           │   ├── database-sidebar.tsx # Sidebar tab container (connection list, form)
@@ -376,6 +376,26 @@ GitStatusPanel refreshes: GET /api/project/:name/git/status
     ↓
 UI updates staged/unstaged lists
 ```
+
+### Tab System Safety (v0.9.85+)
+
+All tab routing and rendering components now include fallback guards for unknown tab types:
+
+**Components Updated:**
+- `tab-bar.tsx` — Tab item rendering with fallback icon/label
+- `mobile-nav.tsx` — Mobile tab selection with fallback handling
+- `tab-content.tsx` — Content router with "Unknown tab type" fallback
+- `editor-panel.tsx` — Panel wrapper with graceful unknown type handling
+
+**Behavior:**
+- Unknown tab types no longer crash the UI
+- Fallback displays icon + tab identifier
+- Users can still close/manage unknown tabs
+- Enables safe extension tab additions without core UI changes
+
+**Motivation:** Support future extension-contributed tab types without requiring core UI updates.
+
+---
 
 ## Critical Types
 
@@ -623,6 +643,109 @@ ppm ext enable @ppm/ext-db        # Enable
 ppm ext disable @ppm/ext-db       # Disable
 ppm ext dev /path/to/src          # Dev symlink
 ```
+
+### Bundled Extensions (v0.9.85+)
+
+PPM ships with pre-built extensions in `packages/ext-*` that are auto-discovered and available out-of-the-box:
+
+**Discovery:**
+- `discoverBundledManifests()` scans `packages/` for directories matching `ext-*`
+- Bundled extensions loaded during `discover()` before user-installed extensions
+- User-installed extensions override bundled if same ID (user takes precedence)
+
+**Behavior:**
+- `ppm ext list` shows "Source" column: `bundled` (cyan) vs `user`
+- Bundled extensions cannot be removed (`ppm ext remove` rejected with helpful message)
+- Use `ppm ext disable` to turn off bundled extensions
+- Removal protection prevents accidental deletion of core extensions
+
+**Current Bundled Extensions:**
+- `@ppm/ext-git-graph` — Interactive git history visualization with workflow actions
+
+**Architecture:**
+- Extension paths tracked in `extensionService.extensionPaths` (ID → directory)
+- Bundled IDs tracked in `extensionService.bundledIds` Set
+- `isBundled(id)` public method for checking extension source
+
+---
+
+## ext-git-graph Extension (Git History Visualization)
+
+### Overview
+The git-graph extension provides an interactive SVG visualization of repository commit history with comprehensive git workflow support. Implements the vscode-git-graph deterministic layout algorithm with faithful branch path rendering.
+
+### Key Features
+
+**Graph Visualization:**
+- Single SVG model with continuous Bézier branch paths for smooth merge visualization
+- Deterministic lane assignment algorithm with greedy color reuse for branch lanes
+- Shadow lines for visual depth and branch continuity
+- Proper HEAD/stash node rendering (hollow circle for HEAD, nested circles for stash)
+- Mobile SVG alignment: gridY matches 44px CSS row height for responsive layouts
+
+**Git Workflow Actions:**
+- **File Operations:** Stage/unstage files, open in editor, discard changes
+- **Commits:** Create commits directly from webview with message and file selection
+- **Branch Operations:** Stash/reset/clean with context menu and safety warnings
+- **Repository:** Auto-fetch with configurable interval, manual fetch button
+- **Filters:** Branch/tag/remote filters, tree/list view toggle
+
+**UI Components:**
+- Resizable graph column for flexible workspace adjustment
+- Branch filter dropdown for quick navigation
+- Tree/list view toggle for different visualization modes
+- Commit detail panel with file diffs and action buttons
+- Context menus with destructive operation warnings
+
+### Architecture
+
+**Location:** `packages/ext-git-graph/`
+
+**Files:**
+- `extension.ts` (370 LOC) — RPC handlers, git operations, settings management
+- `webview-html.ts` (443 additions) — Faithful SVG graph rendering with deterministic layout
+- `types.ts` — Extension settings, message types, git operation definitions
+- `git-log-parser.ts` — Parse git log with branches, tags, remotes, stashes
+- `extension.test.ts` (230+ lines) — Integration tests for RPC handlers
+- `webview-html.test.ts` — Graph rendering and layout tests
+
+**RPC Protocol:**
+- `gitStatus()` — Get current repo state
+- `gitLog()` — Fetch commit history
+- `stage(path)` / `unstage(path)` — File staging
+- `commit(message, files)` — Create commit
+- `stash()` / `reset(ref)` / `clean()` — Branch operations
+- `openFile(path)` — Open in editor (IPC to main window)
+
+**Settings:**
+- `autoFetchInterval: number` — Seconds between auto-fetches (0 = disabled)
+
+### Security
+
+**Path Validation:**
+- `assertSafePath()` in extension-rpc-handlers ensures git operations only on registered project paths
+- Prevents directory traversal attacks
+- Cross-project workspace safety via RPC sandboxing
+
+**XSS Prevention:**
+- `escHtml()` applied to parent hashes and file status in detail panel
+- Sanitized commit messages and metadata display
+
+### Mobile & Responsive
+
+- Long-press support for context menus on touch devices
+- Responsive CSS with flexible column sizing
+- Dark/light theme support via CSS variables
+- Touch-friendly button sizing (44px minimum)
+
+### Testing
+
+**62 unit tests** covering:
+- Git log parsing (commits, branches, tags, stashes)
+- Parser edge cases (merge commits, rebases, detached HEAD)
+- RPC handler validation and error cases
+- Webview HTML rendering and layout algorithms
+- Integration with main extension lifecycle
 
 ---
 

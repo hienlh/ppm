@@ -38,7 +38,7 @@ export function readManifestAt(dir: string): ExtensionManifest | null {
   }
 }
 
-/** Scan extensions directory for all valid manifests */
+/** Scan extensions directory (node_modules) for all valid manifests */
 export async function discoverManifests(extensionsDir: string): Promise<ExtensionManifest[]> {
   const manifests: ExtensionManifest[] = [];
   if (!existsSync(extensionsDir)) return manifests;
@@ -60,6 +60,23 @@ export async function discoverManifests(extensionsDir: string): Promise<Extensio
       const manifest = readManifestAt(entryPath);
       if (manifest) manifests.push(manifest);
     }
+  }
+  return manifests;
+}
+
+export type BundledManifest = ExtensionManifest & { _dir: string };
+
+/** Scan packages directory for bundled extensions (ext-* dirs) */
+export async function discoverBundledManifests(packagesDir: string): Promise<BundledManifest[]> {
+  const manifests: BundledManifest[] = [];
+  if (!existsSync(packagesDir)) return manifests;
+
+  const entries = await readdir(packagesDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith("ext-")) continue;
+    const dir = resolve(packagesDir, entry.name);
+    const manifest = readManifestAt(dir);
+    if (manifest) manifests.push({ ...manifest, _dir: dir });
   }
   return manifests;
 }

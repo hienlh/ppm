@@ -2,47 +2,64 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.72
+**Current Version:** v0.9.85
 
 ---
 
-## [Unreleased] — Slash-Discovery Module + Git-Graph Faithful Port (in progress)
+## [Unreleased] — Bundled Extensions + Git-Graph Refinement (in progress)
 
 ### Added
-- **Git-Graph Faithful Port** — Complete port of vscode-git-graph `graph.ts` to ext-git-graph webview
+- **Bundled Extensions Support** — Auto-discover extensions from packages/ext-* directories
+  - PPM discovers bundled extensions (e.g., ext-git-graph) without manual installation
+  - Bundled extensions available out-of-the-box with all PPM instances
+  - `ppm ext list` shows "Source" column (bundled/user) for transparency
+  - Bundled extension removal protection: prevents accidental deletion, suggests `ppm ext disable` instead
+  - User-installed extensions override bundled with same ID (user takes precedence)
+  - Extension paths tracked separately for bundled vs node_modules locations
+
+- **Git-Graph UI Improvements** — Enhanced git-graph extension with comprehensive git workflow
+  - Interactive UI elements: resizable graph column, branch filter dropdown, tree/list view toggle
+  - Git actions: stage/unstage files, commit from webview, stash/reset/clean operations
+  - Uncommitted file actions: open in editor, discard changes, stage for commit
+  - Auto-fetch with configurable interval (autoFetchInterval setting)
+  - Fetch button for manual repository refresh
+  - Context menu with destructive operation warnings
+  - Path traversal validation for security (assertSafePath in RPC handlers)
+  - Fallback guards for all tab type handling (unknown tab types safely ignored)
+
+- **Faithful SVG Graph Rendering** — Port of vscode-git-graph algorithm with deterministic layout
   - Single SVG model with continuous branch paths using Bézier curves
-  - Faithful implementation of determinePath algorithm with unavailable-point tracking
-  - HEAD/stash node rendering (hollow circle for HEAD, nested circles for stash)
-  - Shadow lines for visual depth, greedy color reuse for branches
+  - Deterministic lane assignment algorithm with greedy color reuse
+  - Proper HEAD/stash node rendering (hollow circle for HEAD, nested circles for stash)
+  - Shadow lines for visual depth and branch continuity
   - Mobile SVG alignment: gridY matches 44px CSS row height
-  - XSS fix: escHtml applied to parent hashes and file status in detail panel
+  - XSS security fix: escHtml applied to parent hashes and file status in detail panel
   - Regex ordering fix in formatCommitMessage for proper URL/mention detection
-  - Path validation: assertSafePath allows registered project paths for extensions
   - Removed dot alignment bug that forced rows to 29px
 
-- **Modular Slash-Discovery Engine** — Composable, testable command discovery replacing monolithic `slash-items.service.ts`
-  - Skill root discovery: user-global (`~/.claude/skills/`), env vars, bundled assets
-  - SKILL.md parsing + loose `.md` file + command registry support
-  - Shadowing resolution: project > user > bundled priority hierarchy
-  - Fuzzy search via Levenshtein distance with configurable tolerance
-  - Built-in command registry (9 commands: /skills, /version, /help, etc.)
-  - CLI tool: `ppm skills list|search|info` with JSON output and project filtering
-  - API endpoint: `GET /chat/slash-items?q=<query>` for server-side search
-  - WebSocket interception for /skills and /version commands (execute locally before SDK)
-  - Auto-generated bundled guide skill from docs (`assets/skills/ppm-guide/SKILL.md`)
-
 ### Technical Details
-- **Files Created:**
-  - `src/services/slash-discovery/` — 9 modular files (types, discovery, loading, searching, handlers)
-  - `src/cli/commands/skills-cmd.ts` — CLI command handler
-  - `scripts/generate-ppm-guide.ts` — Guide skill generator
-  - `assets/skills/ppm-guide/SKILL.md` — Auto-generated from docs
 - **Files Modified:**
-  - `src/server/routes/chat.ts` — Integrated discovery module for slash-items endpoint
-  - `src/server/ws/chat.ts` — Intercept /skills, /version before SDK dispatch
-  - `src/cli/index.ts` — Registered skills command
-  - `package.json` — Added `generate:guide` script
-- **Breaking Changes:** None (existing `/chat/slash-items` endpoint preserved, new response includes `type` field)
+  - `src/services/extension-manifest.ts` — Added discoverBundledManifests() to scan packages/ext-* dirs
+  - `src/services/extension.service.ts` — Added extensionPaths Map, bundledIds Set, isBundled() method; updated discover()/activate()/remove() to handle bundled extensions
+  - `src/cli/commands/ext-cmd.ts` — Added "Source" column to `ppm ext list`, calls discover() to populate bundled info
+  - `packages/ext-git-graph/src/webview-html.ts` — Major rewrite: deterministic graph layout (443 additions, 104 deletions)
+  - `packages/ext-git-graph/src/extension.ts` — Git actions, auto-fetch interval, openFile/openSourceControl handlers
+  - `packages/ext-git-graph/src/types.ts` — Added autoFetchInterval to settings, new message types
+  - `src/services/extension-rpc-handlers.ts` — Allow git operations in all registered project paths (not just CWD)
+  - `src/web/components/layout/tab-bar.tsx` — Fallback guard for unknown tab types
+  - `src/web/components/layout/mobile-nav.tsx` — Fallback guard for unknown tab types
+  - `src/web/components/layout/tab-content.tsx` — Fallback guard for unknown tab types
+  - `src/web/components/layout/editor-panel.tsx` — Fallback guard for unknown tab types
+  - `src/web/hooks/use-extension-ws.ts` — Enhanced RPC integration
+- **New Tests:**
+  - `tests/unit/services/extension-manifest.test.ts` — 9 tests for discoverBundledManifests() and manifest parsing
+  - `tests/unit/services/extension-service-bundled.test.ts` — 9 tests for isBundled(), discover(), and removal protection
+- **Type Changes:**
+  - Settings: Added `autoFetchInterval: number` option
+  - Messages: New `openFile`, `openSourceControl` message types from extension
+  - New type: `BundledManifest` (ExtensionManifest with _dir field)
+- **Security:** Path validation ensures extensions can only operate on registered project paths
+- **Breaking Changes:** None (backward compatible)
 
 ---
 

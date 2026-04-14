@@ -4,7 +4,7 @@ import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/exte
 import { getExtensions, getExtensionById, insertExtension, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import { RpcChannel } from "./extension-rpc.ts";
-import { parseManifest, discoverManifests } from "./extension-manifest.ts";
+import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
 import { installExtension, removeExtension, devLinkExtension, ensureExtensionsDir } from "./extension-installer.ts";
 import { registerVscodeCompatHandlers } from "./extension-rpc-handlers.ts";
 import { getPpmDir } from "./ppm-dir.ts";
@@ -15,6 +15,8 @@ class ExtensionService {
   private activatedIds = new Set<string>();
   private workerReady = false;
   private installing = new Set<string>();
+  private extensionPaths = new Map<string, string>();
+  private bundledIds = new Set<string>();
 
   // --- Worker lifecycle ---
 
@@ -54,6 +56,8 @@ class ExtensionService {
     if (this.worker) { this.worker.terminate(); this.worker = null; }
     this.workerReady = false;
     this.activatedIds.clear();
+    this.extensionPaths.clear();
+    this.bundledIds.clear();
     contributionRegistry.clear();
   }
 
@@ -65,7 +69,29 @@ class ExtensionService {
 
   async discover(): Promise<ExtensionManifest[]> {
     ensureExtensionsDir(resolve(getPpmDir(), "extensions"));
-    return discoverManifests(resolve(getPpmDir(), "extensions"));
+
+    // Discover bundled extensions from packages/ext-*
+    const bundledDir = resolve(import.meta.dir, "../../packages");
+    const bundled = await discoverBundledManifests(bundledDir);
+    for (const m of bundled) {
+      this.extensionPaths.set(m.id, m._dir);
+      this.bundledIds.add(m.id);
+    }
+
+    // Discover user-installed extensions
+    const userExtDir = resolve(getPpmDir(), "extensions");
+    const userManifests = await discoverManifests(userExtDir);
+    for (const m of userManifests) {
+      this.extensionPaths.set(m.id, resolve(userExtDir, "node_modules", m.id));
+    }
+
+    // Merge: user overrides bundled if same id (strip _dir to avoid leaking paths)
+    const byId = new Map(bundled.map((m) => {
+      const { _dir, ...manifest } = m;
+      return [m.id, manifest as ExtensionManifest];
+    }));
+    for (const m of userManifests) byId.set(m.id, m);
+    return [...byId.values()];
   }
 
   async install(name: string): Promise<ExtensionManifest> {
@@ -79,6 +105,9 @@ class ExtensionService {
   }
 
   async remove(id: string): Promise<void> {
+    if (this.bundledIds.has(id)) {
+      throw new Error(`Cannot remove bundled extension "${id}". Use 'ppm ext disable ${id}' instead.`);
+    }
     if (this.activatedIds.has(id)) await this.deactivate(id);
     await removeExtension(id, resolve(getPpmDir(), "extensions"));
     contributionRegistry.unregister(id);
@@ -92,7 +121,8 @@ class ExtensionService {
     if (!row.enabled) throw new Error(`Extension ${id} is disabled`);
 
     const manifest: ExtensionManifest = JSON.parse(row.manifest);
-    const extDir = resolve(resolve(getPpmDir(), "extensions"), "node_modules", id);
+    const extDir = this.extensionPaths.get(id)
+      ?? resolve(resolve(getPpmDir(), "extensions"), "node_modules", id);
     const entryPath = resolve(extDir, manifest.main);
     if (!existsSync(entryPath)) throw new Error(`Entry point not found: ${entryPath}`);
 
@@ -211,6 +241,7 @@ class ExtensionService {
   }
 
   isActivated(id: string): boolean { return this.activatedIds.has(id); }
+  isBundled(id: string): boolean { return this.bundledIds.has(id); }
   getExtensionsDir(): string { return resolve(getPpmDir(), "extensions"); }
 
   /** Push current contributions to all connected browser clients */
