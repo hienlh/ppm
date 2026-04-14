@@ -1,0 +1,27 @@
+{
+  "name": "@ppm/ext-git-graph",
+  "version": "0.1.0",
+  "main": "src/extension.ts",
+  "engines": { "ppm": ">=0.9.0" },
+  "activationEvents": ["onCommand:git-graph.view"],
+  "contributes": {
+    "commands": [
+      { "command": "git-graph.view", "title": "Git Graph: View Repository", "icon": "git-branch" }
+    ],
+    "menus": {
+      "commandPalette": [
+        { "command": "git-graph.view" }
+      ]
+    },
+    "configuration": {
+      "properties": {
+        "git-graph.maxCommits": { "type": "number", "default": 300, "description": "Maximum commits to load" },
+        "git-graph.showRemoteBranches": { "type": "boolean", "default": true, "description": "Show remote branches" }
+      }
+    }
+  },
+  "ppm": {
+    "displayName": "Git Graph",
+    "icon": "git-branch"
+  }
+}

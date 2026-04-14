@@ -279,6 +279,78 @@ const value = context.globalState.get("key");
 await context.workspaceState.update("project", "data");
 ```
 
+### Process Spawning (Subprocess Execution)
+
+Extensions needing to run external commands use the RPC `process:spawn` handler. This is essential for extensions that interact with CLIs (git, docker, node, etc.).
+
+```typescript
+// Inside your extension (via RPC)
+const rpc = (context as any).rpc;
+
+const result = await rpc.request("process:spawn", [
+  "git",                    // command (must be in allowlist)
+  ["log", "--oneline", "-n", "10"],  // args array
+  { cwd: process.cwd() }    // options: { cwd?: string, timeout?: number }
+]);
+
+// Result structure
+if (!result.error) {
+  const { code, stdout, stderr } = result;
+  console.log("Exit code:", code);
+  console.log("Output:", stdout);
+} else {
+  console.error("Command failed:", result.error);
+}
+```
+
+**Allowed Commands** (security allowlist):
+- `git` — Version control operations
+- `node`, `bun` — JavaScript runtimes
+- `npm`, `yarn`, `pnpm` — Package managers
+- `docker` — Container operations
+- `psql` — PostgreSQL CLI
+- `sqlite3` — SQLite CLI
+- `python3`, `python` — Python runtime
+
+**Restrictions:**
+- CWD limited to current project root (no path escaping)
+- 30-second timeout by default
+- Stdout/stderr captured as strings
+- Non-zero exit codes returned as error
+
+**Example: Git Graph Extension**
+
+```typescript
+// In ext-git-graph, spawn git to fetch log
+export async function activate(context: ExtensionContext, vscode: any) {
+  const rpc = (context as any).rpc;
+  
+  context.subscriptions.push(
+    vscode.commands.registerCommand("git-graph.view", async () => {
+      try {
+        const result = await rpc.request("process:spawn", [
+          "git",
+          ["log", "--all", "--oneline", "--graph"],
+          { cwd: process.cwd() }
+        ]);
+        
+        if (result.error) {
+          await vscode.window.showErrorMessage(`Git error: ${result.error}`);
+          return;
+        }
+        
+        // Parse result.stdout and render graph in webview
+        const commits = parseGitLog(result.stdout);
+        const panel = vscode.window.createWebviewPanel("git-graph", "Git Graph", vscode.ViewColumn.Active);
+        panel.webview.html = renderSvgGraph(commits);
+      } catch (e) {
+        await vscode.window.showErrorMessage(`Failed to load git graph: ${e}`);
+      }
+    })
+  );
+}
+```
+
 ### Utilities
 
 ```typescript
@@ -313,6 +385,7 @@ emitter.fire("event data");  // Notify listeners
 | **Webview Panel** | ✅ Supported | Sandboxed iframe, 2-way messaging |
 | **Workspace Config** | ✅ Supported | Read/write user & workspace settings |
 | **Workspace FS** | ⚠️ Partial | Read, write, stat, readDirectory (no watch) |
+| **Process Spawn** | ✅ Supported | Run external commands (git, npm, etc.) |
 | **Storage (Memento)** | ✅ Supported | Global & workspace state, auto-persisted |
 | **Uri** | ✅ Supported | File/webview URI utilities |
 | **EventEmitter** | ✅ Supported | Custom event streams |
@@ -439,7 +512,9 @@ ppm ext dev ./path/to/extension
 
 ---
 
-## Example: Database Viewer
+## Examples
+
+### Database Viewer
 
 See `packages/ext-database/` in the PPM repo for a complete reference extension:
 
@@ -489,6 +564,23 @@ export function activate(context: ExtensionContext, vscode: any) {
   context.subscriptions.push(status);
 }
 ```
+
+### Git Graph
+
+See `packages/ext-git-graph/` for an extension using **process:spawn** to run git commands:
+
+- **Process spawning** via RPC to execute `git log`
+- **SVG graph rendering** of commit history
+- **Webview panel** for interactive visualization
+- **Commit details** with author, date, message
+- **Context menu** for actions (checkout, cherry-pick, etc.)
+- **Search/find** widget within the graph
+
+Key patterns:
+- Use `process:spawn` RPC to safely run git commands from the worker
+- Parse git output in the extension, format for webview
+- Render visualization (SVG/Canvas) in sandboxed webview panel
+- Two-way messaging between extension and webview for interactions
 
 ---
 

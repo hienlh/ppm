@@ -21,11 +21,13 @@ export {
   type RpcClient,
 } from "./types.ts";
 export { type ExtensionContext, Memento } from "./context.ts";
+export { ProcessService, type SpawnResult, type SpawnOptions } from "./process.ts";
 
 // Service imports
 import { CommandService } from "./commands.ts";
 import { WindowService } from "./window.ts";
 import { WorkspaceService } from "./workspace.ts";
+import { ProcessService } from "./process.ts";
 import { createExtensionContext, type ExtensionContext } from "./context.ts";
 import { createEnvNamespace } from "./env.ts";
 import { createNotSupported } from "./not-supported.ts";
@@ -55,12 +57,14 @@ export function createVscodeCompat(options: CreateVscodeCompatOptions) {
   const commands = new CommandService(rpc, extensionId);
   const window = new WindowService(rpc, extensionId);
   const workspace = new WorkspaceService(rpc, extensionId);
+  const process = new ProcessService(rpc);
 
   return {
     // Active API namespaces
     commands,
     window,
     workspace,
+    process,
     env: createEnvNamespace(options.appName ?? "PPM", options.machineId ?? "ppm-local"),
 
     // Classes & utilities

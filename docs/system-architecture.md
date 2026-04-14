@@ -1295,15 +1295,20 @@ Browser (React)                    ← Zustand store + React components
 ```
 
 **Key components:**
-- **Package Format:** npm packages (`@ppm/ext-database`, `@ppm/ext-docker`, etc.)
+- **Package Format:** npm packages (`@ppm/ext-database`, `@ppm/ext-git-graph`, `@ppm/ext-docker`, etc.)
 - **Installation:** `~/.ppm/extensions/node_modules/{id}/`
 - **Lifecycle:** Install → Enable → Activate → Deactivate → Remove
 - **Worker Isolation:** Each activated extension runs in a Bun Worker (crash-safe, 10s activation timeout)
 - **Communication:** RPC (Worker↔Main) + WebSocket (Main↔Browser)
 - **API Shim:** `@ppm/vscode-compat` — VSCode-compatible API (commands, window, workspace)
+- **Subprocess Access:** RPC `process:spawn` handler for extensions needing CLI commands (git, docker, npm, python, etc.)
 - **State Storage:** globalState + workspaceState in SQLite via Memento
 - **UI Bridge:** StatusBar, TreeView, WebviewPanel, QuickPick, InputBox, Notifications
 - **Contributions:** Commands, views, configuration contributed via manifest
+
+**Official Extensions:**
+- `@ppm/ext-database` — Database browser with SQLite/PostgreSQL support (tree view + query panel)
+- `@ppm/ext-git-graph` — Git commit graph visualization (SVG rendering, uses process:spawn for git CLI)
 
 ### Manifest Format
 
@@ -1417,10 +1422,33 @@ Extension metadata defined in `package.json` under `ppm` key:
    }
    ```
 
-**Built-in Methods:**
-- `storage:get(extId, scope, key)` — Get persistent value
-- `storage:set(extId, scope, key, value)` — Set persistent value
-- `storage:delete(extId, scope, key)` — Delete key
+**Built-in Methods (vscode-compat API):**
+- `commands:execute(command, ...args)` — Execute command
+- `commands:list(filterInternal)` — List available commands
+- `window:showMessage(level, message, items[])` — Show dialog with buttons
+- `window:showQuickPick(items[], options)` — Quick pick menu
+- `window:showInputBox(options)` — Text input dialog
+- `window:webview:create(panelId, extensionId, viewType, title)` — Create webview panel
+- `window:webview:html(panelId, html)` — Set webview content
+- `window:webview:postMessage(panelId, message)` — Send message to webview
+- `window:tree:update(viewId, items[])` — Update tree view items
+- `window:tree:refresh(viewId)` — Refresh tree view
+- `window:statusbar:update(item)` — Update/create status bar item
+- `window:statusbar:remove(itemId)` — Remove status bar item
+- `workspace:config:get(key)` — Read config value
+- `workspace:config:update(key, value, target)` — Write config value
+- `workspace:fs:readFile(filePath)` — Read file (base64 encoded)
+- `workspace:fs:writeFile(filePath, base64Content)` — Write file
+- `workspace:fs:stat(filePath)` — Get file metadata
+- `workspace:fs:readDirectory(dirPath)` — List directory contents
+
+**Subprocess Execution (extensions needing CLI access):**
+- `process:spawn(command, args[], options)` — Execute external command
+  - **Allowed commands:** git, node, bun, npm, yarn, pnpm, docker, psql, sqlite3, python3, python
+  - **Options:** `{ cwd?: string, timeout?: number }` (default: 30s timeout, CWD restricted to project root)
+  - **Returns:** `{ code: number, stdout: string, stderr: string, error?: string }`
+  - **Example:** See ext-git-graph for real-world usage (runs `git log --graph`)
+
 - Extension can define custom RPC methods via `rpc.onRequest(method, handler)`
 
 ### State Storage

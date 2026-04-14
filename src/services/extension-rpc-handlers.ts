@@ -221,6 +221,54 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     }
     return results;
   });
+
+  // --- process spawn (for extensions needing subprocess access) ---
+
+  const ALLOWED_SPAWN_COMMANDS = new Set(["git", "node", "bun", "npx", "sqlite3"]);
+  const BLOCKED_ENV_KEYS = new Set(["PATH", "HOME", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "LD_LIBRARY_PATH"]);
+
+  rpc.onRequest("process:spawn", async (params) => {
+    const [cmd, args, cwd, options] = params as [string, string[], string, { timeout?: number; env?: Record<string, string> }?];
+
+    // Security: command allowlist
+    const baseName = cmd.split("/").pop() || cmd;
+    if (!ALLOWED_SPAWN_COMMANDS.has(baseName)) {
+      throw new Error(`process:spawn: command "${cmd}" not allowed. Allowed: ${[...ALLOWED_SPAWN_COMMANDS].join(", ")}`);
+    }
+
+    // Security: CWD must be within allowed roots
+    const safeCwd = await assertSafePath(cwd);
+
+    // Security: block dangerous env overrides
+    const safeEnv = { ...process.env };
+    if (options?.env) {
+      for (const [key, val] of Object.entries(options.env)) {
+        if (!BLOCKED_ENV_KEYS.has(key)) safeEnv[key] = val;
+      }
+    }
+
+    const timeout = options?.timeout ?? 30_000;
+    const proc = Bun.spawn([cmd, ...args], {
+      cwd: safeCwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: safeEnv,
+    });
+
+    const timer = setTimeout(() => { try { proc.kill(); } catch {} }, timeout);
+    try {
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      const exitCode = await proc.exited;
+      clearTimeout(timer);
+      return { stdout, stderr, exitCode };
+    } catch (e) {
+      clearTimeout(timer);
+      throw new Error(`process:spawn failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  });
 }
 
 /** Get a nested value from an object by dot-separated key */
