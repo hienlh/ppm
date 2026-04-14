@@ -80,12 +80,64 @@ export interface ActionResult {
   error?: string;
 }
 
+export interface UncommittedData {
+  staged: FileChange[];
+  unstaged: FileChange[];
+}
+
+// --- Settings ---
+
+export interface IssueLinkingRule {
+  pattern: string;
+  url: string;
+}
+
+export interface PrCreationConfig {
+  provider: "github" | "gitlab" | "bitbucket" | "custom";
+  urlTemplate: string;
+  owner: string;
+  repo: string;
+  defaultTargetBranch: string;
+}
+
+export interface GitGraphSettings {
+  maxCommits: number;
+  showTags: boolean;
+  showStashes: boolean;
+  showRemoteBranches: boolean;
+  graphStyle: "rounded" | "angular";
+  firstParentOnly: boolean;
+  dateFormat: "relative" | "absolute" | "iso";
+  commitOrdering: "topo" | "date" | "author-date";
+  issueLinkingRules: IssueLinkingRule[];
+  prCreation: PrCreationConfig | null;
+  autoFetchInterval: number;
+}
+
+export const DEFAULT_SETTINGS: GitGraphSettings = {
+  maxCommits: 300,
+  showTags: true,
+  showStashes: true,
+  showRemoteBranches: true,
+  graphStyle: "rounded",
+  firstParentOnly: false,
+  dateFormat: "relative",
+  commitOrdering: "topo",
+  issueLinkingRules: [{ pattern: "#(\\d+)", url: "" }],
+  prCreation: null,
+  autoFetchInterval: 0,
+};
+
 // --- Extension → Webview messages ---
 
 export type ExtToWebview =
   | { command: "loadRepoInfo"; data: RepoInfo }
   | { command: "loadCommits"; data: GitVertex[]; append: boolean }
   | { command: "commitDetails"; data: CommitDetail }
+  | { command: "loadUncommitted"; data: UncommittedData | null }
+  | { command: "loadSettings"; data: GitGraphSettings }
+  | { command: "loadUserDetails"; data: { name: string; email: string } }
+  | { command: "loadOwnerRepo"; data: { owner: string; repo: string } }
   | { command: "refresh"; data: GitVertex[]; repoInfo: RepoInfo }
   | { command: "actionResult"; action: string; result: ActionResult }
   | { command: "error"; message: string };
@@ -97,4 +149,16 @@ export type WebviewToExt =
   | { command: "requestRepoInfo" }
   | { command: "requestCommits"; maxCommits?: number; skip?: number; branch?: string }
   | { command: "requestCommitDetails"; hash: string }
-  | { command: "gitAction"; action: string; args: Record<string, unknown> };
+  | { command: "requestUncommitted" }
+  | { command: "openDiff"; filePath: string; hash: string; parentHash: string | null }
+  | { command: "requestSettings" }
+  | { command: "updateSetting"; key: string; value: unknown }
+  | { command: "requestUserDetails" }
+  | { command: "updateUserDetails"; name?: string; email?: string }
+  | { command: "addRemote"; name: string; url: string }
+  | { command: "removeRemote"; name: string }
+  | { command: "editRemoteUrl"; name: string; url: string }
+  | { command: "requestOwnerRepo" }
+  | { command: "gitAction"; action: string; args: Record<string, unknown> }
+  | { command: "openFile"; filePath: string }
+  | { command: "openSourceControl" };

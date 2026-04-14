@@ -184,6 +184,12 @@ export class WindowService {
     });
   }
 
+  // --- Open PPM Tab ---
+
+  async openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>): Promise<void> {
+    await this.rpc.request("window:openTab", tabType, title, projectId, metadata);
+  }
+
   // --- Webview Panel ---
 
   createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn): unknown {

@@ -62,6 +62,13 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
           panel.tabs.map((tab) => {
             const Component = TAB_COMPONENTS[tab.type];
             const isActive = tab.id === panel.activeTabId;
+            if (!Component) {
+              return (
+                <div key={tab.id} className={isActive ? "h-full w-full flex items-center justify-center text-muted-foreground" : "hidden"}>
+                  Unknown tab type: {tab.type}
+                </div>
+              );
+            }
             return (
               <div key={tab.id} className={isActive ? "h-full w-full" : "hidden"}>
                 <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-6 animate-spin text-primary" /></div>}>

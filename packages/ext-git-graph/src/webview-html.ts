@@ -16,8 +16,15 @@ ${getStyles()}
   <div id="app">
     <header id="toolbar">
       <div class="toolbar-left">
-        <select id="branch-selector"><option value="all">All Branches</option></select>
+        <div id="branch-selector" class="branch-dropdown">
+          <button id="branch-trigger" class="branch-trigger">All Branches</button>
+          <div id="branch-dropdown-menu" class="branch-dropdown-menu hidden">
+            <input id="branch-filter" type="text" placeholder="Filter branches..." class="branch-filter-input" />
+            <div id="branch-list" class="branch-list"></div>
+          </div>
+        </div>
         <button id="btn-refresh" title="Refresh">&#x21bb;</button>
+        <button id="btn-fetch" title="Fetch from remotes">&#x2B07;</button>
       </div>
       <div class="toolbar-right">
         <button id="btn-find" title="Find (Ctrl+F)">&#x1F50D;</button>
@@ -33,7 +40,7 @@ ${getStyles()}
     </div>
     <div id="graph-container">
       <div id="graph-header" class="commit-row header-row">
-        <div class="col-graph">Graph</div>
+        <div class="col-graph">Graph<div class="graph-resize-handle" id="graph-resize-handle"></div></div>
         <div class="col-message">Message</div>
         <div class="col-author">Author</div>
         <div class="col-date">Date</div>
@@ -46,6 +53,59 @@ ${getStyles()}
       <div id="loading" class="loading hidden">Loading...</div>
     </div>
     <div id="detail-panel" class="detail-panel hidden"></div>
+    <div id="settings-panel" class="settings-panel">
+      <div class="settings-header">
+        <h3>Git Graph Settings</h3>
+        <button id="settings-close" title="Close">&times;</button>
+      </div>
+      <div class="settings-body">
+        <details class="settings-section" open>
+          <summary>General</summary>
+          <div class="setting-row"><label>Max Commits</label><input type="number" id="s-maxCommits" min="10" max="10000" step="50"></div>
+          <div class="setting-row"><label>Show Tags</label><input type="checkbox" id="s-showTags"></div>
+          <div class="setting-row"><label>Show Stashes</label><input type="checkbox" id="s-showStashes"></div>
+          <div class="setting-row"><label>Show Remote Branches</label><input type="checkbox" id="s-showRemoteBranches"></div>
+          <div class="setting-row"><label>Graph Style</label><select id="s-graphStyle"><option value="rounded">Rounded</option><option value="angular">Angular</option></select></div>
+          <div class="setting-row"><label>First Parent Only</label><input type="checkbox" id="s-firstParentOnly"></div>
+          <div class="setting-row"><label>Date Format</label><select id="s-dateFormat"><option value="relative">Relative</option><option value="absolute">Absolute</option><option value="iso">ISO</option></select></div>
+          <div class="setting-row"><label>Commit Ordering</label><select id="s-commitOrdering"><option value="topo">Topological</option><option value="date">Date</option><option value="author-date">Author Date</option></select></div>
+          <div class="setting-row"><label>Auto Fetch Interval</label><select id="s-autoFetchInterval"><option value="0">Disabled</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option></select></div>
+        </details>
+        <details class="settings-section" open>
+          <summary>User Details</summary>
+          <div class="setting-row"><label>Name</label><input type="text" id="s-userName" placeholder="user.name"></div>
+          <div class="setting-row"><label>Email</label><input type="text" id="s-userEmail" placeholder="user.email"></div>
+          <div class="setting-row" style="justify-content:flex-end"><button id="s-saveUser" class="btn-sm">Save User Details</button></div>
+        </details>
+        <details class="settings-section" open>
+          <summary>Remotes</summary>
+          <div id="s-remotes-list"></div>
+          <div class="add-remote-form">
+            <input type="text" id="s-newRemoteName" placeholder="Remote name">
+            <input type="text" id="s-newRemoteUrl" placeholder="Remote URL">
+            <button id="s-addRemote" class="btn-sm">Add Remote</button>
+          </div>
+        </details>
+        <details class="settings-section">
+          <summary>Issue Linking</summary>
+          <p style="font-size:11px;color:var(--subtext);margin-bottom:6px">Turn issue references in commit messages into clickable links.</p>
+          <div id="issue-rules-list"></div>
+          <button id="add-issue-rule" class="btn-sm" style="margin-top:6px">+ Add Rule</button>
+        </details>
+        <details class="settings-section">
+          <summary>Pull Request Creation</summary>
+          <div class="setting-row"><label>Provider</label><select id="pr-provider"><option value="">Disabled</option><option value="github">GitHub</option><option value="gitlab">GitLab</option><option value="bitbucket">Bitbucket</option><option value="custom">Custom</option></select></div>
+          <div id="pr-config" class="hidden">
+            <div class="setting-row"><label>Owner</label><input type="text" id="pr-owner" placeholder="owner or org"></div>
+            <div class="setting-row"><label>Repo</label><input type="text" id="pr-repo" placeholder="repository name"></div>
+            <div class="setting-row"><label>Target Branch</label><input type="text" id="pr-target" placeholder="main"></div>
+            <div class="setting-row"><label>URL Template</label><input type="text" id="pr-url-template" placeholder="https://..."></div>
+            <p style="font-size:10px;color:var(--subtext);margin:2px 0 4px">Variables: \${owner}, \${repo}, \${sourceBranch}, \${targetBranch}</p>
+            <div class="setting-row" style="justify-content:flex-end"><button id="pr-save" class="btn-sm">Save PR Config</button></div>
+          </div>
+        </details>
+      </div>
+    </div>
     <div id="status-bar">
       <span id="status-text">Loading repository...</span>
     </div>
@@ -72,7 +132,6 @@ function getStyles(): string {
     --bg: #09090b; --surface: #18181b; --text: #fafafa; --subtext: #a1a1aa; --subtle: #52525b;
     --border: #27272a; --border2: #3f3f46; --selected: #1e293b; --surface-hover: #27272a;
   }
-  #graph-svg-container .shadow { stroke: rgba(255,255,255,0.08); }
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
 #app { display: flex; flex-direction: column; height: 100vh; }
@@ -81,8 +140,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 #toolbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
 .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 6px; }
 select { background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
-button { background: transparent; color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 4px 8px; font-size: 12px; cursor: pointer; min-width: 28px; min-height: 28px; }
-button:hover { background: var(--surface-hover); }
+button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; min-width: 28px; min-height: 28px; transition: background 0.15s, border-color 0.15s; }
+button:hover { background: var(--surface-hover); border-color: var(--border2); }
+button:active { background: var(--surface); }
+.btn-fetching { opacity: 0.6; pointer-events: none; }
+
+/* Branch dropdown */
+.branch-dropdown { position: relative; }
+.branch-trigger { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 24px 4px 8px; font-size: 12px; cursor: pointer; min-width: 140px; text-align: left; position: relative; }
+.branch-trigger::after { content: '\\25BC'; font-size: 8px; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--subtext); }
+.branch-dropdown-menu { position: absolute; top: 100%; left: 0; z-index: 60; background: var(--surface); border: 1px solid var(--border2); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); min-width: 220px; max-height: 300px; display: flex; flex-direction: column; margin-top: 2px; }
+.branch-filter-input { padding: 6px 8px; border: none; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; outline: none; border-radius: 6px 6px 0 0; }
+.branch-list { overflow-y: auto; max-height: 250px; }
+.branch-option { padding: 6px 10px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.branch-option:hover { background: var(--surface-hover); }
+.branch-option.selected { background: var(--selected); font-weight: 600; }
+@media (max-width: 768px) { .branch-option { padding: 10px 12px; min-height: 44px; } }
 
 /* Find bar */
 .find-bar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
@@ -93,12 +166,18 @@ button:hover { background: var(--surface-hover); }
 
 /* Graph container */
 #graph-container { flex: 1; overflow-y: auto; overflow-x: hidden; }
-.commit-row { display: flex; align-items: center; border-bottom: 1px solid var(--border); cursor: pointer; min-height: 28px; padding: 0 8px; }
+.commit-row { display: flex; align-items: center; cursor: pointer; min-height: 28px; padding: 0 8px; }
 .commit-row:hover { background: var(--surface-hover); }
 .commit-row.selected { background: var(--selected); }
-.commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; }
+.commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--border); }
 .commit-row.search-match { background: rgba(234, 179, 8, 0.15); }
-.col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; }
+.commit-row.virtual { opacity: 0.85; font-style: italic; }
+.commit-row.virtual .col-message { color: var(--subtext); }
+.file-clickable { cursor: pointer; border-radius: 3px; padding: 2px 4px; margin: 0 -4px; }
+.file-clickable:hover { background: var(--surface-hover); }
+.col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; position: relative; }
+.graph-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; background: transparent; }
+.graph-resize-handle:hover, .graph-resize-handle.dragging { background: var(--blue); opacity: 0.5; }
 .col-message { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; }
 .col-author { width: 120px; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtext); font-size: 12px; }
 .col-date { width: 100px; min-width: 100px; color: var(--subtext); font-size: 12px; }
@@ -115,7 +194,6 @@ button:hover { background: var(--surface-hover); }
 #commit-list-wrapper { position: relative; }
 #graph-svg-container { position: absolute; top: 0; left: 8px; z-index: 1; pointer-events: none; }
 #graph-svg-container circle { pointer-events: auto; cursor: pointer; }
-#graph-svg-container .shadow { stroke: rgba(0,0,0,0.15); stroke-width: 5; fill: none; }
 #graph-svg-container .line { stroke-width: 2; fill: none; }
 #graph-svg-container .graphCurrent { fill: var(--bg); stroke-width: 2; }
 #graph-svg-container .graphStashOuter { fill: none; stroke: #808080; stroke-width: 1.5; }
@@ -139,6 +217,29 @@ button:hover { background: var(--surface-hover); }
 .file-stat .add { color: var(--green); }
 .file-stat .del { color: var(--red); }
 
+/* File view toggle */
+.file-view-toggle { display: flex; gap: 2px; margin-bottom: 6px; }
+.toggle-btn { padding: 2px 6px; font-size: 12px; min-width: 28px; min-height: 28px; border: 1px solid var(--border); border-radius: 4px; background: transparent; cursor: pointer; }
+.toggle-btn.active { background: var(--surface-hover); border-color: var(--border2); }
+.tree-dir { display: flex; align-items: center; gap: 4px; padding: 2px 0; font-size: 12px; color: var(--subtext); }
+.tree-dir-name { font-weight: 500; color: var(--text); }
+.tree-dir-count { font-size: 11px; color: var(--subtle); }
+
+/* File actions */
+.file-actions { display: flex; gap: 2px; margin-left: auto; flex-shrink: 0; }
+.file-action-btn { min-width: 24px; min-height: 24px; padding: 0 4px; border: none; background: transparent; cursor: pointer; border-radius: 4px; font-size: 12px; color: var(--subtext); display: flex; align-items: center; justify-content: center; }
+.file-action-btn:hover { background: var(--surface-hover); color: var(--text); }
+.file-action-btn[data-action="discard"]:hover { color: var(--red); }
+.section-actions { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.commit-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.commit-section textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 6px; padding: 8px; font-size: 12px; font-family: inherit; resize: vertical; min-height: 60px; }
+.commit-section textarea:focus { outline: none; border-color: var(--blue); }
+.commit-actions { display: flex; justify-content: flex-end; margin-top: 6px; gap: 6px; }
+.btn-commit { background: var(--green); color: #fff; border-color: transparent; padding: 4px 16px; font-weight: 600; }
+.btn-commit:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-commit:hover:not(:disabled) { opacity: 0.9; }
+@media (max-width: 768px) { .file-action-btn { min-width: 36px; min-height: 36px; } }
+
 /* Status bar */
 #status-bar { display: flex; align-items: center; padding: 4px 12px; border-top: 1px solid var(--border); background: var(--surface); font-size: 11px; color: var(--subtext); flex-shrink: 0; }
 
@@ -152,6 +253,35 @@ button:hover { background: var(--surface-hover); }
 /* Loading */
 .loading { text-align: center; padding: 16px; color: var(--subtext); }
 
+/* Settings panel */
+.settings-panel { position: absolute; right: 0; top: 0; bottom: 0; width: 340px; background: var(--surface); border-left: 1px solid var(--border2); z-index: 50; overflow-y: auto; transform: translateX(100%); transition: transform 0.2s ease; display: flex; flex-direction: column; }
+.settings-panel.open { transform: translateX(0); }
+.settings-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.settings-header h3 { font-size: 14px; font-weight: 600; }
+.settings-body { flex: 1; overflow-y: auto; padding: 8px 0; }
+.settings-section { border-bottom: 1px solid var(--border); padding: 8px 14px; }
+.settings-section summary { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--subtext); cursor: pointer; padding: 4px 0; user-select: none; }
+.settings-section[open] summary { margin-bottom: 6px; }
+.setting-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; font-size: 12px; gap: 8px; }
+.setting-row label { flex: 1; min-width: 0; }
+.setting-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--blue); flex-shrink: 0; }
+.setting-row input[type="number"] { width: 72px; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+.setting-row select { background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 12px; min-width: 100px; }
+.setting-row input[type="text"] { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+.btn-sm { font-size: 11px; padding: 3px 10px; border-radius: 6px; min-width: 0; min-height: 0; }
+.remote-item { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.remote-item:last-child { border-bottom: none; }
+.remote-item .remote-name { font-weight: 600; margin-bottom: 2px; }
+.remote-item .remote-url { color: var(--subtext); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; word-break: break-all; }
+.remote-actions { display: flex; gap: 4px; margin-top: 4px; }
+.add-remote-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.add-remote-form input { background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 4px 6px; font-size: 12px; }
+.issue-rule-row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
+.issue-rule-row input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 11px; font-family: 'SF Mono', 'Fira Code', monospace; }
+.issue-rule-row input.rule-error { border-color: var(--red); }
+.issue-rule-row .rule-remove { min-width: 24px; min-height: 24px; padding: 0; font-size: 14px; color: var(--red); border: none; }
+@media (max-width: 768px) { .settings-panel { width: 100%; } }
+
 /* Dialog overlay */
 .dialog-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; }
 .dialog { background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; padding: 16px; min-width: 300px; max-width: 400px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
@@ -162,8 +292,8 @@ button:hover { background: var(--surface-hover); }
 .dialog input:focus, .dialog select:focus { outline: none; border-color: var(--blue); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .dialog-actions button { min-width: 64px; }
-.dialog-actions .btn-primary { background: var(--blue); color: #fff; }
-.dialog-actions .btn-danger { background: var(--red); color: #fff; }
+.dialog-actions .btn-primary { background: var(--blue); color: #fff; border-color: transparent; }
+.dialog-actions .btn-danger { background: var(--red); color: #fff; border-color: transparent; }
 
 /* Links in commit messages */
 .commit-link { color: var(--blue); text-decoration: none; cursor: pointer; }
@@ -193,6 +323,13 @@ const graphConfig = {
 };
 
 // --- State ---
+const DEFAULT_SETTINGS = {
+  maxCommits: 300, showTags: true, showStashes: true, showRemoteBranches: true,
+  graphStyle: 'rounded', firstParentOnly: false, dateFormat: 'relative', commitOrdering: 'topo',
+  issueLinkingRules: [{ pattern: '#(\\\\d+)', url: '' }], prCreation: null,
+  autoFetchInterval: 0,
+};
+
 const state = {
   repo: '',
   commits: [],
@@ -206,8 +343,14 @@ const state = {
   expandedCommit: null,
   maxCommits: 300,
   loading: false,
+  uncommitted: null,
   searchMatches: [],
   searchIndex: -1,
+  settings: { ...DEFAULT_SETTINGS },
+  userDetails: { name: '', email: '' },
+  graphColWidth: null,
+  fileViewMode: 'list',
+  _lastDetail: null,
 };
 
 // --- Init ---
@@ -227,6 +370,7 @@ window.addEventListener('message', (event) => {
       state.currentBranch = msg.data.currentBranch;
       renderBranchSelector();
       updateStatus();
+      if (document.getElementById('settings-panel').classList.contains('open')) renderRemotesList();
       break;
     case 'loadCommits':
       if (msg.append) {
@@ -256,8 +400,44 @@ window.addEventListener('message', (event) => {
       renderCommitList();
       updateStatus();
       break;
+    case 'loadUncommitted':
+      state.uncommitted = msg.data;
+      renderCommitList();
+      if (state.selectedCommit === 'uncommitted') {
+        if (!msg.data || (msg.data.staged.length === 0 && msg.data.unstaged.length === 0)) {
+          state.selectedCommit = null;
+          state.expandedCommit = null;
+          document.getElementById('detail-panel').classList.add('hidden');
+        } else {
+          renderUncommittedDetail();
+        }
+      }
+      break;
+    case 'loadSettings':
+      state.settings = { ...DEFAULT_SETTINGS, ...msg.data };
+      state.maxCommits = state.settings.maxCommits;
+      applySettingsToUI();
+      break;
+    case 'loadUserDetails':
+      state.userDetails = msg.data;
+      document.getElementById('s-userName').value = msg.data.name;
+      document.getElementById('s-userEmail').value = msg.data.email;
+      break;
+    case 'loadOwnerRepo':
+      if (msg.data.owner) document.getElementById('pr-owner').value = msg.data.owner;
+      if (msg.data.repo) document.getElementById('pr-repo').value = msg.data.repo;
+      break;
     case 'actionResult':
-      if (!msg.result.ok) alert('Git action failed: ' + (msg.result.error || 'Unknown error'));
+      if (msg.action === 'fetch') {
+        fetchInProgress = false;
+        btnFetch.classList.remove('btn-fetching');
+        btnFetch.title = 'Fetch from remotes';
+        if (!msg.result.ok) {
+          document.getElementById('status-text').textContent = 'Fetch failed: ' + (msg.result.error || 'Unknown error');
+        }
+      } else if (!msg.result.ok) {
+        alert('Git action failed: ' + (msg.result.error || 'Unknown error'));
+      }
       break;
     case 'error':
       document.getElementById('status-text').textContent = 'Error: ' + msg.message;
@@ -265,24 +445,123 @@ window.addEventListener('message', (event) => {
   }
 });
 
-// --- Branch selector ---
-function renderBranchSelector() {
-  const sel = document.getElementById('branch-selector');
-  sel.innerHTML = '<option value="all">All Branches</option>';
+// --- File click delegation (opens diff tab) ---
+document.getElementById('detail-panel').addEventListener('click', (e) => {
+  // File-level action buttons (stage/unstage/discard/open)
+  const actionBtn = e.target.closest('.file-action-btn');
+  if (actionBtn) {
+    e.stopPropagation();
+    const action = actionBtn.dataset.action;
+    const file = actionBtn.dataset.file;
+    if (action === 'open') {
+      vscode.postMessage({ command: 'openFile', filePath: file });
+    } else if (action === 'stage') {
+      vscode.postMessage({ command: 'gitAction', action: 'stage', args: { files: [file] } });
+    } else if (action === 'unstage') {
+      vscode.postMessage({ command: 'gitAction', action: 'unstage', args: { files: [file] } });
+    } else if (action === 'discard') {
+      showDialog({
+        title: 'Discard Changes',
+        message: 'Discard changes to "' + file + '"? This cannot be undone.',
+        destructive: true,
+        confirmLabel: 'Discard',
+        onConfirm: () => vscode.postMessage({ command: 'gitAction', action: 'discard', args: { files: [file] } }),
+      });
+    }
+    return;
+  }
+  // Section-level actions (Stage All / Unstage All)
+  const sectionBtn = e.target.closest('.section-action-btn');
+  if (sectionBtn) {
+    e.stopPropagation();
+    const action = sectionBtn.dataset.action;
+    if (action === 'stage-all') {
+      const files = state.uncommitted.unstaged.map(f => f.path);
+      vscode.postMessage({ command: 'gitAction', action: 'stage', args: { files } });
+    } else if (action === 'unstage-all') {
+      const files = state.uncommitted.staged.map(f => f.path);
+      vscode.postMessage({ command: 'gitAction', action: 'unstage', args: { files } });
+    }
+    return;
+  }
+  // Toggle buttons (tree/list view)
+  const toggleBtn = e.target.closest('.toggle-btn[data-view]');
+  if (toggleBtn) {
+    state.fileViewMode = toggleBtn.dataset.view;
+    if (state.selectedCommit === 'uncommitted') {
+      renderUncommittedDetail();
+    } else if (state._lastDetail) {
+      renderDetailPanel(state._lastDetail);
+    }
+    return;
+  }
+  // File click (opens diff)
+  const item = e.target.closest('.file-clickable');
+  if (!item) return;
+  const filePath = item.dataset.path;
+  const hash = item.dataset.hash;
+  const parentHash = item.dataset.parent || null;
+  if (filePath && hash) {
+    vscode.postMessage({ command: 'openDiff', filePath, hash, parentHash });
+  }
+});
+
+// --- Branch dropdown ---
+let selectedBranch = 'all';
+const branchTrigger = document.getElementById('branch-trigger');
+const branchMenu = document.getElementById('branch-dropdown-menu');
+const branchFilterInput = document.getElementById('branch-filter');
+const branchListEl = document.getElementById('branch-list');
+
+branchTrigger.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const wasHidden = branchMenu.classList.contains('hidden');
+  branchMenu.classList.toggle('hidden');
+  if (wasHidden) {
+    branchFilterInput.value = '';
+    renderBranchOptions('');
+    branchFilterInput.focus();
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#branch-selector')) branchMenu.classList.add('hidden');
+});
+
+branchFilterInput.addEventListener('input', () => {
+  renderBranchOptions(branchFilterInput.value.toLowerCase());
+});
+branchFilterInput.addEventListener('click', (e) => e.stopPropagation());
+
+function renderBranchOptions(filter) {
+  const options = [{ name: 'all', label: 'All Branches', current: false }];
   state.branches.forEach(b => {
-    const opt = document.createElement('option');
-    opt.value = b.name;
-    opt.textContent = (b.current ? '* ' : '') + b.name;
-    sel.appendChild(opt);
+    if (b.remote && !state.settings.showRemoteBranches) return;
+    options.push({ name: b.name, label: (b.current ? '* ' : '') + b.name, current: b.current });
   });
+  const filtered = filter ? options.filter(o => o.label.toLowerCase().includes(filter)) : options;
+  branchListEl.innerHTML = filtered.map(o =>
+    '<div class="branch-option' + (o.name === selectedBranch ? ' selected' : '') + '" data-branch="' + escHtml(o.name) + '">' + escHtml(o.label) + '</div>'
+  ).join('');
 }
 
-document.getElementById('branch-selector').addEventListener('change', (e) => {
-  const branch = e.target.value;
+branchListEl.addEventListener('click', (e) => {
+  const opt = e.target.closest('.branch-option');
+  if (!opt) return;
+  const branch = opt.dataset.branch;
+  selectedBranch = branch;
+  branchTrigger.textContent = branch === 'all' ? 'All Branches' : branch;
+  branchMenu.classList.add('hidden');
   state.commits = [];
   document.getElementById('commit-list').innerHTML = '';
   vscode.postMessage({ command: 'requestCommits', branch, maxCommits: state.maxCommits });
 });
+
+function renderBranchSelector() {
+  const branchNames = state.branches.map(b => b.name);
+  if (selectedBranch !== 'all' && !branchNames.includes(selectedBranch)) selectedBranch = 'all';
+  branchTrigger.textContent = selectedBranch === 'all' ? 'All Branches' : selectedBranch;
+}
 
 // --- Refresh ---
 document.getElementById('btn-refresh').addEventListener('click', () => {
@@ -291,6 +570,61 @@ document.getElementById('btn-refresh').addEventListener('click', () => {
   vscode.postMessage({ command: 'requestRepoInfo' });
   vscode.postMessage({ command: 'requestCommits', maxCommits: state.maxCommits });
 });
+
+// --- Fetch ---
+const btnFetch = document.getElementById('btn-fetch');
+let fetchInProgress = false;
+let autoFetchTimer = null;
+
+function doFetch() {
+  fetchInProgress = true;
+  btnFetch.classList.add('btn-fetching');
+  btnFetch.title = 'Fetching...';
+  vscode.postMessage({ command: 'gitAction', action: 'fetch', args: { prune: true } });
+}
+
+btnFetch.addEventListener('click', () => { if (!fetchInProgress) doFetch(); });
+
+function startAutoFetch(intervalSec) {
+  stopAutoFetch();
+  if (!intervalSec || intervalSec <= 0) return;
+  const ms = Math.max(intervalSec, 30) * 1000;
+  autoFetchTimer = setInterval(() => { if (!fetchInProgress) doFetch(); }, ms);
+}
+function stopAutoFetch() {
+  if (autoFetchTimer) { clearInterval(autoFetchTimer); autoFetchTimer = null; }
+}
+
+// --- Graph column resize ---
+{
+  const resizeHandle = document.getElementById('graph-resize-handle');
+  let resizing = false, startX = 0, startW = 0;
+  resizeHandle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resizing = true;
+    startX = e.clientX;
+    startW = document.querySelector('.col-graph').offsetWidth;
+    resizeHandle.classList.add('dragging');
+    resizeHandle.setPointerCapture(e.pointerId);
+  });
+  resizeHandle.addEventListener('pointermove', (e) => {
+    if (!resizing) return;
+    const newW = Math.max(40, Math.min(400, startW + e.clientX - startX));
+    document.documentElement.style.setProperty('--graph-col-w', newW + 'px');
+  });
+  resizeHandle.addEventListener('pointerup', (e) => {
+    if (!resizing) return;
+    resizing = false;
+    resizeHandle.classList.remove('dragging');
+    const newW = Math.max(40, Math.min(400, startW + e.clientX - startX));
+    state.graphColWidth = newW;
+    document.documentElement.style.setProperty('--graph-col-w', newW + 'px');
+  });
+  resizeHandle.addEventListener('dblclick', () => {
+    state.graphColWidth = null;
+    graphRender(-1);
+  });
+}
 
 // --- Graph rendering (faithful port of vscode-git-graph graph.ts) ---
 
@@ -379,15 +713,11 @@ class GBranch {
   }
 
   static _drawPath(svg, path, isCommitted, colour) {
-    const shadow = document.createElementNS(SVG_NS, 'path');
     const line = document.createElementNS(SVG_NS, 'path');
-    shadow.setAttribute('class', 'shadow');
-    shadow.setAttribute('d', path);
     line.setAttribute('class', 'line');
     line.setAttribute('d', path);
     line.setAttribute('stroke', isCommitted ? colour : '#808080');
     if (!isCommitted) line.setAttribute('stroke-dasharray', '2');
-    svg.appendChild(shadow);
     svg.appendChild(line);
   }
 }
@@ -568,7 +898,7 @@ function graphGetAvailableColour(startAt) {
 function graphRender(expandIdx) {
   const container = document.getElementById('graph-svg-container');
   container.innerHTML = '';
-  if (gVertices.length === 0) { document.documentElement.style.setProperty('--graph-col-w', '40px'); return; }
+  if (gVertices.length === 0) { if (state.graphColWidth === null) document.documentElement.style.setProperty('--graph-col-w', '40px'); return; }
 
   // Detect mobile: match CSS breakpoint where row height changes to 44px
   const isMobile = window.matchMedia('(max-width: 768px)').matches;
@@ -600,7 +930,7 @@ function graphRender(expandIdx) {
   svg.setAttribute('width', gw.toString());
   svg.setAttribute('height', h.toString());
   container.appendChild(svg);
-  document.documentElement.style.setProperty('--graph-col-w', gw + 'px');
+  if (state.graphColWidth === null) document.documentElement.style.setProperty('--graph-col-w', gw + 'px');
 }
 
 function graphVertexOver(e) {
@@ -623,15 +953,40 @@ function graphVertexOut(e) {
 }
 
 // --- Commit list ---
+function getDisplayCommits() {
+  const u = state.uncommitted;
+  if (!u || (u.staged.length === 0 && u.unstaged.length === 0)) return state.commits;
+  const virtualCommit = {
+    hash: 'uncommitted',
+    parents: state.head ? [state.head] : [],
+    author: '',
+    authorEmail: '',
+    authorDate: Math.floor(Date.now() / 1000),
+    committer: '',
+    committerEmail: '',
+    commitDate: Math.floor(Date.now() / 1000),
+    refs: [],
+    message: 'Uncommitted Changes (' + (u.staged.length + u.unstaged.length) + ' files)',
+  };
+  return [virtualCommit, ...state.commits];
+}
+
 function renderCommitList() {
   const container = document.getElementById('commit-list');
   container.innerHTML = '';
 
-  graphLoadCommits(state.commits);
+  const displayCommits = getDisplayCommits();
+  graphLoadCommits(displayCommits);
 
-  state.commits.forEach((commit, idx) => {
+  // Mark uncommitted vertex for dashed lines
+  if (displayCommits.length > 0 && displayCommits[0].hash === 'uncommitted') {
+    if (gVertices.length > 0) gVertices[0].setNotCommitted();
+  }
+
+  displayCommits.forEach((commit, idx) => {
+    const isVirtual = commit.hash === 'uncommitted';
     const row = document.createElement('div');
-    row.className = 'commit-row';
+    row.className = 'commit-row' + (isVirtual ? ' virtual' : '');
     row.dataset.hash = commit.hash;
 
     // Graph spacer column (SVG overlays this area)
@@ -644,6 +999,8 @@ function renderCommitList() {
     let badges = '';
     if (commit.refs) {
       commit.refs.forEach(ref => {
+        if (ref.type === 'tag' && !state.settings.showTags) return;
+        if (ref.type === 'remote' && !state.settings.showRemoteBranches) return;
         badges += '<span class="ref-badge ref-' + ref.type + '">' + escHtml(ref.name) + '</span>';
       });
     }
@@ -651,15 +1008,15 @@ function renderCommitList() {
 
     const authorCol = document.createElement('div');
     authorCol.className = 'col-author';
-    authorCol.textContent = commit.author;
+    authorCol.textContent = isVirtual ? '' : commit.author;
 
     const dateCol = document.createElement('div');
     dateCol.className = 'col-date';
-    dateCol.textContent = formatRelativeDate(commit.commitDate);
+    dateCol.textContent = isVirtual ? 'now' : formatDate(commit.commitDate);
 
     const hashCol = document.createElement('div');
     hashCol.className = 'col-hash';
-    hashCol.textContent = commit.hash.substring(0, 7);
+    hashCol.textContent = isVirtual ? '...' : commit.hash.substring(0, 7);
 
     row.appendChild(graphCol);
     row.appendChild(msgCol);
@@ -668,11 +1025,19 @@ function renderCommitList() {
     row.appendChild(hashCol);
 
     row.addEventListener('click', () => selectCommit(commit.hash));
-    row.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      showCommitContextMenu(e.clientX, e.clientY, commit);
-    });
-    setupLongPress(row, (x, y) => showCommitContextMenu(x, y, commit));
+    if (isVirtual) {
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showUncommittedContextMenu(e.clientX, e.clientY);
+      });
+      setupLongPress(row, (x, y) => showUncommittedContextMenu(x, y));
+    } else {
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showCommitContextMenu(e.clientX, e.clientY, commit);
+      });
+      setupLongPress(row, (x, y) => showCommitContextMenu(x, y, commit));
+    }
 
     container.appendChild(row);
   });
@@ -696,11 +1061,154 @@ function selectCommit(hash) {
   const row = document.querySelector('[data-hash="' + CSS.escape(hash) + '"]');
   if (row) row.classList.add('selected');
 
+  if (hash === 'uncommitted') {
+    renderUncommittedDetail();
+    return;
+  }
   vscode.postMessage({ command: 'requestCommitDetails', hash });
+}
+
+// --- File tree helpers ---
+function buildFileTree(files) {
+  const root = { name: '', children: {}, files: [] };
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let node = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!node.children[parts[i]]) node.children[parts[i]] = { name: parts[i], children: {}, files: [] };
+      node = node.children[parts[i]];
+    }
+    node.files.push({ ...f, fileName: parts[parts.length - 1] });
+  }
+  return root;
+}
+
+function countFiles(node) {
+  let count = node.files.length;
+  for (const child of Object.values(node.children)) count += countFiles(child);
+  return count;
+}
+
+function renderFileTree(node, depth, hash, parentHash, section) {
+  let html = '';
+  const dirs = Object.keys(node.children).sort();
+  for (const dir of dirs) {
+    const child = node.children[dir];
+    html += '<div class="tree-dir" style="padding-left:' + (depth * 16) + 'px">';
+    html += '&#x1F4C1; <span class="tree-dir-name">' + escHtml(dir) + '/</span>';
+    html += '<span class="tree-dir-count">(' + countFiles(child) + ')</span></div>';
+    html += renderFileTree(child, depth + 1, hash, parentHash, section);
+  }
+  const sortedFiles = [...node.files].sort((a, b) => a.fileName.localeCompare(b.fileName));
+  for (const f of sortedFiles) {
+    html += '<div class="file-item file-clickable" style="padding-left:' + (depth * 16) + 'px" ';
+    html += 'data-path="' + escHtml(f.path) + '" data-hash="' + escHtml(hash) + '" data-parent="' + escHtml(parentHash) + '">';
+    html += '<span class="file-status file-status-' + escHtml(f.status) + '">' + escHtml(f.status) + '</span>';
+    html += '<span class="file-name">' + escHtml(f.fileName) + '</span>';
+    if (f.additions > 0 || f.deletions > 0) {
+      html += '<span class="file-stat">';
+      if (f.additions > 0) html += '<span class="add">+' + f.additions + '</span> ';
+      if (f.deletions > 0) html += '<span class="del">-' + f.deletions + '</span>';
+      html += '</span>';
+    }
+    if (section) html += renderFileActions(f, section);
+    html += '</div>';
+  }
+  return html;
+}
+
+function renderFileListHtml(files, hash, parentHash, section) {
+  if (state.fileViewMode === 'tree') {
+    return renderFileTree(buildFileTree(files), 0, hash, parentHash, section);
+  }
+  return files.map(f =>
+    '<div class="file-item file-clickable" data-path="' + escHtml(f.path) + '" data-hash="' + escHtml(hash) + '" data-parent="' + escHtml(parentHash || '') + '">' +
+      '<span class="file-status file-status-' + escHtml(f.status) + '">' + escHtml(f.status) + '</span>' +
+      '<span class="file-name">' + escHtml(f.path) + '</span>' +
+      '<span class="file-stat">' +
+        (f.additions > 0 ? '<span class="add">+' + f.additions + '</span> ' : '') +
+        (f.deletions > 0 ? '<span class="del">-' + f.deletions + '</span>' : '') +
+      '</span>' +
+      (section ? renderFileActions(f, section) : '') +
+    '</div>'
+  ).join('');
+}
+
+function renderFileActions(file, section) {
+  let html = '<span class="file-actions">';
+  if (section === 'unstaged') {
+    html += '<button class="file-action-btn" data-action="stage" data-file="' + escHtml(file.path) + '" title="Stage">+</button>';
+    html += '<button class="file-action-btn" data-action="discard" data-file="' + escHtml(file.path) + '" title="Discard changes">&times;</button>';
+  } else if (section === 'staged') {
+    html += '<button class="file-action-btn" data-action="unstage" data-file="' + escHtml(file.path) + '" title="Unstage">&minus;</button>';
+  }
+  html += '<button class="file-action-btn" data-action="open" data-file="' + escHtml(file.path) + '" title="Open file">&#x1F4C4;</button>';
+  html += '</span>';
+  return html;
+}
+
+function fileViewToggleHtml() {
+  return '<div class="file-view-toggle">' +
+    '<button class="toggle-btn' + (state.fileViewMode === 'list' ? ' active' : '') + '" data-view="list" title="List view">&#x2630;</button>' +
+    '<button class="toggle-btn' + (state.fileViewMode === 'tree' ? ' active' : '') + '" data-view="tree" title="Tree view">&#x1F332;</button>' +
+  '</div>';
+}
+
+function renderUncommittedDetail() {
+  const panel = document.getElementById('detail-panel');
+  panel.classList.remove('hidden');
+  const u = state.uncommitted;
+  if (!u) { panel.classList.add('hidden'); return; }
+  let html = '<h3>Uncommitted Changes</h3>';
+  if (u.staged.length > 0 || u.unstaged.length > 0) {
+    html += fileViewToggleHtml();
+  }
+  if (u.staged.length > 0) {
+    html += '<div class="file-list"><div class="section-actions"><strong>Staged (' + u.staged.length + '):</strong>';
+    html += '<button class="btn-sm section-action-btn" data-action="unstage-all">Unstage All</button></div>';
+    html += renderFileListHtml(u.staged, 'staged', state.head, 'staged');
+    html += '</div>';
+  }
+  if (u.unstaged.length > 0) {
+    html += '<div class="file-list"><div class="section-actions"><strong>Unstaged (' + u.unstaged.length + '):</strong>';
+    html += '<button class="btn-sm section-action-btn" data-action="stage-all">Stage All</button></div>';
+    html += renderFileListHtml(u.unstaged, 'uncommitted', state.head, 'unstaged');
+    html += '</div>';
+  }
+  if (u.staged.length === 0 && u.unstaged.length === 0) {
+    html += '<p>No uncommitted changes.</p>';
+  }
+  html += '<div class="commit-section">';
+  html += '<textarea id="commit-message" placeholder="Commit message..." rows="3"></textarea>';
+  html += '<div class="commit-actions"><button id="btn-commit" class="btn-sm btn-commit" disabled>Commit</button></div>';
+  html += '</div>';
+  panel.innerHTML = html;
+  wireCommitControls();
+}
+
+function wireCommitControls() {
+  const textarea = document.getElementById('commit-message');
+  const commitBtn = document.getElementById('btn-commit');
+  if (!textarea || !commitBtn) return;
+  const updateBtn = () => {
+    const hasMsg = textarea.value.trim().length > 0;
+    const hasStaged = state.uncommitted && state.uncommitted.staged.length > 0;
+    commitBtn.disabled = !(hasMsg && hasStaged);
+  };
+  textarea.addEventListener('input', updateBtn);
+  updateBtn();
+  commitBtn.addEventListener('click', () => {
+    const message = textarea.value.trim();
+    if (!message) return;
+    vscode.postMessage({ command: 'gitAction', action: 'commit', args: { message } });
+    textarea.value = '';
+    commitBtn.disabled = true;
+  });
 }
 
 // --- Detail panel ---
 function renderDetailPanel(detail) {
+  state._lastDetail = detail;
   const panel = document.getElementById('detail-panel');
   panel.classList.remove('hidden');
 
@@ -717,16 +1225,8 @@ function renderDetailPanel(detail) {
   html += '<div class="detail-message">' + escHtml(detail.message) + '</div>';
 
   if (detail.fileChanges && detail.fileChanges.length > 0) {
-    html += '<div class="file-list"><strong>Files changed (' + detail.fileChanges.length + '):</strong>';
-    detail.fileChanges.forEach(f => {
-      html += '<div class="file-item">';
-      html += '<span class="file-status file-status-' + escHtml(f.status) + '">' + escHtml(f.status) + '</span>';
-      html += '<span>' + escHtml(f.path) + '</span>';
-      html += '<span class="file-stat">';
-      if (f.additions > 0) html += '<span class="add">+' + f.additions + '</span> ';
-      if (f.deletions > 0) html += '<span class="del">-' + f.deletions + '</span>';
-      html += '</span></div>';
-    });
+    html += '<div class="file-list">' + fileViewToggleHtml() + '<strong>Files changed (' + detail.fileChanges.length + '):</strong>';
+    html += renderFileListHtml(detail.fileChanges, detail.hash, detail.parents[0] || '');
     html += '</div>';
   }
 
@@ -743,12 +1243,22 @@ function showCommitContextMenu(x, y, commit) {
     { label: 'Checkout...', action: () => gitAction('checkout', { target: commit.hash }) },
     { label: 'Create Branch Here...', action: () => promptAndAction('Branch name:', (name) => gitAction('createBranch', { name, startPoint: commit.hash })) },
     { label: 'Create Tag Here...', action: () => promptAndAction('Tag name:', (name) => gitAction('createTag', { name, hash: commit.hash })) },
+  ];
+  // Add "Create PR" if PR creation is configured and commit has a branch ref
+  if (state.settings.prCreation && state.settings.prCreation.urlTemplate) {
+    const branchRef = (commit.refs || []).find(r => r.type === 'local' || r.type === 'head');
+    if (branchRef) {
+      items.push({ separator: true });
+      items.push({ label: 'Create Pull Request (' + branchRef.name + ')', action: () => openPrUrl(branchRef.name) });
+    }
+  }
+  items.push(
     { separator: true },
     { label: 'Cherry-pick', action: () => gitAction('cherryPick', { hash: commit.hash }) },
     { label: 'Revert', action: () => gitAction('revert', { hash: commit.hash }) },
     { separator: true },
     { label: 'Reset Current Branch to Here...', destructive: true, action: () => promptResetMode(commit.hash) },
-  ];
+  );
 
   let html = '';
   items.forEach((item, idx) => {
@@ -773,6 +1283,72 @@ function showCommitContextMenu(x, y, commit) {
   });
 
   // Close on click outside
+  setTimeout(() => document.addEventListener('click', hideContextMenu, { once: true }), 0);
+}
+
+function showUncommittedContextMenu(x, y) {
+  const menu = document.getElementById('context-menu');
+  const items = [
+    { label: 'Stash Uncommitted Changes...', action: () => {
+      showDialog({
+        title: 'Stash Changes',
+        input: { placeholder: 'Stash message (optional)' },
+        confirmLabel: 'Stash',
+        onConfirm: (message) => gitAction('stashSave', message ? { message } : {}),
+      });
+    }},
+    { label: 'Reset Uncommitted Changes...', destructive: true, action: () => {
+      showDialog({
+        title: 'Reset Changes',
+        message: 'Reset all uncommitted changes. Staged changes will be unstaged.',
+        select: { options: ['mixed', 'hard'], defaultValue: 'mixed', label: 'Reset mode:' },
+        destructive: true,
+        confirmLabel: 'Reset',
+        onConfirm: (mode) => {
+          if (mode === 'hard') {
+            showDialog({
+              title: 'Confirm Hard Reset',
+              message: 'WARNING: --hard will permanently discard ALL uncommitted changes!',
+              destructive: true,
+              confirmLabel: 'Reset Hard',
+              onConfirm: () => gitAction('reset', { mode: 'hard', hash: 'HEAD' }),
+            });
+          } else {
+            gitAction('reset', { mode, hash: 'HEAD' });
+          }
+        },
+      });
+    }},
+    { label: 'Clean Untracked Files...', destructive: true, action: () => {
+      showDialog({
+        title: 'Clean Untracked Files',
+        message: 'Permanently delete all untracked files and directories. This cannot be undone!',
+        destructive: true,
+        confirmLabel: 'Clean',
+        onConfirm: () => gitAction('clean', {}),
+      });
+    }},
+    { separator: true },
+    { label: 'Open Source Control View', action: () => vscode.postMessage({ command: 'openSourceControl' }) },
+  ];
+
+  let html = '';
+  items.forEach((item, idx) => {
+    if (item.separator) {
+      html += '<div class="ctx-separator"></div>';
+    } else {
+      html += '<div class="ctx-item' + (item.destructive ? ' destructive' : '') + '" data-idx="' + idx + '">' + escHtml(item.label) + '</div>';
+    }
+  });
+  menu.innerHTML = html;
+  menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+  menu.classList.remove('hidden');
+  menu.querySelectorAll('.ctx-item').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    const item = items[idx];
+    if (item && item.action) el.addEventListener('click', () => { hideContextMenu(); item.action(); });
+  });
   setTimeout(() => document.addEventListener('click', hideContextMenu, { once: true }), 0);
 }
 
@@ -889,12 +1465,33 @@ function setupLongPress(el, callback) {
 // --- Text formatter (URLs, issues, commit hashes) ---
 function formatCommitMessage(msg) {
   let safe = escHtml(msg);
-  // Short commit hashes first (before URLs, to avoid matching hex in href attributes)
+  // Apply issue linking rules from settings
+  const rules = state.settings.issueLinkingRules || [];
+  for (const rule of rules) {
+    if (!rule.pattern) continue;
+    if (rule.pattern.length > 200) continue; // ReDoS guard
+    try {
+      const re = new RegExp(rule.pattern, 'g');
+      if (rule.url) {
+        safe = safe.replace(re, function(match) {
+          let href = rule.url;
+          for (let i = 1; i < arguments.length - 2; i++) {
+            if (typeof arguments[i] === 'string') href = href.split('$' + i).join(arguments[i]);
+          }
+          return '<a class="commit-link" href="' + escHtml(href) + '" target="_blank" title="' + escHtml(href) + '">' + match + '</a>';
+        });
+      } else {
+        safe = safe.replace(re, '<span class="commit-link" title="$&">$&</span>');
+      }
+    } catch (e) { /* invalid regex — skip */ }
+  }
+  // Short commit hashes
   safe = safe.replace(/\\b([0-9a-f]{7,40})\\b/g, '<span class="commit-link" title="$1">$1</span>');
-  // Issue references (#123)
-  safe = safe.replace(/#(\\d+)/g, '<span class="commit-link" title="Issue #$1">#$1</span>');
-  // URLs last (won't corrupt already-wrapped hashes since they don't look like URLs)
-  safe = safe.replace(/(https?:\\/\\/[^\\s<]+)/g, '<a class="commit-link" href="$1" target="_blank">$1</a>');
+  // URLs — skip if already inside an <a> tag
+  safe = safe.replace(/(<a[^>]*>.*?<\\/a>)|(https?:\\/\\/[^\\s<]+)/g, (m, linked, url) => {
+    if (linked) return linked;
+    return '<a class="commit-link" href="' + url + '" target="_blank">' + url + '</a>';
+  });
   return safe;
 }
 
@@ -921,9 +1518,10 @@ function doSearch(query) {
   state.searchIndex = -1;
   if (!query.trim()) { document.getElementById('find-count').textContent = ''; return; }
   const q = query.toLowerCase();
+  const displayCommits = getDisplayCommits();
   document.querySelectorAll('.commit-row:not(.header-row)').forEach((row, idx) => {
-    const commit = state.commits[idx];
-    if (!commit) return;
+    const commit = displayCommits[idx];
+    if (!commit || commit.hash === 'uncommitted') return;
     const match = commit.message.toLowerCase().includes(q) ||
       commit.author.toLowerCase().includes(q) ||
       commit.hash.toLowerCase().startsWith(q);
@@ -978,9 +1576,12 @@ document.getElementById('graph-container').addEventListener('scroll', (e) => {
 });
 
 // --- Utilities ---
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
-function formatRelativeDate(ts) {
+function formatDate(ts) {
+  const fmt = state.settings.dateFormat;
+  if (fmt === 'iso') return new Date(ts * 1000).toISOString().substring(0, 16).replace('T', ' ');
+  if (fmt === 'absolute') return new Date(ts * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   const now = Date.now() / 1000;
   const diff = now - ts;
   if (diff < 60) return 'just now';
@@ -1001,17 +1602,243 @@ function updateStatus() {
 }
 
 // --- Settings panel ---
+const settingsPanel = document.getElementById('settings-panel');
+
 document.getElementById('btn-settings').addEventListener('click', () => {
-  showDialog({
-    title: 'Git Graph Settings',
-    message: 'Max commits to load per page:',
-    input: { placeholder: 'e.g. 300', defaultValue: String(state.maxCommits) },
-    confirmLabel: 'Save',
-    onConfirm: (value) => {
-      const n = parseInt(value, 10);
-      if (n > 0 && n <= 10000) state.maxCommits = n;
-    }
+  const isOpen = settingsPanel.classList.toggle('open');
+  if (isOpen) {
+    vscode.postMessage({ command: 'requestSettings' });
+    vscode.postMessage({ command: 'requestUserDetails' });
+    renderRemotesList();
+  }
+});
+document.getElementById('settings-close').addEventListener('click', () => {
+  settingsPanel.classList.remove('open');
+});
+
+function applySettingsToUI() {
+  const s = state.settings;
+  document.getElementById('s-maxCommits').value = s.maxCommits;
+  document.getElementById('s-showTags').checked = s.showTags;
+  document.getElementById('s-showStashes').checked = s.showStashes;
+  document.getElementById('s-showRemoteBranches').checked = s.showRemoteBranches;
+  document.getElementById('s-graphStyle').value = s.graphStyle;
+  document.getElementById('s-firstParentOnly').checked = s.firstParentOnly;
+  document.getElementById('s-dateFormat').value = s.dateFormat;
+  document.getElementById('s-commitOrdering').value = s.commitOrdering;
+  document.getElementById('s-autoFetchInterval').value = s.autoFetchInterval || 0;
+  graphConfig.style = s.graphStyle;
+  startAutoFetch(s.autoFetchInterval);
+  renderIssueRules();
+  applyPrSettingsToUI();
+}
+
+// General setting change handlers
+['showTags', 'showStashes', 'showRemoteBranches', 'firstParentOnly'].forEach(key => {
+  document.getElementById('s-' + key).addEventListener('change', (e) => {
+    vscode.postMessage({ command: 'updateSetting', key, value: e.target.checked });
+    state.settings[key] = e.target.checked;
+    renderCommitList();
   });
 });
+['graphStyle', 'dateFormat', 'commitOrdering'].forEach(key => {
+  document.getElementById('s-' + key).addEventListener('change', (e) => {
+    vscode.postMessage({ command: 'updateSetting', key, value: e.target.value });
+    state.settings[key] = e.target.value;
+    if (key === 'graphStyle') graphConfig.style = e.target.value;
+    if (key === 'dateFormat') renderCommitList();
+  });
+});
+document.getElementById('s-maxCommits').addEventListener('change', (e) => {
+  const n = parseInt(e.target.value, 10);
+  if (n > 0 && n <= 10000) {
+    state.maxCommits = n;
+    state.settings.maxCommits = n;
+    vscode.postMessage({ command: 'updateSetting', key: 'maxCommits', value: n });
+  }
+});
+document.getElementById('s-autoFetchInterval').addEventListener('change', (e) => {
+  const val = parseInt(e.target.value, 10);
+  state.settings.autoFetchInterval = val;
+  vscode.postMessage({ command: 'updateSetting', key: 'autoFetchInterval', value: val });
+  startAutoFetch(val);
+});
+
+// User details
+document.getElementById('s-saveUser').addEventListener('click', () => {
+  const name = document.getElementById('s-userName').value.trim();
+  const email = document.getElementById('s-userEmail').value.trim();
+  vscode.postMessage({ command: 'updateUserDetails', name, email });
+});
+
+// Remotes
+function renderRemotesList() {
+  const container = document.getElementById('s-remotes-list');
+  if (state.remotes.length === 0) {
+    container.innerHTML = '<p style="font-size:12px;color:var(--subtext)">No remotes configured.</p>';
+    return;
+  }
+  container.innerHTML = state.remotes.map(r =>
+    '<div class="remote-item">' +
+      '<div class="remote-name">' + escHtml(r.name) + '</div>' +
+      '<div class="remote-url">' + escHtml(r.fetchUrl) + '</div>' +
+      '<div class="remote-actions">' +
+        '<button class="btn-sm" data-edit-remote="' + escHtml(r.name) + '">Edit URL</button>' +
+        '<button class="btn-sm" style="color:var(--red)" data-rm-remote="' + escHtml(r.name) + '">Remove</button>' +
+      '</div>' +
+    '</div>'
+  ).join('');
+}
+
+document.getElementById('s-remotes-list').addEventListener('click', (e) => {
+  const editBtn = e.target.closest('[data-edit-remote]');
+  if (editBtn) {
+    const name = editBtn.dataset.editRemote;
+    const remote = state.remotes.find(r => r.name === name);
+    showDialog({
+      title: 'Edit Remote URL: ' + name,
+      input: { placeholder: 'New URL', defaultValue: remote ? remote.fetchUrl : '' },
+      onConfirm: (url) => { if (url) vscode.postMessage({ command: 'editRemoteUrl', name, url }); },
+    });
+    return;
+  }
+  const rmBtn = e.target.closest('[data-rm-remote]');
+  if (rmBtn) {
+    const name = rmBtn.dataset.rmRemote;
+    showDialog({
+      title: 'Remove Remote',
+      message: 'Remove remote "' + name + '"? This cannot be undone.',
+      destructive: true,
+      confirmLabel: 'Remove',
+      onConfirm: () => vscode.postMessage({ command: 'removeRemote', name }),
+    });
+  }
+});
+
+document.getElementById('s-addRemote').addEventListener('click', () => {
+  const name = document.getElementById('s-newRemoteName').value.trim();
+  const url = document.getElementById('s-newRemoteUrl').value.trim();
+  if (name && url) {
+    vscode.postMessage({ command: 'addRemote', name, url });
+    document.getElementById('s-newRemoteName').value = '';
+    document.getElementById('s-newRemoteUrl').value = '';
+  }
+});
+
+// --- Issue Linking ---
+function renderIssueRules() {
+  const rules = state.settings.issueLinkingRules || [];
+  const container = document.getElementById('issue-rules-list');
+  container.innerHTML = rules.map((r, i) =>
+    '<div class="issue-rule-row" data-idx="' + i + '">' +
+      '<input type="text" class="rule-pattern" placeholder="Regex, e.g. #(\\d+)" value="' + escHtml(r.pattern) + '">' +
+      '<input type="text" class="rule-url" placeholder="URL with $1, e.g. https://..." value="' + escHtml(r.url) + '">' +
+      '<button class="rule-remove" title="Remove">&times;</button>' +
+    '</div>'
+  ).join('');
+}
+
+let issueRuleDebounce = null;
+document.getElementById('issue-rules-list').addEventListener('input', (e) => {
+  const row = e.target.closest('.issue-rule-row');
+  if (!row) return;
+  const idx = parseInt(row.dataset.idx);
+  const rules = [...(state.settings.issueLinkingRules || [])];
+  if (!rules[idx]) return;
+  if (e.target.classList.contains('rule-pattern')) {
+    rules[idx] = { ...rules[idx], pattern: e.target.value };
+    try { new RegExp(e.target.value); e.target.classList.remove('rule-error'); }
+    catch { e.target.classList.add('rule-error'); return; }
+  }
+  if (e.target.classList.contains('rule-url')) {
+    rules[idx] = { ...rules[idx], url: e.target.value };
+  }
+  state.settings.issueLinkingRules = rules;
+  clearTimeout(issueRuleDebounce);
+  issueRuleDebounce = setTimeout(() => {
+    vscode.postMessage({ command: 'updateSetting', key: 'issueLinkingRules', value: rules });
+  }, 500);
+});
+
+document.getElementById('issue-rules-list').addEventListener('click', (e) => {
+  if (!e.target.closest('.rule-remove')) return;
+  const row = e.target.closest('.issue-rule-row');
+  const idx = parseInt(row.dataset.idx);
+  const rules = [...(state.settings.issueLinkingRules || [])];
+  rules.splice(idx, 1);
+  state.settings.issueLinkingRules = rules;
+  vscode.postMessage({ command: 'updateSetting', key: 'issueLinkingRules', value: rules });
+  renderIssueRules();
+});
+
+document.getElementById('add-issue-rule').addEventListener('click', () => {
+  const rules = [...(state.settings.issueLinkingRules || []), { pattern: '', url: '' }];
+  state.settings.issueLinkingRules = rules;
+  vscode.postMessage({ command: 'updateSetting', key: 'issueLinkingRules', value: rules });
+  renderIssueRules();
+});
+
+// --- PR Creation ---
+const PR_TEMPLATES = {
+  github: 'https://github.com/\${owner}/\${repo}/compare/\${targetBranch}...\${sourceBranch}?expand=1',
+  gitlab: 'https://gitlab.com/\${owner}/\${repo}/-/merge_requests/new?source_branch=\${sourceBranch}&target_branch=\${targetBranch}',
+  bitbucket: 'https://bitbucket.org/\${owner}/\${repo}/pull-requests/new?source=\${sourceBranch}&dest=\${targetBranch}',
+  custom: '',
+};
+
+document.getElementById('pr-provider').addEventListener('change', (e) => {
+  const provider = e.target.value;
+  const prConfig = document.getElementById('pr-config');
+  if (!provider) {
+    prConfig.classList.add('hidden');
+    state.settings.prCreation = null;
+    vscode.postMessage({ command: 'updateSetting', key: 'prCreation', value: null });
+    return;
+  }
+  prConfig.classList.remove('hidden');
+  document.getElementById('pr-url-template').value = PR_TEMPLATES[provider] || '';
+  document.getElementById('pr-target').value = 'main';
+  vscode.postMessage({ command: 'requestOwnerRepo' });
+});
+
+document.getElementById('pr-save').addEventListener('click', () => {
+  const provider = document.getElementById('pr-provider').value;
+  if (!provider) return;
+  const config = {
+    provider,
+    urlTemplate: document.getElementById('pr-url-template').value.trim(),
+    owner: document.getElementById('pr-owner').value.trim(),
+    repo: document.getElementById('pr-repo').value.trim(),
+    defaultTargetBranch: document.getElementById('pr-target').value.trim() || 'main',
+  };
+  state.settings.prCreation = config;
+  vscode.postMessage({ command: 'updateSetting', key: 'prCreation', value: config });
+});
+
+function applyPrSettingsToUI() {
+  const pr = state.settings.prCreation;
+  if (!pr) {
+    document.getElementById('pr-provider').value = '';
+    document.getElementById('pr-config').classList.add('hidden');
+    return;
+  }
+  document.getElementById('pr-provider').value = pr.provider;
+  document.getElementById('pr-config').classList.remove('hidden');
+  document.getElementById('pr-owner').value = pr.owner || '';
+  document.getElementById('pr-repo').value = pr.repo || '';
+  document.getElementById('pr-target').value = pr.defaultTargetBranch || 'main';
+  document.getElementById('pr-url-template').value = pr.urlTemplate || '';
+}
+
+function openPrUrl(sourceBranch) {
+  const pr = state.settings.prCreation;
+  if (!pr || !pr.urlTemplate) return;
+  const url = pr.urlTemplate
+    .replace(/\\$\\{owner\\}/g, encodeURIComponent(pr.owner))
+    .replace(/\\$\\{repo\\}/g, encodeURIComponent(pr.repo))
+    .replace(/\\$\\{sourceBranch\\}/g, encodeURIComponent(sourceBranch))
+    .replace(/\\$\\{targetBranch\\}/g, encodeURIComponent(pr.defaultTargetBranch || 'main'));
+  window.open(url, '_blank');
+}
 `;
 }

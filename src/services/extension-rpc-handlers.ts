@@ -112,6 +112,15 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     return { ok: true };
   });
 
+  // --- open PPM tab (generic, any extension can use) ---
+  rpc.onRequest("window:openTab", async (params) => {
+    const [tabType, title, projectId, metadata] = params as [
+      string, string, string | null, Record<string, unknown> | undefined,
+    ];
+    broadcastExtMsg({ type: "tab:open", tabType, title, projectId, closable: true, metadata });
+    return { ok: true };
+  });
+
   // --- tree views (forwarded to browser via WS bridge) ---
   rpc.onRequest("window:tree:update", async (params) => {
     const [viewId, items] = params as [string, unknown[]];

@@ -194,7 +194,7 @@ export function TabBar({ panelId }: TabBarProps) {
               key={tab.id}
               tab={tab}
               isActive={tab.id === activeTabId}
-              icon={TAB_ICONS[tab.type]}
+              icon={TAB_ICONS[tab.type] || Puzzle}
               showDropBefore={dropIndex === i}
               notificationType={notiType}
               onSelect={() => {

@@ -211,7 +211,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
         <div className="flex-1 min-w-0 relative flex items-center h-12 -ml-4">
           <div ref={mobileScrollRef} className="flex-1 min-w-0 flex items-center h-12 overflow-x-auto scrollbar-none pl-4">
           {tabs.map((tab) => {
-            const Icon = TAB_ICONS[tab.type];
+            const Icon = TAB_ICONS[tab.type] || Puzzle;
             const isActive = tab.id === activeTabId;
             const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
             const entry = sessionId ? notifications.get(sessionId) : undefined;

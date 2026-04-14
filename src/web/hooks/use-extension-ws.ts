@@ -142,6 +142,16 @@ export function useExtensionWs(enabled = true) {
             detail: { panelId: msg.panelId, message: msg.message },
           }));
           break;
+
+        case "tab:open":
+          useTabStore.getState().openTab({
+            type: (msg as any).tabType,
+            title: (msg as any).title,
+            projectId: (msg as any).projectId ?? null,
+            closable: (msg as any).closable ?? true,
+            metadata: (msg as any).metadata,
+          });
+          break;
       }
     });
 
