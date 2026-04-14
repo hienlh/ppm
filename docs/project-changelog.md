@@ -6,7 +6,7 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Bundled Extensions + Git-Graph Refinement (in progress)
+## [Unreleased] — Bundled Extensions + Git-Graph Refinement + Code Quality Improvements
 
 ### Added
 - **Bundled Extensions Support** — Auto-discover extensions from packages/ext-* directories
@@ -17,15 +17,24 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
   - User-installed extensions override bundled with same ID (user takes precedence)
   - Extension paths tracked separately for bundled vs node_modules locations
 
-- **Git-Graph UI Improvements** — Enhanced git-graph extension with comprehensive git workflow
+- **Git-Graph UI Improvements** — 7 UX refinements + comprehensive git workflow
+  - Branch context menu: right-click for checkout/merge/rebase/delete/create operations
+  - Double-click checkout: branch labels double-click to switch branches instantly
+  - Toast notifications: replaced blocked alert() with inline webview toast elements
+  - SVG icons: replaced Unicode symbols (↻⬇🔍⚙🌲📁) with inline Lucide SVG icons
+  - Auto-fetch enhancement: added 10-second interval option to dropdown
+  - Uncommitted polling: 5-second status refresh to detect working tree changes
   - Interactive UI elements: resizable graph column, branch filter dropdown, tree/list view toggle
   - Git actions: stage/unstage files, commit from webview, stash/reset/clean operations
-  - Uncommitted file actions: open in editor, discard changes, stage for commit
-  - Auto-fetch with configurable interval (autoFetchInterval setting)
-  - Fetch button for manual repository refresh
-  - Context menu with destructive operation warnings
   - Path traversal validation for security (assertSafePath in RPC handlers)
   - Fallback guards for all tab type handling (unknown tab types safely ignored)
+
+- **Extension Host Stability** — Worker debugging & error handling improvements
+  - Enhanced error logging in extension host worker
+  - Fixed localHandlers presence check before RPC invocation
+  - Proper disposed flag tracking to prevent polling race conditions
+  - HEAD ref type detection corrected for git operations
+  - Removed unused variable warnings from build
 
 - **Faithful SVG Graph Rendering** — Port of vscode-git-graph algorithm with deterministic layout
   - Single SVG model with continuous branch paths using Bézier curves
@@ -42,24 +51,28 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
   - `src/services/extension-manifest.ts` — Added discoverBundledManifests() to scan packages/ext-* dirs
   - `src/services/extension.service.ts` — Added extensionPaths Map, bundledIds Set, isBundled() method; updated discover()/activate()/remove() to handle bundled extensions
   - `src/cli/commands/ext-cmd.ts` — Added "Source" column to `ppm ext list`, calls discover() to populate bundled info
-  - `packages/ext-git-graph/src/webview-html.ts` — Major rewrite: deterministic graph layout (443 additions, 104 deletions)
-  - `packages/ext-git-graph/src/extension.ts` — Git actions, auto-fetch interval, openFile/openSourceControl handlers
-  - `packages/ext-git-graph/src/types.ts` — Added autoFetchInterval to settings, new message types
-  - `src/services/extension-rpc-handlers.ts` — Allow git operations in all registered project paths (not just CWD)
+  - `packages/ext-git-graph/src/webview-html.ts` — UX refinements: branch context menu, dblclick checkout, toast notifications, SVG Lucide icons, 10s auto-fetch option, improved UI responsiveness
+  - `packages/ext-git-graph/src/extension.ts` — 5s uncommitted status polling, openFile/openSourceControl handlers, enhanced error handling
+  - `packages/ext-git-graph/src/types.ts` — Added autoFetchInterval, new message types
+  - `src/services/extension-rpc-handlers.ts` — Allow git operations in all registered project paths (not just CWD), improved path validation
+  - `src/services/extension-host-worker.ts` — Enhanced error logging, localHandlers check, disposed flag fix for polling race conditions
   - `src/web/components/layout/tab-bar.tsx` — Fallback guard for unknown tab types
   - `src/web/components/layout/mobile-nav.tsx` — Fallback guard for unknown tab types
   - `src/web/components/layout/tab-content.tsx` — Fallback guard for unknown tab types
   - `src/web/components/layout/editor-panel.tsx` — Fallback guard for unknown tab types
   - `src/web/hooks/use-extension-ws.ts` — Enhanced RPC integration
+  - `src/types/extension-messages.ts` — New message types for UX events
 - **New Tests:**
   - `tests/unit/services/extension-manifest.test.ts` — 9 tests for discoverBundledManifests() and manifest parsing
   - `tests/unit/services/extension-service-bundled.test.ts` — 9 tests for isBundled(), discover(), and removal protection
 - **Type Changes:**
   - Settings: Added `autoFetchInterval: number` option
-  - Messages: New `openFile`, `openSourceControl` message types from extension
+  - Messages: New `openFile`, `openSourceControl`, toast notification message types
   - New type: `BundledManifest` (ExtensionManifest with _dir field)
+  - HEAD ref type detection corrected
 - **Security:** Path validation ensures extensions can only operate on registered project paths
 - **Breaking Changes:** None (backward compatible)
+- **Test Coverage:** 129 tests passing (111 extension tests + 18 bundled tests)
 
 ---
 

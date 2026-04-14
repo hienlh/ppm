@@ -80,9 +80,13 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
     case "command:execute": {
       try {
         const { extensionService } = await import("../../services/extension.service.ts");
-        // Forward to extension host worker via RPC
         if (extensionService["rpc"]) {
-          await extensionService["rpc"].sendRequest("ext:command:execute", msg.command, ...(msg.args ?? []));
+          const result = await extensionService["rpc"].sendRequest<{ ok: boolean; error?: string }>(
+            "ext:command:execute", msg.command, ...(msg.args ?? []),
+          );
+          if (!result?.ok) {
+            console.error(`[ExtWS] command:execute failed: ${result?.error ?? "unknown"}`);
+          }
         }
       } catch (e) {
         console.error(`[ExtWS] command:execute error:`, e);

@@ -252,7 +252,18 @@ function openGitGraph(
   });
 
   context.subscriptions.push(msgDisposable);
-  panel.onDidDispose(() => msgDisposable.dispose());
+
+  // Poll uncommitted changes every 5 seconds
+  let disposed = false;
+  const uncommittedPollTimer = setInterval(() => {
+    if (!disposed) handleUncommittedStatus(vscode, panel, projectPath);
+  }, 5_000);
+
+  panel.onDidDispose(() => {
+    disposed = true;
+    clearInterval(uncommittedPollTimer);
+    msgDisposable.dispose();
+  });
 }
 
 async function handleRepoInfo(
@@ -599,11 +610,20 @@ function buildGitActionArgs(action: string, args: Record<string, unknown>): stri
     case "stashDrop": return ["stash", "drop", ...(args.stashRef ? [assertValidRef(args.stashRef, "stashRef")] : [])];
     case "fetch": return ["fetch", ...(args.remote ? [assertValidRemote(args.remote)] : []), ...(args.prune ? ["--prune"] : [])];
     case "pull": return ["pull", ...(args.remote ? [assertValidRemote(args.remote)] : []), ...(args.branch ? [assertValidRef(args.branch, "branch")] : [])];
+    case "renameBranch": {
+      const oldName = assertValidRef(args.oldName, "oldName");
+      const newName = assertValidRef(args.newName, "newName");
+      return ["branch", "-m", oldName, newName];
+    }
     case "push": {
       const pushArgs = ["push"];
       if (args.remote) pushArgs.push(assertValidRemote(args.remote));
-      if (args.branch) pushArgs.push(assertValidRef(args.branch, "branch"));
-      if (args.force) pushArgs.push("--force");
+      if (args.delete && args.branch) {
+        pushArgs.push("--delete", assertValidRef(args.branch, "branch"));
+      } else {
+        if (args.branch) pushArgs.push(assertValidRef(args.branch, "branch"));
+        if (args.force) pushArgs.push("--force");
+      }
       return pushArgs;
     }
     case "createTag": {

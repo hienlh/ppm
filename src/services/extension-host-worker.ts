@@ -101,13 +101,17 @@ rpc.onRequest("ext:deactivate", async (params) => {
 
 rpc.onRequest("ext:command:execute", async (params) => {
   const [command, ...args] = params as [string, ...unknown[]];
-  for (const [, ext] of activeExtensions) {
+  for (const [extId, ext] of activeExtensions) {
     if (ext.commands) {
+      const hasLocal = (ext.commands as any).localHandlers?.has(command);
+      if (!hasLocal) continue;
       try {
         const result = await (ext.commands as any).executeCommand(command, ...args);
         return { ok: true, result };
-      } catch {
-        // Command not found in this extension, try next
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[ExtHost] Command "${command}" in ${extId} threw:`, msg);
+        return { ok: false, error: msg };
       }
     }
   }

@@ -23,12 +23,12 @@ ${getStyles()}
             <div id="branch-list" class="branch-list"></div>
           </div>
         </div>
-        <button id="btn-refresh" title="Refresh">&#x21bb;</button>
-        <button id="btn-fetch" title="Fetch from remotes">&#x2B07;</button>
+        <button id="btn-refresh" title="Refresh"></button>
+        <button id="btn-fetch" title="Fetch from remotes"></button>
       </div>
       <div class="toolbar-right">
-        <button id="btn-find" title="Find (Ctrl+F)">&#x1F50D;</button>
-        <button id="btn-settings" title="Settings">&#x2699;</button>
+        <button id="btn-find" title="Find (Ctrl+F)"></button>
+        <button id="btn-settings" title="Settings"></button>
       </div>
     </header>
     <div id="find-bar" class="find-bar hidden">
@@ -69,7 +69,7 @@ ${getStyles()}
           <div class="setting-row"><label>First Parent Only</label><input type="checkbox" id="s-firstParentOnly"></div>
           <div class="setting-row"><label>Date Format</label><select id="s-dateFormat"><option value="relative">Relative</option><option value="absolute">Absolute</option><option value="iso">ISO</option></select></div>
           <div class="setting-row"><label>Commit Ordering</label><select id="s-commitOrdering"><option value="topo">Topological</option><option value="date">Date</option><option value="author-date">Author Date</option></select></div>
-          <div class="setting-row"><label>Auto Fetch Interval</label><select id="s-autoFetchInterval"><option value="0">Disabled</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option></select></div>
+          <div class="setting-row"><label>Auto Fetch Interval</label><select id="s-autoFetchInterval"><option value="0">Disabled</option><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option></select></div>
         </details>
         <details class="settings-section" open>
           <summary>User Details</summary>
@@ -299,6 +299,13 @@ button:active { background: var(--surface); }
 .commit-link { color: var(--blue); text-decoration: none; cursor: pointer; }
 .commit-link:hover { text-decoration: underline; }
 
+/* Toast notifications */
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); padding: 8px 16px; border-radius: 6px; font-size: 12px; z-index: 300; animation: toast-in 0.3s ease; max-width: 80%; pointer-events: none; }
+.toast-error { background: var(--red); color: #fff; }
+.toast-success { background: var(--green); color: #fff; }
+.toast-info { background: var(--blue); color: #fff; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
 /* Touch targets for mobile */
 @media (max-width: 768px) {
   .commit-row { min-height: 44px; }
@@ -353,7 +360,38 @@ const state = {
   _lastDetail: null,
 };
 
+// --- SVG Icons ---
+const ICONS = {
+  refresh: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>',
+  download: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  settings: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
+  folderOpen: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2l-1-5H4l-1 5a2 2 0 002 2z"/></svg>',
+  file: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>',
+  list: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+  tree: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>',
+  plus: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  minus: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  fileOpen: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+};
+
+// --- Toast notifications ---
+function showToast(message, type) {
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + (type || 'error');
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, 4000);
+}
+
 // --- Init ---
+document.getElementById('btn-refresh').innerHTML = ICONS.refresh;
+document.getElementById('btn-fetch').innerHTML = ICONS.download;
+document.getElementById('btn-find').innerHTML = ICONS.search;
+document.getElementById('btn-settings').innerHTML = ICONS.settings;
 vscode.postMessage({ command: 'ready' });
 
 // --- Message handler ---
@@ -436,7 +474,7 @@ window.addEventListener('message', (event) => {
           document.getElementById('status-text').textContent = 'Fetch failed: ' + (msg.result.error || 'Unknown error');
         }
       } else if (!msg.result.ok) {
-        alert('Git action failed: ' + (msg.result.error || 'Unknown error'));
+        showToast('Git action failed: ' + (msg.result.error || 'Unknown error'), 'error');
       }
       break;
     case 'error':
@@ -588,7 +626,7 @@ btnFetch.addEventListener('click', () => { if (!fetchInProgress) doFetch(); });
 function startAutoFetch(intervalSec) {
   stopAutoFetch();
   if (!intervalSec || intervalSec <= 0) return;
-  const ms = Math.max(intervalSec, 30) * 1000;
+  const ms = Math.max(intervalSec, 10) * 1000;
   autoFetchTimer = setInterval(() => { if (!fetchInProgress) doFetch(); }, ms);
 }
 function stopAutoFetch() {
@@ -1006,6 +1044,24 @@ function renderCommitList() {
     }
     msgCol.innerHTML = badges + formatCommitMessage(commit.message);
 
+    // Attach context menu and double-click to ref badges
+    msgCol.querySelectorAll('.ref-badge').forEach(badge => {
+      const refName = badge.textContent;
+      const refType = badge.className.includes('ref-head') ? 'head'
+                    : badge.className.includes('ref-remote') ? 'remote'
+                    : badge.className.includes('ref-tag') ? 'tag' : 'local';
+      badge.style.cursor = 'pointer';
+      badge.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        gitAction('checkout', { target: refName });
+      });
+      badge.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showBranchContextMenu(e.clientX, e.clientY, refName, refType, commit);
+      });
+    });
+
     const authorCol = document.createElement('div');
     authorCol.className = 'col-author';
     authorCol.textContent = isVirtual ? '' : commit.author;
@@ -1095,7 +1151,7 @@ function renderFileTree(node, depth, hash, parentHash, section) {
   for (const dir of dirs) {
     const child = node.children[dir];
     html += '<div class="tree-dir" style="padding-left:' + (depth * 16) + 'px">';
-    html += '&#x1F4C1; <span class="tree-dir-name">' + escHtml(dir) + '/</span>';
+    html += ICONS.folderOpen + ' <span class="tree-dir-name">' + escHtml(dir) + '/</span>';
     html += '<span class="tree-dir-count">(' + countFiles(child) + ')</span></div>';
     html += renderFileTree(child, depth + 1, hash, parentHash, section);
   }
@@ -1137,20 +1193,20 @@ function renderFileListHtml(files, hash, parentHash, section) {
 function renderFileActions(file, section) {
   let html = '<span class="file-actions">';
   if (section === 'unstaged') {
-    html += '<button class="file-action-btn" data-action="stage" data-file="' + escHtml(file.path) + '" title="Stage">+</button>';
-    html += '<button class="file-action-btn" data-action="discard" data-file="' + escHtml(file.path) + '" title="Discard changes">&times;</button>';
+    html += '<button class="file-action-btn" data-action="stage" data-file="' + escHtml(file.path) + '" title="Stage">' + ICONS.plus + '</button>';
+    html += '<button class="file-action-btn" data-action="discard" data-file="' + escHtml(file.path) + '" title="Discard changes">' + ICONS.x + '</button>';
   } else if (section === 'staged') {
-    html += '<button class="file-action-btn" data-action="unstage" data-file="' + escHtml(file.path) + '" title="Unstage">&minus;</button>';
+    html += '<button class="file-action-btn" data-action="unstage" data-file="' + escHtml(file.path) + '" title="Unstage">' + ICONS.minus + '</button>';
   }
-  html += '<button class="file-action-btn" data-action="open" data-file="' + escHtml(file.path) + '" title="Open file">&#x1F4C4;</button>';
+  html += '<button class="file-action-btn" data-action="open" data-file="' + escHtml(file.path) + '" title="Open file">' + ICONS.fileOpen + '</button>';
   html += '</span>';
   return html;
 }
 
 function fileViewToggleHtml() {
   return '<div class="file-view-toggle">' +
-    '<button class="toggle-btn' + (state.fileViewMode === 'list' ? ' active' : '') + '" data-view="list" title="List view">&#x2630;</button>' +
-    '<button class="toggle-btn' + (state.fileViewMode === 'tree' ? ' active' : '') + '" data-view="tree" title="Tree view">&#x1F332;</button>' +
+    '<button class="toggle-btn' + (state.fileViewMode === 'list' ? ' active' : '') + '" data-view="list" title="List view">' + ICONS.list + '</button>' +
+    '<button class="toggle-btn' + (state.fileViewMode === 'tree' ? ' active' : '') + '" data-view="tree" title="Tree view">' + ICONS.tree + '</button>' +
   '</div>';
 }
 
@@ -1342,6 +1398,105 @@ function showUncommittedContextMenu(x, y) {
   });
   menu.innerHTML = html;
   menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+  menu.classList.remove('hidden');
+  menu.querySelectorAll('.ctx-item').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    const item = items[idx];
+    if (item && item.action) el.addEventListener('click', () => { hideContextMenu(); item.action(); });
+  });
+  setTimeout(() => document.addEventListener('click', hideContextMenu, { once: true }), 0);
+}
+
+function showBranchContextMenu(x, y, branchName, refType, commit) {
+  const menu = document.getElementById('context-menu');
+  const items = [];
+
+  if (refType === 'head' || refType === 'local') {
+    items.push(
+      { label: 'Checkout "' + branchName + '"', action: () => gitAction('checkout', { target: branchName }) },
+      { label: 'Merge into current branch', action: () => showDialog({
+          title: 'Merge "' + branchName + '"',
+          message: 'Merge "' + branchName + '" into the current branch?',
+          confirmLabel: 'Merge',
+          onConfirm: () => gitAction('merge', { branch: branchName }),
+        })
+      },
+      { label: 'Rebase onto "' + branchName + '"', action: () => showDialog({
+          title: 'Rebase onto "' + branchName + '"',
+          message: 'Rebase current branch onto "' + branchName + '"?',
+          confirmLabel: 'Rebase',
+          onConfirm: () => gitAction('rebase', { branch: branchName }),
+        })
+      },
+      { separator: true },
+      { label: 'Rename branch...', action: () => showDialog({
+          title: 'Rename Branch',
+          input: { placeholder: 'New branch name', defaultValue: branchName },
+          confirmLabel: 'Rename',
+          onConfirm: (newName) => { if (newName && newName !== branchName) gitAction('renameBranch', { oldName: branchName, newName }); },
+        })
+      },
+    );
+    if (refType !== 'head') {
+      items.push(
+        { label: 'Delete branch...', destructive: true, action: () => showDialog({
+            title: 'Delete Branch',
+            message: 'Delete local branch "' + branchName + '"?',
+            destructive: true,
+            confirmLabel: 'Delete',
+            onConfirm: () => gitAction('deleteBranch', { name: branchName, force: false }),
+          })
+        },
+      );
+    }
+    if (state.settings.prCreation && state.settings.prCreation.urlTemplate) {
+      items.push({ separator: true });
+      items.push({ label: 'Create Pull Request', action: () => openPrUrl(branchName) });
+    }
+  } else if (refType === 'remote') {
+    items.push(
+      { label: 'Checkout as local branch', action: () => gitAction('checkout', { target: branchName }) },
+      { separator: true },
+      { label: 'Delete remote branch...', destructive: true, action: () => showDialog({
+          title: 'Delete Remote Branch',
+          message: 'Delete remote branch "' + branchName + '"? This cannot be undone.',
+          destructive: true,
+          confirmLabel: 'Delete',
+          onConfirm: () => {
+            const parts = branchName.split('/');
+            const remote = parts[0];
+            const branch = parts.slice(1).join('/');
+            gitAction('push', { remote, branch, force: false, delete: true });
+          },
+        })
+      },
+    );
+  } else if (refType === 'tag') {
+    items.push(
+      { label: 'Checkout tag "' + branchName + '"', action: () => gitAction('checkout', { target: branchName }) },
+      { separator: true },
+      { label: 'Delete tag...', destructive: true, action: () => showDialog({
+          title: 'Delete Tag',
+          message: 'Delete tag "' + branchName + '"?',
+          destructive: true,
+          confirmLabel: 'Delete',
+          onConfirm: () => gitAction('deleteTag', { name: branchName }),
+        })
+      },
+    );
+  }
+
+  let html = '';
+  items.forEach((item, idx) => {
+    if (item.separator) {
+      html += '<div class="ctx-separator"></div>';
+    } else {
+      html += '<div class="ctx-item' + (item.destructive ? ' destructive' : '') + '" data-idx="' + idx + '">' + escHtml(item.label) + '</div>';
+    }
+  });
+  menu.innerHTML = html;
+  menu.style.left = Math.min(x, window.innerWidth - 220) + 'px';
   menu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
   menu.classList.remove('hidden');
   menu.querySelectorAll('.ctx-item').forEach(el => {
