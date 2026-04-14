@@ -34,7 +34,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "open-chat", label: "Open Chat", category: "tabs", defaultKey: "Mod+L" },
   { id: "open-terminal", label: "Open Terminal", category: "tabs", defaultKey: "Mod+'" },
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
-  { id: "open-git-graph", label: "Git Graph", category: "tabs", defaultKey: "Mod+G" },
+  { id: "open-git-graph", label: "Git Graph", category: "tabs", defaultKey: "Mod+G" }, // triggers ext:command:execute git-graph.view
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
   { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
   { id: "voice-input", label: "Voice Input", category: "general", defaultKey: "Mod+Shift+V", note: "Toggle speech-to-text in chat" },

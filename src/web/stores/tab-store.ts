@@ -9,7 +9,6 @@ export type TabType =
   | "database"
   | "sqlite"
   | "postgres"
-  | "git-graph"
   | "git-diff"
   | "settings"
   | "ports"

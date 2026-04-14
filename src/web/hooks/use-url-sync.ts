@@ -14,7 +14,7 @@ export interface UrlState {
 
 const VALID_TAB_TYPES: TabType[] = [
   "terminal", "chat", "editor", "database", "sqlite",
-  "postgres", "git-graph", "git-diff", "settings", "ports",
+  "postgres", "git-diff", "settings", "ports",
   "extension",
 ];
 
@@ -109,7 +109,6 @@ function buildMetadataFromUrl(
       return { ...(sessionId && { sessionId }), ...(providerId && { providerId }), projectName };
     }
     case "terminal": return { terminalIndex: parseInt(identifier ?? "1", 10), projectName };
-    case "git-graph": return { projectName };
     case "git-diff": return identifier ? { filePath: identifier, projectName } : null;
     case "settings": return {};
     case "database": {
@@ -132,7 +131,6 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
     case "editor": return identifier?.split("/").pop() ?? "File";
     case "chat": return "Chat";
     case "terminal": return `Terminal ${identifier ?? "1"}`;
-    case "git-graph": return "Git Graph";
     case "git-diff": return identifier?.split("/").pop() ?? "Diff";
     case "settings": return "Settings";
     case "database": return identifier ?? "Database";
@@ -142,7 +140,7 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
     case "extension": {
       if (!identifier) return "Extension";
       // "git-graph" → "Git Graph"
-      return identifier.split("-").map(w => w[0].toUpperCase() + w.slice(1)).join(" ");
+      return identifier.split("-").map(w => (w[0]?.toUpperCase() ?? "") + w.slice(1)).join(" ");
     }
     default: return type;
   }

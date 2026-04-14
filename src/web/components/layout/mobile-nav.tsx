@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
-  Terminal, MessageSquare, GitBranch, Database,
+  Terminal, MessageSquare, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
   ChevronRight, Globe, Puzzle, Copy, Download, Pencil, Trash2,
 } from "lucide-react";
@@ -21,14 +21,13 @@ import { FileActions } from "@/components/explorer/file-actions";
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
   { type: "chat", label: "AI Chat" },
-  { type: "git-graph", label: "Git Graph" },
   { type: "settings", label: "Settings" },
 ];
 const NEW_TAB_LABELS: Partial<Record<TabType, string>> = Object.fromEntries(NEW_TAB_OPTIONS.map((o) => [o.type, o.label]));
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal, chat: MessageSquare, editor: FileCode, database: Database, sqlite: Database, postgres: Database,
-  "git-graph": GitBranch, "git-diff": FileDiff, settings: Settings, ports: Globe,
+  "git-diff": FileDiff, settings: Settings, ports: Globe,
   extension: Puzzle,
   "extension-webview": Puzzle,
 };
@@ -142,7 +141,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   function handleNewTab(type: TabType) {
     const state = usePanelStore.getState();
     const firstPanelId = state.grid[0]?.[0] ?? state.focusedPanelId;
-    const needsProject = type === "git-graph" || type === "git-diff" || type === "terminal" || type === "chat";
+    const needsProject = type === "git-diff" || type === "terminal" || type === "chat";
     const metadata = needsProject ? { projectName: activeProjectForTab?.name } : undefined;
     state.openTab(
       { type, title: NEW_TAB_LABELS[type] ?? type, metadata, projectId: activeProjectForTab?.name ?? null, closable: true },

@@ -33,11 +33,6 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.PostgresViewer,
     })),
   ),
-  "git-graph": lazy(() =>
-    import("@/components/git/git-graph").then((m) => ({
-      default: m.GitGraph,
-    })),
-  ),
   "git-diff": lazy(() =>
     import("@/components/editor/diff-viewer").then((m) => ({
       default: m.DiffViewer,

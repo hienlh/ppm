@@ -112,7 +112,6 @@ export function useGlobalKeybindings() {
       const tabShortcuts: { action: string; type: string; title: string }[] = [
         { action: "open-chat", type: "chat", title: "AI Chat" },
         { action: "open-terminal", type: "terminal", title: "Terminal" },
-        { action: "open-git-graph", type: "git-graph", title: "Git Graph" },
       ];
       for (const s of tabShortcuts) {
         if (match(e, s.action)) {
@@ -127,6 +126,16 @@ export function useGlobalKeybindings() {
           });
           return;
         }
+      }
+
+      // Open Git Graph (extension)
+      if (match(e, "open-git-graph")) {
+        e.preventDefault();
+        const project = useProjectStore.getState().activeProject;
+        window.dispatchEvent(new CustomEvent("ext:command:execute", {
+          detail: { command: "git-graph.view", args: project ? [project.path] : [] },
+        }));
+        return;
       }
 
       // Open settings (sidebar)

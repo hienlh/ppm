@@ -16,10 +16,10 @@ import {
 } from "./panel-utils";
 
 /** Tab types that can only have 1 instance per project */
-const SINGLETON_TYPES = new Set<TabType>(["git-graph", "settings"]);
+const SINGLETON_TYPES = new Set<TabType>(["settings"]);
 
 /** Tab types removed in a prior version — filter them out when loading persisted state */
-const OBSOLETE_TAB_TYPES = new Set(["projects", "git-status"]);
+const OBSOLETE_TAB_TYPES = new Set(["projects", "git-status", "git-graph"]);
 
 function pushHistory(history: string[], id: string): string[] {
   const filtered = history.filter((h) => h !== id);

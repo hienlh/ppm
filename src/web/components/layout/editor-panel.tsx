@@ -1,8 +1,8 @@
 import { Suspense, lazy, useEffect, useState, useCallback } from "react";
-import { ChevronDown, ChevronUp, Loader2, Terminal, MessageSquare, GitBranch, Pin, PinOff } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Terminal, MessageSquare, FilePlus, Pin, PinOff } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
-import type { TabType } from "@/stores/tab-store";
+import { useTabStore, type TabType } from "@/stores/tab-store";
 import { api, projectUrl } from "@/lib/api-client";
 import type { SessionInfo } from "../../../types/chat";
 import { TabBar } from "./tab-bar";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 const QUICK_OPEN_TABS: { type: TabType; label: string; icon: React.ElementType }[] = [
   { type: "terminal", label: "Terminal", icon: Terminal },
   { type: "chat", label: "AI Chat", icon: MessageSquare },
-  { type: "git-graph", label: "Git Graph", icon: GitBranch },
+  { type: "editor", label: "New File", icon: FilePlus },
 ];
 
 const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
@@ -22,7 +22,6 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   database: lazy(() => import("@/components/database/database-viewer").then((m) => ({ default: m.DatabaseViewer }))),
   sqlite: lazy(() => import("@/components/sqlite/sqlite-viewer").then((m) => ({ default: m.SqliteViewer }))),
   postgres: lazy(() => import("@/components/postgres/postgres-viewer").then((m) => ({ default: m.PostgresViewer }))),
-  "git-graph": lazy(() => import("@/components/git/git-graph").then((m) => ({ default: m.GitGraph }))),
   "git-diff": lazy(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
   settings: lazy(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
   ports: lazy(() => import("@/components/ports/port-forwarding-tab").then((m) => ({ default: m.PortForwardingTab }))),
@@ -151,6 +150,10 @@ function EmptyPanel({ panelId }: { panelId: string }) {
   }, [activeProject?.name]);
 
   function openTab(type: TabType) {
+    if (type === "editor") {
+      useTabStore.getState().openNewFile();
+      return;
+    }
     const needsProject = type !== "settings";
     const metadata = needsProject && activeProject ? { projectName: activeProject.name } : undefined;
     usePanelStore.getState().openTab(

@@ -103,8 +103,6 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
       return `sqlite:${metadata?.filePath ?? "default"}`;
     case "postgres":
       return `postgres:${metadata?.connectionId ?? "default"}:${metadata?.tableName ?? ""}`;
-    case "git-graph":
-      return "git-graph";
     case "extension": {
       const vt = String(metadata?.viewType ?? "unknown").replace(/\.view$/, "");
       return `extension:${vt}`;
