@@ -155,9 +155,11 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
   async function assertSafePath(filePath: string): Promise<string> {
     const { resolve, relative } = await import("node:path");
     const resolved = resolve(filePath);
-    // Allow: CWD (project root) and ~/.ppm/extensions/ (extension storage)
+    // Allow: CWD, ~/.ppm/extensions/, and all registered project paths
     const { getPpmDir } = await import("./ppm-dir.ts");
-    const allowedRoots = [resolve(process.cwd()), resolve(getPpmDir(), "extensions")];
+    const { configService } = await import("./config.service.ts");
+    const projectPaths = configService.get("projects").map((p: { path: string }) => resolve(p.path));
+    const allowedRoots = [resolve(process.cwd()), resolve(getPpmDir(), "extensions"), ...projectPaths];
     const isSafe = allowedRoots.some((root) => {
       const rel = relative(root, resolved);
       return !rel.startsWith("..") && !rel.startsWith("/");

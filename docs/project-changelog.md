@@ -6,9 +6,20 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Slash-Discovery Module (in progress)
+## [Unreleased] — Slash-Discovery Module + Git-Graph Faithful Port (in progress)
 
 ### Added
+- **Git-Graph Faithful Port** — Complete port of vscode-git-graph `graph.ts` to ext-git-graph webview
+  - Single SVG model with continuous branch paths using Bézier curves
+  - Faithful implementation of determinePath algorithm with unavailable-point tracking
+  - HEAD/stash node rendering (hollow circle for HEAD, nested circles for stash)
+  - Shadow lines for visual depth, greedy color reuse for branches
+  - Mobile SVG alignment: gridY matches 44px CSS row height
+  - XSS fix: escHtml applied to parent hashes and file status in detail panel
+  - Regex ordering fix in formatCommitMessage for proper URL/mention detection
+  - Path validation: assertSafePath allows registered project paths for extensions
+  - Removed dot alignment bug that forced rows to 29px
+
 - **Modular Slash-Discovery Engine** — Composable, testable command discovery replacing monolithic `slash-items.service.ts`
   - Skill root discovery: user-global (`~/.claude/skills/`), env vars, bundled assets
   - SKILL.md parsing + loose `.md` file + command registry support

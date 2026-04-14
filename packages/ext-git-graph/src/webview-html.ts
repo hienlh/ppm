@@ -21,6 +21,7 @@ ${getStyles()}
       </div>
       <div class="toolbar-right">
         <button id="btn-find" title="Find (Ctrl+F)">&#x1F50D;</button>
+        <button id="btn-settings" title="Settings">&#x2699;</button>
       </div>
     </header>
     <div id="find-bar" class="find-bar hidden">
@@ -38,7 +39,10 @@ ${getStyles()}
         <div class="col-date">Date</div>
         <div class="col-hash">Hash</div>
       </div>
-      <div id="commit-list"></div>
+      <div id="commit-list-wrapper">
+        <div id="graph-svg-container"></div>
+        <div id="commit-list"></div>
+      </div>
       <div id="loading" class="loading hidden">Loading...</div>
     </div>
     <div id="detail-panel" class="detail-panel hidden"></div>
@@ -62,14 +66,13 @@ function getStyles(): string {
   --border: #e4e4e7; --border2: #d4d4d8; --blue: #3b82f6; --red: #ef4444; --green: #22c55e;
   --yellow: #eab308; --purple: #8b5cf6; --orange: #f97316;
   --surface-hover: #f4f4f5; --selected: #eff6ff;
-  --graph-colors: #4ec9b0, #569cd6, #c586c0, #ce9178, #dcdcaa, #4fc1ff, #d7ba7d, #9cdcfe, #b5cea8, #d16969;
-  --cell-w: 16; --cell-h: 24;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #09090b; --surface: #18181b; --text: #fafafa; --subtext: #a1a1aa; --subtle: #52525b;
     --border: #27272a; --border2: #3f3f46; --selected: #1e293b; --surface-hover: #27272a;
   }
+  #graph-svg-container .shadow { stroke: rgba(255,255,255,0.08); }
 }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
 #app { display: flex; flex-direction: column; height: 100vh; }
@@ -95,7 +98,7 @@ button:hover { background: var(--surface-hover); }
 .commit-row.selected { background: var(--selected); }
 .commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; }
 .commit-row.search-match { background: rgba(234, 179, 8, 0.15); }
-.col-graph { width: 120px; min-width: 120px; overflow: hidden; position: relative; height: 28px; }
+.col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; }
 .col-message { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; }
 .col-author { width: 120px; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtext); font-size: 12px; }
 .col-date { width: 100px; min-width: 100px; color: var(--subtext); font-size: 12px; }
@@ -108,10 +111,16 @@ button:hover { background: var(--surface-hover); }
 .ref-remote { background: var(--purple); color: #fff; }
 .ref-tag { background: var(--yellow); color: #000; }
 
-/* SVG graph */
-.graph-svg { position: absolute; top: 0; left: 0; }
-.graph-node { stroke-width: 2; }
-.graph-line { fill: none; stroke-width: 2; }
+/* SVG graph — single SVG overlay */
+#commit-list-wrapper { position: relative; }
+#graph-svg-container { position: absolute; top: 0; left: 8px; z-index: 1; pointer-events: none; }
+#graph-svg-container circle { pointer-events: auto; cursor: pointer; }
+#graph-svg-container .shadow { stroke: rgba(0,0,0,0.15); stroke-width: 5; fill: none; }
+#graph-svg-container .line { stroke-width: 2; fill: none; }
+#graph-svg-container .graphCurrent { fill: var(--bg); stroke-width: 2; }
+#graph-svg-container .graphStashOuter { fill: none; stroke: #808080; stroke-width: 1.5; }
+#graph-svg-container .graphStashInner { fill: #808080; }
+.commit-row.graph-hover { background: var(--surface-hover); }
 
 /* Detail panel */
 .detail-panel { border-top: 1px solid var(--border2); background: var(--surface); max-height: 40vh; overflow-y: auto; padding: 12px 16px; flex-shrink: 0; }
@@ -174,9 +183,14 @@ button:hover { background: var(--surface-hover); }
 function getScript(): string {
   return `
 const vscode = acquireVsCodeApi();
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const NULL_VERTEX_ID = -1;
 const GRAPH_COLORS = ['#4ec9b0','#569cd6','#c586c0','#ce9178','#dcdcaa','#4fc1ff','#d7ba7d','#9cdcfe','#b5cea8','#d16969'];
-const CELL_W = 16;
-const CELL_H = 28;
+const graphConfig = {
+  colours: GRAPH_COLORS,
+  grid: { x: 16, y: 28, offsetX: 8, offsetY: 14, expandY: 60 },
+  style: 'rounded'
+};
 
 // --- State ---
 const state = {
@@ -278,90 +292,351 @@ document.getElementById('btn-refresh').addEventListener('click', () => {
   vscode.postMessage({ command: 'requestCommits', maxCommits: state.maxCommits });
 });
 
-// --- Graph rendering ---
-function assignLanes(commits) {
-  const lanes = []; // active lane → hash of branch tip
-  const commitLane = new Map();
+// --- Graph rendering (faithful port of vscode-git-graph graph.ts) ---
 
-  for (const commit of commits) {
-    // Find existing lane for this commit
-    let lane = lanes.indexOf(commit.hash);
-    if (lane === -1) {
-      // New branch — find empty lane or add new one
-      lane = lanes.indexOf(null);
-      if (lane === -1) { lane = lanes.length; lanes.push(null); }
+class GBranch {
+  constructor(colour) {
+    this._colour = colour;
+    this._end = 0;
+    this._lines = [];
+    this._numUncommitted = 0;
+  }
+  addLine(p1, p2, isCommitted, lockedFirst) {
+    this._lines.push({ p1, p2, lockedFirst });
+    if (isCommitted) {
+      if (p2.x === 0 && p2.y < this._numUncommitted) this._numUncommitted = p2.y;
+    } else {
+      this._numUncommitted++;
     }
-    commitLane.set(commit.hash, lane);
-    lanes[lane] = null; // Free lane after commit
+  }
+  getColour() { return this._colour; }
+  getEnd() { return this._end; }
+  setEnd(end) { this._end = end; }
 
-    // Assign parents to lanes
-    for (let i = 0; i < commit.parents.length; i++) {
-      const parentHash = commit.parents[i];
-      const existingLane = lanes.indexOf(parentHash);
-      if (existingLane !== -1) continue; // Already has a lane
+  draw(svg, config, expandAt) {
+    const colour = config.colours[this._colour % config.colours.length];
+    const d = config.grid.y * (config.style === 'angular' ? 0.38 : 0.8);
+    const pxLines = [];
+    let curPath = '';
 
-      if (i === 0) {
-        // First parent stays in same lane
-        lanes[lane] = parentHash;
+    for (let i = 0; i < this._lines.length; i++) {
+      const ln = this._lines[i];
+      let x1 = ln.p1.x * config.grid.x + config.grid.offsetX;
+      let y1 = ln.p1.y * config.grid.y + config.grid.offsetY;
+      let x2 = ln.p2.x * config.grid.x + config.grid.offsetX;
+      let y2 = ln.p2.y * config.grid.y + config.grid.offsetY;
+
+      if (expandAt > -1) {
+        if (ln.p1.y > expandAt) {
+          y1 += config.grid.expandY; y2 += config.grid.expandY;
+        } else if (ln.p2.y > expandAt) {
+          if (x1 === x2) {
+            y2 += config.grid.expandY;
+          } else if (ln.lockedFirst) {
+            pxLines.push({ p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 }, isC: i >= this._numUncommitted, lf: ln.lockedFirst });
+            pxLines.push({ p1: { x: x2, y: y1 + config.grid.y }, p2: { x: x2, y: y2 + config.grid.expandY }, isC: i >= this._numUncommitted, lf: ln.lockedFirst });
+            continue;
+          } else {
+            pxLines.push({ p1: { x: x1, y: y1 }, p2: { x: x1, y: y2 - config.grid.y + config.grid.expandY }, isC: i >= this._numUncommitted, lf: ln.lockedFirst });
+            y1 += config.grid.expandY; y2 += config.grid.expandY;
+          }
+        }
+      }
+      pxLines.push({ p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 }, isC: i >= this._numUncommitted, lf: ln.lockedFirst });
+    }
+
+    // Simplify consecutive vertical segments
+    let si = 0;
+    while (si < pxLines.length - 1) {
+      const a = pxLines[si], b = pxLines[si + 1];
+      if (a.p1.x === a.p2.x && a.p2.x === b.p1.x && b.p1.x === b.p2.x && a.p2.y === b.p1.y && a.isC === b.isC) {
+        a.p2.y = b.p2.y;
+        pxLines.splice(si + 1, 1);
+      } else { si++; }
+    }
+
+    // Build SVG paths
+    for (let i = 0; i < pxLines.length; i++) {
+      const pl = pxLines[i];
+      const x1 = pl.p1.x, y1 = pl.p1.y, x2 = pl.p2.x, y2 = pl.p2.y;
+
+      if (curPath !== '' && i > 0 && pl.isC !== pxLines[i - 1].isC) {
+        GBranch._drawPath(svg, curPath, pxLines[i - 1].isC, colour);
+        curPath = '';
+      }
+      if (curPath === '' || (i > 0 && (x1 !== pxLines[i - 1].p2.x || y1 !== pxLines[i - 1].p2.y))) {
+        curPath += 'M' + x1.toFixed(0) + ',' + y1.toFixed(1);
+      }
+      if (x1 === x2) {
+        curPath += 'L' + x2.toFixed(0) + ',' + y2.toFixed(1);
+      } else if (config.style === 'angular') {
+        curPath += 'L' + (pl.lf ? (x2.toFixed(0) + ',' + (y2 - d).toFixed(1)) : (x1.toFixed(0) + ',' + (y1 + d).toFixed(1))) + 'L' + x2.toFixed(0) + ',' + y2.toFixed(1);
       } else {
-        // Other parents get new lanes
-        const emptyLane = lanes.indexOf(null);
-        if (emptyLane !== -1) lanes[emptyLane] = parentHash;
-        else lanes.push(parentHash);
+        curPath += 'C' + x1.toFixed(0) + ',' + (y1 + d).toFixed(1) + ' ' + x2.toFixed(0) + ',' + (y2 - d).toFixed(1) + ' ' + x2.toFixed(0) + ',' + y2.toFixed(1);
+      }
+    }
+    if (curPath !== '') GBranch._drawPath(svg, curPath, pxLines[pxLines.length - 1].isC, colour);
+  }
+
+  static _drawPath(svg, path, isCommitted, colour) {
+    const shadow = document.createElementNS(SVG_NS, 'path');
+    const line = document.createElementNS(SVG_NS, 'path');
+    shadow.setAttribute('class', 'shadow');
+    shadow.setAttribute('d', path);
+    line.setAttribute('class', 'line');
+    line.setAttribute('d', path);
+    line.setAttribute('stroke', isCommitted ? colour : '#808080');
+    if (!isCommitted) line.setAttribute('stroke-dasharray', '2');
+    svg.appendChild(shadow);
+    svg.appendChild(line);
+  }
+}
+
+class GVertex {
+  constructor(id, isStash) {
+    this.id = id;
+    this.isStash = isStash;
+    this._x = 0;
+    this._children = [];
+    this._parents = [];
+    this._nextParent = 0;
+    this._onBranch = null;
+    this._isCommitted = true;
+    this._isCurrent = false;
+    this._nextX = 0;
+    this._connections = [];
+  }
+  addChild(v) { this._children.push(v); }
+  getChildren() { return this._children; }
+  addParent(v) { this._parents.push(v); }
+  getParents() { return this._parents; }
+  hasParents() { return this._parents.length > 0; }
+  getNextParent() { return this._nextParent < this._parents.length ? this._parents[this._nextParent] : null; }
+  registerParentProcessed() { this._nextParent++; }
+  isMerge() { return this._parents.length > 1; }
+
+  addToBranch(branch, x) { if (this._onBranch === null) { this._onBranch = branch; this._x = x; } }
+  isNotOnBranch() { return this._onBranch === null; }
+  isOnThisBranch(branch) { return this._onBranch === branch; }
+  getBranch() { return this._onBranch; }
+
+  getPoint() { return { x: this._x, y: this.id }; }
+  getNextPoint() { return { x: this._nextX, y: this.id }; }
+
+  getPointConnectingTo(vertex, onBranch) {
+    for (let i = 0; i < this._connections.length; i++) {
+      if (this._connections[i].connectsTo === vertex && this._connections[i].onBranch === onBranch) return { x: i, y: this.id };
+    }
+    return null;
+  }
+  registerUnavailablePoint(x, connectsTo, onBranch) {
+    if (x === this._nextX) { this._nextX = x + 1; this._connections[x] = { connectsTo, onBranch }; }
+  }
+
+  getColour() { return this._onBranch !== null ? this._onBranch.getColour() : 0; }
+  getIsCommitted() { return this._isCommitted; }
+  setNotCommitted() { this._isCommitted = false; }
+  setCurrent() { this._isCurrent = true; }
+
+  draw(svg, config, expandOffset, overListener, outListener) {
+    if (this._onBranch === null) return;
+    const colour = this._isCommitted ? config.colours[this._onBranch.getColour() % config.colours.length] : '#808080';
+    const cx = (this._x * config.grid.x + config.grid.offsetX).toString();
+    const cy = (this.id * config.grid.y + config.grid.offsetY + (expandOffset ? config.grid.expandY : 0)).toString();
+
+    const circle = document.createElementNS(SVG_NS, 'circle');
+    circle.dataset.id = this.id.toString();
+    circle.setAttribute('cx', cx);
+    circle.setAttribute('cy', cy);
+    circle.setAttribute('r', '4');
+    if (this._isCurrent) {
+      circle.setAttribute('class', 'graphCurrent');
+      circle.setAttribute('stroke', colour);
+    } else {
+      circle.setAttribute('fill', colour);
+    }
+    svg.appendChild(circle);
+
+    if (this.isStash && !this._isCurrent) {
+      circle.setAttribute('r', '4.5');
+      circle.setAttribute('class', 'graphStashOuter');
+      const inner = document.createElementNS(SVG_NS, 'circle');
+      inner.setAttribute('cx', cx);
+      inner.setAttribute('cy', cy);
+      inner.setAttribute('r', '2');
+      inner.setAttribute('class', 'graphStashInner');
+      svg.appendChild(inner);
+    }
+
+    circle.addEventListener('mouseover', overListener);
+    circle.addEventListener('mouseout', outListener);
+  }
+}
+
+// --- Graph layout state ---
+let gVertices = [], gBranches = [], gAvailColours = [], gCommitLookup = {};
+
+function graphLoadCommits(commits) {
+  gVertices = []; gBranches = []; gAvailColours = [];
+  if (commits.length === 0) return;
+
+  const stashHashes = new Set(state.stashes.map(s => s.hash));
+  const nullVertex = new GVertex(NULL_VERTEX_ID, false);
+  const lookup = {};
+  for (let i = 0; i < commits.length; i++) {
+    lookup[commits[i].hash] = i;
+    gVertices.push(new GVertex(i, stashHashes.has(commits[i].hash)));
+  }
+  gCommitLookup = lookup;
+
+  for (let i = 0; i < commits.length; i++) {
+    for (let j = 0; j < commits[i].parents.length; j++) {
+      const ph = commits[i].parents[j];
+      if (typeof lookup[ph] === 'number') {
+        gVertices[i].addParent(gVertices[lookup[ph]]);
+        gVertices[lookup[ph]].addChild(gVertices[i]);
+      } else {
+        gVertices[i].addParent(nullVertex);
       }
     }
   }
-  return commitLane;
-}
 
-function renderGraphSvg(commit, row, commitLane, allCommits) {
-  const lane = commitLane.get(commit.hash) || 0;
-  const cx = lane * CELL_W + CELL_W / 2;
-  const cy = CELL_H / 2;
-  const color = GRAPH_COLORS[lane % GRAPH_COLORS.length];
-
-  let svg = '<svg class="graph-svg" width="' + Math.max((lane + 3) * CELL_W, 120) + '" height="' + CELL_H + '">';
-
-  // Draw lines to parents
-  for (const parentHash of commit.parents) {
-    const parentIdx = allCommits.findIndex(c => c.hash === parentHash);
-    if (parentIdx === -1) continue;
-    const parentLane = commitLane.get(parentHash) || 0;
-    const px = parentLane * CELL_W + CELL_W / 2;
-    const py = CELL_H; // Bottom of cell = top of next row
-    const pColor = GRAPH_COLORS[parentLane % GRAPH_COLORS.length];
-
-    if (lane === parentLane) {
-      // Straight vertical line
-      svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + px + '" y2="' + py + '" stroke="' + pColor + '" class="graph-line" />';
-    } else {
-      // Bezier curve for lane change
-      const midY = cy + (py - cy) / 2;
-      svg += '<path d="M' + cx + ' ' + cy + ' C' + cx + ' ' + midY + ' ' + px + ' ' + midY + ' ' + px + ' ' + py + '" stroke="' + pColor + '" class="graph-line" />';
-    }
+  if (state.head && typeof lookup[state.head] === 'number') {
+    gVertices[lookup[state.head]].setCurrent();
   }
 
-  // Draw commit node
-  svg += '<circle cx="' + cx + '" cy="' + cy + '" r="4" fill="' + color + '" stroke="' + color + '" class="graph-node" />';
-  svg += '</svg>';
-  return svg;
+  let i = 0;
+  while (i < gVertices.length) {
+    if (gVertices[i].getNextParent() !== null || gVertices[i].isNotOnBranch()) {
+      graphDeterminePath(i);
+    } else { i++; }
+  }
+}
+
+function graphDeterminePath(startAt) {
+  let i = startAt;
+  let vertex = gVertices[i], parentVertex = gVertices[i].getNextParent(), curVertex;
+  let lastPoint = vertex.isNotOnBranch() ? vertex.getNextPoint() : vertex.getPoint(), curPoint;
+
+  if (parentVertex !== null && parentVertex.id !== NULL_VERTEX_ID && vertex.isMerge() && !vertex.isNotOnBranch() && !parentVertex.isNotOnBranch()) {
+    let foundPtp = false, pBranch = parentVertex.getBranch();
+    for (i = startAt + 1; i < gVertices.length; i++) {
+      curVertex = gVertices[i];
+      curPoint = curVertex.getPointConnectingTo(parentVertex, pBranch);
+      if (curPoint !== null) { foundPtp = true; } else { curPoint = curVertex.getNextPoint(); }
+      pBranch.addLine(lastPoint, curPoint, vertex.getIsCommitted(), !foundPtp && curVertex !== parentVertex ? lastPoint.x < curPoint.x : true);
+      curVertex.registerUnavailablePoint(curPoint.x, parentVertex, pBranch);
+      lastPoint = curPoint;
+      if (foundPtp) { vertex.registerParentProcessed(); break; }
+    }
+  } else {
+    const branch = new GBranch(graphGetAvailableColour(startAt));
+    vertex.addToBranch(branch, lastPoint.x);
+    vertex.registerUnavailablePoint(lastPoint.x, vertex, branch);
+    for (i = startAt + 1; i < gVertices.length; i++) {
+      curVertex = gVertices[i];
+      curPoint = parentVertex === curVertex && !parentVertex.isNotOnBranch() ? curVertex.getPoint() : curVertex.getNextPoint();
+      branch.addLine(lastPoint, curPoint, vertex.getIsCommitted(), lastPoint.x < curPoint.x);
+      curVertex.registerUnavailablePoint(curPoint.x, parentVertex, branch);
+      lastPoint = curPoint;
+      if (parentVertex === curVertex) {
+        vertex.registerParentProcessed();
+        const onBranch = !parentVertex.isNotOnBranch();
+        parentVertex.addToBranch(branch, curPoint.x);
+        vertex = parentVertex;
+        parentVertex = vertex.getNextParent();
+        if (parentVertex === null || onBranch) break;
+      }
+    }
+    if (i === gVertices.length && parentVertex !== null && parentVertex.id === NULL_VERTEX_ID) {
+      vertex.registerParentProcessed();
+    }
+    branch.setEnd(i);
+    gBranches.push(branch);
+    gAvailColours[branch.getColour()] = i;
+  }
+}
+
+function graphGetAvailableColour(startAt) {
+  for (let i = 0; i < gAvailColours.length; i++) {
+    if (startAt > gAvailColours[i]) return i;
+  }
+  gAvailColours.push(0);
+  return gAvailColours.length - 1;
+}
+
+function graphRender(expandIdx) {
+  const container = document.getElementById('graph-svg-container');
+  container.innerHTML = '';
+  if (gVertices.length === 0) { document.documentElement.style.setProperty('--graph-col-w', '40px'); return; }
+
+  // Detect mobile: match CSS breakpoint where row height changes to 44px
+  const isMobile = window.matchMedia('(max-width: 768px)').matches;
+  const cfg = isMobile
+    ? { ...graphConfig, grid: { ...graphConfig.grid, y: 44, offsetY: 22 } }
+    : graphConfig;
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  const group = document.createElementNS(SVG_NS, 'g');
+
+  for (let i = 0; i < gBranches.length; i++) gBranches[i].draw(group, cfg, expandIdx);
+
+  const overL = (e) => graphVertexOver(e), outL = (e) => graphVertexOut(e);
+  for (let i = 0; i < gVertices.length; i++) {
+    gVertices[i].draw(group, cfg, expandIdx > -1 && i > expandIdx, overL, outL);
+  }
+
+  svg.appendChild(group);
+
+  let maxX = 0;
+  for (let i = 0; i < gVertices.length; i++) {
+    const p = gVertices[i].getNextPoint();
+    if (p.x > maxX) maxX = p.x;
+  }
+  const w = 2 * cfg.grid.offsetX + Math.max(maxX - 1, 0) * cfg.grid.x;
+  const h = gVertices.length * cfg.grid.y + cfg.grid.offsetY - cfg.grid.y / 2 + (expandIdx > -1 ? cfg.grid.expandY : 0);
+
+  const gw = Math.max(w, 40);
+  svg.setAttribute('width', gw.toString());
+  svg.setAttribute('height', h.toString());
+  container.appendChild(svg);
+  document.documentElement.style.setProperty('--graph-col-w', gw + 'px');
+}
+
+function graphVertexOver(e) {
+  if (!e.target || !e.target.dataset || !e.target.dataset.id) return;
+  const id = parseInt(e.target.dataset.id);
+  if (id >= 0 && id < state.commits.length) {
+    const rows = document.querySelectorAll('.commit-row:not(.header-row)');
+    if (rows[id]) rows[id].classList.add('graph-hover');
+    e.target.setAttribute('r', e.target.classList.contains('graphStashOuter') ? '5.5' : '5');
+  }
+}
+function graphVertexOut(e) {
+  if (!e.target || !e.target.dataset || !e.target.dataset.id) return;
+  const id = parseInt(e.target.dataset.id);
+  if (id >= 0) {
+    const rows = document.querySelectorAll('.commit-row:not(.header-row)');
+    if (rows[id]) rows[id].classList.remove('graph-hover');
+    e.target.setAttribute('r', e.target.classList.contains('graphStashOuter') ? '4.5' : '4');
+  }
 }
 
 // --- Commit list ---
 function renderCommitList() {
   const container = document.getElementById('commit-list');
   container.innerHTML = '';
-  const commitLane = assignLanes(state.commits);
+
+  graphLoadCommits(state.commits);
 
   state.commits.forEach((commit, idx) => {
     const row = document.createElement('div');
     row.className = 'commit-row';
     row.dataset.hash = commit.hash;
 
-    // Graph column
+    // Graph spacer column (SVG overlays this area)
     const graphCol = document.createElement('div');
     graphCol.className = 'col-graph';
-    graphCol.innerHTML = renderGraphSvg(commit, idx, commitLane, state.commits);
 
     // Message column with ref badges
     const msgCol = document.createElement('div');
@@ -374,17 +649,14 @@ function renderCommitList() {
     }
     msgCol.innerHTML = badges + formatCommitMessage(commit.message);
 
-    // Author column
     const authorCol = document.createElement('div');
     authorCol.className = 'col-author';
     authorCol.textContent = commit.author;
 
-    // Date column
     const dateCol = document.createElement('div');
     dateCol.className = 'col-date';
     dateCol.textContent = formatRelativeDate(commit.commitDate);
 
-    // Hash column
     const hashCol = document.createElement('div');
     hashCol.className = 'col-hash';
     hashCol.textContent = commit.hash.substring(0, 7);
@@ -395,10 +667,7 @@ function renderCommitList() {
     row.appendChild(dateCol);
     row.appendChild(hashCol);
 
-    // Click handler
     row.addEventListener('click', () => selectCommit(commit.hash));
-
-    // Context menu (right-click + long-press for mobile)
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       showCommitContextMenu(e.clientX, e.clientY, commit);
@@ -407,6 +676,8 @@ function renderCommitList() {
 
     container.appendChild(row);
   });
+
+  graphRender(-1);
 }
 
 function selectCommit(hash) {
@@ -441,7 +712,7 @@ function renderDetailPanel(detail) {
     html += '<div class="detail-field"><span class="label">Committer:</span> ' + escHtml(detail.committer) + ' &lt;' + escHtml(detail.committerEmail) + '&gt;</div>';
   }
   if (detail.parents.length > 0) {
-    html += '<div class="detail-field"><span class="label">Parents:</span> ' + detail.parents.map(p => p.substring(0, 7)).join(', ') + '</div>';
+    html += '<div class="detail-field"><span class="label">Parents:</span> ' + detail.parents.map(p => escHtml(p.substring(0, 7))).join(', ') + '</div>';
   }
   html += '<div class="detail-message">' + escHtml(detail.message) + '</div>';
 
@@ -449,7 +720,7 @@ function renderDetailPanel(detail) {
     html += '<div class="file-list"><strong>Files changed (' + detail.fileChanges.length + '):</strong>';
     detail.fileChanges.forEach(f => {
       html += '<div class="file-item">';
-      html += '<span class="file-status file-status-' + f.status + '">' + f.status + '</span>';
+      html += '<span class="file-status file-status-' + escHtml(f.status) + '">' + escHtml(f.status) + '</span>';
       html += '<span>' + escHtml(f.path) + '</span>';
       html += '<span class="file-stat">';
       if (f.additions > 0) html += '<span class="add">+' + f.additions + '</span> ';
@@ -618,12 +889,12 @@ function setupLongPress(el, callback) {
 // --- Text formatter (URLs, issues, commit hashes) ---
 function formatCommitMessage(msg) {
   let safe = escHtml(msg);
-  // URLs
-  safe = safe.replace(/(https?:\\/\\/[^\\s<]+)/g, '<a class="commit-link" href="$1" target="_blank">$1</a>');
+  // Short commit hashes first (before URLs, to avoid matching hex in href attributes)
+  safe = safe.replace(/\\b([0-9a-f]{7,40})\\b/g, '<span class="commit-link" title="$1">$1</span>');
   // Issue references (#123)
   safe = safe.replace(/#(\\d+)/g, '<span class="commit-link" title="Issue #$1">#$1</span>');
-  // Short commit hashes (7+ hex chars standalone)
-  safe = safe.replace(/\\b([0-9a-f]{7,40})\\b/g, '<span class="commit-link" title="$1">$1</span>');
+  // URLs last (won't corrupt already-wrapped hashes since they don't look like URLs)
+  safe = safe.replace(/(https?:\\/\\/[^\\s<]+)/g, '<a class="commit-link" href="$1" target="_blank">$1</a>');
   return safe;
 }
 
@@ -728,5 +999,19 @@ function updateStatus() {
   parts.push(state.tags.length + ' tags');
   document.getElementById('status-text').textContent = parts.join(' | ');
 }
+
+// --- Settings panel ---
+document.getElementById('btn-settings').addEventListener('click', () => {
+  showDialog({
+    title: 'Git Graph Settings',
+    message: 'Max commits to load per page:',
+    input: { placeholder: 'e.g. 300', defaultValue: String(state.maxCommits) },
+    confirmLabel: 'Save',
+    onConfirm: (value) => {
+      const n = parseInt(value, 10);
+      if (n > 0 && n <= 10000) state.maxCommits = n;
+    }
+  });
+});
 `;
 }

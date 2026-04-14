@@ -189,8 +189,11 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       group: "action" as const,
       keywords: `extension ${cmd.command} ${cmd.category ?? ""}`,
       action: () => {
-        // Phase 4: execute via WS bridge
-        console.log("[CmdPalette] ext command:", cmd.command);
+        const args: unknown[] = [];
+        if (activeProject?.path) args.push(activeProject.path);
+        window.dispatchEvent(new CustomEvent("ext:command:execute", {
+          detail: { command: cmd.command, args },
+        }));
         onClose();
       },
     }));

@@ -7,9 +7,10 @@ type: project
 ## Test runner: `bun test` (Jest-compatible API from `bun:test`)
 
 ## Test structure
-- `tests/setup.ts` — shared helpers: `createTempDir`, `cleanupDir`, `createTempGitRepo`, `buildTestApp`
-- `tests/unit/services/` — unit tests for ConfigService, ProjectService, FileService, GitService
-- `tests/integration/api/` — integration tests using `app.request()` (no real server needed)
+- `tests/test-setup.ts` — isolates PPM_HOME to temp dir, creates in-memory DB, disables auth
+- `tests/unit/` — unit tests for services, routes, utilities
+- `tests/integration/` — integration tests using `app.request()` or real git operations
+- Test files use `.test.ts` suffix and live colocated with or in `__tests__` subdirs
 
 ## Critical gotchas
 
@@ -26,7 +27,31 @@ Config is stored in SQLite (`~/.ppm/ppm.db`). If an explicit YAML path is given 
 Overrides `configService.save = () => {}` (no-op) to prevent tests writing to disk. Injects config directly by mutating private fields via `as unknown as`.
 
 ### Real git repos for git tests
-`createTempGitRepo()` uses `Bun.spawn` with git env vars (author name/email) to create a real repo with an initial commit. No mocks for git operations.
+Use `Bun.spawn` with git env vars (author name/email) to create real repos. Capture stdout with `stdout: "pipe"` and read via `new Response(proc.stdout).text()`. No mocks for git operations.
 
 **Why:** Tests must use real implementations — no fakes/mocks that diverge from production behavior.
-**How to apply:** Always use `createTempGitRepo` for anything touching GitService or git API routes.
+**How to apply:** For git operations, always spawn real `git` commands; for unit tests of parsers, use sample data but validate against real git output.
+
+## Bun.spawn patterns for tests
+
+**For subprocess output capture:**
+```ts
+const proc = Bun.spawn(["git", "log", ...], {
+  cwd,
+  env,
+  stdout: "pipe",
+  stderr: "pipe",
+});
+const stdout = await new Response(proc.stdout).text();
+const exitCode = await proc.exited;
+```
+
+**For git commands with author info:**
+```ts
+const env = {
+  GIT_AUTHOR_NAME: "Test Author",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "Test Committer",
+  GIT_COMMITTER_EMAIL: "committer@example.com",
+};
+```

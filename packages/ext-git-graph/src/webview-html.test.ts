@@ -33,6 +33,7 @@ describe("webview-html: getWebviewHtml", () => {
     expect(html).toContain('id="branch-selector"');
     expect(html).toContain('id="btn-refresh"');
     expect(html).toContain('id="btn-find"');
+    expect(html).toContain('id="btn-settings"');
   });
 
   it("includes commit list columns", () => {
@@ -69,6 +70,8 @@ describe("webview-html: getWebviewHtml", () => {
     expect(html).toContain('id="graph-header"');
     expect(html).toContain('id="commit-list"');
     expect(html).toContain('id="loading"');
+    expect(html).toContain('id="graph-svg-container"');
+    expect(html).toContain('id="commit-list-wrapper"');
   });
 
   it("marks elements with proper classes", () => {
@@ -110,10 +113,9 @@ describe("webview-html: getWebviewHtml", () => {
     expect(html).toContain("--orange:");
   });
 
-  it("includes graph cell dimensions variables", () => {
+  it("includes graph column width variable", () => {
     const html = getWebviewHtml();
-    expect(html).toContain("--cell-w:");
-    expect(html).toContain("--cell-h:");
+    expect(html).toContain("--graph-col-w");
   });
 
   it("includes overflow handling for containers", () => {

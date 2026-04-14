@@ -95,6 +95,9 @@ function openGitGraph(
     try {
       switch (msg.command) {
         case "ready":
+          await handleRepoInfo(vscode, panel, projectPath);
+          await handleRequestCommits(vscode, panel, projectPath);
+          break;
         case "requestRepoInfo":
           await handleRepoInfo(vscode, panel, projectPath);
           break;

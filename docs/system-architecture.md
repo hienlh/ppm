@@ -1308,7 +1308,7 @@ Browser (React)                    ← Zustand store + React components
 
 **Official Extensions:**
 - `@ppm/ext-database` — Database browser with SQLite/PostgreSQL support (tree view + query panel)
-- `@ppm/ext-git-graph` — Git commit graph visualization (SVG rendering, uses process:spawn for git CLI)
+- `@ppm/ext-git-graph` — Git commit graph visualization (faithful vscode-git-graph SVG algorithm with Bézier curves, uses process:spawn for git CLI across registered projects)
 
 ### Manifest Format
 
@@ -1445,9 +1445,9 @@ Extension metadata defined in `package.json` under `ppm` key:
 **Subprocess Execution (extensions needing CLI access):**
 - `process:spawn(command, args[], options)` — Execute external command
   - **Allowed commands:** git, node, bun, npm, yarn, pnpm, docker, psql, sqlite3, python3, python
-  - **Options:** `{ cwd?: string, timeout?: number }` (default: 30s timeout, CWD restricted to project root)
+  - **Options:** `{ cwd?: string, timeout?: number }` (default: 30s timeout, CWD must be within registered project paths, ~/.ppm/extensions/, or current process directory)
   - **Returns:** `{ code: number, stdout: string, stderr: string, error?: string }`
-  - **Example:** See ext-git-graph for real-world usage (runs `git log --graph`)
+  - **Example:** See ext-git-graph for real-world usage (runs `git log --all` across any registered project via path-based CWD)
 
 - Extension can define custom RPC methods via `rpc.onRequest(method, handler)`
 

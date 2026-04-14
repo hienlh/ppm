@@ -569,18 +569,23 @@ export function activate(context: ExtensionContext, vscode: any) {
 
 See `packages/ext-git-graph/` for an extension using **process:spawn** to run git commands:
 
-- **Process spawning** via RPC to execute `git log`
-- **SVG graph rendering** of commit history
-- **Webview panel** for interactive visualization
-- **Commit details** with author, date, message
+- **Process spawning** via RPC to execute `git log` across any registered project
+- **SVG graph rendering** faithful port of vscode-git-graph algorithm:
+  - Single SVG overlay with continuous branch paths (Bézier curves)
+  - Shadow lines for visual depth
+  - HEAD and stash node indicators
+  - Color-coded column tracking for branch visualization
+- **Webview panel** for interactive visualization with scrolling commit list
+- **Commit details** panel with author, date, message, and file changes
 - **Context menu** for actions (checkout, cherry-pick, etc.)
-- **Search/find** widget within the graph
+- **Search/find** widget with navigation within the graph
 
 Key patterns:
-- Use `process:spawn` RPC to safely run git commands from the worker
-- Parse git output in the extension, format for webview
-- Render visualization (SVG/Canvas) in sandboxed webview panel
-- Two-way messaging between extension and webview for interactions
+- Use `process:spawn` RPC to safely run git commands from any registered project root
+- Parse git log output and compute graph coordinates (row, column, edge routing)
+- Render single SVG overlay synchronized with commit list rows
+- Implement custom graph rendering algorithm (path computation, Bézier curves, node placement)
+- Two-way messaging between extension and webview for interactions and detail panel updates
 
 ---
 
