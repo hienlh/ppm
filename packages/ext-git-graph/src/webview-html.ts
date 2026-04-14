@@ -27,6 +27,19 @@ ${getStyles()}
         <button id="btn-fetch" title="Fetch from remotes"></button>
       </div>
       <div class="toolbar-right">
+        <div class="worktree-dropdown">
+          <button id="btn-worktree" title="Worktrees"></button>
+          <div id="worktree-popover" class="worktree-popover hidden">
+            <div class="worktree-popover-header">
+              <span>Worktrees</span>
+            </div>
+            <div id="worktree-list" class="worktree-list"></div>
+            <div class="worktree-popover-footer">
+              <button id="wt-add" class="btn-sm">+ Add Worktree</button>
+              <button id="wt-prune" class="btn-sm secondary" title="Remove stale worktree entries">Prune</button>
+            </div>
+          </div>
+        </div>
         <button id="btn-find" title="Find (Ctrl+F)"></button>
         <button id="btn-settings" title="Settings"></button>
       </div>
@@ -155,6 +168,28 @@ button:active { background: var(--surface); }
 .branch-option { padding: 6px 10px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 6px; }
 .branch-option:hover { background: var(--surface-hover); }
 .branch-option.selected { background: var(--selected); font-weight: 600; }
+
+/* Worktree popover */
+.worktree-dropdown { position: relative; }
+#btn-worktree { display: flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 8px; }
+#btn-worktree .wt-count { background: var(--accent, #58a6ff); color: #fff; font-size: 10px; border-radius: 8px; padding: 0 5px; min-width: 16px; text-align: center; line-height: 16px; }
+.worktree-popover { position: absolute; top: 100%; right: 0; z-index: 60; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); min-width: 300px; max-width: 400px; margin-top: 4px; display: flex; flex-direction: column; }
+.worktree-popover-header { padding: 8px 12px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
+.worktree-list { overflow-y: auto; max-height: 240px; }
+.wt-item { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.wt-item:last-child { border-bottom: none; }
+.wt-item-info { flex: 1; min-width: 0; }
+.wt-item-branch { font-weight: 600; display: flex; align-items: center; gap: 4px; }
+.wt-item-path { font-size: 10px; color: var(--subtext); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-badge { font-size: 9px; padding: 1px 4px; border-radius: 4px; background: var(--border); color: var(--subtext); }
+.wt-badge-current { background: var(--accent, #58a6ff); color: #fff; }
+.wt-item-active { background: var(--selected); }
+.wt-badge-locked { background: #d29922; color: #fff; }
+.wt-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.wt-item-actions button { min-width: 24px; min-height: 24px; padding: 2px 6px; font-size: 10px; }
+.worktree-popover-footer { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
+.worktree-popover-footer .btn-sm { flex: 1; }
+.wt-empty { padding: 16px; text-align: center; font-size: 11px; color: var(--subtext); }
 @media (max-width: 768px) { .branch-option { padding: 10px 12px; min-height: 44px; } }
 
 /* Find bar */
@@ -357,6 +392,7 @@ const state = {
   userDetails: { name: '', email: '' },
   graphColWidth: null,
   fileViewMode: 'list',
+  worktrees: [],
   _lastDetail: null,
 };
 
@@ -374,6 +410,8 @@ const ICONS = {
   minus: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
   fileOpen: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+  gitBranch: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>',
+  trash: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>',
 };
 
 // --- Toast notifications ---
@@ -392,6 +430,7 @@ document.getElementById('btn-refresh').innerHTML = ICONS.refresh;
 document.getElementById('btn-fetch').innerHTML = ICONS.download;
 document.getElementById('btn-find').innerHTML = ICONS.search;
 document.getElementById('btn-settings').innerHTML = ICONS.settings;
+document.getElementById('btn-worktree').innerHTML = ICONS.gitBranch + ' <span class="wt-count" style="display:none">0</span>';
 vscode.postMessage({ command: 'ready' });
 
 // --- Message handler ---
@@ -488,6 +527,14 @@ window.addEventListener('message', (event) => {
       } else if (!msg.result.ok) {
         showToast('Git action failed: ' + (msg.result.error || 'Unknown error'), 'error');
       }
+      // Refresh worktree list after worktree mutations
+      if (msg.result.ok && (msg.action === 'addWorktree' || msg.action === 'removeWorktree' || msg.action === 'pruneWorktrees')) {
+        vscode.postMessage({ command: 'requestWorktrees' });
+      }
+      break;
+    case 'loadWorktrees':
+      state.worktrees = msg.data || [];
+      renderWorktreeList();
       break;
     case 'error':
       document.getElementById('status-text').textContent = 'Error: ' + msg.message;
@@ -643,6 +690,143 @@ function startAutoFetch(intervalSec) {
 }
 function stopAutoFetch() {
   if (autoFetchTimer) { clearInterval(autoFetchTimer); autoFetchTimer = null; }
+}
+
+// --- Worktree popover ---
+const wtPopover = document.getElementById('worktree-popover');
+const btnWorktree = document.getElementById('btn-worktree');
+
+btnWorktree.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const wasHidden = wtPopover.classList.contains('hidden');
+  wtPopover.classList.toggle('hidden');
+  if (wasHidden) vscode.postMessage({ command: 'requestWorktrees' });
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.worktree-dropdown')) wtPopover.classList.add('hidden');
+});
+
+function renderWorktreeList() {
+  const listEl = document.getElementById('worktree-list');
+  const countEl = btnWorktree.querySelector('.wt-count');
+  const wts = state.worktrees;
+  if (countEl) {
+    countEl.textContent = wts.length;
+    countEl.style.display = wts.length > 1 ? '' : 'none';
+  }
+  if (!wts.length) {
+    listEl.innerHTML = '<div class="wt-empty">No worktrees found</div>';
+    return;
+  }
+  listEl.innerHTML = wts.map((wt, i) => {
+    const branchName = wt.branch || (wt.isDetached ? 'detached HEAD' : '(bare)');
+    const shortHash = wt.head ? wt.head.substring(0, 7) : '';
+    const isCurrent = wt.path === state.repo;
+    let badges = '';
+    if (isCurrent) badges += ' <span class="wt-badge wt-badge-current">current</span>';
+    if (wt.isMain && !isCurrent) badges += ' <span class="wt-badge">main</span>';
+    if (wt.locked) badges += ' <span class="wt-badge wt-badge-locked">locked</span>';
+    if (wt.prunable) badges += ' <span class="wt-badge">prunable</span>';
+    if (wt.isDetached) badges += ' <span class="wt-badge">detached</span>';
+    const actions = isCurrent ? ''
+      : '<button class="wt-open" data-idx="' + i + '" title="Open in PPM">' + ICONS.fileOpen + '</button>'
+        + (wt.isMain ? '' : '<button class="wt-remove" data-idx="' + i + '" title="Remove worktree">' + ICONS.trash + '</button>');
+    return '<div class="wt-item' + (isCurrent ? ' wt-item-active' : '') + '">'
+      + '<div class="wt-item-info">'
+      + '<div class="wt-item-branch">' + ICONS.gitBranch + ' ' + escHtml(branchName) + badges + '</div>'
+      + '<div class="wt-item-path" title="' + escHtml(wt.path) + '">' + escHtml(wt.path) + ' <span style="color:var(--subtle)">' + shortHash + '</span></div>'
+      + '</div>'
+      + (actions ? '<div class="wt-item-actions">' + actions + '</div>' : '')
+      + '</div>';
+  }).join('');
+
+  // Bind action buttons
+  listEl.querySelectorAll('.wt-open').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const wt = state.worktrees[parseInt(btn.dataset.idx)];
+      if (wt) vscode.postMessage({ command: 'openWorktree', path: wt.path });
+    });
+  });
+  listEl.querySelectorAll('.wt-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const wt = state.worktrees[parseInt(btn.dataset.idx)];
+      if (!wt) return;
+      showDialog({
+        title: 'Remove Worktree',
+        message: 'Remove worktree at "' + wt.path + '"?',
+        destructive: true,
+        confirmLabel: 'Remove',
+        onConfirm: () => vscode.postMessage({ command: 'removeWorktree', path: wt.path }),
+      });
+    });
+  });
+}
+
+document.getElementById('wt-add').addEventListener('click', () => {
+  showCreateWorktreeDialog();
+});
+
+document.getElementById('wt-prune').addEventListener('click', () => {
+  showDialog({
+    title: 'Prune Worktrees',
+    message: 'Remove stale worktree entries (worktrees whose directories no longer exist)?',
+    confirmLabel: 'Prune',
+    onConfirm: () => vscode.postMessage({ command: 'pruneWorktrees' }),
+  });
+});
+
+function showCreateWorktreeDialog(startPoint) {
+  const overlay = document.createElement('div');
+  overlay.className = 'dialog-overlay';
+  const dialog = document.createElement('div');
+  dialog.className = 'dialog';
+  dialog.innerHTML = '<h3>Add Worktree</h3>'
+    + '<p style="font-size:12px;margin-bottom:8px">Path for the new worktree directory:</p>'
+    + '<input type="text" id="wt-dialog-path" placeholder="/path/to/worktree" style="width:100%;margin-bottom:8px" />'
+    + '<p style="font-size:12px;margin-bottom:4px">Branch:</p>'
+    + '<div style="display:flex;gap:8px;margin-bottom:6px">'
+    + '<label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="radio" name="wt-branch-mode" value="existing" checked /> Existing branch</label>'
+    + '<label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="radio" name="wt-branch-mode" value="new" /> New branch</label>'
+    + '</div>'
+    + '<input type="text" id="wt-dialog-branch" placeholder="Branch name" style="width:100%;margin-bottom:8px" />'
+    + (startPoint ? '<input type="hidden" id="wt-dialog-start" value="' + escHtml(startPoint) + '" />' : '<input type="text" id="wt-dialog-start" placeholder="Start point (commit/branch, optional)" style="width:100%;margin-bottom:8px" />');
+
+  const actions = document.createElement('div');
+  actions.className = 'dialog-actions';
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.className = 'secondary';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  const confirmBtn = document.createElement('button');
+  confirmBtn.textContent = 'Create';
+  confirmBtn.className = 'btn-primary';
+  confirmBtn.addEventListener('click', () => {
+    const path = dialog.querySelector('#wt-dialog-path').value.trim();
+    if (!path) { showToast('Path is required', 'error'); return; }
+    const branch = dialog.querySelector('#wt-dialog-branch').value.trim();
+    const mode = dialog.querySelector('input[name="wt-branch-mode"]:checked').value;
+    const sp = dialog.querySelector('#wt-dialog-start');
+    const startPt = sp ? sp.value.trim() : '';
+    const msg = { command: 'addWorktree', path };
+    if (mode === 'new' && branch) { msg.newBranch = branch; }
+    else if (branch) { msg.branch = branch; }
+    if (startPt) msg.startPoint = startPt;
+    vscode.postMessage(msg);
+    overlay.remove();
+  });
+  actions.appendChild(cancelBtn);
+  actions.appendChild(confirmBtn);
+  dialog.appendChild(actions);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  setTimeout(() => dialog.querySelector('#wt-dialog-path').focus(), 50);
+  overlay.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') overlay.remove();
+    if (e.key === 'Enter') confirmBtn.click();
+  });
 }
 
 // --- Graph column resize ---
@@ -1311,6 +1495,7 @@ function showCommitContextMenu(x, y, commit) {
     { label: 'Checkout...', action: () => gitAction('checkout', { target: commit.hash }) },
     { label: 'Create Branch Here...', action: () => promptAndAction('Branch name:', (name) => gitAction('createBranch', { name, startPoint: commit.hash })) },
     { label: 'Create Tag Here...', action: () => promptAndAction('Tag name:', (name) => gitAction('createTag', { name, hash: commit.hash })) },
+    { label: 'Create Worktree Here...', action: () => showCreateWorktreeDialog(commit.hash) },
   ];
   // Add "Create PR" if PR creation is configured and commit has a branch ref
   if (state.settings.prCreation && state.settings.prCreation.urlTemplate) {

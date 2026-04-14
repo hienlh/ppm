@@ -121,6 +121,13 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     return { ok: true };
   });
 
+  // --- switch PPM project ---
+  rpc.onRequest("window:switchProject", async (params) => {
+    const [projectName] = params as [string];
+    broadcastExtMsg({ type: "project:switch", projectName });
+    return { ok: true };
+  });
+
   // --- tree views (forwarded to browser via WS bridge) ---
   rpc.onRequest("window:tree:update", async (params) => {
     const [viewId, items] = params as [string, unknown[]];

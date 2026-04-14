@@ -190,6 +190,10 @@ export class WindowService {
     await this.rpc.request("window:openTab", tabType, title, projectId, metadata);
   }
 
+  async switchProject(projectName: string): Promise<void> {
+    await this.rpc.request("window:switchProject", projectName);
+  }
+
   // --- Webview Panel ---
 
   createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn): unknown {

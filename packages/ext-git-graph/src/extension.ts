@@ -4,7 +4,7 @@
  */
 import type { ExtensionContext } from "@ppm/vscode-compat";
 import type { SpawnResult } from "@ppm/vscode-compat/src/process.ts";
-import type { GitGraphSettings, WebviewToExt } from "./types.ts";
+import type { GitGraphSettings, WebviewToExt, Worktree } from "./types.ts";
 import { DEFAULT_SETTINGS } from "./types.ts";
 import { getWebviewHtml } from "./webview-html.ts";
 
@@ -14,7 +14,9 @@ interface VscodeApi {
   };
   window: {
     showErrorMessage(message: string, ...items: string[]): Promise<string | undefined>;
+    showInformationMessage(message: string, ...items: string[]): Promise<string | undefined>;
     openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>): Promise<void>;
+    switchProject(projectName: string): Promise<void>;
     createWebviewPanel(viewType: string, title: string, showOptions: unknown): {
       webview: {
         html: string;
@@ -153,6 +155,7 @@ function openGitGraph(
           await handleRepoInfo(vscode, panel, pp);
           await handleRequestCommits(vscode, panel, pp, context);
           handleUncommittedStatus(vscode, panel, pp); // fire-and-forget
+          handleWorktrees(vscode, panel, pp); // fire-and-forget
           break;
         case "requestRepoInfo":
           await handleRepoInfo(vscode, panel, pp);
@@ -257,6 +260,79 @@ function openGitGraph(
           });
           break;
         }
+        case "requestWorktrees":
+          await handleWorktrees(vscode, panel, pp);
+          break;
+        case "addWorktree": {
+          const addArgs = ["worktree", "add"];
+          if (msg.newBranch) {
+            addArgs.push("-b", assertValidRef(msg.newBranch, "newBranch"));
+          }
+          addArgs.push(msg.path);
+          if (msg.branch) addArgs.push(assertValidRef(msg.branch, "branch"));
+          if (msg.startPoint) addArgs.push(assertValidHash(msg.startPoint));
+          const addResult = await spawnGit(vscode, addArgs, pp);
+          await panel.webview.postMessage({
+            command: "actionResult", action: "addWorktree",
+            result: { ok: addResult.exitCode === 0, error: addResult.exitCode !== 0 ? addResult.stderr.trim() : undefined },
+          });
+          if (addResult.exitCode === 0) await handleWorktrees(vscode, panel, pp);
+          break;
+        }
+        case "removeWorktree": {
+          const rmArgs = ["worktree", "remove", ...(msg.force ? ["--force"] : []), msg.path];
+          const rmResult = await spawnGit(vscode, rmArgs, pp);
+          await panel.webview.postMessage({
+            command: "actionResult", action: "removeWorktree",
+            result: { ok: rmResult.exitCode === 0, error: rmResult.exitCode !== 0 ? rmResult.stderr.trim() : undefined },
+          });
+          if (rmResult.exitCode === 0) await handleWorktrees(vscode, panel, pp);
+          break;
+        }
+        case "pruneWorktrees": {
+          const pruneResult = await spawnGit(vscode, ["worktree", "prune"], pp);
+          await panel.webview.postMessage({
+            command: "actionResult", action: "pruneWorktrees",
+            result: { ok: pruneResult.exitCode === 0, error: pruneResult.exitCode !== 0 ? pruneResult.stderr.trim() : undefined },
+          });
+          if (pruneResult.exitCode === 0) await handleWorktrees(vscode, panel, pp);
+          break;
+        }
+        case "openWorktree": {
+          // Find project matching worktree path and switch to it
+          try {
+            const res = await fetch(`${baseUrl}/api/projects`);
+            const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+            const match = json.data?.find((p) => p.path === msg.path);
+            if (match) {
+              await vscode.window.switchProject(match.name);
+            } else {
+              // Worktree not registered — offer to add it as a project
+              const dirName = msg.path.split(/[\\/]/).filter(Boolean).pop() || "worktree";
+              const answer = await vscode.window.showInformationMessage(
+                `Worktree "${dirName}" is not registered as a project. Add it?`,
+                "Yes, add project", "Cancel",
+              );
+              if (answer === "Yes, add project") {
+                const addRes = await fetch(`${baseUrl}/api/projects`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ path: msg.path, name: dirName }),
+                });
+                const addJson = await addRes.json() as { ok: boolean; data?: { name: string } };
+                if (addJson.ok) {
+                  const name = addJson.data?.name || dirName;
+                  await vscode.window.switchProject(name);
+                } else {
+                  await vscode.window.showErrorMessage("Failed to add project");
+                }
+              }
+            }
+          } catch {
+            await vscode.window.showErrorMessage("Failed to look up projects");
+          }
+          break;
+        }
         case "openSourceControl": {
           await vscode.window.showInformationMessage("Open the Source Control panel from the sidebar.");
           break;
@@ -295,6 +371,7 @@ async function reloadPanelData(
   await handleRepoInfo(vscode, panel, projectPath);
   await handleRequestCommits(vscode, panel, projectPath, context);
   handleUncommittedStatus(vscode, panel, projectPath);
+  handleWorktrees(vscode, panel, projectPath);
 }
 
 async function handleRepoInfo(
@@ -411,6 +488,43 @@ async function handleUncommittedStatus(
   } catch {
     await panel.webview.postMessage({ command: "loadUncommitted", data: null });
   }
+}
+
+async function handleWorktrees(
+  vscode: VscodeApi,
+  panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
+  projectPath: string,
+): Promise<void> {
+  const result = await spawnGit(vscode, ["worktree", "list", "--porcelain"], projectPath, 10_000);
+  if (result.exitCode !== 0) {
+    await panel.webview.postMessage({ command: "loadWorktrees", data: [] });
+    return;
+  }
+  const worktrees: Worktree[] = [];
+  let current: Partial<Worktree> = {};
+  for (const line of result.stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current.path) worktrees.push(current as Worktree);
+      current = { path: line.slice(9), branch: "", head: "", isMain: false, isDetached: false, locked: false, prunable: false };
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice(5);
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.slice(7).replace(/^refs\/heads\//, "");
+    } else if (line === "detached") {
+      current.isDetached = true;
+    } else if (line === "bare") {
+      // skip bare entries
+    } else if (line.startsWith("locked")) {
+      current.locked = true;
+      if (line.length > 7) current.lockReason = line.slice(7);
+    } else if (line.startsWith("prunable")) {
+      current.prunable = true;
+    }
+  }
+  if (current.path) worktrees.push(current as Worktree);
+  // Mark first worktree as main
+  if (worktrees.length > 0) worktrees[0].isMain = true;
+  await panel.webview.postMessage({ command: "loadWorktrees", data: worktrees });
 }
 
 function mapStatusCode(code: string): "A" | "M" | "D" | "R" {

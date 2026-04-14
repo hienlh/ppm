@@ -44,6 +44,17 @@ export interface Stash {
   message: string;
 }
 
+export interface Worktree {
+  path: string;
+  branch: string;
+  head: string;
+  isMain: boolean;
+  isDetached: boolean;
+  locked: boolean;
+  lockReason?: string;
+  prunable: boolean;
+}
+
 export interface CommitDetail {
   hash: string;
   author: string;
@@ -139,7 +150,8 @@ export type ExtToWebview =
   | { command: "loadUserDetails"; data: { name: string; email: string } }
   | { command: "loadOwnerRepo"; data: { owner: string; repo: string } }
   | { command: "refresh"; data: GitVertex[]; repoInfo: RepoInfo }
-  | { command: "actionResult"; action: string; result: ActionResult }
+  | { command: "actionResult"; action: string; args?: Record<string, unknown>; result: ActionResult }
+  | { command: "loadWorktrees"; data: Worktree[] }
   | { command: "error"; message: string };
 
 // --- Webview → Extension messages ---
@@ -160,5 +172,10 @@ export type WebviewToExt =
   | { command: "editRemoteUrl"; name: string; url: string }
   | { command: "requestOwnerRepo" }
   | { command: "gitAction"; action: string; args: Record<string, unknown> }
+  | { command: "requestWorktrees" }
+  | { command: "addWorktree"; path: string; branch?: string; newBranch?: string; startPoint?: string }
+  | { command: "removeWorktree"; path: string; force?: boolean }
+  | { command: "pruneWorktrees" }
+  | { command: "openWorktree"; path: string }
   | { command: "openFile"; filePath: string }
   | { command: "openSourceControl" };

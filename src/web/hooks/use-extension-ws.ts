@@ -156,6 +156,10 @@ export function useExtensionWs(enabled = true) {
             metadata: (msg as any).metadata,
           });
           break;
+
+        case "project:switch":
+          useTabStore.getState().switchProject((msg as any).projectName);
+          break;
       }
     });
 

@@ -50,6 +50,7 @@ export type ExtServerMsg =
   | { type: "webview:dispose"; panelId: string }
   | { type: "webview:postMessage"; panelId: string; message: unknown }
   | { type: "tab:open"; tabType: string; title: string; projectId: string | null; closable?: boolean; metadata?: Record<string, unknown> }
+  | { type: "project:switch"; projectName: string }
   | { type: "contributions:update"; contributions: ExtensionContributes };
 
 // --- Client → Server messages ---
