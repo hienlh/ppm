@@ -53,6 +53,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.PortForwardingTab,
     })),
   ),
+  extension: lazy(() =>
+    import("@/components/extensions/extension-webview").then((m) => ({
+      default: m.ExtensionWebview,
+    })),
+  ),
   "extension-webview": lazy(() =>
     import("@/components/extensions/extension-webview").then((m) => ({
       default: m.ExtensionWebview,

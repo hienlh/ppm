@@ -1,5 +1,6 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useExtensionStore } from "@/stores/extension-store";
+import { Loader2 } from "lucide-react";
 
 /** Inject acquireVsCodeApi() shim so extension webviews can postMessage to parent */
 const VSCODE_API_SHIM = `<script>
@@ -22,49 +23,89 @@ interface ExtensionWebviewProps {
 
 /**
  * iframe-based webview container for extension-contributed webview panels.
- * Renders as a tab component in the editor panel system.
+ * Matches panel by panelId (direct) or viewType (reload recovery).
  */
 export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const panelId = metadata?.panelId as string | undefined;
-  const panel = useExtensionStore((s) => panelId ? s.webviewPanels[panelId] : undefined);
+  const viewType = metadata?.viewType as string | undefined;
+  const [timedOut, setTimedOut] = useState(false);
+
+  // Match panel: prefer panelId (exact), fallback to viewType match (reload recovery)
+  const panel = useExtensionStore((s) => {
+    if (panelId && s.webviewPanels[panelId]) return s.webviewPanels[panelId];
+    if (viewType) {
+      // Find panel whose viewType matches (with or without .view suffix)
+      const fullViewType = viewType.includes(".") ? viewType : `${viewType}.view`;
+      return Object.values(s.webviewPanels).find(
+        (p) => p.viewType === viewType || p.viewType === fullViewType,
+      );
+    }
+    return undefined;
+  });
+
+  const resolvedPanelId = panel?.id ?? panelId;
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   // Inject acquireVsCodeApi shim + write HTML into iframe via srcdoc
   const rawHtml = panel?.html ?? "";
   const html = injectVscodeApiShim(rawHtml);
 
+  // On reload: if we have a viewType but no panel, trigger the extension command
+  // Convention: command = "{viewType}.view" (e.g., "git-graph" → "git-graph.view")
+  useEffect(() => {
+    if (panel || !viewType) return;
+    const command = viewType.includes(".") ? viewType : `${viewType}.view`;
+    window.dispatchEvent(new CustomEvent("ext:command:execute", {
+      detail: { command, args: [] },
+    }));
+  }, [panel, viewType]);
+
+  // Timeout: if panel doesn't appear within 10s, show error
+  useEffect(() => {
+    if (panel) { setTimedOut(false); return; }
+    const timer = setTimeout(() => setTimedOut(true), 10_000);
+    return () => clearTimeout(timer);
+  }, [panel]);
+
   // Listen for postMessage from iframe → forward to extension via WS bridge
   useEffect(() => {
+    if (!resolvedPanelId) return;
     const handler = (event: MessageEvent) => {
       if (iframeRef.current && event.source === iframeRef.current.contentWindow) {
-        // Forward to server via custom event → picked up by useExtensionWs
         window.dispatchEvent(new CustomEvent("ext:webview:send", {
-          detail: { panelId, message: event.data },
+          detail: { panelId: resolvedPanelId, message: event.data },
         }));
       }
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [panelId]);
+  }, [resolvedPanelId]);
 
   // Listen for server→webview messages (dispatched by useExtensionWs)
-  // targetOrigin "*" is safe here because sandbox omits allow-same-origin,
-  // so iframe origin is opaque "null". MUST restrict if allow-same-origin is ever added.
   useEffect(() => {
+    if (!resolvedPanelId) return;
     const handler = (e: Event) => {
       const { panelId: targetId, message } = (e as CustomEvent).detail;
-      if (targetId === panelId) {
+      if (targetId === resolvedPanelId) {
         iframeRef.current?.contentWindow?.postMessage(message, "*");
       }
     };
     window.addEventListener("ext:webview:message", handler);
     return () => window.removeEventListener("ext:webview:message", handler);
-  }, [panelId]);
+  }, [resolvedPanelId]);
 
+  // Loading state — waiting for extension to create the panel
   if (!panel) {
     return (
-      <div className="flex items-center justify-center h-full text-sm text-text-subtle">
-        Webview panel not found
+      <div className="flex flex-col items-center justify-center h-full gap-2 text-sm text-text-subtle">
+        {timedOut ? (
+          <span>Extension failed to load webview panel</span>
+        ) : (
+          <>
+            <Loader2 className="size-5 animate-spin" />
+            <span>Loading extension...</span>
+          </>
+        )}
       </div>
     );
   }

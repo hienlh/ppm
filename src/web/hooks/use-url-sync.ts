@@ -15,6 +15,7 @@ export interface UrlState {
 const VALID_TAB_TYPES: TabType[] = [
   "terminal", "chat", "editor", "database", "sqlite",
   "postgres", "git-graph", "git-diff", "settings", "ports",
+  "extension",
 ];
 
 // ---------------------------------------------------------------------------
@@ -121,6 +122,7 @@ function buildMetadataFromUrl(
       return connId ? { connectionId: connId, tableName: tableName ?? "" } : null;
     }
     case "ports": return null;
+    case "extension": return identifier ? { viewType: identifier, projectName } : null;
     default: return null;
   }
 }
@@ -137,6 +139,11 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
     case "sqlite": return identifier?.split("/").pop() ?? "SQLite";
     case "postgres": return identifier ?? "PostgreSQL";
     case "ports": return "Ports";
+    case "extension": {
+      if (!identifier) return "Extension";
+      // "git-graph" → "Git Graph"
+      return identifier.split("-").map(w => w[0].toUpperCase() + w.slice(1)).join(" ");
+    }
     default: return type;
   }
 }

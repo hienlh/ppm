@@ -13,6 +13,7 @@ export type TabType =
   | "git-diff"
   | "settings"
   | "ports"
+  | "extension"
   | "extension-webview";
 
 export interface Tab {

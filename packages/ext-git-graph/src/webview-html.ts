@@ -1612,7 +1612,7 @@ function setupLongPress(el, callback) {
     if (timer && (Math.abs(e.touches[0].clientX - startX) > 10 || Math.abs(e.touches[0].clientY - startY) > 10)) {
       clearTimeout(timer); timer = null;
     }
-  });
+  }, { passive: true });
   el.addEventListener('touchend', () => { if (timer) { clearTimeout(timer); timer = null; } });
   el.addEventListener('touchcancel', () => { if (timer) { clearTimeout(timer); timer = null; } });
 }

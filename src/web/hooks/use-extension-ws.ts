@@ -111,7 +111,8 @@ export function useExtensionWs(enabled = true) {
           });
           break;
 
-        case "webview:create":
+        case "webview:create": {
+          const viewTypeSlug = msg.viewType.replace(/\.view$/, "");
           store.addWebviewPanel({
             id: msg.panelId,
             extensionId: msg.extensionId,
@@ -119,15 +120,16 @@ export function useExtensionWs(enabled = true) {
             title: msg.title,
             html: "",
           });
-          // Open a tab to display the webview panel
+          // Open a tab — use stable viewType slug as identifier (survives reload)
           useTabStore.getState().openTab({
-            type: "extension-webview",
+            type: "extension",
             title: msg.title,
             projectId: null,
             closable: true,
-            metadata: { panelId: msg.panelId, extensionId: msg.extensionId },
+            metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
           });
           break;
+        }
 
         case "webview:html":
           store.updateWebviewPanel(msg.panelId, { html: msg.html });
