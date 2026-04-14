@@ -351,7 +351,7 @@ async function handleUncommittedStatus(
   projectPath: string,
 ): Promise<void> {
   try {
-    const result = await spawnGit(vscode, ["status", "--porcelain=v1"], projectPath, 10_000);
+    const result = await spawnGit(vscode, ["status", "--porcelain=v1", "-u"], projectPath, 10_000);
     if (result.exitCode !== 0 || !result.stdout.trim()) {
       await panel.webview.postMessage({ command: "loadUncommitted", data: null });
       return;
