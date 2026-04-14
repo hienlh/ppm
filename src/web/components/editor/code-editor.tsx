@@ -340,22 +340,28 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
       );
     }
 
-    // Register CodeLens for inline Run buttons on .sql files
+    // Register CodeLens for inline Run buttons on .sql files (scoped to this editor's model)
     if (isSql) {
       codeLensDisposable.current.forEach((d) => d.dispose());
       codeLensDisposable.current = [];
 
+      const thisModel = editor.getModel();
       const cmdId = editor.addCommand(0, (_accessor: unknown, sql: string) => {
         if (sql) runSqlRef.current(sql);
       });
 
-      if (cmdId) {
+      if (cmdId && thisModel) {
         const provider = monaco.languages.registerCodeLensProvider("sql", {
           provideCodeLenses: (model: MonacoType.editor.ITextModel) => {
+            // Only provide lenses for THIS editor's model, not all SQL models
+            if (model !== thisModel) return { lenses: [], dispose: () => {} };
+
             const lenses: MonacoType.languages.CodeLens[] = [];
-            const lines = model.getValue().split("\n");
+            const text = model.getValue();
+            const lines = text.split("\n");
             let stmtStartLine = -1;
             let stmtLines: string[] = [];
+            let dollarBlock = false; // Track DO $$ ... $$ blocks
 
             const addLens = (line: number, stmt: string) => {
               const trimmed = stmt.trim();
@@ -374,7 +380,13 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
                 stmtLines = [];
               }
               stmtLines.push(lines[i]!);
-              if (trimmed.endsWith(";")) {
+
+              // Detect $$ dollar-quoted block start/end
+              const dollarMatches = (trimmed.match(/\$\$/g) || []).length;
+              if (dollarMatches % 2 === 1) dollarBlock = !dollarBlock;
+
+              // Only split on ; when NOT inside a $$ block
+              if (!dollarBlock && trimmed.endsWith(";")) {
                 addLens(stmtStartLine, stmtLines.join("\n"));
                 stmtStartLine = -1;
                 stmtLines = [];
