@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.86] - 2026-04-15
+
+### Added
+- **Git Graph worktree management**: Toolbar popover with full CRUD — list worktrees with branch/hash/status badges, create (existing or new branch), remove, and prune stale entries. "Create Worktree Here..." in commit context menu.
+- **Project auto-add for worktrees**: Opening a worktree not registered as a project prompts to add it automatically, then switches to it.
+- **Extension project switching API**: `window.switchProject()` in vscode-compat allows extensions to trigger project switches via `project:switch` WS message.
+
+### Fixed
+- **Branch-already-exists dialog**: Creating a branch that exists now shows replace/cancel dialog instead of a generic error toast.
+
 ## [0.9.85] - 2026-04-14
 
 ### Added
