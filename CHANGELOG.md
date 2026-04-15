@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.87] - 2026-04-15
+
+### Added
+- **Git Graph stash management**: Toolbar popover with stash count badge, list all stashes with Apply/Pop/Drop actions, "Stash Changes" button.
+- **Git Graph rebase context menu**: "Rebase current branch onto this..." in commit context menu with confirmation dialog.
+- **Conflict detection & merge state display**: Parse UU/AA/DD status codes, detect merge/rebase/cherry-pick state from .git sentinel files, show conflict section + banner with Continue/Skip/Abort.
+- **Inline conflict resolution editor**: Monaco-based editor with colored decorations (green current, blue incoming) and Accept Current/Incoming/Both buttons.
+- **Extension error reporting**: Error toasts for extension command failures, activation error tracking and display on browser connect.
+- **Extension breadcrumb logging**: `[ExtService]`, `[ExtHost]`, `[ExtWS]`, `[ext-git-graph]` tagged console.log at each pipeline step.
+
+### Fixed
+- **Extension silent failure**: Extensions that failed to activate or execute commands now show error toasts instead of spinning forever.
+- **Extension timeout UX**: Improved from generic "failed to load" to specific error message with retry button.
+
 ## [0.9.86] - 2026-04-15
 
 ### Added
