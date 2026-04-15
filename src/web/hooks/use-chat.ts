@@ -94,6 +94,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   projectNameRef.current = projectName;
   /** Toast ID for the current pending approval notification */
   const approvalToastRef = useRef<string | number | null>(null);
+  /** RAF handle for throttled syncMessages */
+  const syncRafRef = useRef<number>(0);
 
   // Team activity tracking
   const teamActivityRef = useRef<{
@@ -143,8 +145,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     return true;
   }, []);
 
-  /** Trigger re-render with latest events snapshot */
-  const syncMessages = useCallback(() => {
+  /** Flush refs into React state (called from rAF or directly) */
+  const flushMessages = useCallback(() => {
+    syncRafRef.current = 0;
     const content = streamingContentRef.current;
     const events = [...streamingEventsRef.current];
     const account = streamingAccountRef.current;
@@ -163,6 +166,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }];
     });
   }, []);
+
+  /** Throttled sync — batches rapid WS events into one render per animation frame */
+  const syncMessages = useCallback(() => {
+    if (!syncRafRef.current) {
+      syncRafRef.current = requestAnimationFrame(flushMessages);
+    }
+  }, [flushMessages]);
 
   /** Process a single stream event — reused by live events and turn_events replay */
   const processStreamEvent = useCallback((data: unknown) => {
@@ -346,6 +356,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           useNotificationStore.getState().addNotification(sessionIdRef.current, "done", projectNameRef.current);
           playNotificationSound("done");
         }
+        // Cancel any pending throttled sync — done handler writes final state directly
+        if (syncRafRef.current) { cancelAnimationFrame(syncRafRef.current); syncRafRef.current = 0; }
         // Finalize the streaming message — preserve SDK UUID for fork/rewind
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
@@ -499,6 +511,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setCompactStatus(null);
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
+    if (syncRafRef.current) { cancelAnimationFrame(syncRafRef.current); syncRafRef.current = 0; }
     setIsConnected(false);
     // Reset team state
     teamActivityRef.current = { teamNames: new Set(), messages: [] };
@@ -542,6 +555,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       const isFollowUp = phaseRef.current !== "idle";
 
       if (isFollowUp) {
+        // Cancel pending throttled sync before finalizing
+        if (syncRafRef.current) { cancelAnimationFrame(syncRafRef.current); syncRafRef.current = 0; }
         // Streaming follow-up: finalize current assistant message, then send
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
