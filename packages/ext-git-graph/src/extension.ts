@@ -434,7 +434,8 @@ async function handleRequestCommits(
   if (branch && branch !== "all") {
     args.push(branch);
   } else {
-    args.push("--all");
+    // Exclude stash refs — stashes are loaded separately via handleStashes
+    args.push("--exclude=refs/stash", "--all");
   }
 
   const result = await spawnGit(vscode, args, projectPath);
