@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.93] - 2026-04-15
+
+### Fixed
+- **Infinite tab creation on project switch**: Switching projects with Git Graph open no longer creates 99+ duplicate tabs. Fixed dedup logic in `webview:create` handler to detect existing tabs with `@panelId` suffix variants, and prevented double-dispatch from reload + project-sync effects.
+
 ## [0.9.92] - 2026-04-15
 
 ### Fixed
