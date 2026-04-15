@@ -1402,7 +1402,8 @@ function getDisplayCommits() {
     if (Object.keys(parentIndexes).length > 0) {
       const result = [];
       for (const c of commits) {
-        result.push(c);
+        // Stash virtual commits must come BEFORE their parent in the array
+        // (graph algorithm scans forward to find parents — same pattern as uncommitted)
         const stashesForCommit = parentIndexes[c.hash];
         if (stashesForCommit) {
           for (const s of stashesForCommit) {
@@ -1417,6 +1418,7 @@ function getDisplayCommits() {
             });
           }
         }
+        result.push(c);
       }
       commits = result;
     }
