@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.91] - 2026-04-15
+
+### Fixed
+- **Git Graph broken after stash visualization**: Stash virtual commits were inserted after parent in array but graph algorithm scans forward — graph silently broke when stashes existed. Fixed insertion order (stash before parent, same pattern as uncommitted).
+
 ## [0.9.90] - 2026-04-15
 
 ### Added
