@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.3] - 2026-04-16
+
+### Performance
+- **CSS `field-sizing: content` for native textarea auto-resize**: Use browser-native auto-sizing instead of JavaScript `scrollHeight` reads. Eliminates forced synchronous layout reflow on every keystroke. JS resize kept as fallback for browsers without `field-sizing` support (Safari 18.2+, Chrome 123+).
+- **CSS `contain: strict` on message list**: Prevents textarea resize from triggering layout recalculation of the entire message list DOM tree. Browser can skip message layout when only the input area changes.
+
 ## [0.10.2] - 2026-04-16
 
 ### Performance

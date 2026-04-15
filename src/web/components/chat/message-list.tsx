@@ -117,7 +117,7 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
-      <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden" resize="smooth" initial="instant">
+      <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden [contain:strict]" resize="smooth" initial="instant">
         <StickToBottom.Content className="p-4 space-y-4 select-none">
           {hasMore && (
             <button onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}

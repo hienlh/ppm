@@ -95,6 +95,11 @@ export const MessageInput = memo(function MessageInput({
   // Track picker open state to avoid unnecessary parent callbacks per keystroke
   const slashPickerOpenRef = useRef(false);
   const filePickerOpenRef = useRef(false);
+  // CSS field-sizing: content handles auto-resize natively (Safari 18.2+, Chrome 123+).
+  // Only fall back to JS scrollHeight resize when unsupported.
+  const needsJsResize = useRef(
+    typeof CSS === "undefined" || !CSS.supports("field-sizing", "content"),
+  );
 
   /** Write value to both textareas + ref + update hasText state */
   const writeTextareas = useCallback((newValue: string) => {
@@ -119,14 +124,16 @@ export const MessageInput = memo(function MessageInput({
     const prefix = preVoiceTextRef.current;
     const newValue = prefix ? prefix + " " + text : text;
     writeTextareas(newValue);
-    // Auto-resize textarea
-    requestAnimationFrame(() => {
-      const ta = getVisibleTextarea();
-      if (ta) {
-        ta.style.height = "auto";
-        ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
-      }
-    });
+    // Auto-resize textarea (only when CSS field-sizing is unsupported)
+    if (needsJsResize.current) {
+      requestAnimationFrame(() => {
+        const ta = getVisibleTextarea();
+        if (ta) {
+          ta.style.height = "auto";
+          ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
+        }
+      });
+    }
   }, [writeTextareas, getVisibleTextarea]);
   const handleVoiceToggle = useCallback(() => {
     if (voice.isListening) {
@@ -375,8 +382,10 @@ export const MessageInput = memo(function MessageInput({
     setAttachments([]);
     setPendingSend(false);
     setPriority('next');
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
-    if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
+    if (needsJsResize.current) {
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+      if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
+    }
   }, [attachments, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas]);
 
   const handleSend = useCallback(() => {
@@ -509,13 +518,15 @@ export const MessageInput = memo(function MessageInput({
       setHasText(text.trim().length > 0);
       // Update picker state (slash/file autocomplete)
       updatePickerState(text, el.selectionStart);
-      // rAF-debounced resize
-      if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
-      resizeRafRef.current = requestAnimationFrame(() => {
-        resizeRafRef.current = 0;
-        el.style.height = "auto";
-        el.style.height = Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 80 : 160) + "px";
-      });
+      // JS auto-resize fallback — only when CSS field-sizing: content is unsupported
+      if (needsJsResize.current) {
+        if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = requestAnimationFrame(() => {
+          resizeRafRef.current = 0;
+          el.style.height = "auto";
+          el.style.height = Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 80 : 160) + "px";
+        });
+      }
     },
     [updatePickerState],
   );
@@ -630,7 +641,7 @@ export const MessageInput = memo(function MessageInput({
             placeholder={isStreaming ? "Follow-up..." : "Ask anything..."}
             disabled={disabled}
             rows={1}
-            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20"
+            className="flex-1 resize-none bg-transparent py-1.5 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-20 [field-sizing:content]"
           />
           {voice.supported && (
             <button
@@ -680,7 +691,7 @@ export const MessageInput = memo(function MessageInput({
             placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
             disabled={disabled}
             rows={1}
-            className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40"
+            className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40 [field-sizing:content]"
           />
           <div className="flex items-center justify-between px-3 pb-2">
             <div className="flex items-center gap-1">
