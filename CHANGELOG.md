@@ -1,8 +1,9 @@
 # Changelog
 
-## [0.9.91] - 2026-04-15
+## [0.9.92] - 2026-04-15
 
 ### Fixed
+- **Webview panel lifecycle**: Closing a git-graph tab now properly disposes the panel on the extension side. Previously, the extension kept a stale `activePanel` reference and refused to create a new panel on reopen.
 - **Git Graph broken after stash visualization**: Stash virtual commits were inserted after parent in array but graph algorithm scans forward — graph silently broke when stashes existed. Fixed insertion order (stash before parent, same pattern as uncommitted).
 
 ## [0.9.90] - 2026-04-15
