@@ -54,10 +54,18 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const rawHtml = panel?.html ?? "";
   const html = injectVscodeApiShim(rawHtml);
 
-  // On reload: resolve project path and dispatch command once
-  // No retry — if it fails, user closes tab and reopens to retry
+  // Track which project was last dispatched to prevent duplicate dispatches
+  const prevProjectRef = useRef<string | null>(null);
+
+  // On reload: resolve project path and dispatch command once.
+  // No retry — if it fails, user closes tab and reopens to retry.
+  // Skip if project-sync effect already dispatched for this project
+  // (panel is briefly undefined during dispose→recreate transition).
   useEffect(() => {
     if (panel || !viewType) return;
+    // If we already dispatched for this project (via project-sync effect),
+    // don't dispatch again — the panel is just temporarily missing.
+    if (projectName && projectName === prevProjectRef.current) return;
     if (projectName) prevProjectRef.current = projectName;
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
     let cancelled = false;
@@ -87,7 +95,6 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // On mount: dispatch command so extension can reload if project differs.
   // On project switch: dispatch command with new project path.
   // Extension deduplicates same-project calls (noop if already correct).
-  const prevProjectRef = useRef<string | null>(null);
   useEffect(() => {
     if (!panel || !viewType || !projectName) return;
     // Skip if we already dispatched for this project
