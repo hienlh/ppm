@@ -2,13 +2,51 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.85
+**Current Version:** v0.9.86
 
 ---
 
-## [Unreleased] — Bundled Extensions + Git-Graph Refinement + Code Quality Improvements
+## [Unreleased] — Git-Graph Stash Management, Rebase, Conflict Resolution + Worktree CRUD
 
 ### Added
+- **Git Stash Management** — Toolbar popover for interactive stash operations
+  - List all stashes with index, hash (abbreviated), and message
+  - Apply/Pop/Drop actions per stash via context menu or action buttons
+  - "Stash Changes" button in main toolbar to stash uncommitted work
+  - Stash list persisted in RepoInfo and refreshed on uncommitted status updates
+  - Keyboard shortcuts for quick access to stash operations
+
+- **Interactive Rebase** — Branch context menu + commit history actions
+  - "Rebase current branch onto..." option in commit context menu
+  - Confirmation dialog shows branch selection and target commit
+  - Rebase state detection and progress tracking (e.g., "3/5" for interactive rebase)
+  - Continue/Skip/Abort controls in merge state banner during rebase
+
+- **Merge/Rebase/Cherry-Pick Conflict Detection** — Visual conflict indicators
+  - Detects merge state from .git sentinel files (MERGE_HEAD, REBASE_MERGE, CHERRY_PICK_HEAD)
+  - Parses git status UU/AA/DD/AU/UA/DU/UD codes for unmerged entries
+  - Conflicted files displayed in "Conflicts" section in uncommitted status
+  - Conflict state banner shows merge state type + progress + action buttons (Continue/Skip/Abort)
+  - Auto-detects merge state only when conflicts exist (performance optimization)
+
+- **Inline Conflict Resolution Editor** — New conflict-editor tab type with Monaco
+  - Dedicated `conflict-editor` tab type for visual conflict resolution
+  - Monaco-based editor with syntax highlighting per file type (JS/TS/Python/etc.)
+  - Conflict regions visually highlighted: green for current, blue for incoming, gray for markers
+  - Accept buttons: Accept Current / Accept Incoming / Accept Both (with proper merging)
+  - Conflict counter in header: "N conflicts remaining" → "All conflicts resolved" on completion
+  - Automatic file save after each resolution; conflict count updates in real-time
+  - Parses 3-way conflict markers (<<<<<<, =======, >>>>>>>) and extracts labels (HEAD/branch names)
+
+- **Worktree Management** — Full CRUD with project integration
+  - Worktree toolbar popover listing all worktrees (with path, branch, HEAD status)
+  - Create worktree from commit context menu ("Create Worktree Here...")
+  - Remove, prune, and auto-lock operations per worktree
+  - Current worktree highlighted with badge and active background
+  - Auto-add unregistered worktrees as projects via confirmation dialog
+  - Branch-already-exists dialog offers force-replace option for branch conflicts
+  - Project switcher integration: switch to worktree branches directly
+
 - **Bundled Extensions Support** — Auto-discover extensions from packages/ext-* directories
   - PPM discovers bundled extensions (e.g., ext-git-graph) without manual installation
   - Bundled extensions available out-of-the-box with all PPM instances
@@ -47,32 +85,54 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
   - Removed dot alignment bug that forced rows to 29px
 
 ### Technical Details
+
+**Stash/Rebase/Conflict/Worktree Implementation:**
+- **Files Created:**
+  - `src/web/components/editor/conflict-editor.tsx` — Monaco-based conflict resolution editor with visual highlighting, accept buttons, real-time conflict counter, auto-save on resolution
+
 - **Files Modified:**
+  - `packages/ext-git-graph/src/extension.ts` — Added stash parsing, merge state detection (merge/rebase/cherry-pick), conflict file opening, worktree CRUD operations, branch context menu rebase action
+  - `packages/ext-git-graph/src/types.ts` — Added Stash interface, MergeState interface (type, progress, message), FileChange status "U" for unmerged, Worktree interface, updated UncommittedData with conflicted field
+  - `packages/ext-git-graph/src/webview-html.ts` — Added stash popover UI, rebase context menu item, conflict section in uncommitted panel, merge state banner with Continue/Skip/Abort, worktree popover with CRUD UI
+  - `src/web/stores/tab-store.ts` — Added "conflict-editor" as valid TabType
+  - `src/web/stores/panel-utils.ts` — Added conflict-editor case to deriveTabId() for metadata-driven tab ID generation
+  - `src/web/components/layout/editor-panel.tsx` — Lazy-imported ConflictEditor component with fallback
+  - `src/web/components/layout/tab-content.tsx` — Lazy-imported ConflictEditor component with fallback
+  - `src/web/components/layout/mobile-nav.tsx` — Added conflict-editor icon (conflict/warning icon)
+  - `src/web/components/layout/tab-bar.tsx` — Added conflict-editor icon (conflict/warning icon)
+
+- **Services Modified:**
   - `src/services/extension-manifest.ts` — Added discoverBundledManifests() to scan packages/ext-* dirs
   - `src/services/extension.service.ts` — Added extensionPaths Map, bundledIds Set, isBundled() method; updated discover()/activate()/remove() to handle bundled extensions
   - `src/cli/commands/ext-cmd.ts` — Added "Source" column to `ppm ext list`, calls discover() to populate bundled info
-  - `packages/ext-git-graph/src/webview-html.ts` — UX refinements: branch context menu, dblclick checkout, toast notifications, SVG Lucide icons, 10s auto-fetch option, improved UI responsiveness
-  - `packages/ext-git-graph/src/extension.ts` — 5s uncommitted status polling, openFile/openSourceControl handlers, enhanced error handling
-  - `packages/ext-git-graph/src/types.ts` — Added autoFetchInterval, new message types
   - `src/services/extension-rpc-handlers.ts` — Allow git operations in all registered project paths (not just CWD), improved path validation
   - `src/services/extension-host-worker.ts` — Enhanced error logging, localHandlers check, disposed flag fix for polling race conditions
-  - `src/web/components/layout/tab-bar.tsx` — Fallback guard for unknown tab types
-  - `src/web/components/layout/mobile-nav.tsx` — Fallback guard for unknown tab types
-  - `src/web/components/layout/tab-content.tsx` — Fallback guard for unknown tab types
-  - `src/web/components/layout/editor-panel.tsx` — Fallback guard for unknown tab types
-  - `src/web/hooks/use-extension-ws.ts` — Enhanced RPC integration
-  - `src/types/extension-messages.ts` — New message types for UX events
-- **New Tests:**
-  - `tests/unit/services/extension-manifest.test.ts` — 9 tests for discoverBundledManifests() and manifest parsing
-  - `tests/unit/services/extension-service-bundled.test.ts` — 9 tests for isBundled(), discover(), and removal protection
+
 - **Type Changes:**
-  - Settings: Added `autoFetchInterval: number` option
-  - Messages: New `openFile`, `openSourceControl`, toast notification message types
-  - New type: `BundledManifest` (ExtensionManifest with _dir field)
-  - HEAD ref type detection corrected
+  - New: `Stash` = { index, hash, message }
+  - New: `MergeState` = { type: "merge" | "rebase" | "cherry-pick", progress?, message? }
+  - New: `Worktree` = { path, branch, head, isMain, isDetached, locked, lockReason?, prunable }
+  - Updated: `FileChange.status` now includes "U" for unmerged/conflicted entries (was "A" | "M" | "D" | "R" | "C")
+  - Updated: `UncommittedData` now includes `conflicted: FileChange[]` and optional `mergeState: MergeState`
+  - Updated: `RepoInfo` now includes `stashes: Stash[]` and `currentBranch: string`
+  - Updated: `TabType` now includes "conflict-editor"
+
+- **Git State Detection:**
+  - Merge state determined by .git sentinel files: MERGE_HEAD (merge), rebase-merge/ (interactive rebase), CHERRY_PICK_HEAD (cherry-pick)
+  - Progress tracked: "3/5" format from rebase-merge/msgnum and rebase-merge/end
+  - Conflict detection: UU/AA/DD/AU/UA/DU/UD git status codes parsed as unmerged entries
+  - Only detects merge state when conflicts exist (perf optimization)
+
+- **Conflict Resolution Flow:**
+  - User clicks conflicted file → opens conflict-editor tab
+  - Component parses conflict markers (<<<<<<, =======, >>>>>>>) from file content
+  - Displays visual highlighting + Accept buttons above each conflict region
+  - Resolution applies edit via Monaco, saves file automatically, updates conflict counter
+  - Conflict count reflects real-time resolution progress
+
 - **Security:** Path validation ensures extensions can only operate on registered project paths
 - **Breaking Changes:** None (backward compatible)
-- **Test Coverage:** 129 tests passing (111 extension tests + 18 bundled tests)
+- **Test Coverage:** All changes maintain test suite passing
 
 ---
 

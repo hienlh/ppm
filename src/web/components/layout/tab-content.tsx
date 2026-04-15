@@ -58,6 +58,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.ExtensionWebview,
     })),
   ),
+  "conflict-editor": lazy(() =>
+    import("@/components/editor/conflict-editor").then((m) => ({
+      default: m.ConflictEditor,
+    })),
+  ),
 };
 
 function LoadingFallback() {

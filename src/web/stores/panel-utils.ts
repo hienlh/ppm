@@ -109,6 +109,8 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     }
     case "git-diff":
       return `git-diff:${metadata?.filePath ?? "unknown"}`;
+    case "conflict-editor":
+      return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":
       return "settings";
     case "ports":

@@ -151,13 +151,14 @@ WS     /ws/project/:name/terminal/:id             → Terminal I/O
 ```
 /project/{name}                          → Project root (project switcher)
 /project/{name}/editor/{filePath}        → Open editor tab (e.g., src/index.ts)
+/project/{name}/conflict-editor/{filePath} → Open conflict resolution editor (during merge/rebase)
 /project/{name}/chat/{provider}/{sessionId} → Open chat tab
 /project/{name}/terminal/{index}         → Open terminal tab
 /project/{name}/database/{connId}/{table} → Open database browser
 /project/{name}/git-graph                → Git history graph (singleton)
 /project/{name}/settings                 → Settings panel (singleton)
 ```
-Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `chat:claude/abc123`). Deep links auto-create missing tabs.
+Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `conflict-editor:src/file.ts`, `chat:claude/abc123`). Deep links auto-create missing tabs.
 
 ---
 

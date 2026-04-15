@@ -156,6 +156,7 @@ function openGitGraph(
           await handleRequestCommits(vscode, panel, pp, context);
           handleUncommittedStatus(vscode, panel, pp); // fire-and-forget
           handleWorktrees(vscode, panel, pp); // fire-and-forget
+          handleStashes(vscode, panel, pp); // fire-and-forget
           break;
         case "requestRepoInfo":
           await handleRepoInfo(vscode, panel, pp);
@@ -263,6 +264,9 @@ function openGitGraph(
         case "requestWorktrees":
           await handleWorktrees(vscode, panel, pp);
           break;
+        case "requestStashes":
+          await handleStashes(vscode, panel, pp);
+          break;
         case "addWorktree": {
           const addArgs = ["worktree", "add"];
           if (msg.newBranch) {
@@ -333,6 +337,16 @@ function openGitGraph(
           }
           break;
         }
+        case "openConflictFile": {
+          assertSafeFilePaths([msg.filePath], pp);
+          const projectName = await resolveProjectName(pp);
+          // Opens as conflict-editor tab (Phase 4 will wire this properly)
+          await vscode.window.openTab("conflict-editor", `Conflict: ${msg.filePath.split(/[\\/]/).pop()}`, projectName, {
+            projectName,
+            filePath: msg.filePath,
+          });
+          break;
+        }
         case "openSourceControl": {
           await vscode.window.showInformationMessage("Open the Source Control panel from the sidebar.");
           break;
@@ -372,6 +386,7 @@ async function reloadPanelData(
   await handleRequestCommits(vscode, panel, projectPath, context);
   handleUncommittedStatus(vscode, panel, projectPath);
   handleWorktrees(vscode, panel, projectPath);
+  handleStashes(vscode, panel, projectPath);
 }
 
 async function handleRepoInfo(
@@ -453,6 +468,8 @@ async function handleCommitDetails(
   await panel.webview.postMessage({ command: "commitDetails", data: detail });
 }
 
+const UNMERGED_CODES = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
 async function handleUncommittedStatus(
   vscode: VscodeApi,
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
@@ -466,11 +483,20 @@ async function handleUncommittedStatus(
     }
     const staged: import("./types.ts").FileChange[] = [];
     const unstaged: import("./types.ts").FileChange[] = [];
+    const conflicted: import("./types.ts").FileChange[] = [];
     for (const line of result.stdout.split("\n").filter(Boolean)) {
-      if (staged.length + unstaged.length >= 500) break; // cap total
-      const x = line[0]; // staged status
-      const y = line[1]; // unstaged status
+      if (staged.length + unstaged.length + conflicted.length >= 500) break;
+      const xy = line.substring(0, 2);
       const filePath = line.substring(3);
+
+      // Check for unmerged/conflict entries first
+      if (UNMERGED_CODES.has(xy)) {
+        conflicted.push({ path: filePath, status: "U", additions: 0, deletions: 0 });
+        continue;
+      }
+
+      const x = xy[0]; // staged status
+      const y = xy[1]; // unstaged status
       if (x !== " " && x !== "?") {
         staged.push({ path: filePath, status: mapStatusCode(x), additions: 0, deletions: 0 });
       }
@@ -481,13 +507,70 @@ async function handleUncommittedStatus(
         unstaged.push({ path: filePath, status: "A", additions: 0, deletions: 0 });
       }
     }
+
+    // Only detect merge state when conflicts exist (perf optimization)
+    let mergeState: import("./types.ts").MergeState | undefined;
+    if (conflicted.length > 0) {
+      mergeState = await detectMergeState(vscode, projectPath);
+    }
+
     await panel.webview.postMessage({
       command: "loadUncommitted",
-      data: { staged, unstaged },
+      data: { staged, unstaged, conflicted, mergeState },
     });
   } catch {
     await panel.webview.postMessage({ command: "loadUncommitted", data: null });
   }
+}
+
+async function detectMergeState(
+  vscode: VscodeApi,
+  projectPath: string,
+): Promise<import("./types.ts").MergeState | undefined> {
+  // Resolve the actual GIT_DIR (handles worktrees where .git is a pointer file)
+  const gitDirResult = await spawnGit(vscode, ["rev-parse", "--git-dir"], projectPath, 2000);
+  if (gitDirResult.exitCode !== 0) return undefined;
+  let gitDir = gitDirResult.stdout.trim();
+  // Make absolute if relative
+  if (!gitDir.startsWith("/")) gitDir = `${projectPath}/${gitDir}`;
+
+  // Check rebase-merge (interactive rebase)
+  const rebaseMergeDir = `${gitDir}/rebase-merge`;
+  const checkRebase = await vscode.process.spawn("test", ["-d", rebaseMergeDir], projectPath, { timeout: 2000 });
+  if (checkRebase.exitCode === 0) {
+    const [numResult, endResult, msgResult] = await Promise.all([
+      vscode.process.spawn("cat", [`${rebaseMergeDir}/msgnum`], projectPath, { timeout: 2000 }),
+      vscode.process.spawn("cat", [`${rebaseMergeDir}/end`], projectPath, { timeout: 2000 }),
+      vscode.process.spawn("cat", [`${rebaseMergeDir}/message`], projectPath, { timeout: 2000 }),
+    ]);
+    const current = numResult.stdout.trim();
+    const total = endResult.stdout.trim();
+    return {
+      type: "rebase",
+      progress: current && total ? `${current}/${total}` : undefined,
+      message: msgResult.stdout.trim().split("\n")[0] || undefined,
+    };
+  }
+
+  // Check rebase-apply (non-interactive rebase / am)
+  const checkRebaseApply = await vscode.process.spawn("test", ["-d", `${gitDir}/rebase-apply`], projectPath, { timeout: 2000 });
+  if (checkRebaseApply.exitCode === 0) {
+    return { type: "rebase" };
+  }
+
+  // Check merge
+  const checkMerge = await vscode.process.spawn("test", ["-f", `${gitDir}/MERGE_HEAD`], projectPath, { timeout: 2000 });
+  if (checkMerge.exitCode === 0) {
+    return { type: "merge" };
+  }
+
+  // Check cherry-pick
+  const checkCherry = await vscode.process.spawn("test", ["-f", `${gitDir}/CHERRY_PICK_HEAD`], projectPath, { timeout: 2000 });
+  if (checkCherry.exitCode === 0) {
+    return { type: "cherry-pick" };
+  }
+
+  return undefined;
 }
 
 async function handleWorktrees(
@@ -525,6 +608,29 @@ async function handleWorktrees(
   // Mark first worktree as main
   if (worktrees.length > 0) worktrees[0].isMain = true;
   await panel.webview.postMessage({ command: "loadWorktrees", data: worktrees });
+}
+
+async function handleStashes(
+  vscode: VscodeApi,
+  panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
+  projectPath: string,
+): Promise<void> {
+  const result = await spawnGit(vscode, ["stash", "list", "--format=%gd|%H|%s"], projectPath, 10_000);
+  const stashes: import("./types.ts").Stash[] = [];
+  if (result.exitCode === 0 && result.stdout.trim()) {
+    for (const line of result.stdout.split("\n").filter(Boolean)) {
+      const parts = line.split("|");
+      if (parts.length >= 3) {
+        const refMatch = parts[0].match(/\{(\d+)\}/);
+        stashes.push({
+          index: refMatch ? parseInt(refMatch[1]) : stashes.length,
+          hash: parts[1],
+          message: parts.slice(2).join("|"),
+        });
+      }
+    }
+  }
+  await panel.webview.postMessage({ command: "loadStashes", data: stashes });
 }
 
 function mapStatusCode(code: string): "A" | "M" | "D" | "R" {
@@ -754,6 +860,13 @@ function buildGitActionArgs(action: string, args: Record<string, unknown>): stri
     case "stashSave": return ["stash", "push", ...(args.message ? ["-m", String(args.message)] : [])];
     case "stashPop": return ["stash", "pop", ...(args.stashRef ? [assertValidRef(args.stashRef, "stashRef")] : [])];
     case "stashDrop": return ["stash", "drop", ...(args.stashRef ? [assertValidRef(args.stashRef, "stashRef")] : [])];
+    case "stashApply": return ["stash", "apply", ...(args.stashRef ? [assertValidRef(args.stashRef, "stashRef")] : [])];
+    case "rebaseContinue": return ["rebase", "--continue"];
+    case "rebaseAbort": return ["rebase", "--abort"];
+    case "rebaseSkip": return ["rebase", "--skip"];
+    case "mergeAbort": return ["merge", "--abort"];
+    case "cherryPickAbort": return ["cherry-pick", "--abort"];
+    case "cherryPickContinue": return ["cherry-pick", "--continue"];
     case "fetch": return ["fetch", ...(args.remote ? [assertValidRemote(args.remote)] : []), ...(args.prune ? ["--prune"] : [])];
     case "pull": return ["pull", ...(args.remote ? [assertValidRemote(args.remote)] : []), ...(args.branch ? [assertValidRef(args.branch, "branch")] : [])];
     case "renameBranch": {

@@ -71,9 +71,15 @@ export interface CommitDetail {
 export interface FileChange {
   path: string;
   oldPath?: string;
-  status: "A" | "M" | "D" | "R" | "C";
+  status: "A" | "M" | "D" | "R" | "C" | "U";
   additions: number;
   deletions: number;
+}
+
+export interface MergeState {
+  type: "merge" | "rebase" | "cherry-pick";
+  progress?: string; // e.g. "3/5" for rebase
+  message?: string;  // current commit message being rebased
 }
 
 export interface RepoInfo {
@@ -94,6 +100,8 @@ export interface ActionResult {
 export interface UncommittedData {
   staged: FileChange[];
   unstaged: FileChange[];
+  conflicted: FileChange[];
+  mergeState?: MergeState;
 }
 
 // --- Settings ---
@@ -152,6 +160,7 @@ export type ExtToWebview =
   | { command: "refresh"; data: GitVertex[]; repoInfo: RepoInfo }
   | { command: "actionResult"; action: string; args?: Record<string, unknown>; result: ActionResult }
   | { command: "loadWorktrees"; data: Worktree[] }
+  | { command: "loadStashes"; data: Stash[] }
   | { command: "error"; message: string };
 
 // --- Webview → Extension messages ---
@@ -178,4 +187,6 @@ export type WebviewToExt =
   | { command: "pruneWorktrees" }
   | { command: "openWorktree"; path: string }
   | { command: "openFile"; filePath: string }
-  | { command: "openSourceControl" };
+  | { command: "openConflictFile"; filePath: string }
+  | { command: "openSourceControl" }
+  | { command: "requestStashes" };

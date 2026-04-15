@@ -71,6 +71,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 - File download feature (v0.9.2) — Single-file + folder-as-zip downloads with short-lived tokens, context menu + toolbar UI
 - Agent Team UI (v0.9.9) — Real-time team monitoring dashboard: REST API + fs.watch inbox events, team activity button with unread pulse, popover/drawer with members + messages, team management in Settings
 - Git-Graph UI Improvements (v0.9.85+) — ✅ Faithful SVG graph rendering (vscode-git-graph port), interactive git workflow (stage/unstage/commit/stash), branch filters, auto-fetch, mobile support, tab system safety guards, UX refinements (branch context menu, dblclick checkout, toast notifications, SVG icons)
+- Git Workflow Enhancements (v0.9.86+) — ✅ Stash management (popover with Apply/Pop/Drop), rebase from context menu, conflict detection (merge/rebase/cherry-pick states), inline conflict resolution editor (Monaco with visual highlighting + Accept buttons), worktree full CRUD (create/remove/prune with project integration)
 
 **Multi-provider — v0.9 scope (reduced):**
 - Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy
@@ -100,12 +101,12 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ### v0.10.0 — "Enhanced Workflow" (Q3 2026)
 
-**Theme:** Agent collaboration + git workflow. High-impact, independent features that ship fast.
+**Theme:** Agent collaboration + advanced git workflow. High-impact, independent features that ship fast.
 
 | Feature | Priority | Description |
 |---------|----------|-------------|
 | **Agent Team** | High | Multi-agent collaboration within PPM. Spawn agent teams for parallel task execution — lead agent delegates to specialist agents (coder, tester, reviewer). Task coordination, file ownership, progress tracking. |
-| **Worktree management** | Medium | UI to create/switch/delete git worktrees. Use different providers on different branches. Integrated with project switcher. |
+| **Advanced Git Operations** | Medium | Interactive rebase UI, cherry-pick workflow, merge strategy selection. (Worktree management completed in v0.9.86) |
 
 ---
 

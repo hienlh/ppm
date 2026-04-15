@@ -40,6 +40,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   ports: Globe,
   extension: Puzzle,
   "extension-webview": Puzzle,
+  "conflict-editor": FileDiff,
 };
 
 interface TabBarProps {

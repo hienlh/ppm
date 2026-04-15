@@ -1,12 +1,12 @@
 # PPM Codebase Summary
 
-**Last Updated:** 2026-04-14
-**Version:** 0.9.85
+**Last Updated:** 2026-04-15
+**Version:** 0.9.86
 **Repository:** PPM (Project & Process Manager) — Multi-provider web IDE/project manager with Claude Agent SDK
 
 **Core Statistics:**
-- **375 files** across CLI, server, web, packages, and test layers
-- **875,671 tokens** total codebase size (repomix)
+- **366 files** across CLI, server, web, packages, and test layers
+- **885,308 tokens** total codebase size (repomix)
 - **500+ passing tests**
 - **Tech Stack:** Bun (runtime), Hono (HTTP), React (UI), Claude Agent SDK (AI)
 
@@ -166,9 +166,10 @@ src/
 │           │   ├── usage-badge.tsx  # Token usage display
 │           │   ├── attachment-chips.tsx # Display attached files
 │           │   └── chat-placeholder.tsx # Empty state
-│           ├── editor/              # Code editor (800+ LOC, 6 files)
+│           ├── editor/              # Code editor (900+ LOC, 7 files)
 │           │   ├── code-editor.tsx  # Monaco Editor integration (@monaco-editor/react, v2.0+)
 │           │   ├── diff-viewer.tsx  # Monaco diff viewer for git diffs (v2.0+)
+│           │   ├── conflict-editor.tsx # Inline conflict resolution (3-way markers, visual highlighting, v0.9.86+)
 │           │   ├── editor-breadcrumb.tsx # VSCode-style breadcrumb with nested dropdown
 │           │   ├── editor-toolbar.tsx # File-type contextual toolbar
 │           │   ├── csv-preview.tsx  # CSV table viewer with @tanstack/react-table
@@ -377,6 +378,36 @@ GitStatusPanel refreshes: GET /api/project/:name/git/status
 UI updates staged/unstaged lists
 ```
 
+### Git Workflow Enhancements (v0.9.86+)
+
+**Stash Management:**
+- Toolbar popover lists all stashes (index, abbreviated hash, message)
+- Apply/Pop/Drop actions per stash with visual feedback
+- "Stash Changes" button saves uncommitted work to stash list
+- Stash state integrated into RepoInfo and refreshed on status changes
+
+**Conflict Detection & Resolution:**
+- Detects merge/rebase/cherry-pick state from .git sentinel files (MERGE_HEAD, rebase-merge/, CHERRY_PICK_HEAD)
+- Parses git status UU/AA/DD/AU/UA/DU/UD codes for unmerged entries
+- Conflict state banner shows state type, progress (e.g., "3/5" for rebase), and Continue/Skip/Abort actions
+- New `conflict-editor` tab type with Monaco-based visual conflict resolution
+  - Parses 3-way conflict markers (<<<<<<, =======, >>>>>>>)
+  - Highlights current (green), incoming (blue), and marker lines (gray)
+  - Accept buttons for Current / Incoming / Both with automatic save
+  - Real-time conflict counter: "N conflicts remaining" → "All resolved"
+
+**Rebase from Context Menu:**
+- Right-click commits to open rebase menu
+- Confirmation dialog with branch/target selection
+- Rebase state tracking and progress display during operation
+
+**Worktree Management:**
+- Popover UI for listing, creating, removing, pruning worktrees
+- Current worktree highlighted with active badge
+- "Create Worktree Here..." option in commit context menu
+- Auto-add unregistered worktrees as projects with confirmation
+- Branch-already-exists handling with force-replace option
+
 ### Tab System Safety (v0.9.85+)
 
 All tab routing and rendering components now include fallback guards for unknown tab types:
@@ -404,9 +435,11 @@ All tab routing and rendering components now include fallback guards for unknown
 | `ApiResponse<T>` | types/api.ts | Standard envelope for all REST responses |
 | `AIProvider` | providers/provider.interface.ts | Interface for AI model adapters |
 | `ChatEvent` | types/chat.ts | Union of streaming message types |
-| `GitStatus` | types/git.ts | Current branch, staged, unstaged, untracked files |
+| `GitStatus` | types/git.ts | Current branch, staged, unstaged, untracked files (includes conflicted field v0.9.86+) |
 | `Session` | types/chat.ts | Chat session with ID, projectName, title, createdAt |
 | `Project` | types/project.ts | Project config (name, path) |
+| `MergeState` | ext-git-graph/src/types.ts | Merge/rebase/cherry-pick state with progress tracking (v0.9.86+) |
+| `TabType` | web/stores/tab-store.ts | "editor" \| "chat" \| "terminal" \| "database" \| "git-graph" \| "conflict-editor" \| "settings" (v0.9.86+) |
 
 ## External Dependencies
 

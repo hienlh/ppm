@@ -13,7 +13,8 @@ export type TabType =
   | "settings"
   | "ports"
   | "extension"
-  | "extension-webview";
+  | "extension-webview"
+  | "conflict-editor";
 
 export interface Tab {
   id: string;

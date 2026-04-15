@@ -27,6 +27,16 @@ ${getStyles()}
         <button id="btn-fetch" title="Fetch from remotes"></button>
       </div>
       <div class="toolbar-right">
+        <div class="stash-dropdown">
+          <button id="btn-stash" title="Stashes"></button>
+          <div id="stash-popover" class="stash-popover hidden">
+            <div class="stash-popover-header"><span>Stashes</span></div>
+            <div id="stash-list" class="stash-list"></div>
+            <div class="stash-popover-footer">
+              <button id="stash-save" class="btn-sm">+ Stash Changes</button>
+            </div>
+          </div>
+        </div>
         <div class="worktree-dropdown">
           <button id="btn-worktree" title="Worktrees"></button>
           <div id="worktree-popover" class="worktree-popover hidden">
@@ -191,6 +201,37 @@ button:active { background: var(--surface); }
 .worktree-popover-footer .btn-sm { flex: 1; }
 .wt-empty { padding: 16px; text-align: center; font-size: 11px; color: var(--subtext); }
 @media (max-width: 768px) { .branch-option { padding: 10px 12px; min-height: 44px; } }
+
+/* Stash popover */
+.stash-dropdown { position: relative; }
+#btn-stash { display: flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 8px; }
+#btn-stash .stash-count { background: var(--accent, #58a6ff); color: #fff; font-size: 10px; border-radius: 8px; padding: 0 5px; min-width: 16px; text-align: center; line-height: 16px; }
+.stash-popover { position: absolute; top: 100%; right: 0; z-index: 60; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); min-width: 300px; max-width: 400px; margin-top: 4px; display: flex; flex-direction: column; }
+.stash-popover-header { padding: 8px 12px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
+.stash-list { overflow-y: auto; max-height: 240px; }
+.stash-item { padding: 8px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.stash-item:last-child { border-bottom: none; }
+.stash-item-info { flex: 1; min-width: 0; }
+.stash-item-ref { font-weight: 600; font-size: 11px; color: var(--subtext); }
+.stash-item-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stash-item-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.stash-item-actions button { min-width: 24px; min-height: 24px; padding: 2px 6px; font-size: 10px; }
+.stash-empty { padding: 16px; text-align: center; font-size: 11px; color: var(--subtext); }
+.stash-popover-footer { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
+.stash-popover-footer .btn-sm { flex: 1; }
+
+/* Merge/rebase banner */
+.merge-banner { padding: 8px 12px; background: rgba(133, 77, 14, 0.12); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-size: 12px; flex-shrink: 0; }
+.merge-banner .banner-icon { color: #eab308; }
+.merge-banner .banner-text { flex: 1; }
+.merge-banner .banner-actions { display: flex; gap: 4px; }
+.merge-banner .banner-actions button { font-size: 11px; padding: 2px 8px; }
+.merge-banner .btn-continue { background: var(--green); color: #fff; border-color: transparent; }
+.merge-banner .btn-abort { background: var(--red); color: #fff; border-color: transparent; }
+
+/* Conflict section */
+.conflict-header { padding: 4px 0; font-size: 12px; font-weight: 600; color: var(--red); display: flex; align-items: center; gap: 4px; }
+.file-status-U { color: var(--red); font-weight: bold; }
 
 /* Find bar */
 .find-bar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
@@ -393,6 +434,7 @@ const state = {
   graphColWidth: null,
   fileViewMode: 'list',
   worktrees: [],
+  mergeState: null,
   _lastDetail: null,
 };
 
@@ -412,6 +454,7 @@ const ICONS = {
   fileOpen: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
   gitBranch: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>',
   trash: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>',
+  archive: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
 };
 
 // --- Toast notifications ---
@@ -431,6 +474,7 @@ document.getElementById('btn-fetch').innerHTML = ICONS.download;
 document.getElementById('btn-find').innerHTML = ICONS.search;
 document.getElementById('btn-settings').innerHTML = ICONS.settings;
 document.getElementById('btn-worktree').innerHTML = ICONS.gitBranch + ' <span class="wt-count" style="display:none">0</span>';
+document.getElementById('btn-stash').innerHTML = ICONS.archive + ' <span class="stash-count" style="display:none">0</span>';
 vscode.postMessage({ command: 'ready' });
 
 // --- Message handler ---
@@ -479,9 +523,12 @@ window.addEventListener('message', (event) => {
       break;
     case 'loadUncommitted':
       state.uncommitted = msg.data;
+      state.mergeState = msg.data?.mergeState || null;
       renderCommitList();
+      renderMergeBanner();
       if (state.selectedCommit === 'uncommitted') {
-        if (!msg.data || (msg.data.staged.length === 0 && msg.data.unstaged.length === 0)) {
+        const u = msg.data;
+        if (!u || (u.staged.length === 0 && u.unstaged.length === 0 && (!u.conflicted || u.conflicted.length === 0))) {
           state.selectedCommit = null;
           state.expandedCommit = null;
           document.getElementById('detail-panel').classList.add('hidden');
@@ -531,10 +578,18 @@ window.addEventListener('message', (event) => {
       if (msg.result.ok && (msg.action === 'addWorktree' || msg.action === 'removeWorktree' || msg.action === 'pruneWorktrees')) {
         vscode.postMessage({ command: 'requestWorktrees' });
       }
+      // Refresh stash list after stash mutations
+      if (msg.result.ok && ['stashSave','stashPop','stashDrop','stashApply'].includes(msg.action)) {
+        vscode.postMessage({ command: 'requestStashes' });
+      }
       break;
     case 'loadWorktrees':
       state.worktrees = msg.data || [];
       renderWorktreeList();
+      break;
+    case 'loadStashes':
+      state.stashes = msg.data || [];
+      renderStashList();
       break;
     case 'error':
       document.getElementById('status-text').textContent = 'Error: ' + msg.message;
@@ -552,6 +607,8 @@ document.getElementById('detail-panel').addEventListener('click', (e) => {
     const file = actionBtn.dataset.file;
     if (action === 'open') {
       vscode.postMessage({ command: 'openFile', filePath: file });
+    } else if (action === 'open-conflict') {
+      vscode.postMessage({ command: 'openConflictFile', filePath: file });
     } else if (action === 'stage') {
       vscode.postMessage({ command: 'gitAction', action: 'stage', args: { files: [file] } });
     } else if (action === 'unstage') {
@@ -828,6 +885,140 @@ function showCreateWorktreeDialog(startPoint) {
     if (e.key === 'Enter') confirmBtn.click();
   });
 }
+
+// --- Merge/rebase banner ---
+function renderMergeBanner() {
+  let banner = document.getElementById('merge-banner');
+  if (!state.mergeState) {
+    if (banner) banner.remove();
+    return;
+  }
+  const ms = state.mergeState;
+  const typeLabel = ms.type === 'cherry-pick' ? 'Cherry-pick' : ms.type.charAt(0).toUpperCase() + ms.type.slice(1);
+  const progressText = ms.progress ? ' (' + ms.progress + ')' : '';
+  const msgText = ms.message ? ' — ' + escHtml(ms.message) : '';
+
+  let buttonsHtml = '';
+  if (ms.type === 'rebase') {
+    buttonsHtml = '<button class="btn-sm btn-continue" data-merge-action="rebaseContinue">Continue</button>'
+      + '<button class="btn-sm" data-merge-action="rebaseSkip">Skip</button>'
+      + '<button class="btn-sm btn-abort" data-merge-action="rebaseAbort">Abort</button>';
+  } else if (ms.type === 'merge') {
+    buttonsHtml = '<button class="btn-sm btn-abort" data-merge-action="mergeAbort">Abort</button>';
+  } else if (ms.type === 'cherry-pick') {
+    buttonsHtml = '<button class="btn-sm btn-continue" data-merge-action="cherryPickContinue">Continue</button>'
+      + '<button class="btn-sm btn-abort" data-merge-action="cherryPickAbort">Abort</button>';
+  }
+
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'merge-banner';
+    banner.className = 'merge-banner';
+    const toolbar = document.getElementById('toolbar');
+    toolbar.parentNode.insertBefore(banner, toolbar.nextSibling);
+  }
+  banner.innerHTML = '<span class="banner-icon">⚠</span>'
+    + '<span class="banner-text"><strong>' + typeLabel + ' in progress' + progressText + '</strong>' + msgText + '</span>'
+    + '<div class="banner-actions">' + buttonsHtml + '</div>';
+
+  banner.querySelectorAll('[data-merge-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.mergeAction;
+      if (action.includes('Abort')) {
+        showDialog({
+          title: 'Abort ' + typeLabel,
+          message: 'Abort the current ' + ms.type + '? Any resolved conflicts will be lost.',
+          destructive: true,
+          confirmLabel: 'Abort',
+          onConfirm: () => gitAction(action, {}),
+        });
+      } else {
+        gitAction(action, {});
+      }
+    });
+  });
+}
+
+// --- Stash popover ---
+const btnStash = document.getElementById('btn-stash');
+const stashPopover = document.getElementById('stash-popover');
+
+btnStash.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const wasHidden = stashPopover.classList.contains('hidden');
+  stashPopover.classList.toggle('hidden');
+  if (wasHidden) vscode.postMessage({ command: 'requestStashes' });
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.stash-dropdown')) stashPopover.classList.add('hidden');
+});
+
+function renderStashList() {
+  const listEl = document.getElementById('stash-list');
+  const countEl = btnStash.querySelector('.stash-count');
+  const stashes = state.stashes;
+  if (countEl) {
+    countEl.textContent = stashes.length;
+    countEl.style.display = stashes.length > 0 ? '' : 'none';
+  }
+  if (!stashes.length) {
+    listEl.innerHTML = '<div class="stash-empty">No stashes</div>';
+    return;
+  }
+  listEl.innerHTML = stashes.map((s, i) => {
+    const ref = 'stash@{' + s.index + '}';
+    return '<div class="stash-item">'
+      + '<div class="stash-item-info">'
+      + '<div class="stash-item-ref">' + escHtml(ref) + '</div>'
+      + '<div class="stash-item-msg" title="' + escHtml(s.message) + '">' + escHtml(s.message) + '</div>'
+      + '</div>'
+      + '<div class="stash-item-actions">'
+      + '<button class="stash-apply btn-sm" data-idx="' + i + '" title="Apply (keep stash)">Apply</button>'
+      + '<button class="stash-pop btn-sm" data-idx="' + i + '" title="Pop (apply & remove)">Pop</button>'
+      + '<button class="stash-drop btn-sm" data-idx="' + i + '" title="Drop (delete)">Drop</button>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+
+  listEl.querySelectorAll('.stash-apply').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const s = state.stashes[parseInt(btn.dataset.idx)];
+      if (s) gitAction('stashApply', { stashRef: 'stash@{' + s.index + '}' });
+    });
+  });
+  listEl.querySelectorAll('.stash-pop').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const s = state.stashes[parseInt(btn.dataset.idx)];
+      if (s) gitAction('stashPop', { stashRef: 'stash@{' + s.index + '}' });
+    });
+  });
+  listEl.querySelectorAll('.stash-drop').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const s = state.stashes[parseInt(btn.dataset.idx)];
+      if (!s) return;
+      showDialog({
+        title: 'Drop Stash',
+        message: 'Delete stash@{' + s.index + '}? This cannot be undone.',
+        destructive: true,
+        confirmLabel: 'Drop',
+        onConfirm: () => gitAction('stashDrop', { stashRef: 'stash@{' + s.index + '}' }),
+      });
+    });
+  });
+}
+
+document.getElementById('stash-save').addEventListener('click', () => {
+  showDialog({
+    title: 'Stash Changes',
+    input: { placeholder: 'Stash message (optional)' },
+    confirmLabel: 'Stash',
+    onConfirm: (msg) => gitAction('stashSave', msg ? { message: msg } : {}),
+  });
+});
 
 // --- Graph column resize ---
 {
@@ -1189,7 +1380,8 @@ function graphVertexOut(e) {
 // --- Commit list ---
 function getDisplayCommits() {
   const u = state.uncommitted;
-  if (!u || (u.staged.length === 0 && u.unstaged.length === 0)) return state.commits;
+  const totalFiles = u ? (u.staged.length + u.unstaged.length + (u.conflicted ? u.conflicted.length : 0)) : 0;
+  if (!u || totalFiles === 0) return state.commits;
   const virtualCommit = {
     hash: 'uncommitted',
     parents: state.head ? [state.head] : [],
@@ -1200,7 +1392,7 @@ function getDisplayCommits() {
     committerEmail: '',
     commitDate: Math.floor(Date.now() / 1000),
     refs: [],
-    message: 'Uncommitted Changes (' + (u.staged.length + u.unstaged.length) + ' files)',
+    message: 'Uncommitted Changes (' + totalFiles + ' files)',
   };
   return [virtualCommit, ...state.commits];
 }
@@ -1412,8 +1604,24 @@ function renderUncommittedDetail() {
   const u = state.uncommitted;
   if (!u) { panel.classList.add('hidden'); return; }
   let html = '<h3>Uncommitted Changes</h3>';
-  if (u.staged.length > 0 || u.unstaged.length > 0) {
+  const hasFiles = u.staged.length > 0 || u.unstaged.length > 0 || (u.conflicted && u.conflicted.length > 0);
+  if (hasFiles) {
     html += fileViewToggleHtml();
+  }
+  // Conflict section (above staged/unstaged)
+  if (u.conflicted && u.conflicted.length > 0) {
+    html += '<div class="file-list"><div class="conflict-header">⚠ Conflicts (' + u.conflicted.length + ')</div>';
+    html += u.conflicted.map(f => {
+      const fileName = f.path.split('/').pop() || f.path;
+      return '<div class="file-item">'
+        + '<span class="file-status file-status-U">U</span>'
+        + '<span class="file-clickable" data-file="' + escHtml(f.path) + '" data-hash="uncommitted" data-parent="' + escHtml(state.head) + '">' + escHtml(f.path) + '</span>'
+        + '<div class="file-actions">'
+        + '<button class="file-action-btn" data-action="open-conflict" data-file="' + escHtml(f.path) + '" title="Open conflict file">' + ICONS.fileOpen + '</button>'
+        + '<button class="file-action-btn" data-action="stage" data-file="' + escHtml(f.path) + '" title="Mark resolved (stage)">' + ICONS.plus + '</button>'
+        + '</div></div>';
+    }).join('');
+    html += '</div>';
   }
   if (u.staged.length > 0) {
     html += '<div class="file-list"><div class="section-actions"><strong>Staged (' + u.staged.length + '):</strong>';
@@ -1427,7 +1635,7 @@ function renderUncommittedDetail() {
     html += renderFileListHtml(u.unstaged, 'uncommitted', state.head, 'unstaged');
     html += '</div>';
   }
-  if (u.staged.length === 0 && u.unstaged.length === 0) {
+  if (u.staged.length === 0 && u.unstaged.length === 0 && (!u.conflicted || u.conflicted.length === 0)) {
     html += '<p>No uncommitted changes.</p>';
   }
   html += '<div class="commit-section">';
@@ -1496,6 +1704,16 @@ function showCommitContextMenu(x, y, commit) {
     { label: 'Create Branch Here...', action: () => promptAndAction('Branch name:', (name) => gitAction('createBranch', { name, startPoint: commit.hash })) },
     { label: 'Create Tag Here...', action: () => promptAndAction('Tag name:', (name) => gitAction('createTag', { name, hash: commit.hash })) },
     { label: 'Create Worktree Here...', action: () => showCreateWorktreeDialog(commit.hash) },
+    { separator: true },
+    { label: 'Rebase current branch onto this...', action: () => {
+      showDialog({
+        title: 'Rebase',
+        message: 'Rebase current branch (' + escHtml(state.currentBranch) + ') onto commit ' + commit.hash.substring(0, 7) + '?',
+        rawMessage: true,
+        confirmLabel: 'Rebase',
+        onConfirm: () => gitAction('rebase', { branch: commit.hash }),
+      });
+    }},
   ];
   // Add "Create PR" if PR creation is configured and commit has a branch ref
   if (state.settings.prCreation && state.settings.prCreation.urlTemplate) {
