@@ -156,33 +156,33 @@ function getStyles(): string {
     --border: #27272a; --border2: #3f3f46; --selected: #1e293b; --surface-hover: #27272a;
   }
 }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 13px; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); font-size: 12px; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
 #app { display: flex; flex-direction: column; height: 100vh; }
 
 /* Toolbar */
-#toolbar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
-.toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 6px; }
-select { background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
-button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer; min-width: 28px; min-height: 28px; transition: background 0.15s, border-color 0.15s; }
+#toolbar { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+.toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 4px; }
+select { background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 11px; }
+button { background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; font-size: 11px; cursor: pointer; min-width: 24px; min-height: 24px; transition: background 0.15s, border-color 0.15s; }
 button:hover { background: var(--surface-hover); border-color: var(--border2); }
 button:active { background: var(--surface); }
 .btn-fetching { opacity: 0.6; pointer-events: none; }
 
 /* Branch dropdown */
 .branch-dropdown { position: relative; }
-.branch-trigger { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 24px 4px 8px; font-size: 12px; cursor: pointer; min-width: 140px; text-align: left; position: relative; }
+.branch-trigger { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 3px 22px 3px 7px; font-size: 11px; cursor: pointer; min-width: 120px; text-align: left; position: relative; }
 .branch-trigger::after { content: '\\25BC'; font-size: 8px; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: var(--subtext); }
 .branch-dropdown-menu { position: absolute; top: 100%; left: 0; z-index: 60; background: var(--surface); border: 1px solid var(--border2); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); min-width: 220px; max-height: 300px; display: flex; flex-direction: column; margin-top: 2px; }
-.branch-filter-input { padding: 6px 8px; border: none; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; outline: none; border-radius: 6px 6px 0 0; }
+.branch-filter-input { padding: 4px 7px; border: none; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 11px; outline: none; border-radius: 5px 5px 0 0; }
 .branch-list { overflow-y: auto; max-height: 250px; }
-.branch-option { padding: 6px 10px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.branch-option { padding: 4px 8px; cursor: pointer; font-size: 11px; display: flex; align-items: center; gap: 5px; }
 .branch-option:hover { background: var(--surface-hover); }
 .branch-option.selected { background: var(--selected); font-weight: 600; }
 
 /* Worktree popover */
 .worktree-dropdown { position: relative; }
-#btn-worktree { display: flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 8px; }
-#btn-worktree .wt-count { background: var(--accent, #58a6ff); color: #fff; font-size: 10px; border-radius: 8px; padding: 0 5px; min-width: 16px; text-align: center; line-height: 16px; }
+#btn-worktree { display: flex; align-items: center; gap: 3px; font-size: 11px; padding: 3px 6px; }
+#btn-worktree .wt-count { background: var(--accent, #58a6ff); color: #fff; font-size: 9px; border-radius: 7px; padding: 0 4px; min-width: 14px; text-align: center; line-height: 14px; }
 .worktree-popover { position: absolute; top: 100%; right: 0; z-index: 60; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); min-width: 300px; max-width: 400px; margin-top: 4px; display: flex; flex-direction: column; }
 .worktree-popover-header { padding: 8px 12px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
 .worktree-list { overflow-y: auto; max-height: 240px; }
@@ -204,8 +204,8 @@ button:active { background: var(--surface); }
 
 /* Stash popover */
 .stash-dropdown { position: relative; }
-#btn-stash { display: flex; align-items: center; gap: 4px; font-size: 12px; padding: 4px 8px; }
-#btn-stash .stash-count { background: var(--accent, #58a6ff); color: #fff; font-size: 10px; border-radius: 8px; padding: 0 5px; min-width: 16px; text-align: center; line-height: 16px; }
+#btn-stash { display: flex; align-items: center; gap: 3px; font-size: 11px; padding: 3px 6px; }
+#btn-stash .stash-count { background: var(--accent, #58a6ff); color: #fff; font-size: 9px; border-radius: 7px; padding: 0 4px; min-width: 14px; text-align: center; line-height: 14px; }
 .stash-popover { position: absolute; top: 100%; right: 0; z-index: 60; background: var(--surface); border: 1px solid var(--border2); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.2); min-width: 300px; max-width: 400px; margin-top: 4px; display: flex; flex-direction: column; }
 .stash-popover-header { padding: 8px 12px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); }
 .stash-list { overflow-y: auto; max-height: 240px; }
@@ -234,18 +234,18 @@ button:active { background: var(--surface); }
 .file-status-U { color: var(--red); font-weight: bold; }
 
 /* Find bar */
-.find-bar { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
-.find-bar input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+.find-bar { display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.find-bar input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; font-size: 11px; }
 .find-bar input:focus { outline: none; border-color: var(--blue); }
-#find-count { font-size: 11px; color: var(--subtext); min-width: 60px; }
+#find-count { font-size: 10px; color: var(--subtext); min-width: 50px; }
 .hidden { display: none !important; }
 
 /* Graph container */
 #graph-container { flex: 1; overflow-y: auto; overflow-x: hidden; }
-.commit-row { display: flex; align-items: center; cursor: pointer; min-height: 28px; padding: 0 8px; }
+.commit-row { display: flex; align-items: center; cursor: pointer; min-height: 24px; padding: 0 6px; font-size: 12px; }
 .commit-row:hover { background: var(--surface-hover); }
 .commit-row.selected { background: var(--selected); }
-.commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 11px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--border); }
+.commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 10px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--border); min-height: 22px; }
 .commit-row.search-match { background: rgba(234, 179, 8, 0.15); }
 .commit-row.virtual { opacity: 0.85; font-style: italic; }
 .commit-row.virtual .col-message { color: var(--subtext); }
@@ -254,13 +254,13 @@ button:active { background: var(--surface); }
 .col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; position: relative; }
 .graph-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; background: transparent; }
 .graph-resize-handle:hover, .graph-resize-handle.dragging { background: var(--blue); opacity: 0.5; }
-.col-message { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px; }
-.col-author { width: 120px; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtext); font-size: 12px; }
-.col-date { width: 100px; min-width: 100px; color: var(--subtext); font-size: 12px; }
-.col-hash { width: 70px; min-width: 70px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: var(--subtle); }
+.col-message { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 6px; }
+.col-author { width: 100px; min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtext); font-size: 11px; }
+.col-date { width: 80px; min-width: 80px; color: var(--subtext); font-size: 11px; }
+.col-hash { width: 60px; min-width: 60px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; color: var(--subtle); }
 
 /* Ref badges */
-.ref-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-right: 4px; vertical-align: middle; }
+.ref-badge { display: inline-block; padding: 0px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; margin-right: 3px; vertical-align: middle; line-height: 16px; }
 .ref-head { background: var(--green); color: #fff; }
 .ref-local { background: var(--blue); color: #fff; }
 .ref-remote { background: var(--purple); color: #fff; }
@@ -277,14 +277,14 @@ button:active { background: var(--surface); }
 .commit-row.graph-hover { background: var(--surface-hover); }
 
 /* Detail panel */
-.detail-panel { border-top: 1px solid var(--border2); background: var(--surface); max-height: 40vh; overflow-y: auto; padding: 12px 16px; flex-shrink: 0; }
-.detail-panel h3 { font-size: 14px; margin-bottom: 8px; }
-.detail-field { margin-bottom: 4px; font-size: 12px; }
+.detail-panel { border-top: 1px solid var(--border2); background: var(--surface); max-height: 40vh; overflow-y: auto; padding: 8px 12px; flex-shrink: 0; }
+.detail-panel h3 { font-size: 13px; margin-bottom: 6px; }
+.detail-field { margin-bottom: 3px; font-size: 11px; }
 .detail-field .label { color: var(--subtext); display: inline-block; width: 80px; }
-.detail-message { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 8px; margin: 8px 0; font-size: 12px; white-space: pre-wrap; font-family: 'SF Mono', 'Fira Code', monospace; }
+.detail-message { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px; margin: 6px 0; font-size: 11px; white-space: pre-wrap; font-family: 'SF Mono', 'Fira Code', monospace; }
 .file-list { margin-top: 8px; }
-.file-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
-.file-status { display: inline-block; width: 16px; text-align: center; font-weight: 700; font-size: 11px; }
+.file-item { display: flex; align-items: center; gap: 5px; padding: 1px 0; font-size: 11px; font-family: 'SF Mono', 'Fira Code', monospace; }
+.file-status { display: inline-block; width: 14px; text-align: center; font-weight: 700; font-size: 10px; }
 .file-status-A { color: var(--green); }
 .file-status-M { color: var(--yellow); }
 .file-status-D { color: var(--red); }

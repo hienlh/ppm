@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.88] - 2026-04-15
+
+### Fixed
+- **Git Graph spacing too large**: Reduced font sizes, row heights, padding, and column widths across toolbar, commit rows, detail panel, and all UI elements for a tighter, more compact layout.
+
 ## [0.9.87] - 2026-04-15
 
 ### Added
