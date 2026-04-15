@@ -240,6 +240,24 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode],
   );
 
+  /** Stable wrapper for MessageInput onSend — clears forkDraft and delegates to handleSend */
+  const handleInputSend = useCallback(
+    (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
+      setForkDraft(undefined);
+      handleSend(content, attachments, priority);
+    },
+    [handleSend],
+  );
+
+  /** Stable callback for slash items loaded — prevents MessageInput memo break */
+  const handleSlashItemsLoaded = useCallback(
+    (items: SlashItem[], ranked?: boolean) => {
+      setSlashItems(items);
+      if (ranked !== undefined) setSlashRanked(ranked);
+    },
+    [],
+  );
+
   // --- Slash picker handlers ---
   const handleSlashStateChange = useCallback((visible: boolean, filter: string) => {
     setShowSlashPicker(visible);
@@ -397,17 +415,14 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
         {/* Input */}
         <MessageInput
-          onSend={(content, attachments, priority) => {
-            if (forkDraft) setForkDraft(undefined);
-            handleSend(content, attachments, priority);
-          }}
+          onSend={handleInputSend}
           isStreaming={isStreaming}
           onCancel={cancelStreaming}
           autoFocus={!(metadata?.sessionId) || !!forkDraft}
           initialValue={forkDraft}
           projectName={projectName}
           onSlashStateChange={handleSlashStateChange}
-          onSlashItemsLoaded={(items, ranked) => { setSlashItems(items); if (ranked !== undefined) setSlashRanked(ranked); }}
+          onSlashItemsLoaded={handleSlashItemsLoaded}
           slashSelected={slashSelected}
           onFileStateChange={handleFileStateChange}
           onFileItemsLoaded={setFileItems}

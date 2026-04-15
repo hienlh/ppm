@@ -54,6 +54,20 @@ function killAllByName(name: string): number {
 export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
   if (options?.all) {
     console.log("  Stopping all PPM and cloudflared processes...\n");
+    // Stop via system service manager first (prevents Restart=always from restarting)
+    try {
+      const { getAutoStartStatus } = await import("../../services/autostart-register.ts");
+      const autoStatus = getAutoStartStatus();
+      if (autoStatus.enabled && autoStatus.running) {
+        if (process.platform === "linux") {
+          Bun.spawnSync({ cmd: ["systemctl", "--user", "stop", "ppm.service"], stdout: "ignore", stderr: "ignore" });
+        } else if (process.platform === "darwin") {
+          const { getPlistPath } = await import("../../services/autostart-generator.ts");
+          Bun.spawnSync({ cmd: ["launchctl", "bootout", `gui/${process.getuid!()}`, getPlistPath()], stdout: "ignore", stderr: "ignore" });
+        }
+        await Bun.sleep(2000);
+      }
+    } catch {}
     const cfKilled = killAllByName("cloudflared");
     let killed = 0;
     if (existsSync(statusFile())) {
@@ -140,6 +154,23 @@ async function softStopCmd() {
 
 /** Hard stop: SIGTERM supervisor → everything dies (current behavior) */
 async function hardStop() {
+  // Stop via system service manager first (prevents Restart=always from restarting)
+  try {
+    const { getAutoStartStatus } = await import("../../services/autostart-register.ts");
+    const autoStatus = getAutoStartStatus();
+    if (autoStatus.enabled && autoStatus.running) {
+      if (process.platform === "linux") {
+        Bun.spawnSync({ cmd: ["systemctl", "--user", "stop", "ppm.service"], stdout: "ignore", stderr: "ignore" });
+        await Bun.sleep(2000);
+      } else if (process.platform === "darwin") {
+        const { getPlistPath } = await import("../../services/autostart-generator.ts");
+        // bootout stops the service; plist stays in LaunchAgents for next login auto-load
+        Bun.spawnSync({ cmd: ["launchctl", "bootout", `gui/${process.getuid!()}`, getPlistPath()], stdout: "ignore", stderr: "ignore" });
+        await Bun.sleep(2000);
+      }
+    }
+  } catch {}
+
   let status: { pid?: number; tunnelPid?: number; supervisorPid?: number } | null = null;
 
   if (existsSync(statusFile())) {

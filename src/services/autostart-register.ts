@@ -60,34 +60,37 @@ function removeMetadata(): void {
 
 // ─── macOS ──────────────────────────────────────────────────────────────
 
-async function enableMacOS(config: AutoStartConfig): Promise<string> {
+async function enableMacOS(config: AutoStartConfig, opts?: { skipStart?: boolean }): Promise<string> {
   const plistPath = getPlistPath();
   const plistDir = dirname(plistPath);
 
   if (!existsSync(plistDir)) mkdirSync(plistDir, { recursive: true });
   writeFileSync(plistPath, generatePlist(config));
 
-  // Unload first if already loaded (ignore errors)
-  Bun.spawnSync({
-    cmd: ["launchctl", "bootout", `gui/${process.getuid!()}`, plistPath],
-    stdout: "ignore", stderr: "ignore",
-  });
+  // Skip loading if supervisor is already running from direct spawn
+  if (!opts?.skipStart) {
+    // Unload first if already loaded (ignore errors)
+    Bun.spawnSync({
+      cmd: ["launchctl", "bootout", `gui/${process.getuid!()}`, plistPath],
+      stdout: "ignore", stderr: "ignore",
+    });
 
-  // Load the agent
-  const result = Bun.spawnSync({
-    cmd: ["launchctl", "bootstrap", `gui/${process.getuid!()}`, plistPath],
-    stdout: "pipe", stderr: "pipe",
-  });
-
-  if (result.exitCode !== 0) {
-    // Fallback to legacy syntax
-    const legacy = Bun.spawnSync({
-      cmd: ["launchctl", "load", plistPath],
+    // Load the agent
+    const result = Bun.spawnSync({
+      cmd: ["launchctl", "bootstrap", `gui/${process.getuid!()}`, plistPath],
       stdout: "pipe", stderr: "pipe",
     });
-    if (legacy.exitCode !== 0) {
-      const err = legacy.stderr.toString().trim();
-      throw new Error(`launchctl load failed: ${err}`);
+
+    if (result.exitCode !== 0) {
+      // Fallback to legacy syntax
+      const legacy = Bun.spawnSync({
+        cmd: ["launchctl", "load", plistPath],
+        stdout: "pipe", stderr: "pipe",
+      });
+      if (legacy.exitCode !== 0) {
+        const err = legacy.stderr.toString().trim();
+        throw new Error(`launchctl load failed: ${err}`);
+      }
     }
   }
 
@@ -146,7 +149,7 @@ function statusMacOS(): AutoStartStatus {
 
 // ─── Linux ──────────────────────────────────────────────────────────────
 
-async function enableLinux(config: AutoStartConfig): Promise<string> {
+async function enableLinux(config: AutoStartConfig, opts?: { skipStart?: boolean }): Promise<string> {
   const servicePath = getServicePath();
   const serviceDir = dirname(servicePath);
 
@@ -171,11 +174,13 @@ async function enableLinux(config: AutoStartConfig): Promise<string> {
     throw new Error(`systemctl enable failed: ${enable.stderr.toString().trim()}`);
   }
 
-  // Start
-  Bun.spawnSync({
-    cmd: ["systemctl", "--user", "start", "ppm.service"],
-    stdout: "ignore", stderr: "ignore",
-  });
+  // Start (skip if supervisor is already running from direct spawn)
+  if (!opts?.skipStart) {
+    Bun.spawnSync({
+      cmd: ["systemctl", "--user", "start", "ppm.service"],
+      stdout: "ignore", stderr: "ignore",
+    });
+  }
 
   // Enable lingering so service runs at boot without login
   Bun.spawnSync({
@@ -312,11 +317,11 @@ function statusWindows(): AutoStartStatus {
 
 // ─── Public API ─────────────────────────────────────────────────────────
 
-/** Enable auto-start for the current platform */
-export async function enableAutoStart(config: AutoStartConfig): Promise<string> {
+/** Enable auto-start for the current platform. skipStart=true registers without starting (when supervisor is already running). */
+export async function enableAutoStart(config: AutoStartConfig, opts?: { skipStart?: boolean }): Promise<string> {
   const platform = process.platform;
-  if (platform === "darwin") return enableMacOS(config);
-  if (platform === "linux") return enableLinux(config);
+  if (platform === "darwin") return enableMacOS(config, opts);
+  if (platform === "linux") return enableLinux(config, opts);
   if (platform === "win32") return enableWindows(config);
   throw new Error(`Auto-start not supported on ${platform}`);
 }

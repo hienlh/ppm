@@ -132,7 +132,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=${execStart}
-Restart=always
+Restart=on-failure
 RestartSec=5
 ${envPath}
 WorkingDirectory=${homedir()}/.ppm

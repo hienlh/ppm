@@ -78,6 +78,10 @@
       "name": "@ppm/ext-database",
       "version": "0.1.0",
     },
+    "packages/ext-git-graph": {
+      "name": "@ppm/ext-git-graph",
+      "version": "0.1.0",
+    },
     "packages/vscode-compat": {
       "name": "@ppm/vscode-compat",
       "version": "0.1.0",
@@ -478,6 +482,8 @@
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
 
     "@ppm/ext-database": ["@ppm/ext-database@workspace:packages/ext-database"],
+
+    "@ppm/ext-git-graph": ["@ppm/ext-git-graph@workspace:packages/ext-git-graph"],
 
     "@ppm/vscode-compat": ["@ppm/vscode-compat@workspace:packages/vscode-compat"],
 

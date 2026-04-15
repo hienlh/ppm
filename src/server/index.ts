@@ -347,23 +347,46 @@ export async function startServer(options: {
       await ensureCloudflared();
     }
 
-    // Spawn supervisor process (manages server + tunnel children)
+    // ── Try starting via system service manager (crash recovery) ────────
+    // If autostart was previously enabled, start via systemd/launchd so the OS
+    // monitors the supervisor and restarts it on crash (Restart=always).
+    let startedViaService = false;
+    {
+      const { getAutoStartStatus } = await import("../services/autostart-register.ts");
+      const autoStatus = getAutoStartStatus();
+      if (autoStatus.enabled && !autoStatus.running) {
+        if (process.platform === "linux") {
+          // Update service file in case config changed (port, share, etc.)
+          const { enableAutoStart } = await import("../services/autostart-register.ts");
+          await enableAutoStart({ port, host, share: !!options.share, configPath: options.config, profile: options.profile });
+          startedViaService = true;
+        } else if (process.platform === "darwin") {
+          const { enableAutoStart } = await import("../services/autostart-register.ts");
+          await enableAutoStart({ port, host, share: !!options.share, configPath: options.config, profile: options.profile });
+          startedViaService = true;
+        }
+      }
+    }
+
+    // ── Spawn supervisor directly (fallback or first run) ────────────────
     const isCompiledBin = isCompiledBinary();
     const logFile = resolve(ppmDir, "ppm.log");
     const logFd = openSync(logFile, "a");
     const supervisorScript = resolve(import.meta.dir, "..", "services", "supervisor.ts");
 
-    const superviseArgs = [
-      "__supervise__", String(port), host,
-      options.config ?? "", options.profile ?? "",
-    ];
-    if (options.share) superviseArgs.push("--share");
-    // Strip trailing empty args (before --share flag)
-    while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
-
     let supervisorPid: number;
 
-    if (process.platform === "win32") {
+    if (startedViaService) {
+      // Supervisor was started by systemd/launchd — read PID from status.json
+      supervisorPid = 0; // will be read from status.json below
+    } else if (process.platform === "win32") {
+      const superviseArgs = [
+        "__supervise__", String(port), host,
+        options.config ?? "", options.profile ?? "",
+      ];
+      if (options.share) superviseArgs.push("--share");
+      while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
+
       const bunExe = process.execPath.replace(/\\/g, "\\\\");
       const logEscaped = logFile.replace(/\\/g, "\\\\");
       const errLog = logFile.replace(/\.log$/, ".err.log").replace(/\\/g, "\\\\");
@@ -388,6 +411,13 @@ export async function startServer(options: {
         process.exit(1);
       }
     } else {
+      const superviseArgs = [
+        "__supervise__", String(port), host,
+        options.config ?? "", options.profile ?? "",
+      ];
+      if (options.share) superviseArgs.push("--share");
+      while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
+
       const cmd = isCompiledBin
         ? [process.execPath, ...superviseArgs]
         : [process.execPath, "run", supervisorScript, ...superviseArgs];
@@ -405,26 +435,30 @@ export async function startServer(options: {
     let serverPid: number | null = null;
     while (Date.now() - startWait < 10_000) {
       await Bun.sleep(500);
-      // Check supervisor is still alive
-      try { process.kill(supervisorPid, 0); } catch {
-        console.error("  ✗  Supervisor exited immediately after start.");
-        console.error("     Check logs: ppm logs");
-        process.exit(1);
-      }
       // Check if server PID appeared in status.json
       try {
         const data = JSON.parse(readFileSync(statusFile, "utf-8"));
         if (data.pid && data.supervisorPid) {
+          // Update supervisorPid if started via service (was 0 initially)
+          if (!supervisorPid) supervisorPid = data.supervisorPid;
           serverPid = data.pid;
           break;
         }
       } catch {}
+      // Check supervisor is still alive (skip if PID unknown from service start)
+      if (supervisorPid) {
+        try { process.kill(supervisorPid, 0); } catch {
+          console.error("  ✗  Supervisor exited immediately after start.");
+          console.error("     Check logs: ppm logs");
+          process.exit(1);
+        }
+      }
     }
 
     if (!serverPid) {
       console.error("  ✗  Server did not start within 10 seconds.");
       console.error("     Check logs: ppm logs");
-      try { process.kill(supervisorPid); } catch {}
+      if (supervisorPid) { try { process.kill(supervisorPid); } catch {} }
       process.exit(1);
     }
 
@@ -455,6 +489,23 @@ export async function startServer(options: {
       console.log();
       qr.generate(shareUrl, { small: true });
     }
+
+    // Auto-enable system service (systemd/launchd) for boot resilience
+    try {
+      const { getAutoStartStatus, enableAutoStart } = await import("../services/autostart-register.ts");
+      const status = getAutoStartStatus();
+      if (!status.enabled) {
+        const autoConfig = {
+          port, host,
+          share: !!options.share,
+          configPath: options.config,
+          profile: options.profile,
+        };
+        // skipStart: supervisor is already running from direct spawn above
+        await enableAutoStart(autoConfig, { skipStart: true });
+        console.log(`  ✓  Auto-restart enabled (${status.platform}). Disable: ppm autostart disable`);
+      }
+    } catch {}
 
     console.log(`  Commands:`);
     console.log(`    ppm restart   Reload config (keeps tunnel URL)`);
