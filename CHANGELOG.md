@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.1] - 2026-04-16
+
+### Performance
+- **Plain text during streaming**: Bypass heavy `MarkdownRenderer` (6 plugins: remarkGfm, remarkMath, remarkBreaks, rehypeRaw, rehypeKatex, rehypeHighlight) during active streaming. Renders plain text with `whitespace-pre-wrap` while tokens arrive, then switches to full markdown once streaming ends. Eliminates the dominant per-frame cost on iPad/mobile.
+
 ## [0.10.0] - 2026-04-16
 
 ### Performance
