@@ -74,7 +74,11 @@ export const MessageInput = memo(function MessageInput({
   providerId,
   onProviderChange,
 }: MessageInputProps) {
-  const [value, setValue] = useState(initialValue ?? "");
+  // Uncontrolled textarea: value lives in DOM + ref, not React state.
+  // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
+  // This eliminates React re-render on every keystroke — critical for Chromium on iPad.
+  const valueRef = useRef(initialValue ?? "");
+  const [hasText, setHasText] = useState(() => (initialValue ?? "").trim().length > 0);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
   const [pendingSend, setPendingSend] = useState(false);
@@ -88,6 +92,24 @@ export const MessageInput = memo(function MessageInput({
   const slashSearchIdRef = useRef(0);
   const fileItemsRef = useRef<FileNode[]>([]);
   const resizeRafRef = useRef(0);
+  // Track picker open state to avoid unnecessary parent callbacks per keystroke
+  const slashPickerOpenRef = useRef(false);
+  const filePickerOpenRef = useRef(false);
+
+  /** Write value to both textareas + ref + update hasText state */
+  const writeTextareas = useCallback((newValue: string) => {
+    valueRef.current = newValue;
+    if (textareaRef.current) textareaRef.current.value = newValue;
+    if (mobileTextareaRef.current) mobileTextareaRef.current.value = newValue;
+    setHasText(newValue.trim().length > 0);
+  }, []);
+
+  /** Get the currently visible textarea */
+  const getVisibleTextarea = useCallback(() => {
+    return window.matchMedia("(min-width: 768px)").matches
+      ? textareaRef.current
+      : mobileTextareaRef.current;
+  }, []);
 
   // Voice input (Web Speech API)
   const voice = useVoiceInput();
@@ -96,26 +118,24 @@ export const MessageInput = memo(function MessageInput({
   const voiceResultCb = useCallback((text: string) => {
     const prefix = preVoiceTextRef.current;
     const newValue = prefix ? prefix + " " + text : text;
-    setValue(newValue);
+    writeTextareas(newValue);
     // Auto-resize textarea
     requestAnimationFrame(() => {
-      const ta = window.matchMedia("(min-width: 768px)").matches
-        ? textareaRef.current
-        : mobileTextareaRef.current;
+      const ta = getVisibleTextarea();
       if (ta) {
         ta.style.height = "auto";
         ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
       }
     });
-  }, []);
+  }, [writeTextareas, getVisibleTextarea]);
   const handleVoiceToggle = useCallback(() => {
     if (voice.isListening) {
       voice.stop();
     } else {
-      preVoiceTextRef.current = value.trim();
+      preVoiceTextRef.current = valueRef.current.trim();
       voice.start(voiceResultCb);
     }
-  }, [voice.isListening, voice.start, voice.stop, value, voiceResultCb]);
+  }, [voice.isListening, voice.start, voice.stop, voiceResultCb]);
 
   // Listen for global keyboard shortcut (Cmd+Shift+V) to toggle voice
   useEffect(() => {
@@ -127,24 +147,19 @@ export const MessageInput = memo(function MessageInput({
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette)
   useEffect(() => {
     if (initialValue) {
-      setValue(initialValue);
+      writeTextareas(initialValue);
       // Focus and move cursor to end
       setTimeout(() => {
         const ta = textareaRef.current;
         if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
       }, 50);
     }
-  }, [initialValue]);
+  }, [initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-focus on mount when requested
   useEffect(() => {
     if (!autoFocus) return;
-    setTimeout(() => {
-      const ta = window.matchMedia("(min-width: 768px)").matches
-        ? textareaRef.current
-        : mobileTextareaRef.current;
-      ta?.focus();
-    }, 100);
+    setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch slash items when projectName changes
@@ -197,43 +212,44 @@ export const MessageInput = memo(function MessageInput({
   // Handle parent selecting a slash item
   useEffect(() => {
     if (!slashSelected) return;
-    const el = textareaRef.current;
-    const cursorPos = el?.selectionStart ?? value.length;
-    const textBefore = value.slice(0, cursorPos);
-    const textAfter = value.slice(cursorPos);
+    const el = getVisibleTextarea();
+    if (!el) return;
+    const text = el.value;
+    const cursorPos = el.selectionStart;
+    const textBefore = text.slice(0, cursorPos);
+    const textAfter = text.slice(cursorPos);
     // Find the /query pattern before cursor and replace it
     const replaced = textBefore.replace(/(?:^|\s)\/\S*$/, (match) => {
       const prefix = match.startsWith("/") ? "" : match[0]; // preserve whitespace
       return `${prefix}/${slashSelected.name} `;
     });
-    const newValue = replaced + textAfter;
-    setValue(newValue);
+    writeTextareas(replaced + textAfter);
     onSlashStateChange?.(false, "");
+    slashPickerOpenRef.current = false;
     onFileStateChange?.(false, "");
-    if (el) {
-      el.focus();
-      setTimeout(() => {
-        el.selectionStart = el.selectionEnd = replaced.length;
-      }, 0);
-    }
+    filePickerOpenRef.current = false;
+    el.focus();
+    setTimeout(() => {
+      el.selectionStart = el.selectionEnd = replaced.length;
+    }, 0);
   }, [slashSelected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle parent selecting a file
   useEffect(() => {
     if (!fileSelected) return;
-    const el = textareaRef.current;
+    const el = getVisibleTextarea();
     if (!el) return;
 
-    // Replace the @query with @path
+    const text = el.value;
     const cursorPos = el.selectionStart;
-    const textBefore = value.slice(0, cursorPos);
-    const textAfter = value.slice(cursorPos);
+    const textBefore = text.slice(0, cursorPos);
+    const textAfter = text.slice(cursorPos);
     // Find the @ trigger before cursor
     const atMatch = textBefore.match(/@(\S*)$/);
     if (atMatch) {
       const start = textBefore.length - atMatch[0].length;
       const newText = textBefore.slice(0, start) + `@${fileSelected.path} ` + textAfter;
-      setValue(newText);
+      writeTextareas(newText);
       const newCursorPos = start + fileSelected.path.length + 2; // +2 for @ and space
       setTimeout(() => {
         el.selectionStart = el.selectionEnd = newCursorPos;
@@ -241,14 +257,15 @@ export const MessageInput = memo(function MessageInput({
       }, 0);
     } else {
       // Fallback: append at end
-      const newText = value + `@${fileSelected.path} `;
-      setValue(newText);
+      const newText = text + `@${fileSelected.path} `;
+      writeTextareas(newText);
       setTimeout(() => {
         el.selectionStart = el.selectionEnd = newText.length;
         el.focus();
       }, 0);
     }
     onFileStateChange?.(false, "");
+    filePickerOpenRef.current = false;
   }, [fileSelected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle external files dropped on parent (ChatTab)
@@ -290,7 +307,9 @@ export const MessageInput = memo(function MessageInput({
       for (const file of files) {
         if (!isSupportedFile(file)) {
           // Unsupported → insert file name as text
-          setValue((prev) => prev + (prev.length > 0 && !prev.endsWith(" ") ? " " : "") + file.name);
+          const cur = valueRef.current;
+          const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
+          writeTextareas(cur + sep + file.name);
           continue;
         }
 
@@ -322,7 +341,7 @@ export const MessageInput = memo(function MessageInput({
       }
       (mobileTextareaRef.current ?? textareaRef.current)?.focus();
     },
-    [uploadFile],
+    [uploadFile, writeTextareas],
   );
 
   const removeAttachment = useCallback((id: string) => {
@@ -335,7 +354,7 @@ export const MessageInput = memo(function MessageInput({
 
   /** Execute the actual send (called directly or after uploads complete) */
   const executeSend = useCallback(() => {
-    const trimmed = value.trim();
+    const trimmed = valueRef.current.trim();
     const readyAttachments = attachments.filter((a) => a.status === "ready");
     if (!trimmed && readyAttachments.length === 0) {
       setPendingSend(false);
@@ -343,10 +362,12 @@ export const MessageInput = memo(function MessageInput({
     }
 
     onSlashStateChange?.(false, "");
+    slashPickerOpenRef.current = false;
     onFileStateChange?.(false, "");
+    filePickerOpenRef.current = false;
     if (voice.isListening) voice.stop();
     onSend(trimmed, readyAttachments, isStreaming ? priority : undefined);
-    setValue("");
+    writeTextareas("");
     // Revoke preview URLs
     for (const att of attachments) {
       if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
@@ -356,14 +377,14 @@ export const MessageInput = memo(function MessageInput({
     setPriority('next');
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
-  }, [value, attachments, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority]);
+  }, [attachments, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas]);
 
   const handleSend = useCallback(() => {
     if (disabled) return;
 
     // If files are still uploading, queue the send for when they finish
     if (attachments.some((a) => a.status === "uploading")) {
-      const trimmed = value.trim();
+      const trimmed = valueRef.current.trim();
       if (trimmed || attachments.some((a) => a.status !== "error")) {
         setPendingSend(true);
       }
@@ -371,7 +392,7 @@ export const MessageInput = memo(function MessageInput({
     }
 
     executeSend();
-  }, [value, attachments, disabled, executeSend]);
+  }, [attachments, disabled, executeSend]);
 
   // Auto-send when queued and all uploads complete
   useEffect(() => {
@@ -434,9 +455,9 @@ export const MessageInput = memo(function MessageInput({
         // Cancel pending slash search if any
         if (slashDebounceRef.current) { clearTimeout(slashDebounceRef.current); slashDebounceRef.current = undefined; }
         if (slashRankedRef.current) slashRankedRef.current = false;
-        // Close pickers only if they were open (avoid unnecessary parent setState)
-        onSlashStateChange?.(false, "");
-        onFileStateChange?.(false, "");
+        // Close pickers only if they were actually open (avoid unnecessary parent setState)
+        if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
+        if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
         return;
       }
 
@@ -446,7 +467,8 @@ export const MessageInput = memo(function MessageInput({
         if (slashMatch && slashItemsRef.current.length > 0) {
           const filter = slashMatch[1] ?? "";
           onSlashStateChange?.(true, filter);
-          onFileStateChange?.(false, "");
+          slashPickerOpenRef.current = true;
+          if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
           if (filter) fetchSlashSearch(filter);
           return;
         }
@@ -461,37 +483,42 @@ export const MessageInput = memo(function MessageInput({
         const atMatch = textBefore.match(/@(\S*)$/);
         if (atMatch && fileItemsRef.current.length > 0) {
           onFileStateChange?.(true, atMatch[1] ?? "");
-          onSlashStateChange?.(false, "");
+          filePickerOpenRef.current = true;
+          if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
           return;
         }
       }
 
-      // Nothing matched — close both pickers
-      onSlashStateChange?.(false, "");
-      onFileStateChange?.(false, "");
+      // Nothing matched — close both pickers (only if open)
+      if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
+      if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
     },
     [onSlashStateChange, onFileStateChange, fetchSlashSearch],
   );
 
-  const handleChange = useCallback(
-    (text: string, cursorPos: number) => {
-      setValue(text);
-      updatePickerState(text, cursorPos);
+  /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */
+  const handleTextareaChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const el = e.target;
+      const text = el.value;
+      valueRef.current = text;
+      // Sync the other textarea (handles viewport rotation edge case)
+      const other = el === textareaRef.current ? mobileTextareaRef.current : textareaRef.current;
+      if (other) other.value = text;
+      // Only trigger re-render on empty↔non-empty transition (for send button state)
+      setHasText(text.trim().length > 0);
+      // Update picker state (slash/file autocomplete)
+      updatePickerState(text, el.selectionStart);
+      // rAF-debounced resize
+      if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
+      resizeRafRef.current = requestAnimationFrame(() => {
+        resizeRafRef.current = 0;
+        el.style.height = "auto";
+        el.style.height = Math.min(el.scrollHeight, el === mobileTextareaRef.current ? 80 : 160) + "px";
+      });
     },
     [updatePickerState],
   );
-
-  const handleInput = useCallback((e?: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const el = e?.target ?? textareaRef.current;
-    if (!el) return;
-    // Batch height recalculation to avoid sync layout reflow per keystroke
-    if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
-    resizeRafRef.current = requestAnimationFrame(() => {
-      resizeRafRef.current = 0;
-      el.style.height = "auto";
-      el.style.height = Math.min(el.scrollHeight, 160) + "px";
-    });
-  }, []);
 
   /** Handle paste — intercept images from clipboard */
   const handlePaste = useCallback(
@@ -543,7 +570,7 @@ export const MessageInput = memo(function MessageInput({
     [processFiles],
   );
 
-  const hasContent = value.trim().length > 0 || attachments.some((a) => a.status !== "error");
+  const hasContent = hasText || attachments.some((a) => a.status !== "error");
   const showCancel = isStreaming && !hasContent;
 
   return (
@@ -555,11 +582,7 @@ export const MessageInput = memo(function MessageInput({
           if (disabled) return;
           // Only focus when clicking outside the textarea (e.g. padding area)
           if (e.target instanceof HTMLTextAreaElement) return;
-          // Pick the visible textarea based on viewport width
-          const ta = window.matchMedia("(min-width: 768px)").matches
-            ? textareaRef.current
-            : mobileTextareaRef.current;
-          ta?.focus();
+          getVisibleTextarea()?.focus();
         }}
       >
         {/* Attachment chips (inside container, aligned with input) */}
@@ -598,8 +621,8 @@ export const MessageInput = memo(function MessageInput({
           </button>
           <textarea
             ref={mobileTextareaRef}
-            value={value}
-            onChange={(e) => { handleChange(e.target.value, e.target.selectionStart); handleInput(e); }}
+            defaultValue={initialValue ?? ""}
+            onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onDrop={handleDrop}
@@ -648,8 +671,8 @@ export const MessageInput = memo(function MessageInput({
         <div className="hidden md:block">
           <textarea
             ref={textareaRef}
-            value={value}
-            onChange={(e) => { handleChange(e.target.value, e.target.selectionStart); handleInput(e); }}
+            defaultValue={initialValue ?? ""}
+            onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onDrop={handleDrop}

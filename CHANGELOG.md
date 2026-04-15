@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.2] - 2026-04-16
+
+### Performance
+- **Uncontrolled textarea for chat input**: Converted chat input from React controlled (`value={state}`) to uncontrolled (`defaultValue` + ref). Eliminates React re-render on every keystroke — browser handles text input natively. Fixes input lag on Chromium-based browsers (Coc Coc) on iPad where React's `textarea.value` re-assignment caused jank. Safari was unaffected because WebKit optimizes same-value assignments.
+- **Picker state callback deduplication**: Track slash/file picker open state in refs; only call parent `onSlashStateChange`/`onFileStateChange` when state actually transitions. Previously called on every keystroke even when pickers were already closed.
+
 ## [0.10.1] - 2026-04-16
 
 ### Performance
