@@ -63,12 +63,20 @@ export function activate(context: ExtensionContext, vscode: VscodeApi): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("git-graph.view", async (...args: unknown[]) => {
       const projectPath = args[0] as string | undefined;
+      console.log(`[ext-git-graph] git-graph.view command received, projectPath=${projectPath ?? "(none)"}`);
       const resolvedPath = projectPath || await resolveProjectPath();
       if (!resolvedPath) {
+        console.warn("[ext-git-graph] no project path resolved");
         await vscode.window.showErrorMessage("Git Graph: No project selected. Open a project first, then try again.");
         return;
       }
-      await openGitGraph(vscode, context, resolvedPath);
+      try {
+        await openGitGraph(vscode, context, resolvedPath);
+        console.log("[ext-git-graph] webview panel created");
+      } catch (e) {
+        console.error("[ext-git-graph] openGitGraph failed:", e);
+        throw e;
+      }
     }),
   );
 

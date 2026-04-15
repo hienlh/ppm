@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useTabStore } from "@/stores/tab-store";
 import { Loader2 } from "lucide-react";
@@ -118,6 +118,37 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     })();
   }, [panel, viewType, currentProject]);
 
+  // Check activation errors for this extension
+  const extensionId = metadata?.extensionId as string | undefined;
+  const activationError = useExtensionStore((s) => {
+    // Direct match by extensionId (most reliable)
+    if (extensionId && s.activationErrors[extensionId]) return s.activationErrors[extensionId];
+    // Fallback: check by viewType prefix (e.g. "ext-git-graph" for viewType "git-graph")
+    if (!viewType) return undefined;
+    for (const [extId, error] of Object.entries(s.activationErrors)) {
+      if (extId === `ext-${viewType}`) return error;
+    }
+    return undefined;
+  });
+
+  // Retry handler — re-dispatches the command
+  const handleRetry = useCallback(() => {
+    setTimedOut(false);
+    if (!viewType) return;
+    const command = viewType.includes(".") ? viewType : `${viewType}.view`;
+    (async () => {
+      try {
+        const res = await fetch("/api/projects");
+        const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+        const match = json.data?.find((p) => p.name === projectName);
+        const args = match ? [match.path] : [];
+        window.dispatchEvent(new CustomEvent("ext:command:execute", {
+          detail: { command, args },
+        }));
+      } catch {}
+    })();
+  }, [viewType, projectName]);
+
   // Timeout: if panel doesn't appear within 10s, show error
   useEffect(() => {
     if (panel) { setTimedOut(false); return; }
@@ -155,9 +186,20 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Loading state — waiting for extension to create the panel
   if (!panel) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-2 text-sm text-text-subtle">
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-sm text-text-subtle">
         {timedOut ? (
-          <span>Extension failed to load webview panel</span>
+          <>
+            <span className="text-destructive font-medium">Extension failed to load</span>
+            {activationError && (
+              <span className="text-xs text-muted-foreground max-w-md text-center">{activationError}</span>
+            )}
+            <button
+              onClick={handleRetry}
+              className="text-xs text-primary hover:underline"
+            >
+              Retry
+            </button>
+          </>
         ) : (
           <>
             <Loader2 className="size-5 animate-spin" />

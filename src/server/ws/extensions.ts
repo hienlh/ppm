@@ -71,9 +71,14 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
 
   switch (msg.type) {
     case "ready": {
-      // Send current contributions on connect
+      // Send current contributions + any activation errors on connect
       const contributions = contributionRegistry.getAll();
-      ws.send(JSON.stringify({ type: "contributions:update", contributions } satisfies ExtServerMsg));
+      const { extensionService } = await import("../../services/extension.service.ts");
+      const activationErrors = Object.fromEntries(extensionService.getActivationErrors());
+      const readyMsg: ExtServerMsg = Object.keys(activationErrors).length > 0
+        ? { type: "contributions:update", contributions, activationErrors }
+        : { type: "contributions:update", contributions };
+      ws.send(JSON.stringify(readyMsg));
       break;
     }
 
@@ -81,15 +86,36 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
       try {
         const { extensionService } = await import("../../services/extension.service.ts");
         if (extensionService["rpc"]) {
+          console.log(`[ExtWS] command:execute "${msg.command}"`);
           const result = await extensionService["rpc"].sendRequest<{ ok: boolean; error?: string }>(
             "ext:command:execute", msg.command, ...(msg.args ?? []),
           );
           if (!result?.ok) {
             console.error(`[ExtWS] command:execute failed: ${result?.error ?? "unknown"}`);
+            broadcastExtMsg({
+              type: "notification",
+              id: `cmd-error-${Date.now()}`,
+              level: "error",
+              message: `Extension command failed: ${result?.error ?? "unknown error"}`,
+            });
           }
+        } else {
+          console.error(`[ExtWS] command:execute: extension host not ready`);
+          broadcastExtMsg({
+            type: "notification",
+            id: `cmd-error-${Date.now()}`,
+            level: "error",
+            message: `Extension host not ready. Try reloading the page.`,
+          });
         }
       } catch (e) {
         console.error(`[ExtWS] command:execute error:`, e);
+        broadcastExtMsg({
+          type: "notification",
+          id: `cmd-error-${Date.now()}`,
+          level: "error",
+          message: `Extension command error: ${e instanceof Error ? e.message : String(e)}`,
+        });
       }
       break;
     }

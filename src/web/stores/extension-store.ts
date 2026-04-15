@@ -87,6 +87,10 @@ interface ExtensionStore {
   contributions: ExtensionContributes | null;
   setContributions: (c: ExtensionContributes) => void;
 
+  // Activation errors (sent from server)
+  activationErrors: Record<string, string>;
+  setActivationErrors: (errors: Record<string, string>) => void;
+
   // QuickPick modal
   quickPick: QuickPickState | null;
   showQuickPick: (items: QuickPickItemUI[], options?: QuickPickState["options"]) => Promise<QuickPickItemUI[] | undefined>;
@@ -153,6 +157,10 @@ export const useExtensionStore = create<ExtensionStore>((set, get) => ({
   // --- Contributions ---
   contributions: null,
   setContributions: (c) => set({ contributions: c }),
+
+  // --- Activation errors ---
+  activationErrors: {},
+  setActivationErrors: (errors) => set({ activationErrors: errors }),
 
   // --- QuickPick ---
   quickPick: null,

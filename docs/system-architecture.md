@@ -1677,6 +1677,48 @@ Main Process                Worker
 
 5. Extension auto-activates based on `activationEvents`, state persists
 
+### Error Handling & Debugging
+
+**Activation Error Tracking:**
+- `ExtensionService.activationErrors` Map tracks `extId → error message` for all failed activations
+- Errors set during `activate()` if worker response indicates failure (`!result.ok`)
+- Errors cleared on successful activation or worker termination
+- Errors included in `contributions:update` message sent via WS to browser on client connect
+
+**User Feedback (UI):**
+- **Command Errors:** When extension command fails, toast shows "Extension command failed: {error}" with error details
+- **Timeout Handling:** If webview panel doesn't load within 10s, fallback UI displays activation error (if available) + "Retry" button
+- **Retry Button:** User can click to re-trigger the command without page reload (re-dispatches `ext:command:execute`)
+
+**Breadcrumb Logging (Console):**
+- **`[ExtService]`** — Main process lifecycle: activation start/success, worker lifecycle, contributions broadcast
+- **`[ExtHost]`** — Worker-side execution: command routing, handler invocation, error context
+- **`[ExtWS]`** — WebSocket bridge: client connect, message handling, error responses
+- **Extension-specific tags** — e.g., `[ext-git-graph]` for extension-specific log context
+
+**Example Log Flow (normal):**
+```
+[ExtService] startup: activating ext-git-graph...
+[ExtWS] Client connected (1 total)
+[ExtHost] activating ext-git-graph from dist/extension.js
+[ExtHost] activated ext-git-graph (1 total)
+[ExtService] activated ext-git-graph successfully
+[ExtWS] command:execute "git-graph.view"
+[ExtHost] command:execute "git-graph.view" (1 extensions active)
+[ExtHost] routing "git-graph.view" → ext-git-graph
+```
+
+**Example Log Flow (error):**
+```
+[ExtService] startup: activating ext-git-graph...
+[ExtHost] activating ext-git-graph from dist/extension.ts
+[ExtHost] ERROR: Cannot find module 'missing-dep'
+[ExtService] Failed to activate ext-git-graph on startup: Cannot find module 'missing-dep'
+→ activationErrors["ext-git-graph"] = "Cannot find module 'missing-dep'"
+→ browser receives { type: "contributions:update", activationErrors: {"ext-git-graph": "..."} }
+→ user sees toast: "Extension "ext-git-graph" failed to activate: Cannot find module..."
+```
+
 ### Crash Safety
 
 **Worker Isolation:**

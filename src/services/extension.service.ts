@@ -13,6 +13,7 @@ class ExtensionService {
   private worker: Worker | null = null;
   private rpc: RpcChannel | null = null;
   private activatedIds = new Set<string>();
+  private activationErrors = new Map<string, string>();
   private workerReady = false;
   private installing = new Set<string>();
   private extensionPaths = new Map<string, string>();
@@ -56,6 +57,7 @@ class ExtensionService {
     if (this.worker) { this.worker.terminate(); this.worker = null; }
     this.workerReady = false;
     this.activatedIds.clear();
+    this.activationErrors.clear();
     this.extensionPaths.clear();
     this.bundledIds.clear();
     contributionRegistry.clear();
@@ -141,15 +143,20 @@ class ExtensionService {
     const port = cfg.get("port") ?? 8080;
     const baseUrl = `http://localhost:${port}`;
 
+    console.log(`[ExtService] activating ${id} (entry: ${entryPath})`);
     const result = await rpc.sendRequest<{ ok: boolean; error?: string }>(
       "ext:activate", id, entryPath, extDir, storedState, baseUrl,
     );
-    if (!result.ok) throw new Error(`Failed to activate ${id}: ${result.error}`);
+    if (!result.ok) {
+      this.activationErrors.set(id, result.error ?? "Unknown activation error");
+      throw new Error(`Failed to activate ${id}: ${result.error}`);
+    }
 
+    this.activationErrors.delete(id);
     this.activatedIds.add(id);
     if (manifest.contributes) contributionRegistry.register(id, manifest.contributes);
     this.broadcastContributions();
-    console.log(`[ExtService] Activated ${id}`);
+    console.log(`[ExtService] activated ${id} successfully`);
   }
 
   async deactivate(id: string): Promise<void> {
@@ -236,7 +243,9 @@ class ExtensionService {
     }
     for (const row of getExtensions()) {
       if (row.enabled !== 1) continue;
+      console.log(`[ExtService] startup: activating ${row.id}...`);
       try { await this.activate(row.id); } catch (e) {
+        this.activationErrors.set(row.id, e instanceof Error ? e.message : String(e));
         console.error(`[ExtService] Failed to activate ${row.id} on startup:`, e);
       }
     }
@@ -252,12 +261,17 @@ class ExtensionService {
   isActivated(id: string): boolean { return this.activatedIds.has(id); }
   isBundled(id: string): boolean { return this.bundledIds.has(id); }
   getExtensionsDir(): string { return resolve(getPpmDir(), "extensions"); }
+  getActivationErrors(): Map<string, string> { return new Map(this.activationErrors); }
 
   /** Push current contributions to all connected browser clients */
   private broadcastContributions(): void {
     try {
       const { broadcastExtMsg } = require("../server/ws/extensions.ts");
-      broadcastExtMsg({ type: "contributions:update", contributions: contributionRegistry.getAll() });
+      const contributions = contributionRegistry.getAll();
+      broadcastExtMsg(this.activationErrors.size > 0
+        ? { type: "contributions:update", contributions, activationErrors: Object.fromEntries(this.activationErrors) }
+        : { type: "contributions:update", contributions },
+      );
     } catch {}
   }
 }

@@ -40,6 +40,14 @@ export function useExtensionWs(enabled = true) {
       switch (msg.type) {
         case "contributions:update":
           store.setContributions(msg.contributions);
+          if (msg.activationErrors) {
+            const prev = store.activationErrors;
+            store.setActivationErrors(msg.activationErrors);
+            // Only toast NEW errors (avoid spam on repeated contributions:update)
+            for (const [extId, error] of Object.entries(msg.activationErrors)) {
+              if (!prev[extId]) toast.error(`Extension "${extId}" failed to activate: ${error}`);
+            }
+          }
           break;
 
         case "statusbar:update":

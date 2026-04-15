@@ -29,6 +29,7 @@ self.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
 
 rpc.onRequest("ext:activate", async (params) => {
   const [extId, entryPath, extensionPath, storedState, baseUrl] = params as [string, string, string, Record<string, Record<string, string | null>>?, string?];
+  console.log(`[ExtHost] activating ${extId} from ${entryPath}`);
   if (activeExtensions.has(extId)) return { ok: true, already: true };
 
   // Expose server base URL so extensions can use fetch() with absolute URLs
@@ -68,6 +69,7 @@ rpc.onRequest("ext:activate", async (params) => {
       window: api.window as WindowService,
       commands: api.commands as CommandService,
     });
+    console.log(`[ExtHost] activated ${extId} (${activeExtensions.size} total)`);
     return { ok: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -101,20 +103,23 @@ rpc.onRequest("ext:deactivate", async (params) => {
 
 rpc.onRequest("ext:command:execute", async (params) => {
   const [command, ...args] = params as [string, ...unknown[]];
+  console.log(`[ExtHost] command:execute "${command}" (${activeExtensions.size} extensions active)`);
   for (const [extId, ext] of activeExtensions) {
     if (ext.commands) {
       const hasLocal = (ext.commands as any).localHandlers?.has(command);
       if (!hasLocal) continue;
+      console.log(`[ExtHost] routing "${command}" → ${extId}`);
       try {
         const result = await (ext.commands as any).executeCommand(command, ...args);
         return { ok: true, result };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.error(`[ExtHost] Command "${command}" in ${extId} threw:`, msg);
+        console.error(`[ExtHost] command "${command}" in ${extId} threw:`, msg);
         return { ok: false, error: msg };
       }
     }
   }
+  console.warn(`[ExtHost] command not found: "${command}"`);
   return { ok: false, error: `Command not found: ${command}` };
 });
 

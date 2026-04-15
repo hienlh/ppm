@@ -67,12 +67,13 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
   - Path traversal validation for security (assertSafePath in RPC handlers)
   - Fallback guards for all tab type handling (unknown tab types safely ignored)
 
-- **Extension Host Stability** — Worker debugging & error handling improvements
-  - Enhanced error logging in extension host worker
-  - Fixed localHandlers presence check before RPC invocation
-  - Proper disposed flag tracking to prevent polling race conditions
-  - HEAD ref type detection corrected for git operations
-  - Removed unused variable warnings from build
+- **Extension Error Reporting & Logging** — Silent failure debugging & user feedback
+  - Activation error tracking: Map stores `extId → error message` in ExtensionService
+  - Error toasts on command failure: "Extension command failed: {error}" displays in UI
+  - Timeout UX improved: Fallback UI shows activation error + "Retry" button for quick recovery
+  - Breadcrumb logging with tags for debugging: `[ExtService]`, `[ExtHost]`, `[ExtWS]`, `[ext-git-graph]`
+  - Console logs track: activation start/success, command routing, failures with context
+  - Activation errors included in `contributions:update` message sent to browser on WS connect
 
 - **Faithful SVG Graph Rendering** — Port of vscode-git-graph algorithm with deterministic layout
   - Single SVG model with continuous branch paths using Bézier curves
