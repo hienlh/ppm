@@ -150,6 +150,21 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     })();
   }, [viewType, projectName]);
 
+  // On unmount: notify server to dispose the panel so extension clears activePanel state
+  const panelIdForCleanup = useRef<string | null>(null);
+  useEffect(() => {
+    panelIdForCleanup.current = resolvedPanelId ?? null;
+  }, [resolvedPanelId]);
+  useEffect(() => {
+    return () => {
+      const id = panelIdForCleanup.current;
+      if (id) {
+        useExtensionStore.getState().removeWebviewPanel(id);
+        window.dispatchEvent(new CustomEvent("ext:webview:close", { detail: { panelId: id } }));
+      }
+    };
+  }, []);
+
   // Timeout: if panel doesn't appear within 10s, show error
   useEffect(() => {
     if (panel) { setTimedOut(false); return; }

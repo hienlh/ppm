@@ -173,6 +173,18 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
       break;
     }
 
+    case "webview:close": {
+      try {
+        const { extensionService } = await import("../../services/extension.service.ts");
+        if (extensionService["rpc"]) {
+          await extensionService["rpc"].sendRequest("ext:webview:close", msg.panelId);
+        }
+      } catch (e) {
+        console.error(`[ExtWS] webview:close error:`, e);
+      }
+      break;
+    }
+
     case "tree:expand": {
       try {
         const { extensionService } = await import("../../services/extension.service.ts");

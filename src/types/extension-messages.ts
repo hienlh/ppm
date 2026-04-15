@@ -61,6 +61,7 @@ export type ExtClientMsg =
   | { type: "tree:expand"; viewId: string; itemId: string }
   | { type: "tree:click"; viewId: string; itemId: string; command?: string }
   | { type: "webview:message"; panelId: string; message: unknown }
+  | { type: "webview:close"; panelId: string }
   | { type: "quickpick:resolve"; requestId: string; selected: QuickPickItemMsg[] | null }
   | { type: "inputbox:resolve"; requestId: string; value: string | null }
   | { type: "notification:action"; id: string; action: string | null };

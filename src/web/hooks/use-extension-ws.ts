@@ -192,12 +192,20 @@ export function useExtensionWs(enabled = true) {
     };
     window.addEventListener("ext:command:execute", commandHandler);
 
+    // Listen for webview close requests (dispatched by ExtensionWebview on unmount)
+    const webviewCloseHandler = (e: Event) => {
+      const { panelId } = (e as CustomEvent).detail;
+      client.send(JSON.stringify({ type: "webview:close", panelId }));
+    };
+    window.addEventListener("ext:webview:close", webviewCloseHandler);
+
     client.connect();
 
     return () => {
       window.removeEventListener("ext:webview:send", webviewSendHandler);
       window.removeEventListener("ext:tree:expand", treeExpandHandler);
       window.removeEventListener("ext:command:execute", commandHandler);
+      window.removeEventListener("ext:webview:close", webviewCloseHandler);
       client.disconnect();
       clientRef.current = null;
     };

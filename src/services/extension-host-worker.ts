@@ -123,6 +123,18 @@ rpc.onRequest("ext:command:execute", async (params) => {
   return { ok: false, error: `Command not found: ${command}` };
 });
 
+// Browser closed a webview panel tab → fire onDidDispose in the extension
+rpc.onRequest("ext:webview:close", async (params) => {
+  const [panelId] = params as [string];
+  for (const [, ext] of activeExtensions) {
+    if (!ext.window) continue;
+    if ((ext.window as any)._disposePanel(panelId)) {
+      return { ok: true };
+    }
+  }
+  return { ok: false, error: `No panel found: ${panelId}` };
+});
+
 // Deliver webview messages from browser → extension's onDidReceiveMessage
 rpc.onRequest("ext:webview:message", async (params) => {
   const [panelId, message] = params as [string, unknown];

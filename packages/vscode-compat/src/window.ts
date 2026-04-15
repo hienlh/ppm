@@ -14,6 +14,8 @@ export class WindowService {
   private _idCounter = 0;
   /** @internal Panel emitters keyed by panelId — for webview message delivery */
   private _panelEmitters = new Map<string, EventEmitter<unknown>>();
+  /** @internal Panel dispose emitters keyed by panelId — for browser-initiated disposal */
+  private _panelDisposeEmitters = new Map<string, EventEmitter<void>>();
   /** @internal Tree providers keyed by viewId — for tree expand/refresh */
   private _treeProviders = new Map<string, { provider: any }>();
   /** @internal Cache original tree elements by ID so getChildren receives the real object */
@@ -29,6 +31,16 @@ export class WindowService {
     const emitter = this._panelEmitters.get(panelId);
     if (emitter) { emitter.fire(message); return true; }
     return false;
+  }
+
+  /** @internal Dispose a panel by ID (called when browser closes the tab) */
+  _disposePanel(panelId: string): boolean {
+    if (!this._panelEmitters.has(panelId)) return false;
+    const disposeEvent = this._panelDisposeEmitters?.get(panelId);
+    if (disposeEvent) { disposeEvent.fire(); disposeEvent.dispose(); }
+    this._panelEmitters.delete(panelId);
+    this._panelDisposeEmitters?.delete(panelId);
+    return true;
   }
 
   /** @internal Get tree children for a viewId (used by Worker for tree:expand) */
@@ -205,6 +217,7 @@ export class WindowService {
     const onDidDispose = new EventEmitter<void>();
     const onDidReceiveMessage = new EventEmitter<unknown>();
     this._panelEmitters.set(panelId, onDidReceiveMessage);
+    this._panelDisposeEmitters.set(panelId, onDidDispose);
 
     let currentHtml = "";
     const webview = {
@@ -229,6 +242,7 @@ export class WindowService {
       reveal() {},
       dispose: () => {
         this._panelEmitters.delete(panelId);
+        this._panelDisposeEmitters.delete(panelId);
         rpc.request("window:webview:dispose", panelId);
         onDidDispose.fire();
         onDidDispose.dispose();
