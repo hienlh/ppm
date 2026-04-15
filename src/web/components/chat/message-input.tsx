@@ -87,6 +87,7 @@ export const MessageInput = memo(function MessageInput({
   const slashDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const slashSearchIdRef = useRef(0);
   const fileItemsRef = useRef<FileNode[]>([]);
+  const resizeRafRef = useRef(0);
 
   // Voice input (Web Speech API)
   const voice = useVoiceInput();
@@ -426,15 +427,29 @@ export const MessageInput = memo(function MessageInput({
     (text: string, cursorPos: number) => {
       const textBefore = text.slice(0, cursorPos);
 
-      // Check for slash anywhere in text (after whitespace or at start)
-      const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
-      if (slashMatch && slashItemsRef.current.length > 0) {
-        const filter = slashMatch[1] ?? "";
-        onSlashStateChange?.(true, filter);
+      // Fast path: if no trigger chars exist at all, skip regex + callbacks
+      const hasSlash = textBefore.includes("/");
+      const hasAt = textBefore.includes("@");
+      if (!hasSlash && !hasAt) {
+        // Cancel pending slash search if any
+        if (slashDebounceRef.current) { clearTimeout(slashDebounceRef.current); slashDebounceRef.current = undefined; }
+        if (slashRankedRef.current) slashRankedRef.current = false;
+        // Close pickers only if they were open (avoid unnecessary parent setState)
+        onSlashStateChange?.(false, "");
         onFileStateChange?.(false, "");
-        // Trigger server-side search for non-empty filter
-        if (filter) fetchSlashSearch(filter);
         return;
+      }
+
+      // Check for slash anywhere in text (after whitespace or at start)
+      if (hasSlash) {
+        const slashMatch = textBefore.match(/(?:^|\s)\/(\S*)$/);
+        if (slashMatch && slashItemsRef.current.length > 0) {
+          const filter = slashMatch[1] ?? "";
+          onSlashStateChange?.(true, filter);
+          onFileStateChange?.(false, "");
+          if (filter) fetchSlashSearch(filter);
+          return;
+        }
       }
 
       // Cancel pending search when slash picker closes
@@ -442,11 +457,13 @@ export const MessageInput = memo(function MessageInput({
       if (slashRankedRef.current) slashRankedRef.current = false;
 
       // Check for @ anywhere in text (after whitespace or at start)
-      const atMatch = textBefore.match(/@(\S*)$/);
-      if (atMatch && fileItemsRef.current.length > 0) {
-        onFileStateChange?.(true, atMatch[1] ?? "");
-        onSlashStateChange?.(false, "");
-        return;
+      if (hasAt) {
+        const atMatch = textBefore.match(/@(\S*)$/);
+        if (atMatch && fileItemsRef.current.length > 0) {
+          onFileStateChange?.(true, atMatch[1] ?? "");
+          onSlashStateChange?.(false, "");
+          return;
+        }
       }
 
       // Nothing matched — close both pickers
@@ -467,8 +484,13 @@ export const MessageInput = memo(function MessageInput({
   const handleInput = useCallback((e?: React.ChangeEvent<HTMLTextAreaElement>) => {
     const el = e?.target ?? textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    // Batch height recalculation to avoid sync layout reflow per keystroke
+    if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
+    resizeRafRef.current = requestAnimationFrame(() => {
+      resizeRafRef.current = 0;
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 160) + "px";
+    });
   }, []);
 
   /** Handle paste — intercept images from clipboard */

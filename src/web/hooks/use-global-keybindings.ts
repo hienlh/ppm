@@ -24,6 +24,8 @@ export function useGlobalKeybindings() {
     let lastShiftUp = 0;
     let shiftAlone = false; // true if Shift was pressed without any other key
     const { matchesEvent } = useKeybindingsStore.getState();
+    /** Cache parsed combos for extension keybindings (combo string → ParsedCombo) */
+    const extParsedCache = new Map<string, ReturnType<typeof parseCombo>>();
 
     let composing = false;
     function onCompositionStart() { composing = true; }
@@ -183,10 +185,13 @@ export function useGlobalKeybindings() {
         const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
         const { getBinding: getBind } = useKeybindingsStore.getState();
         for (const kb of extKbs) {
-          // User override via "ext:<command>" key, fallback to extension default
           const overrideCombo = getBind(`ext:${kb.command}`);
-          const combo = overrideCombo || ((mac && kb.mac) ? kb.mac : kb.key);
-          if (combo && eventMatchesCombo(e, parseCombo(combo))) {
+          const raw = overrideCombo || ((mac && kb.mac) ? kb.mac : kb.key);
+          if (!raw) continue;
+          // Use per-extension parsed cache to avoid parseCombo on every keydown
+          let parsed = extParsedCache.get(raw);
+          if (!parsed) { parsed = parseCombo(raw); extParsedCache.set(raw, parsed); }
+          if (eventMatchesCombo(e, parsed)) {
             e.preventDefault();
             const project = useProjectStore.getState().activeProject;
             const args: unknown[] = [];

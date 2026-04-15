@@ -118,7 +118,7 @@ export function MessageList({
   return (
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
       <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden" resize="smooth" initial="instant">
-        <StickToBottom.Content className="p-4 space-y-4">
+        <StickToBottom.Content className="p-4 space-y-4 select-none">
           {hasMore && (
             <button onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
               className="w-full py-2 text-xs text-text-secondary hover:text-text-primary bg-surface-elevated/50 hover:bg-surface-elevated rounded-md border border-border/50 transition-colors">
@@ -197,7 +197,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
       {message.events && message.events.length > 0
         ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} />
         : message.content && (
-            <div className="text-sm text-text-primary">
+            <div className="text-sm text-text-primary select-text">
               <MarkdownContent content={message.content} projectName={projectName} />
             </div>
           )}
@@ -343,7 +343,7 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
         <div
           ref={contentRef}
           className={cn(
-            "whitespace-pre-wrap break-words transition-all duration-200",
+            "whitespace-pre-wrap break-words transition-all duration-200 select-text",
             !expanded && "line-clamp-2",
             expanded && "max-h-[50vh] overflow-y-auto",
           )}
@@ -752,7 +752,7 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
           return (
-            <div key={`text-${i}`} className="text-sm text-text-primary">
+            <div key={`text-${i}`} className="text-sm text-text-primary select-text">
               <StreamingText content={group.content} animate={isLast} projectName={projectName} />
             </div>
           );

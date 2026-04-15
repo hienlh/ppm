@@ -123,17 +123,33 @@ export function comboFromEvent(e: KeyboardEvent): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-parsed combo cache — avoids 21+ parseCombo() calls per keydown
+// ---------------------------------------------------------------------------
+
+/** Rebuild parsed combo cache from current overrides */
+function buildParsedCache(overrides: Record<string, string>): Map<string, ParsedCombo> {
+  const cache = new Map<string, ParsedCombo>();
+  for (const action of KEY_ACTIONS) {
+    const combo = overrides[action.id] ?? action.defaultKey;
+    if (combo) cache.set(action.id, parseCombo(combo));
+  }
+  return cache;
+}
+
+// ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
 interface KeybindingsState {
   /** User overrides from server (action ID → combo string) */
   overrides: Record<string, string>;
+  /** Pre-parsed combos — rebuilt when overrides change */
+  parsedCache: Map<string, ParsedCombo>;
   loaded: boolean;
 
   /** Get the effective binding for an action */
   getBinding: (actionId: string) => string;
-  /** Check if a keyboard event matches an action */
+  /** Check if a keyboard event matches an action (uses pre-parsed cache) */
   matchesEvent: (e: KeyboardEvent, actionId: string) => boolean;
   /** Set a custom binding (persists to server) */
   setBinding: (actionId: string, combo: string) => void;
@@ -145,8 +161,11 @@ interface KeybindingsState {
   loadFromServer: () => Promise<void>;
 }
 
+const INITIAL_CACHE = buildParsedCache({});
+
 export const useKeybindingsStore = create<KeybindingsState>((set, get) => ({
   overrides: {},
+  parsedCache: INITIAL_CACHE,
   loaded: false,
 
   getBinding: (actionId) => {
@@ -154,30 +173,28 @@ export const useKeybindingsStore = create<KeybindingsState>((set, get) => ({
   },
 
   matchesEvent: (e, actionId) => {
-    const combo = get().getBinding(actionId);
-    if (!combo) return false;
-    return eventMatchesCombo(e, parseCombo(combo));
+    const parsed = get().parsedCache.get(actionId);
+    if (!parsed) return false;
+    return eventMatchesCombo(e, parsed);
   },
 
   setBinding: (actionId, combo) => {
     const newOverrides = { ...get().overrides, [actionId]: combo };
-    set({ overrides: newOverrides });
-    // Persist to server (fire-and-forget)
+    set({ overrides: newOverrides, parsedCache: buildParsedCache(newOverrides) });
     api.put("/api/settings/keybindings", { [actionId]: combo }).catch(() => {});
   },
 
   resetBinding: (actionId) => {
     const newOverrides = { ...get().overrides };
     delete newOverrides[actionId];
-    set({ overrides: newOverrides });
+    set({ overrides: newOverrides, parsedCache: buildParsedCache(newOverrides) });
     api.put("/api/settings/keybindings", { [actionId]: null }).catch(() => {});
   },
 
   resetAll: () => {
-    set({ overrides: {} });
-    // Send all current override keys as null to clear them
     const nulled: Record<string, null> = {};
     for (const key of Object.keys(get().overrides)) nulled[key] = null;
+    set({ overrides: {}, parsedCache: buildParsedCache({}) });
     if (Object.keys(nulled).length > 0) {
       api.put("/api/settings/keybindings", nulled).catch(() => {});
     }
@@ -186,9 +203,9 @@ export const useKeybindingsStore = create<KeybindingsState>((set, get) => ({
   loadFromServer: async () => {
     try {
       const overrides = await api.get<Record<string, string>>("/api/settings/keybindings");
-      set({ overrides, loaded: true });
+      set({ overrides, parsedCache: buildParsedCache(overrides), loaded: true });
     } catch {
-      set({ loaded: true }); // proceed with defaults on error
+      set({ loaded: true });
     }
   },
 }));
