@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.90] - 2026-04-15
+
+### Added
+- **Git Graph stash branch visualization**: Stashes now render as separate branch spurs from their parent commit in the graph (like VSCode Git Graph). Grey branch lines, `stash@{N}` badge, and right-click context menu (Apply/Pop/Drop).
+
+### Fixed
+- **Wrong project loading in Git Graph**: Fixed bug where switching projects would show the previous project's commits. ExtensionWebview now always dispatches the command on mount to ensure correct project data.
+
 ## [0.9.88] - 2026-04-15
 
 ### Fixed
