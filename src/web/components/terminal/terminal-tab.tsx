@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useTerminal } from "@/hooks/use-terminal";
 import { cn } from "@/lib/utils";
 import { Copy, ClipboardPaste } from "lucide-react";
@@ -18,7 +18,7 @@ const MOBILE_KEYS = [
   { label: "\u2192", value: "\x1b[C" },
 ] as const;
 
-export function TerminalTab({ metadata }: TerminalTabProps) {
+export const TerminalTab = memo(function TerminalTab({ metadata }: TerminalTabProps) {
   const sessionId = (metadata?.sessionId as string) ?? "new";
   const projectName = metadata?.projectName as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -153,4 +153,4 @@ export function TerminalTab({ metadata }: TerminalTabProps) {
       )}
     </div>
   );
-}
+});

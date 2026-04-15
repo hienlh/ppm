@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -34,7 +35,7 @@ function ProjectAvatar({ name, color, allNames }: { name: string; color: string;
 }
 
 export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps) {
-  const { projects, activeProject, setActiveProject, setProjectColor, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore();
+  const { projects, activeProject, setActiveProject, setProjectColor, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore(useShallow((s) => ({ projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject, setProjectColor: s.setProjectColor, reorderProjects: s.reorderProjects, renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder })));
 
   const openTab = useTabStore((s) => s.openTab);
   const version = useSettingsStore((s) => s.version);

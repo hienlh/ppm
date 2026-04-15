@@ -1,8 +1,9 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { Plus, Settings, Pencil, Trash2, Palette, Bug, Cloud, X, Copy } from "lucide-react";
 import { CloudSharePopover } from "./cloud-share-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -29,7 +30,7 @@ import { cn } from "@/lib/utils";
 // ---------------------------------------------------------------------------
 // Avatar circle
 // ---------------------------------------------------------------------------
-function ProjectAvatar({ name, color, active, allNames }: {
+const ProjectAvatar = memo(function ProjectAvatar({ name, color, active, allNames }: {
   name: string; color: string; active: boolean; allNames: string[];
 }) {
   const initials = getProjectInitials(name, allNames);
@@ -51,7 +52,7 @@ function ProjectAvatar({ name, color, active, allNames }: {
       )}
     </div>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // Color picker popover (inline in dialog)
@@ -78,8 +79,8 @@ function ColorPicker({ current, onChange }: { current: string; onChange: (c: str
 // ---------------------------------------------------------------------------
 // ProjectBar
 // ---------------------------------------------------------------------------
-export function ProjectBar() {
-  const { projects, activeProject, setActiveProject, setProjectColor, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore();
+export const ProjectBar = memo(function ProjectBar() {
+  const { projects, activeProject, setActiveProject, setProjectColor, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore(useShallow((s) => ({ projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject, setProjectColor: s.setProjectColor, reorderProjects: s.reorderProjects, renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder })));
   const openTab = useTabStore((s) => s.openTab);
   const version = useSettingsStore((s) => s.version);
   const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
@@ -435,4 +436,4 @@ export function ProjectBar() {
     </aside>
     </div>
   );
-}
+});

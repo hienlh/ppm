@@ -5,6 +5,7 @@ import {
   ChevronRight, Globe, Puzzle, Copy, Download, Pencil, Trash2,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
@@ -152,7 +153,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   }
 
   // Active project avatar for the Projects button
-  const { activeProject, projects, customOrder } = useProjectStore();
+  const { activeProject, projects, customOrder } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject, projects: s.projects, customOrder: s.customOrder })));
   const ordered = resolveOrder(projects, customOrder ?? null);
   const allNames = ordered.map((p) => p.name);
   const activeIdx = ordered.findIndex((p) => p.name === activeProject?.name);

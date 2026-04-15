@@ -146,8 +146,8 @@ export function ChatTab() {
 }
 ```
 
-### Zustand Stores
-Define stores as singleton exports. Use selectors to subscribe to specific state:
+### Zustand Stores (useShallow)
+Define stores as singleton exports. Use `useShallow` when destructuring state to prevent unnecessary re-renders:
 
 ```typescript
 // Good: src/web/stores/chat-store.ts
@@ -156,8 +156,26 @@ export const chatStore = create<ChatState>((set) => ({
   addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
 }));
 
-// Usage with selector (avoids full re-render)
+// Usage with useShallow (avoids full re-render on object mutations)
+const { messages, addMessage } = chatStore(useShallow((state) => ({
+  messages: state.messages,
+  addMessage: state.addMessage,
+})));
+
+// Single selector still works without useShallow
 const messages = chatStore((state) => state.messages);
+```
+
+### Component Memoization (React.memo)
+Memoize expensive components to prevent re-renders from parent updates:
+
+```typescript
+// Good: Memoized heavy component
+export const CodeEditor = memo(function CodeEditor({ filePath }: Props) {
+  return <MonacoEditor path={filePath} />;
+});
+
+// Memoized components: CodeEditor, MessageBubble, ProjectBar, ProjectAvatar, TerminalTab, PanelLayout, Sidebar, StatusBar, StatusBarEntry, TabBar, TreeNode
 ```
 
 ### Custom Hooks
@@ -616,12 +634,46 @@ type FileStatus =
 ## Performance Conventions
 
 ### Code Splitting
-Use React.lazy() for routes and heavy components:
+Use `React.lazy()` + `Suspense` for routes, tab components, and heavy renderers:
 
 ```typescript
 // Good: Lazy-load terminal component
 const TerminalTab = lazy(() => import("./terminal-tab"));
+
+// Good: Lazy-load markdown renderer on 3+ sites
+const MarkdownRenderer = lazy(() => import("./markdown-renderer"));
 ```
+
+### Vendor Chunk Splitting (vite.config.ts)
+Manually split large vendor libraries into separate chunks for better caching:
+
+```typescript
+// Chunks: vendor-monaco, vendor-mermaid, vendor-xterm, vendor-markdown, vendor-ui
+manualChunks(id: string) {
+  if (id.includes("node_modules/monaco-editor")) return "vendor-monaco";
+  if (id.includes("node_modules/mermaid")) return "vendor-mermaid";
+  if (id.includes("node_modules/@xterm")) return "vendor-xterm";
+  // ... etc
+}
+```
+
+### Dynamic Imports (On-Demand Loading)
+Load heavy libraries only when needed:
+
+```typescript
+// Good: Mermaid diagram support on-demand in markdown
+let mermaidPromise: Promise<typeof import("mermaid")> | null = null;
+async function loadMermaid() {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then((mod) => mod.default);
+  }
+  return mermaidPromise;
+}
+```
+
+### Chat Pagination & Message Caps
+- **Chat history:** Load 50 messages per page with load-more button
+- **Team activity:** Cap `teamActivityRef` at 500 messages to prevent unbounded growth
 
 ### Memoization
 Memoize expensive computations and callbacks:

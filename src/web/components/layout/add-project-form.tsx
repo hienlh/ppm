@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Loader2, FolderOpen } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,7 @@ interface AddProjectFormProps {
 }
 
 export function AddProjectForm({ onSuccess, onCancel, footerClassName }: AddProjectFormProps) {
-  const { addProject } = useProjectStore();
+  const { addProject } = useProjectStore(useShallow((s) => ({ addProject: s.addProject })));
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const [suggestions, setSuggestions] = useState<SuggestedDir[]>([]);

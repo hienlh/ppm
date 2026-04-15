@@ -110,6 +110,23 @@ export default defineConfig({
   build: {
     outDir: "../../dist/web",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes("node_modules/monaco-editor")) return "vendor-monaco";
+          if (id.includes("node_modules/mermaid")) return "vendor-mermaid";
+          if (id.includes("node_modules/@xterm")) return "vendor-xterm";
+          if (
+            id.includes("node_modules/react-markdown") ||
+            id.includes("node_modules/rehype-katex") ||
+            id.includes("node_modules/rehype-highlight") ||
+            id.includes("node_modules/remark-gfm") ||
+            id.includes("node_modules/remark-math")
+          ) return "vendor-markdown";
+          if (id.includes("node_modules/@radix-ui")) return "vendor-ui";
+        },
+      },
+    },
   },
   server: {
     host: true,

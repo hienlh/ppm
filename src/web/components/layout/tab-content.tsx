@@ -1,4 +1,5 @@
 import { Suspense, lazy } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { Loader2 } from "lucide-react";
 
@@ -74,7 +75,7 @@ function LoadingFallback() {
 }
 
 export function TabContent() {
-  const { tabs, activeTabId } = useTabStore();
+  const { tabs, activeTabId } = useTabStore(useShallow((s) => ({ tabs: s.tabs, activeTabId: s.activeTabId })));
 
   if (tabs.length === 0) {
     return (

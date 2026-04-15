@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Search, CaseSensitive, ChevronRight, ChevronDown, FileText, X, Loader2, WholeWord, Regex, ReplaceAll } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { projectUrl, api } from "@/lib/api-client";
@@ -62,7 +63,7 @@ function OptionButton({ active, onClick, title, children }: { active: boolean; o
 }
 
 export function SearchPanel() {
-  const { activeProject } = useProjectStore();
+  const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const openTab = useTabStore((s) => s.openTab);
 
   const [query, setQuery] = useState("");

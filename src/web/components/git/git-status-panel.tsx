@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
+import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -117,7 +118,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     label: string;
     files: string[];
   } | null>(null);
-  const { openTab } = useTabStore();
+  const { openTab } = useTabStore(useShallow((s) => ({ openTab: s.openTab })));
   const viewMode = useSettingsStore((s) => s.gitStatusViewMode);
   const setViewMode = useSettingsStore((s) => s.setGitStatusViewMode);
   const activeProjectPath = useProjectStore((s) =>

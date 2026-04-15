@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, memo } from "react";
 import {
   Plus,
   Terminal,
@@ -47,7 +47,7 @@ interface TabBarProps {
   panelId?: string;
 }
 
-export function TabBar({ panelId }: TabBarProps) {
+export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   const activeProject = useProjectStore((s) => s.activeProject);
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -267,5 +267,5 @@ export function TabBar({ panelId }: TabBarProps) {
     )}
     </>
   );
-}
+});
 

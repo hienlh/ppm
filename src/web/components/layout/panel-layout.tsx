@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, memo } from "react";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import { GripVertical, GripHorizontal } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
@@ -10,7 +10,7 @@ interface PanelLayoutProps {
   projectName: string;
 }
 
-export function PanelLayout({ projectName }: PanelLayoutProps) {
+export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayoutProps) {
   const isDesktop = useMediaQuery("(min-width: 768px)");
   const grid = usePanelStore((s) =>
     s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? [[]]),
@@ -51,7 +51,7 @@ export function PanelLayout({ projectName }: PanelLayoutProps) {
       ))}
     </Group>
   );
-}
+});
 
 function RowGroup({ row, rowIdx, totalRows, projectName }: { row: string[]; rowIdx: number; totalRows: number; projectName: string }) {
   const defaultSize = `${Math.round(100 / totalRows)}%`;

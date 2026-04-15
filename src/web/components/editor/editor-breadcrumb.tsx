@@ -10,6 +10,7 @@ import {
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
 import { useFileStore, type FileNode } from "@/stores/file-store";
+import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { basename } from "@/lib/utils";
 
@@ -83,7 +84,7 @@ interface EditorBreadcrumbProps {
 
 export function EditorBreadcrumb({ filePath, projectName, tabId, className }: EditorBreadcrumbProps) {
   const tree = useFileStore((s) => s.tree);
-  const { updateTab, openTab } = useTabStore();
+  const { updateTab, openTab } = useTabStore(useShallow((s) => ({ updateTab: s.updateTab, openTab: s.openTab })));
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const segments = useMemo(

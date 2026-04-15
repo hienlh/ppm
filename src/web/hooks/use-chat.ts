@@ -310,6 +310,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
               );
               existing.push(...newMsgs);
               existing.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+              if (existing.length > 500) existing.splice(0, existing.length - 500);
             }
             updateTeamActivity();
           }).catch(() => {});
@@ -321,7 +322,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       case "team_inbox": {
         const msgs = (ev as any).messages as any[];
         if (Array.isArray(msgs)) {
-          teamActivityRef.current.messages.push(...msgs);
+          const existing = teamActivityRef.current.messages;
+          existing.push(...msgs);
+          if (existing.length > 500) existing.splice(0, existing.length - 500);
           teamUnreadRef.current += msgs.length;
           updateTeamActivity();
         }

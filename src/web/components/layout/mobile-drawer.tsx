@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import {
   X, Bug, FolderOpen, GitBranch, Settings, Database,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { FileTree } from "@/components/explorer/file-tree";
@@ -28,7 +29,7 @@ interface MobileDrawerProps {
 }
 
 export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps) {
-  const { activeProject } = useProjectStore();
+  const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const version = useSettingsStore((s) => s.version);
   const [activeTab, setActiveTab] = useState<DrawerTab>(initialTab ?? "explorer");
 

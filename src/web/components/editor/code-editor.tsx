@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo, memo, lazy, Suspense } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
-import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
+import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -12,10 +12,12 @@ import { Loader2, FileWarning, ExternalLink, Play, Database } from "lucide-react
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
 import { SaveAsDialog } from "./save-as-dialog";
-import { lazy, Suspense } from "react";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
 import { useConnections, type Connection } from "../database/use-connections";
 
+const MarkdownRenderer = lazy(() =>
+  import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
+);
 const CsvPreview = lazy(() => import("./csv-preview").then((m) => ({ default: m.CsvPreview })));
 
 /** Image extensions renderable inline */
@@ -47,7 +49,7 @@ interface CodeEditorProps {
   tabId?: string;
 }
 
-export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
+export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const filePath = metadata?.filePath as string | undefined;
   const projectName = metadata?.projectName as string | undefined;
   // Inline content mode: read-only Monaco with pre-loaded content (e.g. cell viewer)
@@ -61,8 +63,8 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestContentRef = useRef<string>("");
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
-  const { tabs, updateTab } = useTabStore();
-  const { wordWrap, toggleWordWrap } = useSettingsStore();
+  const { tabs, updateTab } = useTabStore(useShallow((s) => ({ tabs: s.tabs, updateTab: s.updateTab })));
+  const { wordWrap, toggleWordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap })));
   const monacoTheme = useMonacoTheme();
 
   const isUntitled = metadata?.isUntitled === true;
@@ -553,10 +555,14 @@ export function CodeEditor({ metadata, tabId }: CodeEditorProps) {
       )}
     </div>
   );
-}
+});
 
 function MarkdownPreview({ content }: { content: string }) {
-  return <MarkdownRenderer content={content} className="flex-1 overflow-auto p-4" />;
+  return (
+    <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded m-4" />}>
+      <MarkdownRenderer content={content} className="flex-1 overflow-auto p-4" />
+    </Suspense>
+  );
 }
 
 function ImagePreview({ filePath, projectName }: { filePath: string; projectName: string }) {

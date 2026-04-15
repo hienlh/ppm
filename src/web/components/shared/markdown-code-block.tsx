@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import mermaid from "mermaid";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
 import { useTabStore } from "@/stores/tab-store";
 
 const MERMAID_KEYWORDS = /^(sequenceDiagram|flowchart|graph\s|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|quadrantChart|requirementDiagram|gitGraph|mindmap|timeline|sankey|xychart|block-beta|packet-beta|architecture-beta|kanban)\b/;
 
-let mermaidInitialized = false;
-function ensureMermaidInit() {
-  if (mermaidInitialized) return;
-  mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
-  mermaidInitialized = true;
+let mermaidPromise: Promise<typeof import("mermaid")["default"]> | null = null;
+function getMermaid() {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then((mod) => {
+      mod.default.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
+      return mod.default;
+    });
+  }
+  return mermaidPromise;
 }
 
 /** Extract plain text from a hast node tree */
@@ -89,9 +92,8 @@ function MermaidDiagram({ source }: { source: string }) {
   const [svg, setSvg] = useState<string | null>(null);
 
   useEffect(() => {
-    ensureMermaidInit();
     const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
-    mermaid.render(id, source).then(({ svg }) => setSvg(svg)).catch(() => {});
+    getMermaid().then((m) => m.render(id, source)).then(({ svg }) => setSvg(svg)).catch(() => {});
   }, [source]);
 
   if (!svg) return <pre><code>{source}</code></pre>;

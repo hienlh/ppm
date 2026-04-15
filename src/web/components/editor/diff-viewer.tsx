@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { DiffEditor } from "@monaco-editor/react";
 import { api, projectUrl } from "@/lib/api-client";
+import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { Loader2, FileCode, PanelLeftOpen, PanelRightOpen, Columns2, WrapText } from "lucide-react";
@@ -40,7 +41,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const [loading, setLoading] = useState(!isInline);
   const [error, setError] = useState<string | null>(null);
   const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
-  const { wordWrap, toggleWordWrap } = useSettingsStore();
+  const { wordWrap, toggleWordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap })));
   const monacoTheme = useMonacoTheme();
 
   // Measure container height — Monaco needs explicit pixel height on mobile

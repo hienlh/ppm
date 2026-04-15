@@ -6,9 +6,19 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Git-Graph Stash Management, Rebase, Conflict Resolution + Worktree CRUD
+## [Unreleased] — Frontend Memory Optimization + Git-Graph Stash Management, Rebase, Conflict Resolution + Worktree CRUD
 
 ### Added
+- **Frontend Memory & Performance Optimizations** — Reduce re-renders, lazy-load heavy components, code splitting
+  - **useShallow pattern:** All destructured Zustand store calls now use `useShallow` (36 usage sites) to prevent re-renders on object mutations
+  - **React.memo wrapping:** 10 heavy components memoized (CodeEditor, MessageBubble, ProjectBar, ProjectAvatar, TerminalTab, PanelLayout, Sidebar, StatusBar, StatusBarEntry, TabBar, TreeNode)
+  - **Lazy loading:** MarkdownRenderer lazy-loaded from 3 sites, CodeMirror on-demand in postgres-viewer
+  - **Dynamic import:** Mermaid loaded on-demand in markdown-code-block (only when needed)
+  - **Code splitting:** 5 vendor chunks in vite.config.ts (monaco, mermaid, xterm, markdown, ui libraries) for better caching
+  - **Chat pagination:** Message history limited to 50 per page with load-more button
+  - **Message cap:** Team activity capped at 500 messages to prevent unbounded growth
+
+### Added (Git-Graph)
 - **Git Stash Management** — Toolbar popover for interactive stash operations
   - List all stashes with index, hash (abbreviated), and message
   - Apply/Pop/Drop actions per stash via context menu or action buttons

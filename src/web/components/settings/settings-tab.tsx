@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore, type Theme } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
@@ -41,7 +42,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
 ];
 
 export function SettingsTab() {
-  const { theme, setTheme, deviceName, setDeviceName, version } = useSettingsStore();
+  const { theme, setTheme, deviceName, setDeviceName, version } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version })));
   const { permission, isSubscribed, loading, error: pushError, subscribe, unsubscribe } = usePushNotification();
   const [activeCategory, setActiveCategory] = useState<SettingsCategory | null>(null);
   const [nameInput, setNameInput] = useState(deviceName ?? "");

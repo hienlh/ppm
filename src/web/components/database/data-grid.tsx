@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useRef, memo, useEffect } from "react";
 import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, Filter, Pin, PinOff, Columns3 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import type { DbColumnInfo } from "./use-database";
 import { ExportButton } from "./export-button";
@@ -42,7 +43,7 @@ export function DataGrid({
   const [insertValues, setInsertValues] = useState<Record<string, string>>({});
   const [insertError, setInsertError] = useState<string | null>(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
-  const { openTab } = useTabStore();
+  const { openTab } = useTabStore(useShallow((s) => ({ openTab: s.openTab })));
   const openCellViewer = useCallback((cell: { col: string; value: string }) => {
     openTab({
       type: "editor",

@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, memo } from "react";
 import {
   Folder,
   FolderOpen,
@@ -12,6 +12,7 @@ import {
   Download,
   Loader2,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -58,8 +59,8 @@ interface TreeNodeProps {
   onFileOpen?: () => void;
 }
 
-function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodeProps) {
-  const { expandedPaths, toggleExpand, selectedFiles, toggleFileSelect } = useFileStore();
+const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodeProps) {
+  const { expandedPaths, toggleExpand, selectedFiles, toggleFileSelect } = useFileStore(useShallow((s) => ({ expandedPaths: s.expandedPaths, toggleExpand: s.toggleExpand, selectedFiles: s.selectedFiles, toggleFileSelect: s.toggleFileSelect })));
   const openTab = useTabStore((s) => s.openTab);
   const isExpanded = expandedPaths.has(node.path);
   const isDir = node.type === "directory";
@@ -187,14 +188,14 @@ function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodePr
       ))}
     </div>
   );
-}
+});
 
 interface FileTreeProps {
   onFileOpen?: () => void;
 }
 
 export function FileTree({ onFileOpen }: FileTreeProps = {}) {
-  const { tree, loading, error, fetchTree, reset, selectedFiles, clearSelection } = useFileStore();
+  const { tree, loading, error, fetchTree, reset, selectedFiles, clearSelection } = useFileStore(useShallow((s) => ({ tree: s.tree, loading: s.loading, error: s.error, fetchTree: s.fetchTree, reset: s.reset, selectedFiles: s.selectedFiles, clearSelection: s.clearSelection })));
   const activeProject = useProjectStore((s) => s.activeProject);
   const openTab = useTabStore((s) => s.openTab);
   const [actionState, setActionState] = useState<{

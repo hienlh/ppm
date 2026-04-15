@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback, memo, lazy, Suspense } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
 import { ToolCard } from "./tool-cards";
-import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+const MarkdownRenderer = lazy(() =>
+  import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
+);
 import { cn, basename } from "@/lib/utils";
 
 import {
@@ -67,6 +69,34 @@ export function MessageList({
 }: MessageListProps) {
   // Scroll handled by StickToBottom wrapper — no manual scroll logic needed
 
+  const PAGE_SIZE = 50;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // Reset visible count when conversation identity changes (not on every streaming tick)
+  const conversationId = messages[0]?.id;
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [conversationId]);
+
+  const filtered = useMemo(() => messages.filter((msg) => {
+    const hasContent = msg.content && msg.content.trim().length > 0;
+    const hasEvents = msg.events && msg.events.length > 0;
+    // User bubbles only render text — hide SDK tool-result user messages
+    // that have no text content (their events are merged into assistant)
+    if (msg.role === "user") return hasContent;
+    return hasContent || hasEvents;
+  }), [messages]);
+
+  const displayed = useMemo(() => {
+    const start = Math.max(0, filtered.length - visibleCount);
+    return filtered.slice(start);
+  }, [filtered, visibleCount]);
+
+  const hasMore = visibleCount < filtered.length;
+
+  // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
+  const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
+    onFork?.(msgContent, msgId);
+  }, [onFork]);
+
   if (messagesLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
@@ -85,32 +115,30 @@ export function MessageList({
     );
   }
 
-  const filtered = useMemo(() => messages.filter((msg) => {
-    const hasContent = msg.content && msg.content.trim().length > 0;
-    const hasEvents = msg.events && msg.events.length > 0;
-    // User bubbles only render text — hide SDK tool-result user messages
-    // that have no text content (their events are merged into assistant)
-    if (msg.role === "user") return hasContent;
-    return hasContent || hasEvents;
-  }), [messages]);
-
   return (
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
       <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden" resize="smooth" initial="instant">
         <StickToBottom.Content className="p-4 space-y-4">
-          {filtered.map((msg, idx) => (
+          {hasMore && (
+            <button onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+              className="w-full py-2 text-xs text-text-secondary hover:text-text-primary bg-surface-elevated/50 hover:bg-surface-elevated rounded-md border border-border/50 transition-colors">
+              Load {Math.min(PAGE_SIZE, filtered.length - visibleCount)} more messages...
+            </button>
+          )}
+          {displayed.map((msg, idx) => {
+            const globalIdx = filtered.length - displayed.length + idx;
+            const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
+            return (
               <MessageBubble
                 key={msg.id}
                 message={msg}
                 isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                 projectName={projectName}
-                onFork={msg.role === "user" && onFork ? () => {
-                  // Pass the SDK UUID of the previous assistant message for fork (JSONL-level message ID)
-                  const prevMsg = idx > 0 ? filtered[idx - 1] : undefined;
-                  onFork(msg.content, prevMsg?.sdkUuid ?? prevMsg?.id);
-                } : undefined}
+                onFork={msg.role === "user" && onFork ? handleFork : undefined}
+                prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
               />
-            ))}
+            );
+          })}
 
         {pendingApproval && (
           pendingApproval.tool === "AskUserQuestion"
@@ -142,10 +170,15 @@ function ScrollToBottomButton() {
   );
 }
 
-function MessageBubble({ message, isStreaming, projectName, onFork }: { message: ChatMessage; isStreaming: boolean; projectName?: string; onFork?: () => void }) {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId }: {
+  message: ChatMessage; isStreaming: boolean; projectName?: string;
+  onFork?: (content: string, messageId: string | undefined) => void;
+  prevMsgId?: string
+}) {
   if (message.role === "user") {
+    const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
     return (
-      <UserBubble content={message.content} projectName={projectName} onFork={onFork} />
+      <UserBubble content={message.content} projectName={projectName} onFork={handleFork} />
     );
   }
 
@@ -175,7 +208,7 @@ function MessageBubble({ message, isStreaming, projectName, onFork }: { message:
       )}
     </div>
   );
-}
+});
 
 /** Image extensions that can be previewed inline */
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -843,7 +876,11 @@ function stripTeammateMessages(text: string): string {
 function MarkdownContent({ content, projectName, isStreaming }: { content: string; projectName?: string; isStreaming?: boolean }) {
   const cleaned = stripTeammateMessages(content);
   if (!cleaned) return null;
-  return <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} />;
+  return (
+    <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded" />}>
+      <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} />
+    </Suspense>
+  );
 }
 
 /* ToolCard, ToolSummary, ToolDetails extracted to ./tool-cards.tsx */

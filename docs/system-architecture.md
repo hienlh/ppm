@@ -1897,6 +1897,42 @@ Would require:
 
 ---
 
+## Frontend Performance Optimization (v0.9.86+)
+
+### Memory & Re-Render Reduction
+
+**1. useShallow Pattern (Zustand)**
+- All destructured store selectors wrapped in `useShallow()` (36 sites)
+- Prevents unnecessary re-renders when object properties mutate
+- Example: `const { messages, addMessage } = chatStore(useShallow(...))`
+
+**2. Component Memoization (React.memo)**
+- 10 heavy components wrapped (CodeEditor, MessageBubble, ProjectBar, ProjectAvatar, TerminalTab, PanelLayout, Sidebar, StatusBar, StatusBarEntry, TabBar, TreeNode)
+- Memoization skips re-renders if props unchanged
+- Paired with `useCallback` to maintain stable references
+
+**3. Lazy Loading**
+- MarkdownRenderer lazy-loaded from 3 sites (reduces initial bundle)
+- CodeMirror on-demand in postgres-viewer
+- Mermaid diagram support loaded dynamically only when diagram syntax detected
+
+**4. Code Splitting (vite.config.ts)**
+- 5 vendor chunks: `vendor-monaco`, `vendor-mermaid`, `vendor-xterm`, `vendor-markdown`, `vendor-ui`
+- Heavy libraries (>500KB) in separate chunks for better browser caching
+- Each chunk independently cacheable and updated
+
+**5. Chat Pagination & Message Caps**
+- Chat history loads 50 messages per page with load-more button (prevents DOM bloat)
+- Team activity capped at 500 messages (prevents unbounded growth)
+
+### Benefits
+- Faster page load (lazy chunks load on-demand)
+- Reduced re-render cycles (useShallow + memo)
+- Lower memory footprint (capped message buffers)
+- Better caching (vendor chunk stability across versions)
+
+---
+
 ## Error Handling Strategy
 
 | Layer | Error Type | Handling |

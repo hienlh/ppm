@@ -2,8 +2,10 @@
  * Tool card components for chat message rendering.
  * Handles summary + details for all SDK tool types.
  */
-import { useState, useMemo } from "react";
-import { MarkdownRenderer } from "@/components/shared/markdown-renderer";
+import { useState, useMemo, lazy, Suspense } from "react";
+const MarkdownRenderer = lazy(() =>
+  import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
+);
 import {
   ChevronDown,
   ChevronRight,
@@ -20,6 +22,7 @@ import {
   Columns2,
 } from "lucide-react";
 import type { ChatEvent } from "../../../types/chat";
+import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { basename } from "@/lib/utils";
 
@@ -159,7 +162,7 @@ function ToolDetails({
   projectName?: string;
 }) {
   const s = (v: unknown) => String(v ?? "");
-  const { openTab } = useTabStore();
+  const { openTab } = useTabStore(useShallow((state) => ({ openTab: state.openTab })));
 
   /** Open a file in a new editor tab */
   const openFile = (filePath: string) => {
@@ -451,7 +454,11 @@ function SubagentChildren({ events, projectName }: { events: ChatEvent[]; projec
 
 /** Inline markdown renderer for tool details (prompt, result) */
 function MiniMarkdown({ content, maxHeight = "max-h-48" }: { content: string; maxHeight?: string }) {
-  return <MarkdownRenderer content={content} className={`text-text-secondary overflow-auto ${maxHeight}`} />;
+  return (
+    <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded" />}>
+      <MarkdownRenderer content={content} className={`text-text-secondary overflow-auto ${maxHeight}`} />
+    </Suspense>
+  );
 }
 
 

@@ -1,8 +1,9 @@
+import { memo } from "react";
 import { useExtensionStore, type StatusBarItemUI } from "@/stores/extension-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** Fixed status bar at the bottom of the editor area (hidden on mobile) */
-export function StatusBar() {
+export const StatusBar = memo(function StatusBar() {
   const items = useExtensionStore((s) => s.statusBarItems);
 
   const left = items
@@ -27,9 +28,9 @@ export function StatusBar() {
       </div>
     </div>
   );
-}
+});
 
-function StatusBarEntry({ item }: { item: StatusBarItemUI }) {
+const StatusBarEntry = memo(function StatusBarEntry({ item }: { item: StatusBarItemUI }) {
   const content = (
     <button
       className={`truncate px-1 rounded-sm transition-colors ${
@@ -61,4 +62,4 @@ function StatusBarEntry({ item }: { item: StatusBarItemUI }) {
   }
 
   return content;
-}
+});

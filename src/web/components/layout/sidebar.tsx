@@ -1,5 +1,6 @@
-import { useCallback, useRef, useMemo } from "react";
+import { useCallback, useRef, useMemo, memo } from "react";
 import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database, Search, Puzzle } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useExtensionStore } from "@/stores/extension-store";
@@ -58,8 +59,8 @@ function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   );
 }
 
-export function Sidebar() {
-  const { activeProject } = useProjectStore();
+export const Sidebar = memo(function Sidebar() {
+  const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
   const sidebarWidth = useSettingsStore((s) => s.sidebarWidth);
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
@@ -169,4 +170,4 @@ export function Sidebar() {
       <ResizeHandle onResize={setSidebarWidth} />
     </aside>
   );
-}
+});

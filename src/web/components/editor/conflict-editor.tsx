@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { api, projectUrl } from "@/lib/api-client";
+import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { Loader2 } from "lucide-react";
@@ -100,7 +101,7 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
   const widgetsRef = useRef<MonacoType.editor.IContentWidget[]>([]);
   const decorationsRef = useRef<MonacoType.editor.IEditorDecorationsCollection | null>(null);
 
-  const { wordWrap } = useSettingsStore();
+  const { wordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap })));
   const monacoTheme = useMonacoTheme();
 
   const containerRef = useRef<HTMLDivElement>(null);

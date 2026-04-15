@@ -1,7 +1,7 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef, lazy, Suspense } from "react";
 import { Database, Loader2, AlertCircle, Play, ChevronLeft, ChevronRight, Table, RefreshCw } from "lucide-react";
 import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
-import CodeMirror from "@uiw/react-codemirror";
+const CodeMirror = lazy(() => import("@uiw/react-codemirror"));
 import { sql, PostgreSQL } from "@codemirror/lang-sql";
 import { usePostgres, type PgColumnInfo, type PgQueryResult } from "./use-postgres";
 
@@ -244,9 +244,11 @@ function PgQueryEditor({ onExecute, result, error, loading }: {
     <div className="flex flex-col h-full overflow-hidden">
       <div className="flex items-start gap-1 border-b border-border bg-background" onKeyDown={handleKeyDown}>
         <div className="flex-1 max-h-[120px] overflow-auto">
-          <CodeMirror value={query} onChange={setQuery} extensions={[sql({ dialect: PostgreSQL })]}
-            basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: false }}
-            className="text-xs [&_.cm-editor]:!outline-none [&_.cm-scroller]:!overflow-auto" />
+          <Suspense fallback={<div className="p-2 text-xs text-text-secondary">Loading editor...</div>}>
+            <CodeMirror value={query} onChange={setQuery} extensions={[sql({ dialect: PostgreSQL })]}
+              basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLine: false }}
+              className="text-xs [&_.cm-editor]:!outline-none [&_.cm-scroller]:!overflow-auto" />
+          </Suspense>
         </div>
         <button type="button" onClick={handleExecute} disabled={loading} title="Execute (Cmd+Enter)"
           className="shrink-0 m-1 p-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors">
