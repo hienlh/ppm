@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.97] - 2026-04-15
+
+### Fixed
+- **Git Graph duplicate stash entries**: Same stash appeared twice — once as `refs/stash` from `git log --all` and once as `stash@{0}` from `git stash list`. Excluded `refs/stash` from log query since stashes have dedicated rendering.
+
 ## [0.9.96] - 2026-04-15
 
 ### Fixed
