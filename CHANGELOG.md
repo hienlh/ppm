@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.95] - 2026-04-15
+
+### Fixed
+- **Extension webview infinite error toasts**: Removed retry loop that dispatched `ext:command:execute` every 2s with no limit, causing infinite error toasts when extension failed to activate. Now dispatches once — user closes and reopens tab to retry. Load timeout reduced from 10s to 5s.
+
 ## [0.9.94] - 2026-04-15
 
 ### Performance
