@@ -54,47 +54,33 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const rawHtml = panel?.html ?? "";
   const html = injectVscodeApiShim(rawHtml);
 
-  // On reload: resolve project path, then dispatch command with retry
-  // Retry needed because WS connection may not be ready on first attempt
+  // On reload: resolve project path and dispatch command once
+  // No retry — if it fails, user closes tab and reopens to retry
   useEffect(() => {
     if (panel || !viewType) return;
-    // Mark project as "dispatched" so project-sync effect doesn't double-dispatch
     if (projectName) prevProjectRef.current = projectName;
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
     let cancelled = false;
-    let resolvedArgs: unknown[] | null = null;
 
-    async function resolveArgs(): Promise<unknown[]> {
-      if (resolvedArgs) return resolvedArgs;
-      if (!projectName) return [];
-      try {
-        const res = await fetch("/api/projects");
-        const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
-        const match = json.data?.find((p) => p.name === projectName);
-        resolvedArgs = match ? [match.path] : [];
-      } catch {
-        resolvedArgs = [];
+    async function dispatch() {
+      let args: unknown[] = [];
+      if (projectName) {
+        try {
+          const res = await fetch("/api/projects");
+          const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+          const match = json.data?.find((p) => p.name === projectName);
+          if (match) args = [match.path];
+        } catch {}
       }
-      return resolvedArgs;
-    }
-
-    async function attempt() {
-      const args = await resolveArgs();
       if (cancelled) return;
       window.dispatchEvent(new CustomEvent("ext:command:execute", {
         detail: { command, args },
       }));
     }
 
-    // First attempt after short delay (let WS connect), then retry every 2s
-    const initialTimer = setTimeout(() => {
-      if (!cancelled) attempt();
-    }, 500);
-    const retryTimer = setInterval(() => {
-      if (!cancelled) attempt();
-    }, 2_000);
-
-    return () => { cancelled = true; clearTimeout(initialTimer); clearInterval(retryTimer); };
+    // Short delay to let WS connect after page load
+    const timer = setTimeout(dispatch, 500);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [panel, viewType, projectName]);
 
   // When panel exists, ensure correct project is loaded.
@@ -168,10 +154,10 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     };
   }, []);
 
-  // Timeout: if panel doesn't appear within 10s, show error
+  // Timeout: if panel doesn't appear within 5s, show error
   useEffect(() => {
     if (panel) { setTimedOut(false); return; }
-    const timer = setTimeout(() => setTimedOut(true), 10_000);
+    const timer = setTimeout(() => setTimedOut(true), 5_000);
     return () => clearTimeout(timer);
   }, [panel]);
 
