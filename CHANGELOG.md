@@ -9,6 +9,7 @@
 
 ### Performance
 - **Chat input lag during streaming**: Extracted inline `onSend` and `onSlashItemsLoaded` callbacks into stable `useCallback` refs in ChatTab, so `memo(MessageInput)` correctly skips re-renders during streaming token updates.
+- **Streaming render throttle**: `syncMessages` now batches rapid WS events via `requestAnimationFrame` instead of triggering a React render on every token. Reduces re-renders from hundreds/sec to ~60fps max.
 
 ## [0.9.97] - 2026-04-15
 
