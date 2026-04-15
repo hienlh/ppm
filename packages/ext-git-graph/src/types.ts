@@ -17,7 +17,7 @@ export interface GitVertex {
 
 export interface RefData {
   name: string;
-  type: "head" | "local" | "remote" | "tag";
+  type: "head" | "local" | "remote" | "tag" | "stash";
 }
 
 export interface Branch {
@@ -41,6 +41,7 @@ export interface Remote {
 export interface Stash {
   index: number;
   hash: string;
+  parentHash: string;
   message: string;
 }
 

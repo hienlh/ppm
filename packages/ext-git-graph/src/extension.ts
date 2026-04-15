@@ -406,7 +406,7 @@ async function handleRepoInfo(
     spawnGit(vscode, ["branch", "-a", "--format=%(refname:short)|%(objectname:short)|%(HEAD)"], projectPath),
     spawnGit(vscode, ["tag", "-l", "--format=%(refname:short)|%(objectname:short)"], projectPath),
     spawnGit(vscode, ["remote", "-v"], projectPath),
-    spawnGit(vscode, ["stash", "list", "--format=%gd|%H|%s"], projectPath),
+    spawnGit(vscode, ["stash", "list", "--format=%gd|%H|%P|%s"], projectPath),
     spawnGit(vscode, ["rev-parse", "--abbrev-ref", "HEAD"], projectPath),
     spawnGit(vscode, ["rev-parse", "HEAD"], projectPath),
   ]);
@@ -623,17 +623,20 @@ async function handleStashes(
   panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
   projectPath: string,
 ): Promise<void> {
-  const result = await spawnGit(vscode, ["stash", "list", "--format=%gd|%H|%s"], projectPath, 10_000);
+  const result = await spawnGit(vscode, ["stash", "list", "--format=%gd|%H|%P|%s"], projectPath, 10_000);
   const stashes: import("./types.ts").Stash[] = [];
   if (result.exitCode === 0 && result.stdout.trim()) {
     for (const line of result.stdout.split("\n").filter(Boolean)) {
       const parts = line.split("|");
-      if (parts.length >= 3) {
+      if (parts.length >= 4) {
         const refMatch = parts[0].match(/\{(\d+)\}/);
+        // %P gives space-separated parent hashes; first parent is the commit the stash was created on
+        const parentHash = parts[2].split(" ")[0] || "";
         stashes.push({
           index: refMatch ? parseInt(refMatch[1]) : stashes.length,
           hash: parts[1],
-          message: parts.slice(2).join("|"),
+          parentHash,
+          message: parts.slice(3).join("|"),
         });
       }
     }
@@ -752,8 +755,9 @@ function parseRemotes(stdout: string): import("./types.ts").Remote[] {
 function parseStashes(stdout: string): import("./types.ts").Stash[] {
   return stdout.trim().split("\n").filter(Boolean).map((line, i) => {
     const parts = line.split("|");
-    const [, hash, ...messageParts] = parts;
-    return { index: i, hash, message: messageParts.join("|") };
+    const [, hash, parents, ...messageParts] = parts;
+    const parentHash = (parents || "").split(" ")[0] || "";
+    return { index: i, hash, parentHash, message: messageParts.join("|") };
   });
 }
 

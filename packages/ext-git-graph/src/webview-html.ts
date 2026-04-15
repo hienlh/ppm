@@ -249,6 +249,8 @@ button:active { background: var(--surface); }
 .commit-row.search-match { background: rgba(234, 179, 8, 0.15); }
 .commit-row.virtual { opacity: 0.85; font-style: italic; }
 .commit-row.virtual .col-message { color: var(--subtext); }
+.commit-row.stash-row { opacity: 0.75; }
+.commit-row.stash-row .col-message { color: var(--subtext); font-style: italic; }
 .file-clickable { cursor: pointer; border-radius: 3px; padding: 2px 4px; margin: 0 -4px; }
 .file-clickable:hover { background: var(--surface-hover); }
 .col-graph { width: var(--graph-col-w, 120px); min-width: var(--graph-col-w, 80px); overflow: hidden; flex-shrink: 0; position: relative; }
@@ -265,6 +267,7 @@ button:active { background: var(--surface); }
 .ref-local { background: var(--blue); color: #fff; }
 .ref-remote { background: var(--purple); color: #fff; }
 .ref-tag { background: var(--yellow); color: #000; }
+.ref-stash { background: #808080; color: #fff; }
 
 /* SVG graph — single SVG overlay */
 #commit-list-wrapper { position: relative; }
@@ -272,8 +275,6 @@ button:active { background: var(--surface); }
 #graph-svg-container circle { pointer-events: auto; cursor: pointer; }
 #graph-svg-container .line { stroke-width: 2; fill: none; }
 #graph-svg-container .graphCurrent { fill: var(--bg); stroke-width: 2; }
-#graph-svg-container .graphStashOuter { fill: none; stroke: #808080; stroke-width: 1.5; }
-#graph-svg-container .graphStashInner { fill: #808080; }
 .commit-row.graph-hover { background: var(--surface-hover); }
 
 /* Detail panel */
@@ -590,6 +591,7 @@ window.addEventListener('message', (event) => {
     case 'loadStashes':
       state.stashes = msg.data || [];
       renderStashList();
+      if (state.commits.length > 0) renderCommitList();
       break;
     case 'error':
       document.getElementById('status-text').textContent = 'Error: ' + msg.message;
@@ -1054,8 +1056,9 @@ document.getElementById('stash-save').addEventListener('click', () => {
 // --- Graph rendering (faithful port of vscode-git-graph graph.ts) ---
 
 class GBranch {
-  constructor(colour) {
+  constructor(colour, isStash) {
     this._colour = colour;
+    this._isStash = !!isStash;
     this._end = 0;
     this._lines = [];
     this._numUncommitted = 0;
@@ -1073,7 +1076,7 @@ class GBranch {
   setEnd(end) { this._end = end; }
 
   draw(svg, config, expandAt) {
-    const colour = config.colours[this._colour % config.colours.length];
+    const colour = this._isStash ? '#808080' : config.colours[this._colour % config.colours.length];
     const d = config.grid.y * (config.style === 'angular' ? 0.38 : 0.8);
     const pxLines = [];
     let curPath = '';
@@ -1195,7 +1198,9 @@ class GVertex {
 
   draw(svg, config, expandOffset, overListener, outListener) {
     if (this._onBranch === null) return;
-    const colour = this._isCommitted ? config.colours[this._onBranch.getColour() % config.colours.length] : '#808080';
+    const STASH_COLOR = '#808080';
+    const colour = this.isStash ? STASH_COLOR
+      : this._isCommitted ? config.colours[this._onBranch.getColour() % config.colours.length] : '#808080';
     const cx = (this._x * config.grid.x + config.grid.offsetX).toString();
     const cy = (this.id * config.grid.y + config.grid.offsetY + (expandOffset ? config.grid.expandY : 0)).toString();
 
@@ -1212,17 +1217,6 @@ class GVertex {
     }
     svg.appendChild(circle);
 
-    if (this.isStash && !this._isCurrent) {
-      circle.setAttribute('r', '4.5');
-      circle.setAttribute('class', 'graphStashOuter');
-      const inner = document.createElementNS(SVG_NS, 'circle');
-      inner.setAttribute('cx', cx);
-      inner.setAttribute('cy', cy);
-      inner.setAttribute('r', '2');
-      inner.setAttribute('class', 'graphStashInner');
-      svg.appendChild(inner);
-    }
-
     circle.addEventListener('mouseover', overListener);
     circle.addEventListener('mouseout', outListener);
   }
@@ -1235,12 +1229,11 @@ function graphLoadCommits(commits) {
   gVertices = []; gBranches = []; gAvailColours = [];
   if (commits.length === 0) return;
 
-  const stashHashes = new Set(state.stashes.map(s => s.hash));
   const nullVertex = new GVertex(NULL_VERTEX_ID, false);
   const lookup = {};
   for (let i = 0; i < commits.length; i++) {
     lookup[commits[i].hash] = i;
-    gVertices.push(new GVertex(i, stashHashes.has(commits[i].hash)));
+    gVertices.push(new GVertex(i, !!commits[i]._isStash));
   }
   gCommitLookup = lookup;
 
@@ -1285,7 +1278,7 @@ function graphDeterminePath(startAt) {
       if (foundPtp) { vertex.registerParentProcessed(); break; }
     }
   } else {
-    const branch = new GBranch(graphGetAvailableColour(startAt));
+    const branch = new GBranch(graphGetAvailableColour(startAt), vertex.isStash);
     vertex.addToBranch(branch, lastPoint.x);
     vertex.registerUnavailablePoint(lastPoint.x, vertex, branch);
     for (i = startAt + 1; i < gVertices.length; i++) {
@@ -1361,10 +1354,10 @@ function graphRender(expandIdx) {
 function graphVertexOver(e) {
   if (!e.target || !e.target.dataset || !e.target.dataset.id) return;
   const id = parseInt(e.target.dataset.id);
-  if (id >= 0 && id < state.commits.length) {
+  if (id >= 0 && id < gVertices.length) {
     const rows = document.querySelectorAll('.commit-row:not(.header-row)');
     if (rows[id]) rows[id].classList.add('graph-hover');
-    e.target.setAttribute('r', e.target.classList.contains('graphStashOuter') ? '5.5' : '5');
+    e.target.setAttribute('r', '5');
   }
 }
 function graphVertexOut(e) {
@@ -1373,28 +1366,63 @@ function graphVertexOut(e) {
   if (id >= 0) {
     const rows = document.querySelectorAll('.commit-row:not(.header-row)');
     if (rows[id]) rows[id].classList.remove('graph-hover');
-    e.target.setAttribute('r', e.target.classList.contains('graphStashOuter') ? '4.5' : '4');
+    e.target.setAttribute('r', '4');
   }
 }
 
 // --- Commit list ---
 function getDisplayCommits() {
+  let commits = state.commits;
+
+  // Inject uncommitted changes virtual commit
   const u = state.uncommitted;
   const totalFiles = u ? (u.staged.length + u.unstaged.length + (u.conflicted ? u.conflicted.length : 0)) : 0;
-  if (!u || totalFiles === 0) return state.commits;
-  const virtualCommit = {
-    hash: 'uncommitted',
-    parents: state.head ? [state.head] : [],
-    author: '',
-    authorEmail: '',
-    authorDate: Math.floor(Date.now() / 1000),
-    committer: '',
-    committerEmail: '',
-    commitDate: Math.floor(Date.now() / 1000),
-    refs: [],
-    message: 'Uncommitted Changes (' + totalFiles + ' files)',
-  };
-  return [virtualCommit, ...state.commits];
+  if (u && totalFiles > 0) {
+    commits = [{
+      hash: 'uncommitted',
+      parents: state.head ? [state.head] : [],
+      author: '', authorEmail: '',
+      authorDate: Math.floor(Date.now() / 1000),
+      committer: '', committerEmail: '',
+      commitDate: Math.floor(Date.now() / 1000),
+      refs: [],
+      message: 'Uncommitted Changes (' + totalFiles + ' files)',
+    }, ...commits];
+  }
+
+  // Inject stash virtual commits as branch spurs from their parent
+  if (state.settings.showStashes && state.stashes.length > 0) {
+    const parentIndexes = {};
+    const commitHashSet = new Set(commits.map(c => c.hash));
+    for (const s of state.stashes) {
+      if (!s.parentHash || !commitHashSet.has(s.parentHash)) continue;
+      if (!parentIndexes[s.parentHash]) parentIndexes[s.parentHash] = [];
+      parentIndexes[s.parentHash].push(s);
+    }
+    if (Object.keys(parentIndexes).length > 0) {
+      const result = [];
+      for (const c of commits) {
+        result.push(c);
+        const stashesForCommit = parentIndexes[c.hash];
+        if (stashesForCommit) {
+          for (const s of stashesForCommit) {
+            result.push({
+              hash: s.hash,
+              parents: [s.parentHash],
+              author: '', authorEmail: '',
+              authorDate: 0, committer: '', committerEmail: '', commitDate: 0,
+              refs: [{ type: 'stash', name: 'stash@{' + s.index + '}' }],
+              message: s.message,
+              _isStash: true,
+            });
+          }
+        }
+      }
+      commits = result;
+    }
+  }
+
+  return commits;
 }
 
 function renderCommitList() {
@@ -1411,8 +1439,9 @@ function renderCommitList() {
 
   displayCommits.forEach((commit, idx) => {
     const isVirtual = commit.hash === 'uncommitted';
+    const isStash = !!commit._isStash;
     const row = document.createElement('div');
-    row.className = 'commit-row' + (isVirtual ? ' virtual' : '');
+    row.className = 'commit-row' + (isVirtual ? ' virtual' : '') + (isStash ? ' stash-row' : '');
     row.dataset.hash = commit.hash;
 
     // Graph spacer column (SVG overlays this area)
@@ -1437,30 +1466,39 @@ function renderCommitList() {
       const refName = badge.textContent;
       const refType = badge.className.includes('ref-head') ? 'head'
                     : badge.className.includes('ref-remote') ? 'remote'
-                    : badge.className.includes('ref-tag') ? 'tag' : 'local';
+                    : badge.className.includes('ref-tag') ? 'tag'
+                    : badge.className.includes('ref-stash') ? 'stash' : 'local';
       badge.style.cursor = 'pointer';
-      badge.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        gitAction('checkout', { target: refName });
-      });
-      badge.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showBranchContextMenu(e.clientX, e.clientY, refName, refType, commit);
-      });
+      if (refType === 'stash') {
+        badge.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          showStashBadgeMenu(e.clientX, e.clientY, refName);
+        });
+      } else {
+        badge.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          gitAction('checkout', { target: refName });
+        });
+        badge.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          showBranchContextMenu(e.clientX, e.clientY, refName, refType, commit);
+        });
+      }
     });
 
     const authorCol = document.createElement('div');
     authorCol.className = 'col-author';
-    authorCol.textContent = isVirtual ? '' : commit.author;
+    authorCol.textContent = (isVirtual || isStash) ? '' : commit.author;
 
     const dateCol = document.createElement('div');
     dateCol.className = 'col-date';
-    dateCol.textContent = isVirtual ? 'now' : formatDate(commit.commitDate);
+    dateCol.textContent = isVirtual ? 'now' : isStash ? '' : formatDate(commit.commitDate);
 
     const hashCol = document.createElement('div');
     hashCol.className = 'col-hash';
-    hashCol.textContent = isVirtual ? '...' : commit.hash.substring(0, 7);
+    hashCol.textContent = isVirtual ? '...' : isStash ? '' : commit.hash.substring(0, 7);
 
     row.appendChild(graphCol);
     row.appendChild(msgCol);
@@ -1475,6 +1513,13 @@ function renderCommitList() {
         showUncommittedContextMenu(e.clientX, e.clientY);
       });
       setupLongPress(row, (x, y) => showUncommittedContextMenu(x, y));
+    } else if (isStash) {
+      const stashRef = (commit.refs && commit.refs[0]) ? commit.refs[0].name : '';
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (stashRef) showStashBadgeMenu(e.clientX, e.clientY, stashRef);
+      });
+      setupLongPress(row, (x, y) => { if (stashRef) showStashBadgeMenu(x, y, stashRef); });
     } else {
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -1913,6 +1958,41 @@ function showBranchContextMenu(x, y, branchName, refType, commit) {
   menu.innerHTML = html;
   menu.style.left = Math.min(x, window.innerWidth - 220) + 'px';
   menu.style.top = Math.min(y, window.innerHeight - 300) + 'px';
+  menu.classList.remove('hidden');
+  menu.querySelectorAll('.ctx-item').forEach(el => {
+    const idx = parseInt(el.dataset.idx);
+    const item = items[idx];
+    if (item && item.action) el.addEventListener('click', () => { hideContextMenu(); item.action(); });
+  });
+  setTimeout(() => document.addEventListener('click', hideContextMenu, { once: true }), 0);
+}
+
+function showStashBadgeMenu(x, y, stashRef) {
+  const menu = document.getElementById('context-menu');
+  const items = [
+    { label: 'Apply (keep stash)', action: () => gitAction('stashApply', { stashRef }) },
+    { label: 'Pop (apply & remove)', action: () => gitAction('stashPop', { stashRef }) },
+    { separator: true },
+    { label: 'Drop stash...', destructive: true, action: () => showDialog({
+        title: 'Drop Stash',
+        message: 'Delete ' + stashRef + '? This cannot be undone.',
+        destructive: true,
+        confirmLabel: 'Drop',
+        onConfirm: () => gitAction('stashDrop', { stashRef }),
+      })
+    },
+  ];
+  let html = '';
+  items.forEach((item, idx) => {
+    if (item.separator) {
+      html += '<div class="ctx-separator"></div>';
+    } else {
+      html += '<div class="ctx-item' + (item.destructive ? ' destructive' : '') + '" data-idx="' + idx + '">' + escHtml(item.label) + '</div>';
+    }
+  });
+  menu.innerHTML = html;
+  menu.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - 200) + 'px';
   menu.classList.remove('hidden');
   menu.querySelectorAll('.ctx-item').forEach(el => {
     const idx = parseInt(el.dataset.idx);

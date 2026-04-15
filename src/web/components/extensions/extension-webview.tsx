@@ -94,29 +94,30 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     return () => { cancelled = true; clearTimeout(initialTimer); clearInterval(retryTimer); };
   }, [panel, viewType, projectName]);
 
-  // When project switches while panel exists, re-dispatch command with new project path
-  const prevProjectRef = useRef(currentProject);
+  // When panel exists, ensure correct project is loaded.
+  // On mount: dispatch command so extension can reload if project differs.
+  // On project switch: dispatch command with new project path.
+  // Extension deduplicates same-project calls (noop if already correct).
+  const prevProjectRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!panel || !viewType || !currentProject || currentProject === prevProjectRef.current) {
-      prevProjectRef.current = currentProject;
-      return;
-    }
-    prevProjectRef.current = currentProject;
-    // Resolve new project path and dispatch command
+    if (!panel || !viewType || !projectName) return;
+    // Skip if we already dispatched for this project
+    if (projectName === prevProjectRef.current) return;
+    prevProjectRef.current = projectName;
+    const command = viewType.includes(".") ? viewType : `${viewType}.view`;
     (async () => {
       try {
         const res = await fetch("/api/projects");
         const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
-        const match = json.data?.find((p: { name: string }) => p.name === currentProject);
+        const match = json.data?.find((p) => p.name === projectName);
         if (match) {
-          const command = viewType.includes(".") ? viewType : `${viewType}.view`;
           window.dispatchEvent(new CustomEvent("ext:command:execute", {
             detail: { command, args: [match.path] },
           }));
         }
       } catch {}
     })();
-  }, [panel, viewType, currentProject]);
+  }, [panel, viewType, projectName]);
 
   // Check activation errors for this extension
   const extensionId = metadata?.extensionId as string | undefined;
