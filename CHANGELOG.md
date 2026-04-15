@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.98] - 2026-04-15
+
+### Fixed
+- **Auto-start service crash recovery**: `ppm start` now starts via systemd/launchd when autostart was previously enabled, giving OS-level crash recovery (Restart=on-failure). Changed systemd from `Restart=always` to `Restart=on-failure` so `ppm stop` works cleanly.
+- **`ppm stop` vs service manager conflict**: `ppm stop --all` and hard-stop now stop the system service first (systemctl stop / launchctl bootout) before killing processes, preventing the service manager from immediately restarting the supervisor.
+- **Auto-enable autostart on first `ppm start`**: Server auto-registers with systemd/launchd after successful startup (with `skipStart` so it doesn't double-spawn).
+
+### Performance
+- **Chat input lag during streaming**: Extracted inline `onSend` and `onSlashItemsLoaded` callbacks into stable `useCallback` refs in ChatTab, so `memo(MessageInput)` correctly skips re-renders during streaming token updates.
+
 ## [0.9.97] - 2026-04-15
 
 ### Fixed
