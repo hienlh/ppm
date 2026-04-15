@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.94] - 2026-04-15
+
+### Performance
+- **Zustand useShallow**: Added shallow selectors to 17 store consumers to prevent unnecessary re-renders on unrelated state changes
+- **React.memo**: Wrapped 11 heavy components (CodeEditor, MessageBubble, ProjectBar, TerminalTab, PanelLayout, Sidebar, StatusBar, TabBar, TreeNode, etc.)
+- **Lazy loading**: MarkdownRenderer, mermaid, and CodeMirror loaded on demand via React.lazy/dynamic import
+- **Code splitting**: Vite manualChunks splits vendor-monaco, vendor-mermaid, vendor-xterm, vendor-markdown, vendor-ui into separate cached chunks
+- **Chat pagination**: Display last 50 messages with load-more button for long conversations
+- **Team message cap**: Capped team activity accumulation at 500 messages to prevent unbounded memory growth
+
 ## [0.9.93] - 2026-04-15
 
 ### Fixed
