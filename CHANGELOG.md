@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.96] - 2026-04-15
+
+### Fixed
+- **Git Graph infinite reload loop on project switch**: Extension dispose→recreate during project switch briefly set panel to undefined, triggering reload-recovery effect which dispatched the command again — infinite loop. Fixed by checking `prevProjectRef` before dispatch.
+
 ## [0.9.95] - 2026-04-15
 
 ### Fixed
