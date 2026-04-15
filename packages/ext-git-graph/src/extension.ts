@@ -133,14 +133,12 @@ function openGitGraph(
   context: ExtensionContext,
   projectPath: string,
 ): void {
-  // If panel exists and project changed, reload data in the existing panel
-  if (activePanel && activeProjectPath !== projectPath) {
-    activeProjectPath = projectPath;
-    reloadPanelData(vscode, activePanel, projectPath, context);
-    return;
+  // Always dispose stale panel to avoid browser/server desync.
+  // On page reload the browser's WS close message can be lost, leaving
+  // activePanel referencing a panel the browser no longer knows about.
+  if (activePanel) {
+    activePanel.dispose(); // fires onDidDispose → clears activePanel & timers
   }
-  // If panel exists with same project, nothing to do
-  if (activePanel) return;
 
   activeProjectPath = projectPath;
   const dirName = projectPath.split(/[\\/]/).filter(Boolean).pop() || "Git Graph";
@@ -383,19 +381,6 @@ function openGitGraph(
   });
 }
 
-/** Reload all data in existing panel for a new project path */
-async function reloadPanelData(
-  vscode: VscodeApi,
-  panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
-  projectPath: string,
-  context: ExtensionContext,
-): Promise<void> {
-  await handleRepoInfo(vscode, panel, projectPath);
-  await handleRequestCommits(vscode, panel, projectPath, context);
-  handleUncommittedStatus(vscode, panel, projectPath);
-  handleWorktrees(vscode, panel, projectPath);
-  handleStashes(vscode, panel, projectPath);
-}
 
 async function handleRepoInfo(
   vscode: VscodeApi,

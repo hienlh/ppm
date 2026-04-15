@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from "react";
 import { WsClient } from "@/lib/ws-client";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useTabStore } from "@/stores/tab-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { getAuthToken } from "@/lib/api-client";
 import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.ts";
 import { toast } from "sonner";
@@ -128,16 +129,34 @@ export function useExtensionWs(enabled = true) {
             title: msg.title,
             html: "",
           });
-          // Open a tab — use stable viewType slug as identifier (survives reload)
-          // Include projectName so reload can resolve project path for re-trigger
-          const currentProject = useTabStore.getState().currentProject;
-          useTabStore.getState().openTab({
-            type: "extension",
-            title: msg.title,
-            projectId: null,
-            closable: true,
-            metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(currentProject && { projectName: currentProject }) },
-          });
+          // Check if a tab for this viewType already exists in current grid
+          // (prevents infinite tab creation on project switch / panel recreate)
+          const baseTabId = `extension:${viewTypeSlug}`;
+          const ps = usePanelStore.getState();
+          const gridPanelIds = new Set(ps.grid.flat());
+          let existingTabId: string | null = null;
+          for (const pid of gridPanelIds) {
+            const p = ps.panels[pid];
+            if (!p) continue;
+            const t = p.tabs.find(tab => tab.id === baseTabId || tab.id.startsWith(`${baseTabId}@`));
+            if (t) { existingTabId = t.id; break; }
+          }
+          if (existingTabId) {
+            // Tab already exists — update metadata with new panelId (panel was recreated)
+            useTabStore.getState().updateTab(existingTabId, {
+              title: msg.title,
+              metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
+            });
+          } else {
+            const currentProject = useTabStore.getState().currentProject;
+            useTabStore.getState().openTab({
+              type: "extension",
+              title: msg.title,
+              projectId: null,
+              closable: true,
+              metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(currentProject && { projectName: currentProject }) },
+            });
+          }
           break;
         }
 

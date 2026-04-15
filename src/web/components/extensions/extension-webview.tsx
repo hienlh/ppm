@@ -30,7 +30,8 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const panelId = metadata?.panelId as string | undefined;
   const viewType = metadata?.viewType as string | undefined;
   const currentProject = useTabStore((s) => s.currentProject);
-  const projectName = (metadata?.projectName as string | undefined) || currentProject || undefined;
+  // Prefer currentProject (reflects URL/active project) over stale tab metadata
+  const projectName = currentProject || (metadata?.projectName as string | undefined) || undefined;
   const [timedOut, setTimedOut] = useState(false);
 
   // Match panel: prefer panelId (exact), fallback to viewType match (reload recovery)
@@ -57,6 +58,8 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Retry needed because WS connection may not be ready on first attempt
   useEffect(() => {
     if (panel || !viewType) return;
+    // Mark project as "dispatched" so project-sync effect doesn't double-dispatch
+    if (projectName) prevProjectRef.current = projectName;
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
     let cancelled = false;
     let resolvedArgs: unknown[] | null = null;
@@ -199,8 +202,10 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     return () => window.removeEventListener("ext:webview:message", handler);
   }, [resolvedPanelId]);
 
-  // Loading state — waiting for extension to create the panel
-  if (!panel) {
+  // Loading state — waiting for extension to create the panel AND deliver HTML.
+  // We must wait for HTML before mounting the iframe because browsers don't
+  // re-execute scripts when React updates the srcDoc attribute from "" to content.
+  if (!panel || !rawHtml) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-sm text-text-subtle">
         {timedOut ? (
@@ -230,6 +235,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     <div className="h-full w-full relative">
       <iframe
         ref={iframeRef}
+        key={resolvedPanelId}
         srcDoc={html}
         sandbox="allow-scripts"
         className="w-full h-full border-0 bg-white dark:bg-zinc-900"
