@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0] - 2026-04-16
+
+### Performance
+- **Pre-parsed keybinding combos**: Cache `ParsedCombo` objects on store load/override instead of calling `parseCombo()` on every keydown. Eliminates 21+ object allocations per keystroke. Extension keybindings also cached.
+- **rAF-debounced textarea auto-resize**: Batch height recalculation via `requestAnimationFrame` instead of forcing synchronous layout reflow on every keystroke. Significant improvement on mobile/tablet.
+- **Early-exit picker state updates**: Skip regex matching and parent callbacks in `updatePickerState` when text has no `/` or `@` characters. Avoids unnecessary work on most keystrokes.
+- **CSS `select-none` on chat chrome**: Non-text elements (tool cards, buttons, icons, badges) marked `select-none`; only actual message text is selectable. Reduces browser selection computation cost on Cmd+A.
+
 ## [0.9.98] - 2026-04-15
 
 ### Fixed
