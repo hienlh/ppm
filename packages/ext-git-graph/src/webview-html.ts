@@ -401,7 +401,7 @@ const NULL_VERTEX_ID = -1;
 const GRAPH_COLORS = ['#4ec9b0','#569cd6','#c586c0','#ce9178','#dcdcaa','#4fc1ff','#d7ba7d','#9cdcfe','#b5cea8','#d16969'];
 const graphConfig = {
   colours: GRAPH_COLORS,
-  grid: { x: 16, y: 28, offsetX: 8, offsetY: 14, expandY: 60 },
+  grid: { x: 16, y: 24, offsetX: 8, offsetY: 12, expandY: 60 },
   style: 'rounded'
 };
 
