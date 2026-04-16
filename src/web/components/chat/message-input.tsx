@@ -40,6 +40,12 @@ interface MessageInputProps {
   fileSelected?: FileNode | null;
   /** External files added via drag-drop on parent */
   externalFiles?: File[] | null;
+  /** External paths from file tree drag or disambiguation */
+  externalPaths?: string[] | null;
+  /** Callback when external paths have been consumed (inserted into textarea) */
+  onExternalPathsConsumed?: () => void;
+  /** Callback when OS-dropped files resolve to multiple matches (disambiguation needed) */
+  onDisambiguate?: (matches: FileNode[]) => void;
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
   /** Auto-focus textarea on mount */
@@ -67,6 +73,9 @@ export const MessageInput = memo(function MessageInput({
   onFileItemsLoaded,
   fileSelected,
   externalFiles,
+  externalPaths,
+  onExternalPathsConsumed,
+  onDisambiguate,
   initialValue,
   autoFocus,
   permissionMode,
@@ -291,6 +300,17 @@ export const MessageInput = memo(function MessageInput({
     processFiles(externalFiles);
   }, [externalFiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Handle external paths from file tree drag or disambiguation
+  useEffect(() => {
+    if (!externalPaths || externalPaths.length === 0) return;
+    const pathRefs = externalPaths.map((p) => `@${p}`).join(" ");
+    const cur = valueRef.current;
+    const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
+    writeTextareas(cur + sep + pathRefs + " ");
+    getVisibleTextarea()?.focus();
+    onExternalPathsConsumed?.();
+  }, [externalPaths]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Upload a single file to the server, return server path */
   const uploadFile = useCallback(
     async (file: File): Promise<string | null> => {
@@ -318,12 +338,34 @@ export const MessageInput = memo(function MessageInput({
     [projectName],
   );
 
-  /** Process dropped/pasted/selected files */
+  /** Process dropped/pasted/selected files — resolves paths via server when possible */
   const processFiles = useCallback(
-    (files: File[]) => {
+    async (files: File[]) => {
       for (const file of files) {
+        // Step 1: Try server-side filename resolution for all files
+        if (projectName) {
+          try {
+            const data = await api.get<{ matches: FileNode[] }>(
+              `${projectUrl(projectName)}/files/resolve?name=${encodeURIComponent(file.name)}`,
+            );
+            if (data.matches.length === 1) {
+              const cur = valueRef.current;
+              const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
+              writeTextareas(cur + sep + `@${data.matches[0]!.path} `);
+              continue;
+            }
+            if (data.matches.length > 1) {
+              onDisambiguate?.(data.matches);
+              continue;
+            }
+            // 0 matches → fall through to existing behavior
+          } catch {
+            // Resolve failed → fall through
+          }
+        }
+
+        // Step 2: Fallback — upload supported files, insert name for unsupported
         if (!isSupportedFile(file)) {
-          // Unsupported → insert file name as text
           const cur = valueRef.current;
           const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
           writeTextareas(cur + sep + file.name);
@@ -358,7 +400,7 @@ export const MessageInput = memo(function MessageInput({
       }
       (mobileTextareaRef.current ?? textareaRef.current)?.focus();
     },
-    [uploadFile, writeTextareas],
+    [uploadFile, writeTextareas, projectName, onDisambiguate],
   );
 
   const removeAttachment = useCallback((id: string) => {
@@ -566,10 +608,19 @@ export const MessageInput = memo(function MessageInput({
   const handleDrop = useCallback(
     (e: DragEvent<HTMLTextAreaElement>) => {
       e.preventDefault();
+      // Check for internal file tree drag first
+      const ppmPath = e.dataTransfer.getData("application/x-ppm-path");
+      if (ppmPath) {
+        const cur = valueRef.current;
+        const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
+        writeTextareas(cur + sep + `@${ppmPath} `);
+        getVisibleTextarea()?.focus();
+        return;
+      }
       const files = Array.from(e.dataTransfer.files);
       if (files.length > 0) processFiles(files);
     },
-    [processFiles],
+    [processFiles, writeTextareas, getVisibleTextarea],
   );
 
   const handleDragOver = useCallback((e: DragEvent<HTMLTextAreaElement>) => {

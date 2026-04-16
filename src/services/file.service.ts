@@ -127,6 +127,48 @@ class FileService {
     return nodes;
   }
 
+  /** Search project for files matching a given filename (exact, case-sensitive) */
+  resolveFilename(projectPath: string, filename: string, maxResults = 20): FileNode[] {
+    const ig = loadGitignore(projectPath);
+    const matches: FileNode[] = [];
+    this.walkForFilename(projectPath, projectPath, filename, ig, matches, maxResults);
+    return matches;
+  }
+
+  private walkForFilename(
+    rootPath: string,
+    dirPath: string,
+    targetName: string,
+    ig: Ignore,
+    results: FileNode[],
+    maxResults: number,
+  ): void {
+    if (results.length >= maxResults) return;
+    if (!existsSync(dirPath)) return;
+
+    let entries;
+    try { entries = readdirSync(dirPath, { withFileTypes: true }); }
+    catch { return; }
+
+    for (const entry of entries) {
+      if (results.length >= maxResults) return;
+      if (this.isExcluded(entry.name)) continue;
+
+      const fullPath = join(dirPath, entry.name);
+      const relPath = relative(rootPath, fullPath);
+      const relPosix = relPath.split("\\").join("/");
+
+      const checkPath = entry.isDirectory() ? `${relPosix}/` : relPosix;
+      if (ig.ignores(checkPath) || ig.ignores(relPosix)) continue;
+
+      if (entry.isDirectory()) {
+        this.walkForFilename(rootPath, fullPath, targetName, ig, results, maxResults);
+      } else if (entry.name === targetName) {
+        results.push({ name: entry.name, path: relPath, type: "file" });
+      }
+    }
+  }
+
   /** Read file content with encoding detection */
   readFile(
     projectPath: string,

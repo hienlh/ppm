@@ -57,6 +57,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   // Drag-and-drop state
   const [isDragging, setIsDragging] = useState(false);
   const [externalFiles, setExternalFiles] = useState<File[] | null>(null);
+  const [externalPaths, setExternalPaths] = useState<string[] | null>(null);
+  const [disambiguateItems, setDisambiguateItems] = useState<FileNode[] | null>(null);
   const dragCounterRef = useRef(0);
 
   // Use tab's own project, not global activeProject (keep-alive: hidden tabs must not react to switches)
@@ -285,6 +287,16 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     setSlashFilter("");
   }, []);
 
+  // --- Disambiguation picker handler (OS drag resolve with multiple matches) ---
+  const handleDisambiguate = useCallback((matches: FileNode[]) => {
+    setDisambiguateItems(matches);
+  }, []);
+
+  const handleDisambiguateSelect = useCallback((item: FileNode) => {
+    setExternalPaths([item.path]);
+    setDisambiguateItems(null);
+  }, []);
+
   // --- File picker handlers ---
   const handleFileStateChange = useCallback((visible: boolean, filter: string) => {
     setShowFilePicker(visible);
@@ -307,7 +319,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleDragEnter = useCallback((e: DragEvent) => {
     e.preventDefault();
     dragCounterRef.current++;
-    if (e.dataTransfer.types.includes("Files")) {
+    if (e.dataTransfer.types.includes("application/x-ppm-path") || e.dataTransfer.types.includes("Files")) {
       setIsDragging(true);
     }
   }, []);
@@ -328,6 +340,13 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     e.preventDefault();
     dragCounterRef.current = 0;
     setIsDragging(false);
+
+    // Check for internal file tree drag (custom MIME) first
+    const ppmPath = e.dataTransfer.getData("application/x-ppm-path");
+    if (ppmPath) {
+      setExternalPaths([ppmPath]);
+      return;
+    }
 
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
@@ -422,6 +441,15 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onClose={handleFileClose}
           visible={showFilePicker}
         />
+        {disambiguateItems && (
+          <FilePicker
+            items={disambiguateItems}
+            filter=""
+            onSelect={handleDisambiguateSelect}
+            onClose={() => setDisambiguateItems(null)}
+            visible={true}
+          />
+        )}
 
         {/* Input */}
         <MessageInput
@@ -438,6 +466,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onFileItemsLoaded={setFileItems}
           fileSelected={fileSelected}
           externalFiles={externalFiles}
+          externalPaths={externalPaths}
+          onExternalPathsConsumed={() => setExternalPaths(null)}
+          onDisambiguate={handleDisambiguate}
           permissionMode={permissionMode}
           onModeChange={setPermissionMode}
           providerId={providerId}

@@ -192,6 +192,13 @@ html, body {
   padding: 0;
 }
 
+/* Light mode: dark code blocks so github-dark-dimmed syntax colors stay readable */
+.light .markdown-content pre {
+  background: #22272e;
+  color: #adbac7;
+  border-color: #373e47;
+}
+
 .markdown-content :not(pre) > code {
   background: var(--color-background);
   padding: 0.125rem 0.25rem;

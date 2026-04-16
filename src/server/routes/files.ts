@@ -160,6 +160,21 @@ function globToPathRegex(glob: string): RegExp {
   return new RegExp(re);
 }
 
+/** GET /files/resolve?name=filename — resolve filename to project path(s) */
+fileRoutes.get("/resolve", (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const name = c.req.query("name");
+    if (!name || name.includes("/") || name.includes("\\")) {
+      return c.json(err("Invalid filename"), 400);
+    }
+    const matches = fileService.resolveFilename(projectPath, name);
+    return c.json(ok({ matches }));
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
 /** GET /files/search?q=...&caseSensitive=false — search file content with grep */
 fileRoutes.get("/search", async (c) => {
   const projectPath = c.get("projectPath");

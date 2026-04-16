@@ -89,6 +89,13 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
     onFileOpen?.();
   }
 
+  function handleDragStart(e: React.DragEvent) {
+    const pathValue = isDir ? `${node.path}/` : node.path;
+    e.dataTransfer.setData("application/x-ppm-path", pathValue);
+    e.dataTransfer.setData("text/plain", node.name);
+    e.dataTransfer.effectAllowed = "copy";
+  }
+
   const Icon = isDir
     ? isExpanded
       ? FolderOpen
@@ -107,6 +114,8 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <button
+            draggable
+            onDragStart={handleDragStart}
             onClick={handleClick}
             className={cn(
               "flex items-center w-full gap-1.5 px-2 py-1 rounded-sm text-sm",
