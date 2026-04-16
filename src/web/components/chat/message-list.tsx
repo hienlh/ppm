@@ -807,21 +807,14 @@ function ThinkingBlock({ content, isStreaming }: { content: string; isStreaming:
  * When `isStreaming=true`, shows a blinking cursor at the end.
  */
 function StreamingText({ content, animate: isStreaming, projectName }: { content: string; animate: boolean; projectName?: string }) {
-  // During active streaming, render plain text to avoid running 6 heavy markdown
-  // plugins (remarkGfm, remarkMath, remarkBreaks, rehypeRaw, rehypeKatex, rehypeHighlight)
-  // on every rAF frame. Full markdown renders once streaming ends.
-  if (isStreaming) {
-    const cleaned = stripTeammateMessages(content);
-    return (
-      <>
-        {cleaned && (
-          <div className="prose prose-invert max-w-none whitespace-pre-wrap break-words select-text">{cleaned}</div>
-        )}
+  return (
+    <>
+      <MarkdownContent content={content} projectName={projectName} isStreaming={isStreaming} />
+      {isStreaming && (
         <span className="text-text-subtle text-sm animate-pulse">Thinking...</span>
-      </>
-    );
-  }
-  return <MarkdownContent content={content} projectName={projectName} />;
+      )}
+    </>
+  );
 }
 
 /**
