@@ -383,11 +383,24 @@ button:active { background: var(--surface); }
 .toast-info { background: var(--blue); color: #fff; }
 @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
-/* Touch targets for mobile */
-@media (max-width: 768px) {
-  .commit-row { min-height: 44px; }
-  .ctx-item { padding: 10px 16px; min-height: 44px; }
-  button { min-width: 44px; min-height: 44px; }
+/* Touch devices — compact mobile layout */
+@media (pointer: coarse) {
+  .commit-row { min-height: 32px; }
+  .ctx-item { padding: 8px 12px; min-height: 36px; }
+  button { min-width: 32px; min-height: 32px; padding: 2px 6px; }
+  #app { flex-direction: column; }
+  #toolbar { order: 10; border-bottom: none; border-top: 1px solid var(--border); padding: 2px 6px; }
+  #toolbar button { font-size: 10px; }
+  .branch-trigger { font-size: 10px !important; padding: 2px 6px !important; }
+  #graph-container { order: 1; overflow-x: auto; overflow-y: auto; }
+  #find-bar { order: 0; }
+  #status-bar { order: 9; }
+  #commit-list-wrapper { min-width: 700px; }
+  #graph-header { min-width: 700px; }
+  .commit-row.header-row { min-height: 20px; }
+}
+/* Column hiding on very narrow non-touch containers (e.g. narrow desktop panel) */
+@media (max-width: 500px) and (pointer: fine) {
   .col-author, .col-hash { display: none; }
   .col-date { width: 60px; min-width: 60px; }
 }
@@ -1318,10 +1331,10 @@ function graphRender(expandIdx) {
   container.innerHTML = '';
   if (gVertices.length === 0) { if (state.graphColWidth === null) document.documentElement.style.setProperty('--graph-col-w', '40px'); return; }
 
-  // Detect mobile: match CSS breakpoint where row height changes to 44px
-  const isMobile = window.matchMedia('(max-width: 768px)').matches;
-  const cfg = isMobile
-    ? { ...graphConfig, grid: { ...graphConfig.grid, y: 44, offsetY: 22 } }
+  // Detect touch device: match CSS breakpoint where row height changes to 32px
+  const isTouch = window.matchMedia('(pointer: coarse)').matches;
+  const cfg = isTouch
+    ? { ...graphConfig, grid: { ...graphConfig.grid, y: 32, offsetY: 16 } }
     : graphConfig;
 
   const svg = document.createElementNS(SVG_NS, 'svg');

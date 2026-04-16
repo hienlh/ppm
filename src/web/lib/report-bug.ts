@@ -1,4 +1,4 @@
-import { api, projectUrl } from "./api-client";
+import { api, projectUrl, getAuthToken } from "./api-client";
 
 const REPO = "hienlh/ppm";
 
@@ -9,7 +9,8 @@ export async function buildBugReport(
 ): Promise<string> {
   let serverLogs = "(could not fetch)";
   try {
-    const res = await fetch("/api/logs/recent");
+    const token = getAuthToken();
+    const res = await fetch("/api/logs/recent", token ? { headers: { Authorization: `Bearer ${token}` } } : {});
     const json = await res.json();
     if (json.ok) serverLogs = json.data.logs || "(empty)";
   } catch {}

@@ -34,6 +34,7 @@ interface VscodeApi {
 }
 
 let baseUrl = "";
+let authToken = "";
 
 // Track active panel state for reuse across project switches
 let activePanel: ReturnType<VscodeApi["window"]["createWebviewPanel"]> | null = null;
@@ -59,6 +60,7 @@ async function saveSetting(context: ExtensionContext, key: string, value: unknow
 
 export function activate(context: ExtensionContext, vscode: VscodeApi): void {
   baseUrl = (globalThis as any).__PPM_BASE_URL__ || "";
+  authToken = (globalThis as any).__PPM_AUTH_TOKEN__ || "";
 
   context.subscriptions.push(
     vscode.commands.registerCommand("git-graph.view", async (...args: unknown[]) => {
@@ -87,10 +89,15 @@ export function deactivate(): void {
   console.log("[ext-git-graph] deactivated");
 }
 
+/** Build fetch options with auth header when token is available */
+function authHeaders(): RequestInit {
+  return authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {};
+}
+
 /** Resolve project path from PPM API as fallback */
 async function resolveProjectPath(): Promise<string | null> {
   try {
-    const res = await fetch(`${baseUrl}/api/projects`);
+    const res = await fetch(`${baseUrl}/api/projects`, authHeaders());
     const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
     if (!json.ok || !json.data || json.data.length === 0) return null;
     // Single project — safe to auto-select
@@ -104,7 +111,7 @@ async function resolveProjectPath(): Promise<string | null> {
 /** Resolve project name from path via PPM API */
 async function resolveProjectName(projectPath: string): Promise<string> {
   try {
-    const res = await fetch(`${baseUrl}/api/projects`);
+    const res = await fetch(`${baseUrl}/api/projects`, authHeaders());
     const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
     if (json.ok && json.data) {
       const match = json.data.find((p) => p.path === projectPath);
@@ -311,7 +318,7 @@ function openGitGraph(
         case "openWorktree": {
           // Find project matching worktree path and switch to it
           try {
-            const res = await fetch(`${baseUrl}/api/projects`);
+            const res = await fetch(`${baseUrl}/api/projects`, authHeaders());
             const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
             const match = json.data?.find((p) => p.path === msg.path);
             if (match) {
@@ -326,7 +333,7 @@ function openGitGraph(
               if (answer === "Yes, add project") {
                 const addRes = await fetch(`${baseUrl}/api/projects`, {
                   method: "POST",
-                  headers: { "Content-Type": "application/json" },
+                  headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
                   body: JSON.stringify({ path: msg.path, name: dirName }),
                 });
                 const addJson = await addRes.json() as { ok: boolean; data?: { name: string } };

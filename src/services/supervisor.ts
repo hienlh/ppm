@@ -15,7 +15,7 @@ import { isCompiledBinary } from "./autostart-generator.ts";
 import {
   type SupervisorState,
   getState, setState, waitForResume, triggerResume,
-  readAndDeleteCmd, readStatus, updateStatus,
+  readAndDeleteCmd, readStatus, updateStatus, writeStatus,
   STATUS_FILE, PID_FILE,
 } from "./supervisor-state.ts";
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
@@ -767,11 +767,12 @@ export async function runSupervisor(opts: {
     log("ERROR", `Unhandled rejection: ${reason}`);
   });
 
-  // Write supervisor PID + clear stale availableVersion from previous run
+  // Full write to clear any stale data from previous runs (different port, dead PIDs, etc.)
   writeFileSync(PID_FILE(), String(process.pid));
-  updateStatus({
+  writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
     state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,
+    pid: null, tunnelPid: null, shareUrl: null,
   });
 
   // Build __serve__ args

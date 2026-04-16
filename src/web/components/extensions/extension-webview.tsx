@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useTabStore } from "@/stores/tab-store";
+import { getAuthToken } from "@/lib/api-client";
 import { Loader2 } from "lucide-react";
 
 /** Inject acquireVsCodeApi() shim so extension webviews can postMessage to parent */
@@ -74,7 +75,8 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
       let args: unknown[] = [];
       if (projectName) {
         try {
-          const res = await fetch("/api/projects");
+          const token = getAuthToken();
+          const res = await fetch("/api/projects", token ? { headers: { Authorization: `Bearer ${token}` } } : {});
           const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
           const match = json.data?.find((p) => p.name === projectName);
           if (match) args = [match.path];
@@ -103,7 +105,8 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
     (async () => {
       try {
-        const res = await fetch("/api/projects");
+        const token = getAuthToken();
+        const res = await fetch("/api/projects", token ? { headers: { Authorization: `Bearer ${token}` } } : {});
         const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
         const match = json.data?.find((p) => p.name === projectName);
         if (match) {
@@ -135,7 +138,8 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
     (async () => {
       try {
-        const res = await fetch("/api/projects");
+        const token = getAuthToken();
+        const res = await fetch("/api/projects", token ? { headers: { Authorization: `Bearer ${token}` } } : {});
         const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
         const match = json.data?.find((p) => p.name === projectName);
         const args = match ? [match.path] : [];

@@ -55,7 +55,19 @@ export function updateStatus(patch: Record<string, unknown>) {
   try {
     const data = { ...readStatus(), ...patch };
     atomicWriteJson(STATUS_FILE(), data);
-  } catch {}
+  } catch (e) {
+    // Log to stderr so failures are visible in ppm.log
+    try { process.stderr.write(`[updateStatus] Failed to write status.json: ${e}\n`); } catch {}
+  }
+}
+
+/** Full write — replaces entire status.json (use at supervisor startup to clear stale data) */
+export function writeStatus(data: Record<string, unknown>) {
+  try {
+    atomicWriteJson(STATUS_FILE(), data);
+  } catch (e) {
+    try { process.stderr.write(`[writeStatus] Failed to write status.json: ${e}\n`); } catch {}
+  }
 }
 
 // ─── Command file protocol ─────────────────────────────────────────────

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getAuthToken } from "@/lib/api-client";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
@@ -93,9 +94,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     applyThemeClass(theme);
     set({ theme });
     // Save to server (fire-and-forget)
+    const token = getAuthToken();
     fetch("/api/settings/theme", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ theme }),
     }).catch(() => {});
   },
@@ -144,9 +146,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   fetchServerInfo: async () => {
     try {
+      const token = getAuthToken();
+      const authInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
       const [infoRes, themeRes] = await Promise.all([
-        fetch("/api/info"),
-        fetch("/api/settings/theme"),
+        fetch("/api/info", authInit),
+        fetch("/api/settings/theme", authInit),
       ]);
       const infoJson = await infoRes.json();
       if (infoJson.ok) {

@@ -90,11 +90,12 @@ export class WsClient {
   send(data: string | ArrayBuffer): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(data);
-    } else if (this.ws?.readyState === WebSocket.CONNECTING) {
-      console.warn("[ws] WS still CONNECTING — queuing message");
+    } else if (!this.intentionalClose) {
+      // Queue message — will be flushed when WS (re)connects
+      console.warn(`[ws] WS not open (readyState=${this.ws?.readyState ?? "no-ws"}) — queuing message`);
       this.pendingMessages.push(data);
     } else {
-      console.warn(`[ws] message dropped — readyState=${this.ws?.readyState ?? "no-ws"}`);
+      console.warn(`[ws] message dropped — WS intentionally closed`);
     }
   }
 
