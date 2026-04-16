@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useJiraStore } from "@/stores/jira-store";
 import { JiraFilterBuilder } from "./jira-filter-builder";
-import { Plus, Trash2, Play, Loader2 } from "lucide-react";
+import { Plus, Trash2, Play, Loader2, Pencil } from "lucide-react";
 import type { JiraWatcher, JiraWatcherMode } from "../../../../src/types/jira";
 
 const INTERVALS = [
@@ -19,8 +19,9 @@ const INTERVALS = [
 interface Props { configId: number }
 
 export function JiraWatcherList({ configId }: Props) {
-  const { watchers, createWatcher, deleteWatcher, toggleWatcher, pullWatcher } = useJiraStore();
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const { watchers, deleteWatcher, toggleWatcher, pullWatcher } = useJiraStore();
+  const [addOpen, setAddOpen] = useState(false);
+  const [editingWatcher, setEditingWatcher] = useState<JiraWatcher | null>(null);
   const [pulling, setPulling] = useState<number | null>(null);
 
   const handlePull = async (id: number) => {
@@ -33,7 +34,7 @@ export function JiraWatcherList({ configId }: Props) {
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium">Watchers</h4>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
             <Button size="sm" variant="outline" className="min-h-[44px]">
               <Plus className="size-4 mr-1" /> Add
@@ -41,7 +42,7 @@ export function JiraWatcherList({ configId }: Props) {
           </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader><DialogTitle>New Watcher</DialogTitle></DialogHeader>
-            <AddWatcherForm configId={configId} onDone={() => setDialogOpen(false)} />
+            <WatcherForm configId={configId} onDone={() => setAddOpen(false)} />
           </DialogContent>
         </Dialog>
       </div>
@@ -64,6 +65,9 @@ export function JiraWatcherList({ configId }: Props) {
           <span className="text-xs text-muted-foreground shrink-0">
             {w.mode === "notify" ? "notify" : "debug"} · {formatInterval(w.intervalMs)}
           </span>
+          <Button size="icon" variant="ghost" className="size-8" onClick={() => setEditingWatcher(w)}>
+            <Pencil className="size-3.5" />
+          </Button>
           <Button size="icon" variant="ghost" className="size-8" onClick={() => handlePull(w.id)} disabled={pulling === w.id}>
             {pulling === w.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
           </Button>
@@ -72,6 +76,20 @@ export function JiraWatcherList({ configId }: Props) {
           </Button>
         </div>
       ))}
+
+      {/* Edit dialog */}
+      <Dialog open={!!editingWatcher} onOpenChange={(open) => { if (!open) setEditingWatcher(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Edit Watcher</DialogTitle></DialogHeader>
+          {editingWatcher && (
+            <WatcherForm
+              configId={configId}
+              existing={editingWatcher}
+              onDone={() => setEditingWatcher(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -82,21 +100,33 @@ function formatInterval(ms: number): string {
   return `${ms / 1000}s`;
 }
 
-function AddWatcherForm({ configId, onDone }: { configId: number; onDone: () => void }) {
-  const { createWatcher } = useJiraStore();
-  const [name, setName] = useState("");
-  const [jql, setJql] = useState("");
-  const [intervalMs, setIntervalMs] = useState(120000);
-  const [mode, setMode] = useState<JiraWatcherMode>("debug");
-  const [prompt, setPrompt] = useState("");
+/** Shared form for creating and editing watchers */
+function WatcherForm({ configId, existing, onDone }: {
+  configId: number; existing?: JiraWatcher; onDone: () => void;
+}) {
+  const { createWatcher, updateWatcher } = useJiraStore();
+  const [name, setName] = useState(existing?.name ?? "");
+  const [jql, setJql] = useState(existing?.jql ?? "");
+  const [intervalMs, setIntervalMs] = useState(existing?.intervalMs ?? 120000);
+  const [mode, setMode] = useState<JiraWatcherMode>(existing?.mode ?? "debug");
+  const [prompt, setPrompt] = useState(existing?.promptTemplate ?? "");
   const [saving, setSaving] = useState(false);
+
+  const isEdit = !!existing;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !jql) return;
     setSaving(true);
     try {
-      await createWatcher({ configId, name, jql, intervalMs, mode, promptTemplate: prompt || undefined });
+      if (isEdit) {
+        await updateWatcher(existing.id, {
+          name, jql, intervalMs, mode,
+          promptTemplate: prompt || null,
+        });
+      } else {
+        await createWatcher({ configId, name, jql, intervalMs, mode, promptTemplate: prompt || undefined });
+      }
       onDone();
     } catch {}
     setSaving(false);
@@ -139,7 +169,7 @@ function AddWatcherForm({ configId, onDone }: { configId: number; onDone: () => 
         />
       </div>
       <Button type="submit" size="sm" disabled={saving || !name || !jql} className="min-h-[44px] w-full">
-        {saving ? <Loader2 className="size-4 animate-spin" /> : "Create Watcher"}
+        {saving ? <Loader2 className="size-4 animate-spin" /> : isEdit ? "Save Changes" : "Create Watcher"}
       </Button>
     </form>
   );
