@@ -4,6 +4,7 @@ import { Separator } from "@/components/ui/separator";
 import { useJiraStore } from "@/stores/jira-store";
 import { JiraConfigForm } from "./jira-config-form";
 import { JiraWatcherList } from "./jira-watcher-list";
+import { JiraResultsPanel } from "./jira-results-panel";
 
 export function JiraSettingsSection() {
   const {
@@ -46,6 +47,8 @@ export function JiraSettingsSection() {
             <>
               <Separator />
               <JiraWatcherList configId={selectedConfig.id} />
+              <Separator />
+              <JiraResultsPanel />
             </>
           )}
         </>
