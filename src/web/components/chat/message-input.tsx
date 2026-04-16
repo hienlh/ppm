@@ -32,7 +32,7 @@ interface MessageInputProps {
   projectName?: string;
   /** Slash picker state change */
   onSlashStateChange?: (visible: boolean, filter: string) => void;
-  onSlashItemsLoaded?: (items: SlashItem[], ranked?: boolean) => void;
+  onSlashItemsLoaded?: (items: SlashItem[], ranked?: boolean, recentNames?: string[]) => void;
   slashSelected?: SlashItem | null;
   /** File picker state change */
   onFileStateChange?: (visible: boolean, filter: string) => void;
@@ -169,25 +169,35 @@ export const MessageInput = memo(function MessageInput({
     setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch slash items when projectName changes
-  useEffect(() => {
+  // Fetch slash items from server
+  const fetchSlashItems = useCallback(() => {
     if (!projectName) {
       slashItemsRef.current = [];
-      onSlashItemsLoaded?.([], false);
+      onSlashItemsLoaded?.([], false, []);
       return;
     }
     api
-      .get<SlashItem[]>(`${projectUrl(projectName)}/chat/slash-items`)
-      .then((items) => {
-        slashItemsRef.current = items;
+      .get<{ items: SlashItem[]; recentNames: string[] }>(`${projectUrl(projectName)}/chat/slash-items`)
+      .then((data) => {
+        slashItemsRef.current = data.items;
         slashRankedRef.current = false;
-        onSlashItemsLoaded?.(items, false);
+        onSlashItemsLoaded?.(data.items, false, data.recentNames);
       })
       .catch(() => {
         slashItemsRef.current = [];
-        onSlashItemsLoaded?.([], false);
+        onSlashItemsLoaded?.([], false, []);
       });
-  }, [projectName]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectName, onSlashItemsLoaded]);
+
+  // Fetch slash items when projectName changes
+  useEffect(() => { fetchSlashItems(); }, [fetchSlashItems]);
+
+  // Re-fetch when cache is invalidated via refresh button
+  useEffect(() => {
+    const handler = () => fetchSlashItems();
+    window.addEventListener("ppm:slash-items-refresh", handler);
+    return () => window.removeEventListener("ppm:slash-items-refresh", handler);
+  }, [fetchSlashItems]);
 
   // Cleanup debounce timer on unmount
   useEffect(() => {
@@ -437,12 +447,12 @@ export const MessageInput = memo(function MessageInput({
       const requestId = ++slashSearchIdRef.current;
       slashDebounceRef.current = setTimeout(() => {
         api
-          .get<SlashItem[]>(`${projectUrl(projectName)}/chat/slash-items?q=${encodeURIComponent(query)}`)
-          .then((items) => {
+          .get<{ items: SlashItem[]; recentNames: string[] }>(`${projectUrl(projectName)}/chat/slash-items?q=${encodeURIComponent(query)}`)
+          .then((data) => {
             if (requestId !== slashSearchIdRef.current) return; // stale response
-            slashItemsRef.current = items;
+            slashItemsRef.current = data.items;
             slashRankedRef.current = true;
-            onSlashItemsLoaded?.(items, true);
+            onSlashItemsLoaded?.(data.items, true, data.recentNames);
           })
           .catch(() => {
             if (requestId !== slashSearchIdRef.current) return;

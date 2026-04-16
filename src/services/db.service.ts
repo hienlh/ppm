@@ -477,6 +477,20 @@ function runMigrations(database: Database): void {
     }
     database.exec("PRAGMA user_version = 16");
   }
+
+  if (current < 17) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS slash_recents (
+        project_path TEXT NOT NULL,
+        item_name    TEXT NOT NULL,
+        item_type    TEXT NOT NULL,
+        used_at      INTEGER NOT NULL,
+        use_count    INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (project_path, item_name, item_type)
+      );
+      PRAGMA user_version = 17;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,6 +1385,28 @@ function mapBotTaskRow(row: Record<string, any>): BotTask {
     startedAt: row.started_at,
     completedAt: row.completed_at,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Slash recents helpers
+// ---------------------------------------------------------------------------
+
+/** Record usage of a slash item (upsert: increment count + update timestamp) */
+export function upsertSlashRecent(projectPath: string, itemName: string, itemType: string): void {
+  getDb().query(`
+    INSERT INTO slash_recents (project_path, item_name, item_type, used_at, use_count)
+    VALUES (?, ?, ?, ?, 1)
+    ON CONFLICT (project_path, item_name, item_type)
+    DO UPDATE SET used_at = excluded.used_at, use_count = use_count + 1
+  `).run(projectPath, itemName, itemType, Date.now());
+}
+
+/** Get recently used slash item names for a project, ordered by most recent first */
+export function getSlashRecents(projectPath: string, limit = 5): string[] {
+  const rows = getDb().query(
+    "SELECT item_name FROM slash_recents WHERE project_path = ? ORDER BY used_at DESC LIMIT ?",
+  ).all(projectPath, limit) as Array<{ item_name: string }>;
+  return rows.map((r) => r.item_name);
 }
 
 // Auto-close on process exit

@@ -46,18 +46,21 @@ export function scoreFuzzy(query: string, candidate: string): FuzzyScore | null 
 
 /**
  * Search slash items by query with fuzzy matching.
+ * Recently used items get a rank boost (sorted earlier within same rank tier).
  * Returns ranked results (best match first), truncated to limit.
  */
 export function searchSlashItems(
   items: SlashItem[],
   query: string,
   limit = 20,
+  recentNames: string[] = [],
 ): SlashItem[] {
   if (!query) return items;
   // Cap query length to prevent quadratic blowup in Levenshtein
   query = query.slice(0, 50);
 
-  const scored: Array<{ item: SlashItem; rank: number; distance: number }> = [];
+  const recentSet = new Set(recentNames);
+  const scored: Array<{ item: SlashItem; rank: number; distance: number; recent: boolean }> = [];
 
   for (const item of items) {
     // Score against name and description, keep best
@@ -67,10 +70,16 @@ export function searchSlashItems(
       .filter((s): s is FuzzyScore => s !== null)
       .sort((a, b) => a.rank - b.rank || a.distance - b.distance)[0];
 
-    if (best) scored.push({ item, rank: best.rank, distance: best.distance });
+    if (best) scored.push({ item, rank: best.rank, distance: best.distance, recent: recentSet.has(item.name) });
   }
 
-  scored.sort((a, b) => a.rank - b.rank || a.distance - b.distance || a.item.name.localeCompare(b.item.name));
+  // Within same rank+distance, recent items come first
+  scored.sort((a, b) =>
+    a.rank - b.rank
+    || a.distance - b.distance
+    || (a.recent === b.recent ? 0 : a.recent ? -1 : 1)
+    || a.item.name.localeCompare(b.item.name),
+  );
 
   return scored.slice(0, limit).map((s) => s.item);
 }

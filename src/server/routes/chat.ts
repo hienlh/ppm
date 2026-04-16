@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
-import { listSlashItems, searchSlashItems } from "../../services/slash-items.service.ts";
+import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
+import { upsertSlashRecent, getSlashRecents } from "../../services/db.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle } from "../../services/db.service.ts";
@@ -21,8 +22,32 @@ chatRoutes.get("/slash-items", (c) => {
     const projectPath = c.get("projectPath");
     const q = c.req.query("q");
     let items = listSlashItems(projectPath);
-    if (q) items = searchSlashItems(items, q);
-    return c.json(ok(items));
+    const recentNames = getSlashRecents(projectPath);
+    if (q) items = searchSlashItems(items, q, 20, recentNames);
+    return c.json(ok({ items, recentNames }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** DELETE /chat/slash-items/cache — invalidate cached slash items for this project */
+chatRoutes.delete("/slash-items/cache", (c) => {
+  try {
+    invalidateCache(c.get("projectPath"));
+    return c.json(ok({ invalidated: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /chat/slash-recents — record usage of a slash item */
+chatRoutes.post("/slash-recents", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const { name, type } = await c.req.json<{ name: string; type: string }>();
+    if (!name || !type) return c.json(err("name and type required"), 400);
+    upsertSlashRecent(projectPath, name, type);
+    return c.json(ok({ recorded: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

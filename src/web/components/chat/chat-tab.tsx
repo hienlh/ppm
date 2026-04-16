@@ -38,6 +38,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [slashFilter, setSlashFilter] = useState("");
   const [slashRanked, setSlashRanked] = useState(false);
   const [slashSelected, setSlashSelected] = useState<SlashItem | null>(null);
+  const [slashRecentNames, setSlashRecentNames] = useState<string[]>([]);
 
   // File picker state
   const [fileItems, setFileItems] = useState<FileNode[]>([]);
@@ -251,9 +252,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   /** Stable callback for slash items loaded — prevents MessageInput memo break */
   const handleSlashItemsLoaded = useCallback(
-    (items: SlashItem[], ranked?: boolean) => {
+    (items: SlashItem[], ranked?: boolean, recentNames?: string[]) => {
       setSlashItems(items);
       if (ranked !== undefined) setSlashRanked(ranked);
+      if (recentNames) setSlashRecentNames(recentNames);
     },
     [],
   );
@@ -270,7 +272,13 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     setShowSlashPicker(false);
     setSlashFilter("");
     setTimeout(() => setSlashSelected(null), 50);
-  }, []);
+    // Record usage for recents (fire-and-forget)
+    if (projectName) {
+      api.post(`${projectUrl(projectName)}/chat/slash-recents`, { name: item.name, type: item.type }).catch(() => {});
+      // Optimistic update: add to front of recents
+      setSlashRecentNames((prev) => [item.name, ...prev.filter((n) => n !== item.name)].slice(0, 5));
+    }
+  }, [projectName]);
 
   const handleSlashClose = useCallback(() => {
     setShowSlashPicker(false);
@@ -404,6 +412,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onClose={handleSlashClose}
           visible={showSlashPicker}
           ranked={slashRanked}
+          recentNames={slashRecentNames}
+          projectName={projectName}
         />
         <FilePicker
           items={fileItems}

@@ -2,11 +2,13 @@ import { discoverSkillRoots } from "./discover-skill-roots.ts";
 import { loadItemsFromRoots } from "./skill-loader.ts";
 import { resolveOverrides } from "./resolve-overrides.ts";
 import { getBuiltinSlashItems } from "./builtin-commands.ts";
+import { getCached, setCache } from "./cache.ts";
 import type { SlashItem, SlashItemWithSource, DiscoveryResult } from "./types.ts";
 
 export { searchSlashItems } from "./fuzzy-search.ts";
 export { isPpmHandled, getBuiltinByName } from "./builtin-commands.ts";
 export { executeBuiltin } from "./builtin-handlers.ts";
+export { invalidateCache, invalidateAll } from "./cache.ts";
 export type { SlashItem, SlashItemWithSource, ShadowedItem, DiscoveryResult, SkillRoot, DefinitionSource } from "./types.ts";
 
 /**
@@ -34,9 +36,14 @@ export function listSlashItemsDetailed(projectPath: string): DiscoveryResult {
 
 /**
  * Backward-compatible: returns flat list of active items (no source metadata).
- * Same signature as the original `listSlashItems()`.
+ * Uses in-memory cache (5 min TTL) to avoid repeated filesystem scans.
  */
 export function listSlashItems(projectPath: string): SlashItem[] {
+  const cached = getCached(projectPath);
+  if (cached) return cached;
+
   const { active } = listSlashItemsDetailed(projectPath);
-  return active.map(({ source, rootPath, filePath, ...item }) => item);
+  const items = active.map(({ source, rootPath, filePath, ...item }) => item);
+  setCache(projectPath, items);
+  return items;
 }

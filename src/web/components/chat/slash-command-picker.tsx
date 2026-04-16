@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from "react";
-import { Sparkles, Terminal, Zap } from "lucide-react";
+import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
+import { Sparkles, Terminal, Zap, RefreshCw, Clock } from "lucide-react";
+import { api, projectUrl } from "@/lib/api-client";
 
 export interface SlashItem {
   type: "skill" | "command" | "builtin";
@@ -19,6 +20,10 @@ interface SlashCommandPickerProps {
   visible: boolean;
   /** When true, items are pre-ranked by server — skip client-side filtering */
   ranked?: boolean;
+  /** Recently used item names (most recent first) */
+  recentNames?: string[];
+  /** Project name for cache invalidation */
+  projectName?: string;
 }
 
 export function SlashCommandPicker({
@@ -28,19 +33,46 @@ export function SlashCommandPicker({
   onClose,
   visible,
   ranked,
+  recentNames = [],
+  projectName,
 }: SlashCommandPickerProps) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const filtered = ranked
-    ? items
-    : items.filter((item) => {
-        const q = filter.toLowerCase();
-        return (
-          item.name.toLowerCase().includes(q) ||
-          item.description.toLowerCase().includes(q)
-        );
-      });
+  const recentSet = useMemo(() => new Set(recentNames), [recentNames]);
+
+  // Build display list: when no filter + not ranked, put recents first
+  const displayItems = useMemo(() => {
+    let base: SlashItem[];
+    if (ranked) {
+      base = items;
+    } else if (filter) {
+      const q = filter.toLowerCase();
+      base = items.filter(
+        (item) => item.name.toLowerCase().includes(q) || item.description.toLowerCase().includes(q),
+      );
+    } else {
+      base = items;
+    }
+
+    // Reorder: recents first when no filter and not server-ranked
+    if (!filter && !ranked && recentNames.length > 0) {
+      const recents: SlashItem[] = [];
+      const rest: SlashItem[] = [];
+      for (const item of base) {
+        if (recentSet.has(item.name)) recents.push(item);
+        else rest.push(item);
+      }
+      // Sort recents by their order in recentNames (most recent first)
+      recents.sort((a, b) => recentNames.indexOf(a.name) - recentNames.indexOf(b.name));
+      return { items: [...recents, ...rest], recentCount: recents.length };
+    }
+    return { items: base, recentCount: 0 };
+  }, [items, filter, ranked, recentNames, recentSet]);
+
+  const filtered = displayItems.items;
+  const recentCount = displayItems.recentCount;
 
   // Reset selection when filter changes
   useEffect(() => {
@@ -95,49 +127,91 @@ export function SlashCommandPicker({
     return () => document.removeEventListener("keydown", handler, true);
   }, [visible, handleKeyDown]);
 
+  const handleRefresh = useCallback(() => {
+    if (!projectName || refreshing) return;
+    setRefreshing(true);
+    api.del(`${projectUrl(projectName)}/chat/slash-items/cache`)
+      .then(() => {
+        // Trigger re-fetch by dispatching custom event (MessageInput listens on projectName)
+        window.dispatchEvent(new CustomEvent("ppm:slash-items-refresh"));
+      })
+      .finally(() => setRefreshing(false));
+  }, [projectName, refreshing]);
+
   if (!visible || filtered.length === 0) return null;
 
   return (
     <div className="max-h-52 overflow-y-auto border-b border-border bg-surface">
       <div ref={listRef} className="py-1">
-        {filtered.map((item, i) => (
-          <button
-            key={`${item.type}-${item.name}`}
-            className={`flex items-start gap-3 w-full px-3 py-2 text-left transition-colors ${
-              i === selectedIndex
-                ? "bg-primary/10 text-primary"
-                : "hover:bg-surface-hover text-text-primary"
-            }`}
-            onMouseEnter={() => setSelectedIndex(i)}
-            onClick={() => onSelect(item)}
-          >
-            <span className="shrink-0 mt-0.5">
-              {item.type === "builtin" ? (
-                <Zap className="size-4 text-emerald-500" />
-              ) : item.type === "skill" ? (
-                <Sparkles className="size-4 text-amber-500" />
-              ) : (
-                <Terminal className="size-4 text-blue-500" />
+        {filtered.map((item, i) => {
+          // Show "Recent" separator before first item, "All" before first non-recent
+          const showRecentLabel = recentCount > 0 && i === 0;
+          const showAllLabel = recentCount > 0 && i === recentCount;
+
+          return (
+            <div key={`${item.type}-${item.name}`}>
+              {showRecentLabel && (
+                <div className="flex items-center justify-between px-3 pt-1 pb-0.5">
+                  <span className="text-[10px] font-medium text-text-subtle uppercase tracking-wider flex items-center gap-1">
+                    <Clock className="size-3" />
+                    Recent
+                  </span>
+                  {projectName && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
+                      className="text-text-subtle hover:text-text-primary transition-colors p-0.5 rounded"
+                      title="Refresh skill list"
+                      aria-label="Refresh skill list"
+                    >
+                      <RefreshCw className={`size-3 ${refreshing ? "animate-spin" : ""}`} />
+                    </button>
+                  )}
+                </div>
               )}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline gap-2">
-                <span className="font-medium text-sm">/{item.name}</span>
-                {item.argumentHint && (
-                  <span className="text-xs text-text-subtle">{item.argumentHint}</span>
-                )}
-                <span className="text-xs text-text-subtle capitalize ml-auto">
-                  {item.scope === "bundled" ? "PPM" : item.scope === "user" ? "global" : item.type}
+              {showAllLabel && (
+                <div className="px-3 pt-1.5 pb-0.5">
+                  <span className="text-[10px] font-medium text-text-subtle uppercase tracking-wider">All</span>
+                </div>
+              )}
+              <button
+                className={`flex items-start gap-3 w-full px-3 py-2 text-left transition-colors ${
+                  i === selectedIndex
+                    ? "bg-primary/10 text-primary"
+                    : "hover:bg-surface-hover text-text-primary"
+                }`}
+                onMouseEnter={() => setSelectedIndex(i)}
+                onClick={() => onSelect(item)}
+              >
+                <span className="shrink-0 mt-0.5">
+                  {item.type === "builtin" ? (
+                    <Zap className="size-4 text-emerald-500" />
+                  ) : item.type === "skill" ? (
+                    <Sparkles className="size-4 text-amber-500" />
+                  ) : (
+                    <Terminal className="size-4 text-blue-500" />
+                  )}
                 </span>
-              </div>
-              {item.description && (
-                <p className="text-xs text-text-subtle mt-0.5 line-clamp-2">
-                  {item.description}
-                </p>
-              )}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-medium text-sm">/{item.name}</span>
+                    {item.argumentHint && (
+                      <span className="text-xs text-text-subtle">{item.argumentHint}</span>
+                    )}
+                    <span className="text-xs text-text-subtle capitalize ml-auto">
+                      {item.scope === "bundled" ? "PPM" : item.scope === "user" ? "global" : item.type}
+                    </span>
+                  </div>
+                  {item.description && (
+                    <p className="text-xs text-text-subtle mt-0.5 line-clamp-2">
+                      {item.description}
+                    </p>
+                  )}
+                </div>
+              </button>
             </div>
-          </button>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
