@@ -70,14 +70,26 @@ class JiraWatcherService {
       const response = await searchIssues(creds, watcher.jql);
       let newCount = 0;
       for (const issue of response.issues) {
-        const { inserted, resultId } = insertResult(
-          watcher.id, issue.key,
-          issue.fields.summary, issue.fields.updated,
-        );
+        let inserted: boolean, resultId: number | null;
+        try {
+          ({ inserted, resultId } = insertResult(
+            watcher.id, issue.key,
+            issue.fields.summary, issue.fields.updated,
+          ));
+        } catch (e: any) {
+          console.error(`[jira] insertResult FK error for watcher ${watcher.id}, issue ${issue.key}:`, e.message);
+          throw e;
+        }
         if (inserted && resultId) {
           newCount++;
           if (watcher.mode === "debug") {
-            await this.createDebugTask(watcher, issue, resultId);
+            try {
+              await this.createDebugTask(watcher, issue, resultId);
+            } catch (e: any) {
+              console.error(`[jira] createDebugTask error for watcher ${watcher.id}, issue ${issue.key}:`, e.message);
+              // Don't fail entire poll for bot task creation errors
+              updateResultStatus(resultId, "failed", { aiSummary: e.message });
+            }
           } else {
             // notify-only mode
             notificationService.broadcast("done", {
