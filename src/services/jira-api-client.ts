@@ -113,7 +113,7 @@ export async function searchIssues(
   maxResults = 50,
   startAt = 0,
 ): Promise<JiraSearchResponse> {
-  return jiraFetch<JiraSearchResponse>(creds, "POST", "/rest/api/3/search/jql", {
+  return jiraFetch<JiraSearchResponse>(creds, "POST", "/rest/api/3/search", {
     jql, fields: fields.split(","), maxResults, startAt,
   });
 }
