@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useJiraStore } from "@/stores/jira-store";
@@ -14,6 +14,14 @@ export function JiraConfigForm({ projectId, existing }: Props) {
   const [baseUrl, setBaseUrl] = useState(existing?.baseUrl ?? "");
   const [email, setEmail] = useState(existing?.email ?? "");
   const [token, setToken] = useState("");
+
+  // Sync state when existing config loads or changes
+  useEffect(() => {
+    if (existing) {
+      setBaseUrl(existing.baseUrl);
+      setEmail(existing.email);
+    }
+  }, [existing?.baseUrl, existing?.email]);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
