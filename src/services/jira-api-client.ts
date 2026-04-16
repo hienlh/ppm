@@ -203,3 +203,14 @@ export async function getFieldOptions(
   return jiraFetch<Array<any>>(creds, "GET", "/rest/api/3/status")
     .then((list) => list.map((s: any) => ({ id: s.id, name: s.name })));
 }
+
+/** Fetch assignable users for filter builder */
+export async function getAssignableUsers(
+  creds: JiraCredentials,
+): Promise<Array<{ accountId: string; displayName: string }>> {
+  return jiraFetch<Array<any>>(creds, "GET", "/rest/api/3/users/search?maxResults=100")
+    .then((list) => list
+      .filter((u: any) => u.accountType === "atlassian")
+      .map((u: any) => ({ accountId: u.accountId, displayName: u.displayName })),
+    );
+}

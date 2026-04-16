@@ -9,6 +9,7 @@ interface FilterState {
   issueType: string[];
   priority: string[];
   status: string[];
+  assignee: string[];
 }
 
 function filtersToJql(filters: FilterState): string {
@@ -17,10 +18,11 @@ function filtersToJql(filters: FilterState): string {
   if (filters.issueType.length) clauses.push(`issuetype IN (${filters.issueType.map((v) => `"${v}"`).join(", ")})`);
   if (filters.priority.length) clauses.push(`priority IN (${filters.priority.map((v) => `"${v}"`).join(", ")})`);
   if (filters.status.length) clauses.push(`status IN (${filters.status.map((v) => `"${v}"`).join(", ")})`);
+  if (filters.assignee.length) clauses.push(`assignee IN (${filters.assignee.map((v) => `"${v}"`).join(", ")})`);
   return (clauses.join(" AND ") || "ORDER BY updated DESC") + (clauses.length ? " ORDER BY updated DESC" : "");
 }
 
-const EMPTY_FILTERS: FilterState = { project: [], issueType: [], priority: [], status: [] };
+const EMPTY_FILTERS: FilterState = { project: [], issueType: [], priority: [], status: [], assignee: [] };
 
 interface FieldOption { id?: string; key?: string; name: string }
 
@@ -40,9 +42,10 @@ export function JiraFilterBuilder({ value, onChange, configId }: Props) {
   const [issueTypes, setIssueTypes] = useState<FieldOption[]>([]);
   const [priorities, setPriorities] = useState<FieldOption[]>([]);
   const [statuses, setStatuses] = useState<FieldOption[]>([]);
+  const [assignees, setAssignees] = useState<FieldOption[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Fetch metadata when configId changes and builder mode active
+  // Fetch metadata when configId changes
   useEffect(() => {
     if (!configId) return;
     setLoading(true);
@@ -51,11 +54,13 @@ export function JiraFilterBuilder({ value, onChange, configId }: Props) {
       api.get<FieldOption[]>(`/api/jira/metadata/${configId}/issuetype`).catch(() => []),
       api.get<FieldOption[]>(`/api/jira/metadata/${configId}/priority`).catch(() => []),
       api.get<FieldOption[]>(`/api/jira/metadata/${configId}/status`).catch(() => []),
-    ]).then(([p, it, pr, st]) => {
+      api.get<Array<{ accountId: string; displayName: string }>>(`/api/jira/metadata/${configId}/assignees`).catch(() => []),
+    ]).then(([p, it, pr, st, as_]) => {
       setProjects(p);
       setIssueTypes(it);
       setPriorities(pr);
       setStatuses(st);
+      setAssignees(as_.map((u) => ({ id: u.accountId, name: u.displayName })));
     }).finally(() => setLoading(false));
   }, [configId]);
 
@@ -127,6 +132,12 @@ export function JiraFilterBuilder({ value, onChange, configId }: Props) {
             onAdd={addValue} onRemove={removeValue}
             options={statuses.map((s) => ({ value: s.name, label: s.name }))}
             placeholder="Select status..."
+          />
+          <FilterField
+            label="Assignee" field="assignee" filters={filters}
+            onAdd={addValue} onRemove={removeValue}
+            options={assignees.map((a) => ({ value: a.id ?? a.name, label: a.name }))}
+            placeholder="Select assignee..."
           />
         </div>
       )}

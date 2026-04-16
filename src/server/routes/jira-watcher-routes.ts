@@ -9,7 +9,7 @@ import { jiraWatcherService, clampInterval } from "../../services/jira-watcher.s
 import { getDecryptedCredentials } from "../../services/jira-config.service.ts";
 import {
   getIssue, updateIssue, getTransitions, transitionIssue,
-  searchText, getProjects, getFieldOptions,
+  searchText, getProjects, getFieldOptions, getAssignableUsers,
 } from "../../services/jira-api-client.ts";
 import { ok, err } from "../../types/api.ts";
 import type { JiraWatcherMode } from "../../types/jira.ts";
@@ -230,6 +230,13 @@ jiraWatcherRoutes.get("/metadata/:configId/projects", async (c) => {
   const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
   if (!creds) return c.json(err("Invalid config"), 404);
   try { return c.json(ok(await getProjects(creds))); }
+  catch (e: any) { return c.json(err(e.message), 502); }
+});
+
+jiraWatcherRoutes.get("/metadata/:configId/assignees", async (c) => {
+  const creds = getDecryptedCredentials(parseInt(c.req.param("configId"), 10));
+  if (!creds) return c.json(err("Invalid config"), 404);
+  try { return c.json(ok(await getAssignableUsers(creds))); }
   catch (e: any) { return c.json(err(e.message), 502); }
 });
 
