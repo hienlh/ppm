@@ -166,13 +166,25 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     };
   }, []);
 
-  // Timeout: if panel doesn't appear within 5s after extensions are ready, show error
+  // Auto-retry: if panel doesn't appear after extensions are ready,
+  // re-dispatch the command every 2s (up to 3 times) before showing error.
+  // This handles transient WS instability during initial page load where the
+  // first command dispatch may be lost due to connection cycling.
   useEffect(() => {
     if (panel) { setTimedOut(false); return; }
-    if (!extensionsReady) return; // Don't start timer until extensions are activated
-    const timer = setTimeout(() => setTimedOut(true), 5_000);
-    return () => clearTimeout(timer);
-  }, [panel, extensionsReady]);
+    if (!extensionsReady || !viewType) return;
+    let retries = 0;
+    const id = setInterval(() => {
+      retries++;
+      if (retries > 3) {
+        clearInterval(id);
+        setTimedOut(true);
+        return;
+      }
+      handleRetry();
+    }, 2_000);
+    return () => clearInterval(id);
+  }, [panel, extensionsReady, viewType, handleRetry]);
 
   // Listen for postMessage from iframe → forward to extension via WS bridge
   useEffect(() => {

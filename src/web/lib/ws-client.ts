@@ -33,9 +33,16 @@ export class WsClient {
     this.cleanup();
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const fullUrl = this.url.startsWith("ws")
-      ? this.url
-      : `${protocol}//${window.location.host}${this.url}`;
+    let fullUrl: string;
+    if (this.url.startsWith("ws")) {
+      fullUrl = this.url;
+    } else if (import.meta.env.DEV && this.url.startsWith("/ws/")) {
+      // In dev mode, connect directly to the backend server (port 8081) to
+      // bypass Vite's dev proxy which has unreliable WebSocket upgrade handling.
+      fullUrl = `ws://${window.location.hostname}:8081${this.url}`;
+    } else {
+      fullUrl = `${protocol}//${window.location.host}${this.url}`;
+    }
 
     this.ws = new WebSocket(fullUrl);
 

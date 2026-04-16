@@ -178,19 +178,22 @@ export function App() {
 
       useProjectStore.getState().setActiveProject(target);
 
+      // Switch panel layout to target project BEFORE opening URL tabs.
+      // Without this, autoOpenFromUrl creates tabs in the __global__ layout
+      // which get lost when the switchProject effect fires after render.
+      useTabStore.getState().switchProject(target.name);
+
       // Auto-open target tab from URL (type-based)
-      queueMicrotask(() => {
-        if (urlState.tabType) {
-          autoOpenFromUrl(urlState.tabType, urlState.tabIdentifier, target!.name);
-        }
-        // Legacy: ?openChat= query param
-        if (urlState.openChat) {
-          autoOpenFromUrl("chat", urlState.openChat, target!.name);
-          const url = new URL(window.location.href);
-          url.searchParams.delete("openChat");
-          window.history.replaceState(null, "", url.pathname);
-        }
-      });
+      if (urlState.tabType) {
+        autoOpenFromUrl(urlState.tabType, urlState.tabIdentifier, target!.name);
+      }
+      // Legacy: ?openChat= query param
+      if (urlState.openChat) {
+        autoOpenFromUrl("chat", urlState.openChat, target!.name);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("openChat");
+        window.history.replaceState(null, "", url.pathname);
+      }
     });
   }, [authState, fetchProjects]);
 
