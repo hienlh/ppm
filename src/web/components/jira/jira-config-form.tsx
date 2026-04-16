@@ -17,6 +17,7 @@ export function JiraConfigForm({ projectId, existing }: Props) {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
 
   const handleSave = async (e: FormEvent) => {
     e.preventDefault();
@@ -32,11 +33,13 @@ export function JiraConfigForm({ projectId, existing }: Props) {
   const handleTest = async () => {
     setTesting(true);
     setTestResult(null);
+    setTestError(null);
     try {
       const ok = await testConnection(projectId);
       setTestResult(ok ? "ok" : "fail");
-    } catch {
+    } catch (e: any) {
       setTestResult("fail");
+      setTestError(e?.message ?? "Connection failed");
     }
     setTesting(false);
   };
@@ -90,6 +93,9 @@ export function JiraConfigForm({ projectId, existing }: Props) {
         {testResult === "ok" && <CheckCircle className="size-4 text-green-500" />}
         {testResult === "fail" && <AlertCircle className="size-4 text-red-500" />}
       </div>
+      {testError && (
+        <p className="text-xs text-red-500 break-all">{testError}</p>
+      )}
     </form>
   );
 }

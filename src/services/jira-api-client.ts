@@ -111,11 +111,13 @@ export async function searchIssues(
   jql: string,
   fields = DEFAULT_FIELDS,
   maxResults = 50,
-  startAt = 0,
+  nextPageToken?: string,
 ): Promise<JiraSearchResponse> {
-  return jiraFetch<JiraSearchResponse>(creds, "POST", "/rest/api/3/search", {
-    jql, fields: fields.split(","), maxResults, startAt,
-  });
+  const body: Record<string, unknown> = {
+    jql, fields: fields.split(","), maxResults,
+  };
+  if (nextPageToken) body.nextPageToken = nextPageToken;
+  return jiraFetch<JiraSearchResponse>(creds, "POST", "/rest/api/3/search/jql", body);
 }
 
 export async function getIssue(
@@ -155,7 +157,8 @@ export async function transitionIssue(
 }
 
 export async function testConnection(creds: JiraCredentials): Promise<boolean> {
-  await searchIssues(creds, "ORDER BY created DESC", "summary", 1);
+  // Use bounded JQL — unbounded queries return 400 on /search/jql
+  await searchIssues(creds, "created >= -30d ORDER BY created DESC", "summary", 1);
   return true;
 }
 
