@@ -203,6 +203,10 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **executeDelegation()** | Task execution in isolated session, result capture | (async function, manages ChatService + result storage) |
 | **PPMBotFormatterService** | Markdown → Telegram HTML + chunking | formatMarkdown, chunkMessage |
 | **PPMBotStreamerService** | ChatEvent → progressive Telegram edits | streamMessageEdits |
+| **JiraConfigService** | Jira config CRUD, token encryption | getConfigByProjectId, upsertConfig, deleteConfig, getDecryptedCredentials |
+| **JiraWatcherDbService** | Jira watchers + results queries | getAllEnabledWatchers, insertResult, updateResultStatus, getWatcherById |
+| **JiraApiClient** | Jira Cloud REST API v3 integration | searchIssues, getIssue, updateIssue, testConnection, getProjects, getFieldOptions |
+| **JiraWatcherService** | Poll orchestrator, timer management | startAll, startWatcher, pollWatcher, syncResultStatuses |
 | **ClawBotService** | LEGACY Telegram bot (deprecated v0.9.11) | (direct-chat model, replaced by coordinator) |
 | **ClawBotTelegramService** | LEGACY Telegram API | (deprecated v0.9.11) |
 | **ClawBotSessionService** | LEGACY chatID mapping | (deprecated v0.9.11) |
@@ -441,6 +445,97 @@ Telegram → ClawBotTelegramService (polling) → ClawBotService (orchestrator)
 
 ---
 
+### Jira Watcher Auto-Debug Service
+**Component:** Jira Cloud REST API poller + auto-debugging orchestrator
+
+**Responsibilities:**
+- Poll Jira Cloud per-project on configurable interval (30s–60m)
+- Match issues via JQL filters (status, project key, priority, etc.)
+- Auto-trigger PPMBot debug tasks on new matches
+- Track results (pending/running/done/failed) in SQLite
+- Notify via Telegram when analysis completes
+- Rate-limit aware (tracks Jira API quota, auto-backoff 429 responses)
+
+**Architecture:**
+```
+Jira Cloud API ← JiraWatcherService (poller, 30s–60m intervals per watcher)
+                 ├─ searchIssues(jql) → issue list
+                 ├─ insertResult() → SQLite jira_watch_results
+                 ├─ createBotTask() → bot_tasks row + task UUID
+                 └─ notificationService.broadcast() → Telegram chat
+
+JiraWatcherService (sync loop, 30s)
+ └─ syncResultStatuses() — poll bot_tasks, update result.status
+     ├─ status=completed → mark result done, fetch AI summary
+     └─ status=failed → mark result failed, store error msg
+```
+
+**Services (src/services/):**
+- **JiraConfigService** — Config CRUD, AES-256 token encryption/decryption, per-project setup
+- **JiraWatcherDbService** — Watchers + results table queries, enabled/disabled toggle, last polled tracking
+- **JiraApiClient** — Jira Cloud REST v3 (search, getIssue, transitions, test connection), rate limit state, backoff logic
+- **JiraWatcherService** — Main poller, timer management (startAll, startWatcher, stopWatcher, pollWatcher), prompt templating, debug task creation, result status sync
+
+**Database Schema (v18):**
+- `jira_config` — id, project_id (FK), base_url, email, api_token_encrypted, created_at
+- `jira_watchers` — id, jira_config_id (FK), name, jql, prompt_template, enabled, mode ("debug"|"notify"), interval_ms, last_polled_at, created_at
+- `jira_watch_results` — id, watcher_id, issue_key, issue_summary, issue_updated, session_id (FK bot_tasks.id), status ("pending"|"running"|"done"|"failed"), ai_summary, source ("watcher"|"manual"), deleted, created_at
+
+**API Routes (src/server/routes/jira*.ts):**
+```
+POST   /api/jira/config                    — Create/update config (baseUrl, email, token)
+GET    /api/jira/config                    — Get config for active project
+DELETE /api/jira/config                    — Delete config
+POST   /api/jira/config/test               — Test Jira connection
+GET    /api/jira/watchers                  — List watchers for config
+POST   /api/jira/watchers                  — Create watcher (name, jql, mode, interval)
+PATCH  /api/jira/watchers/:id              — Update watcher
+DELETE /api/jira/watchers/:id              — Delete watcher (soft delete results)
+POST   /api/jira/watchers/:id/enable       — Enable/disable watcher
+POST   /api/jira/watchers/:id/poll         — Trigger poll now
+GET    /api/jira/results                   — List results (paginated, filterable)
+DELETE /api/jira/results/:id               — Delete result (soft delete)
+GET    /api/jira/search                    — Search Jira (for filter builder UI)
+GET    /api/jira/ticket/:key               — Get full ticket details
+GET    /api/jira/metadata                  — Fetch projects, issue types, priorities, statuses
+```
+
+**CLI Commands (src/cli/commands/jira*.ts):**
+```
+ppm jira config set <project> --url <url> --email <email> --token <token>
+ppm jira config show <project>
+ppm jira config remove <project>
+ppm jira config test <project>
+ppm jira watch add <project> <name> --jql <jql> [--mode debug|notify] [--interval 300000]
+ppm jira watch list <project>
+ppm jira watch enable/disable <project> <watcherId>
+ppm jira watch remove <project> <watcherId>
+ppm jira watch test <project> <watcherId>
+ppm jira watch pull <project> <watcherId>
+ppm jira results list <project> [--limit 50]
+ppm jira results delete <project> <resultId>
+ppm jira track <issue-key>                 — Manually track ticket (insert result, create debug task)
+```
+
+**Frontend (src/web/components/jira/):**
+- **jira-settings-tab.tsx** — Config form, test button, token input
+- **jira-filter-builder.tsx** — JQL builder UI (projects, issue types, priorities, statuses, custom JQL)
+- **jira-watcher-list.tsx** — List watchers, enable/disable, edit, delete, poll now, interval controls
+- **jira-results-panel.tsx** — Results table (issue key, status, summary, AI summary), delete, detail dialog
+- **jira-ticket-detail.tsx** — Modal with full ticket, AI analysis, transitions (if debug mode)
+- **jira-store.ts** — Zustand (configs, watchers, results, filters, settings)
+
+**Key Design Decisions:**
+1. **Interval per watcher** — Different JQL queries can poll at different rates (debug vs notify)
+2. **Mode switching** — debug = create bot task; notify = send telegram-only notification
+3. **Result deduplication** — insertResult() checks issue_key + watcher_id, only inserts if new
+4. **Rate limit aware** — getRateLimitState() tracks Jira API quota, pauseConfigWatchers() backs off on 429
+5. **Prompt templating** — Support {issue_key}, {summary}, {description}, {status}, {priority} placeholders
+6. **Async status sync** — Result status synced from bot_tasks every 30s (decoupled from poll)
+7. **Soft deletes** — Results marked deleted=1 (preserve history, don't lose tracking)
+
+---
+
 ### Data Access Layer (SQLite + Filesystem + Git)
 **Components:** SQLite via bun:sqlite, direct filesystem access, simple-git wrapper
 
@@ -452,7 +547,7 @@ Telegram → ClawBotTelegramService (polling) → ClawBotService (orchestrator)
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
-- SQLite: WAL mode, foreign keys, lazy init, schema v13 (13 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats)
+- SQLite: WAL mode, foreign keys, lazy init, schema v18 (16 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, bot_tasks)
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)

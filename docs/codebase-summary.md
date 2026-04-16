@@ -17,8 +17,10 @@
 ```
 src/
 ├── cli/
-│   ├── commands/                # 14 CLI commands (start, stop, init, config, chat, db, git, ext, etc.)
-│   │   └── ext-cmd.ts           # Extension CLI (install/remove/list/enable/disable/dev)
+│   ├── commands/                # 16 CLI command groups (start, stop, init, config, chat, db, git, ext, jira, etc.)
+│   │   ├── ext-cmd.ts           # Extension CLI (install/remove/list/enable/disable/dev)
+│   │   ├── jira-cmd.ts          # Jira config commands (set, show, remove, test)
+│   │   └── jira-watcher-cmd.ts  # Jira watcher commands (add, list, enable, disable, remove, test, pull)
 │   └── utils/
 │       └── project-resolver.ts  # Resolve project name -> path
 ├── server/
@@ -36,6 +38,9 @@ src/
 │   │   ├── mcp.ts               # MCP server CRUD + import (GET, POST, PUT, DELETE)
 │   │   ├── extensions.ts        # Extension install/remove/list/enable/disable, contributions
 │   │   ├── upgrade.ts           # Version checking, upgrade
+│   │   ├── jira.ts              # Jira routes barrel (config, watchers)
+│   │   ├── jira-config-routes.ts # Jira config API (CRUD, test connection)
+│   │   ├── jira-watcher-routes.ts # Jira watcher API (CRUD, poll, results, search, metadata)
 │   │   └── static.ts            # Serve frontend (dist/web)
 │   ├── helpers/
 │   │   └── resolve-project.ts   # Resolve project from request params
@@ -92,7 +97,11 @@ src/
 │   │   ├── sqlite-adapter.ts
 │   │   ├── postgres-adapter.ts
 │   │   └── readonly-check.ts    # CTE-safe readonly validation
-│   └── ... (20+ other services)
+│   ├── jira-api-client.ts       # Jira Cloud REST API v3 (search, getIssue, transitions)
+│   ├── jira-config.service.ts   # Jira config CRUD, AES-256 token encryption
+│   ├── jira-watcher-db.service.ts # Watchers + results table queries
+│   ├── jira-watcher.service.ts  # Poll orchestrator, timer management, result sync
+│   └── ... (16+ other services)
 ├── lib/
 │   ├── account-crypto.ts        # AES-256 encryption
 │   └── network-utils.ts
@@ -105,11 +114,13 @@ src/
 │   ├── mcp.ts                   # McpServerConfig, McpTransportType, validation
 │   ├── extension.ts             # ExtensionManifest, ExtensionInfo, RpcMessage, ExtensionContext
 │   ├── ppmbot.ts                # BotTask, TelegramUpdate, PPMBotCommand (coordinator types)
+│   ├── jira.ts                  # JiraConfig, JiraWatcher, JiraWatchResult, JiraIssue, JiraCredentials
 │   ├── project.ts
 │   └── terminal.ts
 └── web/                         # React frontend (Vite + React 18)
     ├── app.tsx                  # Root component
-    ├── stores/                  # Zustand state (6 stores)
+    ├── stores/                  # Zustand state (7 stores)
+    │   └── jira-store.ts         # ADDED: Jira config, watchers, results, filters state
     ├── hooks/                   # Custom hooks (9 hooks)
     ├── components/
     │   ├── chat/
@@ -122,7 +133,15 @@ src/
     │   ├── settings/
     │   │   ├── ai-settings-section.tsx # UPDATED: Per-provider tabs, dynamic model dropdowns
     │   │   ├── mcp-settings-section.tsx # ADDED: MCP servers tab (list, add, edit, delete)
-    │   │   └── mcp-server-dialog.tsx    # ADDED: Add/Edit MCP server dialog
+    │   │   ├── mcp-server-dialog.tsx    # ADDED: Add/Edit MCP server dialog
+    │   │   ├── settings-tab.tsx # UPDATED: Added Jira Watcher tab
+    │   │   └── jira/                  # ADDED: Jira Watcher components
+    │   │       ├── jira-settings-tab.tsx
+    │   │       ├── jira-config-form.tsx
+    │   │       ├── jira-filter-builder.tsx
+    │   │       ├── jira-watcher-list.tsx
+    │   │       ├── jira-results-panel.tsx
+    │   │       └── jira-ticket-detail.tsx
     │   ├── database/
     │   ├── editor/
     │   ├── explorer/
@@ -222,11 +241,16 @@ src/
 │   ├── test-setup.ts                # Disable auth for tests
 │   ├── unit/
 │   │   ├── providers/               # Mock provider, SDK tests
+│   │   ├── jira-watcher-poll.test.ts # ADDED: Jira watcher polling, rate limit backoff
 │   │   └── services/                # Chat, config, db, session-log, push-notification tests
 │   └── integration/
 │       ├── claude-agent-sdk-integration.test.ts
 │       ├── sqlite-migration.test.ts # SQLite migration validation
+│       ├── jira-config.test.ts # ADDED: Jira config CRUD, token encryption
+│       ├── jira-migration.test.ts # ADDED: Schema v18 migration validation
+│       ├── jira-watcher-db.test.ts # ADDED: Watcher + result queries
 │       ├── api/                     # Chat route tests
+│       ├── api/jira-routes.test.ts # ADDED: Jira API endpoints
 │       └── ws/                      # WebSocket tests
 ├── scripts/
 │   ├── build.ts                     # Build CLI binary (bun build --compile)

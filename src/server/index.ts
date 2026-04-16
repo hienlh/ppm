@@ -150,6 +150,10 @@ app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
 
+// Jira watcher
+import { jiraRoutes } from "./routes/jira.ts";
+app.route("/api/jira", jiraRoutes);
+
 // Agent Teams management
 import { teamRoutes } from "./routes/teams.ts";
 app.route("/api/teams", teamRoutes);
@@ -649,6 +653,17 @@ if (process.argv.includes("__serve__")) {
     .catch((e) => {
       console.error("[ppmbot] Startup error:", e);
     });
+
+  // Start Jira watchers (non-blocking, cleanup on exit)
+  import("../services/jira-watcher.service.ts")
+    .then(({ jiraWatcherService }) => {
+      jiraWatcherService.startAll().catch((e) => {
+        console.error("[jira] Failed to start watchers:", (e as Error).message);
+      });
+      process.on("SIGTERM", () => jiraWatcherService.stopAll());
+      process.on("SIGINT", () => jiraWatcherService.stopAll());
+    })
+    .catch(() => {});
 
   console.log(`Server child ready on port ${port}`);
 }

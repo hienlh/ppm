@@ -157,4 +157,7 @@ registerDbCommands(program);
 const { registerBotCommands } = await import("./cli/commands/bot-cmd.ts");
 registerBotCommands(program);
 
+const { registerJiraCommands } = await import("./cli/commands/jira-cmd.ts");
+await registerJiraCommands(program);
+
 program.parse();

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-const CURRENT_SCHEMA_VERSION = 15;
+const CURRENT_SCHEMA_VERSION = 18;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -489,6 +489,57 @@ function runMigrations(database: Database): void {
         PRIMARY KEY (project_path, item_name, item_type)
       );
       PRAGMA user_version = 17;
+    `);
+  }
+
+  if (current < 18) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS jira_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+        base_url TEXT NOT NULL,
+        email TEXT NOT NULL,
+        api_token_encrypted TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS jira_watchers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        jira_config_id INTEGER NOT NULL REFERENCES jira_config(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        jql TEXT NOT NULL,
+        prompt_template TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        mode TEXT NOT NULL DEFAULT 'debug',
+        interval_ms INTEGER NOT NULL DEFAULT 120000,
+        last_polled_at TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_jira_watchers_config
+        ON jira_watchers(jira_config_id);
+      CREATE INDEX IF NOT EXISTS idx_jira_watchers_enabled
+        ON jira_watchers(enabled);
+
+      CREATE TABLE IF NOT EXISTS jira_watch_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        watcher_id INTEGER REFERENCES jira_watchers(id) ON DELETE CASCADE,
+        issue_key TEXT NOT NULL,
+        issue_summary TEXT,
+        issue_updated TEXT,
+        session_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        ai_summary TEXT,
+        source TEXT NOT NULL DEFAULT 'watcher',
+        deleted INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(watcher_id, issue_key, issue_updated)
+      );
+      CREATE INDEX IF NOT EXISTS idx_jira_results_watcher
+        ON jira_watch_results(watcher_id, deleted);
+      CREATE INDEX IF NOT EXISTS idx_jira_results_status
+        ON jira_watch_results(status);
+
+      PRAGMA user_version = 18;
     `);
   }
 }

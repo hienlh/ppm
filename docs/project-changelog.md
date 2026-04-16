@@ -6,9 +6,25 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Frontend Memory Optimization + Git-Graph Stash Management, Rebase, Conflict Resolution + Worktree CRUD
+## [Unreleased] — Jira Watcher Auto-Debug + Frontend Memory Optimization + Git-Graph Stash Management, Rebase, Conflict Resolution + Worktree CRUD
 
 ### Added
+- **Jira Watcher Auto-Debug** — Poll Jira Cloud per-project, auto-debug matched tickets via PPMBot
+  - Jira Cloud REST API integration (search, get issue, transitions, metadata discovery)
+  - Per-project config (base URL, email, AES-256 token encryption)
+  - JQL-based watchers with two modes: debug (auto-create bot task) and notify-only (Telegram notification)
+  - Configurable poll intervals (30s–60m per watcher, interval clamping)
+  - Rate limit aware (tracks Jira API quota, auto-backoff 429 responses)
+  - Result tracking (pending/running/done/failed status, AI summary persistence)
+  - Async status sync (bot task results reflected in watch results every 30s)
+  - Prompt templating ({issue_key}, {summary}, {description}, {status}, {priority} substitution)
+  - Soft deletes (preserve result history, don't lose tracking)
+  - Frontend filter builder UI (projects, issue types, priorities, statuses, custom JQL)
+  - CLI commands: `ppm jira config {set,show,remove,test}`, `ppm jira watch {add,list,enable,disable,remove,test,pull}`
+  - API routes: /api/jira/config/*, /api/jira/{watchers,results,search,ticket,metadata}
+  - 3 SQLite tables (v18): jira_config, jira_watchers, jira_watch_results
+  - 44 tests (integration + unit, JQL builder, result sync, credential encryption, rate limiting)
+
 - **Frontend Memory & Performance Optimizations** — Reduce re-renders, lazy-load heavy components, code splitting
   - **useShallow pattern:** All destructured Zustand store calls now use `useShallow` (36 usage sites) to prevent re-renders on object mutations
   - **React.memo wrapping:** 10 heavy components memoized (CodeEditor, MessageBubble, ProjectBar, ProjectAvatar, TerminalTab, PanelLayout, Sidebar, StatusBar, StatusBarEntry, TabBar, TreeNode)

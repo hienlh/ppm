@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, BellOff, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe, Plug, Puzzle,
+  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import { ProxySettingsSection } from "./proxy-settings-section";
 import { McpSettingsSection } from "./mcp-settings-section";
 import { ExtensionManagerSection } from "./extension-manager-section";
 import { PPMBotSettingsSection } from "./ppmbot-settings-section";
+import { JiraSettingsSection } from "../jira/jira-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
@@ -29,12 +30,13 @@ const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
 const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
   !window.matchMedia("(display-mode: standalone)").matches;
 
-type SettingsCategory = "ai" | "notifications" | "clawbot" | "proxy" | "shortcuts" | "mcp" | "extensions";
+type SettingsCategory = "ai" | "notifications" | "clawbot" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { value: "notifications", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
   { value: "clawbot", label: "PPMBot", subtitle: "Telegram AI bot", icon: Bot },
+  { value: "jira", label: "Jira Watcher", subtitle: "Auto-debug Jira tickets", icon: Bug },
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { value: "mcp", label: "MCP Servers", subtitle: "Model Context Protocol tools", icon: Plug },
@@ -90,6 +92,7 @@ export function SettingsTab() {
             {activeCategory === "ai" && <AISettingsSection compact />}
             {activeCategory === "notifications" && <NotificationsContent isSubscribed={isSubscribed} loading={loading} permission={permission} pushError={pushError} subscribe={subscribe} unsubscribe={unsubscribe} />}
             {activeCategory === "clawbot" && <PPMBotSettingsSection />}
+            {activeCategory === "jira" && <JiraSettingsSection />}
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
             {activeCategory === "mcp" && <McpSettingsSection />}
