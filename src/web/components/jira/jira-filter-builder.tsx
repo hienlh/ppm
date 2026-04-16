@@ -164,14 +164,17 @@ function FilterField({ label, field, filters, onAdd, onRemove, options, placehol
     <div>
       <label className="text-xs text-muted-foreground">{label}</label>
       <div className="flex items-center gap-1 flex-wrap">
-        {filters[field].map((v) => (
-          <span key={v} className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-primary/10 text-xs">
-            {v}
-            <button type="button" onClick={() => onRemove(field, v)} className="hover:text-destructive">
-              <X className="size-3" />
-            </button>
-          </span>
-        ))}
+        {filters[field].map((v) => {
+          const displayLabel = options.find((o) => o.value === v)?.label ?? v;
+          return (
+            <span key={v} className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-primary/10 text-xs">
+              {displayLabel}
+              <button type="button" onClick={() => onRemove(field, v)} className="hover:text-destructive">
+                <X className="size-3" />
+              </button>
+            </span>
+          );
+        })}
         {available.length > 0 ? (
           <Select onValueChange={(v) => onAdd(field, v)}>
             <SelectTrigger className="h-7 w-auto min-w-[120px] text-xs">
