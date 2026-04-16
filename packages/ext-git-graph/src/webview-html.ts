@@ -242,7 +242,7 @@ button:active { background: var(--surface); }
 
 /* Graph container */
 #graph-container { flex: 1; overflow-y: auto; overflow-x: hidden; }
-.commit-row { display: flex; align-items: center; cursor: pointer; min-height: 24px; padding: 0 6px; font-size: 12px; }
+.commit-row { display: flex; align-items: center; cursor: pointer; height: 24px; padding: 0 6px; font-size: 12px; box-sizing: border-box; overflow: hidden; }
 .commit-row:hover { background: var(--surface-hover); }
 .commit-row.selected { background: var(--selected); }
 .commit-row.header-row { background: var(--surface); cursor: default; font-weight: 600; font-size: 10px; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--border); min-height: 22px; }
@@ -385,7 +385,7 @@ button:active { background: var(--surface); }
 
 /* Touch devices — compact mobile layout */
 @media (pointer: coarse) {
-  .commit-row { min-height: 32px; }
+  .commit-row { height: 32px; }
   .ctx-item { padding: 8px 12px; min-height: 36px; }
   button { min-width: 32px; min-height: 32px; padding: 2px 6px; }
   #app { flex-direction: column; }
@@ -398,6 +398,7 @@ button:active { background: var(--surface); }
   #commit-list-wrapper { min-width: 700px; }
   #graph-header { min-width: 700px; }
   .commit-row.header-row { min-height: 20px; }
+  .detail-panel { order: 8; max-height: 35vh; }
 }
 /* Column hiding on very narrow non-touch containers (e.g. narrow desktop panel) */
 @media (max-width: 500px) and (pointer: fine) {
@@ -1331,11 +1332,11 @@ function graphRender(expandIdx) {
   container.innerHTML = '';
   if (gVertices.length === 0) { if (state.graphColWidth === null) document.documentElement.style.setProperty('--graph-col-w', '40px'); return; }
 
-  // Detect touch device: match CSS breakpoint where row height changes to 32px
-  const isTouch = window.matchMedia('(pointer: coarse)').matches;
-  const cfg = isTouch
-    ? { ...graphConfig, grid: { ...graphConfig.grid, y: 32, offsetY: 16 } }
-    : graphConfig;
+  // Measure actual row height (may be fractional due to browser zoom)
+  // and use it for SVG grid to prevent cumulative sub-pixel drift
+  const firstRow = document.querySelector('#commit-list .commit-row');
+  const rowH = firstRow ? firstRow.getBoundingClientRect().height : graphConfig.grid.y;
+  const cfg = { ...graphConfig, grid: { ...graphConfig.grid, y: rowH, offsetY: rowH / 2 } };
 
   const svg = document.createElementNS(SVG_NS, 'svg');
   const group = document.createElementNS(SVG_NS, 'g');

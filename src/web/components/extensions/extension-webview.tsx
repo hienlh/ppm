@@ -34,6 +34,8 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Prefer currentProject (reflects URL/active project) over stale tab metadata
   const projectName = currentProject || (metadata?.projectName as string | undefined) || undefined;
   const [timedOut, setTimedOut] = useState(false);
+  // Track whether extensions are activated (contributions received from WS)
+  const extensionsReady = useExtensionStore((s) => s.contributions !== null);
 
   // Match panel: prefer panelId (exact), fallback to viewType match (reload recovery)
   const panel = useExtensionStore((s) => {
@@ -59,11 +61,11 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const prevProjectRef = useRef<string | null>(null);
 
   // On reload: resolve project path and dispatch command once.
-  // No retry — if it fails, user closes tab and reopens to retry.
+  // Wait for extensions to be activated (contributions received) before dispatching.
   // Skip if project-sync effect already dispatched for this project
   // (panel is briefly undefined during dispose→recreate transition).
   useEffect(() => {
-    if (panel || !viewType) return;
+    if (panel || !viewType || !extensionsReady) return;
     // If we already dispatched for this project (via project-sync effect),
     // don't dispatch again — the panel is just temporarily missing.
     if (projectName && projectName === prevProjectRef.current) return;
@@ -88,10 +90,9 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
       }));
     }
 
-    // Short delay to let WS connect after page load
-    const timer = setTimeout(dispatch, 500);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [panel, viewType, projectName]);
+    dispatch();
+    return () => { cancelled = true; };
+  }, [panel, viewType, projectName, extensionsReady]);
 
   // When panel exists, ensure correct project is loaded.
   // On mount: dispatch command so extension can reload if project differs.
@@ -165,12 +166,13 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     };
   }, []);
 
-  // Timeout: if panel doesn't appear within 5s, show error
+  // Timeout: if panel doesn't appear within 5s after extensions are ready, show error
   useEffect(() => {
     if (panel) { setTimedOut(false); return; }
+    if (!extensionsReady) return; // Don't start timer until extensions are activated
     const timer = setTimeout(() => setTimedOut(true), 5_000);
     return () => clearTimeout(timer);
-  }, [panel]);
+  }, [panel, extensionsReady]);
 
   // Listen for postMessage from iframe → forward to extension via WS bridge
   useEffect(() => {
