@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.5] - 2026-04-16
+
+### Fixed
+- **Stale status.json after supervisor restart**: `ppm status` showed dead PIDs when supervisor restarted on a different port. Supervisor startup now does a full write (not patch) to clear stale data from previous runs. `updateStatus()` logs errors instead of silently swallowing them.
+- **Auth token for extensions**: Extensions (git-graph) and frontend components now include Bearer auth token in all fetch() calls to PPM API, fixing 401 errors when auth is enabled.
+- **WS message queuing**: `WsClient.send()` queues messages during reconnection instead of dropping them.
+
+### Improved
+- **Git-graph touch layout**: Uses `pointer: coarse` media query instead of `max-width: 768px` for more accurate touch device detection with compact row sizing.
+
 ## [0.10.4] - 2026-04-16
 
 ### Fixed
