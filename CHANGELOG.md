@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.10.4] - 2026-04-16
+
+### Fixed
+- **Restore markdown rendering during streaming**: Reverted plain-text bypass that prevented markdown (tables, headers, code blocks) from rendering while assistant is streaming. Full `MarkdownRenderer` now runs during streaming again.
+
 ## [0.10.3] - 2026-04-16
 
 ### Performance
