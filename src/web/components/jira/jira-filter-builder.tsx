@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { X } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { X, Loader2 } from "lucide-react";
+import { api } from "@/lib/api-client";
 
 interface FilterState {
   project: string[];
@@ -21,15 +22,42 @@ function filtersToJql(filters: FilterState): string {
 
 const EMPTY_FILTERS: FilterState = { project: [], issueType: [], priority: [], status: [] };
 
+interface FieldOption { id?: string; key?: string; name: string }
+
 interface Props {
   value: string;
   onChange: (jql: string) => void;
+  configId: number;
 }
 
-export function JiraFilterBuilder({ value, onChange }: Props) {
+export function JiraFilterBuilder({ value, onChange, configId }: Props) {
   const [mode, setMode] = useState<"builder" | "raw">(value ? "raw" : "builder");
   const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
   const [rawJql, setRawJql] = useState(value);
+
+  // Metadata options fetched from Jira API
+  const [projects, setProjects] = useState<FieldOption[]>([]);
+  const [issueTypes, setIssueTypes] = useState<FieldOption[]>([]);
+  const [priorities, setPriorities] = useState<FieldOption[]>([]);
+  const [statuses, setStatuses] = useState<FieldOption[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch metadata when configId changes and builder mode active
+  useEffect(() => {
+    if (!configId) return;
+    setLoading(true);
+    Promise.all([
+      api.get<FieldOption[]>(`/api/jira/metadata/${configId}/projects`).catch(() => []),
+      api.get<FieldOption[]>(`/api/jira/metadata/${configId}/issuetype`).catch(() => []),
+      api.get<FieldOption[]>(`/api/jira/metadata/${configId}/priority`).catch(() => []),
+      api.get<FieldOption[]>(`/api/jira/metadata/${configId}/status`).catch(() => []),
+    ]).then(([p, it, pr, st]) => {
+      setProjects(p);
+      setIssueTypes(it);
+      setPriorities(pr);
+      setStatuses(st);
+    }).finally(() => setLoading(false));
+  }, [configId]);
 
   // Sync builder → JQL
   useEffect(() => {
@@ -64,6 +92,7 @@ export function JiraFilterBuilder({ value, onChange }: Props) {
           type="button" size="sm" variant={mode === "raw" ? "default" : "outline"}
           onClick={() => setMode("raw")} className="min-h-[44px] text-xs"
         >Raw JQL</Button>
+        {loading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
       </div>
 
       {mode === "raw" ? (
@@ -75,10 +104,30 @@ export function JiraFilterBuilder({ value, onChange }: Props) {
         />
       ) : (
         <div className="space-y-2">
-          <FilterField label="Project" field="project" filters={filters} onAdd={addValue} onRemove={removeValue} placeholder="PROJ" />
-          <FilterField label="Issue Type" field="issueType" filters={filters} onAdd={addValue} onRemove={removeValue} placeholder="Bug" />
-          <FilterField label="Priority" field="priority" filters={filters} onAdd={addValue} onRemove={removeValue} placeholder="High" />
-          <FilterField label="Status" field="status" filters={filters} onAdd={addValue} onRemove={removeValue} placeholder="To Do" />
+          <FilterField
+            label="Project" field="project" filters={filters}
+            onAdd={addValue} onRemove={removeValue}
+            options={projects.map((p) => ({ value: p.key ?? p.name, label: `${p.key ?? p.name} — ${p.name}` }))}
+            placeholder="Select project..."
+          />
+          <FilterField
+            label="Issue Type" field="issueType" filters={filters}
+            onAdd={addValue} onRemove={removeValue}
+            options={issueTypes.map((t) => ({ value: t.name, label: t.name }))}
+            placeholder="Select issue type..."
+          />
+          <FilterField
+            label="Priority" field="priority" filters={filters}
+            onAdd={addValue} onRemove={removeValue}
+            options={priorities.map((p) => ({ value: p.name, label: p.name }))}
+            placeholder="Select priority..."
+          />
+          <FilterField
+            label="Status" field="status" filters={filters}
+            onAdd={addValue} onRemove={removeValue}
+            options={statuses.map((s) => ({ value: s.name, label: s.name }))}
+            placeholder="Select status..."
+          />
         </div>
       )}
 
@@ -90,14 +139,15 @@ export function JiraFilterBuilder({ value, onChange }: Props) {
   );
 }
 
-function FilterField({ label, field, filters, onAdd, onRemove, placeholder }: {
+function FilterField({ label, field, filters, onAdd, onRemove, options, placeholder }: {
   label: string; field: keyof FilterState; filters: FilterState;
   onAdd: (f: keyof FilterState, v: string) => void;
   onRemove: (f: keyof FilterState, v: string) => void;
+  options: Array<{ value: string; label: string }>;
   placeholder: string;
 }) {
-  const [input, setInput] = useState("");
-  const handleAdd = () => { if (input.trim()) { onAdd(field, input.trim()); setInput(""); } };
+  // Filter out already-selected options
+  const available = options.filter((o) => !filters[field].includes(o.value));
 
   return (
     <div>
@@ -111,11 +161,22 @@ function FilterField({ label, field, filters, onAdd, onRemove, placeholder }: {
             </button>
           </span>
         ))}
-        <Input
-          value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAdd(); } }}
-          placeholder={placeholder} className="h-7 w-24 text-xs flex-shrink-0"
-        />
+        {available.length > 0 ? (
+          <Select onValueChange={(v) => onAdd(field, v)}>
+            <SelectTrigger className="h-7 w-auto min-w-[120px] text-xs">
+              <SelectValue placeholder={placeholder} />
+            </SelectTrigger>
+            <SelectContent>
+              {available.map((o) => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : options.length > 0 ? (
+          <span className="text-xs text-muted-foreground italic">All selected</span>
+        ) : (
+          <span className="text-xs text-muted-foreground italic">Loading...</span>
+        )}
       </div>
     </div>
   );

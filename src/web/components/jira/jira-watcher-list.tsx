@@ -108,7 +108,7 @@ function AddWatcherForm({ configId, onDone }: { configId: number; onDone: () => 
         <label className="text-xs text-muted-foreground">Name</label>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bug watcher" className="h-9" />
       </div>
-      <JiraFilterBuilder value={jql} onChange={setJql} />
+      <JiraFilterBuilder value={jql} onChange={setJql} configId={configId} />
       <div className="flex gap-2">
         <div className="flex-1">
           <label className="text-xs text-muted-foreground">Interval</label>
