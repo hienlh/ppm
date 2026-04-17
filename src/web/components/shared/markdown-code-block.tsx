@@ -41,8 +41,10 @@ export function MdPre({ children, node, ...rest }: any) {
   const isBash = /^(bash|sh|shell|zsh)$/.test(lang || "") || (!lang && text.startsWith("$"));
 
   return (
-    <pre {...rest} className={`relative group ${rest.className || ""}`}>
-      {children}
+    <div className="relative group">
+      <pre {...rest}>
+        {children}
+      </pre>
       {codeActions && (
         <div className="code-actions absolute top-1 right-1 flex gap-1">
           <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => navigator.clipboard.writeText(text)} />
@@ -58,7 +60,7 @@ export function MdPre({ children, node, ...rest }: any) {
           )}
         </div>
       )}
-    </pre>
+    </div>
   );
 }
 
