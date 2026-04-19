@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.11.0] - 2026-04-19
+
+### Added
+- **Jira Debug Sessions**: New debug session service replaces bot_task flow — enqueue, resume, cancel debug sessions for Jira results with SDK integration and WS streaming
+- **Jira sidebar panel**: Dedicated Jira tab in sidebar (desktop) and mobile drawer with unread badge, ticket cards, watcher form, filter builder, and debug prompt dialog
+- **Jira unread tracking**: `read_at` column on results, unread count API, badge on sidebar tab
+- **Jira test JQL endpoint**: `POST /watchers/test-jql` to validate JQL queries against live Jira
+- **Jira baseline poll**: First auto-poll sets `last_polled_at` without inserting results, preventing flood of old tickets
+- **File browser: New Folder**: Create folders with `git init` directly from FileBrowserPicker via `POST /api/fs/mkdir`
+- **File browser: Delete Folder**: Remove folders from FileBrowserPicker via `DELETE /api/fs/rmdir` with confirmation
+- **WS broadcast helpers**: `broadcastGlobalEvent()` and `forwardEventToSession()` for background processes to stream events to frontend
+- **Jira WS events**: Global `jira:*` events dispatched via `window.dispatchEvent` for real-time UI updates
+- **Drag files to chat**: Drag files from explorer directly into chat input
+
+### Fixed
+- **Extension first-load failure**: Broken WS proxy caused extensions to fail on initial load
+- **Git graph SVG alignment drift**: Fixed mobile detail panel and alignment issues
+- **Copy button drift on scroll**: Prevented copy button from drifting on horizontal scroll in code blocks
+- **Jira config form sync**: Form state now syncs when existing config loads asynchronously
+- **Jira search API migration**: Migrated to `/search/jql` API with correct params, fallback to classic endpoint
+- **Jira filter display names**: Show display names instead of account IDs in filter chips
+- **Bot task FK errors**: Gracefully handle FK errors during Jira poll instead of crashing entire poll
+- **Soft-deleted result resurrection**: `insertResult` now resurrects soft-deleted duplicates instead of silently skipping
+
+### Changed
+- **Jira settings → sidebar toggle**: Jira moved from settings category to a toggle switch + dedicated sidebar tab
+- **DB migration v19**: Added `read_at`, `triggered_by` columns; index for unread count; cleanup stale running results
+- **Watcher poll source tracking**: `pollWatcher()` now accepts `source` param (`auto`/`manual`) for triggered_by tracking
+
 ## [0.10.5] - 2026-04-16
 
 ### Fixed
