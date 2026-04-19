@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.2] - 2026-04-19
+
+### Fixed
+- **Token refresh on 401**: Force actual OAuth refresh when API returns 401, even if token appears fresh by expiry timestamp — fixes intermittent "Token refreshed" message that didn't actually refresh
+
 ## [0.11.1] - 2026-04-19
 
 ### Added
