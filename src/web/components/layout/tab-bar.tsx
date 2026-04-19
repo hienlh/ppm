@@ -21,6 +21,7 @@ import { useTouchTabDrag, wasTouchDragRecent } from "@/hooks/use-touch-tab-drag"
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl } from "@/lib/api-client";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
+import { useStreamingStore } from "@/stores/streaming-store";
 import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
 import { DraggableTab } from "./draggable-tab";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   const { handleTouchStart, handleTouchMove, handleTouchEnd } = useTouchTabDrag(effectivePanelId);
 
   const notifications = useNotificationStore((s) => s.notifications);
+  const streamingSessions = useStreamingStore((s) => s.sessions);
   const { canScrollLeft, canScrollRight, scrollLeft: doScrollLeft, scrollRight: doScrollRight } =
     useTabOverflow(scrollRef);
 
@@ -189,6 +191,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
             const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
             const entry = sessionId ? notifications.get(sessionId) : undefined;
             const notiType = entry && entry.count > 0 ? entry.type : null;
+            const isTabStreaming = sessionId ? streamingSessions.has(sessionId) : false;
             return (
             <DraggableTab
               key={tab.id}
@@ -197,6 +200,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               icon={TAB_ICONS[tab.type] || Puzzle}
               showDropBefore={dropIndex === i}
               notificationType={notiType}
+              isStreaming={isTabStreaming}
               onSelect={() => {
                 if (wasTouchDragRecent()) return;
                 usePanelStore.getState().setActiveTab(tab.id, effectivePanelId);

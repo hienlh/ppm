@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useWebSocket } from "./use-websocket";
 import { api, getAuthToken, projectUrl } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
+import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
@@ -127,6 +128,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
   // Derived state
   const isStreaming = phase !== "idle";
+
+  // Sync streaming state to global store (for favicon + tab icon indicators)
+  useEffect(() => {
+    if (!sessionId) return;
+    useStreamingStore.getState().setStreaming(sessionId, phase !== "idle");
+    return () => { useStreamingStore.getState().setStreaming(sessionId, false); };
+  }, [sessionId, phase]);
 
   /**
    * Route a child event to its parent Agent/Task tool_use's children array.

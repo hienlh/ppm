@@ -19,6 +19,8 @@ interface DraggableTabProps {
   showDropBefore: boolean;
   /** Notification type if unread (null = no unread). Controls badge color. */
   notificationType?: string | null;
+  /** True when this chat tab is actively streaming an AI response */
+  isStreaming?: boolean;
   onSelect: () => void;
   onClose: () => void;
   onDragStart: (e: React.DragEvent) => void;
@@ -35,7 +37,7 @@ interface DraggableTabProps {
 }
 
 export function DraggableTab({
-  tab, isActive, icon: Icon, showDropBefore, notificationType, onSelect, onClose,
+  tab, isActive, icon: Icon, showDropBefore, notificationType, isStreaming, onSelect, onClose,
   onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd, tabRef, onRename, onContextAction,
 }: DraggableTabProps) {
   const [editing, setEditing] = useState(false);
@@ -92,9 +94,11 @@ export function DraggableTab({
     >
       <span className="relative">
         <Icon className="size-4" />
-        {notificationType && !isActive && (
+        {isStreaming ? (
+          <span className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none" />
+        ) : notificationType && !isActive ? (
           <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notificationType))} />
-        )}
+        ) : null}
       </span>
       {editing ? (
         <input
