@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.8] - 2026-04-19
+
+### Fixed
+- **Supervisor shutdown timeout**: Use SIGKILL for child processes instead of SIGTERM — prevents 90s systemd timeout caused by orphaned grandchildren (Claude SDK subprocesses)
+- **Supervisor signal handler**: Add 5s force-exit safety net if `process.exit(0)` doesn't terminate
+- **Tunnel retry overflow**: URL extraction failure path now respects MAX_RESTARTS and resets counter after stable window (previously retried infinitely)
+
+### Improved
+- **Supervisor logging**: All supervisor logs now write to stderr so `journalctl` captures full lifecycle events
+- **Tunnel exit logging**: Log exit code and signal when tunnel process dies for easier debugging
+- **systemd service hardening**: Add `TimeoutStopSec=10` and `KillMode=mixed` to generated service unit
+
 ## [0.11.7] - 2026-04-19
 
 ### Added
