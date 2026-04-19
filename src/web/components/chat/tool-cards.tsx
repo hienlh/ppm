@@ -69,10 +69,11 @@ export function ToolCard({
   const hasResult = result?.type === "tool_result";
   const isError = hasResult && !!(result as any).isError;
   const hasAnswers = toolName === "AskUserQuestion" && !!(input as any)?.answers;
+  const wasApproved = tool.type === "approval_request" && (tool as any).approved != null;
   const isSubagent = (toolName === "Agent" || toolName === "Task") && tool.type === "tool_use";
   const children = isSubagent ? (tool as any).children as ChatEvent[] | undefined : undefined;
   const hasChildren = children && children.length > 0;
-  const isDone = hasResult || hasAnswers || completed;
+  const isDone = hasResult || hasAnswers || wasApproved || completed;
 
   return (
     <div className={`rounded border text-xs ${isSubagent ? "border-accent/30 bg-accent/5" : "border-border bg-background"}`}>

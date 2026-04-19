@@ -31,6 +31,8 @@ interface SessionEntry {
   cleanupTimer?: ReturnType<typeof setTimeout>;
   pendingApprovalEvent?: { type: string; requestId: string; tool: string; input: unknown };
   turnEvents: unknown[];
+  /** The user message that initiated the current turn (for reconnect replay) */
+  currentUserMessage?: string;
   streamPromise?: Promise<void>;
   permissionMode?: string;
   /** Whether the persistent event consumer loop is running */
@@ -139,7 +141,11 @@ function sendTurnEvents(sessionId: string, ws: ChatWsSocket): void {
   const entry = activeSessions.get(sessionId);
   if (!entry || entry.turnEvents.length === 0) return;
   try {
-    ws.send(JSON.stringify({ type: "turn_events", events: entry.turnEvents }));
+    ws.send(JSON.stringify({
+      type: "turn_events",
+      events: entry.turnEvents,
+      userMessage: entry.currentUserMessage ?? null,
+    }));
   } catch (e) {
     console.warn(`[chat] session=${sessionId} sendTurnEvents failed: ${(e as Error).message}`);
   }
@@ -621,6 +627,9 @@ export const chatWebSocket = {
 
       const provider = providerRegistry.get(providerId);
 
+      // Store user message for reconnect replay (turn_events includes only assistant events)
+      entry.currentUserMessage = parsed.content;
+
       if (!entry.isStreamingActive) {
         // First message or post-crash recovery: start persistent consumer
         // Resume session in provider (can be slow on first call — sdkListSessions)
@@ -672,6 +681,19 @@ export const chatWebSocket = {
       }
       if (entry) {
         entry.pendingApprovalEvent = undefined;
+        // Enrich the buffered approval_request with response data so replayed
+        // events render correctly (e.g. AskUserQuestion shows answered state)
+        const respData = (parsed as any).data;
+        for (let i = entry.turnEvents.length - 1; i >= 0; i--) {
+          const buffered = entry.turnEvents[i] as any;
+          if (buffered.type === "approval_request" && buffered.requestId === parsed.requestId) {
+            buffered.approved = parsed.approved;
+            if (buffered.tool === "AskUserQuestion" && respData) {
+              buffered.input = { ...buffered.input, answers: respData };
+            }
+            break;
+          }
+        }
         // Broadcast approval cleared to all clients
         broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
       }

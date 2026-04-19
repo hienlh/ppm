@@ -88,6 +88,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const pendingMessageRef = useRef<string | null>(null);
   const sendRef = useRef<(data: string) => void>(() => {});
   const refetchRef = useRef<(() => void) | null>(null);
+  /** True while replaying turn_events — suppresses setPendingApproval */
+  const isReplayingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   const projectNameRef = useRef(projectName);
@@ -251,6 +253,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
       case "approval_request": {
         streamingEventsRef.current.push(ev as ChatEvent);
+        // During turn_events replay, session_state already set the correct
+        // pendingApproval — skip re-setting it for historical (already-answered) events
+        if (isReplayingRef.current) break;
         setPendingApproval({
           requestId: ev.requestId,
           tool: ev.tool,
@@ -457,12 +462,30 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // Handle turn_events (reconnect sync with rAF chunking)
     if ((data as any).type === "turn_events") {
       const events = (data as any).events as unknown[];
-      if (!events?.length) { setIsReconnecting(false); return; }
+      const userMessage = (data as any).userMessage as string | null;
+      if (!events?.length && !userMessage) { setIsReconnecting(false); return; }
 
-      // Truncate messages after last user message
+      // Remove stale streaming assistant message + inject current turn's user message
       setMessages(prev => {
-        const lastUserIdx = prev.findLastIndex(m => m.role === "user");
-        return lastUserIdx >= 0 ? prev.slice(0, lastUserIdx + 1) : prev;
+        let updated = prev;
+        // Only remove in-progress streaming assistant (not finalized or REST-loaded)
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant" && last.id.startsWith("streaming-")) {
+          updated = updated.slice(0, -1);
+        }
+        // Add the current turn's user message if not already present
+        if (userMessage) {
+          const lastAfter = updated[updated.length - 1];
+          if (lastAfter?.role !== "user" || lastAfter.content !== userMessage) {
+            updated = [...updated, {
+              id: `user-replay-${Date.now()}`,
+              role: "user" as const,
+              content: userMessage,
+              timestamp: new Date().toISOString(),
+            }];
+          }
+        }
+        return updated;
       });
 
       // Reset streaming refs
@@ -471,6 +494,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       streamingAccountRef.current = null;
 
       // Process events in chunks via requestAnimationFrame to avoid blocking main thread
+      isReplayingRef.current = true;
       const CHUNK_SIZE = 100;
       let offset = 0;
       const processChunk = () => {
@@ -482,6 +506,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         if (offset < events.length) {
           requestAnimationFrame(processChunk);
         } else {
+          isReplayingRef.current = false;
           setIsReconnecting(false);
         }
       };
