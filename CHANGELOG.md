@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.7] - 2026-04-19
+
+### Added
+- **Video preview**: Open video files (mp4, webm, mov, ogg, avi, mkv) in editor tabs with native playback controls
+- **Audio preview**: Open audio files (mp3, wav, flac, aac, m4a, wma) in editor tabs with native audio controls
+
+### Refactored
+- Extract ImagePreview, PdfPreview into separate files with shared `useBlobUrl` hook (DRY)
+
 ## [0.11.6] - 2026-04-19
 
 ### Added
