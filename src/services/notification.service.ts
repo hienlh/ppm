@@ -13,6 +13,12 @@ export interface NotificationPayload {
 }
 
 class NotificationService {
+  /** Broadcast event to all connected WebSocket clients */
+  async broadcastWs(event: unknown): Promise<void> {
+    const { broadcastGlobalEvent } = await import("../server/ws/chat.ts");
+    broadcastGlobalEvent(event);
+  }
+
   /** Broadcast notification to all channels (push, telegram). Fire-and-forget. */
   async broadcast(_type: NotificationType, payload: NotificationPayload): Promise<void> {
     const tasks: Promise<void>[] = [];

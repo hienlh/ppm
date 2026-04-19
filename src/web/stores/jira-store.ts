@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api } from "@/lib/api-client";
 import type {
-  JiraConfig, JiraWatcher, JiraWatchResult, JiraWatcherMode,
+  JiraConfig, JiraWatcher, JiraWatchResult, JiraWatcherMode, JiraIssue,
 } from "../../../src/types/jira";
 
 export interface ProjectWithId {
@@ -33,11 +33,20 @@ interface JiraStore {
   deleteWatcher: (id: number) => Promise<void>;
   toggleWatcher: (id: number, enabled: boolean) => Promise<void>;
   pullWatcher: (id: number) => Promise<{ newIssues: number }>;
+  testJql: (configId: number, jql: string) => Promise<{ issues: JiraIssue[]; total: number }>;
 
   // Results
   results: JiraWatchResult[];
   loadResults: (watcherId?: number, status?: string, limit?: number, offset?: number) => Promise<void>;
   softDeleteResult: (id: number) => Promise<void>;
+
+  // Debug + Unread
+  startDebug: (resultId: number, prompt?: string) => Promise<void>;
+  resumeDebug: (resultId: number) => Promise<void>;
+  cancelDebug: (resultId: number) => Promise<void>;
+  markRead: (resultId: number) => Promise<void>;
+  unreadCount: number;
+  loadUnreadCount: () => Promise<void>;
 }
 
 export const useJiraStore = create<JiraStore>((set, get) => ({
@@ -46,6 +55,7 @@ export const useJiraStore = create<JiraStore>((set, get) => ({
   selectedProjectId: null,
   watchers: [],
   results: [],
+  unreadCount: 0,
 
   setSelectedProjectId: (id) => set({ selectedProjectId: id }),
 
@@ -108,7 +118,14 @@ export const useJiraStore = create<JiraStore>((set, get) => ({
   },
 
   pullWatcher: async (id) => {
-    return await api.post<{ newIssues: number }>(`/api/jira/watchers/${id}/pull`);
+    const result = await api.post<{ newIssues: number }>(`/api/jira/watchers/${id}/pull`);
+    // Refresh results so the UI shows newly pulled tickets
+    await get().loadResults();
+    return result;
+  },
+
+  testJql: async (configId, jql) => {
+    return await api.post<{ issues: JiraIssue[]; total: number }>("/api/jira/watchers/test-jql", { configId, jql });
   },
 
   loadResults: async (watcherId, status, limit = 50, offset = 0) => {
@@ -124,5 +141,58 @@ export const useJiraStore = create<JiraStore>((set, get) => ({
   softDeleteResult: async (id) => {
     set((s) => ({ results: s.results.filter((r) => r.id !== id) }));
     try { await api.del(`/api/jira/results/${id}`); } catch {}
+  },
+
+  startDebug: async (resultId, prompt) => {
+    // Optimistic update before API call
+    const prev = get().results.find((r) => r.id === resultId)?.status;
+    set((s) => ({
+      results: s.results.map((r) => r.id === resultId ? { ...r, status: "queued" as const } : r),
+    }));
+    try {
+      await api.post(`/api/jira/results/${resultId}/debug`, prompt ? { prompt } : {});
+    } catch {
+      // Rollback on failure
+      set((s) => ({
+        results: s.results.map((r) => r.id === resultId ? { ...r, status: (prev ?? "pending") as any } : r),
+      }));
+    }
+  },
+
+  resumeDebug: async (resultId) => {
+    const prev = get().results.find((r) => r.id === resultId)?.status;
+    set((s) => ({
+      results: s.results.map((r) => r.id === resultId ? { ...r, status: "queued" as const } : r),
+    }));
+    try {
+      await api.post(`/api/jira/results/${resultId}/resume`);
+    } catch {
+      set((s) => ({
+        results: s.results.map((r) => r.id === resultId ? { ...r, status: (prev ?? "failed") as any } : r),
+      }));
+    }
+  },
+
+  cancelDebug: async (resultId) => {
+    try {
+      await api.post(`/api/jira/results/${resultId}/cancel`);
+      await get().loadResults();
+    } catch {}
+  },
+
+  markRead: async (resultId) => {
+    // Optimistic update
+    set((s) => ({
+      results: s.results.map((r) => r.id === resultId ? { ...r, readAt: new Date().toISOString() } : r),
+      unreadCount: Math.max(0, s.unreadCount - 1),
+    }));
+    try { await api.patch(`/api/jira/results/${resultId}/read`); } catch {}
+  },
+
+  loadUnreadCount: async () => {
+    try {
+      const res = await api.get<{ count: number }>("/api/jira/results/unread-count");
+      set({ unreadCount: res.count });
+    } catch {}
   },
 }));

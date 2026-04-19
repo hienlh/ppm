@@ -87,7 +87,7 @@ export function JiraFilterBuilder({ value, onChange, configId }: Props) {
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 min-w-0">
       <div className="flex items-center gap-2">
         <Button
           type="button" size="sm" variant={mode === "builder" ? "default" : "outline"}

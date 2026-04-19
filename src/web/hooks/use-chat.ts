@@ -396,6 +396,12 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
 
+    // Dispatch global Jira events so components can listen via window events
+    if (typeof (data as any).type === "string" && (data as any).type.startsWith("jira:")) {
+      window.dispatchEvent(new CustomEvent((data as any).type, { detail: data }));
+      return;
+    }
+
     // Handle title updates from SDK summary
     if ((data as any).type === "title_updated") {
       setSessionTitle((data as any).title ?? null);

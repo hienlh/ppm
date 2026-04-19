@@ -32,6 +32,8 @@ export function rowToResult(row: JiraWatchResultRow): JiraWatchResult {
     status: row.status,
     aiSummary: row.ai_summary,
     source: row.source,
+    readAt: row.read_at,
+    triggeredBy: row.triggered_by,
     createdAt: row.created_at,
   };
 }
@@ -94,20 +96,32 @@ export function getAllEnabledWatchers(): JiraWatcherRow[] {
 
 // ── Result CRUD ───────────────────────────────────────────────────────
 
-/** Insert a result. Returns true if new row was inserted (dedup via UNIQUE constraint). */
+/** Insert a result. Resurrects soft-deleted duplicates. Returns true if row was inserted or resurrected. */
 export function insertResult(
   watcherId: number | null, issueKey: string,
   issueSummary: string | null, issueUpdated: string | null,
   source: "watcher" | "manual" = "watcher",
+  triggeredBy: "auto" | "manual" = "auto",
 ): { inserted: boolean; resultId: number | null } {
   try {
     const row = getDb().query(`
-      INSERT INTO jira_watch_results (watcher_id, issue_key, issue_summary, issue_updated, source)
-      VALUES (?, ?, ?, ?, ?) RETURNING id
-    `).get(watcherId, issueKey, issueSummary, issueUpdated, source) as { id: number } | null;
+      INSERT INTO jira_watch_results (watcher_id, issue_key, issue_summary, issue_updated, source, triggered_by)
+      VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+    `).get(watcherId, issueKey, issueSummary, issueUpdated, source, triggeredBy) as { id: number } | null;
     return { inserted: true, resultId: row?.id ?? null };
   } catch (e: any) {
-    if (e.message?.includes("UNIQUE constraint")) return { inserted: false, resultId: null };
+    if (e.message?.includes("UNIQUE constraint")) {
+      // Resurrect soft-deleted row if it exists
+      const resurrected = getDb().query(`
+        UPDATE jira_watch_results
+        SET deleted = 0, status = 'pending', session_id = NULL, ai_summary = NULL,
+            read_at = NULL, triggered_by = ?, source = ?, created_at = datetime('now')
+        WHERE watcher_id IS ? AND issue_key = ? AND issue_updated IS ? AND deleted = 1
+        RETURNING id
+      `).get(triggeredBy, source, watcherId, issueKey, issueUpdated) as { id: number } | null;
+      if (resurrected) return { inserted: true, resultId: resurrected.id };
+      return { inserted: false, resultId: null };
+    }
     throw e;
   }
 }
@@ -162,7 +176,20 @@ export function getWatcherStats(): Record<JiraResultStatus, number> {
   const rows = getDb().query(
     "SELECT status, COUNT(*) as count FROM jira_watch_results WHERE deleted = 0 GROUP BY status",
   ).all() as Array<{ status: JiraResultStatus; count: number }>;
-  const stats: Record<string, number> = { pending: 0, running: 0, done: 0, failed: 0 };
+  const stats: Record<string, number> = { pending: 0, queued: 0, running: 0, done: 0, failed: 0 };
   for (const r of rows) stats[r.status] = r.count;
   return stats as Record<JiraResultStatus, number>;
+}
+
+export function markResultRead(resultId: number): boolean {
+  return getDb().query(
+    "UPDATE jira_watch_results SET read_at = datetime('now') WHERE id = ? AND read_at IS NULL",
+  ).run(resultId).changes > 0;
+}
+
+export function getUnreadCount(): number {
+  const row = getDb().query(
+    "SELECT COUNT(*) as count FROM jira_watch_results WHERE status = 'done' AND read_at IS NULL AND deleted = 0",
+  ).get() as { count: number };
+  return row.count;
 }

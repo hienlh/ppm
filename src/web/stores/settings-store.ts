@@ -3,7 +3,7 @@ import { getAuthToken } from "@/lib/api-client";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
-export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | `ext:${string}`;
+export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -14,9 +14,11 @@ interface SettingsState {
   gitStatusViewMode: GitStatusViewMode;
   wordWrap: boolean;
   sidebarActiveTab: SidebarActiveTab;
+  jiraEnabled: boolean;
   deviceName: string | null;
   version: string | null;
   setTheme: (theme: Theme) => void;
+  setJiraEnabled: (enabled: boolean) => void;
   setDeviceName: (name: string) => Promise<void>;
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
@@ -33,6 +35,7 @@ interface PersistedSettings {
   gitStatusViewMode?: GitStatusViewMode;
   wordWrap?: boolean;
   sidebarActiveTab?: SidebarActiveTab;
+  jiraEnabled?: boolean;
 }
 
 function loadPersistedSettings(): PersistedSettings {
@@ -47,7 +50,7 @@ function loadPersistedSettings(): PersistedSettings {
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
   if (typeof tab !== "string") return false;
-  return ["explorer", "git", "settings", "database", "search"].includes(tab) || tab.startsWith("ext:");
+  return ["explorer", "git", "settings", "database", "search", "jira"].includes(tab) || tab.startsWith("ext:");
 }
 
 function persistSettings(update: Partial<PersistedSettings>) {
@@ -86,6 +89,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   wordWrap: _initial.wordWrap ?? false,
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "explorer",
+  jiraEnabled: _initial.jiraEnabled ?? false,
   deviceName: null,
   version: null,
 
@@ -114,6 +118,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const { updateDeviceName } = await import("@/lib/api-settings");
       await updateDeviceName(trimmed);
     } catch {}
+  },
+
+  setJiraEnabled: (enabled) => {
+    persistSettings({ jiraEnabled: enabled });
+    set({ jiraEnabled: enabled });
+    // If disabling and currently on jira tab, switch to explorer
+    if (!enabled && get().sidebarActiveTab === "jira") {
+      const tab: SidebarActiveTab = "explorer";
+      persistSettings({ sidebarActiveTab: tab });
+      set({ sidebarActiveTab: tab });
+    }
   },
 
   toggleSidebar: () => {

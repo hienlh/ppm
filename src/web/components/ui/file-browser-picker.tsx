@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";
 import {
-  Folder, File, Database, Home, Monitor, FileText,
+  Folder, File, Database, Home, Monitor, FileText, FolderPlus, Trash2,
   Download, ChevronRight, ArrowLeft, Search, Loader2, Clock, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -107,6 +107,10 @@ export function FileBrowserPicker({
   const [pathInput, setPathInput] = useState("");
   const [showHidden, setShowHidden] = useState(false);
   const [recentPaths, setRecentPaths] = useState<string[]>([]);
+  const [newFolderName, setNewFolderName] = useState<string | null>(null);
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [newFolderError, setNewFolderError] = useState<string | null>(null);
+  const newFolderInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
@@ -184,6 +188,40 @@ export function FileBrowserPicker({
     saveRecent(current);
     onSelect(selected);
   };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName?.trim() || !current) return;
+    const folderPath = `${current}/${newFolderName.trim()}`;
+    setCreatingFolder(true);
+    setNewFolderError(null);
+    try {
+      await api.post("/api/fs/mkdir", { path: folderPath });
+      setNewFolderName(null);
+      setNewFolderError(null);
+      await fetchDir(current, showHidden);
+      setSelected(folderPath);
+    } catch (e) {
+      setNewFolderError((e as Error).message || "Failed to create folder");
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (!selected) return;
+    const entry = entries.find((e) => e.path === selected);
+    if (!entry || entry.type !== "directory") return;
+    if (!window.confirm(`Delete folder "${entry.name}"? This cannot be undone.`)) return;
+    try {
+      await api.del("/api/fs/rmdir", { path: selected });
+      setSelected(null);
+      await fetchDir(current, showHidden);
+    } catch (e) {
+      setError((e as Error).message || "Failed to delete folder");
+    }
+  };
+
+  const selectedIsFolder = selected ? entries.some((e) => e.path === selected && e.type === "directory") : false;
 
   // Filter entries by search + accept
   const visible = entries.filter((e) => {
@@ -283,6 +321,32 @@ export function FileBrowserPicker({
             </div>
           ) : (
             <div ref={listRef} className="py-1">
+              {newFolderName != null && (
+                <>
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-primary/5 border-b border-border">
+                    <FolderPlus className="size-4 text-primary shrink-0" />
+                    <Input
+                      ref={newFolderInputRef}
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleCreateFolder();
+                        if (e.key === "Escape") setNewFolderName(null);
+                      }}
+                      placeholder="Folder name"
+                      className="h-6 text-xs flex-1"
+                      disabled={creatingFolder}
+                      autoFocus
+                    />
+                    {creatingFolder && <Loader2 className="size-3.5 animate-spin text-primary shrink-0" />}
+                  </div>
+                  {newFolderError && (
+                    <div className="px-3 py-1 text-[11px] text-destructive bg-destructive/5 border-b border-border">
+                      {newFolderError}
+                    </div>
+                  )}
+                </>
+              )}
               {visible.map((entry) => {
                 const selectable = isSelectable(entry);
                 return (
@@ -321,6 +385,29 @@ export function FileBrowserPicker({
 
       {/* Footer */}
       <div className="flex items-center gap-2 px-3 py-2 border-t border-border shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0"
+          onClick={() => {
+            setNewFolderName("");
+            setNewFolderError(null);
+            setTimeout(() => newFolderInputRef.current?.focus(), 50);
+          }}
+          title="New Folder"
+        >
+          <FolderPlus className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7 shrink-0 text-destructive/70 hover:text-destructive disabled:opacity-30"
+          onClick={handleDeleteSelected}
+          disabled={!selectedIsFolder}
+          title="Delete selected folder"
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
         <Button
           variant="ghost"
           size="icon"

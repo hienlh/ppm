@@ -1,5 +1,5 @@
 import { useCallback, useRef, useMemo, memo } from "react";
-import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database, Search, Puzzle } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -10,7 +10,9 @@ import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
+import { JiraPanel } from "@/components/jira/jira-panel";
 import { useGitStatusStore, useGitChangesPoller } from "@/stores/git-status-store";
+import { useJiraStore } from "@/stores/jira-store";
 import { cn } from "@/lib/utils";
 
 const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
@@ -67,15 +69,22 @@ export const Sidebar = memo(function Sidebar() {
   const setSidebarWidth = useSettingsStore((s) => s.setSidebarWidth);
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
+  const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
   const contributions = useExtensionStore((s) => s.contributions);
   const gitChangesCount = useGitStatusStore((s) =>
     activeProject?.name ? (s.counts.get(activeProject.name) ?? 0) : 0,
   );
+  const jiraUnreadCount = useJiraStore((s) => s.unreadCount);
   useGitChangesPoller(activeProject?.name, sidebarActiveTab === "git");
 
-  // Build tabs list: built-in + extension-contributed sidebar views
+  // Build tabs list: built-in + jira (conditional) + extension-contributed sidebar views
   const TABS = useMemo(() => {
     const tabs: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [...BUILTIN_TABS];
+    if (jiraEnabled) {
+      // Insert Jira before Settings
+      const settingsIdx = tabs.findIndex((t) => t.id === "settings");
+      tabs.splice(settingsIdx, 0, { id: "jira", label: "Jira", icon: Bug });
+    }
     if (contributions?.views) {
       const sidebarViews = contributions.views["sidebar"] ?? contributions.views["explorer"] ?? [];
       for (const view of sidebarViews) {
@@ -83,7 +92,7 @@ export const Sidebar = memo(function Sidebar() {
       }
     }
     return tabs;
-  }, [contributions]);
+  }, [contributions, jiraEnabled]);
 
   if (sidebarCollapsed) {
     return (
@@ -126,6 +135,11 @@ export const Sidebar = memo(function Sidebar() {
                   {gitChangesCount > 99 ? "99+" : gitChangesCount}
                 </span>
               )}
+              {tab.id === "jira" && jiraUnreadCount > 0 && (
+                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-medium leading-none">
+                  {jiraUnreadCount > 99 ? "99+" : jiraUnreadCount}
+                </span>
+              )}
             </button>
           );
         })}
@@ -157,6 +171,9 @@ export const Sidebar = memo(function Sidebar() {
         )}
         {sidebarActiveTab === "database" && (
           <DatabaseSidebar />
+        )}
+        {sidebarActiveTab === "jira" && (
+          <JiraPanel />
         )}
         {sidebarActiveTab === "settings" && (
           <SettingsTab />

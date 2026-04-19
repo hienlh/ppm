@@ -3,13 +3,14 @@ import {
   createWatcher, updateWatcher, deleteWatcher,
   getWatchersByConfigId, getWatcherById,
   getResultsByWatcherId, getResultById, softDeleteResult,
-  getWatcherStats, insertResult,
+  getWatcherStats, insertResult, markResultRead, getUnreadCount,
 } from "../../services/jira-watcher-db.service.ts";
 import { jiraWatcherService, clampInterval } from "../../services/jira-watcher.service.ts";
+import { jiraDebugService } from "../../services/jira-debug-session.service.ts";
 import { getDecryptedCredentials } from "../../services/jira-config.service.ts";
 import {
   getIssue, updateIssue, getTransitions, transitionIssue,
-  searchText, getProjects, getFieldOptions, getAssignableUsers,
+  searchText, searchIssues, getProjects, getFieldOptions, getAssignableUsers,
 } from "../../services/jira-api-client.ts";
 import { ok, err } from "../../types/api.ts";
 import type { JiraWatcherMode } from "../../types/jira.ts";
@@ -77,10 +78,23 @@ jiraWatcherRoutes.delete("/watchers/:id", (c) => {
   return c.json(ok({ deleted: true }));
 });
 
+jiraWatcherRoutes.post("/watchers/test-jql", async (c) => {
+  const body = await c.req.json<{ configId: number; jql: string }>();
+  if (!body.configId || !body.jql) return c.json(err("configId and jql required"), 400);
+  const creds = getDecryptedCredentials(body.configId);
+  if (!creds) return c.json(err("Invalid config"), 404);
+  try {
+    const response = await searchIssues(creds, body.jql, undefined, 20);
+    return c.json(ok({ issues: response.issues, total: response.total }));
+  } catch (e: any) {
+    return c.json(err(`JQL search failed: ${e.message}`), 502);
+  }
+});
+
 jiraWatcherRoutes.post("/watchers/:id/pull", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   try {
-    const count = await jiraWatcherService.pollWatcher(id);
+    const count = await jiraWatcherService.pollWatcher(id, "manual");
     return c.json(ok({ polled: true, newIssues: count }));
   } catch (e: any) {
     return c.json(err(`Poll failed: ${e.message}`), 502);
@@ -92,12 +106,62 @@ jiraWatcherRoutes.post("/watchers/pull-all", async (c) => {
     const all = (await import("../../services/jira-watcher-db.service.ts")).getAllEnabledWatchers();
     let total = 0;
     for (const w of all) {
-      try { total += await jiraWatcherService.pollWatcher(w.id); } catch {}
+      try { total += await jiraWatcherService.pollWatcher(w.id, "manual"); } catch {}
     }
     return c.json(ok({ polled: true, watcherCount: all.length, newIssues: total }));
   } catch (e: any) {
     return c.json(err(`Pull failed: ${e.message}`), 502);
   }
+});
+
+// ── Debug sessions ───────────────────────────────────────────────────
+
+jiraWatcherRoutes.post("/results/:id/debug", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const body = await c.req.json<{ prompt?: string }>().catch(() => ({} as { prompt?: string }));
+  const result = getResultById(id);
+  if (!result) return c.json(err("Result not found"), 404);
+  if (result.status !== "pending" && result.status !== "failed") {
+    return c.json(err("Result must be pending or failed to debug"), 400);
+  }
+  try {
+    jiraDebugService.enqueue(id, body.prompt);
+    return c.json(ok({ queued: true }));
+  } catch (e: any) {
+    return c.json(err(e.message), 500);
+  }
+});
+
+jiraWatcherRoutes.post("/results/:id/resume", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const body = await c.req.json<{ prompt?: string }>().catch(() => ({} as { prompt?: string }));
+  const result = getResultById(id);
+  if (!result) return c.json(err("Result not found"), 404);
+  if (result.status !== "failed") return c.json(err("Only failed results can be resumed"), 400);
+  if (!result.sessionId) return c.json(err("No session to resume"), 400);
+  try {
+    jiraDebugService.resumeDebug(id, body.prompt);
+    return c.json(ok({ resumed: true }));
+  } catch (e: any) {
+    return c.json(err(e.message), 500);
+  }
+});
+
+jiraWatcherRoutes.post("/results/:id/cancel", (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const cancelled = jiraDebugService.cancelDebug(id);
+  if (!cancelled) return c.json(err("No active debug session for this result"), 404);
+  return c.json(ok({ cancelled: true }));
+});
+
+jiraWatcherRoutes.patch("/results/:id/read", (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  if (!markResultRead(id)) return c.json(err("Result not found or already read"), 404);
+  return c.json(ok({ read: true }));
+});
+
+jiraWatcherRoutes.get("/results/unread-count", (c) => {
+  return c.json(ok({ count: getUnreadCount() }));
 });
 
 // ── Results ───────────────────────────────────────────────────────────

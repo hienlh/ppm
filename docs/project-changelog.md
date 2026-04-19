@@ -6,17 +6,31 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Jira Watcher Auto-Debug + Frontend Memory Optimization + Git-Graph Stash Management, Rebase, Conflict Resolution + Worktree CRUD
+## [Unreleased] — Jira Debug Session Redesign + Frontend Memory Optimization + Git-Graph Stash Management, Rebase, Conflict Resolution + Worktree CRUD
 
 ### Added
-- **Jira Watcher Auto-Debug** — Poll Jira Cloud per-project, auto-debug matched tickets via PPMBot
+- **Jira Debug Session Redesign** — Direct Claude session debug replacing bot_task flow with concurrency queue
+  - Replaced bot_task-based debug with direct `chatService.sendMessage()` calls (simpler, faster)
+  - Concurrency queue: max 2 concurrent sessions globally, max 1 per project (prevents resource exhaustion)
+  - Manual "Start Debug" button with editable prompt in results panel (override watcher template)
+  - Unread tracking: `read_at` column on `jira_watch_results`, unread badge count in UI
+  - WS toast notifications on debug completion (`jira:debug_complete` event)
+  - Prompt override support for custom debug instructions per result
+  - Result status flow: pending → queued → running → done/failed
+  - Timeout protection: 10-minute abort-on-timeout with graceful cleanup
+  - AI summary capture: last assistant text (max 500 chars) stored in result
+  - Database schema v19: added `read_at` (nullable timestamp), `triggered_by` ("auto"|"manual")
+  - New service: `JiraDebugSessionService` with queue management + concurrency limits
+  - New component: `JiraDebugPromptDialog` for manual prompt override UI
+  - API: `POST /api/jira/results/:id/debug` to trigger debug (with optional prompt)
+
+- **Jira Watcher Auto-Debug (v0.9.86+)** — Poll Jira Cloud per-project, auto-debug matched tickets
   - Jira Cloud REST API integration (search, get issue, transitions, metadata discovery)
   - Per-project config (base URL, email, AES-256 token encryption)
-  - JQL-based watchers with two modes: debug (auto-create bot task) and notify-only (Telegram notification)
+  - JQL-based watchers with two modes: debug (queue session) and notify-only (Telegram notification)
   - Configurable poll intervals (30s–60m per watcher, interval clamping)
   - Rate limit aware (tracks Jira API quota, auto-backoff 429 responses)
-  - Result tracking (pending/running/done/failed status, AI summary persistence)
-  - Async status sync (bot task results reflected in watch results every 30s)
+  - Result tracking (pending/queued/running/done/failed status, AI summary persistence)
   - Prompt templating ({issue_key}, {summary}, {description}, {status}, {priority} substitution)
   - Soft deletes (preserve result history, don't lose tracking)
   - Frontend filter builder UI (projects, issue types, priorities, statuses, custom JQL)

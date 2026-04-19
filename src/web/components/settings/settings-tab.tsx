@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useShallow } from "zustand/react/shallow";
@@ -16,7 +17,6 @@ import { ProxySettingsSection } from "./proxy-settings-section";
 import { McpSettingsSection } from "./mcp-settings-section";
 import { ExtensionManagerSection } from "./extension-manager-section";
 import { PPMBotSettingsSection } from "./ppmbot-settings-section";
-import { JiraSettingsSection } from "../jira/jira-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
@@ -36,7 +36,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { value: "notifications", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
   { value: "clawbot", label: "PPMBot", subtitle: "Telegram AI bot", icon: Bot },
-  { value: "jira", label: "Jira Watcher", subtitle: "Auto-debug Jira tickets", icon: Bug },
+  // Jira is now a toggle, not a full settings category
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { value: "mcp", label: "MCP Servers", subtitle: "Model Context Protocol tools", icon: Plug },
@@ -44,7 +44,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
 ];
 
 export function SettingsTab() {
-  const { theme, setTheme, deviceName, setDeviceName, version } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version })));
+  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled })));
   const { permission, isSubscribed, loading, error: pushError, subscribe, unsubscribe } = usePushNotification();
   const [activeCategory, setActiveCategory] = useState<SettingsCategory | null>(null);
   const [nameInput, setNameInput] = useState(deviceName ?? "");
@@ -92,7 +92,7 @@ export function SettingsTab() {
             {activeCategory === "ai" && <AISettingsSection compact />}
             {activeCategory === "notifications" && <NotificationsContent isSubscribed={isSubscribed} loading={loading} permission={permission} pushError={pushError} subscribe={subscribe} unsubscribe={unsubscribe} />}
             {activeCategory === "clawbot" && <PPMBotSettingsSection />}
-            {activeCategory === "jira" && <JiraSettingsSection />}
+            {/* Jira is now a sidebar tab with a toggle below */}
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
             {activeCategory === "mcp" && <McpSettingsSection />}
@@ -163,6 +163,20 @@ export function SettingsTab() {
                   </Button>
                 );
               })}
+            </div>
+          </section>
+
+          {/* Jira toggle */}
+          <section className="space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bug className="size-4 text-muted-foreground" />
+                <div>
+                  <p className="text-xs font-medium">Jira Watcher</p>
+                  <p className="text-[11px] text-muted-foreground">Auto-debug Jira tickets</p>
+                </div>
+              </div>
+              <Switch checked={jiraEnabled} onCheckedChange={setJiraEnabled} />
             </div>
           </section>
 

@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
-  X, Bug, FolderOpen, GitBranch, Settings, Database,
+  X, Bug as BugIcon, FolderOpen, GitBranch, Settings, Database,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
@@ -9,12 +9,13 @@ import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
+import { JiraPanel } from "@/components/jira/jira-panel";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { cn } from "@/lib/utils";
 
-type DrawerTab = "explorer" | "git" | "settings" | "database";
+type DrawerTab = "explorer" | "git" | "settings" | "database" | "jira";
 
-const TABS: { id: DrawerTab; label: string; icon: React.ElementType }[] = [
+const BASE_TABS: { id: DrawerTab; label: string; icon: React.ElementType }[] = [
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "database", label: "Database", icon: Database },
@@ -31,7 +32,16 @@ interface MobileDrawerProps {
 export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps) {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const version = useSettingsStore((s) => s.version);
+  const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
   const [activeTab, setActiveTab] = useState<DrawerTab>(initialTab ?? "explorer");
+
+  const TABS = useMemo(() => {
+    if (!jiraEnabled) return BASE_TABS;
+    const tabs = [...BASE_TABS];
+    const settingsIdx = tabs.findIndex((t) => t.id === "settings");
+    tabs.splice(settingsIdx, 0, { id: "jira", label: "Jira", icon: BugIcon });
+    return tabs;
+  }, [jiraEnabled]);
 
   // Sync when initialTab changes (e.g. settings button opens drawer)
   useEffect(() => {
@@ -92,6 +102,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {activeTab === "database" && (
             <DatabaseSidebar />
           )}
+          {activeTab === "jira" && (
+            <JiraPanel />
+          )}
           {activeTab === "settings" && (
             <SettingsTab />
           )}
@@ -126,7 +139,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
               onClick={handleReportBug}
               className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
             >
-              <Bug className="size-3" />
+              <BugIcon className="size-3" />
               <span>Report Bug</span>
             </button>
           </div>

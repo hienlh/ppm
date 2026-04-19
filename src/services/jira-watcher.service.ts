@@ -1,12 +1,10 @@
 import { searchIssues, JiraApiError, getRateLimitState } from "./jira-api-client.ts";
 import { getDecryptedCredentials } from "./jira-config.service.ts";
-import {
-  getAllEnabledWatchers, insertResult, updateResultStatus,
-  getRunningResults, getWatcherById as dbGetWatcherById,
-} from "./jira-watcher-db.service.ts";
-import { getDb, createBotTask } from "./db.service.ts";
+import { getAllEnabledWatchers, insertResult } from "./jira-watcher-db.service.ts";
+import { jiraDebugService } from "./jira-debug-session.service.ts";
+import { getDb } from "./db.service.ts";
 import { notificationService } from "./notification.service.ts";
-import type { JiraWatcherRow, JiraIssue, JiraRateLimitState } from "../types/jira.ts";
+import type { JiraWatcherRow, JiraIssue } from "../types/jira.ts";
 
 const INTERVAL_MIN = 30_000;   // 30s
 const INTERVAL_MAX = 3_600_000; // 60m
@@ -18,12 +16,10 @@ export function clampInterval(ms: number): number {
 
 class JiraWatcherService {
   private activeTimers = new Map<number, Timer>();
-  private syncTimer: Timer | null = null;
 
   async startAll(): Promise<void> {
     const watchers = getAllEnabledWatchers();
     for (const w of watchers) this.startWatcher(w.id, w.interval_ms);
-    this.startSyncLoop();
     if (watchers.length) console.log(`[jira] Started ${watchers.length} watcher(s)`);
   }
 
@@ -32,7 +28,6 @@ class JiraWatcherService {
       clearInterval(timer);
       this.activeTimers.delete(id);
     }
-    if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null; }
   }
 
   startWatcher(id: number, intervalMs: number): void {
@@ -53,7 +48,7 @@ class JiraWatcherService {
     return this.activeTimers.has(id);
   }
 
-  async pollWatcher(watcherId: number): Promise<number> {
+  async pollWatcher(watcherId: number, source: "auto" | "manual" = "auto"): Promise<number> {
     const watcher = getDb()
       .query("SELECT * FROM jira_watchers WHERE id = ?")
       .get(watcherId) as JiraWatcherRow | null;
@@ -66,15 +61,29 @@ class JiraWatcherService {
     const rlState = getRateLimitState(creds.baseUrl);
     if (rlState.pausedUntil && Date.now() < rlState.pausedUntil) return 0;
 
+    const isFirstPoll = !watcher.last_polled_at;
+
     try {
+      // First auto-poll = baseline only: just set last_polled_at, skip inserts
+      // Manual pull always fetches everything
+      if (isFirstPoll && source === "auto") {
+        await searchIssues(creds, watcher.jql); // validate JQL works
+        getDb().query("UPDATE jira_watchers SET last_polled_at = datetime('now') WHERE id = ?").run(watcherId);
+        console.log(`[jira] Watcher "${watcher.name}": baseline poll done (skipped inserts)`);
+        return 0;
+      }
+
       const response = await searchIssues(creds, watcher.jql);
       let newCount = 0;
+      const newResultIds: number[] = [];
+
       for (const issue of response.issues) {
         let inserted: boolean, resultId: number | null;
         try {
           ({ inserted, resultId } = insertResult(
             watcher.id, issue.key,
             issue.fields.summary, issue.fields.updated,
+            "watcher", source,
           ));
         } catch (e: any) {
           console.error(`[jira] insertResult FK error for watcher ${watcher.id}, issue ${issue.key}:`, e.message);
@@ -82,21 +91,23 @@ class JiraWatcherService {
         }
         if (inserted && resultId) {
           newCount++;
-          if (watcher.mode === "debug") {
-            try {
-              await this.createDebugTask(watcher, issue, resultId);
-            } catch (e: any) {
-              console.error(`[jira] createDebugTask error for watcher ${watcher.id}, issue ${issue.key}:`, e.message);
-              // Don't fail entire poll for bot task creation errors
-              updateResultStatus(resultId, "failed", { aiSummary: e.message });
-            }
-          } else {
-            // notify-only mode
+          newResultIds.push(resultId);
+
+          if (watcher.mode === "notify") {
             notificationService.broadcast("done", {
               title: `Jira: ${issue.key}`,
               body: issue.fields.summary,
               project: "", sessionId: "",
             }).catch(() => {});
+          }
+        }
+      }
+
+      // Auto-enqueue debug for new issues (≤5 to avoid flooding)
+      if (watcher.mode === "debug" && source === "auto" && newResultIds.length > 0 && newResultIds.length <= 5) {
+        for (const rid of newResultIds) {
+          try { jiraDebugService.enqueue(rid); } catch (e: any) {
+            console.warn(`[jira] enqueue debug error resultId=${rid}:`, e.message);
           }
         }
       }
@@ -115,33 +126,6 @@ class JiraWatcherService {
   }
 
   // ── Internal helpers ──────────────────────────────────────────────
-
-  private async createDebugTask(watcher: JiraWatcherRow, issue: JiraIssue, resultId: number): Promise<void> {
-    // Look up project info from jira_config → projects
-    const configRow = getDb().query(
-      "SELECT c.project_id, p.name, p.path FROM jira_config c JOIN projects p ON p.id = c.project_id WHERE c.id = ?",
-    ).get(watcher.jira_config_id) as { project_id: number; name: string; path: string } | null;
-    if (!configRow) return;
-
-    // Get a Telegram chat for notification
-    const chat = getDb().query(
-      "SELECT telegram_chat_id FROM clawbot_paired_chats WHERE status = 'approved' LIMIT 1",
-    ).get() as { telegram_chat_id: string } | null;
-    if (!chat) {
-      // No PPMBot — just mark as pending notification
-      notificationService.broadcast("done", {
-        title: `Jira: ${issue.key}`,
-        body: issue.fields.summary,
-        project: configRow.name, sessionId: "",
-      }).catch(() => {});
-      return;
-    }
-
-    const prompt = this.buildPrompt(watcher, issue);
-    const taskId = crypto.randomUUID();
-    createBotTask(taskId, chat.telegram_chat_id, configRow.name, configRow.path, prompt, 600_000);
-    updateResultStatus(resultId, "running", { sessionId: taskId });
-  }
 
   buildPrompt(watcher: JiraWatcherRow, issue: JiraIssue): string {
     if (watcher.prompt_template) {
@@ -170,39 +154,6 @@ class JiraWatcherService {
     }, RATE_LIMIT_PAUSE_MS);
   }
 
-  // ── Sync result statuses from bot_tasks ─────────────────────────
-
-  private startSyncLoop(): void {
-    this.syncTimer = setInterval(() => this.syncResultStatuses(), 30_000);
-  }
-
-  private syncResultStatuses(): void {
-    const running = getRunningResults();
-    for (const result of running) {
-      if (!result.session_id) continue;
-      const task = getDb()
-        .query("SELECT status, result_summary, session_id, error FROM bot_tasks WHERE id = ?")
-        .get(result.session_id) as { status: string; result_summary: string | null; session_id: string | null; error: string | null } | null;
-      if (!task) continue;
-
-      if (task.status === "completed") {
-        updateResultStatus(result.id, "done", {
-          aiSummary: task.result_summary ?? undefined,
-          sessionId: task.session_id ?? undefined,
-        });
-        notificationService.broadcast("done", {
-          title: `Jira: ${result.issue_key}`,
-          body: result.issue_summary ?? "Analysis complete",
-          project: "",
-          sessionId: task.session_id ?? "",
-        }).catch(() => {});
-      } else if (task.status === "failed" || task.status === "timeout") {
-        updateResultStatus(result.id, "failed", {
-          aiSummary: task.error ?? "Task failed",
-        });
-      }
-    }
-  }
 }
 
 export const jiraWatcherService = new JiraWatcherService();

@@ -542,6 +542,19 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 18;
     `);
   }
+
+  if (current < 19) {
+    database.exec(`
+      ALTER TABLE jira_watch_results ADD COLUMN read_at TEXT;
+      ALTER TABLE jira_watch_results ADD COLUMN triggered_by TEXT DEFAULT 'auto';
+      -- Cleanup stale running results from bot_task era
+      UPDATE jira_watch_results SET status = 'failed', ai_summary = 'Stale: migrated from bot_task flow' WHERE status = 'running';
+      -- Index for unread count query (status='done' AND read_at IS NULL AND deleted=0)
+      CREATE INDEX IF NOT EXISTS idx_jira_results_unread
+        ON jira_watch_results(status, read_at) WHERE deleted = 0;
+      PRAGMA user_version = 19;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------

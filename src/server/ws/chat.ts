@@ -54,10 +54,31 @@ export function hasActiveClient(): boolean {
   return false;
 }
 
+/** Broadcast event to ALL connected WebSocket clients across all sessions */
+export function broadcastGlobalEvent(event: unknown): void {
+  const json = JSON.stringify(event);
+  for (const entry of activeSessions.values()) {
+    for (const ws of entry.clients) {
+      try { ws.send(json); } catch {}
+    }
+  }
+}
+
 /** Remove a client from the session, cleaning up its ping interval */
 function evictClient(entry: SessionEntry, ws: ChatWsSocket): void {
   clearClientPing(entry, ws);
   entry.clients.delete(ws);
+}
+
+/**
+ * Forward an event to connected WS clients for a session (if any).
+ * Used by background processes (e.g. Jira debug) that run sessions server-side
+ * but want to stream events to any frontend client viewing that session.
+ */
+export function forwardEventToSession(sessionId: string, event: unknown): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.clients.size === 0) return; // no connected clients, silently drop
+  bufferAndBroadcast(sessionId, event);
 }
 
 /** Broadcast event to all connected clients for a session */

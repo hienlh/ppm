@@ -33,10 +33,12 @@ export interface JiraWatchResultRow {
   ai_summary: string | null;
   source: string; // "watcher" | "manual"
   deleted: number; // 0 | 1
+  read_at: string | null;
+  triggered_by: string; // "auto" | "manual"
   created_at: string;
 }
 
-export type JiraResultStatus = "pending" | "running" | "done" | "failed";
+export type JiraResultStatus = "pending" | "queued" | "running" | "done" | "failed";
 export type JiraWatcherMode = "debug" | "notify";
 
 // ── API response types (camelCase for frontend) ───────────────────────
@@ -73,6 +75,8 @@ export interface JiraWatchResult {
   status: JiraResultStatus;
   aiSummary: string | null;
   source: string;
+  readAt: string | null;
+  triggeredBy: string;
   createdAt: string;
 }
 

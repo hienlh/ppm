@@ -446,14 +446,15 @@ Telegram → ClawBotTelegramService (polling) → ClawBotService (orchestrator)
 ---
 
 ### Jira Watcher Auto-Debug Service
-**Component:** Jira Cloud REST API poller + auto-debugging orchestrator
+**Component:** Jira Cloud REST API poller + direct Claude debug session orchestrator
 
 **Responsibilities:**
 - Poll Jira Cloud per-project on configurable interval (30s–60m)
 - Match issues via JQL filters (status, project key, priority, etc.)
-- Auto-trigger PPMBot debug tasks on new matches
-- Track results (pending/running/done/failed) in SQLite
-- Notify via Telegram when analysis completes
+- Auto-queue or manually trigger direct Claude debug sessions (no bot_task middleman)
+- Manage concurrency: max 2 concurrent, max 1 per project
+- Track results (pending/queued/running/done/failed) with unread status
+- Notify via WS toast + Telegram when analysis completes
 - Rate-limit aware (tracks Jira API quota, auto-backoff 429 responses)
 
 **Architecture:**
@@ -461,25 +462,30 @@ Telegram → ClawBotTelegramService (polling) → ClawBotService (orchestrator)
 Jira Cloud API ← JiraWatcherService (poller, 30s–60m intervals per watcher)
                  ├─ searchIssues(jql) → issue list
                  ├─ insertResult() → SQLite jira_watch_results
-                 ├─ createBotTask() → bot_tasks row + task UUID
-                 └─ notificationService.broadcast() → Telegram chat
+                 └─ jiraDebugService.enqueue() → concurrency queue
 
-JiraWatcherService (sync loop, 30s)
- └─ syncResultStatuses() — poll bot_tasks, update result.status
-     ├─ status=completed → mark result done, fetch AI summary
-     └─ status=failed → mark result failed, store error msg
+JiraDebugSessionService (concurrency queue processor)
+ ├─ enqueue(resultId, promptOverride?) → validate + queue
+ ├─ processQueue() — respects MAX_CONCURRENT=2, MAX_PER_PROJECT=1
+ ├─ runDebugSession()
+ │   ├─ chatService.createSession(projectPath) — new isolated session
+ │   ├─ chatService.sendMessage(prompt) — send with bypassPermissions
+ │   ├─ capture lastAssistantText (max 500 chars)
+ │   └─ updateResultStatus() + notificationService.broadcastWs("jira:debug_complete")
+ └─ cancelDebug(resultId) — abort running session
 ```
 
 **Services (src/services/):**
 - **JiraConfigService** — Config CRUD, AES-256 token encryption/decryption, per-project setup
 - **JiraWatcherDbService** — Watchers + results table queries, enabled/disabled toggle, last polled tracking
 - **JiraApiClient** — Jira Cloud REST v3 (search, getIssue, transitions, test connection), rate limit state, backoff logic
-- **JiraWatcherService** — Main poller, timer management (startAll, startWatcher, stopWatcher, pollWatcher), prompt templating, debug task creation, result status sync
+- **JiraWatcherService** — Main poller, timer management (startAll, startWatcher, stopWatcher, pollWatcher), prompt templating, session enqueueing
+- **JiraDebugSessionService** — Concurrency queue, session lifecycle, timeout management, abort handling
 
-**Database Schema (v18):**
+**Database Schema (v19):**
 - `jira_config` — id, project_id (FK), base_url, email, api_token_encrypted, created_at
 - `jira_watchers` — id, jira_config_id (FK), name, jql, prompt_template, enabled, mode ("debug"|"notify"), interval_ms, last_polled_at, created_at
-- `jira_watch_results` — id, watcher_id, issue_key, issue_summary, issue_updated, session_id (FK bot_tasks.id), status ("pending"|"running"|"done"|"failed"), ai_summary, source ("watcher"|"manual"), deleted, created_at
+- `jira_watch_results` — id, watcher_id, issue_key, issue_summary, issue_updated, session_id (FK chat_sessions.id), status ("pending"|"queued"|"running"|"done"|"failed"), ai_summary, source ("watcher"|"manual"), triggered_by ("auto"|"manual"), read_at (nullable), deleted, created_at
 
 **API Routes (src/server/routes/jira*.ts):**
 ```
@@ -494,6 +500,8 @@ DELETE /api/jira/watchers/:id              — Delete watcher (soft delete resul
 POST   /api/jira/watchers/:id/enable       — Enable/disable watcher
 POST   /api/jira/watchers/:id/poll         — Trigger poll now
 GET    /api/jira/results                   — List results (paginated, filterable)
+POST   /api/jira/results/:id/debug         — Manually trigger debug for result (with optional prompt override)
+POST   /api/jira/results/:id/read          — Mark result as read
 DELETE /api/jira/results/:id               — Delete result (soft delete)
 GET    /api/jira/search                    — Search Jira (for filter builder UI)
 GET    /api/jira/ticket/:key               — Get full ticket details
@@ -514,25 +522,27 @@ ppm jira watch test <project> <watcherId>
 ppm jira watch pull <project> <watcherId>
 ppm jira results list <project> [--limit 50]
 ppm jira results delete <project> <resultId>
-ppm jira track <issue-key>                 — Manually track ticket (insert result, create debug task)
+ppm jira track <issue-key>                 — Manually track ticket (insert result, queue debug)
 ```
 
 **Frontend (src/web/components/jira/):**
 - **jira-settings-tab.tsx** — Config form, test button, token input
 - **jira-filter-builder.tsx** — JQL builder UI (projects, issue types, priorities, statuses, custom JQL)
 - **jira-watcher-list.tsx** — List watchers, enable/disable, edit, delete, poll now, interval controls
-- **jira-results-panel.tsx** — Results table (issue key, status, summary, AI summary), delete, detail dialog
-- **jira-ticket-detail.tsx** — Modal with full ticket, AI analysis, transitions (if debug mode)
-- **jira-store.ts** — Zustand (configs, watchers, results, filters, settings)
+- **jira-results-panel.tsx** — Results table (issue key, status, summary, AI summary), unread badge, delete, manual debug button
+- **jira-debug-prompt-dialog.tsx** — Modal for prompt override when manually triggering debug
+- **jira-ticket-detail.tsx** — Modal with full ticket, AI analysis, debug status
+- **jira-store.ts** — Zustand (configs, watchers, results, filters, settings, unread count)
 
 **Key Design Decisions:**
-1. **Interval per watcher** — Different JQL queries can poll at different rates (debug vs notify)
-2. **Mode switching** — debug = create bot task; notify = send telegram-only notification
-3. **Result deduplication** — insertResult() checks issue_key + watcher_id, only inserts if new
-4. **Rate limit aware** — getRateLimitState() tracks Jira API quota, pauseConfigWatchers() backs off on 429
-5. **Prompt templating** — Support {issue_key}, {summary}, {description}, {status}, {priority} placeholders
-6. **Async status sync** — Result status synced from bot_tasks every 30s (decoupled from poll)
-7. **Soft deletes** — Results marked deleted=1 (preserve history, don't lose tracking)
+1. **Direct Claude sessions** — Replaced bot_task flow with direct `chatService.sendMessage()` (simpler, faster, no task overhead)
+2. **Concurrency queue** — Max 2 concurrent globally, max 1 per project (prevents resource starvation, respects project context)
+3. **Manual debug trigger** — Users can override watcher prompt and manually queue debug for any pending result
+4. **Unread tracking** — `read_at` column marks when user views result, UI shows unread badge count
+5. **Prompt templating** — Support {issue_key}, {summary}, {description}, {status}, {priority} placeholders in watcher templates
+6. **Timeout protection** — 10-minute timeout with AbortController graceful cleanup and error capture
+7. **WS notifications** — `jira:debug_complete` event streamed to UI for instant toast feedback
+8. **Soft deletes** — Results marked deleted=1 (preserve history, don't lose tracking)
 
 ---
 
@@ -547,7 +557,7 @@ ppm jira track <issue-key>                 — Manually track ticket (insert res
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
-- SQLite: WAL mode, foreign keys, lazy init, schema v18 (16 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, bot_tasks)
+- SQLite: WAL mode, foreign keys, lazy init, schema v19 (18 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, bot_tasks)
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)

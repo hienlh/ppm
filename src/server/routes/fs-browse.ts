@@ -1,5 +1,7 @@
 import { Hono } from "hono";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "fs";
+import { resolve } from "path";
+import { $ } from "bun";
 import {
   browse,
   list,
@@ -68,6 +70,43 @@ fsBrowseRoutes.get("/raw", (c) => {
         "Cache-Control": "private, max-age=3600",
       },
     });
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** DELETE /api/fs/rmdir — delete a directory { path } */
+fsBrowseRoutes.delete("/rmdir", async (c) => {
+  try {
+    const body = await c.req.json<{ path: string }>();
+    if (!body.path) return c.json(err("path is required"), 400);
+
+    const abs = resolve(body.path);
+    if (!existsSync(abs)) return c.json(err("Directory not found"), 404);
+    if (!statSync(abs).isDirectory()) return c.json(err("Path is not a directory"), 400);
+
+    rmSync(abs, { recursive: true });
+    return c.json(ok({ removed: abs }));
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** POST /api/fs/mkdir — create directory and git init { path } */
+fsBrowseRoutes.post("/mkdir", async (c) => {
+  try {
+    const body = await c.req.json<{ path: string }>();
+    if (!body.path) return c.json(err("path is required"), 400);
+
+    const abs = resolve(body.path);
+    if (existsSync(abs)) {
+      return c.json(err(`Directory already exists: ${abs}`), 400);
+    }
+
+    mkdirSync(abs, { recursive: true });
+    // git init in the new directory
+    await $`git init ${abs}`.quiet();
+    return c.json(ok({ path: abs, gitInitialized: true }), 201);
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }

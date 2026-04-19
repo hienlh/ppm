@@ -657,6 +657,10 @@ if (process.argv.includes("__serve__")) {
   // Start Jira watchers (non-blocking, cleanup on exit)
   import("../services/jira-watcher.service.ts")
     .then(({ jiraWatcherService }) => {
+      // Reset zombie debug sessions from previous server run
+      import("../services/jira-debug-session.service.ts").then(({ jiraDebugService }) => {
+        jiraDebugService.init();
+      }).catch(() => {});
       jiraWatcherService.startAll().catch((e) => {
         console.error("[jira] Failed to start watchers:", (e as Error).message);
       });
