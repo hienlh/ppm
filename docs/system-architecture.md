@@ -213,8 +213,9 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **ClawBotMemoryService** | LEGACY FTS5 memory | (deprecated v0.9.11) |
 | **ClawBotFormatterService** | LEGACY formatter | (deprecated v0.9.11) |
 | **ClawBotStreamerService** | LEGACY streamer | (deprecated v0.9.11) |
+| **BashOutputSpy** | Monitor bash tool output in real-time via /proc/PID/fd (Linux/WSL2) or lsof (macOS) | startSpy, stopSpy, stopAllForSession |
 
-**Key Files:** `src/services/*.service.ts`, `src/services/ppmbot/*.ts`, `src/cli/commands/bot-cmd.ts`
+**Key Files:** `src/services/*.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/cli/commands/bot-cmd.ts`
 
 ---
 

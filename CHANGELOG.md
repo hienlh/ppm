@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.11] - 2026-04-20
+
+### Added
+- **Real-time bash output streaming**: Chat displays live incremental bash output during tool execution via WebSocket, with cross-platform support (Linux/macOS)
+
+### Fixed
+- **Supervisor port-race during upgrade**: SIGKILL + process group kill + port-availability polling replaces unreliable 500ms sleep; server startup retries port check 4x before exit
+
 ## [0.11.10] - 2026-04-19
 
 ### Added

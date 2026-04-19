@@ -2,7 +2,37 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.9.86
+**Current Version:** v0.11.10
+
+---
+
+## [0.11.11] — 2026-04-19
+
+### Added
+- **Real-Time Bash Output Streaming** — Stream bash tool output in chat UI while commands run
+  - Backend service `BashOutputSpy` monitors bash process via `/proc/PID/fd/1` (Linux/WSL2) and `lsof` (macOS); graceful no-op on native Windows
+  - Cross-platform PID discovery using `pgrep -fn` (Linux + macOS)
+  - File polling at 100ms intervals captures output lines as they're written
+  - New WebSocket message type: `bash_output` with `{ toolUseId, content, lineCount }`
+  - Frontend hook `useChat` buffers partial output per toolUseId in ref (no excessive re-renders)
+  - ToolCard component auto-expands when streaming and displays line count indicator with animated spinner
+  - StreamingBashOutput component with auto-scroll-to-bottom (respects user scroll position)
+  - Display truncated to last 200 lines for performance; 500KB frontend memory cap
+  - Partial output cleared on `tool_result` or session cleanup; no buffering in reconnect history
+
+### Technical Details
+- **Files Created:**
+  - `src/services/bash-output-spy.ts` — Cross-platform process monitoring with line-buffering
+- **Files Modified:**
+  - `src/types/api.ts` — Added `bash_output` to `ChatWsServerMessage` union
+  - `src/server/ws/chat.ts` — Wire spy start/stop into tool_use/tool_result event loop
+  - `src/web/hooks/use-chat.ts` — Buffer partial output per toolUseId, expose via ref
+  - `src/web/components/chat/message-list.tsx` — Thread bashPartialOutput to ToolCard
+  - `src/web/components/chat/tool-cards.tsx` — Render StreamingBashOutput component, auto-expand on streaming
+- **Type Changes:**
+  - New: `ChatWsServerMessage` variant = `{ type: "bash_output"; toolUseId: string; content: string; lineCount: number }`
+  - Hook return type extended with `bashPartialOutput: RefObject<Map<string, { content: string; lineCount: number }>>`
+- **Breaking Changes:** None (additive feature, backward compatible)
 
 ---
 
