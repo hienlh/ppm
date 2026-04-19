@@ -527,8 +527,10 @@ class AccountService {
    * Also skips the OAuth call if the DB token was already refreshed by another session.
    * @param disableOnFail - if true, disable the account when refresh fails (default: true).
    *   Background/startup refresh should pass false to avoid disabling accounts prematurely.
+   * @param force - if true, bypass the skip-if-fresh check (use after 401 errors where
+   *   the token is demonstrably invalid despite having a future expiresAt).
    */
-  async refreshAccessToken(accountId: string, disableOnFail = true): Promise<void> {
+  async refreshAccessToken(accountId: string, disableOnFail = true, force = false): Promise<void> {
     // Dedup: if a refresh is already in progress for this account, wait for it instead of racing
     const pending = this.pendingRefreshes.get(accountId);
     if (pending) {
@@ -536,7 +538,7 @@ class AccountService {
       return pending;
     }
 
-    const promise = this._doRefreshAccessToken(accountId, disableOnFail);
+    const promise = this._doRefreshAccessToken(accountId, disableOnFail, force);
     this.pendingRefreshes.set(accountId, promise);
     try {
       await promise;
@@ -545,16 +547,18 @@ class AccountService {
     }
   }
 
-  private async _doRefreshAccessToken(accountId: string, disableOnFail: boolean): Promise<void> {
+  private async _doRefreshAccessToken(accountId: string, disableOnFail: boolean, force = false): Promise<void> {
     const account = this.getWithTokens(accountId);
     if (!account) throw new Error(`Account ${accountId} not found`);
     // Skip refresh for temporary accounts (no refresh token)
     if (!account.refreshToken || account.refreshToken === "") {
       throw new Error(`Account ${accountId} has no refresh token (temporary account)`);
     }
-    // Skip if token was already refreshed by another session (still fresh)
+    // Skip if token was already refreshed by another session (still fresh).
+    // But when force=true (after a 401), always refresh — the token may be
+    // revoked server-side despite having a future expiresAt.
     const nowS = Math.floor(Date.now() / 1000);
-    if (account.expiresAt && account.expiresAt - nowS > 60) {
+    if (!force && account.expiresAt && account.expiresAt - nowS > 60) {
       console.log(`[accounts] Token for ${account.email ?? accountId} is already fresh (expires in ${account.expiresAt - nowS}s) — skipping OAuth refresh`);
       return;
     }

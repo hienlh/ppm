@@ -916,9 +916,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (subtype === "api_retry" && (msg as any).error_status === 401 && account && !authRetried) {
             authRetried = true;
             try {
-              // refreshAccessToken has mutex + skip-if-fresh: if another session already
-              // refreshed, it returns immediately without calling OAuth again.
-              await accountService.refreshAccessToken(account.id, false);
+              // force=true: token got 401, so it's invalid regardless of expiresAt
+              await accountService.refreshAccessToken(account.id, false, true);
               const refreshedAccount = accountService.getWithTokens(account.id);
               if (refreshedAccount) {
                 const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
@@ -1093,9 +1092,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (assistantError === "authentication_failed" && account && !authRetried) {
               authRetried = true;
               try {
-                // refreshAccessToken has mutex + skip-if-fresh: if another session already
-                // refreshed, it returns immediately without calling OAuth again.
-                await accountService.refreshAccessToken(account.id, false);
+                // force=true: token got 401, so it's invalid regardless of expiresAt
+                await accountService.refreshAccessToken(account.id, false, true);
                 const refreshedAccount = accountService.getWithTokens(account.id);
                 if (refreshedAccount) {
                   const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
@@ -1272,9 +1270,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (!authRetried) {
                 authRetried = true;
                 try {
-                  // refreshAccessToken has mutex + skip-if-fresh: if another session already
-                  // refreshed, it returns immediately without calling OAuth again.
-                  await accountService.refreshAccessToken(account.id, false);
+                  // force=true: token got 401, so it's invalid regardless of expiresAt
+                  await accountService.refreshAccessToken(account.id, false, true);
                   const refreshedAccount = accountService.getWithTokens(account.id);
                   if (refreshedAccount) {
                     const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
