@@ -440,11 +440,29 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     }
 
     // Kill server child to free the port; keep tunnel alive for domain continuity
+    // Use SIGKILL + process group kill to ensure grandchildren (SDK subprocesses) die too
     log("INFO", "Stopping server before spawning new supervisor (tunnel kept alive)");
-    if (serverChild) { try { serverChild.kill(); } catch {} serverChild = null; }
+    if (serverChild) {
+      const pid = serverChild.pid;
+      try { process.kill(-pid, "SIGKILL"); } catch {} // kill process group
+      try { serverChild.kill("SIGKILL"); } catch {}   // fallback: kill direct child
+      serverChild = null;
+    }
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
-    // Brief wait for port release
-    await Bun.sleep(500);
+    // Poll until port is actually free (max 10s) — never guess with fixed sleep
+    const portFreeStart = Date.now();
+    while (Date.now() - portFreeStart < 10_000) {
+      const inUse = await new Promise<boolean>((resolve) => {
+        const net = require("node:net") as typeof import("node:net");
+        const tester = net.createServer()
+          .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
+          .once("listening", () => tester.close(() => resolve(false)))
+          .listen(_opts.port, _opts.host);
+      });
+      if (!inUse) break;
+      log("DEBUG", `Port ${_opts.port} still in use, waiting...`);
+      await Bun.sleep(200);
+    }
 
     // Spawn new supervisor using saved argv
     const cmd = originalArgv.slice();

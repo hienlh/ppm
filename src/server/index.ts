@@ -316,22 +316,28 @@ export async function startServer(options: {
       } catch {}
     }
 
-    // ── Check port availability ────────────────────────────────────────
-    const portInUse = await new Promise<boolean>((resolve) => {
+    // ── Check port availability (retry up to 5x for upgrade race) ──────
+    const checkPort = () => new Promise<boolean>((resolve) => {
       const net = require("node:net") as typeof import("node:net");
       const tester = net.createServer()
-        .once("error", (err: NodeJS.ErrnoException) => {
-          resolve(err.code === "EADDRINUSE");
-        })
-        .once("listening", () => {
-          tester.close(() => resolve(false));
-        })
+        .once("error", (err: NodeJS.ErrnoException) => resolve(err.code === "EADDRINUSE"))
+        .once("listening", () => tester.close(() => resolve(false)))
         .listen(port, host);
     });
+    let portInUse = await checkPort();
     if (portInUse) {
-      console.error(`\n  ✗  Port ${port} is already in use.`);
-      console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
-      process.exit(1);
+      // Retry — port may still be releasing after supervisor self-replace
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        writeLog("WARN", [`Port ${port} in use, retrying in 1s (${attempt}/4)`]);
+        await Bun.sleep(1000);
+        portInUse = await checkPort();
+        if (!portInUse) break;
+      }
+      if (portInUse) {
+        console.error(`\n  ✗  Port ${port} is already in use.`);
+        console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
+        process.exit(1);
+      }
     }
 
     // Kill any leftover processes from previous run (stale status.json)
