@@ -32,7 +32,7 @@ interface MessageInputProps {
   projectName?: string;
   /** Slash picker state change */
   onSlashStateChange?: (visible: boolean, filter: string) => void;
-  onSlashItemsLoaded?: (items: SlashItem[], ranked?: boolean, recentNames?: string[]) => void;
+  onSlashItemsLoaded?: (items: SlashItem[], recentNames?: string[]) => void;
   slashSelected?: SlashItem | null;
   /** File picker state change */
   onFileStateChange?: (visible: boolean, filter: string) => void;
@@ -96,9 +96,6 @@ export const MessageInput = memo(function MessageInput({
   const mobileTextareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashItemsRef = useRef<SlashItem[]>([]);
-  const slashRankedRef = useRef(false);
-  const slashDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const slashSearchIdRef = useRef(0);
   const fileItemsRef = useRef<FileNode[]>([]);
   const resizeRafRef = useRef(0);
   // Track picker open state to avoid unnecessary parent callbacks per keystroke
@@ -182,19 +179,18 @@ export const MessageInput = memo(function MessageInput({
   const fetchSlashItems = useCallback(() => {
     if (!projectName) {
       slashItemsRef.current = [];
-      onSlashItemsLoaded?.([], false, []);
+      onSlashItemsLoaded?.([], []);
       return;
     }
     api
       .get<{ items: SlashItem[]; recentNames: string[] }>(`${projectUrl(projectName)}/chat/slash-items`)
       .then((data) => {
         slashItemsRef.current = data.items;
-        slashRankedRef.current = false;
-        onSlashItemsLoaded?.(data.items, false, data.recentNames);
+        onSlashItemsLoaded?.(data.items, data.recentNames);
       })
       .catch(() => {
         slashItemsRef.current = [];
-        onSlashItemsLoaded?.([], false, []);
+        onSlashItemsLoaded?.([], []);
       });
   }, [projectName, onSlashItemsLoaded]);
 
@@ -207,13 +203,6 @@ export const MessageInput = memo(function MessageInput({
     window.addEventListener("ppm:slash-items-refresh", handler);
     return () => window.removeEventListener("ppm:slash-items-refresh", handler);
   }, [fetchSlashItems]);
-
-  // Cleanup debounce timer on unmount
-  useEffect(() => {
-    return () => {
-      if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
-    };
-  }, []);
 
   // Fetch file tree when projectName changes
   useEffect(() => {
@@ -481,30 +470,6 @@ export const MessageInput = memo(function MessageInput({
     [handleSend, permissionMode, onModeChange],
   );
 
-  /** Debounced server-side fuzzy search for slash items */
-  const fetchSlashSearch = useCallback(
-    (query: string) => {
-      if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
-      if (!projectName || !query) return;
-      const requestId = ++slashSearchIdRef.current;
-      slashDebounceRef.current = setTimeout(() => {
-        api
-          .get<{ items: SlashItem[]; recentNames: string[] }>(`${projectUrl(projectName)}/chat/slash-items?q=${encodeURIComponent(query)}`)
-          .then((data) => {
-            if (requestId !== slashSearchIdRef.current) return; // stale response
-            slashItemsRef.current = data.items;
-            slashRankedRef.current = true;
-            onSlashItemsLoaded?.(data.items, true, data.recentNames);
-          })
-          .catch(() => {
-            if (requestId !== slashSearchIdRef.current) return;
-            slashRankedRef.current = false;
-          });
-      }, 150);
-    },
-    [projectName, onSlashItemsLoaded],
-  );
-
   const updatePickerState = useCallback(
     (text: string, cursorPos: number) => {
       const textBefore = text.slice(0, cursorPos);
@@ -513,9 +478,6 @@ export const MessageInput = memo(function MessageInput({
       const hasSlash = textBefore.includes("/");
       const hasAt = textBefore.includes("@");
       if (!hasSlash && !hasAt) {
-        // Cancel pending slash search if any
-        if (slashDebounceRef.current) { clearTimeout(slashDebounceRef.current); slashDebounceRef.current = undefined; }
-        if (slashRankedRef.current) slashRankedRef.current = false;
         // Close pickers only if they were actually open (avoid unnecessary parent setState)
         if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
         if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
@@ -530,14 +492,9 @@ export const MessageInput = memo(function MessageInput({
           onSlashStateChange?.(true, filter);
           slashPickerOpenRef.current = true;
           if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
-          if (filter) fetchSlashSearch(filter);
           return;
         }
       }
-
-      // Cancel pending search when slash picker closes
-      if (slashDebounceRef.current) clearTimeout(slashDebounceRef.current);
-      if (slashRankedRef.current) slashRankedRef.current = false;
 
       // Check for @ anywhere in text (after whitespace or at start)
       if (hasAt) {
@@ -554,7 +511,7 @@ export const MessageInput = memo(function MessageInput({
       if (slashPickerOpenRef.current) { onSlashStateChange?.(false, ""); slashPickerOpenRef.current = false; }
       if (filePickerOpenRef.current) { onFileStateChange?.(false, ""); filePickerOpenRef.current = false; }
     },
-    [onSlashStateChange, onFileStateChange, fetchSlashSearch],
+    [onSlashStateChange, onFileStateChange],
   );
 
   /** Unified onChange for both textareas — updates ref, syncs other textarea, triggers picker */

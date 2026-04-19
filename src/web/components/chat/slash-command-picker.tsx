@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
 import { Sparkles, Terminal, Zap, RefreshCw, Clock } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { searchFuzzy } from "../../../shared/fuzzy-search";
 
 export interface SlashItem {
   type: "skill" | "command" | "builtin";
@@ -18,8 +19,6 @@ interface SlashCommandPickerProps {
   onSelect: (item: SlashItem) => void;
   onClose: () => void;
   visible: boolean;
-  /** When true, items are pre-ranked by server — skip client-side filtering */
-  ranked?: boolean;
   /** Recently used item names (most recent first) */
   recentNames?: string[];
   /** Project name for cache invalidation */
@@ -32,7 +31,6 @@ export function SlashCommandPicker({
   onSelect,
   onClose,
   visible,
-  ranked,
   recentNames = [],
   projectName,
 }: SlashCommandPickerProps) {
@@ -42,34 +40,26 @@ export function SlashCommandPicker({
 
   const recentSet = useMemo(() => new Set(recentNames), [recentNames]);
 
-  // Build display list: when no filter + not ranked, put recents first
+  // Build display list: fuzzy search when filter is set, recents-first when idle
   const displayItems = useMemo(() => {
-    let base: SlashItem[];
-    if (ranked) {
-      base = items;
-    } else if (filter) {
-      const q = filter.toLowerCase();
-      base = items.filter(
-        (item) => item.name.toLowerCase().includes(q) || item.description.toLowerCase().includes(q),
-      );
-    } else {
-      base = items;
+    if (filter) {
+      // Client-side fuzzy search (Levenshtein) — replaces old server-side search
+      return { items: searchFuzzy(items, filter, 20, recentNames), recentCount: 0 };
     }
 
-    // Reorder: recents first when no filter and not server-ranked
-    if (!filter && !ranked && recentNames.length > 0) {
+    // No filter — show all items with recents first
+    if (recentNames.length > 0) {
       const recents: SlashItem[] = [];
       const rest: SlashItem[] = [];
-      for (const item of base) {
+      for (const item of items) {
         if (recentSet.has(item.name)) recents.push(item);
         else rest.push(item);
       }
-      // Sort recents by their order in recentNames (most recent first)
       recents.sort((a, b) => recentNames.indexOf(a.name) - recentNames.indexOf(b.name));
       return { items: [...recents, ...rest], recentCount: recents.length };
     }
-    return { items: base, recentCount: 0 };
-  }, [items, filter, ranked, recentNames, recentSet]);
+    return { items, recentCount: 0 };
+  }, [items, filter, recentNames, recentSet]);
 
   const filtered = displayItems.items;
   const recentCount = displayItems.recentCount;

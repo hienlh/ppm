@@ -36,7 +36,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
-  const [slashRanked, setSlashRanked] = useState(false);
   const [slashSelected, setSlashSelected] = useState<SlashItem | null>(null);
   const [slashRecentNames, setSlashRecentNames] = useState<string[]>([]);
 
@@ -255,9 +254,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   /** Stable callback for slash items loaded — prevents MessageInput memo break */
   const handleSlashItemsLoaded = useCallback(
-    (items: SlashItem[], ranked?: boolean, recentNames?: string[]) => {
+    (items: SlashItem[], recentNames?: string[]) => {
       setSlashItems(items);
-      if (ranked !== undefined) setSlashRanked(ranked);
       if (recentNames) setSlashRecentNames(recentNames);
     },
     [],
@@ -267,7 +265,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleSlashStateChange = useCallback((visible: boolean, filter: string) => {
     setShowSlashPicker(visible);
     setSlashFilter(filter);
-    if (!visible || !filter) setSlashRanked(false);
   }, []);
 
   const handleSlashSelect = useCallback((item: SlashItem) => {
@@ -432,7 +429,6 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onSelect={handleSlashSelect}
           onClose={handleSlashClose}
           visible={showSlashPicker}
-          ranked={slashRanked}
           recentNames={slashRecentNames}
           projectName={projectName}
         />
