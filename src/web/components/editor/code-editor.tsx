@@ -1,14 +1,14 @@
 import { useEffect, useState, useCallback, useRef, useMemo, memo, lazy, Suspense } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
-import { api, projectUrl, getAuthToken } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { Loader2, FileWarning, ExternalLink, Play, Database } from "lucide-react";
+import { Loader2, FileWarning, Play, Database } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
 import { SaveAsDialog } from "./save-as-dialog";
@@ -19,9 +19,17 @@ const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
 );
 const CsvPreview = lazy(() => import("./csv-preview").then((m) => ({ default: m.CsvPreview })));
+const ImagePreview = lazy(() => import("./image-preview").then((m) => ({ default: m.ImagePreview })));
+const PdfPreview = lazy(() => import("./pdf-preview").then((m) => ({ default: m.PdfPreview })));
+const VideoPreview = lazy(() => import("./video-preview").then((m) => ({ default: m.VideoPreview })));
+const AudioPreview = lazy(() => import("./audio-preview").then((m) => ({ default: m.AudioPreview })));
 
 /** Image extensions renderable inline */
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
+/** Video extensions playable inline */
+const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "ogg", "avi", "mkv"]);
+/** Audio extensions playable inline */
+const AUDIO_EXTS = new Set(["mp3", "wav", "flac", "aac", "m4a", "wma"]);
 /** SQLite extensions — redirect to sqlite viewer */
 const SQLITE_EXTS = new Set(["db", "sqlite", "sqlite3"]);
 
@@ -75,6 +83,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const ext = filePath ? getFileExt(filePath) : "";
   const isImage = IMAGE_EXTS.has(ext);
   const isPdf = ext === "pdf";
+  const isVideo = VIDEO_EXTS.has(ext);
+  const isAudio = AUDIO_EXTS.has(ext);
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
   const isCsv = ext === "csv";
@@ -215,7 +225,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     }
     if (!filePath) return;
     if (!isExternalFile && !projectName) return;
-    if (isImage || isPdf) { setLoading(false); return; }
+    if (isImage || isPdf || isVideo || isAudio) { setLoading(false); return; }
 
     setLoading(true);
     setError(null);
@@ -451,8 +461,10 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     );
   }
 
-  if (isImage) return <ImagePreview filePath={filePath!} projectName={projectName!} />;
-  if (isPdf) return <PdfPreview filePath={filePath!} projectName={projectName!} />;
+  if (isImage) return <Suspense fallback={<LoadingSpinner />}><ImagePreview filePath={filePath!} projectName={projectName!} /></Suspense>;
+  if (isPdf) return <Suspense fallback={<LoadingSpinner />}><PdfPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
+  if (isVideo) return <Suspense fallback={<LoadingSpinner />}><VideoPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
+  if (isAudio) return <Suspense fallback={<LoadingSpinner />}><AudioPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
 
   if (encoding === "base64") {
     return (
@@ -580,6 +592,10 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   );
 });
 
+function LoadingSpinner() {
+  return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
+}
+
 function MarkdownPreview({ content }: { content: string }) {
   return (
     <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded m-4" />}>
@@ -588,79 +604,3 @@ function MarkdownPreview({ content }: { content: string }) {
   );
 }
 
-function ImagePreview({ filePath, projectName }: { filePath: string; projectName: string }) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let revoke: string | undefined;
-    const url = `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`;
-    const token = getAuthToken();
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.blob(); })
-      .then((blob) => { const u = URL.createObjectURL(blob); revoke = u; setBlobUrl(u); })
-      .catch(() => setError(true));
-    return () => { if (revoke) URL.revokeObjectURL(revoke); };
-  }, [filePath, projectName]);
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
-        <FileWarning className="size-10 text-text-subtle" />
-        <p className="text-sm">Failed to load image.</p>
-      </div>
-    );
-  }
-  if (!blobUrl) {
-    return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
-  }
-  return (
-    <div className="flex items-center justify-center h-full p-4 bg-surface overflow-auto">
-      <img src={blobUrl} alt={filePath} className="max-w-full max-h-full object-contain" />
-    </div>
-  );
-}
-
-function PdfPreview({ filePath, projectName }: { filePath: string; projectName: string }) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    let revoke: string | undefined;
-    const url = `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`;
-    const token = getAuthToken();
-    fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => { if (!r.ok) throw new Error("Failed"); return r.blob(); })
-      .then((blob) => {
-        const u = URL.createObjectURL(new Blob([blob], { type: "application/pdf" }));
-        revoke = u; setBlobUrl(u);
-      })
-      .catch(() => setError(true));
-    return () => { if (revoke) URL.revokeObjectURL(revoke); };
-  }, [filePath, projectName]);
-
-  const openInNewTab = useCallback(() => { if (blobUrl) window.open(blobUrl, "_blank"); }, [blobUrl]);
-
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
-        <FileWarning className="size-10 text-text-subtle" />
-        <p className="text-sm">Failed to load PDF.</p>
-      </div>
-    );
-  }
-  if (!blobUrl) {
-    return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
-  }
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-background shrink-0">
-        <span className="text-xs text-text-secondary truncate">{filePath}</span>
-        <button onClick={openInNewTab} className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors">
-          <ExternalLink className="size-3" /> Open in new tab
-        </button>
-      </div>
-      <iframe src={blobUrl} title={filePath} className="flex-1 w-full border-none" />
-    </div>
-  );
-}
