@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.9] - 2026-04-19
+
+### Added
+- **Streaming favicon indicator**: Favicon alternates between blue and amber when any chat tab is streaming an AI response; notification badge preserved during animation
+- **Streaming tab icon indicator**: Chat tabs show a pulsing emerald dot on the icon while streaming, replacing the static notification badge during active streams
+
 ## [0.11.8] - 2026-04-19
 
 ### Fixed
