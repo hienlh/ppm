@@ -366,6 +366,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         // Finalize the streaming message — preserve SDK UUID for fork/rewind
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
+        const finalAccount = streamingAccountRef.current;
         const doneUuid = ev.lastMessageUuid as string | undefined;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
@@ -376,6 +377,19 @@ export function useChat(sessionId: string | null, providerId = "claude", project
               content: finalContent || last.content,
               events: finalEvents.length > 0 ? finalEvents : last.events,
               ...(doneUuid && { sdkUuid: doneUuid }),
+            }];
+          }
+          // No assistant message flushed yet (rAF was still pending when cancelled).
+          // Create one from accumulated refs so the response isn't silently lost.
+          if (finalContent || finalEvents.length > 0) {
+            return [...prev, {
+              id: `final-${Date.now()}`,
+              role: "assistant" as const,
+              content: finalContent,
+              events: finalEvents,
+              timestamp: new Date().toISOString(),
+              ...(doneUuid && { sdkUuid: doneUuid }),
+              ...finalAccount,
             }];
           }
           return prev;

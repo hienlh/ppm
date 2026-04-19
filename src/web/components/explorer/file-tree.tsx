@@ -256,7 +256,7 @@ interface FileTreeProps {
 }
 
 export function FileTree({ onFileOpen }: FileTreeProps = {}) {
-  const { tree, loading, error, fetchTree, reset, selectedFiles, clearSelection } = useFileStore(useShallow((s) => ({ tree: s.tree, loading: s.loading, error: s.error, fetchTree: s.fetchTree, reset: s.reset, selectedFiles: s.selectedFiles, clearSelection: s.clearSelection })));
+  const { tree, loading, error, fetchTree, reset, selectedFiles, clearSelection, setExpanded } = useFileStore(useShallow((s) => ({ tree: s.tree, loading: s.loading, error: s.error, fetchTree: s.fetchTree, reset: s.reset, selectedFiles: s.selectedFiles, clearSelection: s.clearSelection, setExpanded: s.setExpanded })));
   const activeProject = useProjectStore((s) => s.activeProject);
   const openTab = useTabStore((s) => s.openTab);
   const [actionState, setActionState] = useState<{
@@ -304,10 +304,11 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
         console.error("Upload failed:", json.error);
       }
       loadTree();
+      if (targetDir) setExpanded(targetDir, true);
     } catch (e) {
       console.error("Upload error:", e);
     }
-  }, [activeProject, loadTree]);
+  }, [activeProject, loadTree, setExpanded]);
 
   const [isRootDragOver, setIsRootDragOver] = useState(false);
   const rootDragCounter = useRef(0);
