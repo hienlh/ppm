@@ -11,6 +11,9 @@ import {
   ChevronDown,
   Download,
   Loader2,
+  FilePlus,
+  FolderPlus,
+  RefreshCw,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useFileStore, type FileNode } from "@/stores/file-store";
@@ -27,6 +30,9 @@ import {
 } from "@/components/ui/context-menu";
 import { FileActions } from "./file-actions";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
+
+/** Synthetic root node for creating files/folders at project root */
+const ROOT_NODE: FileNode = { name: "", path: "", type: "directory" };
 
 const FILE_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   ts: FileCode,
@@ -301,25 +307,61 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     return a.name.localeCompare(b.name);
   });
 
+  const toolbarBtnClass = "p-1 rounded-sm text-text-secondary hover:text-foreground hover:bg-surface-elevated transition-colors";
+
   return (
-    <>
-      <ScrollArea className="flex-1">
-        <div className="py-1">
-          {sorted.map((node) => (
-            <TreeNode
-              key={node.path}
-              node={node}
-              depth={0}
-              projectName={activeProject.name}
-              onAction={handleAction}
-              onFileOpen={onFileOpen}
-            />
-          ))}
-          {sorted.length === 0 && (
-            <p className="p-3 text-xs text-text-subtle">Empty project.</p>
-          )}
-        </div>
-      </ScrollArea>
+    <div className="flex flex-col h-full">
+      {/* Toolbar */}
+      <div className="flex items-center gap-0.5 px-2 h-8 border-b border-border shrink-0">
+        <button onClick={() => handleAction("new-file", ROOT_NODE)} title="New File" className={toolbarBtnClass}>
+          <FilePlus className="size-3.5" />
+        </button>
+        <button onClick={() => handleAction("new-folder", ROOT_NODE)} title="New Folder" className={toolbarBtnClass}>
+          <FolderPlus className="size-3.5" />
+        </button>
+        <div className="flex-1" />
+        <button onClick={loadTree} title="Refresh" className={toolbarBtnClass}>
+          <RefreshCw className="size-3.5" />
+        </button>
+      </div>
+
+      {/* File tree with blank-area context menu */}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <ScrollArea className="flex-1">
+            <div className="py-1">
+              {sorted.map((node) => (
+                <TreeNode
+                  key={node.path}
+                  node={node}
+                  depth={0}
+                  projectName={activeProject.name}
+                  onAction={handleAction}
+                  onFileOpen={onFileOpen}
+                />
+              ))}
+              {sorted.length === 0 && (
+                <p className="p-3 text-xs text-text-subtle">Empty project.</p>
+              )}
+            </div>
+          </ScrollArea>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onClick={() => handleAction("new-file", ROOT_NODE)}>
+            <FilePlus className="size-3.5 mr-2" />
+            New File
+          </ContextMenuItem>
+          <ContextMenuItem onClick={() => handleAction("new-folder", ROOT_NODE)}>
+            <FolderPlus className="size-3.5 mr-2" />
+            New Folder
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={loadTree}>
+            <RefreshCw className="size-3.5 mr-2" />
+            Refresh
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {actionState && (
         <FileActions
@@ -330,6 +372,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
           onRefresh={loadTree}
         />
       )}
-    </>
+    </div>
   );
 }
