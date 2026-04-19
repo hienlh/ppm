@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.12] - 2026-04-20
+
+### Fixed
+- **Command palette search ranking**: Replace boolean fuzzy filter with 6-tier scoring — exact filename matches now rank first instead of last
+
 ## [0.11.11] - 2026-04-20
 
 ### Added
