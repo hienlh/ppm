@@ -1,10 +1,12 @@
 # Changelog
 
-## [0.11.5] - 2026-04-19
+## [0.11.6] - 2026-04-19
 
 ### Added
 - **Real-time editor reload**: Editor tabs auto-reload when files change on disk (external edits, AI chat, drag-drop upload) via `fs.watch` + WebSocket; skips reload if unsaved changes exist
 - **Real-time file tree refresh**: Explorer sidebar auto-refreshes on file system changes instead of only on window focus
+
+## [0.11.5] - 2026-04-19
 
 ### Fixed
 - **Silent message loss on fast streaming**: Race condition where assistant response was never rendered — `done` event cancelled pending rAF before content flushed to React state; now creates assistant message from accumulated refs when no flushed message exists
