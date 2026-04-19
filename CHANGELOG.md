@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.13] - 2026-04-20
+
+### Fixed
+- **Slash command search flicker**: Move fuzzy search from server-side to client-side — eliminates 200ms flicker caused by debounced API calls replacing instant client filter results
+
 ## [0.11.12] - 2026-04-20
 
 ### Fixed
