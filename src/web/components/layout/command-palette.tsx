@@ -25,6 +25,7 @@ import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
+import { scoreFileSearch, compareScores, type FileSearchScore } from "@/lib/score-file-search";
 
 interface CommandItem {
   id: string;
@@ -315,19 +316,13 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
     // Normal mode
     if (!query.trim()) return actionCommands;
-    const q = query.toLowerCase();
-    const matchesFuzzy = (text: string) => {
-      let ti = 0;
-      for (let qi = 0; qi < q.length; qi++) {
-        ti = text.indexOf(q[qi]!, ti);
-        if (ti === -1) return false;
-        ti++;
-      }
-      return true;
-    };
-    const matched = allCommands.filter(
-      (c) => matchesFuzzy(c.label.toLowerCase()) || (c.keywords && matchesFuzzy(c.keywords.toLowerCase())),
-    );
+    const scored: Array<{ cmd: CommandItem; score: FileSearchScore }> = [];
+    for (const c of allCommands) {
+      const s = scoreFileSearch(query, c.label, c.keywords ?? c.label);
+      if (s) scored.push({ cmd: c, score: s });
+    }
+    scored.sort((a, b) => compareScores(a.score, b.score));
+    const matched = scored.map((s) => s.cmd);
     // Prepend DB results (already filtered server-side) when query is 2+ chars
     return query.trim().length >= 2 ? [...dbCommands, ...matched] : matched;
   }, [allCommands, actionCommands, fsCommands, dbCommands, query]);
