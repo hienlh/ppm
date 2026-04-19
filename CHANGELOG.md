@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.10] - 2026-04-19
+
+### Added
+- **File type icons**: Explorer tree now shows distinct icons for 50+ file extensions — images, videos, audio, databases, archives, spreadsheets, and language-specific code icons with color coding
+
 ## [0.11.9] - 2026-04-19
 
 ### Added
