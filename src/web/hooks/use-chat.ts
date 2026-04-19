@@ -415,6 +415,12 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
 
+    // Dispatch file change events for real-time editor reload
+    if ((data as any).type === "file:changed") {
+      window.dispatchEvent(new CustomEvent("file:changed", { detail: data }));
+      return;
+    }
+
     // Dispatch global Jira events so components can listen via window events
     if (typeof (data as any).type === "string" && (data as any).type.startsWith("jira:")) {
       window.dispatchEvent(new CustomEvent((data as any).type, { detail: data }));

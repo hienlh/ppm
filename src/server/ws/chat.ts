@@ -5,6 +5,12 @@ import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
 import { getSessionTitle } from "../../services/db.service.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
+import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
+
+// Broadcast file changes to all WS clients for real-time editor reload
+onFileChange((projectName, path) => {
+  broadcastGlobalEvent({ type: "file:changed", projectName, path });
+});
 
 const PING_INTERVAL_MS = 15_000; // 15s keepalive
 const CLEANUP_TIMEOUT_MS = 5 * 60_000; // 5min after Claude done + no FE
@@ -184,6 +190,7 @@ function startCleanupTimer(sessionId: string): void {
     entry.pingIntervals.clear();
     for (const w of entry.teamWatchers.values()) w.cleanup();
     entry.teamWatchers.clear();
+    if (entry.projectName) stopWatching(entry.projectName);
     activeSessions.delete(sessionId);
   }, CLEANUP_TIMEOUT_MS);
 }
@@ -481,6 +488,7 @@ export const chatWebSocket = {
           }
         }).catch(() => {});
       }
+      if (projectName && projectPath) startWatching(projectName, projectPath);
       console.log(`[chat] session=${sessionId} FE reconnected (phase=${existing.phase}, clients=${existing.clients.size})`);
       return;
     }
@@ -500,6 +508,7 @@ export const chatWebSocket = {
     };
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
+    if (projectName && projectPath) startWatching(projectName, projectPath);
 
     ws.send(JSON.stringify({
       type: "session_state",
@@ -707,6 +716,7 @@ export const chatWebSocket = {
 
     // Remove from clients Set + clear per-client ping
     evictClient(entry, ws);
+    if (entry.projectName) stopWatching(entry.projectName);
     console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
     if (entry.clients.size === 0) {

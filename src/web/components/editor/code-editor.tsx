@@ -240,6 +240,29 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [filePath, projectName, isImage, isPdf, isExternalFile, isUntitled]);
 
+  // Real-time reload: listen for file:changed WS events, re-fetch if editor is clean
+  const unsavedRef = useRef(unsaved);
+  unsavedRef.current = unsaved;
+  useEffect(() => {
+    if (!filePath || !projectName || inlineContent != null || isUntitled) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail.projectName !== projectName || detail.path !== filePath) return;
+      if (unsavedRef.current) return; // don't overwrite unsaved changes
+      const readUrl = isExternalFile
+        ? `/api/fs/read?path=${encodeURIComponent(filePath)}`
+        : `${projectUrl(projectName)}/files/read?path=${encodeURIComponent(filePath)}`;
+      api.get<{ content: string; encoding?: string }>(readUrl).then((data) => {
+        if (data.content === latestContentRef.current) return; // skip if unchanged (e.g. self-save)
+        setContent(data.content);
+        latestContentRef.current = data.content;
+        if (data.encoding) setEncoding(data.encoding);
+      }).catch(() => {});
+    };
+    window.addEventListener("file:changed", handler);
+    return () => window.removeEventListener("file:changed", handler);
+  }, [filePath, projectName, isExternalFile, inlineContent, isUntitled]);
+
   // Update tab title unsaved indicator
   useEffect(() => {
     if (!ownTab) return;

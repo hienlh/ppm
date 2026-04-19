@@ -277,12 +277,23 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     }
   }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh file tree when window regains focus
-  // TODO: Replace with fs.watch + WebSocket push for real-time sync without needing window focus
+  // Auto-refresh file tree on window focus and real-time file changes via WebSocket
   useEffect(() => {
-    const handleFocus = () => { if (activeProject) fetchTree(activeProject.name); };
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
+    if (!activeProject) return;
+    const refresh = () => fetchTree(activeProject.name);
+    let debounceTimer: ReturnType<typeof setTimeout>;
+    const debouncedRefresh = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(refresh, 300); };
+    const handleFileChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail.projectName === activeProject.name) debouncedRefresh();
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("file:changed", handleFileChanged);
+    return () => {
+      clearTimeout(debounceTimer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("file:changed", handleFileChanged);
+    };
   }, [activeProject, fetchTree]);
 
   const uploadFiles = useCallback(async (targetDir: string, files: FileList) => {
