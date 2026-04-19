@@ -134,6 +134,8 @@ Type=simple
 ExecStart=${execStart}
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=10
+KillMode=mixed
 ${envPath}
 WorkingDirectory=${homedir()}/.ppm
 

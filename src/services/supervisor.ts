@@ -75,9 +75,8 @@ function log(level: string, msg: string) {
   const ts = new Date().toISOString();
   const line = `[${ts}] [${level}] [supervisor] ${msg}\n`;
   try { appendFileSync(logFile(), line); } catch {}
-  if (level === "ERROR" || level === "FATAL") {
-    process.stderr.write(line);
-  }
+  // Always write supervisor logs to stderr so journalctl captures them
+  try { process.stderr.write(line); } catch {}
 }
 
 // ─── Backoff calc ──────────────────────────────────────────────────────
@@ -243,7 +242,18 @@ export async function spawnTunnel(port: number): Promise<void> {
     tunnelChild = null;
 
     if (shuttingDown) return;
+
+    const now = Date.now();
+    if (now - lastTunnelCrash > STABLE_WINDOW_MS) tunnelRestarts = 0;
+    lastTunnelCrash = now;
     tunnelRestarts++;
+
+    if (tunnelRestarts > MAX_RESTARTS) {
+      log("ERROR", `Tunnel exceeded ${MAX_RESTARTS} URL extraction failures, disabling tunnel`);
+      updateStatus({ shareUrl: null, tunnelPid: null });
+      return;
+    }
+
     const delay = backoffDelay(tunnelRestarts);
     log("WARN", `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
     await Bun.sleep(delay);
@@ -276,7 +286,7 @@ export async function spawnTunnel(port: number): Promise<void> {
   }
 
   const delay = backoffDelay(tunnelRestarts);
-  log("WARN", `Tunnel died (exit ${exitCode}, was ${deadUrl}), restart in ${delay}ms (#${tunnelRestarts})`);
+  log("WARN", `Tunnel process exited (code=${exitCode}, signal=${tunnelChild === null ? "killed" : "self"}, url=${deadUrl}), restart in ${delay}ms (#${tunnelRestarts})`);
   await Bun.sleep(delay);
 
   if (!shuttingDown) return spawnTunnel(port);
@@ -734,9 +744,20 @@ export function shutdown() {
   if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
   if (cloudMonitorTimer) clearInterval(cloudMonitorTimer);
 
-  if (serverChild) { try { serverChild.kill(); } catch {} }
-  if (tunnelChild) { try { tunnelChild.kill(); } catch {} }
-  if (adoptedTunnelPid) { try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {} }
+  // Use SIGKILL for children — SIGTERM leaves grandchildren (Claude SDK, etc.)
+  // alive, causing systemd to wait 90s then SIGKILL the entire cgroup
+  if (serverChild) {
+    log("INFO", `Killing server child (PID: ${serverChild.pid})`);
+    try { serverChild.kill("SIGKILL"); } catch {}
+  }
+  if (tunnelChild) {
+    log("INFO", `Killing tunnel child (PID: ${tunnelChild.pid})`);
+    try { tunnelChild.kill("SIGKILL"); } catch {}
+  }
+  if (adoptedTunnelPid) {
+    log("INFO", `Killing adopted tunnel (PID: ${adoptedTunnelPid})`);
+    try { process.kill(adoptedTunnelPid, "SIGKILL"); } catch {}
+  }
 }
 
 // ─── Main entry ────────────────────────────────────────────────────────
@@ -788,9 +809,19 @@ export async function runSupervisor(opts: {
   _logFd = logFd;
   _opts = { port: opts.port, host: opts.host, share: opts.share };
 
-  // Signal handlers
-  process.on("SIGTERM", () => { shutdown(); process.exit(0); });
-  process.on("SIGINT", () => { shutdown(); process.exit(0); });
+  // Signal handlers — force exit after 5s if process.exit doesn't work
+  const forceShutdown = (signal: string) => {
+    log("INFO", `${signal} received`);
+    shutdown();
+    // Safety net: force kill self if process.exit(0) doesn't terminate
+    setTimeout(() => {
+      log("WARN", `Force exit after ${signal} — process.exit(0) did not terminate`);
+      try { process.kill(process.pid, "SIGKILL"); } catch {}
+    }, 5000).unref();
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => forceShutdown("SIGTERM"));
+  process.on("SIGINT", () => forceShutdown("SIGINT"));
 
   // SIGUSR2 = command file dispatch OR graceful server restart
   process.on("SIGUSR2", () => {
