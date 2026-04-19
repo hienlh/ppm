@@ -6,6 +6,7 @@ import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk"
 import { getSessionTitle } from "../../services/db.service.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
+import { bashOutputSpy } from "../../services/bash-output-spy.ts";
 
 // Broadcast file changes to all WS clients for real-time editor reload
 onFileChange((projectName, path) => {
@@ -301,9 +302,27 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.pendingTeamCreate = ev.toolUseId;
           console.log(`[chat] session=${sessionId} TeamCreate tool_use detected, toolUseId=${ev.toolUseId}`);
         }
+        // Start bash output spy for real-time streaming
+        if (ev.tool === "Bash" && ev.toolUseId) {
+          const command = typeof ev.input === "object" && ev.input
+            ? String((ev.input as any).command ?? "")
+            : "";
+          if (command) {
+            bashOutputSpy.startSpy(ev.toolUseId, command, sessionId, (output) => {
+              broadcast(sessionId, {
+                type: "bash_output",
+                toolUseId: output.toolUseId,
+                content: output.newContent,
+                lineCount: output.totalLineCount,
+              });
+            });
+          }
+        }
       } else if (evType === "tool_result") {
         logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
         console.log(`[chat] session=${sessionId} tool_result: toolUseId=${ev.toolUseId} pendingTeamCreate=${entry.pendingTeamCreate} output=${(ev.output ?? "").slice(0, 200)}`);
+        // Stop bash output spy for this tool
+        if (ev.toolUseId) bashOutputSpy.stopSpy(ev.toolUseId);
         // Detect team creation from TeamCreate tool_result
         if (entry.pendingTeamCreate && entry.pendingTeamCreate === ev.toolUseId) {
           const { extractTeamName, startTeamInboxWatcher } = await import("./team-inbox-watcher.ts");
@@ -376,6 +395,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         const newId = ev.newSessionId as string;
         if (newId && newId !== sessionId) {
           console.log(`[chat] session_migrated: ${sessionId} → ${newId}`);
+          // Stop spies tagged with old session ID before re-keying
+          bashOutputSpy.stopAllForSession(sessionId);
           const oldEntry = activeSessions.get(sessionId);
           if (oldEntry) {
             activeSessions.delete(sessionId);
@@ -413,6 +434,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     entry.turnEvents = [];
     setPhase(sessionId, "idle");
     entry.pendingApprovalEvent = undefined;
+    // Cleanup bash output spies
+    bashOutputSpy.stopAllForSession(sessionId);
     // Cleanup team watchers
     for (const w of entry.teamWatchers.values()) w.cleanup();
     entry.teamWatchers.clear();

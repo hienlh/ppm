@@ -34,6 +34,11 @@ interface TeamActivityState {
 
 const EMPTY_TEAM_ACTIVITY: TeamActivityState = { hasTeams: false, teamNames: [], messageCount: 0, unreadCount: 0 };
 
+export interface BashPartialEntry {
+  content: string;
+  lineCount: number;
+}
+
 interface UseChatReturn {
   messages: ChatMessage[];
   messagesLoading: boolean;
@@ -52,6 +57,8 @@ interface UseChatReturn {
   teamMessages: TeamMessageItem[];
   /** Mark team messages as read (reset unread counter) */
   markTeamRead: () => void;
+  /** Partial bash output keyed by toolUseId (ref-backed for perf) */
+  bashPartialOutput: React.RefObject<Map<string, BashPartialEntry>>;
   sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
@@ -84,6 +91,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [isConnected, setIsConnected] = useState(false);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
+  const bashOutputRef = useRef<Map<string, BashPartialEntry>>(new Map());
   const streamingAccountRef = useRef<{ accountId: string; accountLabel: string } | null>(null);
   const phaseRef = useRef<SessionPhase>("idle");
   const pendingMessageRef = useRef<string | null>(null);
@@ -249,6 +257,10 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }
 
       case "tool_result": {
+        // Clear bash partial output for this tool
+        const trId = ev.toolUseId as string;
+        if (trId) bashOutputRef.current.delete(trId);
+
         const pid = ev.parentToolUseId as string | undefined;
         if (pid && routeToParent(ev as ChatEvent, pid)) {
           syncMessages();
@@ -359,6 +371,28 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         break;
       }
 
+      case "bash_output": {
+        const tuId = ev.toolUseId as string;
+        if (tuId) {
+          const existing = bashOutputRef.current.get(tuId);
+          if (existing) {
+            existing.content += ev.content;
+            // Cap at ~500KB to prevent browser OOM on long-running commands
+            if (existing.content.length > 500_000) {
+              existing.content = existing.content.slice(-500_000);
+            }
+            existing.lineCount = ev.lineCount as number;
+          } else {
+            bashOutputRef.current.set(tuId, {
+              content: ev.content as string,
+              lineCount: ev.lineCount as number,
+            });
+          }
+          syncMessages();
+        }
+        break;
+      }
+
       case "done": {
         // Idempotent: may receive duplicate done (provider + stream loop finally)
         if (phaseRef.current === "idle") break;
@@ -405,6 +439,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
         streamingAccountRef.current = null;
+        bashOutputRef.current.clear();
         setStatusMessage(null);
         // Phase transition to idle comes from BE via phase_changed
         break;
@@ -570,6 +605,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setCompactStatus(null);
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
+    bashOutputRef.current.clear();
     if (syncRafRef.current) { cancelAnimationFrame(syncRafRef.current); syncRafRef.current = 0; }
     setIsConnected(false);
     // Reset team state
@@ -724,6 +760,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     });
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
+    bashOutputRef.current.clear();
     pendingMessageRef.current = null;
     setPhase("idle");
     phaseRef.current = "idle";
@@ -773,6 +810,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     teamActivity,
     teamMessages,
     markTeamRead,
+    bashPartialOutput: bashOutputRef,
     sendMessage,
     respondToApproval,
     cancelStreaming,

@@ -2,7 +2,8 @@
  * Tool card components for chat message rendering.
  * Handles summary + details for all SDK tool types.
  */
-import { useState, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
+import type { BashPartialEntry } from "../../hooks/use-chat";
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
 );
@@ -48,11 +49,13 @@ export function ToolCard({
   result,
   completed,
   projectName,
+  bashPartialOutput,
 }: {
   tool: ChatEvent;
   result?: ChatEvent;
   completed?: boolean;
   projectName?: string;
+  bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -75,6 +78,18 @@ export function ToolCard({
   const hasChildren = children && children.length > 0;
   const isDone = hasResult || hasAnswers || wasApproved || completed;
 
+  // Read partial bash output for streaming Bash tools
+  const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
+  const partial = toolName === "Bash" && !hasResult && toolUseId
+    ? bashPartialOutput?.current?.get(toolUseId)
+    : undefined;
+  const isStreamingBash = !!partial;
+
+  // Auto-expand ToolCard when streaming bash output
+  useEffect(() => {
+    if (isStreamingBash && !expanded) setExpanded(true);
+  }, [isStreamingBash]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className={`rounded border text-xs ${isSubagent ? "border-accent/30 bg-accent/5" : "border-border bg-background"}`}>
       <button
@@ -90,7 +105,10 @@ export function ToolCard({
         <span className="truncate text-text-primary">
           <ToolSummary name={toolName} input={input} />
         </span>
-        {hasChildren && (
+        {isStreamingBash && (
+          <span className="ml-auto text-[10px] text-yellow-400 shrink-0">{partial!.lineCount} line{partial!.lineCount !== 1 ? "s" : ""} streaming...</span>
+        )}
+        {hasChildren && !isStreamingBash && (
           <span className="ml-auto text-[10px] text-text-subtle shrink-0">{children!.length} steps</span>
         )}
       </button>
@@ -99,6 +117,8 @@ export function ToolCard({
           {(tool.type === "tool_use" || tool.type === "approval_request") && (
             <ToolDetails name={toolName} input={input} projectName={projectName} />
           )}
+          {/* Streaming bash output */}
+          {partial && <StreamingBashOutput content={partial.content} lineCount={partial.lineCount} />}
           {/* Subagent children: render nested tool events */}
           {hasChildren && (
             <SubagentChildren events={children!} projectName={projectName} />
@@ -462,6 +482,37 @@ function MiniMarkdown({ content, maxHeight = "max-h-48" }: { content: string; ma
   );
 }
 
+
+/** Real-time streaming bash output with auto-scroll */
+function StreamingBashOutput({ content, lineCount }: { content: string; lineCount: number }) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const userScrolledRef = useRef(false);
+
+  useEffect(() => {
+    if (preRef.current && !userScrolledRef.current) {
+      preRef.current.scrollTop = preRef.current.scrollHeight;
+    }
+  }, [content]);
+
+  return (
+    <div className="border-t border-border pt-1.5">
+      <div className="flex items-center gap-1 text-[10px] text-yellow-400 mb-1">
+        <Loader2 className="size-3 animate-spin" />
+        <span>Output ({lineCount} line{lineCount !== 1 ? "s" : ""}, streaming...)</span>
+      </div>
+      <pre
+        ref={preRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          userScrolledRef.current = el.scrollTop + el.clientHeight < el.scrollHeight - 20;
+        }}
+        className="overflow-x-auto overflow-y-auto max-h-60 text-text-subtle font-mono whitespace-pre-wrap break-all text-[11px]"
+      >
+        {content.split("\n").slice(-200).join("\n")}
+      </pre>
+    </div>
+  );
+}
 
 function truncate(str?: string, max = 50): string {
   if (!str) return "";

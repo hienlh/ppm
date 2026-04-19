@@ -3,6 +3,7 @@ import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
+import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -51,6 +52,8 @@ interface MessageListProps {
   onFork?: (userMessage: string, messageId?: string) => void;
   /** Called when user selects a recent session from the welcome screen */
   onSelectSession?: (session: import("../../../types/chat").SessionInfo) => void;
+  /** Partial bash output ref from useChat for real-time streaming */
+  bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }
 
 export function MessageList({
@@ -66,6 +69,7 @@ export function MessageList({
   compactStatus,
   projectName,
   onFork,
+  bashPartialOutput,
 }: MessageListProps) {
   // Scroll handled by StickToBottom wrapper — no manual scroll logic needed
 
@@ -136,6 +140,7 @@ export function MessageList({
                 projectName={projectName}
                 onFork={msg.role === "user" && onFork ? handleFork : undefined}
                 prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
+                bashPartialOutput={bashPartialOutput}
               />
             );
           })}
@@ -170,10 +175,11 @@ function ScrollToBottomButton() {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId, bashPartialOutput }: {
   message: ChatMessage; isStreaming: boolean; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
-  prevMsgId?: string
+  prevMsgId?: string;
+  bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }) {
   if (message.role === "user") {
     const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
@@ -195,7 +201,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
   return (
     <div className="flex flex-col gap-2">
       {message.events && message.events.length > 0
-        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} />
+        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} />
         : message.content && (
             <div className="text-sm text-text-primary select-text">
               <MarkdownContent content={message.content} projectName={projectName} />
@@ -636,7 +642,7 @@ type EventGroup =
   | { kind: "thinking"; content: string }
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean };
 
-function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatEvent[]; isStreaming: boolean; projectName?: string }) {
+function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput }: { events: ChatEvent[]; isStreaming: boolean; projectName?: string; bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>> }) {
   // Group: consecutive text → merged text block; tool_use + tool_result paired by toolUseId
   const groups: EventGroup[] = [];
   let textBuffer = "";
@@ -757,7 +763,7 @@ function InterleavedEvents({ events, isStreaming, projectName }: { events: ChatE
             </div>
           );
         }
-        return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} completed={group.completed} projectName={projectName} />;
+        return <ToolCard key={`tool-${i}`} tool={group.tool} result={group.result} completed={group.completed} projectName={projectName} bashPartialOutput={bashPartialOutput} />;
       })}
     </>
   );

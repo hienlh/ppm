@@ -36,6 +36,7 @@ export type ChatWsServerMessage =
   | { type: "thinking"; content: string; parentToolUseId?: string }
   | { type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string }
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
+  | { type: "bash_output"; toolUseId: string; content: string; lineCount: number }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "done"; sessionId: string; contextWindowPct?: number }
   | { type: "error"; message: string }

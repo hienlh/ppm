@@ -108,6 +108,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     teamActivity,
     teamMessages,
     markTeamRead,
+    bashPartialOutput,
   } = useChat(sessionId, providerId, projectName);
 
   // Flush pending message once WS connects (replaces unreliable setTimeout)
@@ -398,6 +399,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
         onSelectSession={handleSelectSession}
+        bashPartialOutput={bashPartialOutput}
       />
 
       {/* Bottom toolbar */}
