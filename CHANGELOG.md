@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.3] - 2026-04-19
+
+### Added
+- **Drag-and-drop file upload**: Drag files from OS file manager into explorer sidebar to upload; drop on folder targets that folder, drop on blank area targets project root
+- **Upload limits**: 50MB per file, 20 files per drop, path traversal protection
+
 ## [0.11.2] - 2026-04-19
 
 ### Fixed
