@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, memo } from "react";
+import { useEffect, useCallback, useState, useRef, memo } from "react";
 import {
   Folder,
   FolderOpen,
@@ -30,6 +30,12 @@ import {
 } from "@/components/ui/context-menu";
 import { FileActions } from "./file-actions";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
+import { getAuthToken, projectUrl } from "@/lib/api-client";
+
+/** Check if drag event is from OS files (not internal PPM drag) */
+function isExternalFileDrag(e: React.DragEvent): boolean {
+  return e.dataTransfer.types.includes("Files") && !e.dataTransfer.types.includes("application/x-ppm-path");
+}
 
 /** Synthetic root node for creating files/folders at project root */
 const ROOT_NODE: FileNode = { name: "", path: "", type: "directory" };
@@ -62,16 +68,19 @@ interface TreeNodeProps {
   depth: number;
   projectName: string;
   onAction: (action: string, node: FileNode) => void;
+  onFileDrop: (targetDir: string, files: FileList) => void;
   onFileOpen?: () => void;
 }
 
-const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, onFileOpen }: TreeNodeProps) {
+const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, onFileDrop, onFileOpen }: TreeNodeProps) {
   const { expandedPaths, toggleExpand, selectedFiles, toggleFileSelect } = useFileStore(useShallow((s) => ({ expandedPaths: s.expandedPaths, toggleExpand: s.toggleExpand, selectedFiles: s.selectedFiles, toggleFileSelect: s.toggleFileSelect })));
   const openTab = useTabStore((s) => s.openTab);
   const isExpanded = expandedPaths.has(node.path);
   const isDir = node.type === "directory";
   const isSelected = selectedFiles.includes(node.path);
   const isIgnored = node.ignored === true;
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragCounter = useRef(0);
 
   function handleClick(e: React.MouseEvent) {
     if (isDir) {
@@ -102,6 +111,36 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
     e.dataTransfer.effectAllowed = "copy";
   }
 
+  function handleNodeDragEnter(e: React.DragEvent) {
+    if (!isDir || !isExternalFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (dragCounter.current === 1) setIsDragOver(true);
+  }
+  function handleNodeDragLeave(e: React.DragEvent) {
+    if (!isDir) return;
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current === 0) setIsDragOver(false);
+  }
+  function handleNodeDragOver(e: React.DragEvent) {
+    if (!isDir || !isExternalFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }
+  function handleNodeDrop(e: React.DragEvent) {
+    if (!isDir || !isExternalFileDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setIsDragOver(false);
+    if (e.dataTransfer.files.length > 0) {
+      onFileDrop(node.path, e.dataTransfer.files);
+    }
+  }
+
   const Icon = isDir
     ? isExpanded
       ? FolderOpen
@@ -116,7 +155,12 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
     : [];
 
   return (
-    <div>
+    <div
+      onDragEnter={isDir ? handleNodeDragEnter : undefined}
+      onDragLeave={isDir ? handleNodeDragLeave : undefined}
+      onDragOver={isDir ? handleNodeDragOver : undefined}
+      onDrop={isDir ? handleNodeDrop : undefined}
+    >
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <button
@@ -129,6 +173,7 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
               "select-none",
               isIgnored && "opacity-40",
               isSelected && "bg-primary/15 ring-1 ring-primary/40",
+              isDragOver && "ring-1 ring-dashed ring-primary bg-primary/10",
             )}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
           >
@@ -198,6 +243,7 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
           depth={depth + 1}
           projectName={projectName}
           onAction={onAction}
+          onFileDrop={onFileDrop}
           onFileOpen={onFileOpen}
         />
       ))}
@@ -238,6 +284,56 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [activeProject, fetchTree]);
+
+  const uploadFiles = useCallback(async (targetDir: string, files: FileList) => {
+    if (!activeProject) return;
+    const form = new FormData();
+    form.append("targetDir", targetDir);
+    for (const file of files) form.append("files", file);
+    const headers: HeadersInit = {};
+    const token = getAuthToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    try {
+      const res = await fetch(`${projectUrl(activeProject.name)}/files/upload`, {
+        method: "POST",
+        headers,
+        body: form,
+      });
+      if (!res.ok) {
+        const json = await res.json();
+        console.error("Upload failed:", json.error);
+      }
+      loadTree();
+    } catch (e) {
+      console.error("Upload error:", e);
+    }
+  }, [activeProject, loadTree]);
+
+  const [isRootDragOver, setIsRootDragOver] = useState(false);
+  const rootDragCounter = useRef(0);
+
+  function handleRootDragEnter(e: React.DragEvent) {
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    rootDragCounter.current++;
+    if (rootDragCounter.current === 1) setIsRootDragOver(true);
+  }
+  function handleRootDragLeave() {
+    rootDragCounter.current--;
+    if (rootDragCounter.current === 0) setIsRootDragOver(false);
+  }
+  function handleRootDragOver(e: React.DragEvent) {
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  }
+  function handleRootDrop(e: React.DragEvent) {
+    if (!isExternalFileDrag(e)) return;
+    e.preventDefault();
+    rootDragCounter.current = 0;
+    setIsRootDragOver(false);
+    if (e.dataTransfer.files.length > 0) uploadFiles("", e.dataTransfer.files);
+  }
 
   function handleAction(action: string, node: FileNode) {
     if (action === "copy-path") {
@@ -310,7 +406,13 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
   const toolbarBtnClass = "p-1 rounded-sm text-text-secondary hover:text-foreground hover:bg-surface-elevated transition-colors";
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className={cn("flex flex-col h-full", isRootDragOver && "bg-primary/5")}
+      onDragEnter={handleRootDragEnter}
+      onDragLeave={handleRootDragLeave}
+      onDragOver={handleRootDragOver}
+      onDrop={handleRootDrop}
+    >
       {/* Toolbar */}
       <div className="flex items-center gap-0.5 px-2 h-8 border-b border-border shrink-0">
         <button onClick={() => handleAction("new-file", ROOT_NODE)} title="New File" className={toolbarBtnClass}>
@@ -337,6 +439,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
                   depth={0}
                   projectName={activeProject.name}
                   onAction={handleAction}
+                  onFileDrop={uploadFiles}
                   onFileOpen={onFileOpen}
                 />
               ))}

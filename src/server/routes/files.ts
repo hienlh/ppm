@@ -1,11 +1,14 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { fileService } from "../../services/file.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { errorStatus } from "../helpers/error-status.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
+
+const MAX_UPLOAD_SIZE = 50 * 1024 * 1024; // 50MB per file
+const MAX_UPLOAD_FILES = 20;
 
 export const fileRoutes = new Hono<Env>();
 
@@ -91,6 +94,41 @@ fileRoutes.post("/create", async (c) => {
     }
     fileService.createFile(projectPath, body.path, body.type);
     return c.json(ok({ created: body.path, type: body.type }), 201);
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** POST /files/upload — upload files from OS drag-drop into project directory */
+fileRoutes.post("/upload", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const body = await c.req.parseBody({ all: true });
+    const targetDir = String(body["targetDir"] ?? "");
+    const rawFiles = body["files"];
+    const files = Array.isArray(rawFiles) ? rawFiles : rawFiles ? [rawFiles] : [];
+
+    if (files.length === 0) return c.json(err("No files provided"), 400);
+    if (files.length > MAX_UPLOAD_FILES) return c.json(err(`Max ${MAX_UPLOAD_FILES} files per upload`), 400);
+
+    const absTargetDir = resolve(projectPath, targetDir);
+    if (!absTargetDir.startsWith(projectPath)) return c.json(err("Access denied"), 403);
+    if (!existsSync(absTargetDir)) mkdirSync(absTargetDir, { recursive: true });
+
+    const uploaded: { name: string; path: string; size: number }[] = [];
+    for (const file of files) {
+      if (!(file instanceof File)) continue;
+      if (file.size > MAX_UPLOAD_SIZE) {
+        return c.json(err(`File "${file.name}" exceeds 50MB limit`), 400);
+      }
+      const safeName = file.name.replace(/[/\\]/g, "_");
+      const absPath = resolve(absTargetDir, safeName);
+      if (!absPath.startsWith(projectPath)) return c.json(err("Access denied"), 403);
+      await Bun.write(absPath, file);
+      uploaded.push({ name: safeName, path: absPath.slice(projectPath.length + 1), size: file.size });
+    }
+
+    return c.json(ok({ uploaded }), 201);
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }
