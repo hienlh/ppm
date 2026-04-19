@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.4] - 2026-04-19
+
+### Fixed
+- **AskUserQuestion re-prompting on reconnect**: Replaying turn_events no longer re-triggers already-answered AskUserQuestion dialogs; server enriches answered approvals with response data, client skips stale setPendingApproval during replay
+- **Missing user messages on reconnect**: User messages for in-progress turns were lost during WS reconnect; server now includes the current turn's user message in turn_events payload, client uses targeted truncation instead of dropping completed history
+
 ## [0.11.3] - 2026-04-19
 
 ### Added
