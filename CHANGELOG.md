@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.5] - 2026-04-19
+
+### Fixed
+- **Silent message loss on fast streaming**: Race condition where assistant response was never rendered — `done` event cancelled pending rAF before content flushed to React state; now creates assistant message from accumulated refs when no flushed message exists
+- **Upload auto-expand**: File explorer now auto-expands the target folder after drag-and-drop upload so newly uploaded files are immediately visible
+
 ## [0.11.4] - 2026-04-19
 
 ### Fixed
