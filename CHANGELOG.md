@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.1] - 2026-04-19
+
+### Added
+- **Explorer toolbar**: New File, New Folder, and Refresh buttons always visible at top of file explorer
+- **Blank-area context menu**: Right-click anywhere in empty explorer space to create files/folders or refresh
+
 ## [0.11.0] - 2026-04-19
 
 ### Added
