@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.16] - 2026-04-20
+
+### Fixed
+- **Tool card text selection**: Add `select-text` to expanded tool card content so users can select/copy file paths, bash output, and other tool details in chat
+
 ## [0.11.15] - 2026-04-20
 
 ### Fixed
