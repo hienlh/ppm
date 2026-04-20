@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.11.15] - 2026-04-20
+
+### Fixed
+- **Slash command display in chat**: Parse `<command-message>/<command-name>/<command-args>` XML tags and render as styled chip instead of raw text
+- **Extension tab auto-reopen**: Track recently closed extension viewTypes to prevent auto-reopen when extension sends `webview:create` after user intentionally closed the tab
+
 ## [0.11.14] - 2026-04-20
 
 ### Fixed
