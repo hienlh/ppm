@@ -8,6 +8,15 @@ import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.
 import { toast } from "sonner";
 
 /**
+ * Track recently closed extension viewTypes to prevent auto-reopen.
+ * When user closes an extension tab, the viewType is added here.
+ * If a `webview:create` arrives for a recently closed viewType, we skip
+ * creating a new tab (the close was intentional).
+ * Cleared when user explicitly dispatches a command for the same viewType.
+ */
+const recentlyClosedViews = new Set<string>();
+
+/**
  * Hook that manages the WebSocket connection for extension UI bridge.
  * Dispatches server messages into the extension Zustand store.
  * Only connects when `enabled` is true (after auth).
@@ -147,7 +156,10 @@ export function useExtensionWs(enabled = true) {
               title: msg.title,
               metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
             });
-          } else {
+            // Focus the existing tab so Cmd+G / command palette switches to it
+            useTabStore.getState().setActiveTab(existingTabId);
+          } else if (!recentlyClosedViews.has(viewTypeSlug)) {
+            // Only create a new tab if this viewType wasn't recently closed by user
             const currentProject = useTabStore.getState().currentProject;
             useTabStore.getState().openTab({
               type: "extension",
@@ -207,14 +219,25 @@ export function useExtensionWs(enabled = true) {
     // Listen for command:execute requests (dispatched by StatusBar / TreeView)
     const commandHandler = (e: Event) => {
       const { command, args } = (e as CustomEvent).detail;
+      // User explicitly opened an extension — clear "recently closed" so tab can be created
+      const slug = (command as string).replace(/\.view$/, "");
+      recentlyClosedViews.delete(slug);
       client.send(JSON.stringify({ type: "command:execute", command, args }));
     };
     window.addEventListener("ext:command:execute", commandHandler);
 
     // Listen for webview close requests (dispatched by ExtensionWebview on unmount)
     const webviewCloseHandler = (e: Event) => {
-      const { panelId } = (e as CustomEvent).detail;
+      const { panelId, viewType } = (e as CustomEvent).detail;
       client.send(JSON.stringify({ type: "webview:close", panelId }));
+      // Track that user intentionally closed this extension tab
+      if (viewType) {
+        const slug = (viewType as string).replace(/\.view$/, "");
+        recentlyClosedViews.add(slug);
+        // Auto-clear after 5s — stale entries are harmless but could block
+        // legitimate reopens if user waits too long
+        setTimeout(() => recentlyClosedViews.delete(slug), 5_000);
+      }
     };
     window.addEventListener("ext:webview:close", webviewCloseHandler);
 

@@ -153,15 +153,20 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
 
   // On unmount: notify server to dispose the panel so extension clears activePanel state
   const panelIdForCleanup = useRef<string | null>(null);
+  const viewTypeForCleanup = useRef<string | undefined>(viewType);
   useEffect(() => {
     panelIdForCleanup.current = resolvedPanelId ?? null;
   }, [resolvedPanelId]);
   useEffect(() => {
+    viewTypeForCleanup.current = viewType;
+  }, [viewType]);
+  useEffect(() => {
     return () => {
       const id = panelIdForCleanup.current;
       if (id) {
+        const vt = viewTypeForCleanup.current;
         useExtensionStore.getState().removeWebviewPanel(id);
-        window.dispatchEvent(new CustomEvent("ext:webview:close", { detail: { panelId: id } }));
+        window.dispatchEvent(new CustomEvent("ext:webview:close", { detail: { panelId: id, viewType: vt } }));
       }
     };
   }, []);

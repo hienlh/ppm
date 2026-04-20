@@ -28,6 +28,7 @@ import {
   Tag,
   XCircle,
   ExternalLink,
+  Slash,
 } from "lucide-react";
 import { ChatWelcome } from "./chat-welcome";
 import { QuestionCard } from "./question-card";
@@ -253,6 +254,22 @@ function extractSystemTags(text: string): { cleanText: string; tags: SystemTag[]
   return { cleanText, tags };
 }
 
+/** Extract slash command tags from user message content */
+interface SlashCommand {
+  name: string;
+  args?: string;
+}
+const COMMAND_TAG_RE = /<command-message>[\s\S]*?<\/command-message>\s*<command-name>([\s\S]*?)<\/command-name>(?:\s*<command-args>([\s\S]*?)<\/command-args>)?/;
+
+function parseCommandTags(text: string): { command: SlashCommand | null; cleanText: string } {
+  const match = text.match(COMMAND_TAG_RE);
+  if (!match) return { command: null, cleanText: text };
+  const name = match[1]!.trim();
+  const args = match[2]?.trim() || undefined;
+  const cleanText = text.replace(COMMAND_TAG_RE, "").trim();
+  return { command: { name, args }, cleanText };
+}
+
 /** Parse user message content, extracting attached file paths and the actual text */
 function parseUserAttachments(content: string): { files: string[]; text: string } {
   // Match: [Attached file: /path] or [Attached files:\n/path1\n/path2\n]
@@ -293,10 +310,11 @@ const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details"]);
 
 /** User message bubble — full width, collapsible, with system tag badges */
 function UserBubble({ content, projectName, onFork }: { content: string; projectName?: string; onFork?: () => void }) {
-  const { files, text, tags } = useMemo(() => {
+  const { files, text, tags, command } = useMemo(() => {
     const parsed = parseUserAttachments(content);
-    const { cleanText, tags } = extractSystemTags(parsed.text);
-    return { files: parsed.files, text: cleanText, tags };
+    const { cleanText: noSysTags, tags } = extractSystemTags(parsed.text);
+    const { command, cleanText } = parseCommandTags(noSysTags);
+    return { files: parsed.files, text: cleanText, tags, command };
   }, [content]);
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
@@ -324,6 +342,19 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
     )}>
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
+
+      {/* Slash command chip */}
+      {command && (
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <span className="inline-flex items-center gap-1 rounded-md bg-primary/15 border border-primary/20 px-2 py-0.5 text-xs font-medium text-primary">
+            <Slash className="size-3 shrink-0" />
+            {command.name}
+          </span>
+          {command.args && (
+            <span className="text-xs text-text-secondary truncate max-w-80">{command.args}</span>
+          )}
+        </div>
+      )}
 
       {/* Attached files — image thumbnails + file chips */}
       {files.length > 0 && (
