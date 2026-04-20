@@ -75,7 +75,12 @@ class ApiClient {
       throw new Error("Unauthorized");
     }
 
-    const json = await res.json();
+    let json: any;
+    try {
+      json = await res.json();
+    } catch {
+      throw new Error(res.ok ? "Empty response from server" : `Server error (HTTP ${res.status})`);
+    }
 
     if (json.ok === false) {
       throw new Error(json.error ?? `HTTP ${res.status}`);

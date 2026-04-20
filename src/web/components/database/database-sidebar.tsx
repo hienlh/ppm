@@ -7,7 +7,7 @@ import { ConnectionImportExport } from "./connection-import-export";
 import { useConnections, type Connection, type CreateConnectionData, type UpdateConnectionData } from "./use-connections";
 
 export function DatabaseSidebar() {
-  const { connections, loading, cachedTables, columnCache, createConnection, updateConnection, deleteConnection, testConnection, testRawConnection, refreshTables, fetchColumns, exportConnections, importConnections } = useConnections();
+  const { connections, loading, cachedTables, refreshErrors, columnCache, createConnection, updateConnection, deleteConnection, testConnection, testRawConnection, refreshTables, fetchColumns, exportConnections, importConnections } = useConnections();
   const openTab = useTabStore((s) => s.openTab);
   const [addOpen, setAddOpen] = useState(false);
   const [editConn, setEditConn] = useState<Connection | null>(null);
@@ -62,6 +62,7 @@ export function DatabaseSidebar() {
           <ConnectionList
             connections={connections}
             cachedTables={cachedTables}
+            refreshErrors={refreshErrors}
             onOpenTable={handleOpenTable}
             onRefreshTables={refreshTables}
             onEdit={setEditConn}

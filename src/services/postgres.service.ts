@@ -48,7 +48,7 @@ class PostgresService {
     const sslOpts = sslmode === "no-verify" || sslmode === "require"
       ? { rejectUnauthorized: false }
       : sslmode === "disable" ? false : undefined;
-    const sql = postgres(connectionString, { max: 3, idle_timeout: 60, ssl: sslOpts as any });
+    const sql = postgres(connectionString, { max: 3, idle_timeout: 60, connect_timeout: 10, ssl: sslOpts as any });
     const timer = setTimeout(() => this.disconnect(connectionString), IDLE_TIMEOUT_MS);
     this.cache.set(connectionString, { sql, timer });
     return sql;

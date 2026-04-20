@@ -9,6 +9,14 @@ import { syncTables, searchTables, getTablesFromCache } from "../../services/tab
 import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
 import { ok, err } from "../../types/api.ts";
 
+/** Race a promise against a timeout — ensures routes always respond */
+function withTimeout<T>(promise: Promise<T>, ms: number, message = "Connection timed out"): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
 export const databaseRoutes = new Hono();
 
 /** Strip sensitive connection_config from connection responses */
@@ -190,7 +198,7 @@ databaseRoutes.post("/test", async (c) => {
     const body = await c.req.json<{ type: "sqlite" | "postgres"; connectionConfig: { type: string; path?: string; connectionString?: string } }>();
     if (!body.type || !body.connectionConfig) return c.json(err("type and connectionConfig required"), 400);
     const adapter = getAdapter(body.type);
-    const result = await adapter.testConnection(body.connectionConfig as import("../../types/database.ts").DbConnectionConfig);
+    const result = await withTimeout(adapter.testConnection(body.connectionConfig as import("../../types/database.ts").DbConnectionConfig), 15_000);
     return c.json(ok(result));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -204,7 +212,7 @@ databaseRoutes.post("/connections/:id/test", async (c) => {
     if (!conn) return c.json(err("Connection not found"), 404);
     const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
-    const result = await adapter.testConnection(config);
+    const result = await withTimeout(adapter.testConnection(config), 15_000);
     return c.json(ok(result));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -217,7 +225,7 @@ databaseRoutes.get("/connections/:id/tables", async (c) => {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
     const useCached = c.req.query("cached") === "1";
-    const result = useCached ? getTablesFromCache(conn.id) : await syncTables(conn.id);
+    const result = useCached ? getTablesFromCache(conn.id) : await withTimeout(syncTables(conn.id), 15_000);
     const tables = result.map((t) => ({ name: t.tableName, schema: t.schemaName, rowCount: t.rowCount }));
     return c.json(ok(tables));
   } catch (e) {

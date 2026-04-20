@@ -331,7 +331,7 @@ export function DataGrid({
       if (pc !== col) stickyWidth = Math.max(stickyWidth, offset + (colWidths.get(pc) ?? 0));
     }
     const targetLeft = th.offsetLeft - stickyWidth;
-    container.scrollTo({ left: targetLeft, behavior: "smooth" });
+    container.scrollTo({ left: targetLeft, behavior: "instant" });
     setColSearchOpen(false);
   }, [pinnedColOffsets, colWidths]);
 

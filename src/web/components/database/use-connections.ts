@@ -41,6 +41,7 @@ export function useConnections() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [cachedTables, setCachedTables] = useState<Map<number, CachedTable[]>>(new Map());
+  const [refreshErrors, setRefreshErrors] = useState<Map<number, string>>(new Map());
 
   const fetchConnections = useCallback(async () => {
     try {
@@ -84,15 +85,22 @@ export function useConnections() {
   }, []);
 
   const refreshTables = useCallback(async (id: number): Promise<void> => {
-    const raw = await api.get<{ name: string; schema: string; rowCount: number }[]>(`/api/db/connections/${id}/tables`);
-    const tables: CachedTable[] = raw.map((t) => ({
-      connectionId: id,
-      tableName: t.name,
-      schemaName: t.schema,
-      rowCount: t.rowCount,
-      cachedAt: new Date().toISOString(),
-    }));
-    setCachedTables((prev) => new Map(prev).set(id, tables));
+    setRefreshErrors((prev) => { const m = new Map(prev); m.delete(id); return m; });
+    try {
+      const raw = await api.get<{ name: string; schema: string; rowCount: number }[]>(`/api/db/connections/${id}/tables`);
+      const tables: CachedTable[] = raw.map((t) => ({
+        connectionId: id,
+        tableName: t.name,
+        schemaName: t.schema,
+        rowCount: t.rowCount,
+        cachedAt: new Date().toISOString(),
+      }));
+      setCachedTables((prev) => new Map(prev).set(id, tables));
+    } catch (e) {
+      const msg = (e as Error).message || "Connection failed";
+      setRefreshErrors((prev) => new Map(prev).set(id, msg));
+      throw e; // re-throw so callers know it failed
+    }
   }, []);
 
   /** Fetch column metadata for a table (lazy loaded for schema tree) */
@@ -117,8 +125,13 @@ export function useConnections() {
       "/api/db/connections/import", data,
     );
     await fetchConnections();
+    // Auto-refresh table cache for newly imported connections (fire-and-forget)
+    const imported = result.connections ?? [];
+    if (imported.length > 0) {
+      Promise.all(imported.map((c) => refreshTables(c.id).catch(() => {})));
+    }
     return result;
-  }, [fetchConnections]);
+  }, [fetchConnections, refreshTables]);
 
-  return { connections, loading, cachedTables, columnCache, createConnection, updateConnection, deleteConnection, testConnection, testRawConnection, refreshTables, fetchColumns, exportConnections, importConnections };
+  return { connections, loading, cachedTables, refreshErrors, columnCache, createConnection, updateConnection, deleteConnection, testConnection, testRawConnection, refreshTables, fetchColumns, exportConnections, importConnections };
 }

@@ -14,6 +14,7 @@ interface ColumnInfo {
 interface ConnectionListProps {
   connections: Connection[];
   cachedTables: Map<number, CachedTable[]>;
+  refreshErrors?: Map<number, string>;
   onOpenTable: (conn: Connection, tableName: string, schemaName: string) => void;
   onRefreshTables: (id: number) => Promise<void>;
   onEdit: (conn: Connection) => void;
@@ -27,7 +28,7 @@ interface GroupMap {
 }
 
 export function ConnectionList({
-  connections, cachedTables,
+  connections, cachedTables, refreshErrors,
   onOpenTable, onRefreshTables, onEdit, onDelete,
   onFetchColumns, columnCache,
 }: ConnectionListProps) {
@@ -186,7 +187,11 @@ export function ConnectionList({
                       {isExpanded && (
                         <div className="ml-[11px] border-l border-dashed border-border pl-1">
                           {isRefreshing && tables.length === 0 && <p className="text-[10px] text-text-subtle px-2 py-1">Loading…</p>}
-                          {!isRefreshing && tables.length === 0 && <p className="text-[10px] text-text-subtle px-2 py-1">No tables cached</p>}
+                          {!isRefreshing && tables.length === 0 && (
+                            refreshErrors?.get(conn.id)
+                              ? <p className="text-[10px] text-red-500 px-2 py-1 break-all">{refreshErrors.get(conn.id)}</p>
+                              : <p className="text-[10px] text-text-subtle px-2 py-1">No tables cached</p>
+                          )}
                           {tables.length > 0 && (
                             <>
                               {tables.length > 5 && (
