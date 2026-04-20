@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.12.5] - 2026-04-20
+
+### Fixed
+- **CLI db commands hang**: Close postgres connection pool after CLI operations (`db test`, `db tables`, `db schema`, `db data`, `db query`) — cached pool's 5min idle timer was keeping the process alive
+
 ## [0.12.4] - 2026-04-20
 
 ### Fixed
