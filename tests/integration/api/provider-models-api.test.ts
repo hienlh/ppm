@@ -41,16 +41,20 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(3);
+      expect(json.data.length).toBe(4);
 
       const values = json.data.map((m: any) => m.value);
       expect(values).toContain("claude-sonnet-4-6");
+      expect(values).toContain("claude-opus-4-7");
       expect(values).toContain("claude-opus-4-6");
       expect(values).toContain("claude-haiku-4-5");
 
       // Check labels
       const sonnetModel = json.data.find((m: any) => m.value === "claude-sonnet-4-6");
       expect(sonnetModel.label).toBe("Claude Sonnet 4.6");
+
+      const opus47Model = json.data.find((m: any) => m.value === "claude-opus-4-7");
+      expect(opus47Model.label).toBe("Claude Opus 4.7");
 
       const opusModel = json.data.find((m: any) => m.value === "claude-opus-4-6");
       expect(opusModel.label).toBe("Claude Opus 4.6");
@@ -95,10 +99,11 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(3);
+      expect(json.data.length).toBe(4);
 
       const values = json.data.map((m: any) => m.value);
       expect(values).toContain("claude-sonnet-4-6");
+      expect(values).toContain("claude-opus-4-7");
       expect(values).toContain("claude-opus-4-6");
       expect(values).toContain("claude-haiku-4-5");
     });

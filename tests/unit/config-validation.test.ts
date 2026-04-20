@@ -71,6 +71,7 @@ describe("validateAIProviderConfig", () => {
 
   it("accepts valid models", () => {
     expect(validateAIProviderConfig({ model: "claude-sonnet-4-6" })).toHaveLength(0);
+    expect(validateAIProviderConfig({ model: "claude-opus-4-7" })).toHaveLength(0);
     expect(validateAIProviderConfig({ model: "claude-opus-4-6" })).toHaveLength(0);
   });
 

@@ -123,6 +123,7 @@ export async function initProject(options: InitOptions = {}) {
         message: "AI model:",
         choices: [
           { value: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (fast, recommended)" },
+          { value: "claude-opus-4-7", name: "Claude Opus 4.7 (most powerful)" },
           { value: "claude-opus-4-6", name: "Claude Opus 4.6 (powerful)" },
           { value: "claude-haiku-4-5", name: "Claude Haiku 4.5 (cheap)" },
         ],
