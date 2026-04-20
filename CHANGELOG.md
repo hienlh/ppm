@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.6] - 2026-04-20
+
+### Fixed
+- **CLI db commands hang (postgres)**: Close postgres connection pool after CLI operations — cached pool's 5min idle timer was keeping the process alive
+- **CLI db commands hang (sqlite)**: Same issue — close sqlite cached connections after CLI operations
+
 ## [0.12.5] - 2026-04-20
 
 ### Fixed
