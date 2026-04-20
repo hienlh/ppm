@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Loader2, ArrowUpCircle, X } from "lucide-react";
+import { Loader2, ArrowUpCircle, X, RefreshCw, CheckCircle2 } from "lucide-react";
 
 const POLL_INTERVAL_MS = 60_000;
 const DISMISS_KEY_PREFIX = "ppm-upgrade-dismissed-";
-const RESTART_POLL_MS = 1_500;
-const RESTART_TIMEOUT_MS = 60_000;
 
 interface UpgradeStatus {
   currentVersion: string;
@@ -21,28 +19,13 @@ interface UpgradeResult {
   message?: string;
 }
 
-/** Poll /api/health aggressively until server goes down then back up, then reload. */
-async function waitForServerRestart(): Promise<boolean> {
-  let serverWentDown = false;
-  const start = Date.now();
-
-  while (Date.now() - start < RESTART_TIMEOUT_MS) {
-    await new Promise((r) => setTimeout(r, RESTART_POLL_MS));
-    try {
-      const res = await fetch("/api/health", { cache: "no-store" });
-      if (res.ok && serverWentDown) {
-        if ("caches" in window) {
-          const keys = await caches.keys();
-          await Promise.all(keys.map((k) => caches.delete(k)));
-        }
-        window.location.reload();
-        return true;
-      }
-    } catch {
-      serverWentDown = true;
-    }
+/** Clear browser/SW caches and reload the page */
+async function clearCachesAndReload() {
+  if ("caches" in window) {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
   }
-  return false;
+  window.location.reload();
 }
 
 interface UpgradeBannerProps {
@@ -52,6 +35,7 @@ interface UpgradeBannerProps {
 export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(false);
+  const [upgradeComplete, setUpgradeComplete] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   // Poll for upgrade status
@@ -86,12 +70,9 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
       const data = await api.post<UpgradeResult>("/api/upgrade/apply");
 
       if (data.restart) {
-        // Server will restart — poll aggressively until it comes back
-        const restarted = await waitForServerRestart();
-        if (!restarted) {
-          toast.warning("Upgrade installed but server hasn't restarted. Try refreshing manually.");
-          setUpgrading(false);
-        }
+        // Upgrade installed, server will restart — ask user to reload
+        setUpgrading(false);
+        setUpgradeComplete(true);
       } else {
         // No supervisor — manual restart needed
         toast.info(data.message || "Upgrade installed. Restart PPM manually.");
@@ -102,10 +83,21 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
         setDismissed(true);
       }
     } catch (e) {
-      toast.error(`Upgrade failed: ${(e as Error).message}`);
-      setUpgrading(false);
+      // If fetch failed with a network error, the server likely died mid-response
+      // after the install succeeded (supervisor killed the server before response flushed).
+      // Show reload prompt instead of a confusing error.
+      const isNetworkError = e instanceof TypeError
+        || (e as Error).message?.includes("fetch")
+        || (e as Error).message?.includes("network");
+      if (isNetworkError) {
+        setUpgrading(false);
+        setUpgradeComplete(true);
+      } else {
+        toast.error(`Upgrade failed: ${(e as Error).message}`);
+        setUpgrading(false);
+      }
     }
-  }, []);
+  }, [availableVersion]);
 
   const handleDismiss = useCallback(() => {
     if (availableVersion) {
@@ -114,7 +106,7 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
     setDismissed(true);
   }, [availableVersion]);
 
-  const visible = !!availableVersion && !dismissed;
+  const visible = (!!availableVersion && !dismissed) || upgradeComplete;
 
   useEffect(() => {
     onVisibilityChange?.(visible);
@@ -123,12 +115,30 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
   if (!visible) return null;
 
   return (
-    <div className="w-full bg-blue-600 dark:bg-blue-700 text-white px-3 py-1 flex items-center justify-between gap-2 z-50 text-sm shrink-0">
-      {upgrading ? (
+    <div className={`w-full text-white px-3 py-1 flex items-center justify-between gap-2 z-50 text-sm shrink-0 ${
+      upgradeComplete ? "bg-green-600 dark:bg-green-700" : "bg-blue-600 dark:bg-blue-700"
+    }`}>
+      {upgradeComplete ? (
+        <>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <CheckCircle2 className="size-4 shrink-0" />
+            <span className="truncate">
+              Upgrade to v{availableVersion} installed! Reload to apply.
+            </span>
+          </div>
+          <button
+            onClick={clearCachesAndReload}
+            className="bg-white text-green-600 font-medium rounded-full px-3 py-0.5 text-xs min-h-[28px] min-w-[28px] flex items-center gap-1.5 justify-center hover:bg-green-50 active:bg-green-100 transition-colors shrink-0"
+          >
+            <RefreshCw className="size-3" />
+            Reload
+          </button>
+        </>
+      ) : upgrading ? (
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <Loader2 className="size-4 animate-spin shrink-0" />
           <span className="truncate">
-            Upgrading to v{availableVersion}... PPM will restart shortly
+            Upgrading to v{availableVersion}...
           </span>
         </div>
       ) : (
