@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.18] - 2026-04-20
+
+### Fixed
+- **Tunnel domain loss on upgrade**: Supervisor startup was wiping tunnelPid/shareUrl from status.json before adoptTunnel() could read them; now preserves tunnel info when previous state is "upgrading"
+
 ## [0.11.17] - 2026-04-20
 
 ### Fixed
