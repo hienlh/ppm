@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2] - 2026-04-20
+
+### Fixed
+- **Quota exhaustion auto-retry**: Detect "You've hit your limit" SDK message as rate limit — triggers account rotation and retry instead of showing raw error
+- **False success on error results**: `onSuccess()` no longer called when SDK result has error subtype, preventing failed accounts from staying active
+- **Assistant text quota detection**: Detect quota limit messages in assistant text content (not just error field), covering all SDK delivery paths
+
 ## [0.12.1] - 2026-04-20
 
 ### Added
