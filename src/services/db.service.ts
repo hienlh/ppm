@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-const CURRENT_SCHEMA_VERSION = 18;
+const CURRENT_SCHEMA_VERSION = 20;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -554,6 +554,40 @@ function runMigrations(database: Database): void {
         ON jira_watch_results(status, read_at) WHERE deleted = 0;
       PRAGMA user_version = 19;
     `);
+  }
+
+  if (current < 20) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS project_tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(project_path, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_project_tags_path ON project_tags(project_path);
+    `);
+    // ALTER columns wrapped individually for idempotence
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN tag_id INTEGER REFERENCES project_tags(id) ON DELETE SET NULL"); } catch { /* column exists */ }
+    try { database.exec("ALTER TABLE projects ADD COLUMN default_tag_id INTEGER REFERENCES project_tags(id) ON DELETE SET NULL"); } catch { /* column exists */ }
+    // Seed default tags for all existing projects
+    const projects = database.query("SELECT path FROM projects").all() as { path: string }[];
+    const defaultTags = [
+      { name: "Todo", color: "#22c55e", sort: 0 },
+      { name: "In Progress", color: "#3b82f6", sort: 1 },
+      { name: "Review", color: "#f59e0b", sort: 2 },
+      { name: "Done", color: "#8b5cf6", sort: 3 },
+    ];
+    for (const p of projects) {
+      for (const t of defaultTags) {
+        database.query(
+          "INSERT OR IGNORE INTO project_tags (project_path, name, color, sort_order) VALUES (?, ?, ?, ?)",
+        ).run(p.path, t.name, t.color, t.sort);
+      }
+    }
+    database.exec("PRAGMA user_version = 20");
   }
 }
 

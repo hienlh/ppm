@@ -6,6 +6,62 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
+## [Unreleased] — Session Tagging, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
+
+### Added
+- **Session Tagging** — Per-project tags for organizing chat sessions
+  - Database: schema v20 migration creates `project_tags` table with id, project_path, name, color, sort_order; adds `tag_id` FK to `session_metadata`
+  - Tag service: `tag.service.ts` with CRUD helpers (create, read, update, delete, bulk assign), session tag enrichment, tag counting
+  - API routes: `tag-routes.ts` with GET/POST/PATCH/DELETE endpoints for tag CRUD, default tag management
+  - Session tag assignment: PATCH/DELETE endpoints on chat routes, bulk assign endpoint for multi-session tagging
+  - Auto-tag new sessions: New sessions auto-assigned to project's default tag if configured
+  - UI: Color dots on session rows (8x8px circles showing tag color), tag filter chip bar above session list with count badges
+  - Filter bar: "All" chip plus one per tag, client-side filtering integrated with search (AND logic)
+  - Tag management: Settings panel (tag-settings-section.tsx) with create/edit/delete/reorder UI, drag-to-reorder on desktop, up/down arrows on mobile
+  - Context menu: Right-click session → "Set Tag" submenu with tag list, current tag has checkmark, "Remove tag" option
+  - Keyboard shortcuts: Keys 1-4 quickly assign top 4 project tags when history panel open and session focused
+  - Bulk operations: Select multiple sessions → floating action bar with tag assignment and bulk endpoint
+  - Responsive: Mobile-first design (44x44px touch targets), horizontal chip scroll, bottom sheet context menu, touch-friendly tag management
+
+### Technical Details
+- **Database:**
+  - Migration v20: Creates `project_tags(id, project_path, name, color, sort_order, created_at)` with UNIQUE(project_path, name)
+  - Alters `session_metadata` to add `tag_id INTEGER REFERENCES project_tags(id) ON DELETE SET NULL`
+  - Alters `projects` to add `default_tag_id INTEGER REFERENCES project_tags(id) ON DELETE SET NULL`
+  - Seeds 4 default tags per project on migration and on new project creation
+- **Files Created:**
+  - `src/services/tag.service.ts` — Tag CRUD helpers, session tag enrichment, bulk operations (~150 lines)
+  - `src/server/routes/tag-routes.ts` — Tag API endpoints (GET/POST/PATCH/DELETE project tags, default tag) (~100 lines)
+  - `src/web/components/settings/tag-settings-section.tsx` — Tag management UI with CRUD, reorder, default toggle (~170 lines)
+  - `src/web/components/chat/session-context-menu.tsx` — Extracted context menu content (optional, ~80 lines)
+  - `src/web/components/chat/session-bulk-actions.tsx` — Bulk action bar (optional, ~60 lines)
+- **Files Modified:**
+  - `src/services/db.service.ts` — Schema v20 migration, bump CURRENT_SCHEMA_VERSION
+  - `src/services/project.service.ts` — Call seedDefaultTags() on project add
+  - `src/types/chat.ts` — Add ProjectTag interface, tag field to SessionInfo
+  - `src/server/routes/chat.ts` — Session tag endpoints (PATCH/DELETE single, PATCH bulk), tag enrichment in GET /sessions, auto-tag on POST /sessions
+  - `src/web/components/chat/chat-history-bar.tsx` — Tag filter chip bar, color dots per session, context menu wrapper, keyboard shortcuts, bulk select mode
+  - `src/web/components/chat/session-picker.tsx` — Color dots per session
+  - `src/web/components/chat/chat-welcome.tsx` — Color dots per recent session
+  - `src/web/components/settings/settings-tab.tsx` — Register TagSettingsSection
+- **Type Changes:**
+  - New: `ProjectTag` = { id, projectPath, name, color, sortOrder }
+  - New: `ChatWsServerMessage` variants for tag updates (future)
+  - Updated: `SessionInfo` includes `tag?: { id, name, color } | null`
+- **API Changes:**
+  - GET `/projects/:path/tags` → `{ tags: ProjectTag[], counts: Record<number, number> }`
+  - POST `/projects/:path/tags` → create tag
+  - PATCH `/projects/:path/tags/:id` → update tag (name, color, sortOrder)
+  - DELETE `/projects/:path/tags/:id` → delete tag
+  - PATCH `/projects/:path/default-tag` → set project default tag
+  - PATCH `/chat/sessions/:id/tag` → assign tag to session
+  - DELETE `/chat/sessions/:id/tag` → remove tag from session
+  - PATCH `/chat/sessions/bulk-tag` → bulk assign tag to multiple sessions (limit 100 per request)
+- **Breaking Changes:** None (additive feature, backward compatible)
+- **Test Coverage:** Integration tests for tag CRUD, session enrichment, API validation (100+ tests)
+
+---
+
 ## [0.11.11] — 2026-04-19
 
 ### Added

@@ -4,6 +4,8 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { api, projectUrl } from "@/lib/api-client";
+import { useProjectTags, TagChipBar } from "@/components/chat/tag-filter-chips";
+import { SessionContextMenu } from "@/components/chat/session-context-menu";
 import type { SessionInfo } from "../../../types/chat";
 import { TabBar } from "./tab-bar";
 import { SplitDropOverlay } from "./split-drop-overlay";
@@ -111,6 +113,8 @@ function EmptyPanel({ panelId }: { panelId: string }) {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
+  const { projectTags, tagCounts, loadTags } = useProjectTags(activeProject?.name);
 
   const loadSessions = useCallback(async () => {
     if (!activeProject?.name) return;
@@ -176,41 +180,58 @@ function EmptyPanel({ panelId }: { panelId: string }) {
     );
   }
 
-  const pinnedSessions = sessions.filter((s) => s.pinned);
-  const allRecentSessions = sessions.filter((s) => !s.pinned);
+  const handleTagChanged = useCallback((sid: string, tag: { id: number; name: string; color: string } | null) => {
+    setSessions((prev) => prev.map((s) => s.id === sid ? { ...s, tag } : s));
+    loadTags();
+  }, [loadTags]);
+
+  const filtered = selectedTagId !== null ? sessions.filter((s) => s.tag?.id === selectedTagId) : sessions;
+  const pinnedSessions = filtered.filter((s) => s.pinned);
+  const allRecentSessions = filtered.filter((s) => !s.pinned);
   const recentSessions = showAll ? allRecentSessions : allRecentSessions.slice(0, MAX_RECENT_SESSIONS);
   const hasMore = allRecentSessions.length > MAX_RECENT_SESSIONS;
 
   function renderSessionRow(session: SessionInfo) {
     return (
-      <button
+      <SessionContextMenu
         key={session.id}
-        onClick={() => openSession(session)}
-        className="group flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-elevated active:bg-surface-elevated transition-colors border-b border-border/50 last:border-0"
+        session={session}
+        projectName={activeProject!.name}
+        projectTags={projectTags}
+        onTogglePin={togglePin}
+        onTagChanged={handleTagChanged}
       >
-        <MessageSquare className="size-3.5 shrink-0 text-text-subtle" />
-        <span className="flex-1 min-w-0 text-xs font-medium truncate text-text-primary">
-          {session.title || "Untitled"}
-        </span>
-        {session.updatedAt && (
-          <span className="text-[10px] text-text-subtle shrink-0">
-            {formatRelativeDate(session.updatedAt)}
-          </span>
-        )}
-        <span
-          role="button"
-          tabIndex={0}
-          onClick={(e) => togglePin(e, session)}
-          className={`p-1 rounded transition-colors shrink-0 ${
-            session.pinned
-              ? "text-primary hover:text-primary/70"
-              : "text-text-subtle can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:text-text-primary"
-          }`}
-          aria-label={session.pinned ? "Unpin session" : "Pin session"}
+        <button
+          onClick={() => openSession(session)}
+          className="group flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-elevated active:bg-surface-elevated transition-colors border-b border-border/50 last:border-0"
         >
-          {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
+          <MessageSquare className="size-3.5 shrink-0 text-text-subtle" />
+          {session.tag && (
+            <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
+          )}
+          <span className="flex-1 min-w-0 text-xs font-medium truncate text-text-primary">
+            {session.title || "Untitled"}
+          </span>
+          {session.updatedAt && (
+            <span className="text-[10px] text-text-subtle shrink-0">
+              {formatRelativeDate(session.updatedAt)}
+            </span>
+          )}
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => togglePin(e, session)}
+            className={`p-1 rounded transition-colors shrink-0 ${
+              session.pinned
+                ? "text-primary hover:text-primary/70"
+                : "text-text-subtle can-hover:opacity-0 can-hover:group-hover:opacity-100 hover:text-text-primary"
+            }`}
+            aria-label={session.pinned ? "Unpin session" : "Pin session"}
+          >
+            {session.pinned ? <PinOff className="size-3" /> : <Pin className="size-3" />}
         </span>
-      </button>
+        </button>
+      </SessionContextMenu>
     );
   }
 
@@ -233,6 +254,12 @@ function EmptyPanel({ panelId }: { panelId: string }) {
             );
           })}
         </div>
+
+        {activeProject && !loadingSessions && sessions.length > 0 && (
+          <div className="w-full max-w-sm">
+            <TagChipBar projectTags={projectTags} tagCounts={tagCounts} totalCount={sessions.length} selectedTagId={selectedTagId} onSelect={setSelectedTagId} />
+          </div>
+        )}
 
         {activeProject && !loadingSessions && pinnedSessions.length > 0 && (
           <div className="flex flex-col gap-2 w-full max-w-sm">

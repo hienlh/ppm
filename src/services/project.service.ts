@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { configService } from "./config.service.ts";
+import { seedDefaultTags } from "./tag.service.ts";
 import type { ProjectConfig } from "../types/config.ts";
 import type { ProjectInfo } from "../types/project.ts";
 
@@ -38,6 +39,7 @@ class ProjectService {
     const entry: ProjectConfig = { path: abs, name: projectName };
     configService.set("projects", [...projects, entry]);
     configService.save();
+    try { seedDefaultTags(abs); } catch { /* non-critical */ }
     return entry;
   }
 

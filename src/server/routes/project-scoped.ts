@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { chatRoutes } from "./chat.ts";
+import { tagRoutes } from "./tag-routes.ts";
 import { gitRoutes } from "./git.ts";
 import { fileRoutes } from "./files.ts";
 import { sqliteRoutes } from "./sqlite.ts";
@@ -26,6 +27,7 @@ projectScopedRouter.use("*", async (c, next) => {
 });
 
 projectScopedRouter.route("/chat", chatRoutes);
+projectScopedRouter.route("/tags", tagRoutes);
 projectScopedRouter.route("/git", gitRoutes);
 projectScopedRouter.route("/files", fileRoutes);
 projectScopedRouter.route("/sqlite", sqliteRoutes);

@@ -10,6 +10,7 @@ import { upsertSlashRecent, getSlashRecents } from "../../services/db.service.ts
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle } from "../../services/db.service.ts";
+import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -102,6 +103,8 @@ chatRoutes.get("/sessions", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const providerId = c.req.query("providerId");
+    const tagIdParam = c.req.query("tag_id");
+    const filterTagId = tagIdParam ? parseInt(tagIdParam, 10) : null;
     const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
     const offset = parseInt(c.req.query("offset") ?? "0", 10) || 0;
 
@@ -129,7 +132,8 @@ chatRoutes.get("/sessions", async (c) => {
     const merged = [...pinnedSessions, ...sessions];
     const seen = new Set<string>();
     const deduped = merged.filter((s) => { if (seen.has(s.id)) return false; seen.add(s.id); return true; });
-    const enriched = deduped.map((s) => ({ ...s, pinned: pinnedIds.has(s.id) }));
+    const tagMap = getSessionTags(deduped.map((s) => s.id));
+    const enriched = deduped.map((s) => ({ ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null }));
 
     // Sort: pinned first, then by createdAt desc
     enriched.sort((a, b) => {
@@ -138,8 +142,10 @@ chatRoutes.get("/sessions", async (c) => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
+    // Server-side tag filter
+    const filtered = filterTagId !== null ? enriched.filter((s) => s.tag?.id === filterTagId) : enriched;
     const hasMore = sessions.length >= limit;
-    return c.json(ok({ sessions: enriched, hasMore }));
+    return c.json(ok({ sessions: filtered, hasMore }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -168,6 +174,9 @@ chatRoutes.post("/sessions", async (c) => {
       projectPath,
       title: body.title,
     });
+    // Auto-assign default tag if project has one
+    const defaultTagId = getProjectDefaultTagId(projectPath);
+    if (defaultTagId) setSessionTag(session.id, defaultTagId, projectPath);
     return c.json(ok(session), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 400);
@@ -183,6 +192,7 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     await chatService.deleteSession(providerId, id);
     // Shared DB cleanup
     deleteSessionMapping(id); // legacy cleanup
+    setSessionTag(id, null, c.get("projectPath"));
     deleteSessionMetadata(id);
     deleteSessionTitle(id);
     unpinSession(id);
@@ -230,6 +240,51 @@ chatRoutes.delete("/sessions/:id/pin", (c) => {
     const id = c.req.param("id");
     unpinSession(id);
     return c.json(ok({ id, pinned: false }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PATCH /chat/sessions/bulk-tag — assign tag to multiple sessions (MUST be before /sessions/:id) */
+chatRoutes.patch("/sessions/bulk-tag", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const { sessionIds, tagId } = await c.req.json<{ sessionIds: string[]; tagId: number | null }>();
+    if (!Array.isArray(sessionIds) || sessionIds.length === 0) return c.json(err("sessionIds array required"), 400);
+    if (sessionIds.length > 100) return c.json(err("Max 100 sessions per bulk operation"), 400);
+    if (tagId !== null) {
+      const tag = getTagById(tagId);
+      if (!tag || tag.projectPath !== projectPath) return c.json(err("Tag not found"), 404);
+    }
+    bulkSetSessionTag(sessionIds, tagId, projectPath);
+    return c.json(ok({ updated: sessionIds.length }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PATCH /chat/sessions/:id/tag — assign a tag to a session */
+chatRoutes.patch("/sessions/:id/tag", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const projectPath = c.get("projectPath");
+    const { tagId } = await c.req.json<{ tagId: number }>();
+    if (tagId == null || typeof tagId !== "number") return c.json(err("tagId is required"), 400);
+    const tag = getTagById(tagId);
+    if (!tag || tag.projectPath !== projectPath) return c.json(err("Tag not found"), 404);
+    setSessionTag(id, tagId, projectPath);
+    return c.json(ok({ id, tagId }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** DELETE /chat/sessions/:id/tag — remove tag from a session */
+chatRoutes.delete("/sessions/:id/tag", (c) => {
+  try {
+    const id = c.req.param("id");
+    setSessionTag(id, null, c.get("projectPath"));
+    return c.json(ok({ id, tagId: null }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

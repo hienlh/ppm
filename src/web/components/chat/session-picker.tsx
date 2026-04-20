@@ -99,6 +99,9 @@ export function SessionPicker({
         <div className="flex flex-col min-w-0 flex-1">
           <span className="flex items-center gap-1.5 truncate text-xs font-medium">
             <ProviderBadge providerId={session.providerId} />
+            {session.tag && (
+              <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
+            )}
             {session.title}
           </span>
           <span className="text-xs text-text-subtle">

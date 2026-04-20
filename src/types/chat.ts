@@ -56,6 +56,14 @@ export interface SessionConfig {
   title?: string;
 }
 
+export interface ProjectTag {
+  id: number;
+  projectPath: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+}
+
 export interface SessionInfo {
   id: string;
   providerId: string;
@@ -64,6 +72,7 @@ export interface SessionInfo {
   createdAt: string;
   updatedAt?: string;
   pinned?: boolean;
+  tag?: { id: number; name: string; color: string } | null;
 }
 
 export interface SessionListResponse {

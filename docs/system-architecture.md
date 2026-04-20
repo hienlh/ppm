@@ -143,6 +143,14 @@ POST   /api/upgrade/apply                         → Install new version, trigg
 GET    /api/project/:name/workspace               → Get saved workspace layout + metadata
 PUT    /api/project/:name/workspace               → Save workspace layout (layout JSON)
 GET    /api/project/:name/chat/slash-items        → List slash commands/skills (optional ?q=<query> for fuzzy search)
+GET    /api/projects/:path/tags                   → List project tags with session counts
+POST   /api/projects/:path/tags                   → Create tag
+PATCH  /api/projects/:path/tags/:id               → Update tag (name, color, sortOrder)
+DELETE /api/projects/:path/tags/:id               → Delete tag
+PATCH  /api/projects/:path/default-tag            → Set project default tag
+PATCH  /api/project/:name/chat/sessions/:id/tag   → Assign tag to session
+DELETE /api/project/:name/chat/sessions/:id/tag   → Remove tag from session
+PATCH  /api/project/:name/chat/sessions/bulk-tag  → Bulk assign tag to multiple sessions
 WS     /ws/project/:name/chat/:sessionId          → Chat streaming
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
 ```
@@ -214,8 +222,9 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **ClawBotFormatterService** | LEGACY formatter | (deprecated v0.9.11) |
 | **ClawBotStreamerService** | LEGACY streamer | (deprecated v0.9.11) |
 | **BashOutputSpy** | Monitor bash tool output in real-time via /proc/PID/fd (Linux/WSL2) or lsof (macOS) | startSpy, stopSpy, stopAllForSession |
+| **TagService** | Session tagging CRUD, bulk operations, tag-session enrichment | seedDefaultTags, getTagsByProject, createTag, updateTag, deleteTag, setSessionTag, bulkSetSessionTag, getSessionTags, getTagSessionCounts |
 
-**Key Files:** `src/services/*.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/cli/commands/bot-cmd.ts`
+**Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/cli/commands/bot-cmd.ts`
 
 ---
 

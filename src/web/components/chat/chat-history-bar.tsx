@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot, Tags } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
+import { TagSettingsSection } from "@/components/settings/tag-settings-section";
+import { SessionContextMenu } from "./session-context-menu";
 import { UsageDetailPanel } from "./usage-badge";
 import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
-import type { SessionInfo, SessionListResponse } from "../../../types/chat";
+import type { SessionInfo, SessionListResponse, ProjectTag } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 
@@ -108,6 +110,10 @@ export function ChatHistoryBar({
   const [editingTitle, setEditingTitle] = useState("");
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
+  const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
+  const [tagCounts, setTagCounts] = useState<Record<number, number>>({});
+  const [showTagSettings, setShowTagSettings] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const openTab = useTabStore((s) => s.openTab);
   const PAGE_SIZE = 50;
@@ -154,6 +160,22 @@ export function ChatHistoryBar({
   useEffect(() => {
     if (activePanel === "history" && sessions.length === 0) load();
   }, [activePanel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch tags
+  const loadTags = useCallback(async () => {
+    if (!projectName) return;
+    try {
+      const data = await api.get<{ tags: ProjectTag[]; counts: Record<number, number> }>(
+        `${projectUrl(projectName)}/tags`,
+      );
+      setProjectTags(data.tags);
+      setTagCounts(data.counts);
+    } catch { /* silent */ }
+  }, [projectName]);
+
+  useEffect(() => {
+    if (activePanel === "history" && projectName) loadTags();
+  }, [activePanel, projectName, loadTags]);
 
   function openSession(session: SessionInfo) {
     if (onSelectSession) {
@@ -222,10 +244,35 @@ export function ChatHistoryBar({
     } catch { /* silent */ }
   }, [projectName]);
 
-  // Filter sessions by search query
-  const filteredSessions = searchQuery.trim()
-    ? sessions.filter((s) => (s.title || "").toLowerCase().includes(searchQuery.toLowerCase()))
-    : sessions;
+  const handleTagChanged = useCallback((sid: string, tag: { id: number; name: string; color: string } | null) => {
+    setSessions((prev) => prev.map((s) => s.id === sid ? { ...s, tag } : s));
+    loadTags(); // Refetch counts from API for accuracy
+  }, [loadTags]);
+
+  // Keyboard shortcuts: 1-9 to assign tags to current session
+  useEffect(() => {
+    if (activePanel !== "history") return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= projectTags.length && sessionId) {
+        const tag = projectTags[num - 1];
+        if (tag) {
+          api.patch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/tag`, { tagId: tag.id }).catch(() => {});
+          handleTagChanged(sessionId, { id: tag.id, name: tag.name, color: tag.color });
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [activePanel, projectTags, sessionId, projectName, handleTagChanged]);
+
+  // Filter sessions by search query + tag
+  const filteredSessions = sessions.filter((s) => {
+    if (searchQuery.trim() && !(s.title || "").toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    if (selectedTagId !== null && s.tag?.id !== selectedTagId) return false;
+    return true;
+  });
 
   // Usage badge display — only meaningful for Claude (SDK) provider
   const isClaudeProvider = !providerId || providerId === "claude";
@@ -368,6 +415,45 @@ export function ChatHistoryBar({
             </button>
           </div>
 
+          {/* Tag filter chips */}
+          {projectTags.length > 0 && (
+            <div className="flex items-center gap-1 px-2 py-1 overflow-x-auto border-b border-border/30 scrollbar-none">
+              <button
+                onClick={() => setSelectedTagId(null)}
+                className={`shrink-0 rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                  selectedTagId === null ? "bg-primary/20 border-primary text-primary" : "border-border bg-surface text-text-secondary"
+                }`}
+              >All ({sessions.length})</button>
+              {projectTags.map((tag) => (
+                <button
+                  key={tag.id}
+                  onClick={() => setSelectedTagId(selectedTagId === tag.id ? null : tag.id)}
+                  className={`shrink-0 flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] transition-colors ${
+                    selectedTagId === tag.id ? "border-current" : "border-border bg-surface"
+                  }`}
+                  style={selectedTagId === tag.id ? { backgroundColor: tag.color + "20", color: tag.color, borderColor: tag.color } : undefined}
+                >
+                  <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: tag.color }} />
+                  {tag.name} ({tagCounts[tag.id] ?? 0})
+                </button>
+              ))}
+              <button
+                onClick={() => setShowTagSettings(!showTagSettings)}
+                className={`shrink-0 p-1 rounded transition-colors ${showTagSettings ? "text-primary bg-primary/10" : "text-text-subtle hover:text-text-secondary"}`}
+                title="Manage tags"
+              >
+                <Tags className="size-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Tag management panel (inline) */}
+          {showTagSettings && (
+            <div className="border-b border-border/30 px-2 py-2 max-h-[180px] overflow-y-auto bg-surface-elevated/50">
+              <TagSettingsSection projectName={projectName} onTagsChanged={loadTags} />
+            </div>
+          )}
+
           <div className="max-h-[200px] overflow-y-auto">
             {loading && sessions.length === 0 ? (
               <div className="flex items-center justify-center py-3">
@@ -380,11 +466,23 @@ export function ChatHistoryBar({
             ) : (
               <>
                 {filteredSessions.map((session) => (
-                  <div
+                  <SessionContextMenu
                     key={session.id}
+                    session={session}
+                    projectName={projectName}
+                    projectTags={projectTags}
+                    onTogglePin={togglePin}
+                    onStartEditing={startEditing}
+                    onDeleteSession={deleteSession}
+                    onTagChanged={handleTagChanged}
+                  >
+                  <div
                     className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group"
                   >
                     <ProviderBadge providerId={session.providerId} />
+                    {session.tag && (
+                      <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
+                    )}
                     {editingId === session.id ? (
                       <form
                         className="flex items-center gap-1 flex-1 min-w-0"
@@ -450,6 +548,7 @@ export function ChatHistoryBar({
                       <span className="text-[10px] text-text-subtle shrink-0 w-10 text-right">{formatDate(session.updatedAt)}</span>
                     )}
                   </div>
+                  </SessionContextMenu>
                 ))}
                 {hasMore && !searchQuery && (
                   <button
