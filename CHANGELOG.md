@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.12.1] - 2026-04-20
+
+### Added
+- **Tab bar tag support**: Color dot and right-click "Set Tag" context menu on chat tabs in the tab bar
+
 ## [0.12.0] - 2026-04-20
 
 ### Added
