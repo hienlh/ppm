@@ -845,6 +845,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let authRetried = false;
       let hadAnyEvents = false;
       retryLoop: while (true) {
+      // Reset streaming state on retry — clears stale content from failed attempts
+      // (e.g. "Failed to authenticate. API Error: 401..." text that was already streamed)
+      lastPartialText = "";
+      assistantContent = "";
+      pendingToolCount = 0;
       let sdkEventCount = 0;
       for await (const msg of eventSource) {
         sdkEventCount++;

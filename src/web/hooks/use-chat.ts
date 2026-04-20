@@ -210,8 +210,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         if (ev.accountId && ev.accountLabel) {
           streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
         }
-        // Surface retry as a system-level event in the stream
-        streamingEventsRef.current.push(ev as ChatEvent);
+        // Clear previous streaming events (error text from failed attempt)
+        // and start fresh with only the retry notification
+        streamingEventsRef.current = [ev as ChatEvent];
         syncMessages();
         break;
       }

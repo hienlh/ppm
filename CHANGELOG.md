@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.4] - 2026-04-20
+
+### Fixed
+- **Auth retry content leak**: Reset streaming state (`lastPartialText`, `assistantContent`) on retry — prevents stale error text from suppressing retry response
+- **Error text not cleared on retry**: Frontend now clears previous streaming events on `account_retry`, removing "Failed to authenticate" text before showing retry response
+
 ## [0.12.3] - 2026-04-20
 
 ### Added
