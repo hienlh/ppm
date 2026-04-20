@@ -168,6 +168,7 @@ export function registerDbCommands(program: Command): void {
         if (conn.type === "postgres") {
           const { postgresService } = await import("../../services/postgres.service.ts");
           const result = await postgresService.testConnection(cfg.connectionString!);
+          await postgresService.closeAll();
           if (result.ok) {
             console.log(`${C.green}✓${C.reset} Connection successful: ${conn.name}`);
           } else {
@@ -208,6 +209,7 @@ export function registerDbCommands(program: Command): void {
         if (conn.type === "postgres") {
           const { postgresService } = await import("../../services/postgres.service.ts");
           const tables = await postgresService.getTables(cfg.connectionString!);
+          await postgresService.closeAll();
           if (tables.length === 0) {
             console.log(`${C.dim}No tables found.${C.reset}`);
             return;
@@ -251,6 +253,7 @@ export function registerDbCommands(program: Command): void {
         if (conn.type === "postgres") {
           const { postgresService } = await import("../../services/postgres.service.ts");
           const cols = await postgresService.getTableSchema(cfg.connectionString!, table, options.schema);
+          await postgresService.closeAll();
           printTable(
             ["Column", "Type", "Nullable", "PK", "Default"],
             cols.map((c) => [c.name, c.type, c.nullable ? "YES" : "NO", c.pk ? "PK" : "", c.defaultValue ?? ""]),
@@ -295,6 +298,7 @@ export function registerDbCommands(program: Command): void {
           const result = await postgresService.getTableData(
             cfg.connectionString!, table, options.schema, page, limit, options.order, orderDir,
           );
+          await postgresService.closeAll();
           console.log(`${C.cyan}${table}${C.reset} — page ${result.page}, ${result.total} total rows\n`);
           formatRows(result.columns, result.rows, limit);
         } else {
@@ -334,6 +338,7 @@ export function registerDbCommands(program: Command): void {
         if (conn.type === "postgres") {
           const { postgresService } = await import("../../services/postgres.service.ts");
           const result = await postgresService.executeQuery(cfg.connectionString!, sql);
+          await postgresService.closeAll();
           if (result.changeType === "select") {
             formatRows(result.columns, result.rows);
           } else {
