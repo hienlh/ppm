@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.0] - 2026-04-20
+
+### Added
+- **Session tagging**: Per-project tags (Todo, In Progress, Review, Done) with color-coded dots on session rows
+- **Tag management UI**: Create, edit, delete, reorder tags in project settings; set default tag for new sessions
+- **Tag filter chips**: Filter sessions by tag across History panel, ChatWelcome, and EditorPanel landing
+- **Context menu on sessions**: Right-click (or long-press mobile) for Pin, Rename, Set Tag, Delete — available in all session lists
+- **Keyboard shortcuts**: Press 1-9 in History panel to quick-assign tags to active session
+- **Bulk tag endpoint**: PATCH /chat/sessions/bulk-tag for multi-session tagging (max 100)
+- **Tag CRUD API**: Full REST endpoints under /projects/:path/tags with cross-project authorization
+- **Auto-tag new sessions**: Sessions auto-get project's default tag on creation
+
+### Fixed
+- **Tag persistence**: setSessionTag now uses UPSERT so tags persist for sessions discovered from JSONL (missing session_metadata rows)
+- **Route ordering**: Literal routes (default-tag, bulk-tag, reset) registered before parameterized /:id routes to prevent Hono mismatch
+- **Tag count accuracy**: Counts refetched from API after tag changes instead of fragile client-side optimistic updates
+
 ## [0.11.18] - 2026-04-20
 
 ### Fixed
