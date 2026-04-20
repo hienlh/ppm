@@ -181,6 +181,7 @@ export function registerDbCommands(program: Command): void {
             // Try opening the file
             const { sqliteService } = await import("../../services/sqlite.service.ts");
             sqliteService.getTables(cfg.path!, cfg.path!);
+            sqliteService.closeAll();
             console.log(`${C.green}✓${C.reset} SQLite file accessible: ${conn.name}`);
           } else {
             console.error(`${C.red}✗${C.reset} File not found: ${cfg.path}`);
@@ -221,6 +222,7 @@ export function registerDbCommands(program: Command): void {
         } else {
           const { sqliteService } = await import("../../services/sqlite.service.ts");
           const tables = sqliteService.getTables(cfg.path!, cfg.path!);
+          sqliteService.closeAll();
           if (tables.length === 0) {
             console.log(`${C.dim}No tables found.${C.reset}`);
             return;
@@ -261,6 +263,7 @@ export function registerDbCommands(program: Command): void {
         } else {
           const { sqliteService } = await import("../../services/sqlite.service.ts");
           const cols = sqliteService.getTableSchema(cfg.path!, cfg.path!, table);
+          sqliteService.closeAll();
           printTable(
             ["Column", "Type", "Not Null", "PK", "Default"],
             cols.map((c) => [c.name, c.type, c.notnull ? "YES" : "NO", c.pk ? "PK" : "", c.dflt_value ?? ""]),
@@ -306,6 +309,7 @@ export function registerDbCommands(program: Command): void {
           const result = sqliteService.getTableData(
             cfg.path!, cfg.path!, table, page, limit, options.order, orderDir,
           );
+          sqliteService.closeAll();
           console.log(`${C.cyan}${table}${C.reset} — page ${result.page}, ${result.total} total rows\n`);
           formatRows(result.columns, result.rows, limit);
         }
@@ -347,6 +351,7 @@ export function registerDbCommands(program: Command): void {
         } else {
           const { sqliteService } = await import("../../services/sqlite.service.ts");
           const result = sqliteService.executeQuery(cfg.path!, cfg.path!, sql);
+          sqliteService.closeAll();
           if (result.changeType === "select") {
             formatRows(result.columns, result.rows);
           } else {
