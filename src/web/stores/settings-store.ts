@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
+import hljsDarkUrl from "highlight.js/styles/github-dark-dimmed.min.css?url";
+import hljsLightUrl from "highlight.js/styles/github.min.css?url";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
@@ -70,6 +72,9 @@ export function applyThemeClass(theme: Theme) {
   document.documentElement.classList.toggle("dark", resolved === "dark");
   document.documentElement.classList.toggle("light", resolved === "light");
 
+  // Swap highlight.js syntax theme to match light/dark mode
+  applyHighlightTheme(resolved);
+
   // Update theme-color meta tag
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
@@ -77,6 +82,21 @@ export function applyThemeClass(theme: Theme) {
       "content",
       resolved === "dark" ? "#0f1419" : "#ffffff",
     );
+  }
+}
+
+/** Load the matching highlight.js stylesheet for the current theme */
+function applyHighlightTheme(resolved: "light" | "dark") {
+  const href = resolved === "dark" ? hljsDarkUrl : hljsLightUrl;
+  let link = document.getElementById("hljs-theme") as HTMLLinkElement | null;
+  if (!link) {
+    link = document.createElement("link");
+    link.id = "hljs-theme";
+    link.rel = "stylesheet";
+    document.head.appendChild(link);
+  }
+  if (link.href !== new URL(href, document.baseURI).href) {
+    link.href = href;
   }
 }
 
