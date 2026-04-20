@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.14] - 2026-04-20
+
+### Fixed
+- **External file preview (image/PDF/video/audio)**: Files opened from filesystem search (e.g. `/tmp/`) now load correctly — `useBlobUrl` routes absolute paths through `/api/fs/raw` instead of project-scoped endpoint that returned 403
+
 ## [0.11.13] - 2026-04-20
 
 ### Fixed

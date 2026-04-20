@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { projectUrl, getAuthToken } from "@/lib/api-client";
 
-/** Shared hook: fetch a project file as a blob URL via /files/raw endpoint. */
+/** Shared hook: fetch a project file as a blob URL via /files/raw endpoint.
+ *  Detects absolute paths (external files) and uses /api/fs/raw instead. */
 export function useBlobUrl(
   filePath: string,
   projectName: string,
@@ -12,7 +13,10 @@ export function useBlobUrl(
 
   useEffect(() => {
     let revoke: string | undefined;
-    const url = `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`;
+    const isExternal = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
+    const url = isExternal
+      ? `/api/fs/raw?path=${encodeURIComponent(filePath)}`
+      : `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`;
     const token = getAuthToken();
     fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then((r) => {
