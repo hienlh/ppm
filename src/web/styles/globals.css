@@ -175,12 +175,13 @@ html, body {
   overflow-y: hidden;
   border-radius: 6px;
   background: var(--color-background);
-  padding: 0.5rem;
+  padding: 0.5rem 0.5rem 0.75rem;
   font-size: 0.75rem;
   font-family: var(--font-mono);
   border: 1px solid var(--color-border);
   margin: 0.5rem 0;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
   scrollbar-color: var(--color-border) transparent;
 }
 
