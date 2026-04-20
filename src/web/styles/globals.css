@@ -172,6 +172,7 @@ html, body {
 
 .markdown-content pre {
   overflow-x: auto;
+  overflow-y: hidden;
   border-radius: 6px;
   background: var(--color-background);
   padding: 0.5rem;
@@ -179,6 +180,19 @@ html, body {
   font-family: var(--font-mono);
   border: 1px solid var(--color-border);
   margin: 0.5rem 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.markdown-content pre::-webkit-scrollbar {
+  height: 4px;
+}
+.markdown-content pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+.markdown-content pre::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 9999px;
 }
 
 .markdown-content code {
