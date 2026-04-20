@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.12.3] - 2026-04-20
+
+### Added
+- **Claude Opus 4.7 model support**: Add `claude-opus-4-7` as available model across SDK provider, CLI init, proxy test UI, and config validation (coexists with Opus 4.6)
+
 ## [0.12.2] - 2026-04-20
 
 ### Fixed
