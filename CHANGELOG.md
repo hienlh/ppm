@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.7] - 2026-04-21
+
+### Fixed
+- **Code block scrollbar overlapping text**: Reserve bottom gutter on markdown `<pre>` blocks so overlay-style horizontal scrollbars no longer cover the last line
+- **Code block theme mismatch**: Highlight.js syntax theme now swaps with light/dark mode (github light / github-dark-dimmed) — removed forced-dark `pre` override in light mode
+
 ## [0.12.6] - 2026-04-20
 
 ### Fixed
