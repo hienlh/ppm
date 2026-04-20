@@ -806,12 +806,17 @@ export async function runSupervisor(opts: {
     log("ERROR", `Unhandled rejection: ${reason}`);
   });
 
-  // Full write to clear any stale data from previous runs (different port, dead PIDs, etc.)
+  // Full write to clear stale data — but preserve tunnel info during self-replace upgrade
+  // so the new supervisor can adopt the existing tunnel and keep the domain.
   writeFileSync(PID_FILE(), String(process.pid));
+  const prevStatus = readStatus();
+  const isUpgrade = prevStatus.state === "upgrading";
   writeStatus({
     supervisorPid: process.pid, port: opts.port, host: opts.host, availableVersion: null,
     state: "running", pausedAt: null, pauseReason: null, lastCrashError: null,
-    pid: null, tunnelPid: null, shareUrl: null,
+    pid: null,
+    tunnelPid: isUpgrade ? (prevStatus.tunnelPid ?? null) : null,
+    shareUrl: isUpgrade ? (prevStatus.shareUrl ?? null) : null,
   });
 
   // Build __serve__ args
