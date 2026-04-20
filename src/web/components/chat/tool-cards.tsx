@@ -113,7 +113,7 @@ export function ToolCard({
         )}
       </button>
       {expanded && (
-        <div className="px-2 pb-2 space-y-1.5">
+        <div className="px-2 pb-2 space-y-1.5 select-text">
           {(tool.type === "tool_use" || tool.type === "approval_request") && (
             <ToolDetails name={toolName} input={input} projectName={projectName} />
           )}
