@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useExtensionStore } from "@/stores/extension-store";
-import { useTabStore } from "@/stores/tab-store";
 import { getAuthToken } from "@/lib/api-client";
 import { Loader2 } from "lucide-react";
 
@@ -30,9 +29,10 @@ interface ExtensionWebviewProps {
 export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   const panelId = metadata?.panelId as string | undefined;
   const viewType = metadata?.viewType as string | undefined;
-  const currentProject = useTabStore((s) => s.currentProject);
-  // Prefer currentProject (reflects URL/active project) over stale tab metadata
-  const projectName = currentProject || (metadata?.projectName as string | undefined) || undefined;
+  // Use the tab's own project name (frozen at creation time) — NOT the global
+  // currentProject. Old project's ExtensionWebview must not react to project
+  // switches, which would dispatch commands for the wrong project.
+  const projectName = (metadata?.projectName as string | undefined) || undefined;
   const [timedOut, setTimedOut] = useState(false);
   // Track whether extensions are activated (contributions received from WS)
   const extensionsReady = useExtensionStore((s) => s.contributions !== null);
@@ -62,12 +62,9 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
 
   // On reload: resolve project path and dispatch command once.
   // Wait for extensions to be activated (contributions received) before dispatching.
-  // Skip if project-sync effect already dispatched for this project
-  // (panel is briefly undefined during dispose→recreate transition).
   useEffect(() => {
     if (panel || !viewType || !extensionsReady) return;
-    // If we already dispatched for this project (via project-sync effect),
-    // don't dispatch again — the panel is just temporarily missing.
+    // Already dispatched for this project — panel is just temporarily missing
     if (projectName && projectName === prevProjectRef.current) return;
     if (projectName) prevProjectRef.current = projectName;
     const command = viewType.includes(".") ? viewType : `${viewType}.view`;
@@ -93,31 +90,6 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     dispatch();
     return () => { cancelled = true; };
   }, [panel, viewType, projectName, extensionsReady]);
-
-  // When panel exists, ensure correct project is loaded.
-  // On mount: dispatch command so extension can reload if project differs.
-  // On project switch: dispatch command with new project path.
-  // Extension deduplicates same-project calls (noop if already correct).
-  useEffect(() => {
-    if (!panel || !viewType || !projectName) return;
-    // Skip if we already dispatched for this project
-    if (projectName === prevProjectRef.current) return;
-    prevProjectRef.current = projectName;
-    const command = viewType.includes(".") ? viewType : `${viewType}.view`;
-    (async () => {
-      try {
-        const token = getAuthToken();
-        const res = await fetch("/api/projects", token ? { headers: { Authorization: `Bearer ${token}` } } : {});
-        const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
-        const match = json.data?.find((p) => p.name === projectName);
-        if (match) {
-          window.dispatchEvent(new CustomEvent("ext:command:execute", {
-            detail: { command, args: [match.path] },
-          }));
-        }
-      } catch {}
-    })();
-  }, [panel, viewType, projectName]);
 
   // Check activation errors for this extension
   const extensionId = metadata?.extensionId as string | undefined;

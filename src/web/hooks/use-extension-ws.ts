@@ -151,10 +151,15 @@ export function useExtensionWs(enabled = true) {
             if (t) { existingTabId = t.id; break; }
           }
           if (existingTabId) {
-            // Tab already exists — update metadata with new panelId (panel was recreated)
+            // Tab already exists — update metadata with new panelId (panel was recreated).
+            // Preserve existing metadata (e.g. projectName) since updateTab replaces metadata entirely.
+            const existingTab = ps.grid.flat().reduce<Record<string, unknown> | undefined>((acc, pid) => {
+              if (acc) return acc;
+              return ps.panels[pid]?.tabs.find(tab => tab.id === existingTabId)?.metadata;
+            }, undefined);
             useTabStore.getState().updateTab(existingTabId, {
               title: msg.title,
-              metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
+              metadata: { ...existingTab, viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
             });
             // Focus the existing tab so Cmd+G / command palette switches to it
             useTabStore.getState().setActiveTab(existingTabId);
