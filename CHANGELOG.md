@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.11.17] - 2026-04-20
+
+### Fixed
+- **DB viewer column jump**: Remove smooth scroll animation for instant column navigation
+- **DB connection error display**: Show actual connection errors (e.g. "Connection timed out", "connect ECONNREFUSED") instead of generic "No tables cached"
+- **DB route timeout**: Add 15s timeout to database routes to prevent proxy 502 on unreachable hosts
+- **API client JSON parsing**: Handle empty/broken proxy responses gracefully instead of cryptic JSON parse errors
+
+### Improved
+- **Connection import**: Auto-refresh table cache for newly imported connections
+
 ## [0.11.16] - 2026-04-20
 
 ### Fixed
