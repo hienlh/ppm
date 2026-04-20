@@ -9,6 +9,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 
@@ -34,11 +37,16 @@ interface DraggableTabProps {
   onRename?: (newTitle: string) => void;
   /** Context menu action handler — receives action name */
   onContextAction?: (action: string) => void;
+  /** Tag color dot for chat tabs */
+  tagColor?: string;
+  /** Extra menu content injected before Close section */
+  extraMenuContent?: React.ReactNode;
 }
 
 export function DraggableTab({
   tab, isActive, icon: Icon, showDropBefore, notificationType, isStreaming, onSelect, onClose,
   onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd, tabRef, onRename, onContextAction,
+  tagColor, extraMenuContent,
 }: DraggableTabProps) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(tab.title);
@@ -92,6 +100,9 @@ export function DraggableTab({
         colorStyle && "border-transparent",
       )}
     >
+      {tagColor && (
+        <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: tagColor }} />
+      )}
       <span className="relative">
         <Icon className="size-4" />
         {isStreaming ? (
@@ -169,6 +180,7 @@ export function DraggableTab({
                 <ContextMenuSeparator />
               </>
             )}
+            {extraMenuContent}
             {tab.closable && (
               <ContextMenuItem onClick={() => onContextAction("close")}>
                 Close

@@ -20,6 +20,12 @@ import { useTabDrag } from "@/hooks/use-tab-drag";
 import { useTouchTabDrag, wasTouchDragRecent } from "@/hooks/use-touch-tab-drag";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { api, projectUrl } from "@/lib/api-client";
+import { useProjectTags } from "@/components/chat/tag-filter-chips";
+import {
+  ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
+  ContextMenuItem, ContextMenuSeparator,
+} from "@/components/ui/context-menu";
+import { Tag, Check } from "lucide-react";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
@@ -63,6 +69,37 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   const { dropIndex, handleDragStart, handleDragOver, handleDragOverBar, handleDrop, handleDragEnd } =
     useTabDrag(effectivePanelId);
   const { handleTouchStart, handleTouchMove, handleTouchEnd } = useTouchTabDrag(effectivePanelId);
+
+  const { projectTags, loadTags } = useProjectTags(activeProject?.name);
+  const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
+
+  // Fetch session tags for open chat tabs
+  const chatSessionIds = tabs.filter((t) => t.type === "chat" && t.metadata?.sessionId).map((t) => t.metadata!.sessionId as string);
+  useEffect(() => {
+    if (!activeProject?.name || chatSessionIds.length === 0) return;
+    api.get<{ sessions: { id: string; tag?: { id: number; name: string; color: string } | null }[] }>(
+      `${projectUrl(activeProject.name)}/chat/sessions?limit=50`,
+    ).then((data) => {
+      const map: Record<string, { id: number; name: string; color: string }> = {};
+      for (const s of data.sessions) { if (s.tag) map[s.id] = s.tag; }
+      setSessionTagMap(map);
+    }).catch(() => {});
+  }, [activeProject?.name, chatSessionIds.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const assignTagToSession = useCallback(async (sessionId: string, tagId: number | null) => {
+    if (!activeProject?.name) return;
+    try {
+      if (tagId !== null) {
+        await api.patch(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`, { tagId });
+        const tag = projectTags.find((t) => t.id === tagId);
+        if (tag) setSessionTagMap((prev) => ({ ...prev, [sessionId]: { id: tag.id, name: tag.name, color: tag.color } }));
+      } else {
+        await api.del(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`);
+        setSessionTagMap((prev) => { const n = { ...prev }; delete n[sessionId]; return n; });
+      }
+      loadTags();
+    } catch { /* silent */ }
+  }, [activeProject?.name, projectTags, loadTags]);
 
   const notifications = useNotificationStore((s) => s.notifications);
   const streamingSessions = useStreamingStore((s) => s.sessions);
@@ -219,6 +256,35 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               }}
               onRename={tab.type === "chat" ? (title) => handleRenameTab(tab, title) : undefined}
               onContextAction={(action) => handleTabContextAction(tab, action)}
+              tagColor={sessionId ? sessionTagMap[sessionId]?.color : undefined}
+              extraMenuContent={sessionId && projectTags.length > 0 ? (
+                <>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Tag className="size-3.5 mr-2" />
+                      Set Tag
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {projectTags.map((pt) => (
+                        <ContextMenuItem key={pt.id} onClick={() => assignTagToSession(sessionId, pt.id)}>
+                          <span className="size-2.5 rounded-full mr-2 shrink-0" style={{ backgroundColor: pt.color }} />
+                          {pt.name}
+                          {sessionTagMap[sessionId]?.id === pt.id && <Check className="size-3 ml-auto" />}
+                        </ContextMenuItem>
+                      ))}
+                      {sessionTagMap[sessionId] && (
+                        <>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => assignTagToSession(sessionId, null)}>
+                            Remove tag
+                          </ContextMenuItem>
+                        </>
+                      )}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSeparator />
+                </>
+              ) : undefined}
             />
             );
           })}
