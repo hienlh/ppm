@@ -348,7 +348,11 @@ function UserBubble({ content, messageId, projectName, onFork, onExpandCompact, 
     const parsed = parseUserAttachments(content);
     const { cleanText: noSysTags, tags } = extractSystemTags(parsed.text);
     const { command, cleanText } = parseCommandTags(noSysTags);
-    return { files: parsed.files, text: cleanText, tags, command, jsonlPath: extractJsonlPath(cleanText) };
+    // Merge command args into body text so line-clamp + Show more applies uniformly
+    const bodyText = command?.args
+      ? (cleanText ? `${command.args}\n\n${cleanText}` : command.args)
+      : cleanText;
+    return { files: parsed.files, text: bodyText, tags, command, jsonlPath: extractJsonlPath(cleanText) };
   }, [content]);
 
   // Pre-compact expansion state — local per button instance
@@ -394,16 +398,13 @@ function UserBubble({ content, messageId, projectName, onFork, onExpandCompact, 
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
 
-      {/* Slash command chip */}
+      {/* Slash command chip — args rendered in body for expand/collapse support */}
       {command && (
         <div className="flex items-center gap-1.5 mb-0.5">
           <span className="inline-flex items-center gap-1 rounded-md bg-primary/15 border border-primary/20 px-2 py-0.5 text-xs font-medium text-primary">
             <Slash className="size-3 shrink-0" />
             {command.name}
           </span>
-          {command.args && (
-            <span className="text-xs text-text-secondary truncate max-w-80">{command.args}</span>
-          )}
         </div>
       )}
 
