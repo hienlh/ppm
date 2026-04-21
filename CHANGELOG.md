@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.11] - 2026-04-21
+
+### Fixed
+- **Upgrade wiped user config back to defaults**: `configService.importFromYaml()` unconditionally overwrote SQLite config keys with `{...DEFAULT_CONFIG, ...yaml}` on every `load()` call. The upgrade path via supervisor `selfReplace()` re-ran the saved `originalArgv` — which contained `-c <yaml>` baked into systemd/launchd `ExecStart` — re-triggering the overwrite and resetting user config to defaults + stale YAML contents
+
+### Removed
+- **Legacy YAML config support**: Fully migrated to SQLite; removed `-c/--config <path>` CLI flag (from `start`, `restart`, `open`, `autostart enable`), YAML import/migration code, `configPath` in autostart ExecStart, and `__serve__`/`__supervise__` positional config slot. `js-yaml` dep retained (skill frontmatter only)
+
 ## [0.12.10] - 2026-04-21
 
 ### Fixed
