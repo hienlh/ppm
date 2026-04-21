@@ -141,6 +141,57 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * Auth env vars are ALWAYS explicitly set so the SDK subprocess never falls back
    * to reading the project's .env file (which may contain unrelated API keys).
    */
+  /**
+   * Recover from a 401/auth error. Strategy:
+   *   Attempt 1 (authRetryCount === 0): refresh current account's OAuth token.
+   *   Attempt 2+ (authRetryCount >= 1): switch to a different active account.
+   * Yields account_retry events so the FE can update streaming state.
+   * Returns the new account + incremented retry count, or null if no recovery path remains.
+   * Caller is responsible for rebuilding the SDK query with the returned account.
+   */
+  private async *recoverFromAuthError(opts: {
+    sessionId: string;
+    account: AccountWithTokens;
+    authRetryCount: number;
+    maxRetries: number;
+    context: string;
+  }): AsyncGenerator<ChatEvent, { account: AccountWithTokens; newRetryCount: number } | null, void> {
+    const { sessionId, account, authRetryCount, maxRetries, context } = opts;
+
+    // Attempt 1: refresh the current account's token
+    if (authRetryCount === 0) {
+      try {
+        await accountService.refreshAccessToken(account.id, false, true);
+        const refreshed = accountService.getWithTokens(account.id);
+        if (refreshed) {
+          const label = refreshed.label ?? refreshed.email ?? "Unknown";
+          console.log(`[sdk] session=${sessionId} (${context}) OAuth token refreshed for ${account.id} (${label}) — retrying`);
+          yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshed.id, accountLabel: label };
+          return { account: refreshed, newRetryCount: 1 };
+        }
+      } catch (err) {
+        console.error(`[sdk] session=${sessionId} (${context}) OAuth refresh failed:`, err);
+      }
+      // Refresh failed — fall through to account switch
+    }
+
+    // Attempt 2+: switch to a different active account
+    if (authRetryCount < maxRetries) {
+      accountSelector.onAuthError(account.id);
+      const nextAcc = accountSelector.next();
+      if (nextAcc && nextAcc.id !== account.id) {
+        const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
+        console.log(`[sdk] session=${sessionId} (${context}) switching to account ${nextAcc.id} (${label}) after auth failure`);
+        yield { type: "account_retry" as const, reason: "Switching account", accountId: nextAcc.id, accountLabel: label };
+        return { account: nextAcc, newRetryCount: authRetryCount + 1 };
+      }
+      console.warn(`[sdk] session=${sessionId} (${context}) no alternate account available for switch`);
+    } else {
+      console.warn(`[sdk] session=${sessionId} (${context}) auth retry budget exhausted (${authRetryCount}/${maxRetries})`);
+    }
+    return null;
+  }
+
   private buildQueryEnv(
     _projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
@@ -840,9 +891,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       const MAX_RETRIES = 1;
       const MAX_RATE_LIMIT_RETRIES = 3;
       const RATE_LIMIT_BACKOFF_MS = [15_000, 30_000, 60_000]; // 15s, 30s, 60s
+      // Allow 2 refresh attempts per turn (token can rotate mid-conversation).
+      // Counter resets on successful turn (see result handler) so next turn gets a fresh budget.
+      const MAX_AUTH_RETRIES = 2;
       let retryCount = 0;
       let rateLimitRetryCount = 0;
-      let authRetried = false;
+      let authRetryCount = 0;
       let hadAnyEvents = false;
       retryLoop: while (true) {
       // Reset streaming state on retry — clears stale content from failed attempts
@@ -919,59 +973,36 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Intercept SDK's internal api_retry with 401 — the SDK will retry up to 10 times
           // with exponential backoff using the same expired token, wasting 2+ minutes.
           // Instead, refresh the OAuth token immediately and restart the query.
-          if (subtype === "api_retry" && (msg as any).error_status === 401 && account && !authRetried) {
-            authRetried = true;
-            try {
-              // force=true: token got 401, so it's invalid regardless of expiresAt
-              await accountService.refreshAccessToken(account.id, false, true);
-              const refreshedAccount = accountService.getWithTokens(account.id);
-              if (refreshedAccount) {
-                const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
-                console.log(`[sdk] session=${sessionId} intercepted api_retry 401 — refreshing token for ${account.id} (${label})`);
-                yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
-                const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                closeCurrentStream();
-                const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
-                const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
-                if (!hasHistory) earlyAuthCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
-                const rq = query({
-                  prompt: earlyAuthGen,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
-                });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl });
-                this.activeQueries.set(sessionId, rq);
-                eventSource = rq;
-                continue retryLoop;
-              }
-            } catch (refreshErr) {
-              console.error(`[sdk] session=${sessionId} early OAuth refresh failed:`, refreshErr);
-              accountSelector.onAuthError(account.id);
-              // Refresh failed (e.g. temporary account with no refresh token).
-              // Abort the current query immediately and try switching to a different account.
-              const nextAcc = accountSelector.next();
-              if (nextAcc && nextAcc.id !== account.id) {
-                account = nextAcc;
-                const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
-                console.log(`[sdk] session=${sessionId} refresh failed — switching to ${nextAcc.id} (${label})`);
-                yield { type: "account_retry" as const, reason: "Switching account", accountId: nextAcc.id, accountLabel: label };
-                const switchEnv = this.buildQueryEnv(meta.projectPath, nextAcc);
-                closeCurrentStream();
-                const { generator: switchGen, controller: switchCtrl } = createMessageChannel();
-                const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
-                if (!hasHistory) switchCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: switchEnv };
-                const rq = query({
-                  prompt: switchGen,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
-                });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: switchCtrl });
-                this.activeQueries.set(sessionId, rq);
-                eventSource = rq;
-                continue retryLoop;
-              }
-              // No other account available — let SDK continue and eventually emit error
+          if (subtype === "api_retry" && (msg as any).error_status === 401 && account) {
+            const recovered = yield* this.recoverFromAuthError({
+              sessionId,
+              account,
+              authRetryCount,
+              maxRetries: MAX_AUTH_RETRIES,
+              context: "api_retry",
+            });
+            if (recovered) {
+              authRetryCount = recovered.newRetryCount;
+              account = recovered.account;
+              const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+              closeCurrentStream();
+              const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
+              const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
+              if (!hasHistory) earlyAuthCtrl.push(firstMsg);
+              const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
+              const rq = query({
+                prompt: earlyAuthGen,
+                options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+              });
+              this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl });
+              this.activeQueries.set(sessionId, rq);
+              eventSource = rq;
+              continue retryLoop;
             }
+            // No recovery possible — break immediately to avoid SDK internal 10x retry hang
+            console.warn(`[sdk] session=${sessionId} api_retry 401 with no recovery — tearing down streaming session`);
+            yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
+            break;
           }
 
           // Yield system events so streaming loop can transition phases
@@ -1097,47 +1128,35 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             console.error(`[sdk] session=${sessionId} cwd=${effectiveCwd} assistant error: ${assistantError} (isFirst=${isFirstMessage} retry=${retryCount})`);
             console.error(`[sdk] assistant message dump: ${JSON.stringify(msg).slice(0, 2000)}`);
 
-            // OAuth token expired — refresh and retry once before showing error
-            if (assistantError === "authentication_failed" && account && !authRetried) {
-              authRetried = true;
-              try {
-                // force=true: token got 401, so it's invalid regardless of expiresAt
-                await accountService.refreshAccessToken(account.id, false, true);
-                const refreshedAccount = accountService.getWithTokens(account.id);
-                if (refreshedAccount) {
-                  const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
-                  console.log(`[sdk] session=${sessionId} OAuth token refreshed for ${account.id} (${label}) — retrying`);
-                  yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
-                  const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                  // Close failed query and old channel, create new channel + query with refreshed token.
-                  closeCurrentStream();
-                  const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
-                  const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
-                  if (!hasHistory) authRetryCtrl.push(firstMsg);
-                  const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
-                  const rq = query({
-                    prompt: authRetryGen,
-                    options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
-                  });
-                  this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl });
-                  this.activeQueries.set(sessionId, rq);
-                  eventSource = rq;
-                  continue retryLoop;
-                }
-              } catch (refreshErr) {
-                console.error(`[sdk] session=${sessionId} OAuth refresh failed:`, refreshErr);
-                accountSelector.onAuthError(account.id);
+            // OAuth token expired — refresh (and/or switch account) and retry
+            if (assistantError === "authentication_failed" && account) {
+              const recovered = yield* this.recoverFromAuthError({
+                sessionId,
+                account,
+                authRetryCount,
+                maxRetries: MAX_AUTH_RETRIES,
+                context: "assistant",
+              });
+              if (recovered) {
+                authRetryCount = recovered.newRetryCount;
+                account = recovered.account;
+                const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+                closeCurrentStream();
+                const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
+                const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
+                if (!hasHistory) authRetryCtrl.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
+                const rq = query({
+                  prompt: authRetryGen,
+                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl });
+                this.activeQueries.set(sessionId, rq);
+                eventSource = rq;
+                continue retryLoop;
               }
-            }
-
-            // Auth failed permanently after retry — cooldown account and break loop.
-            // SDK doesn't send a result event after auth errors in streaming mode,
-            // so the streaming session would stay alive with broken credentials forever.
-            // Breaking here lets the finally block tear down the session, so the next
-            // user message creates a fresh session with a different account.
-            if (assistantError === "authentication_failed" && account && authRetried) {
-              accountSelector.onAuthError(account.id);
-              console.warn(`[sdk] session=${sessionId} auth permanently failed — tearing down streaming session`);
+              // All recovery exhausted — tear down streaming session
+              console.warn(`[sdk] session=${sessionId} auth permanently failed after ${authRetryCount} attempts — tearing down streaming session`);
               yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
               break;
             }
@@ -1275,38 +1294,33 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               yield { type: "error", message: `Rate limited. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.` };
               continue;
             } else if (errCode === 401) {
-              // Refresh token and retry — resume existing SDK session to preserve context
-              if (!authRetried) {
-                authRetried = true;
-                try {
-                  // force=true: token got 401, so it's invalid regardless of expiresAt
-                  await accountService.refreshAccessToken(account.id, false, true);
-                  const refreshedAccount = accountService.getWithTokens(account.id);
-                  if (refreshedAccount) {
-                    const label = refreshedAccount.label ?? refreshedAccount.email ?? "Unknown";
-                    console.log(`[sdk] 401 in result on account ${account.id} (${label}) — token refreshed, retrying`);
-                    yield { type: "account_retry" as const, reason: "Token refreshed", accountId: refreshedAccount.id, accountLabel: label };
-                    closeCurrentStream();
-                    const retryEnv = this.buildQueryEnv(meta.projectPath, refreshedAccount);
-                    const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
-                    const authHasHistory2 = (this.messageCount.get(sessionId) ?? 0) > 0;
-                    if (!authHasHistory2) authRetryCtrl2.push(firstMsg);
-                    const retryOpts = { ...queryOptions, sessionId: undefined, resume: authHasHistory2 ? sessionId : undefined, env: retryEnv };
-                    const rq = query({
-                      prompt: authRetryGen2,
-                      options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
-                    });
-                    this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2 });
-                    this.activeQueries.set(sessionId, rq);
-                    eventSource = rq;
-                    continue retryLoop;
-                  }
-                } catch {
-                  accountSelector.onAuthError(account.id);
-                }
-              } else {
-                accountSelector.onAuthError(account.id);
+              // Refresh (or switch account) and retry — resume existing SDK session to preserve context
+              const recovered = yield* this.recoverFromAuthError({
+                sessionId,
+                account,
+                authRetryCount,
+                maxRetries: MAX_AUTH_RETRIES,
+                context: "result",
+              });
+              if (recovered) {
+                authRetryCount = recovered.newRetryCount;
+                account = recovered.account;
+                closeCurrentStream();
+                const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
+                const authHasHistory2 = (this.messageCount.get(sessionId) ?? 0) > 0;
+                if (!authHasHistory2) authRetryCtrl2.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: authHasHistory2 ? sessionId : undefined, env: retryEnv };
+                const rq = query({
+                  prompt: authRetryGen2,
+                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2 });
+                this.activeQueries.set(sessionId, rq);
+                eventSource = rq;
+                continue retryLoop;
               }
+              // All recovery exhausted — fall through to normal result error surfacing
             } else {
               // Only mark success when the result is actually successful,
               // not for unrecognized error subtypes (e.g. quota exhaustion)
@@ -1443,6 +1457,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           resultContextWindowPct = undefined;
           lastAssistantUuid = undefined;
           sdkEventCount = 0;
+          // Reset auth retry budget on successful turn — each new turn gets a fresh
+          // budget so OAuth tokens rotated mid-conversation can still trigger refresh
+          if (!subtype || subtype === "success") authRetryCount = 0;
           continue; // Wait for next turn from generator
         }
       }

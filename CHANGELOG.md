@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.10] - 2026-04-21
+
+### Fixed
+- **Auth retry stuck across turns**: `authRetried` was a per-session boolean, so the second 401 in any subsequent turn skipped token refresh and the stream hung. Replaced with per-turn counter (`authRetryCount`, max 2) that resets on each successful turn, so every turn gets a fresh refresh budget
+- **Multi-attempt auth recovery**: Centralized auth-error recovery in `recoverFromAuthError` — attempt 1 refreshes the current account's OAuth token, attempt 2 switches to a different active account, only then surfaces an error. All three 401 detection paths (`api_retry`, assistant text, result) share this logic
+- **api_retry 401 stall**: When no recovery path remains, break immediately instead of falling through to SDK's internal 10x retry (which wasted ~5 minutes before surfacing the error)
+
 ## [0.12.9] - 2026-04-21
 
 ### Fixed
