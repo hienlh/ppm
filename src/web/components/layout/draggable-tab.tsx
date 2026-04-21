@@ -100,13 +100,20 @@ export function DraggableTab({
         colorStyle && "border-transparent",
       )}
     >
-      {tagColor && (
-        <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: tagColor }} />
-      )}
-      <span className="relative">
+      <span
+        // No-tag: force neutral gray (overrides parent text-primary for active tabs) so untagged
+        // tabs don't look like they have a blue tag. Active state is still signaled via border + title color.
+        className={cn("relative", !tagColor && "text-text-secondary")}
+        style={tagColor ? { color: tagColor } : undefined}
+      >
         <Icon className="size-4" />
         {isStreaming ? (
-          <span className="absolute -top-1 -right-1 size-2 rounded-full bg-emerald-500 animate-pulse motion-reduce:animate-none" />
+          // Messenger-style typing dots inside chat bubble — inherits current icon color
+          <span aria-hidden className="absolute inset-0 flex items-center justify-center gap-[1.5px]">
+            <span className="tab-typing-dot size-[2px] rounded-full bg-current" />
+            <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.15s" }} />
+            <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.3s" }} />
+          </span>
         ) : notificationType && !isActive ? (
           <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notificationType))} />
         ) : null}

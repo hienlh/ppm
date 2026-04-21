@@ -294,3 +294,15 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .markdown-content.is-streaming > *:last-child { animation: none; }
 }
+
+/* Tab streaming indicator — 3 dots bouncing inside chat bubble icon (Messenger typing style) */
+@keyframes tabTypingBounce {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-1.5px); }
+}
+.tab-typing-dot {
+  animation: tabTypingBounce 1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-typing-dot { animation: none; }
+}

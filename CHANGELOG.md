@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.2] - 2026-04-21
+
+### Changed
+- **Chat tab badges redesign** — reduced visual noise from 3 separate indicators to integrated icon states:
+  - **Tag**: removed left-side color dot, now colors the chat icon itself. Untagged tabs force neutral gray (`text-text-secondary`) regardless of active state, so they don't get confused with blue-tagged tabs when active (`text-primary` was leaking into icon)
+  - **Streaming**: replaced top-right pulsing green dot with **Messenger-style typing dots** bouncing inside the chat bubble icon (3× `size-[2px]` circles using `bg-current` + staggered `animationDelay`). Added `tabTypingBounce` keyframe (1.5px translate, 1s loop) to `globals.css` with `prefers-reduced-motion` fallback
+  - **Notification**: unchanged — still top-right colored dot when unread and tab inactive
+- **Favicon streaming indicator** — replaced blue/amber flash with **typing dots animation** on amber background (`#f59e0b`, high-attention) for better peripheral visibility. Pre-encodes 4 frames (3 active positions + 1 rest frame — rest frame makes cycle boundary perceptible so all 3 dots appear to bounce equally) cycled every 300ms. `setFavicon()` signature changed: second arg is now `streamingFrame: number | null` (null = idle) instead of `isStreamingAlt: boolean`. Exports `STREAM_FRAME_COUNT` for DRY cycling in `useNotificationBadge`
+
 ## [0.13.1] - 2026-04-21
 
 ### Fixed

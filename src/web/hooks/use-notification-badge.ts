@@ -3,7 +3,7 @@ import { useNotificationStore, selectTotalUnread } from "@/stores/notification-s
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useStreamingStore, selectAnyStreaming } from "@/stores/streaming-store";
-import { setFavicon } from "@/lib/favicon";
+import { setFavicon, STREAM_FRAME_COUNT } from "@/lib/favicon";
 
 function buildTitle(unread: number, projectName?: string, deviceName?: string): string {
   const parts = [projectName, deviceName || null, "PPM"].filter(Boolean).join(" - ");
@@ -30,13 +30,13 @@ export function useNotificationBadge(): void {
     updateTitle();
 
     if (anyStreaming) {
-      // Alternate favicon between primary (blue) and streaming (amber) every 800ms
-      let alt = false;
-      setFavicon(getHasBadge(), false);
+      // Cycle through typing-dots frames (3 dots + 1 rest frame, Messenger style) every 300ms
+      let frame = 0;
+      setFavicon(getHasBadge(), frame);
       intervalRef.current = setInterval(() => {
-        alt = !alt;
-        setFavicon(getHasBadge(), alt);
-      }, 800);
+        frame = (frame + 1) % STREAM_FRAME_COUNT;
+        setFavicon(getHasBadge(), frame);
+      }, 300);
     } else {
       setFavicon(getHasBadge());
     }

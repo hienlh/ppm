@@ -1,30 +1,52 @@
 const COLOR_PRIMARY = "#3b82f6";
-const COLOR_STREAMING = "#f59e0b"; // amber-500
+const COLOR_STREAMING = "#f59e0b"; // amber-500 — high-attention bg for typing state
+const COLOR_BADGE = "#ef4444";
 
-function buildSvg(bgColor: string, badgeDot: boolean): string {
+/** Idle favicon — "PPM" text on primary background, optional red badge dot. */
+function buildIdleSvg(badgeDot: boolean): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="${bgColor}"/>
+  <rect width="32" height="32" rx="6" fill="${COLOR_PRIMARY}"/>
   <text x="16" y="22" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="11" fill="white">PPM</text>
-  ${badgeDot ? '<circle cx="26" cy="6" r="5" fill="#ef4444"/>' : ""}
+  ${badgeDot ? `<circle cx="26" cy="6" r="5" fill="${COLOR_BADGE}"/>` : ""}
 </svg>`;
 }
 
-// Pre-encode all 4 variants
-export const FAVICON_NORMAL = `data:image/svg+xml,${encodeURIComponent(buildSvg(COLOR_PRIMARY, false))}`;
-export const FAVICON_BADGE = `data:image/svg+xml,${encodeURIComponent(buildSvg(COLOR_PRIMARY, true))}`;
-const FAVICON_STREAMING = `data:image/svg+xml,${encodeURIComponent(buildSvg(COLOR_STREAMING, false))}`;
-const FAVICON_STREAMING_BADGE = `data:image/svg+xml,${encodeURIComponent(buildSvg(COLOR_STREAMING, true))}`;
+/** Streaming favicon — 3 dots (Messenger typing style). `activeDot` (0-2) is raised, -1 = rest. */
+function buildStreamingSvg(activeDot: number, badgeDot: boolean): string {
+  const dots = [10, 16, 22].map((cx, i) => {
+    const cy = i === activeDot ? 13 : 17;
+    return `<circle cx="${cx}" cy="${cy}" r="3" fill="white"/>`;
+  }).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="${COLOR_STREAMING}"/>
+  ${dots}
+  ${badgeDot ? `<circle cx="26" cy="6" r="5" fill="${COLOR_BADGE}"/>` : ""}
+</svg>`;
+}
+
+const encode = (svg: string) => `data:image/svg+xml,${encodeURIComponent(svg)}`;
+
+// Pre-encode all variants: [no-badge, with-badge]
+const FAVICON_IDLE: [string, string] = [encode(buildIdleSvg(false)), encode(buildIdleSvg(true))];
+// 4 frames: dot0 up, dot1 up, dot2 up, all rest (-1) — rest frame makes cycle boundary perceptible
+const FAVICON_STREAM: [string, string][] = [0, 1, 2, -1].map((f) =>
+  [encode(buildStreamingSvg(f, false)), encode(buildStreamingSvg(f, true))] as [string, string],
+);
+export const STREAM_FRAME_COUNT = FAVICON_STREAM.length;
 
 /**
- * Swap favicon. When `isStreamingAlt` is true, uses amber color to
- * create an alternation effect (caller toggles this on an interval).
+ * Swap favicon.
+ * @param hasBadge — true if unread notifications exist
+ * @param streamingFrame — 0..STREAM_FRAME_COUNT-1 for typing-dots animation, null for idle
  */
-export function setFavicon(hasBadge: boolean, isStreamingAlt = false): void {
+export function setFavicon(hasBadge: boolean, streamingFrame: number | null = null): void {
   const el = document.getElementById("ppm-favicon") as HTMLLinkElement | null;
   if (!el) return;
-  if (isStreamingAlt) {
-    el.href = hasBadge ? FAVICON_STREAMING_BADGE : FAVICON_STREAMING;
+  const badgeIdx = hasBadge ? 1 : 0;
+  if (streamingFrame === null) {
+    el.href = FAVICON_IDLE[badgeIdx];
   } else {
-    el.href = hasBadge ? FAVICON_BADGE : FAVICON_NORMAL;
+    const frame = ((streamingFrame % STREAM_FRAME_COUNT) + STREAM_FRAME_COUNT) % STREAM_FRAME_COUNT;
+    el.href = FAVICON_STREAM[frame]![badgeIdx];
   }
 }
