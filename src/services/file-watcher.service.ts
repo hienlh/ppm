@@ -16,11 +16,12 @@ interface WatchEntry {
 }
 
 const watchers = new Map<string, WatchEntry>();
-let changeCallback: ChangeCallback | null = null;
+/** Multiple callbacks supported — each is invoked on every file change event */
+const changeCallbacks: ChangeCallback[] = [];
 
-/** Register callback for file change events */
+/** Register a callback for file change events (additive — does not replace previous) */
 export function onFileChange(cb: ChangeCallback): void {
-  changeCallback = cb;
+  changeCallbacks.push(cb);
 }
 
 function shouldIgnore(filePath: string): boolean {
@@ -47,7 +48,10 @@ export function startWatching(projectName: string, projectPath: string): void {
       entry.timer = setTimeout(() => {
         const paths = [...entry.pending];
         entry.pending.clear();
-        for (const p of paths) changeCallback?.(projectName, p.replaceAll("\\", "/"));
+        for (const p of paths) {
+          const relPath = p.replaceAll("\\", "/");
+          for (const cb of changeCallbacks) cb(projectName, relPath);
+        }
       }, DEBOUNCE_MS);
     });
 

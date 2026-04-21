@@ -223,8 +223,86 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **ClawBotStreamerService** | LEGACY streamer | (deprecated v0.9.11) |
 | **BashOutputSpy** | Monitor bash tool output in real-time via /proc/PID/fd (Linux/WSL2) or lsof (macOS) | startSpy, stopSpy, stopAllForSession |
 | **TagService** | Session tagging CRUD, bulk operations, tag-session enrichment | seedDefaultTags, getTagsByProject, createTag, updateTag, deleteTag, setSessionTag, bulkSetSessionTag, getSessionTags, getTagSessionCounts |
+| **FileFilterService** | Glob pattern matching + precedence-enforced filtering (hardcoded ⊂ global ⊂ project) | mergeFilters, isPathIgnored, matchesPattern |
 
-**Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/cli/commands/bot-cmd.ts`
+**Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/services/file-filter.service.ts`, `src/cli/commands/bot-cmd.ts`
+
+---
+
+### File Service & Filtering (Lazy-Load Tree, Palette Index)
+
+**Component:** FileFilterService + API endpoints `/files/list`, `/files/index`, settings endpoints
+
+**Overview:** Provides efficient file discovery with VS Code-style glob filtering and gitignore support. Three-layer filter precedence enforces consistent exclude patterns across tree navigation and search indexing.
+
+**Filter Precedence (evaluated low-to-high):**
+1. **Hardcoded defaults** — `node_modules/**`, `.git`, `.env*` (always excluded, cannot override)
+2. **Global config** — `files.exclude`, `files.searchExclude`, `files.useIgnoreFiles` (applies to all projects)
+3. **Per-project override** — Project-scoped settings (DB: `projects.settings` JSON, schema v21) override global
+
+**API Endpoints:**
+```
+GET  /api/project/:name/files/list?path=<rel>
+     → 1-level directory children with gitignore decoration (isIgnored field)
+     → { items: [{ name, type, isDir, isIgnored }], ... }
+
+GET  /api/project/:name/files/index
+     → Flat full-project file list (cached in memory, watcher-invalidated)
+     → { files: [{ path, isIgnored }], ... }
+
+GET  /api/settings/files
+     → Global file filter config (all projects)
+     → { filesExclude: [], searchExclude: [], useIgnoreFiles: bool }
+
+PATCH /api/settings/files
+     → Update global config (partial: only specified fields)
+     → Validates arrays ≤200 items, filters non-string patterns
+
+GET  /api/project/:name/settings
+     → Per-project settings (includes file filter overrides)
+     → { filesExclude?: [], searchExclude?: [], useIgnoreFiles?: bool, ... }
+
+PATCH /api/project/:name/settings
+     → Per-project override (stored in projects.settings JSON, schema v21)
+     → Same validation as global, caches invalidation on write
+```
+
+**Filtering Model:**
+
+| Config | Applies To | Validation | Notes |
+|--------|-----------|------------|-------|
+| `filesExclude` | Tree navigation | Glob patterns (max 200) | Hides from tree explorer |
+| `searchExclude` | Index + palette search | Glob patterns (max 200) | Hides from search results |
+| `useIgnoreFiles` | Both (when true) | Boolean | Include `.gitignore` + `.git/info/exclude` in filtering |
+
+**Frontend Integration:**
+- `useFileStore()` hook manages lazy-loading: `loadRoot()`, `loadChildren()`, `loadIndex()`
+- AbortController pool cancels pending requests on project switch
+- File tree auto-expands root (1 level), children load on-demand with spinner
+- Command palette + chat file-picker switched from tree-flattening to `fileIndex` from store
+- "Indexing project…" hint shown when `loadIndex()` is pending
+
+**Server-Side Implementation:**
+- `FileFilterService.mergeFilters()` — Combine hardcoded + global + project overrides with precedence
+- `FileFilterService.isPathIgnored()` — Check if path matches any exclude pattern (gitignore if enabled)
+- `FileService.list()` — 1-level enumeration with `isIgnored` field computed per item
+- In-memory `indexCache` (Map: projectName → FileIndex) invalidated by `fs.watch` (file changes) + manual `invalidateIndexCache()` calls
+- WS `file:changed` events routed to `invalidateFolder()` or `invalidateIndex()` depending on scope
+
+**Database Schema (v21+):**
+```typescript
+// projects table gains:
+settings: TEXT  // JSON: { filesExclude?, searchExclude?, useIgnoreFiles? }
+
+// Example:
+projects.settings = JSON.stringify({
+  filesExclude: ["**/.venv", "**/*.pyc"],
+  searchExclude: ["**/node_modules"],
+  useIgnoreFiles: false
+})
+```
+
+**Deprecated:** `/api/project/:name/files/tree` (marked @deprecated, still functional for backward compat)
 
 ---
 

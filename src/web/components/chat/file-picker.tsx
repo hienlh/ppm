@@ -10,19 +10,6 @@ interface FilePickerProps {
   visible: boolean;
 }
 
-/** Flatten a FileNode tree into a flat list of files and directories. */
-export function flattenFileTree(nodes: FileNode[]): FileNode[] {
-  const result: FileNode[] = [];
-  function walk(list: FileNode[]) {
-    for (const node of list) {
-      result.push(node);
-      if (node.children) walk(node.children);
-    }
-  }
-  walk(nodes);
-  return result;
-}
-
 export function FilePicker({
   items,
   filter,

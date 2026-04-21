@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
-import { fileService } from "../../services/file.service.ts";
+import { fileService, SecurityError, NotFoundError, ValidationError } from "../../services/file.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { errorStatus } from "../helpers/error-status.ts";
 
@@ -13,7 +13,45 @@ const MAX_UPLOAD_FILES = 20;
 export const fileRoutes = new Hono<Env>();
 
 
-/** GET /files/tree?depth=3 */
+/**
+ * GET /files/list?path=<relPath>
+ * Returns one directory level of entries with type and gitignore flag.
+ * Applies filesExclude patterns. path defaults to "" (project root).
+ */
+fileRoutes.get("/list", (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const relPath = (c.req.query("path") ?? "").trim();
+    // Reject path traversal attempts early
+    if (relPath.includes("..")) return c.json(err("Invalid path: traversal not allowed"), 400);
+    const entries = fileService.listDir(projectPath, relPath);
+    return c.json(ok(entries));
+  } catch (e) {
+    if (e instanceof SecurityError) return c.json(err((e as Error).message), 403);
+    if (e instanceof NotFoundError) return c.json(err((e as Error).message), 404);
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/**
+ * GET /files/index
+ * Returns flat array of all project files {path, name} for palette/search.
+ * Result is cached; cache is invalidated on file change events.
+ */
+fileRoutes.get("/index", (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const entries = fileService.buildIndex(projectPath);
+    return c.json(ok(entries));
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/**
+ * @deprecated Use /files/list for lazy-load tree instead.
+ * GET /files/tree?depth=3
+ */
 fileRoutes.get("/tree", (c) => {
   try {
     const projectPath = c.get("projectPath");

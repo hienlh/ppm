@@ -108,18 +108,28 @@ interface TreeNodeProps {
 }
 
 const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, onFileDrop, onFileOpen }: TreeNodeProps) {
-  const { expandedPaths, toggleExpand, selectedFiles, toggleFileSelect } = useFileStore(useShallow((s) => ({ expandedPaths: s.expandedPaths, toggleExpand: s.toggleExpand, selectedFiles: s.selectedFiles, toggleFileSelect: s.toggleFileSelect })));
+  const { expandedPaths, loadedPaths, inflight, toggleExpand, selectedFiles, toggleFileSelect } = useFileStore(
+    useShallow((s) => ({
+      expandedPaths: s.expandedPaths,
+      loadedPaths: s.loadedPaths,
+      inflight: s.inflight,
+      toggleExpand: s.toggleExpand,
+      selectedFiles: s.selectedFiles,
+      toggleFileSelect: s.toggleFileSelect,
+    })),
+  );
   const openTab = useTabStore((s) => s.openTab);
   const isExpanded = expandedPaths.has(node.path);
   const isDir = node.type === "directory";
   const isSelected = selectedFiles.includes(node.path);
   const isIgnored = node.ignored === true;
+  const isLoadingChildren = isDir && isExpanded && !loadedPaths.has(node.path) && inflight.has(node.path);
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
 
   function handleClick(e: React.MouseEvent) {
     if (isDir) {
-      toggleExpand(node.path);
+      toggleExpand(projectName, node.path);
       return;
     }
     // Ctrl/Cmd+Click: toggle file selection for compare
@@ -211,7 +221,9 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
           >
             {isDir ? (
-              isExpanded ? (
+              isLoadingChildren ? (
+                <Loader2 className="size-3.5 shrink-0 text-text-subtle animate-spin" />
+              ) : isExpanded ? (
                 <ChevronDown className="size-3.5 shrink-0 text-text-subtle" />
               ) : (
                 <ChevronRight className="size-3.5 shrink-0 text-text-subtle" />
@@ -289,7 +301,29 @@ interface FileTreeProps {
 }
 
 export function FileTree({ onFileOpen }: FileTreeProps = {}) {
-  const { tree, loading, error, fetchTree, reset, selectedFiles, clearSelection, setExpanded } = useFileStore(useShallow((s) => ({ tree: s.tree, loading: s.loading, error: s.error, fetchTree: s.fetchTree, reset: s.reset, selectedFiles: s.selectedFiles, clearSelection: s.clearSelection, setExpanded: s.setExpanded })));
+  const {
+    tree, loading, error,
+    loadRoot, loadIndex, loadChildren, invalidateIndex, invalidateFolder,
+    reset, selectedFiles, clearSelection, setExpanded,
+    // fetchTree kept for uploadFiles refresh
+    fetchTree,
+  } = useFileStore(
+    useShallow((s) => ({
+      tree: s.tree,
+      loading: s.loading,
+      error: s.error,
+      loadRoot: s.loadRoot,
+      loadIndex: s.loadIndex,
+      loadChildren: s.loadChildren,
+      invalidateIndex: s.invalidateIndex,
+      invalidateFolder: s.invalidateFolder,
+      reset: s.reset,
+      selectedFiles: s.selectedFiles,
+      clearSelection: s.clearSelection,
+      setExpanded: s.setExpanded,
+      fetchTree: s.fetchTree,
+    })),
+  );
   const activeProject = useProjectStore((s) => s.activeProject);
   const openTab = useTabStore((s) => s.openTab);
   const [actionState, setActionState] = useState<{
@@ -297,37 +331,59 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     node: FileNode;
   } | null>(null);
 
-  const loadTree = useCallback(() => {
-    if (activeProject) {
-      fetchTree(activeProject.name);
-    }
-  }, [activeProject, fetchTree]);
+  /** Full reload used by toolbar Refresh button and post-upload */
+  const reloadTree = useCallback(() => {
+    if (!activeProject) return;
+    reset();
+    loadRoot(activeProject.name);
+    loadIndex(activeProject.name);
+  }, [activeProject, reset, loadRoot, loadIndex]);
 
-  useEffect(() => {
-    if (activeProject) {
-      reset();
-      loadTree();
-    }
-  }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-refresh file tree on window focus and real-time file changes via WebSocket
+  // On project switch: reset + load root + load index in parallel + auto-expand root (1 level)
   useEffect(() => {
     if (!activeProject) return;
-    const refresh = () => fetchTree(activeProject.name);
+    reset();
+    const name = activeProject.name;
+
+    // Load root entries, then auto-expand the root node itself (path="")
+    loadRoot(name).then(() => {
+      // Auto-expand root — marks "" as expanded so root-level dirs show children on next expand
+      // Root entries are already visible; no deeper auto-expand per plan decision
+      useFileStore.getState().setExpanded("", true);
+    });
+    loadIndex(name);
+  }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle WS file:changed → invalidate folder + index instead of full tree refetch
+  useEffect(() => {
+    if (!activeProject) return;
+    const projectName = activeProject.name;
     let debounceTimer: ReturnType<typeof setTimeout>;
-    const debouncedRefresh = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(refresh, 300); };
+
     const handleFileChanged = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail.projectName === activeProject.name) debouncedRefresh();
+      if (detail.projectName !== projectName) return;
+
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const store = useFileStore.getState();
+        // Derive parent folder from changed file path
+        const changedPath: string = detail.path ?? "";
+        const parentPath = changedPath.includes("/")
+          ? changedPath.slice(0, changedPath.lastIndexOf("/"))
+          : "";
+        store.invalidateIndex();
+        store.loadIndex(projectName);
+        store.invalidateFolder(projectName, parentPath);
+      }, 300);
     };
-    window.addEventListener("focus", refresh);
+
     window.addEventListener("file:changed", handleFileChanged);
     return () => {
       clearTimeout(debounceTimer);
-      window.removeEventListener("focus", refresh);
       window.removeEventListener("file:changed", handleFileChanged);
     };
-  }, [activeProject, fetchTree]);
+  }, [activeProject]);
 
   const uploadFiles = useCallback(async (targetDir: string, files: FileList) => {
     if (!activeProject) return;
@@ -347,12 +403,21 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
         const json = await res.json();
         console.error("Upload failed:", json.error);
       }
-      loadTree();
+      // Invalidate the target folder so it refreshes
+      const store = useFileStore.getState();
+      const folderPath = targetDir;
+      const folderLoadedPaths = store.loadedPaths;
+      if (folderLoadedPaths.has(folderPath)) {
+        const lp = new Set(store.loadedPaths);
+        lp.delete(folderPath);
+        // Force reload by clearing and re-expanding
+        await store.invalidateFolder(activeProject.name, folderPath);
+      }
       if (targetDir) setExpanded(targetDir, true);
     } catch (e) {
       console.error("Upload error:", e);
     }
-  }, [activeProject, loadTree, setExpanded]);
+  }, [activeProject, setExpanded]);
 
   const [isRootDragOver, setIsRootDragOver] = useState(false);
   const rootDragCounter = useRef(0);
@@ -436,7 +501,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     return (
       <div className="p-3 text-xs text-error">
         {error}
-        <button onClick={loadTree} className="block mt-1 text-primary underline">
+        <button onClick={reloadTree} className="block mt-1 text-primary underline">
           Retry
         </button>
       </div>
@@ -467,7 +532,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
           <FolderPlus className="size-3.5" />
         </button>
         <div className="flex-1" />
-        <button onClick={loadTree} title="Refresh" className={toolbarBtnClass}>
+        <button onClick={reloadTree} title="Refresh" className={toolbarBtnClass}>
           <RefreshCw className="size-3.5" />
         </button>
       </div>
@@ -504,7 +569,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
             New Folder
           </ContextMenuItem>
           <ContextMenuSeparator />
-          <ContextMenuItem onClick={loadTree}>
+          <ContextMenuItem onClick={reloadTree}>
             <RefreshCw className="size-3.5 mr-2" />
             Refresh
           </ContextMenuItem>
@@ -517,7 +582,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
           node={actionState.node}
           projectName={activeProject.name}
           onClose={() => setActionState(null)}
-          onRefresh={loadTree}
+          onRefresh={reloadTree}
         />
       )}
     </div>

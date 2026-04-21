@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-const CURRENT_SCHEMA_VERSION = 20;
+const CURRENT_SCHEMA_VERSION = 21;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -589,6 +589,16 @@ function runMigrations(database: Database): void {
     }
     database.exec("PRAGMA user_version = 20");
   }
+
+  if (current < 21) {
+    // Add per-project settings JSON column (idempotent: check column existence first)
+    const cols = database.query("PRAGMA table_info(projects)").all() as { name: string }[];
+    const hasSettings = cols.some((c) => c.name === "settings");
+    if (!hasSettings) {
+      database.exec(`ALTER TABLE projects ADD COLUMN settings TEXT DEFAULT '{}'`);
+    }
+    database.exec("PRAGMA user_version = 21");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -666,6 +676,52 @@ export function upsertProject(path: string, name: string, color?: string | null)
 
 export function deleteProject(nameOrPath: string): void {
   getDb().query("DELETE FROM projects WHERE name = ? OR path = ?").run(nameOrPath, nameOrPath);
+}
+
+/** Get per-project settings JSON string (returns '{}' if missing or null) */
+export function getProjectSettingsJson(projectPath: string): string {
+  const row = getDb().query("SELECT settings FROM projects WHERE path = ?").get(projectPath) as { settings: string | null } | null;
+  return row?.settings ?? "{}";
+}
+
+/** Patch per-project settings JSON (deep merge — plain-object values are merged one level deep) */
+export function patchProjectSettingsJson(projectPath: string, patch: string): void {
+  const existing = getProjectSettingsJson(projectPath);
+
+  let existingObj: Record<string, unknown>;
+  let patchObj: Record<string, unknown>;
+  try { existingObj = (JSON.parse(existing) ?? {}) as Record<string, unknown>; }
+  catch { existingObj = {}; }
+  try { patchObj = JSON.parse(patch) as Record<string, unknown>; }
+  catch { throw new Error("Invalid patch JSON"); }
+
+  if (typeof patchObj !== "object" || patchObj === null || Array.isArray(patchObj)) {
+    throw new Error("Patch must be a plain object");
+  }
+
+  // One-level deep merge: if both sides have a plain-object value, shallow-merge; else replace
+  const merged: Record<string, unknown> = { ...existingObj };
+  for (const key of Object.keys(patchObj)) {
+    const pv = patchObj[key];
+    const ev = existingObj[key];
+    if (isPlainObject(pv) && isPlainObject(ev)) {
+      merged[key] = { ...(ev as Record<string, unknown>), ...(pv as Record<string, unknown>) };
+    } else {
+      merged[key] = pv;
+    }
+  }
+
+  const result = getDb()
+    .query("UPDATE projects SET settings = ? WHERE path = ?")
+    .run(JSON.stringify(merged), projectPath);
+
+  if ((result as { changes: number }).changes === 0) {
+    throw new Error(`Project not found: ${projectPath}`);
+  }
+}
+
+function isPlainObject(v: unknown): boolean {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 }
 
 export function updateProject(currentName: string, newName: string, newPath: string, color?: string | null): void {

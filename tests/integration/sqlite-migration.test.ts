@@ -227,7 +227,7 @@ describe("YAML → SQLite migration", () => {
     const testDb = openTestDb();
 
     const row = testDb.query("PRAGMA user_version").get() as { user_version: number };
-    expect(row.user_version).toBe(16);
+    expect(row.user_version).toBe(21);
 
     // All tables should exist (v1–v13 migrations)
     const tables = testDb.query(

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { configService } from "../../services/config.service.ts";
+import { configService, FILE_CONFIG_KEYS } from "../../services/config.service.ts";
 import { getConfigValue, setConfigValue, listPairedChats, getPairingByCode, approvePairing, revokePairing, getPPMBotMemories, getDb } from "../../services/db.service.ts";
 import {
   validateAIProviderConfig,
@@ -13,6 +13,7 @@ import {
 } from "../../types/config.ts";
 import { ok, err } from "../../types/api.ts";
 import { proxyService } from "../../services/proxy.service.ts";
+import { clearIndexCache } from "../../services/file-list-index.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 
 export const settingsRoutes = new Hono();
@@ -402,6 +403,54 @@ settingsRoutes.delete("/clawbot/memories/:id", (c) => {
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+// ── File Filters ──────────────────────────────────────────────────────────────
+
+/** GET /settings/files — return global file filter config */
+settingsRoutes.get("/files", (c) => {
+  return c.json(ok({
+    filesExclude: configService.getFilesExclude(),
+    searchExclude: configService.getSearchExclude(),
+    useIgnoreFiles: configService.getUseIgnoreFiles(),
+  }));
+});
+
+/** PATCH /settings/files — partial update to global file filter config */
+settingsRoutes.patch("/files", async (c) => {
+  try {
+    const body = await c.req.json<{
+      filesExclude?: string[];
+      searchExclude?: string[];
+      useIgnoreFiles?: boolean;
+    }>();
+
+    if (body.filesExclude !== undefined) {
+      if (!Array.isArray(body.filesExclude)) return c.json(err("filesExclude must be an array"), 400);
+      const patterns = body.filesExclude.filter((p) => typeof p === "string").slice(0, 200);
+      setConfigValue(FILE_CONFIG_KEYS.filesExclude, JSON.stringify(patterns));
+    }
+    if (body.searchExclude !== undefined) {
+      if (!Array.isArray(body.searchExclude)) return c.json(err("searchExclude must be an array"), 400);
+      const patterns = body.searchExclude.filter((p) => typeof p === "string").slice(0, 200);
+      setConfigValue(FILE_CONFIG_KEYS.searchExclude, JSON.stringify(patterns));
+    }
+    if (body.useIgnoreFiles !== undefined) {
+      if (typeof body.useIgnoreFiles !== "boolean") return c.json(err("useIgnoreFiles must be a boolean"), 400);
+      setConfigValue(FILE_CONFIG_KEYS.useIgnoreFiles, JSON.stringify(body.useIgnoreFiles));
+    }
+
+    // Invalidate all project index caches — global filter changes affect every project
+    clearIndexCache();
+
+    return c.json(ok({
+      filesExclude: configService.getFilesExclude(),
+      searchExclude: configService.getSearchExclude(),
+      useIgnoreFiles: configService.getUseIgnoreFiles(),
+    }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
   }
 });
 

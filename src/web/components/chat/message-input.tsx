@@ -9,7 +9,7 @@ import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
-import { flattenFileTree } from "./file-picker";
+import { useFileStore } from "@/stores/file-store";
 
 export interface ChatAttachment {
   id: string;
@@ -106,6 +106,10 @@ export const MessageInput = memo(function MessageInput({
   const needsJsResize = useRef(
     typeof CSS === "undefined" || !CSS.supports("field-sizing", "content"),
   );
+
+  // File index from store — replaces /files/tree?depth=5 fetch
+  const fileIndex = useFileStore((s) => s.fileIndex);
+  const indexStatus = useFileStore((s) => s.indexStatus);
 
   /** Write value to both textareas + ref + update hasText state */
   const writeTextareas = useCallback((newValue: string) => {
@@ -204,25 +208,18 @@ export const MessageInput = memo(function MessageInput({
     return () => window.removeEventListener("ppm:slash-items-refresh", handler);
   }, [fetchSlashItems]);
 
-  // Fetch file tree when projectName changes
+  // Sync file picker items from store index — no network call needed
   useEffect(() => {
     if (!projectName) {
       fileItemsRef.current = [];
       onFileItemsLoaded?.([]);
       return;
     }
-    api
-      .get<FileNode[]>(`${projectUrl(projectName)}/files/tree?depth=5`)
-      .then((tree) => {
-        const flat = flattenFileTree(tree);
-        fileItemsRef.current = flat;
-        onFileItemsLoaded?.(flat);
-      })
-      .catch(() => {
-        fileItemsRef.current = [];
-        onFileItemsLoaded?.([]);
-      });
-  }, [projectName]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Convert FileEntry[] to FileNode[] — type field is now present on FileEntry
+    const nodes: FileNode[] = fileIndex.map((e) => ({ name: e.name, path: e.path, type: e.type }));
+    fileItemsRef.current = nodes;
+    onFileItemsLoaded?.(nodes);
+  }, [projectName, fileIndex, indexStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle parent selecting a slash item
   useEffect(() => {

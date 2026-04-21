@@ -117,6 +117,9 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
   const openTab = useTabStore((s) => s.openTab);
   const activeProject = useProjectStore((s) => s.activeProject);
+  const fileIndex = useFileStore((s) => s.fileIndex);
+  const indexStatus = useFileStore((s) => s.indexStatus);
+  const loadIndex = useFileStore((s) => s.loadIndex);
   const fileTree = useFileStore((s) => s.tree);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
@@ -223,11 +226,12 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     return [...builtIn, ...extCmds];
   }, [activeProject, openTab, onClose, setSidebarActiveTab, sidebarCollapsed, toggleSidebar, getBinding, extContributions]);
 
-  // File commands — derived from file store tree (project files)
+  // File commands — from index when ready, fallback to flattened tree
   const fileCommands = useMemo<CommandItem[]>(() => {
     const projectId = activeProject?.name ?? null;
     const meta = activeProject ? { projectName: activeProject.name } : undefined;
-    const files = flattenFiles(fileTree);
+    // Filter index to files only — directories are in the index for palette "open folder" affordances but not for file-open commands
+    const files = indexStatus === "ready" ? fileIndex.filter((e) => e.type === "file") : flattenFiles(fileTree);
 
     return files.map((f) => ({
       id: `file:${f.path}`,
@@ -247,7 +251,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         onClose();
       },
     }));
-  }, [fileTree, activeProject, openTab, onClose]);
+  }, [indexStatus, fileIndex, fileTree, activeProject, openTab, onClose]);
 
   // Filesystem commands — from cached API results
   const fsCommands = useMemo<CommandItem[]>(() => {
@@ -424,6 +428,25 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         {pathMode && !fsLoading && fsFiles.length === 0 && query.length < 4 && (
           <div className="px-3 py-2 text-xs text-text-subtle border-b border-border/50">
             Type a directory path to browse files (e.g. ~/Projects/)
+          </div>
+        )}
+
+        {/* Index status hints — non-blocking, muted */}
+        {!pathMode && indexStatus === "loading" && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border/50">
+            <Loader2 className="size-3 animate-spin text-text-subtle shrink-0" />
+            <span className="text-[11px] text-text-subtle italic">Indexing project…</span>
+          </div>
+        )}
+        {!pathMode && indexStatus === "error" && (
+          <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border/50">
+            <span className="text-[11px] text-text-subtle">Failed to build file index —</span>
+            <button
+              onClick={() => activeProject && loadIndex(activeProject.name)}
+              className="text-[11px] text-accent hover:underline"
+            >
+              retry
+            </button>
           </div>
         )}
 

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, BellOff, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug,
+  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug, FolderSearch,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import { McpSettingsSection } from "./mcp-settings-section";
 import { ExtensionManagerSection } from "./extension-manager-section";
 import { PPMBotSettingsSection } from "./ppmbot-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
+import { FilesSettingsSection } from "./files-settings-section";
 import { usePushNotification } from "@/hooks/use-push-notification";
 
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
@@ -30,7 +31,7 @@ const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
 const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
   !window.matchMedia("(display-mode: standalone)").matches;
 
-type SettingsCategory = "ai" | "notifications" | "clawbot" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions";
+type SettingsCategory = "ai" | "notifications" | "clawbot" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
@@ -41,6 +42,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { value: "mcp", label: "MCP Servers", subtitle: "Model Context Protocol tools", icon: Plug },
   { value: "extensions", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
+  { value: "files", label: "File Filters", subtitle: "Exclude patterns, ignore files", icon: FolderSearch },
 ];
 
 export function SettingsTab() {
@@ -97,6 +99,7 @@ export function SettingsTab() {
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
             {activeCategory === "mcp" && <McpSettingsSection />}
             {activeCategory === "extensions" && <ExtensionManagerSection />}
+            {activeCategory === "files" && <FilesSettingsSection />}
           </div>
         </ScrollArea>
       </div>

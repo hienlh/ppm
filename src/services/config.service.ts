@@ -12,6 +12,8 @@ import {
   deleteProject as dbDeleteProject,
   getDb,
   getDbFilePath,
+  getProjectSettingsJson,
+  patchProjectSettingsJson,
 } from "./db.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 
@@ -19,6 +21,13 @@ import { getPpmDir } from "./ppm-dir.ts";
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
   "device_name", "port", "host", "theme", "auth", "ai", "push", "telegram", "clawbot",
 ];
+
+/** File filter config keys stored in the config table */
+export const FILE_CONFIG_KEYS = {
+  filesExclude: "files.exclude",
+  searchExclude: "files.searchExclude",
+  useIgnoreFiles: "files.useIgnoreFiles",
+} as const;
 
 class ConfigService {
   private config: PpmConfig = structuredClone(DEFAULT_CONFIG);
@@ -96,6 +105,38 @@ class ConfigService {
   /** Get the DB file path (replaces getConfigPath for YAML) */
   getConfigPath(): string {
     return getDbFilePath();
+  }
+
+  /** Get global files.exclude patterns (falls back to empty array if not set) */
+  getFilesExclude(): string[] {
+    const raw = getConfigValue(FILE_CONFIG_KEYS.filesExclude);
+    if (!raw) return [];
+    try { return JSON.parse(raw) as string[]; } catch { return []; }
+  }
+
+  /** Get global files.searchExclude patterns */
+  getSearchExclude(): string[] {
+    const raw = getConfigValue(FILE_CONFIG_KEYS.searchExclude);
+    if (!raw) return [];
+    try { return JSON.parse(raw) as string[]; } catch { return []; }
+  }
+
+  /** Get global files.useIgnoreFiles flag (default true) */
+  getUseIgnoreFiles(): boolean {
+    const raw = getConfigValue(FILE_CONFIG_KEYS.useIgnoreFiles);
+    if (raw === null) return true; // default on
+    try { return JSON.parse(raw) as boolean; } catch { return true; }
+  }
+
+  /** Get per-project settings for a given project path */
+  getProjectSettings(projectPath: string): import("../types/project.ts").ProjectSettings {
+    const json = getProjectSettingsJson(projectPath);
+    try { return JSON.parse(json) as import("../types/project.ts").ProjectSettings; } catch { return {}; }
+  }
+
+  /** Merge-patch per-project settings */
+  setProjectSettings(projectPath: string, patch: import("../types/project.ts").ProjectSettings): void {
+    patchProjectSettingsJson(projectPath, JSON.stringify(patch));
   }
 
   /** No-op — kept for backward compatibility (init command) */

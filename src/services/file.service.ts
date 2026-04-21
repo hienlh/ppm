@@ -9,11 +9,19 @@ import {
   rmSync,
   renameSync,
 } from "node:fs";
-import { resolve, relative, basename, dirname, join, normalize, sep } from "node:path";
+import { resolve, relative, dirname, join, normalize, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
-import type { FileNode } from "../types/project.ts";
+import type { FileNode, FileEntry, FileDirEntry } from "../types/project.ts";
+import {
+  listDir as listDirImpl,
+  buildIndex as buildIndexImpl,
+  invalidateIndexCache,
+  clearIndexCache,
+} from "./file-list-index.service.ts";
 
-/** Directories/files excluded from tree listing */
+export { invalidateIndexCache, clearIndexCache };
+
+/** Directories/files excluded from tree listing (legacy — kept for getTree back-compat) */
 const EXCLUDED_NAMES = new Set([".git", "node_modules"]);
 
 /** Load and compile gitignore rules from a project root */
@@ -103,13 +111,7 @@ class FileService {
         };
 
         if (entry.isDirectory()) {
-          node.children = this.buildTree(
-            rootPath,
-            fullPath,
-            currentDepth + 1,
-            maxDepth,
-            ig,
-          );
+          node.children = this.buildTree(rootPath, fullPath, currentDepth + 1, maxDepth, ig);
         }
 
         nodes.push(node);
@@ -170,21 +172,14 @@ class FileService {
   }
 
   /** Read file content with encoding detection */
-  readFile(
-    projectPath: string,
-    filePath: string,
-  ): { content: string; encoding: string } {
+  readFile(projectPath: string, filePath: string): { content: string; encoding: string } {
     const absPath = this.resolveSafe(projectPath, filePath);
     this.blockSensitive(filePath);
 
-    if (!existsSync(absPath)) {
-      throw new NotFoundError(`File not found: ${filePath}`);
-    }
+    if (!existsSync(absPath)) throw new NotFoundError(`File not found: ${filePath}`);
 
     const stat = statSync(absPath);
-    if (stat.isDirectory()) {
-      throw new ValidationError("Cannot read a directory");
-    }
+    if (stat.isDirectory()) throw new ValidationError("Cannot read a directory");
 
     // Binary detection: check for null bytes in first chunk
     const buffer = readFileSync(absPath);
@@ -201,27 +196,18 @@ class FileService {
     const absPath = this.resolveSafe(projectPath, filePath);
     this.blockSensitive(filePath);
 
-    // Ensure parent directory exists
     const dir = dirname(absPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     writeFileSync(absPath, content, "utf-8");
   }
 
   /** Create a file or directory */
-  createFile(
-    projectPath: string,
-    filePath: string,
-    type: "file" | "directory",
-  ): void {
+  createFile(projectPath: string, filePath: string, type: "file" | "directory"): void {
     const absPath = this.resolveSafe(projectPath, filePath);
     this.blockSensitive(filePath);
 
-    if (existsSync(absPath)) {
-      throw new ValidationError(`Already exists: ${filePath}`);
-    }
+    if (existsSync(absPath)) throw new ValidationError(`Already exists: ${filePath}`);
 
     if (type === "directory") {
       mkdirSync(absPath, { recursive: true });
@@ -237,9 +223,7 @@ class FileService {
     const absPath = this.resolveSafe(projectPath, filePath);
     this.blockSensitive(filePath);
 
-    if (!existsSync(absPath)) {
-      throw new NotFoundError(`Not found: ${filePath}`);
-    }
+    if (!existsSync(absPath)) throw new NotFoundError(`Not found: ${filePath}`);
 
     const stat = statSync(absPath);
     if (stat.isDirectory()) {
@@ -250,24 +234,15 @@ class FileService {
   }
 
   /** Rename a file or directory */
-  renameFile(
-    projectPath: string,
-    oldPath: string,
-    newPath: string,
-  ): void {
+  renameFile(projectPath: string, oldPath: string, newPath: string): void {
     const absOld = this.resolveSafe(projectPath, oldPath);
     const absNew = this.resolveSafe(projectPath, newPath);
     this.blockSensitive(oldPath);
     this.blockSensitive(newPath);
 
-    if (!existsSync(absOld)) {
-      throw new NotFoundError(`Not found: ${oldPath}`);
-    }
-    if (existsSync(absNew)) {
-      throw new ValidationError(`Already exists: ${newPath}`);
-    }
+    if (!existsSync(absOld)) throw new NotFoundError(`Not found: ${oldPath}`);
+    if (existsSync(absNew)) throw new ValidationError(`Already exists: ${newPath}`);
 
-    // Ensure parent dir of new path exists
     const dir = dirname(absNew);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
@@ -275,13 +250,24 @@ class FileService {
   }
 
   /** Move a file or directory to a new location */
-  moveFile(
-    projectPath: string,
-    source: string,
-    destination: string,
-  ): void {
-    // Move is functionally the same as rename
+  moveFile(projectPath: string, source: string, destination: string): void {
     this.renameFile(projectPath, source, destination);
+  }
+
+  /**
+   * List one directory level for lazy-load file tree (delegates to file-list-index.service).
+   * Applies filesExclude patterns; returns gitignore flag per entry.
+   */
+  listDir(projectPath: string, relPath: string): FileDirEntry[] {
+    return listDirImpl(projectPath, relPath);
+  }
+
+  /**
+   * Build flat file index for palette/search (delegates to file-list-index.service).
+   * Cached per project; invalidated on file change via invalidateIndexCache().
+   */
+  buildIndex(projectPath: string): FileEntry[] {
+    return buildIndexImpl(projectPath);
   }
 
   /** Block access to sensitive paths (.git/) */
@@ -319,3 +305,19 @@ export class ValidationError extends Error {
 }
 
 export const fileService = new FileService();
+
+// Wire file watcher → index cache invalidation
+// Dynamic import avoids circular dependency (file-watcher → chat.ts → file.service)
+import("./file-watcher.service.ts").then(({ onFileChange }) => {
+  onFileChange((projectName) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { configService } = require("./config.service.ts");
+      const projects = configService.get("projects") as Array<{ name: string; path: string }>;
+      const project = projects.find((p: { name: string }) => p.name === projectName);
+      if (project) invalidateIndexCache(project.path);
+    } catch {
+      // Config not yet loaded or project not found — skip invalidation
+    }
+  });
+}).catch(() => { /* file-watcher unavailable in test/CLI context */ });

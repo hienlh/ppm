@@ -6,9 +6,21 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Session Tagging, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
+## [Unreleased] — Lazy-Load File Tree + Palette Index, Session Tagging, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
 
 ### Added
+- **Lazy-Load File Tree + Palette Index** — Instant project opening on large codebases
+  - Backend: `GET /api/project/:name/files/list?path=<rel>` for 1-level directory listing with gitignore decoration
+  - Backend: `GET /api/project/:name/files/index` for flat full-project index (cached, watcher-invalidated)
+  - Filter model: hardcoded defaults ⊂ global config ⊂ per-project override (VS Code style)
+  - Settings API: `GET/PATCH /api/settings/files` for global `files.exclude` / `files.searchExclude` / `files.useIgnoreFiles`
+  - Project settings: `GET/PATCH /api/project/:name/settings` for per-project override (schema v21: projects.settings JSON)
+  - Frontend: File store refactored to lazy-load with AbortController pool; tree auto-expands root only, children load on-demand
+  - Command palette + chat file-picker switched from tree-flattening to `fileIndex` for instant search
+  - New Settings section: **Files & Search** — global + active-project-scoped settings, glob list editor, `useIgnoreFiles` toggle
+  - Gitignored files decorated grey in tree (when `useIgnoreFiles=true`)
+  - `/api/project/:name/files/tree` marked @deprecated (still functional)
+
 - **Session Tagging** — Per-project tags for organizing chat sessions
   - Database: schema v20 migration creates `project_tags` table with id, project_path, name, color, sort_order; adds `tag_id` FK to `session_metadata`
   - Tag service: `tag.service.ts` with CRUD helpers (create, read, update, delete, bulk assign), session tag enrichment, tag counting
