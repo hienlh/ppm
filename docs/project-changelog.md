@@ -2,7 +2,21 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.11.10
+**Current Version:** v0.13.0
+
+---
+
+## [0.13.0] — 2026-04-21 — PPM Export Skill
+
+### Added
+- **`ppm export skill`** — self-describe for external AI. Installs a Claude Code skill at `~/.claude/skills/ppm/` (or `<project>/.claude/skills/ppm/` with `--scope project`, or custom `--output <dir>`) so external AI agents can autonomously control PPM via its CLI, HTTP API, and SQLite config DB. Skill package contains `SKILL.md` + `references/{cli-reference,http-api,db-schema,common-tasks}.md`.
+- **Build-time generators** (`scripts/generate-ppm-skill.ts` + `scripts/lib/`): walk the Commander tree for CLI reference and regex-scan `src/server/index.ts` + `src/server/routes/*.ts` for HTTP API reference. Zero-side-effect static introspection.
+- **Runtime generator** (`src/services/skill-export/generate-db-schema.ts`): opens `~/.ppm/ppm.db` readonly via `bun:sqlite` and emits markdown tables per PRAGMA table_info.
+- **Re-install safety**: existing skill files renamed to `<name>.bak-<YYYYMMDDHHmm>` before overwrite; never destructive.
+- **`buildProgram()` export** in `src/index.ts` — the assembled Commander tree without `.parse()`, enabling build-time doc tools.
+
+### Changed
+- `scripts/generate-ppm-guide.ts` → `scripts/generate-ppm-skill.ts`; `assets/skills/ppm-guide/` → `assets/skills/ppm/`; `generate:guide` npm script → `generate:skill`.
 
 ---
 

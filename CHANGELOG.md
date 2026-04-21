@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.0] - 2026-04-21
+
+### Added
+- **`ppm export skill`**: Install a Claude Code skill at `~/.claude/skills/ppm/` so external AI agents can control PPM via its CLI, HTTP API, and SQLite config DB. Flags: `--install`, `--scope user|project`, `--output <dir>`, `--format claude-code`. Generates `SKILL.md` + `references/{cli-reference,http-api,db-schema,common-tasks}.md`. CLI/HTTP references are auto-generated at build time by walking the Commander tree and scanning Hono route files. DB schema is generated at install time from the user's `~/.ppm/ppm.db` (opened readonly). Re-install is safe: existing files are renamed to `<name>.bak-<YYYYMMDDHHmm>` before overwrite. Preview mode (no `--install`/`--output`) writes the merged `SKILL.md` to stdout.
+- **`buildProgram()` export in `src/index.ts`**: Module now exports the assembled Commander tree without parsing argv, enabling build-time introspection for auto-generated docs. Runtime behavior preserved via `import.meta.main` guard.
+
+### Changed
+- **Generator rename**: `scripts/generate-ppm-guide.ts` → `scripts/generate-ppm-skill.ts` (plus `scripts/lib/` modules). Output moved from `assets/skills/ppm-guide/` → `assets/skills/ppm/`. `npm` scripts: `generate:guide` → `generate:skill`; `prepublishOnly` updated.
+
 ## [0.12.12] - 2026-04-21
 
 ### Fixed

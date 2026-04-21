@@ -1,6 +1,6 @@
 {
   "name": "@hienlh/ppm",
-  "version": "0.12.12",
+  "version": "0.13.0",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "author": "hienlh",
   "license": "MIT",
@@ -19,8 +19,8 @@
     "start": "bun run src/index.ts start",
     "typecheck": "bunx tsc --noEmit",
     "generate:bot": "bun scripts/generate-bot-coordinator.ts --update",
-    "generate:guide": "bun scripts/generate-ppm-guide.ts",
-    "prepublishOnly": "bun run generate:guide && bun run build:web"
+    "generate:skill": "bun scripts/generate-ppm-skill.ts",
+    "prepublishOnly": "bun run generate:skill && bun run build:web"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.1",

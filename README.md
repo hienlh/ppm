@@ -128,6 +128,17 @@ bunx @hienlh/ppm init -y \
 
 Once running, the Cloudflare public URL is printed to stdout — parse it to share with users.
 
+## Use with Claude Code
+
+Install the PPM skill so Claude Code (and other compatible AI agents) can control PPM via its CLI, HTTP API, and SQLite config DB:
+
+```bash
+ppm export skill --install
+# Installs to ~/.claude/skills/ppm/ (use --scope project for per-project install).
+```
+
+Then in Claude Code: `/ppm list my projects` → Claude invokes `ppm projects list` automatically. Re-run any time to refresh (existing files are backed up with a `.bak-<timestamp>` suffix). Requires PPM v0.13.0+.
+
 ## Requirements
 
 - **Bun** v1.3.6+ ([install](https://bun.sh))
