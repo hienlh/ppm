@@ -1576,6 +1576,29 @@ function parseSessionMessage(msg: { uuid: string; type: string; message: unknown
   const role = msg.type as "user" | "assistant";
   const parentId = (msg as any).parent_tool_use_id as string | undefined;
 
+  // Filter synthetic SDK-generated error messages (auth failures, rate limits, etc.).
+  // Structure: { isApiErrorMessage: true, error: "authentication_failed"|"rate_limit"|...,
+  //   message: { model: "<synthetic>", content: [{text: "Failed to authenticate..."}] } }
+  // Our retry loop handles these; the raw text must not render in chat history.
+  const isSdkErrorMessage =
+    (msg as any).isApiErrorMessage === true ||
+    typeof (msg as any).error === "string" ||
+    (message && (message as any).model === "<synthetic>" &&
+      Array.isArray(message.content) &&
+      (message.content as Array<Record<string, unknown>>).some(
+        (b) => b.type === "text" && typeof b.text === "string" &&
+          /Failed to authenticate|API Error: 40[13]|hit your limit|rate.?limit/i.test(b.text as string),
+      ));
+  if (isSdkErrorMessage) {
+    return {
+      id: msg.uuid,
+      role,
+      content: "",
+      timestamp: new Date().toISOString(),
+      sdkUuid: msg.uuid,
+    };
+  }
+
   // Parse content blocks for both user and assistant messages
   const events: ChatEvent[] = [];
   let textContent = "";

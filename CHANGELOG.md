@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.12.9] - 2026-04-21
+
+### Fixed
+- **Synthetic auth error leaking into history**: Filter SDK-persisted error messages (`isApiErrorMessage: true`, `error` field, or `model: "<synthetic>"` with auth/rate-limit text) when loading session history — raw "Failed to authenticate. API Error: 401 …" no longer shows up as an assistant bubble after reload
+
 ## [0.12.8] - 2026-04-21
 
 ### Changed
