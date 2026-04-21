@@ -530,7 +530,8 @@ if (process.argv.includes("__serve__")) {
   const idx = process.argv.indexOf("__serve__");
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
-  const profileArg = process.argv[idx + 3] && process.argv[idx + 3] !== "_" ? process.argv[idx + 3] : undefined;
+  const profileRaw = process.argv[idx + 3];
+  const profileArg = profileRaw && profileRaw !== "_" && !profileRaw.startsWith("--") ? profileRaw : undefined;
 
   // Set DB profile for daemon child
   const { setDbProfile } = await import("../services/db.service.ts");

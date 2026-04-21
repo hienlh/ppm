@@ -949,7 +949,8 @@ if (process.argv.includes("__supervise__")) {
   const idx = process.argv.indexOf("__supervise__");
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
-  const profile = process.argv[idx + 3] && process.argv[idx + 3] !== "_" ? process.argv[idx + 3] : undefined;
+  const profileRaw = process.argv[idx + 3];
+  const profile = profileRaw && profileRaw !== "_" && !profileRaw.startsWith("--") ? profileRaw : undefined;
   const share = process.argv.includes("--share");
 
   // Set DB profile for supervisor (needed to read config)
