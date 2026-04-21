@@ -301,6 +301,22 @@ Execute a SQL query against a saved connection
 
 Fully shut down PPM (supervisor + server + tunnel)
 
+## `ppm export`
+
+Export PPM metadata for external tools (AI agents, editors)
+
+**Usage:** `ppm export [options] [command]`
+
+### `ppm export skill`
+
+Export Claude Code skill for controlling PPM from external AI tools
+
+**Options:**
+- `--install` — Install to target dir (default scope=user → ~/.claude/skills/ppm/)
+- `--scope <scope>` — Install scope: user | project (default: `"user"`)
+- `--output <dir>` — Custom output directory (overrides --scope)
+- `--format <fmt>` — Output format (default: `"claude-code"`)
+
 ## `ppm ext`
 
 Manage PPM extensions
