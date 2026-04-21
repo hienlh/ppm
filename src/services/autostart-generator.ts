@@ -125,10 +125,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 ExecStart=${execStart}
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=60
 TimeoutStopSec=10
 KillMode=mixed
 ${envPath}

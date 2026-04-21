@@ -19,6 +19,7 @@ import {
   STATUS_FILE, PID_FILE,
 } from "./supervisor-state.ts";
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
+import { sdNotify } from "./sd-notify.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -228,10 +229,22 @@ export async function spawnTunnel(port: number): Promise<void> {
     return;
   }
 
-  tunnelChild = Bun.spawn(
-    [bin, "tunnel", "--url", `http://127.0.0.1:${port}`],
-    { stderr: "pipe", stdout: "ignore", stdin: "ignore" },
-  );
+  // Under systemd, wrap tunnel in a transient user scope so it lives in its
+  // own cgroup instead of ppm.service. This prevents systemd from SIGKILLing
+  // the tunnel when ppm.service cgroup is torn down during upgrade/restart,
+  // preserving the cloudflared trycloudflare URL across the new supervisor.
+  // INVOCATION_ID is set by systemd; absence means we're not under systemd.
+  const underSystemd = !!process.env.INVOCATION_ID && process.platform === "linux";
+  const tunnelCmd = underSystemd
+    ? [
+        "systemd-run", "--user", "--scope", "--quiet", "--collect",
+        "--",
+        bin, "tunnel", "--url", `http://127.0.0.1:${port}`,
+      ]
+    : [bin, "tunnel", "--url", `http://127.0.0.1:${port}`];
+
+  tunnelChild = Bun.spawn(tunnelCmd, { stderr: "pipe", stdout: "ignore", stdin: "ignore" });
+  if (underSystemd) log("INFO", "Tunnel spawned inside transient systemd-run scope (escapes ppm.service cgroup)");
 
   try {
     tunnelUrl = await extractUrlFromStderr(tunnelChild.stderr as ReadableStream<Uint8Array>);
@@ -481,7 +494,15 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
       try {
         const data = JSON.parse(readFileSync(STATUS_FILE(), "utf-8"));
         if (data.supervisorPid && data.supervisorPid !== currentSupervisorPid) {
-          log("INFO", `New supervisor detected (PID: ${data.supervisorPid}), old exiting`);
+          log("INFO", `New supervisor detected (PID: ${data.supervisorPid}), handing off MainPID to systemd`);
+          // Tell systemd the new supervisor is now MainPID — required so that
+          // systemd does NOT tear down the ppm.service cgroup when this old
+          // supervisor exits 0. Needs NotifyAccess=all in unit file.
+          // No-op on non-systemd platforms (NOTIFY_SOCKET unset).
+          await sdNotify(`MAINPID=${data.supervisorPid}`);
+          // Small delay so systemd processes the datagram before our exit.
+          await Bun.sleep(300);
+          log("INFO", `Old supervisor exiting`);
           // Children already killed, just clear remaining timers and exit
           if (heartbeatTimer) clearInterval(heartbeatTimer);
           if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
@@ -918,6 +939,11 @@ export async function runSupervisor(opts: {
   // Connect to Cloud via WebSocket (if device is linked) + start monitoring
   connectCloud(opts, serverArgs, logFd);
   startCloudMonitor(opts, serverArgs, logFd);
+
+  // Signal readiness to systemd (Type=notify). No-op on non-systemd platforms.
+  // Must happen AFTER signal handlers + status.json are set up so systemd
+  // can race-freely promote us to MainPID and forward SIGUSR1/TERM.
+  await sdNotify("READY=1");
 
   // Spawn server + tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];

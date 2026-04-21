@@ -10,6 +10,7 @@ import { SessionContextMenu } from "./session-context-menu";
 import { UsageDetailPanel } from "./usage-badge";
 import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
+import { formatRelativeDate } from "@/lib/format-date";
 import type { SessionInfo, SessionListResponse, ProjectTag } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
 import type { TeamMessageItem } from "@/hooks/use-chat";
@@ -38,14 +39,6 @@ interface ChatHistoryBarProps {
   teamActivity?: TeamActivityState;
   teamMessages?: TeamMessageItem[];
   onTeamOpen?: () => void;
-}
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
 }
 
 function relativeTime(iso: string): string {
@@ -545,7 +538,7 @@ export function ChatHistoryBar({
                       </>
                     )}
                     {editingId !== session.id && session.updatedAt && (
-                      <span className="text-[10px] text-text-subtle shrink-0 w-10 text-right">{formatDate(session.updatedAt)}</span>
+                      <span className="text-[10px] text-text-subtle shrink-0 w-16 text-right">{formatRelativeDate(session.updatedAt)}</span>
                     )}
                   </div>
                   </SessionContextMenu>

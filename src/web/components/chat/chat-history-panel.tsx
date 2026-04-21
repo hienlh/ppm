@@ -2,18 +2,11 @@ import { useEffect, useState, useCallback } from "react";
 import { MessageSquare, Loader2, RefreshCw } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
+import { formatRelativeDate } from "@/lib/format-date";
 import type { SessionInfo } from "../../../types/chat";
 
 interface ChatHistoryPanelProps {
   projectName?: string;
-}
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
 }
 
 export function ChatHistoryPanel({ projectName }: ChatHistoryPanelProps) {
@@ -96,7 +89,7 @@ export function ChatHistoryPanel({ projectName }: ChatHistoryPanelProps) {
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium truncate text-text-primary">{session.title || "Untitled"}</p>
             {session.updatedAt && (
-              <p className="text-[10px] text-text-subtle">{formatDate(session.updatedAt)}</p>
+              <p className="text-[10px] text-text-subtle">{formatRelativeDate(session.updatedAt)}</p>
             )}
           </div>
         </button>

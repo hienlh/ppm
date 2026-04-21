@@ -124,9 +124,11 @@ describe("generateSystemdService", () => {
     expect(service).toContain("WantedBy=default.target");
   });
 
-  test("includes Type=simple", () => {
+  test("includes Type=notify with NotifyAccess=all (sd_notify + MAINPID handoff on upgrade)", () => {
     const service = generateSystemdService(TEST_CONFIG);
-    expect(service).toContain("Type=simple");
+    expect(service).toContain("Type=notify");
+    expect(service).toContain("NotifyAccess=all");
+    expect(service).not.toContain("Type=simple");
   });
 
   test("includes WorkingDirectory", () => {

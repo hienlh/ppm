@@ -499,11 +499,15 @@ export async function startServer(options: {
       qr.generate(shareUrl, { small: true });
     }
 
-    // Auto-enable system service (systemd/launchd) for boot resilience
+    // Auto-enable system service (systemd/launchd) for boot resilience.
+    // Also regenerates a stale unit file (missing Type=notify) so users who
+    // upgrade past the v0.13 → v0.14 systemd cgroup fix get the new unit
+    // picked up on next `systemctl --user restart ppm.service` / reboot.
     try {
-      const { getAutoStartStatus, enableAutoStart } = await import("../services/autostart-register.ts");
+      const { getAutoStartStatus, enableAutoStart, isAutoStartUnitStale } = await import("../services/autostart-register.ts");
       const status = getAutoStartStatus();
-      if (!status.enabled) {
+      const stale = status.enabled && isAutoStartUnitStale();
+      if (!status.enabled || stale) {
         const autoConfig = {
           port, host,
           share: !!options.share,
@@ -511,7 +515,11 @@ export async function startServer(options: {
         };
         // skipStart: supervisor is already running from direct spawn above
         await enableAutoStart(autoConfig, { skipStart: true });
-        console.log(`  ✓  Auto-restart enabled (${status.platform}). Disable: ppm autostart disable`);
+        if (stale) {
+          console.log(`  ↻  Auto-restart config migrated (Type=notify). Run 'systemctl --user restart ppm.service' to apply.`);
+        } else {
+          console.log(`  ✓  Auto-restart enabled (${status.platform}). Disable: ppm autostart disable`);
+        }
       }
     } catch {}
 

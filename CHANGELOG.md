@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.1] - 2026-04-21
+
+### Fixed
+- **WSL/Linux upgrade killed entire PPM stack (100% repro)**: Under `systemd` with `Type=simple`, the old supervisor's `process.exit(0)` at the end of `selfReplace()` triggered `KillMode=mixed` cgroup cleanup that SIGKILLed the freshly-spawned new supervisor along with server + cloudflared. Root cause: `Bun.spawn + unref()` does not escape the unit cgroup. Fix combines two changes:
+  - **Type=notify + MAINPID handoff**: Generated systemd unit now uses `Type=notify` / `NotifyAccess=all`. New supervisor sends `READY=1` via `sd_notify` on startup; during `selfReplace()`, old supervisor sends `MAINPID=<new_pid>` so systemd re-tracks the new supervisor as MainPID *before* the old one exits — cgroup is preserved instead of torn down
+  - **Tunnel in transient systemd scope**: `spawnTunnel()` now wraps `cloudflared` in `systemd-run --user --scope --quiet --collect` when running under systemd, hoisting the tunnel into its own cgroup so the trycloudflare URL survives ppm.service restarts (even the worst-case one). Preserves `adoptTunnel()` domain continuity across upgrades
+  - **Auto-migration**: `ppm start` detects stale unit files missing `Type=notify` and regenerates them silently; user runs one `systemctl --user restart ppm.service` after first upgrade to pick up the new unit
+
+### Added
+- **`src/services/sd-notify.ts`**: Thin wrapper around `systemd-notify` binary for `READY=1` / `MAINPID=` messages. No-op when `NOTIFY_SOCKET` is unset (non-systemd)
+- **`isAutoStartUnitStale()` helper**: Detects outdated systemd unit files so `ppm start` can regenerate them inline
+
 ## [0.13.0] - 2026-04-21
 
 ### Added

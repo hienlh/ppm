@@ -1,30 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { Bot, ChevronDown, ChevronUp, MessageSquare, Pin, PinOff } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { formatRelativeDate } from "@/lib/format-date";
 import { useProjectTags, TagChipBar } from "./tag-filter-chips";
 import { SessionContextMenu } from "./session-context-menu";
 import type { SessionInfo } from "../../../types/chat";
 
 const MAX_RECENT_SESSIONS = 5;
 const FETCH_SESSIONS_LIMIT = 20;
-
-function formatRelativeDate(iso: string): string {
-  try {
-    const date = new Date(iso);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMin = Math.floor(diffMs / 60_000);
-    if (diffMin < 1) return "just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
-    const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h ago`;
-    const diffDay = Math.floor(diffHr / 24);
-    if (diffDay < 7) return `${diffDay}d ago`;
-    return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "";
-  }
-}
 
 interface ChatWelcomeProps {
   projectName: string;
