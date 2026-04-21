@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { configService } from "../../../src/services/config.service.ts";
 import { app } from "../../../src/server/index.ts";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
 
 // Ensure clean state: test DB + auth disabled + test project registered
 beforeAll(() => {
@@ -106,5 +109,51 @@ describe("Chat REST API", () => {
     const res = await app.request(new Request("http://localhost/api/health"));
     const json = await res.json() as any;
     expect(json.ok).toBe(true);
+  });
+
+  describe("GET /chat/pre-compact-messages", () => {
+    const TRANSCRIPT_DIR = resolve(homedir(), ".claude", "_ppm_api_test_transcripts");
+    const VALID_FILE = resolve(TRANSCRIPT_DIR, "sample.jsonl");
+    const OUTSIDE_FILE = resolve(tmpdir(), "ppm-api-outside.jsonl");
+
+    beforeAll(() => {
+      mkdirSync(TRANSCRIPT_DIR, { recursive: true });
+      writeFileSync(VALID_FILE, [
+        JSON.stringify({ uuid: "u1", type: "user", message: { content: "hi" } }),
+        JSON.stringify({ uuid: "u2", type: "assistant", message: { content: [{ type: "text", text: "hello" }] } }),
+      ].join("\n") + "\n");
+      writeFileSync(OUTSIDE_FILE, "{}\n");
+    });
+
+    afterAll(() => {
+      try { rmSync(TRANSCRIPT_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { rmSync(OUTSIDE_FILE, { force: true }); } catch { /* ignore */ }
+    });
+
+    it("400 when jsonlPath missing", async () => {
+      const res = await req("/chat/pre-compact-messages");
+      expect(res.status).toBe(400);
+    });
+
+    it("403 when path outside ~/.claude/", async () => {
+      const res = await req(`/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(OUTSIDE_FILE)}`);
+      expect(res.status).toBe(403);
+    });
+
+    it("404 when file missing", async () => {
+      const missing = resolve(TRANSCRIPT_DIR, "nope.jsonl");
+      const res = await req(`/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(missing)}`);
+      expect(res.status).toBe(404);
+    });
+
+    it("200 returns parsed messages for valid transcript", async () => {
+      const res = await req(`/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(VALID_FILE)}`);
+      const json = await res.json() as any;
+      expect(res.status).toBe(200);
+      expect(json.ok).toBe(true);
+      expect(json.data.length).toBe(2);
+      expect(json.data[0].role).toBe("user");
+      expect(json.data[1].role).toBe("assistant");
+    });
   });
 });

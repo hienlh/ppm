@@ -5,6 +5,10 @@ import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
+import { extractJsonlPath } from "./pre-compact-button";
+const PreCompactSection = lazy(() =>
+  import("./pre-compact-section").then((m) => ({ default: m.PreCompactSection }))
+);
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
 );
@@ -310,11 +314,11 @@ const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details"]);
 
 /** User message bubble — full width, collapsible, with system tag badges */
 function UserBubble({ content, projectName, onFork }: { content: string; projectName?: string; onFork?: () => void }) {
-  const { files, text, tags, command } = useMemo(() => {
+  const { files, text, tags, command, jsonlPath } = useMemo(() => {
     const parsed = parseUserAttachments(content);
     const { cleanText: noSysTags, tags } = extractSystemTags(parsed.text);
     const { command, cleanText } = parseCommandTags(noSysTags);
-    return { files: parsed.files, text: cleanText, tags, command };
+    return { files: parsed.files, text: cleanText, tags, command, jsonlPath: extractJsonlPath(cleanText) };
   }, [content]);
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
@@ -398,6 +402,23 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
         >
           {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
         </button>
+      )}
+      {/* Expand compacted conversation: detect JSONL path in compact summary user message */}
+      {jsonlPath && (
+        <Suspense fallback={<div className="mt-2 animate-pulse h-10 bg-surface/50 rounded" />}>
+          <PreCompactSection
+            jsonlPath={jsonlPath}
+            projectName={projectName}
+            renderMessage={(msg, idx) => (
+              <MessageBubble
+                key={msg.id ?? `pc-${idx}`}
+                message={msg}
+                isStreaming={false}
+                projectName={projectName}
+              />
+            )}
+          />
+        </Suspense>
       )}
       {/* Fork/Rewind button — only for real user messages */}
       {!isSystemContext && onFork && (
@@ -788,9 +809,27 @@ function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput
         }
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
+          const jsonlPath = extractJsonlPath(group.content);
           return (
             <div key={`text-${i}`} className="text-sm text-text-primary select-text">
               <StreamingText content={group.content} animate={isLast} projectName={projectName} />
+              {jsonlPath && (
+                <Suspense fallback={<div className="mt-2 animate-pulse h-10 bg-surface/50 rounded" />}>
+                  <PreCompactSection
+                    jsonlPath={jsonlPath}
+                    projectName={projectName}
+                    renderMessage={(msg, idx) => (
+                      <MessageBubble
+                        key={msg.id ?? `pc-${idx}`}
+                        message={msg}
+                        isStreaming={false}
+                        projectName={projectName}
+                        bashPartialOutput={bashPartialOutput}
+                      />
+                    )}
+                  />
+                </Suspense>
+              )}
             </div>
           );
         }

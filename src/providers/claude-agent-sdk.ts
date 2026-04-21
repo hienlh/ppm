@@ -19,6 +19,7 @@ import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionProjectPath, setSessionMetadata, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
+import { parseSessionMessage, nestChildEvents } from "../services/jsonl-transcript-parser.ts";
 import { resolve } from "node:path";
 import { existsSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -1587,135 +1588,6 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 }
 
-/** Parse SDK SessionMessage into ChatMessage with events for tool_use blocks */
-function parseSessionMessage(msg: { uuid: string; type: string; message: unknown; parent_tool_use_id?: string | null }): ChatMessage {
-  const message = msg.message as Record<string, unknown> | undefined;
-  const role = msg.type as "user" | "assistant";
-  const parentId = (msg as any).parent_tool_use_id as string | undefined;
-
-  // Filter synthetic SDK-generated error messages (auth failures, rate limits, etc.).
-  // Structure: { isApiErrorMessage: true, error: "authentication_failed"|"rate_limit"|...,
-  //   message: { model: "<synthetic>", content: [{text: "Failed to authenticate..."}] } }
-  // Our retry loop handles these; the raw text must not render in chat history.
-  const isSdkErrorMessage =
-    (msg as any).isApiErrorMessage === true ||
-    typeof (msg as any).error === "string" ||
-    (message && (message as any).model === "<synthetic>" &&
-      Array.isArray(message.content) &&
-      (message.content as Array<Record<string, unknown>>).some(
-        (b) => b.type === "text" && typeof b.text === "string" &&
-          /Failed to authenticate|API Error: 40[13]|hit your limit|rate.?limit/i.test(b.text as string),
-      ));
-  if (isSdkErrorMessage) {
-    return {
-      id: msg.uuid,
-      role,
-      content: "",
-      timestamp: new Date().toISOString(),
-      sdkUuid: msg.uuid,
-    };
-  }
-
-  // Parse content blocks for both user and assistant messages
-  const events: ChatEvent[] = [];
-  let textContent = "";
-
-  if (message && Array.isArray(message.content)) {
-    for (const block of message.content as Array<Record<string, unknown>>) {
-      if (block.type === "text" && typeof block.text === "string") {
-        const cleaned = role === "assistant" ? stripTeammateXml(block.text) : block.text;
-        textContent += cleaned;
-        if (role === "assistant" && cleaned) {
-          events.push({ type: "text", content: cleaned, ...(parentId && { parentToolUseId: parentId }) });
-        }
-      } else if (block.type === "tool_use") {
-        events.push({
-          type: "tool_use",
-          tool: (block.name as string) ?? "unknown",
-          input: block.input ?? {},
-          toolUseId: block.id as string | undefined,
-          ...(parentId && { parentToolUseId: parentId }),
-        });
-      } else if (block.type === "tool_result") {
-        const output = block.content ?? block.output ?? "";
-        events.push({
-          type: "tool_result",
-          output: typeof output === "string" ? output : JSON.stringify(output),
-          isError: !!(block as Record<string, unknown>).is_error,
-          toolUseId: block.tool_use_id as string | undefined,
-          ...(parentId && { parentToolUseId: parentId }),
-        });
-      }
-    }
-  } else {
-    textContent = extractText(message);
-  }
-
-  // SDK-generated user messages carry system text (tool_result blocks,
-  // <teammate-message> XML, <task-notification> XML) — not actual user input.
-  // Clear so they don't render as user bubbles.
-  if (role === "user" && (events.some((e) => e.type === "tool_result") || textContent.includes("<teammate-message"))) {
-    textContent = "";
-  }
-
-  return {
-    id: msg.uuid,
-    role,
-    content: textContent,
-    events: events.length > 0 ? events : undefined,
-    timestamp: new Date().toISOString(),
-    sdkUuid: msg.uuid,
-  };
-}
-
-/**
- * Move events with parentToolUseId into their parent Agent/Task tool_use's children array.
- * Mutates the array in-place: child events are removed from the top level and pushed into parent.children.
- */
-function nestChildEvents(events: ChatEvent[]): void {
-  // Build map of Agent/Task tool_use events by toolUseId
-  const parentMap = new Map<string, ChatEvent & { type: "tool_use" }>();
-  for (const ev of events) {
-    if (ev.type === "tool_use" && (ev.tool === "Agent" || ev.tool === "Task") && ev.toolUseId) {
-      parentMap.set(ev.toolUseId, ev);
-    }
-  }
-  if (parentMap.size === 0) return;
-
-  // Collect indices of child events to remove
-  const childIndices: number[] = [];
-  for (let i = 0; i < events.length; i++) {
-    const ev = events[i]!;
-    const pid = (ev as any).parentToolUseId as string | undefined;
-    if (!pid) continue;
-    const parent = parentMap.get(pid);
-    if (parent) {
-      if (!parent.children) parent.children = [];
-      parent.children.push(ev);
-      childIndices.push(i);
-    }
-  }
-
-  // Remove children from flat array (reverse order to keep indices valid)
-  for (let i = childIndices.length - 1; i >= 0; i--) {
-    events.splice(childIndices[i]!, 1);
-  }
-}
-
-/** Extract plain text from message payload */
-function extractText(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-  const msg = message as Record<string, unknown>;
-  if (typeof msg.content === "string") return msg.content;
-  if (Array.isArray(msg.content)) {
-    return (msg.content as Array<Record<string, unknown>>)
-      .filter((b) => b.type === "text" && typeof b.text === "string")
-      .map((b) => b.text as string)
-      .join("");
-  }
-  return "";
-}
-
 /**
  * Scan a JSONL project directory for sessions that the SDK's listSessions missed.
  * The SDK uses a 64KB head buffer; sessions with very large first messages
@@ -1791,9 +1663,3 @@ function findMissingSessions(
   return results;
 }
 
-/** Strip SDK teammate-message XML tags from assistant text */
-const TEAMMATE_MSG_RE = /<teammate-message[^>]*>[\s\S]*?<\/teammate-message>/g;
-function stripTeammateXml(text: string): string {
-  if (!text.includes("<teammate-message")) return text;
-  return text.replace(TEAMMATE_MSG_RE, "").replace(/\n{3,}/g, "\n\n").trim();
-}

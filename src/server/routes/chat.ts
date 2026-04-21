@@ -9,6 +9,7 @@ import { listSlashItems, searchSlashItems, invalidateCache } from "../../service
 import { upsertSlashRecent, getSlashRecents } from "../../services/db.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
+import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { ok, err } from "../../types/api.ts";
@@ -361,6 +362,23 @@ chatRoutes.get("/sessions/:id/debug", (c) => {
   const jsonlPath = jsonlDir ? resolve(jsonlDir, `${sessionId}.jsonl`) : "";
   const jsonlExists = jsonlPath ? existsSync(jsonlPath) : false;
   return c.json(ok({ sessionId, jsonlPath: jsonlExists ? jsonlPath : null, jsonlDir, projectPath }));
+});
+
+/** GET /chat/pre-compact-messages — read and parse a JSONL transcript file (for expand-compact feature) */
+chatRoutes.get("/pre-compact-messages", async (c) => {
+  try {
+    const jsonlPath = c.req.query("jsonlPath");
+    if (!jsonlPath) return c.json(err("jsonlPath query param required"), 400);
+    const validated = validateJsonlPath(jsonlPath);
+    const messages = await parseJsonlTranscript(validated);
+    return c.json(ok(messages));
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    const status = /not found/i.test(message) ? 404
+      : /denied|traversal|Invalid path|too large|Not a regular/i.test(message) ? 403
+      : 500;
+    return c.json(err(message), status);
+  }
 });
 
 /** POST /chat/upload — upload files for chat attachments, returns server-side paths */
