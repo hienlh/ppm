@@ -1,7 +1,5 @@
 import { resolve, basename } from "node:path";
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
-import { getPpmDir } from "../../services/ppm-dir.ts";
 import { input, confirm, select, password } from "@inquirer/prompts";
 import { configService } from "../../services/config.service.ts";
 import { projectService } from "../../services/project.service.ts";
@@ -19,15 +17,14 @@ export interface InitOptions {
   yes?: boolean;
 }
 
-/** Check if config already exists */
-/** Check if config already exists (DB or legacy YAML) */
+/** Check if config already exists in SQLite */
 export function hasConfig(): boolean {
   try {
     const dbConfig = getAllConfig();
-    if (Object.keys(dbConfig).length > 0) return true;
-  } catch {}
-  const globalConfig = resolve(getPpmDir(), "config.yaml");
-  return existsSync(globalConfig);
+    return Object.keys(dbConfig).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function initProject(options: InitOptions = {}) {

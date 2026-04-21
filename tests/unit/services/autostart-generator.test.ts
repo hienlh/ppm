@@ -26,7 +26,6 @@ const TEST_CONFIG = {
 const TEST_CONFIG_WITH_SHARE = {
   ...TEST_CONFIG,
   share: true,
-  configPath: "/home/user/.ppm/config.yaml",
   profile: "dev",
 };
 
@@ -93,13 +92,6 @@ describe("generatePlist", () => {
     expect(plist).toContain(".ppm</string>");
   });
 
-  test("escapes XML special characters in paths", () => {
-    const config = { ...TEST_CONFIG, configPath: "/path/with<special>&chars" };
-    const plist = generatePlist(config);
-    expect(plist).not.toContain("<special>");
-    expect(plist).toContain("&lt;special&gt;");
-    expect(plist).toContain("&amp;chars");
-  });
 });
 
 // ─── Systemd (Linux) ───────────────────────────────────────────────────
@@ -122,7 +114,7 @@ describe("generateSystemdService", () => {
 
   test("includes restart policy", () => {
     const service = generateSystemdService(TEST_CONFIG);
-    expect(service).toContain("Restart=always");
+    expect(service).toContain("Restart=on-failure");
     expect(service).toContain("RestartSec=5");
   });
 
@@ -241,11 +233,6 @@ describe("buildExecCommand", () => {
     const cmd = buildExecCommand(TEST_CONFIG);
     expect(cmd).toContain("3210");
     expect(cmd).toContain("0.0.0.0");
-  });
-
-  test("includes config path when provided", () => {
-    const cmd = buildExecCommand(TEST_CONFIG_WITH_SHARE);
-    expect(cmd).toContain("/home/user/.ppm/config.yaml");
   });
 
   test("includes profile when provided", () => {

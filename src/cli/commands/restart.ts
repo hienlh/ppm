@@ -8,7 +8,7 @@ const restartingFlag = () => resolve(getPpmDir(), ".restarting");
 const restartResult = () => resolve(getPpmDir(), ".restart-result");
 
 /** Restart only the server process, keeping the tunnel alive */
-export async function restartServer(options: { config?: string; force?: boolean }) {
+export async function restartServer(options: { force?: boolean }) {
   // Ignore SIGHUP so this process survives when PPM terminal dies
   process.on("SIGHUP", () => {});
 
@@ -114,7 +114,7 @@ export async function restartServer(options: { config?: string; force?: boolean 
     : resolve(import.meta.dir, "../../server/index.ts");
 
   const { configService } = await import("../../services/config.service.ts");
-  configService.load(options.config);
+  configService.load();
   const port = status.port as number ?? configService.get("port");
   const host = status.host as string ?? configService.get("host");
 
@@ -133,7 +133,6 @@ export async function restartServer(options: { config?: string; force?: boolean 
   // terminal (and its process group) to receive SIGHUP.
   const params = JSON.stringify({
     serverPid, port, host, serverScript,
-    config: options.config ?? "",
     statusFile: statusFile(),
     pidFile: pidFile(),
     restartingFlag: restartingFlag(),
@@ -204,8 +203,8 @@ async function main() {
   // Compiled binary: execPath IS the server, no "run script" needed
   const isCompiled = !process.execPath.includes("bun");
   const serverArgs = isCompiled
-    ? ["__serve__", String(P.port), P.host, P.config].filter(Boolean)
-    : ["run", P.serverScript, "__serve__", String(P.port), P.host, P.config].filter(Boolean);
+    ? ["__serve__", String(P.port), P.host]
+    : ["run", P.serverScript, "__serve__", String(P.port), P.host];
 
   if (process.platform === "win32") {
     const bunExe = process.execPath.replace(/\\\\/g, "\\\\\\\\");

@@ -219,14 +219,13 @@ async function waitForServerReady(statusFile: string, port: number) {
 export async function startServer(options: {
   port?: string;
   share?: boolean;
-  config?: string;
   profile?: string;
 }) {
   // Tunnel always enabled — cloudflared shares the server publicly
   options.share = true;
 
   // Load config
-  configService.load(options.config);
+  configService.load();
   const port = parseInt(options.port ?? String(configService.get("port")), 10);
   const host = configService.get("host");
 
@@ -368,11 +367,11 @@ export async function startServer(options: {
         if (process.platform === "linux") {
           // Update service file in case config changed (port, share, etc.)
           const { enableAutoStart } = await import("../services/autostart-register.ts");
-          await enableAutoStart({ port, host, share: !!options.share, configPath: options.config, profile: options.profile });
+          await enableAutoStart({ port, host, share: !!options.share, profile: options.profile });
           startedViaService = true;
         } else if (process.platform === "darwin") {
           const { enableAutoStart } = await import("../services/autostart-register.ts");
-          await enableAutoStart({ port, host, share: !!options.share, configPath: options.config, profile: options.profile });
+          await enableAutoStart({ port, host, share: !!options.share, profile: options.profile });
           startedViaService = true;
         }
       }
@@ -392,7 +391,7 @@ export async function startServer(options: {
     } else if (process.platform === "win32") {
       const superviseArgs = [
         "__supervise__", String(port), host,
-        options.config ?? "", options.profile ?? "",
+        options.profile ?? "",
       ];
       if (options.share) superviseArgs.push("--share");
       while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
@@ -423,7 +422,7 @@ export async function startServer(options: {
     } else {
       const superviseArgs = [
         "__supervise__", String(port), host,
-        options.config ?? "", options.profile ?? "",
+        options.profile ?? "",
       ];
       if (options.share) superviseArgs.push("--share");
       while (superviseArgs.length > 1 && superviseArgs[superviseArgs.length - 1] === "") superviseArgs.pop();
@@ -508,7 +507,6 @@ export async function startServer(options: {
         const autoConfig = {
           port, host,
           share: !!options.share,
-          configPath: options.config,
           profile: options.profile,
         };
         // skipStart: supervisor is already running from direct spawn above
@@ -532,18 +530,15 @@ if (process.argv.includes("__serve__")) {
   const idx = process.argv.indexOf("__serve__");
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
-  const configPath = process.argv[idx + 3] && process.argv[idx + 3] !== "_" ? process.argv[idx + 3] : undefined;
-  const profileArg = process.argv[idx + 4] && process.argv[idx + 4] !== "_" ? process.argv[idx + 4] : undefined;
+  const profileArg = process.argv[idx + 3] && process.argv[idx + 3] !== "_" ? process.argv[idx + 3] : undefined;
 
-  // Set DB profile for daemon child — explicit --profile takes priority over config-path detection
+  // Set DB profile for daemon child
   const { setDbProfile } = await import("../services/db.service.ts");
   if (profileArg) {
     setDbProfile(profileArg);
-  } else if (configPath && /dev/i.test(configPath)) {
-    setDbProfile("dev");
   }
 
-  configService.load(configPath);
+  configService.load();
   await setupLogFile();
 
   // Sync externally-started tunnel URL + PID into tunnelService

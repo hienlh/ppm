@@ -2,7 +2,7 @@
  * Supervisor process — long-lived parent that manages server child + tunnel child.
  * Respawns children on crash with exponential backoff.
  * Health-checks server (/api/health) and tunnel URL (public probe).
- * Entry: __supervise__ <port> <host> [config] [profile] [--share]
+ * Entry: __supervise__ <port> <host> [profile] [--share]
  */
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
@@ -782,7 +782,6 @@ export function shutdown() {
 export async function runSupervisor(opts: {
   port: number;
   host: string;
-  config?: string;
   profile?: string;
   share: boolean;
 }) {
@@ -822,7 +821,7 @@ export async function runSupervisor(opts: {
   // Build __serve__ args
   const serverArgs = [
     "__serve__", String(opts.port), opts.host,
-    opts.config ?? "", opts.profile ?? "",
+    opts.profile ?? "",
   ];
   // Strip trailing empty args
   while (serverArgs.length > 0 && serverArgs[serverArgs.length - 1] === "") serverArgs.pop();
@@ -950,8 +949,7 @@ if (process.argv.includes("__supervise__")) {
   const idx = process.argv.indexOf("__supervise__");
   const port = parseInt(process.argv[idx + 1] ?? "8080", 10);
   const host = process.argv[idx + 2] ?? "0.0.0.0";
-  const config = process.argv[idx + 3] && process.argv[idx + 3] !== "_" ? process.argv[idx + 3] : undefined;
-  const profile = process.argv[idx + 4] && process.argv[idx + 4] !== "_" ? process.argv[idx + 4] : undefined;
+  const profile = process.argv[idx + 3] && process.argv[idx + 3] !== "_" ? process.argv[idx + 3] : undefined;
   const share = process.argv.includes("--share");
 
   // Set DB profile for supervisor (needed to read config)
@@ -960,5 +958,5 @@ if (process.argv.includes("__supervise__")) {
     setDbProfile(profile);
   }
 
-  runSupervisor({ port, host, config, profile, share });
+  runSupervisor({ port, host, profile, share });
 }

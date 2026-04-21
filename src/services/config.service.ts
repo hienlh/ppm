@@ -1,5 +1,3 @@
-import { existsSync, readFileSync, renameSync } from "node:fs";
-import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { PpmConfig, ProjectConfig } from "../types/config.ts";
 import { DEFAULT_CONFIG, sanitizeConfig } from "../types/config.ts";
@@ -15,7 +13,6 @@ import {
   getProjectSettingsJson,
   patchProjectSettingsJson,
 } from "./db.service.ts";
-import { getPpmDir } from "./ppm-dir.ts";
 
 /** Top-level config keys stored in the config table (not projects) */
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
@@ -32,20 +29,8 @@ export const FILE_CONFIG_KEYS = {
 class ConfigService {
   private config: PpmConfig = structuredClone(DEFAULT_CONFIG);
 
-  /** Load config from DB. If explicitPath given, import that YAML first. */
-  load(explicitPath?: string): PpmConfig {
-    // Import explicit YAML if provided (e.g. `ppm start -c path`)
-    if (explicitPath && existsSync(explicitPath)) {
-      this.importFromYaml(explicitPath);
-    }
-
-    // Auto-migrate: if config.yaml exists but DB has no config rows
-    // Skip migration when using in-memory DB (tests)
-    if (!getDbFilePath().includes(":memory:")) {
-      this.migrateYamlIfNeeded();
-    }
-
-    // Load from DB
+  /** Load config from SQLite. Creates defaults if DB is empty. */
+  load(): PpmConfig {
     const dbConfig = getAllConfig();
     const dbProjects = getProjects();
 
@@ -102,7 +87,7 @@ class ConfigService {
     return this.config;
   }
 
-  /** Get the DB file path (replaces getConfigPath for YAML) */
+  /** Get the DB file path */
   getConfigPath(): string {
     return getDbFilePath();
   }
@@ -183,84 +168,6 @@ class ConfigService {
       const p = projects[i]!;
       stmt.run(p.path, p.name, p.color ?? null, i);
     }
-  }
-
-  private migrateYamlIfNeeded(): void {
-    const yamlPaths = [
-      resolve(getPpmDir(), "config.yaml"),
-      resolve(getPpmDir(), "config.dev.yaml"),
-    ];
-    for (const yamlPath of yamlPaths) {
-      if (!existsSync(yamlPath)) continue;
-      const existing = getAllConfig();
-      if (Object.keys(existing).length > 0) return;
-      this.importFromYaml(yamlPath);
-      try {
-        renameSync(yamlPath, yamlPath + ".bak");
-        console.log(`[config] Migrated ${yamlPath} → SQLite (backup: .bak)`);
-      } catch {}
-    }
-    this.migrateSessionMapIfNeeded();
-    this.migratePushSubsIfNeeded();
-  }
-
-  private importFromYaml(path: string): void {
-    try {
-      const yaml = require("js-yaml");
-      const raw = readFileSync(path, "utf-8");
-      const parsed = yaml.load(raw) as Partial<PpmConfig> | null;
-      if (!parsed) return;
-      const merged = { ...structuredClone(DEFAULT_CONFIG), ...parsed };
-      for (const key of CONFIG_TABLE_KEYS) {
-        const value = (merged as any)[key];
-        if (value !== undefined) {
-          setConfigValue(String(key), JSON.stringify(value));
-        }
-      }
-      if (merged.projects?.length) {
-        this.syncProjectsToDb(merged.projects);
-      }
-    } catch (err) {
-      console.error(`[config] Error importing YAML ${path}:`, (err as Error).message);
-    }
-  }
-
-  private migrateSessionMapIfNeeded(): void {
-    const mapPath = resolve(getPpmDir(), "session-map.json");
-    if (!existsSync(mapPath)) return;
-    try {
-      const { setSessionMetadata } = require("./db.service.ts");
-      const map = JSON.parse(readFileSync(mapPath, "utf-8")) as Record<string, string>;
-      for (const [_ppmId, sdkId] of Object.entries(map)) {
-        // Use SDK ID as canonical session ID (ppmId is legacy)
-        setSessionMetadata(sdkId);
-      }
-      renameSync(mapPath, mapPath + ".bak");
-      console.log("[config] Migrated session-map.json → SQLite");
-    } catch {}
-  }
-
-  private migratePushSubsIfNeeded(): void {
-    const subsPath = resolve(getPpmDir(), "push-subscriptions.json");
-    if (!existsSync(subsPath)) return;
-    try {
-      const { upsertPushSubscription } = require("./db.service.ts");
-      const subs = JSON.parse(readFileSync(subsPath, "utf-8")) as Array<{
-        endpoint: string;
-        keys: { p256dh: string; auth: string };
-        expirationTime?: number | null;
-      }>;
-      for (const sub of subs) {
-        upsertPushSubscription(
-          sub.endpoint,
-          sub.keys.p256dh,
-          sub.keys.auth,
-          sub.expirationTime != null ? String(sub.expirationTime) : null,
-        );
-      }
-      renameSync(subsPath, subsPath + ".bak");
-      console.log("[config] Migrated push-subscriptions.json → SQLite");
-    } catch {}
   }
 }
 

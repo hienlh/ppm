@@ -13,7 +13,7 @@ ppm start
   Start the PPM server (background by default)
   -p, --port <port> — Port to listen on
   -s, --share — (deprecated) Tunnel is now always enabled
-  -c, --config <path> — Path to config file (YAML import into DB)
+  --profile <name> — DB profile name (e.g. 'dev' → ppm.dev.db)
 
 ppm stop
   Stop the PPM server (supervisor stays alive)
@@ -25,7 +25,6 @@ ppm down
 
 ppm restart
   Restart the server (keeps tunnel alive)
-  -c, --config <path> — Path to config file
   --force — Force resume from paused state
 
 ppm status
@@ -35,7 +34,6 @@ ppm status
 
 ppm open
   Open PPM in browser
-  -c, --config <path> — Path to config file
 
 ppm logs
   View PPM daemon logs
@@ -203,7 +201,6 @@ ppm autostart enable
   Register PPM to start automatically on boot
   -p, --port <port> — Override port
   -s, --share — (deprecated) Tunnel is now always enabled
-  -c, --config <path> — Config file path
   --profile <name> — DB profile name
 
 ppm autostart disable

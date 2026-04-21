@@ -11,7 +11,7 @@ function createApp() {
 
 beforeEach(() => {
   setDb(openTestDb());
-  configService.load("nonexistent.yaml");
+  configService.load();
   tunnelService.stopTunnel();
 });
 

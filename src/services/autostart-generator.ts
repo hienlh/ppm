@@ -5,7 +5,6 @@ export interface AutoStartConfig {
   port: number;
   host: string;
   share: boolean;
-  configPath?: string;
   profile?: string;
 }
 
@@ -44,20 +43,16 @@ export function buildExecCommand(config: AutoStartConfig): string[] {
   if (isCompiledBinary()) {
     // Compiled binary: just run self with __supervise__ args
     const args = [process.execPath, "__supervise__", String(config.port), config.host];
-    if (config.configPath) args.push(config.configPath);
     if (config.profile) args.push(config.profile);
     if (config.share) args.push("--share");
     return args;
   }
 
-  // Bun runtime: bun run <script> __supervise__ <port> <host> [config] [profile]
+  // Bun runtime: bun run <script> __supervise__ <port> <host> [profile]
   const bunPath = resolveBunPath();
   const scriptPath = resolve(import.meta.dir, "supervisor.ts");
   const args = [bunPath, "run", scriptPath, "__supervise__", String(config.port), config.host];
-  if (config.configPath) args.push(config.configPath);
-  else args.push(""); // placeholder
   if (config.profile) args.push(config.profile);
-  else args.push(""); // placeholder
   if (config.share) args.push("--share");
   return args;
 }

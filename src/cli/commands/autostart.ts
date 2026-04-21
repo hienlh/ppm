@@ -11,12 +11,11 @@ export function registerAutoStartCommands(program: Command): void {
     .description("Register PPM to start automatically on boot")
     .option("-p, --port <port>", "Override port")
     .option("-s, --share", "(deprecated) Tunnel is now always enabled")
-    .option("-c, --config <path>", "Config file path")
     .option("--profile <name>", "DB profile name")
     .action(async (options) => {
       const { enableAutoStart } = await import("../../services/autostart-register.ts");
 
-      configService.load(options.config);
+      configService.load();
       const port = parseInt(options.port ?? String(configService.get("port")), 10);
       const host = configService.get("host") ?? "0.0.0.0";
 
@@ -24,7 +23,6 @@ export function registerAutoStartCommands(program: Command): void {
         port,
         host,
         share: !!options.share,
-        configPath: options.config,
         profile: options.profile,
       };
 

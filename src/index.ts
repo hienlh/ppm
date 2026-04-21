@@ -18,15 +18,12 @@ program
   .description("Start the PPM server (background by default)")
   .option("-p, --port <port>", "Port to listen on")
   .option("-s, --share", "(deprecated) Tunnel is now always enabled")
-  .option("-c, --config <path>", "Path to config file (YAML import into DB)")
   .option("--profile <name>", "DB profile name (e.g. 'dev' → ppm.dev.db)")
   .action(async (options) => {
     // Set DB profile before any DB access
     const { setDbProfile } = await import("./services/db.service.ts");
     if (options.profile) {
       setDbProfile(options.profile);
-    } else if (options.config && /dev/i.test(options.config)) {
-      setDbProfile("dev");
     }
     // Auto-init on first run
     const { hasConfig, initProject } = await import("./cli/commands/init.ts");
@@ -58,7 +55,6 @@ program
 program
   .command("restart")
   .description("Restart the server (keeps tunnel alive)")
-  .option("-c, --config <path>", "Path to config file")
   .option("--force", "Force resume from paused state")
   .action(async (options) => {
     const { restartServer } = await import("./cli/commands/restart.ts");
@@ -78,7 +74,6 @@ program
 program
   .command("open")
   .description("Open PPM in browser")
-  .option("-c, --config <path>", "Path to config file")
   .action(async () => {
     const { openBrowser } = await import("./cli/commands/open.ts");
     await openBrowser();
