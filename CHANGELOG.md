@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.8] - 2026-04-21
+
+### Changed
+- **Bash tool header**: Show `description` in the tool card summary instead of the raw command — command still visible in the expanded details
+
+### Fixed
+- **TypeScript errors**: Add `session_migrated` variant to `ChatEvent`, replace out-of-scope `writeLog` in server bootstrap with `console.warn`, guard `split("-")[0]` in semver compare, relax `token` to optional in Jira store `saveConfig`, and fix `@/types/project` imports in file-store helpers (alias resolves to `src/web/*`)
+
 ## [0.12.7] - 2026-04-21
 
 ### Fixed
