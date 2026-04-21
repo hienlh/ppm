@@ -57,6 +57,22 @@ gitRoutes.get("/file-diff", async (c) => {
   }
 });
 
+/** GET /git/file-full-diff?file=&ref=
+ *  Returns full file contents (VSCode-style) for both sides:
+ *  { original: <ref version>, modified: <working tree> } */
+gitRoutes.get("/file-full-diff", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const file = c.req.query("file");
+    if (!file) return c.json(err("Missing query: file"), 400);
+    const ref = c.req.query("ref") || "HEAD";
+    const result = await gitService.fileFullDiff(projectPath, file, ref);
+    return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** GET /git/graph?max=200&skip=0 */
 gitRoutes.get("/graph", async (c) => {
   try {

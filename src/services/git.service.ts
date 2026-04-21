@@ -122,6 +122,40 @@ class GitService {
     return files;
   }
 
+  /**
+   * Returns full file contents for both sides of a diff (VSCode-style).
+   * - original: file at HEAD (empty if new/untracked/ref missing)
+   * - modified: working tree content (empty if deleted on disk)
+   * Monaco DiffEditor will compute/render the diff from these full contents.
+   */
+  async fileFullDiff(
+    projectPath: string,
+    filePath: string,
+    ref: string = "HEAD",
+  ): Promise<{ original: string; modified: string }> {
+    const git = this.git(projectPath);
+    const absPath = path.resolve(projectPath, filePath);
+
+    let original = "";
+    try {
+      original = await git.show([`${ref}:${filePath}`]);
+    } catch {
+      // File does not exist at ref (new/untracked/added) → empty original
+      original = "";
+    }
+
+    let modified = "";
+    try {
+      const f = Bun.file(absPath);
+      if (await f.exists()) modified = await f.text();
+    } catch {
+      // File missing on disk (deleted) → empty modified
+      modified = "";
+    }
+
+    return { original, modified };
+  }
+
   async fileDiff(
     projectPath: string,
     filePath: string,

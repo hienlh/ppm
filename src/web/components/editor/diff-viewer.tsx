@@ -38,6 +38,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
 
   const [diffText, setDiffText] = useState<string | null>(null);
   const [fileContents, setFileContents] = useState<{ original: string; modified: string } | null>(null);
+  const [fullFileDiff, setFullFileDiff] = useState<{ original: string; modified: string } | null>(null);
   const [loading, setLoading] = useState(!isInline);
   const [error, setError] = useState<string | null>(null);
   const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
@@ -63,6 +64,9 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     if (!projectName) return;
     setLoading(true);
     setError(null);
+    setFullFileDiff(null);
+    setFileContents(null);
+    setDiffText(null);
 
     if (file1 && file2) {
       const params = new URLSearchParams({ file1, file2 });
@@ -75,12 +79,23 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       return;
     }
 
-    let url: string;
+    // Single-file diff → fetch FULL file contents on both sides (VSCode-style).
+    // Monaco DiffEditor computes the diff itself, giving full-file view instead
+    // of just the changed hunks + 3 lines of context that `git diff` returns.
     if (filePath) {
       const params = new URLSearchParams({ file: filePath });
       if (ref1) params.set("ref", ref1);
-      url = `${projectUrl(projectName)}/git/file-diff?${params}`;
-    } else if (ref1 || ref2) {
+      api
+        .get<{ original: string; modified: string }>(
+          `${projectUrl(projectName)}/git/file-full-diff?${params}`,
+        )
+        .then((data) => { setFullFileDiff(data); setLoading(false); })
+        .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load diff"); setLoading(false); });
+      return;
+    }
+
+    let url: string;
+    if (ref1 || ref2) {
       const params = new URLSearchParams();
       if (ref1) params.set("ref1", ref1);
       if (ref2) params.set("ref2", ref2);
@@ -98,9 +113,10 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const { original, modified } = useMemo(() => {
     if (isInline) return { original: inlineOriginal ?? "", modified: inlineModified ?? "" };
     if (isFileCompare && fileContents) return fileContents;
+    if (fullFileDiff) return fullFileDiff;
     if (!diffText) return { original: "", modified: "" };
     return parseDiff(diffText);
-  }, [diffText, isInline, inlineOriginal, inlineModified, isFileCompare, fileContents]);
+  }, [diffText, isInline, inlineOriginal, inlineModified, isFileCompare, fileContents, fullFileDiff]);
 
   const language = useMemo(() => {
     const langFile = filePath ?? file2 ?? file1;
@@ -135,7 +151,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   }
 
   // Catch diffs with metadata-only changes (mode, rename) where parseDiff returns empty
-  if (!isInline && !isFileCompare && !original && !modified) {
+  if (!isInline && !isFileCompare && !fullFileDiff && !original && !modified) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground">
         <FileCode className="size-8" />
