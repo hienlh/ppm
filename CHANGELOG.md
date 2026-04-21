@@ -1,9 +1,13 @@
 # Changelog
 
-## Unreleased
+## [0.12.12] - 2026-04-21
+
+### Fixed
+- **Login broken when using `--share` without profile**: The `--share` flag was positionally parsed as a DB profile name in both supervisor and server child, causing them to read `ppm.--share.db` (with a random auto-generated token) instead of `ppm.db`. Users saw perpetual "Unauthorized" on login despite entering the correct token
 
 ### Added
 - **Expand compacted conversation**: When Claude compacts context and references a JSONL transcript (`read the full transcript at: ...`), the chat now shows a "Load previous conversation" button. Clicking fetches the pre-compact messages via `GET /chat/pre-compact-messages?jsonlPath=...` and renders them inline in a collapsible section using the existing message pipeline. Extracted shared JSONL parsing logic (`parseSessionMessage`, `nestChildEvents`, `extractText`, `stripTeammateXml`) into `src/services/jsonl-transcript-parser.ts` for reuse. Path is validated strictly under `~/.claude/` (symlink-resolved realpath) with a 50MB size guard
+- **Full-content diff endpoint**: `GET /git/file-full-diff?file=&ref=` returns original (ref) and modified (working tree) file contents for Monaco DiffEditor
 
 ## [0.12.11] - 2026-04-21
 
