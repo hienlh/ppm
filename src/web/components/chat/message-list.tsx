@@ -5,10 +5,7 @@ import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
-import { extractJsonlPath } from "./pre-compact-button";
-const PreCompactSection = lazy(() =>
-  import("./pre-compact-section").then((m) => ({ default: m.PreCompactSection }))
-);
+import { extractJsonlPath, PreCompactButton, type PreCompactStatus } from "./pre-compact-button";
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
 );
@@ -59,6 +56,10 @@ interface MessageListProps {
   onSelectSession?: (session: import("../../../types/chat").SessionInfo) => void;
   /** Partial bash output ref from useChat for real-time streaming */
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
+  /** Fetches pre-compact transcript and prepends messages. Returns loaded count. */
+  onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
+  /** Whether a given compact message has already been expanded. */
+  isCompactExpanded?: (compactMessageId: string) => boolean;
 }
 
 export function MessageList({
@@ -75,6 +76,8 @@ export function MessageList({
   projectName,
   onFork,
   bashPartialOutput,
+  onExpandCompact,
+  isCompactExpanded,
 }: MessageListProps) {
   // Scroll handled by StickToBottom wrapper — no manual scroll logic needed
 
@@ -106,6 +109,15 @@ export function MessageList({
     onFork?.(msgContent, msgId);
   }, [onFork]);
 
+  // Wrap expandCompact: bump visibleCount by loaded count so expansion is immediately visible
+  // in the paginated view (pre-compact messages land at top of flattened array, above pagination window).
+  const handleExpandCompact = useCallback(async (compactId: string, jsonlPath: string): Promise<number> => {
+    if (!onExpandCompact) throw new Error("Expansion not wired");
+    const count = await onExpandCompact(compactId, jsonlPath);
+    setVisibleCount((c) => c + count);
+    return count;
+  }, [onExpandCompact]);
+
   if (messagesLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
@@ -126,8 +138,8 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
-      <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden [contain:strict]" resize="smooth" initial="instant">
-        <StickToBottom.Content className="p-4 space-y-4 select-none">
+      <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden [contain:strict] [overflow-anchor:auto]" resize="smooth" initial="instant">
+        <StickToBottom.Content className="p-4 space-y-4 select-none [&>*]:[overflow-anchor:auto]">
           {hasMore && (
             <button onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
               className="w-full py-2 text-xs text-text-secondary hover:text-text-primary bg-surface-elevated/50 hover:bg-surface-elevated rounded-md border border-border/50 transition-colors">
@@ -146,6 +158,8 @@ export function MessageList({
                 onFork={msg.role === "user" && onFork ? handleFork : undefined}
                 prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
                 bashPartialOutput={bashPartialOutput}
+                onExpandCompact={handleExpandCompact}
+                isCompactExpanded={isCompactExpanded}
               />
             );
           })}
@@ -180,16 +194,25 @@ function ScrollToBottomButton() {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId, bashPartialOutput }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId, bashPartialOutput, onExpandCompact, isCompactExpanded }: {
   message: ChatMessage; isStreaming: boolean; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
   prevMsgId?: string;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
+  onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
+  isCompactExpanded?: (compactMessageId: string) => boolean;
 }) {
   if (message.role === "user") {
     const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
     return (
-      <UserBubble content={message.content} projectName={projectName} onFork={handleFork} />
+      <UserBubble
+        content={message.content}
+        messageId={message.id}
+        projectName={projectName}
+        onFork={handleFork}
+        onExpandCompact={onExpandCompact}
+        isCompactExpanded={isCompactExpanded}
+      />
     );
   }
 
@@ -206,7 +229,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
   return (
     <div className="flex flex-col gap-2">
       {message.events && message.events.length > 0
-        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} />
+        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} messageId={message.id} onExpandCompact={onExpandCompact} isCompactExpanded={isCompactExpanded} />
         : message.content && (
             <div className="text-sm text-text-primary select-text">
               <MarkdownContent content={message.content} projectName={projectName} />
@@ -313,13 +336,37 @@ function isPdfPath(path: string): boolean {
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details"]);
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function UserBubble({ content, projectName, onFork }: { content: string; projectName?: string; onFork?: () => void }) {
+function UserBubble({ content, messageId, projectName, onFork, onExpandCompact, isCompactExpanded }: {
+  content: string;
+  messageId?: string;
+  projectName?: string;
+  onFork?: () => void;
+  onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
+  isCompactExpanded?: (compactMessageId: string) => boolean;
+}) {
   const { files, text, tags, command, jsonlPath } = useMemo(() => {
     const parsed = parseUserAttachments(content);
     const { cleanText: noSysTags, tags } = extractSystemTags(parsed.text);
     const { command, cleanText } = parseCommandTags(noSysTags);
     return { files: parsed.files, text: cleanText, tags, command, jsonlPath: extractJsonlPath(cleanText) };
   }, [content]);
+
+  // Pre-compact expansion state — local per button instance
+  const [preCompactStatus, setPreCompactStatus] = useState<PreCompactStatus>(() =>
+    messageId && isCompactExpanded?.(messageId) ? "loaded" : "idle",
+  );
+  const [preCompactCount, setPreCompactCount] = useState<number | undefined>();
+  const handleExpand = useCallback(async () => {
+    if (!jsonlPath || !messageId || !onExpandCompact) return;
+    setPreCompactStatus("loading");
+    try {
+      const count = await onExpandCompact(messageId, jsonlPath);
+      setPreCompactCount(count);
+      setPreCompactStatus("loaded");
+    } catch {
+      setPreCompactStatus("error");
+    }
+  }, [jsonlPath, messageId, onExpandCompact]);
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
 
@@ -403,22 +450,14 @@ function UserBubble({ content, projectName, onFork }: { content: string; project
           {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
         </button>
       )}
-      {/* Expand compacted conversation: detect JSONL path in compact summary user message */}
-      {jsonlPath && (
-        <Suspense fallback={<div className="mt-2 animate-pulse h-10 bg-surface/50 rounded" />}>
-          <PreCompactSection
-            jsonlPath={jsonlPath}
-            projectName={projectName}
-            renderMessage={(msg, idx) => (
-              <MessageBubble
-                key={msg.id ?? `pc-${idx}`}
-                message={msg}
-                isStreaming={false}
-                projectName={projectName}
-              />
-            )}
-          />
-        </Suspense>
+      {/* Expand compacted conversation: detect JSONL path in compact summary user message.
+          Prepends pre-compact messages into main flattened list (see useChat.expandCompact). */}
+      {jsonlPath && messageId && onExpandCompact && (
+        <PreCompactButton
+          status={preCompactStatus}
+          onLoad={preCompactStatus === "idle" || preCompactStatus === "error" ? handleExpand : undefined}
+          count={preCompactCount}
+        />
       )}
       {/* Fork/Rewind button — only for real user messages */}
       {!isSystemContext && onFork && (
@@ -694,7 +733,31 @@ type EventGroup =
   | { kind: "thinking"; content: string }
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean };
 
-function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput }: { events: ChatEvent[]; isStreaming: boolean; projectName?: string; bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>> }) {
+function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput, messageId, onExpandCompact, isCompactExpanded }: {
+  events: ChatEvent[];
+  isStreaming: boolean;
+  projectName?: string;
+  bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
+  messageId?: string;
+  onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
+  isCompactExpanded?: (compactMessageId: string) => boolean;
+}) {
+  // Local state for the /compact slash-command path (assistant-authored summary)
+  const [preCompactStatus, setPreCompactStatus] = useState<PreCompactStatus>(() =>
+    messageId && isCompactExpanded?.(messageId) ? "loaded" : "idle",
+  );
+  const [preCompactCount, setPreCompactCount] = useState<number | undefined>();
+  const handleExpand = useCallback(async (jsonlPath: string) => {
+    if (!messageId || !onExpandCompact) return;
+    setPreCompactStatus("loading");
+    try {
+      const count = await onExpandCompact(messageId, jsonlPath);
+      setPreCompactCount(count);
+      setPreCompactStatus("loaded");
+    } catch {
+      setPreCompactStatus("error");
+    }
+  }, [messageId, onExpandCompact]);
   // Group: consecutive text → merged text block; tool_use + tool_result paired by toolUseId
   const groups: EventGroup[] = [];
   let textBuffer = "";
@@ -813,22 +876,12 @@ function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput
           return (
             <div key={`text-${i}`} className="text-sm text-text-primary select-text">
               <StreamingText content={group.content} animate={isLast} projectName={projectName} />
-              {jsonlPath && (
-                <Suspense fallback={<div className="mt-2 animate-pulse h-10 bg-surface/50 rounded" />}>
-                  <PreCompactSection
-                    jsonlPath={jsonlPath}
-                    projectName={projectName}
-                    renderMessage={(msg, idx) => (
-                      <MessageBubble
-                        key={msg.id ?? `pc-${idx}`}
-                        message={msg}
-                        isStreaming={false}
-                        projectName={projectName}
-                        bashPartialOutput={bashPartialOutput}
-                      />
-                    )}
-                  />
-                </Suspense>
+              {jsonlPath && messageId && onExpandCompact && (
+                <PreCompactButton
+                  status={preCompactStatus}
+                  onLoad={preCompactStatus === "idle" || preCompactStatus === "error" ? () => handleExpand(jsonlPath) : undefined}
+                  count={preCompactCount}
+                />
               )}
             </div>
           );

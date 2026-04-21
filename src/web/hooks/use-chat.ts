@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useWebSocket } from "./use-websocket";
 import { api, getAuthToken, projectUrl } from "@/lib/api-client";
+import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expansions";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -41,6 +42,12 @@ export interface BashPartialEntry {
 
 interface UseChatReturn {
   messages: ChatMessage[];
+  /** Messages flattened with pre-compact expansions prepended before their compact cards. */
+  renderedMessages: ChatMessage[];
+  /** Fetch pre-compact transcript and store expansion. Returns loaded message count. */
+  expandCompact: (compactMessageId: string, jsonlPath: string) => Promise<number>;
+  /** Whether a given compactMessageId has been expanded. */
+  isCompactExpanded: (compactMessageId: string) => boolean;
   messagesLoading: boolean;
   isStreaming: boolean;
   phase: SessionPhase;
@@ -79,6 +86,8 @@ function isSessionTabActive(sid: string): boolean {
 
 export function useChat(sessionId: string | null, providerId = "claude", projectName = ""): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  /** Map of compactMessageId → pre-compact messages (already ID-prefixed). Ephemeral. */
+  const [expansions, setExpansions] = useState<Map<string, ChatMessage[]>>(new Map());
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -604,6 +613,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setPendingApproval(null);
     if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
     setCompactStatus(null);
+    // Clear ephemeral pre-compact expansions on session change
+    setExpansions(new Map());
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     bashOutputRef.current.clear();
@@ -796,8 +807,33 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   // Keep refetchRef in sync
   refetchRef.current = refetchMessages;
 
+  /** Fetch pre-compact transcript. Idempotent: re-expanding same id replaces entry. */
+  const expandCompact = useCallback(async (compactMessageId: string, jsonlPath: string): Promise<number> => {
+    if (!projectName) throw new Error("No project context available");
+    const url = `${projectUrl(projectName)}/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(jsonlPath)}`;
+    const loaded = await api.get<ChatMessage[]>(url);
+    const prefixed = prefixPreCompactIds(loaded, jsonlPath);
+    setExpansions((prev) => {
+      const next = new Map(prev);
+      next.set(compactMessageId, prefixed);
+      return next;
+    });
+    return prefixed.length;
+  }, [projectName]);
+
+  const isCompactExpanded = useCallback((id: string) => expansions.has(id), [expansions]);
+
+  /** Flattened view: expansions prepended before their compact cards. */
+  const renderedMessages = useMemo(
+    () => flattenWithExpansions(messages, expansions),
+    [messages, expansions],
+  );
+
   return {
     messages,
+    renderedMessages,
+    expandCompact,
+    isCompactExpanded,
     messagesLoading,
     isStreaming,
     phase,

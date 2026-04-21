@@ -88,6 +88,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   const {
     messages,
+    renderedMessages,
+    expandCompact,
+    isCompactExpanded,
     messagesLoading,
     isStreaming,
     phase,
@@ -384,7 +387,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
       {/* Messages */}
       <MessageList
-        messages={messages}
+        messages={renderedMessages}
+        onExpandCompact={expandCompact}
+        isCompactExpanded={isCompactExpanded}
         messagesLoading={messagesLoading}
         pendingApproval={pendingApproval}
         onApprovalResponse={respondToApproval}
