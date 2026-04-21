@@ -23,8 +23,8 @@ export function getInstallMethod(): InstallMethod {
 /** Compare two semver strings (ignores pre-release tags). Returns -1 (a < b), 0 (equal), 1 (a > b) */
 export function compareSemver(a: string, b: string): -1 | 0 | 1 {
   // Strip pre-release suffix (e.g. "1.0.0-beta.1" → "1.0.0")
-  const pa = a.split("-")[0].split(".").map(Number);
-  const pb = b.split("-")[0].split(".").map(Number);
+  const pa = (a.split("-")[0] ?? "0").split(".").map(Number);
+  const pb = (b.split("-")[0] ?? "0").split(".").map(Number);
   for (let i = 0; i < 3; i++) {
     const va = pa[i] ?? 0;
     const vb = pb[i] ?? 0;

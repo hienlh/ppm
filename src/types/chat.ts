@@ -132,7 +132,8 @@ export type ChatEvent =
   | { type: "system"; subtype: string }
   | { type: "team_detected"; teamName: string }
   | { type: "team_updated"; teamName: string; team: unknown }
-  | { type: "team_inbox"; teamName: string; agent: string; messages: unknown[] };
+  | { type: "team_inbox"; teamName: string; agent: string; messages: unknown[] }
+  | { type: "session_migrated"; oldSessionId: string; newSessionId: string };
 
 export type ToolApprovalHandler = (
   tool: string,

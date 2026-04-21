@@ -2,7 +2,7 @@
  * Pure helper functions for immutable lazy-tree merging.
  * Kept separate to stay under the 200-line file size guideline.
  */
-import type { FileDirEntry } from "@/types/project";
+import type { FileDirEntry } from "../../types/project";
 import type { FileNode } from "./file-store";
 
 /** Convert /files/list entries into sparse FileNode children (no grandchildren). */

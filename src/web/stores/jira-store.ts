@@ -20,7 +20,7 @@ interface JiraStore {
   configs: JiraConfig[];
   selectedProjectId: number | null;
   loadConfigs: () => Promise<void>;
-  saveConfig: (projectId: number, data: { baseUrl: string; email: string; token: string }) => Promise<void>;
+  saveConfig: (projectId: number, data: { baseUrl: string; email: string; token?: string }) => Promise<void>;
   deleteConfig: (projectId: number) => Promise<void>;
   testConnection: (projectId: number) => Promise<boolean>;
   setSelectedProjectId: (id: number | null) => void;

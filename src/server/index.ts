@@ -328,7 +328,7 @@ export async function startServer(options: {
     if (portInUse) {
       // Retry — port may still be releasing after supervisor self-replace
       for (let attempt = 1; attempt <= 4; attempt++) {
-        writeLog("WARN", [`Port ${port} in use, retrying in 1s (${attempt}/4)`]);
+        console.warn(`Port ${port} in use, retrying in 1s (${attempt}/4)`);
         await Bun.sleep(1000);
         portInUse = await checkPort();
         if (!portInUse) break;

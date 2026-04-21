@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { api, projectUrl } from "@/lib/api-client";
-import type { FileEntry, FileDirEntry } from "@/types/project";
+import type { FileEntry, FileDirEntry } from "../../types/project";
 import { entriesToNodes, mergeChildren } from "./file-tree-merge-helpers";
 
 export type { FileEntry };

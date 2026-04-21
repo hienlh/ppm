@@ -142,8 +142,10 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
     case "MultiEdit":
     case "NotebookEdit":
       return <>{name} <span className="text-text-subtle">{basename(s(input.file_path))}</span></>;
-    case "Bash":
-      return <>{name} <span className="font-mono text-text-subtle">{truncate(s(input.command), 60)}</span></>;
+    case "Bash": {
+      const preview = input.description ? s(input.description) : s(input.command);
+      return <>{name} <span className={`text-text-subtle${input.description ? "" : " font-mono"}`}>{truncate(preview, 60)}</span></>;
+    }
     case "Glob":
       return <>{name} <span className="font-mono text-text-subtle">{s(input.pattern)}</span></>;
     case "Grep":
