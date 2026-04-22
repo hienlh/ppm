@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, memo, useEffect } from "react";
 import Editor from "@monaco-editor/react";
-import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, ExternalLink, WrapText, Sparkles, Filter, Pin, PinOff, Columns3 } from "lucide-react";
+import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, ExternalLink, WrapText, Sparkles, GripHorizontal, Filter, Pin, PinOff, Columns3 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
@@ -652,8 +652,24 @@ function DataPreviewPanel({ data, onClose, onOpenInTab }: {
     }
   }, [beautified, data.content, data.language]);
 
+  const [panelHeight, setPanelHeight] = useState(200);
+  const handleDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = panelHeight;
+    const onMove = (ev: MouseEvent) => setPanelHeight(Math.max(80, startH + (startY - ev.clientY)));
+    const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [panelHeight]);
+
   return (
-    <div className="shrink-0 border-t border-border flex flex-col" style={{ height: "40%" }}>
+    <div className="shrink-0 border-t border-border flex flex-col" style={{ height: panelHeight }}>
+      {/* Resize handle */}
+      <div onMouseDown={handleDrag}
+        className="shrink-0 h-1.5 cursor-row-resize bg-border/50 hover:bg-primary/30 flex items-center justify-center transition-colors">
+        <GripHorizontal className="size-3 text-muted-foreground/50" />
+      </div>
       <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b border-border shrink-0">
         <Eye className="size-3 text-muted-foreground" />
         <span className="text-xs font-medium text-foreground truncate flex-1">{data.title}</span>

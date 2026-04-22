@@ -8,13 +8,15 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { Loader2, FileWarning, Play, Database } from "lucide-react";
+import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
 import { useConnections, type Connection } from "../database/use-connections";
+import { DataGrid } from "../database/data-grid";
+import type { DbQueryResult, DbColumnInfo } from "../database/use-database";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -170,18 +172,37 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     return () => { completionDisposable.current?.dispose(); };
   }, [sqlSchemaInfo]);
 
-  // Run in DB Viewer
+  // Run SQL inline — execute query and show results in bottom panel
   const openTab = useTabStore((s) => s.openTab);
-  const runSqlInViewer = useCallback((sqlText: string) => {
+  const [sqlResult, setSqlResult] = useState<DbQueryResult | null>(null);
+  const [sqlError, setSqlError] = useState<string | null>(null);
+  const [sqlLoading, setSqlLoading] = useState(false);
+  const [sqlResultSql, setSqlResultSql] = useState<string>("");
+  const runSqlInViewer = useCallback(async (sqlText: string) => {
     if (!selectedSqlConn) return;
+    setSqlLoading(true);
+    setSqlError(null);
+    setSqlResultSql(sqlText);
+    try {
+      const result = await api.post<DbQueryResult>(`/api/db/connections/${selectedSqlConn.id}/query`, { sql: sqlText });
+      setSqlResult(result);
+    } catch (e) {
+      setSqlError((e as Error).message);
+      setSqlResult(null);
+    } finally {
+      setSqlLoading(false);
+    }
+  }, [selectedSqlConn]);
+  const openSqlResultInTab = useCallback(() => {
+    if (!selectedSqlConn || !sqlResultSql) return;
     openTab({
       type: "database",
       title: `${selectedSqlConn.name} · Query`,
       projectId: null,
       closable: true,
-      metadata: { connectionId: selectedSqlConn.id, connectionName: selectedSqlConn.name, dbType: selectedSqlConn.type, initialSql: sqlText },
+      metadata: { connectionId: selectedSqlConn.id, connectionName: selectedSqlConn.name, dbType: selectedSqlConn.type, initialSql: sqlResultSql },
     });
-  }, [selectedSqlConn, openTab]);
+  }, [selectedSqlConn, openTab, sqlResultSql]);
 
   const handleRunInDbViewer = useCallback(() => {
     if (!editorRef.current || !selectedSqlConn) return;
@@ -520,7 +541,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         onClick={handleRunInDbViewer}
         disabled={!selectedSqlConn}
         className="p-0.5 rounded text-muted-foreground hover:text-primary disabled:opacity-30 transition-colors"
-        title="Run all in DB Viewer"
+        title="Run SQL"
       >
         <Play className="size-3.5" />
       </button>
@@ -583,7 +604,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       ) : isMarkdown && mdMode === "preview" ? (
         <MarkdownPreview content={content ?? ""} />
       ) : (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden min-h-0">
           <Editor
             height="100%"
             language={inlineLanguage ?? getMonacoLanguage(filePath ?? "")}
@@ -608,6 +629,16 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         </div>
       )}
 
+      {/* Inline SQL result panel */}
+      {isSql && (sqlResult || sqlError || sqlLoading) && (
+        <SqlResultPanel
+          result={sqlResult} error={sqlError} loading={sqlLoading}
+          connName={selectedSqlConn?.name}
+          onClose={() => { setSqlResult(null); setSqlError(null); setSqlLoading(false); }}
+          onOpenInTab={openSqlResultInTab}
+        />
+      )}
+
       {/* Mobile toolbar — bottom, like terminal */}
       {isMobile && <EditorMobileToolbar editorRef={editorRef} readOnly={inlineContent != null} />}
 
@@ -624,6 +655,92 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     </div>
   );
 });
+
+const NOOP = () => {};
+
+/** Inline SQL result panel — shows query results below the editor */
+function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab }: {
+  result: DbQueryResult | null;
+  error: string | null;
+  loading: boolean;
+  connName?: string;
+  onClose: () => void;
+  onOpenInTab: () => void;
+}) {
+  const tableData = useMemo(() => (
+    result?.changeType === "select" && result.rows.length > 0
+      ? { columns: result.columns, rows: result.rows, total: result.rows.length, limit: result.rows.length }
+      : null
+  ), [result]);
+
+  const querySchema = useMemo<DbColumnInfo[]>(() => (
+    (result?.columns ?? []).map((c) => ({ name: c, type: "text", nullable: true, pk: false, defaultValue: null }))
+  ), [result?.columns]);
+
+  const [panelHeight, setPanelHeight] = useState(250);
+  const handleDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = panelHeight;
+    const onMove = (ev: MouseEvent) => setPanelHeight(Math.max(80, startH + (startY - ev.clientY)));
+    const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [panelHeight]);
+
+  return (
+    <div className="shrink-0 border-t border-border flex flex-col" style={{ height: panelHeight }}>
+      {/* Resize handle */}
+      <div onMouseDown={handleDrag}
+        className="shrink-0 h-1.5 cursor-row-resize bg-border/50 hover:bg-primary/30 flex items-center justify-center transition-colors">
+        <GripHorizontal className="size-3 text-muted-foreground/50" />
+      </div>
+      {/* Title bar */}
+      <div className="flex items-center gap-2 px-2 py-1 bg-muted/50 border-b border-border shrink-0">
+        <Database className="size-3 text-muted-foreground" />
+        <span className="text-xs font-medium text-foreground truncate flex-1">
+          {connName ? `${connName} · Results` : "Query Results"}
+          {result?.executionTimeMs != null && <span className="text-muted-foreground ml-1.5 font-normal">{result.executionTimeMs}ms</span>}
+        </span>
+        <button type="button" onClick={onOpenInTab} title="Open in DB Viewer tab"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+          <ExternalLink className="size-3" />
+          <span className="hidden sm:inline">Open in Tab</span>
+        </button>
+        <button type="button" onClick={onClose} title="Close results"
+          className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors">
+          <X className="size-3" />
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-hidden min-h-0">
+        {loading && (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {error && <div className="px-3 py-2 text-xs text-destructive bg-destructive/5">{error}</div>}
+        {result?.changeType === "modify" && (
+          <div className="px-3 py-2 text-xs text-green-500">
+            {result.rowsAffected} row(s) affected
+          </div>
+        )}
+        {tableData && (
+          <DataGrid
+            tableData={tableData} schema={querySchema} loading={false}
+            page={1} onPageChange={NOOP} onCellUpdate={NOOP}
+            orderBy={null} orderDir="ASC" onToggleSort={NOOP}
+            connectionName={connName}
+          />
+        )}
+        {result?.changeType === "select" && result.rows.length === 0 && (
+          <div className="px-3 py-2 text-xs text-muted-foreground">No results</div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function LoadingSpinner() {
   return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
