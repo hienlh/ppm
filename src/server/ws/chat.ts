@@ -50,6 +50,8 @@ interface SessionEntry {
   teamNames: Set<string>;
   /** toolUseId of a pending TeamCreate call */
   pendingTeamCreate?: string;
+  /** Compact indicator state — sticky until turn ends or boundary received, synced on reconnect */
+  compactStatus?: "compacting" | null;
 }
 
 /** Tracks active sessions — persists even when FE disconnects */
@@ -262,8 +264,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       if (evType === "system") {
         const sub = (ev as any).subtype;
         if (sub === "compacting") {
+          entry.compactStatus = "compacting";
+          console.log(`[chat] session=${sessionId} compact_status=compacting (persisted on entry)`);
           broadcast(sessionId, { type: "compact_status", status: "compacting" });
         } else if (sub === "compact_done") {
+          entry.compactStatus = null;
+          console.log(`[chat] session=${sessionId} compact_status=done (via compact_boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
         }
         if (!firstEventReceived) {
@@ -415,6 +421,14 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       if (evType === "done") {
         entry.turnEvents = [];
         entry.pendingApprovalEvent = undefined;
+        // Clear stale compact status if turn ended without compact_boundary.
+        // SDK may emit `status: compacting` without a matching boundary (deferred,
+        // resolved, or errored); without this clear, UI shows stuck "Compacting…".
+        if (entry.compactStatus === "compacting") {
+          entry.compactStatus = null;
+          console.log(`[chat] session=${sessionId} compact_status=done (cleared on turn done without boundary)`);
+          broadcast(sessionId, { type: "compact_status", status: "done" });
+        }
         setPhase(sessionId, "idle");
         // Reset heartbeat tracking for next turn
         firstEventReceived = false;
@@ -432,6 +446,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     if (heartbeat) clearInterval(heartbeat);
     entry.isStreamingActive = false;
     entry.turnEvents = [];
+    // Force-clear compact status on stream teardown (error, close, etc.)
+    if (entry.compactStatus === "compacting") {
+      entry.compactStatus = null;
+      console.log(`[chat] session=${sessionId} compact_status=done (cleared on stream teardown)`);
+      broadcast(sessionId, { type: "compact_status", status: "done" });
+    }
     setPhase(sessionId, "idle");
     entry.pendingApprovalEvent = undefined;
     // Cleanup bash output spies
@@ -488,6 +508,7 @@ export const chatWebSocket = {
         phase: existing.phase,
         pendingApproval: existing.pendingApprovalEvent ?? null,
         sessionTitle: session?.title || null,
+        compactStatus: existing.compactStatus ?? null,
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -528,6 +549,7 @@ export const chatWebSocket = {
       isStreamingActive: false,
       teamWatchers: new Map(),
       teamNames: new Set(),
+      compactStatus: null,
     };
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
@@ -539,6 +561,7 @@ export const chatWebSocket = {
       phase: "idle",
       pendingApproval: null,
       sessionTitle: session?.title || null,
+      compactStatus: null,
     }));
 
     // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
@@ -580,7 +603,7 @@ export const chatWebSocket = {
       const newEntry: SessionEntry = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
         pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false,
-        teamWatchers: new Map(), teamNames: new Set(),
+        teamWatchers: new Map(), teamNames: new Set(), compactStatus: null,
       };
       activeSessions.set(sessionId, newEntry);
       setupClientPing(newEntry, ws);
@@ -605,6 +628,7 @@ export const chatWebSocket = {
         phase: entry.phase,
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
+        compactStatus: entry.compactStatus ?? null,
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
@@ -705,7 +729,10 @@ export const chatWebSocket = {
     } else if (parsed.type === "cancel") {
       // Fully teardown streaming session — user must resume to continue
       const provider = providerRegistry.get(providerId);
-      provider?.abortQuery?.(sessionId);
+      const phase = entry?.phase ?? "unknown";
+      console.log(`[chat] session=${sessionId} WS cancel received from FE (phase=${phase})`);
+      logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
+      provider?.abortQuery?.(sessionId, "ws_cancel");
     } else if (parsed.type === "approval_response") {
       const provider = providerRegistry.get(providerId);
       if (provider && typeof provider.resolveApproval === "function") {

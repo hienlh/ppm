@@ -24,7 +24,7 @@ export interface AIProvider {
   // Optional capabilities — providers implement what they support
   resolveApproval?(requestId: string, approved: boolean, data?: unknown): void;
   onToolApproval?: (callback: ToolApprovalHandler) => void;
-  abortQuery?(sessionId: string): void;
+  abortQuery?(sessionId: string, source?: string): void;
   getMessages?(sessionId: string): Promise<ChatMessage[]>;
   listSessionsByDir?(dir: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]>;
   ensureProjectPath?(sessionId: string, path: string): void;

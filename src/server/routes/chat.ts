@@ -361,7 +361,16 @@ chatRoutes.get("/sessions/:id/debug", (c) => {
   const jsonlDir = encodedCwd ? resolve(homedir, ".claude", "projects", encodedCwd) : "";
   const jsonlPath = jsonlDir ? resolve(jsonlDir, `${sessionId}.jsonl`) : "";
   const jsonlExists = jsonlPath ? existsSync(jsonlPath) : false;
-  return c.json(ok({ sessionId, jsonlPath: jsonlExists ? jsonlPath : null, jsonlDir, projectPath }));
+  // PPM session ID == SDK session ID (canonical — see claude-agent-sdk.ts:728).
+  // Return both fields so FE debug UI shows them clearly; they are the same value.
+  return c.json(ok({
+    ppmSessionId: sessionId,
+    sdkSessionId: sessionId,
+    sessionId,
+    jsonlPath: jsonlExists ? jsonlPath : null,
+    jsonlDir,
+    projectPath,
+  }));
 });
 
 /** GET /chat/pre-compact-messages — read and parse a JSONL transcript file (for expand-compact feature) */

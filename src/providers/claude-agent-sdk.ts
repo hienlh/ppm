@@ -1535,7 +1535,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
 
   /** Abort and fully teardown the streaming session — user must resume to continue */
-  abortQuery(sessionId: string): void {
+  abortQuery(sessionId: string, source = "unknown"): void {
+    // Capture stack to identify caller during debugging intermittent abort bugs
+    const stack = new Error().stack?.split("\n").slice(2, 5).join(" | ").replace(/\s+/g, " ") ?? "no-stack";
     const ss = this.streamingSessions.get(sessionId);
     if (ss) {
       // Signal generator to end, then close the query (kills bun subprocess)
@@ -1543,7 +1545,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ss.query.close();
       this.streamingSessions.delete(sessionId);
       this.activeQueries.delete(sessionId);
-      console.log(`[sdk] abortQuery: closed streaming session=${sessionId}`);
+      console.log(`[sdk] abortQuery: closed streaming session=${sessionId} source=${source} stack=${stack}`);
       return;
     }
     // Non-streaming fallback
@@ -1551,6 +1553,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     if (q) {
       q.close();
       this.activeQueries.delete(sessionId);
+      console.log(`[sdk] abortQuery: closed non-streaming session=${sessionId} source=${source}`);
     }
   }
 

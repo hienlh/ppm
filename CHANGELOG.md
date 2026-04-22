@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.3] - 2026-04-22
+
+### Fixed
+- **Compact indicator stuck after turn ends**: `compactStatus="compacting"` was only cleared by a matching `compact_boundary` from the SDK. SDK can emit `status: compacting` without a subsequent boundary (turn finishes first, stream tears down, or compaction is deferred), so the indicator stayed on the UI even after the session returned to idle. Fix:
+  - Server persists `compactStatus` on `SessionEntry` and force-clears + broadcasts `compact_status: done` on turn `done` and in the consumer `finally` block (covers errors, closes, deferred compaction)
+  - `session_state` payload now carries `compactStatus` on connect / reconnect / `ready`, so late-joining clients see authoritative state instead of stale/missing updates
+  - Client clears `compactStatus` on `phase_changed → idle` as a belt-and-braces guard and honors `state.compactStatus` in `session_state`
+  - Debug logs added under `[chat] session=<id> compact_status=…` for each transition (set / boundary / cleared-on-done / cleared-on-teardown) to make regressions easy to diagnose
+
 ## [0.13.2] - 2026-04-21
 
 ### Changed

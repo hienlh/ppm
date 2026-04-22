@@ -505,6 +505,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       setPhase(p);
       phaseRef.current = p;
       setConnectingElapsed(p === "connecting" ? ((data as any).elapsed ?? 0) : 0);
+      // Safety: idle phase means no turn running — ensure compact indicator does not linger.
+      // BE should broadcast compact_status=done too, but this is a belt-and-braces clear.
+      if (p === "idle") setCompactStatus(null);
       return;
     }
 
@@ -523,6 +526,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           input: state.pendingApproval.input,
         });
       }
+      // Sync compact indicator from authoritative server state (covers reconnect).
+      // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
+      setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
       // If idle, refetch history (completed turns) and hide overlay
       if (p === "idle") {
         refetchRef.current?.();
