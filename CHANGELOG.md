@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.6] - 2026-04-22
+
+### Added
+- **Mobile tab tag left-edge bar + amber streaming icon**: Tab tag indicator mirrors desktop left-edge bar style on mobile. Streaming icon uses amber color for consistency with favicon streaming indicator
+
+### Fixed
+- **Fork fails on compacted sessions ("Message not found")**: After SDK compaction, old message UUIDs are purged from session JSONL. Forking at a pre-compaction message threw 500. Now catches the error and falls back to a fresh session — user's message is still pre-filled in the new tab
+
 ## [0.13.5] - 2026-04-22
 
 ### Fixed
