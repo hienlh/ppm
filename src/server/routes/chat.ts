@@ -377,9 +377,10 @@ chatRoutes.get("/sessions/:id/debug", (c) => {
 chatRoutes.get("/pre-compact-messages", async (c) => {
   try {
     const jsonlPath = c.req.query("jsonlPath");
+    const beforeUuid = c.req.query("before");
     if (!jsonlPath) return c.json(err("jsonlPath query param required"), 400);
     const validated = validateJsonlPath(jsonlPath);
-    const messages = await parseJsonlTranscript(validated);
+    const messages = await parseJsonlTranscript(validated, beforeUuid);
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

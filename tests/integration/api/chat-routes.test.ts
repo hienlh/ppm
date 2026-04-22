@@ -155,5 +155,26 @@ describe("Chat REST API", () => {
       expect(json.data[0].role).toBe("user");
       expect(json.data[1].role).toBe("assistant");
     });
+
+    it("200 with before=<uuid> truncates at boundary (exclusive)", async () => {
+      // Compact summary references the CURRENT session file which contains pre+summary+post.
+      // The `before` param must stop parsing at the summary uuid so only pre-compact messages return.
+      const BOUNDARY_FILE = resolve(TRANSCRIPT_DIR, "with-compact.jsonl");
+      writeFileSync(BOUNDARY_FILE, [
+        JSON.stringify({ uuid: "pre1", type: "user", message: { content: "pre-compact user" } }),
+        JSON.stringify({ uuid: "pre2", type: "assistant", message: { content: [{ type: "text", text: "pre-compact reply" }] } }),
+        JSON.stringify({ uuid: "compact", type: "user", isCompactSummary: true, message: { content: "This session is being continued..." } }),
+        JSON.stringify({ uuid: "post1", type: "assistant", message: { content: [{ type: "text", text: "post-compact reply" }] } }),
+      ].join("\n") + "\n");
+
+      const res = await req(`/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(BOUNDARY_FILE)}&before=compact`);
+      const json = await res.json() as any;
+      expect(res.status).toBe(200);
+      expect(json.ok).toBe(true);
+      expect(json.data.length).toBe(2); // pre1 + pre2 only
+      expect(json.data[0].sdkUuid).toBe("pre1");
+      expect(json.data[1].sdkUuid).toBe("pre2");
+      try { rmSync(BOUNDARY_FILE, { force: true }); } catch { /* ignore */ }
+    });
   });
 });

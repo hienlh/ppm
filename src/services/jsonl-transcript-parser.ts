@@ -175,8 +175,16 @@ export function validateJsonlPath(inputPath: string): string {
 /**
  * Read a JSONL transcript file, parse entries, apply merge/nest pipeline, return ChatMessage[].
  * Applies the same logic as ClaudeAgentSdkProvider.getMessages() but reads from file directly.
+ *
+ * @param beforeUuid  If provided, stop parsing at the line with this uuid (exclusive).
+ *                    Used for the expand-compact feature: Claude's compact summary references
+ *                    the CURRENT session file (pre+summary+post), so we truncate at the
+ *                    compact summary's uuid to return only pre-compact messages.
  */
-export async function parseJsonlTranscript(filePath: string): Promise<ChatMessage[]> {
+export async function parseJsonlTranscript(
+  filePath: string,
+  beforeUuid?: string,
+): Promise<ChatMessage[]> {
   const text = await Bun.file(filePath).text();
   const parsed: ChatMessage[] = [];
   for (const line of text.split("\n")) {
@@ -188,6 +196,7 @@ export async function parseJsonlTranscript(filePath: string): Promise<ChatMessag
     } catch {
       continue; // skip malformed lines defensively
     }
+    if (beforeUuid && entry.uuid === beforeUuid) break; // stop at compact boundary (exclusive)
     if (entry.type !== "user" && entry.type !== "assistant") continue;
     if (!entry.uuid || !entry.message) continue;
     parsed.push(parseSessionMessage(entry));

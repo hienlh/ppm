@@ -109,12 +109,21 @@ export function MessageList({
     onFork?.(msgContent, msgId);
   }, [onFork]);
 
-  // Wrap expandCompact: bump visibleCount by loaded count so expansion is immediately visible
-  // in the paginated view (pre-compact messages land at top of flattened array, above pagination window).
+  // Scroll anchor bridge published from inside StickToBottom (needs the context's scrollRef).
+  // MessageList captures pre-expand scroll metrics and restores post-render so the compact
+  // message stays at the same viewport offset when history is prepended.
+  const scrollAnchorRef = useRef<ScrollAnchorHandle | null>(null);
+
+  // Wrap expandCompact: bump visibleCount, then restore scroll after React commits the new DOM.
+  // Pre-compact messages land at top of flattened array, above pagination window — bumping
+  // visibleCount by loaded count ensures they render immediately.
   const handleExpandCompact = useCallback(async (compactId: string, jsonlPath: string): Promise<number> => {
     if (!onExpandCompact) throw new Error("Expansion not wired");
+    scrollAnchorRef.current?.capture();
     const count = await onExpandCompact(compactId, jsonlPath);
     setVisibleCount((c) => c + count);
+    // rAF fires after React commits + layout; two rAFs to cover any async measure (lazy markdown).
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollAnchorRef.current?.restore()));
     return count;
   }, [onExpandCompact]);
 
@@ -140,6 +149,7 @@ export function MessageList({
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
       <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden [contain:strict] [overflow-anchor:auto]" resize="smooth" initial="instant">
         <StickToBottom.Content className="p-4 space-y-4 select-none [&>*]:[overflow-anchor:auto]">
+          <ScrollAnchorBridge bridgeRef={scrollAnchorRef} />
           {hasMore && (
             <button onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
               className="w-full py-2 text-xs text-text-secondary hover:text-text-primary bg-surface-elevated/50 hover:bg-surface-elevated rounded-md border border-border/50 transition-colors">
@@ -177,6 +187,43 @@ export function MessageList({
     </StickToBottom>
     </div>
   );
+}
+
+/** Imperative handle exposed by ScrollAnchorBridge — capture & restore scroll on prepend. */
+interface ScrollAnchorHandle {
+  /** Record current scrollTop + scrollHeight before a prepend. No-op if user is at bottom. */
+  capture: () => void;
+  /** After prepend commits, adjust scrollTop by the height delta so viewport stays locked. */
+  restore: () => void;
+}
+
+/**
+ * Consumes StickToBottom's scrollRef (only accessible inside its subtree) and publishes
+ * capture/restore functions to a ref owned by the parent MessageList, so prepend-history
+ * expansion can preserve scroll position across the re-render.
+ */
+function ScrollAnchorBridge({ bridgeRef }: { bridgeRef: React.MutableRefObject<ScrollAnchorHandle | null> }) {
+  const { scrollRef, isAtBottom } = useStickToBottomContext();
+  const state = useRef<{ top: number; height: number } | null>(null);
+  useEffect(() => {
+    bridgeRef.current = {
+      capture: () => {
+        const el = scrollRef.current;
+        if (!el || isAtBottom) { state.current = null; return; } // skip if sticking to bottom
+        state.current = { top: el.scrollTop, height: el.scrollHeight };
+      },
+      restore: () => {
+        const el = scrollRef.current;
+        const s = state.current;
+        if (!el || !s) return;
+        const delta = el.scrollHeight - s.height;
+        if (delta !== 0) el.scrollTop = s.top + delta;
+        state.current = null;
+      },
+    };
+    return () => { bridgeRef.current = null; };
+  }, [bridgeRef, scrollRef, isAtBottom]);
+  return null;
 }
 
 /** Floating button to scroll back to bottom when user has scrolled up */

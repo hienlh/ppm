@@ -816,7 +816,14 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   /** Fetch pre-compact transcript. Idempotent: re-expanding same id replaces entry. */
   const expandCompact = useCallback(async (compactMessageId: string, jsonlPath: string): Promise<number> => {
     if (!projectName) throw new Error("No project context available");
-    const url = `${projectUrl(projectName)}/chat/pre-compact-messages?jsonlPath=${encodeURIComponent(jsonlPath)}`;
+    // Claude's compact summary references the CURRENT session file (pre+summary+post).
+    // Strip the `pc-{hash}-` prefix added by prefixPreCompactIds for nested expansions
+    // so BE receives the raw session uuid and truncates at the correct boundary.
+    const rawUuid = compactMessageId.replace(/^pc-[^-]+-/, "");
+    const url =
+      `${projectUrl(projectName)}/chat/pre-compact-messages` +
+      `?jsonlPath=${encodeURIComponent(jsonlPath)}` +
+      `&before=${encodeURIComponent(rawUuid)}`;
     const loaded = await api.get<ChatMessage[]>(url);
     const prefixed = prefixPreCompactIds(loaded, jsonlPath);
     setExpansions((prev) => {
