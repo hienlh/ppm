@@ -12,6 +12,7 @@ import { Loader2, FileWarning, Play, Database } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
 import { SaveAsDialog } from "./save-as-dialog";
+import { EditorMobileToolbar } from "./editor-mobile-toolbar";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
 import { useConnections, type Connection } from "../database/use-connections";
 
@@ -191,6 +192,31 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       : editor.getValue();
     runSqlInViewer(sqlText);
   }, [selectedSqlConn, runSqlInViewer]);
+
+  // Touch device detection for mobile toolbar
+  const isMobile = typeof window !== "undefined" && "ontouchstart" in window;
+
+  // Track visual viewport so toolbar stays above mobile keyboard
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [mobileHeight, setMobileHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isMobile) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const handle = () => {
+      const el = containerRef.current;
+      if (!el) return;
+      // Calculate available height = viewport height - element's top offset from viewport
+      const top = el.getBoundingClientRect().top;
+      setMobileHeight(vv.height - Math.max(0, top));
+    };
+    vv.addEventListener("resize", handle);
+    vv.addEventListener("scroll", handle);
+    return () => {
+      vv.removeEventListener("resize", handle);
+      vv.removeEventListener("scroll", handle);
+    };
+  }, [isMobile]);
 
   // CodeLens: inline Run buttons between SQL statements
   const codeLensDisposable = useRef<MonacoType.IDisposable[]>([]);
@@ -502,7 +528,11 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   ) : null;
 
   return (
-    <div className="flex flex-col h-full w-full overflow-hidden">
+    <div
+      ref={containerRef}
+      className="flex flex-col h-full w-full overflow-hidden"
+      style={mobileHeight ? { height: `${mobileHeight}px`, maxHeight: `${mobileHeight}px` } : undefined}
+    >
       {/* Inline content toolbar (cell viewer mode) */}
       {inlineContent != null && canBeautifyInline && (
         <div className="flex items-center h-7 border-b border-border bg-background shrink-0 px-2 gap-2">
@@ -577,6 +607,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
           />
         </div>
       )}
+
+      {/* Mobile toolbar — bottom, like terminal */}
+      {isMobile && <EditorMobileToolbar editorRef={editorRef} readOnly={inlineContent != null} />}
 
       {/* Save As dialog for untitled tabs */}
       {showSaveAs && (
