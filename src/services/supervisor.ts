@@ -7,7 +7,7 @@
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
 import {
-  readFileSync, writeFileSync, existsSync, mkdirSync, openSync, appendFileSync,
+  readFileSync, writeFileSync, existsSync, mkdirSync, openSync, closeSync, appendFileSync,
   unlinkSync,
 } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
@@ -170,40 +170,28 @@ export async function spawnServer(
 }
 
 // ─── Tunnel management ─────────────────────────────────────────────────
-async function extractUrlFromStderr(stderr: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stderr.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
+const cloudflaredLogPath = () => resolve(getPpmDir(), "cloudflared.log");
 
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Tunnel URL timeout (30s)")), 30_000);
-
-    const read = async () => {
+/**
+ * Poll cloudflared log file for trycloudflare URL.
+ * Stderr is redirected to this file (not piped) so cloudflared survives
+ * parent supervisor exit during self-replace (no SIGPIPE on closed pipe).
+ */
+async function extractUrlFromLogFile(child: Subprocess): Promise<string> {
+  const path = cloudflaredLogPath();
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) {
       try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const match = buffer.match(TUNNEL_URL_REGEX);
-          if (match) {
-            clearTimeout(timeout);
-            // Keep draining in background to avoid SIGPIPE
-            (async () => {
-              try { while (!(await reader.read()).done) {} } catch {}
-            })();
-            resolve(match[0]);
-            return;
-          }
-        }
-        clearTimeout(timeout);
-        reject(new Error("cloudflared exited without providing URL"));
-      } catch (err) {
-        clearTimeout(timeout);
-        reject(err);
-      }
-    };
-    read();
-  });
+        const content = readFileSync(path, "utf8");
+        const match = content.match(TUNNEL_URL_REGEX);
+        if (match) return match[0];
+      } catch {}
+    }
+    if (child.exitCode !== null) throw new Error("cloudflared exited without providing URL");
+    await Bun.sleep(200);
+  }
+  throw new Error("Tunnel URL timeout (30s)");
 }
 
 async function syncUrlToCloud(url: string) {
@@ -243,11 +231,23 @@ export async function spawnTunnel(port: number): Promise<void> {
       ]
     : [bin, "tunnel", "--url", `http://127.0.0.1:${port}`];
 
-  tunnelChild = Bun.spawn(tunnelCmd, { stderr: "pipe", stdout: "ignore", stdin: "ignore" });
+  // Redirect cloudflared stderr to a log file (not pipe). This way cloudflared
+  // survives parent supervisor exit during self-replace — a piped stderr would
+  // close when parent exits, causing SIGPIPE on next cloudflared log write and
+  // killing the tunnel ~10-15s later (silently breaking adoption).
+  const logPath = cloudflaredLogPath();
+  try { unlinkSync(logPath); } catch {}  // truncate stale URLs from prior run
+  const tunnelLogFd = openSync(logPath, "a");
+  try {
+    tunnelChild = Bun.spawn(tunnelCmd, { stderr: tunnelLogFd, stdout: "ignore", stdin: "ignore" });
+  } finally {
+    // Close our handle; cloudflared keeps its own via dup2
+    try { closeSync(tunnelLogFd); } catch {}
+  }
   if (underSystemd) log("INFO", "Tunnel spawned inside transient systemd-run scope (escapes ppm.service cgroup)");
 
   try {
-    tunnelUrl = await extractUrlFromStderr(tunnelChild.stderr as ReadableStream<Uint8Array>);
+    tunnelUrl = await extractUrlFromLogFile(tunnelChild);
   } catch (err) {
     log("ERROR", `Tunnel URL extraction failed: ${err}`);
     tunnelUrl = null;

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.5] - 2026-04-22
+
+### Fixed
+- **Tunnel URL changes shortly after upgrade (WSL/systemd)**: Adopted tunnel was dying ~10-15s after old supervisor exited during self-replace upgrade, forcing a tunnel respawn with a new trycloudflare URL. Root cause: `Bun.spawn(..., { stderr: "pipe" })` tied cloudflared's stderr to a pipe held by the *old* supervisor; when that supervisor exited, the pipe's read-end closed and cloudflared received `SIGPIPE` on its next periodic log write (typical cadence ~10-15s). `systemd-run --scope` wrapping did NOT protect against this because `--scope` inherits stdio from the invoker. Fix: redirect cloudflared stderr to `~/.ppm/cloudflared.log` (file fd, not pipe). URL extraction polls the file instead of reading the pipe stream. Tunnel now survives parent exit cleanly — adopted URL persists across upgrades
+
 ## [0.13.4] - 2026-04-22
 
 ### Fixed
