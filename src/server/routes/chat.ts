@@ -307,22 +307,31 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
       if (!provider.forkAtMessage) {
         return c.json(err("Provider does not support forking"), 400);
       }
-      const result = await provider.forkAtMessage(sourceId, body.messageId, {
-        title: "Forked Chat", dir: projectPath,
-      });
-      // Register forked session with provider + DB so it's tracked in memory
-      setSessionMetadata(result.sessionId, projectName, projectPath);
-      await provider.resumeSession(result.sessionId);
-      provider.markAsResumed?.(result.sessionId);
-      const forkedSession = {
-        id: result.sessionId,
-        providerId,
-        title: "Forked Chat",
-        projectName,
-        projectPath,
-        createdAt: new Date().toISOString(),
-      };
-      return c.json(ok({ ...forkedSession, forkedFrom: sourceId }), 201);
+      try {
+        const result = await provider.forkAtMessage(sourceId, body.messageId, {
+          title: "Forked Chat", dir: projectPath,
+        });
+        // Register forked session with provider + DB so it's tracked in memory
+        setSessionMetadata(result.sessionId, projectName, projectPath);
+        await provider.resumeSession(result.sessionId);
+        provider.markAsResumed?.(result.sessionId);
+        const forkedSession = {
+          id: result.sessionId,
+          providerId,
+          title: "Forked Chat",
+          projectName,
+          projectPath,
+          createdAt: new Date().toISOString(),
+        };
+        return c.json(ok({ ...forkedSession, forkedFrom: sourceId }), 201);
+      } catch (forkErr) {
+        // Message UUID may no longer exist after SDK compaction — fall back to fresh session
+        console.warn(`[chat] forkAtMessage failed (message may be compacted): ${(forkErr as Error).message}`);
+        const session = await chatService.createSession(providerId, {
+          projectName, projectPath, title: "Forked Chat",
+        });
+        return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
+      }
     } else {
       // No messageId (fork at first message) — create a fresh empty session
       const session = await chatService.createSession(providerId, {
