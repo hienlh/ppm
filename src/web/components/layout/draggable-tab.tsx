@@ -166,7 +166,7 @@ export function DraggableTab({
         // Tag identity marker — VS Code-style vertical bar on left edge (centered, ~60% height, rounded right)
         <span
           aria-hidden
-          className="absolute left-0 top-2 bottom-2 w-[2px] rounded-r-full pointer-events-none"
+          className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full pointer-events-none"
           style={{ backgroundColor: tagColor }}
         />
       )}
