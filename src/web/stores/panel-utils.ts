@@ -89,6 +89,7 @@ export function getNextUntitledNumber(panels: Record<string, Panel>): number {
 export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): string {
   switch (type) {
     case "editor":
+      if (metadata?.viewerKey) return `editor:viewer:${metadata.viewerKey}`;
       if (metadata?.isUntitled) return `editor:untitled-${metadata.untitledNumber ?? 1}`;
       return `editor:${metadata?.filePath ?? "untitled"}`;
     case "chat": {

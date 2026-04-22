@@ -136,6 +136,7 @@ export function DraggableTab({
       ) : (
         <span
           className="max-w-[120px] truncate"
+          title={tab.title}
           onDoubleClick={(e) => {
             if (onRename) { e.stopPropagation(); setEditing(true); }
           }}

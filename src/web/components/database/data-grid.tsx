@@ -1,7 +1,9 @@
 import { useState, useCallback, useMemo, useRef, memo, useEffect } from "react";
-import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, Filter, Pin, PinOff, Columns3 } from "lucide-react";
+import Editor from "@monaco-editor/react";
+import { Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Trash2, Plus, Search, X, Eye, ExternalLink, WrapText, Sparkles, Filter, Pin, PinOff, Columns3 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
+import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import type { DbColumnInfo } from "./use-database";
 import { ExportButton } from "./export-button";
 
@@ -44,15 +46,14 @@ export function DataGrid({
   const [insertError, setInsertError] = useState<string | null>(null);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const { openTab } = useTabStore(useShallow((s) => ({ openTab: s.openTab })));
-  const openCellViewer = useCallback((cell: { col: string; value: string }) => {
-    openTab({
-      type: "editor",
-      title: cell.col,
-      projectId: null,
-      closable: true,
-      metadata: { inlineContent: cell.value, inlineLanguage: detectLang(cell.value) },
-    });
-  }, [openTab]);
+  const [previewData, setPreviewData] = useState<{ title: string; content: string; language: string; viewerKey: string } | null>(null);
+  const openCellViewer = useCallback((cell: { col: string; value: string; pkVal: string }) => {
+    const table = selectedTable ?? "";
+    const lang = detectLang(cell.value);
+    const key = `${connectionId ?? "local"}:${table}:${cell.col}:${cell.pkVal}`;
+    const title = table ? `${cell.col} #${cell.pkVal} — ${table}` : `${cell.col} #${cell.pkVal}`;
+    setPreviewData({ title, content: cell.value, language: lang, viewerKey: key });
+  }, [connectionId, selectedTable]);
   const [pinnedCols, setPinnedCols] = useState<Set<string>>(new Set());
   const [pinnedRows, setPinnedRows] = useState<Set<number>>(new Set());
   const [filterOpenCol, setFilterOpenCol] = useState<string | null>(null);
@@ -69,14 +70,21 @@ export function DataGrid({
   const openRowViewer = useCallback((row: Record<string, unknown>) => {
     const json = JSON.stringify(row, null, 2);
     const pk = pkCol ? String(row[pkCol] ?? "") : "";
+    const table = selectedTable ?? "";
+    const key = `${connectionId ?? "local"}:${table}:row:${pk || "unknown"}`;
+    const title = pk ? `Row #${pk}${table ? ` — ${table}` : ""}` : `Row${table ? ` — ${table}` : ""}`;
+    setPreviewData({ title, content: json, language: "json", viewerKey: key });
+  }, [pkCol, connectionId, selectedTable]);
+  const openPreviewInTab = useCallback(() => {
+    if (!previewData) return;
     openTab({
       type: "editor",
-      title: pk ? `Row ${pk}` : "Row",
+      title: previewData.title,
       projectId: null,
       closable: true,
-      metadata: { inlineContent: json, inlineLanguage: "json" },
+      metadata: { inlineContent: previewData.content, inlineLanguage: previewData.language, viewerKey: previewData.viewerKey },
     });
-  }, [openTab, pkCol]);
+  }, [openTab, previewData]);
 
   // Refs for cell renderers — avoid column memo rebuild on every state change
   const editingRef = useRef(editingCell);
@@ -196,7 +204,7 @@ export function DataGrid({
     if (!el) return;
     const handler = (e: KeyboardEvent) => {
       // Escape closes column search from anywhere
-      if (e.key === "Escape") { setColSearchOpen(false); return; }
+      if (e.key === "Escape") { setColSearchOpen(false); setPreviewData(null); return; }
 
       // Skip if focus is in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
@@ -433,7 +441,7 @@ export function DataGrid({
       )}
 
       {/* Table */}
-      <div ref={scrollRef} className="flex-1 overflow-auto relative">
+      <div ref={scrollRef} className="flex-1 overflow-auto relative min-h-0">
         {loading && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/60">
             <Loader2 className="size-5 animate-spin text-primary" />
@@ -540,6 +548,11 @@ export function DataGrid({
         </table>
       </div>
 
+      {/* Inline preview panel */}
+      {previewData && (
+        <DataPreviewPanel data={previewData} onClose={() => setPreviewData(null)} onOpenInTab={openPreviewInTab} />
+      )}
+
       {/* Footer: row count + pagination */}
       <div className="flex items-center justify-between px-3 py-1.5 border-t border-border bg-background shrink-0 text-xs text-muted-foreground">
         <span>{tableData.total.toLocaleString()} rows</span>
@@ -594,6 +607,93 @@ function detectLang(text: string): string {
   if (t.startsWith("<?xml") || (t.startsWith("<") && /<\/\w+>/.test(t))) return "xml";
   if (t.startsWith("---") || /^\w+:\s/m.test(t)) return "yaml";
   return "plaintext";
+}
+
+/** Inline preview panel for cell/row content with Monaco editor */
+function DataPreviewPanel({ data, onClose, onOpenInTab }: {
+  data: { title: string; content: string; language: string };
+  onClose: () => void;
+  onOpenInTab: () => void;
+}) {
+  const monacoTheme = useMonacoTheme();
+  const [wordWrap, setWordWrap] = useState(true);
+  const [displayContent, setDisplayContent] = useState(data.content);
+  const [beautified, setBeautified] = useState(false);
+  const canBeautify = data.language === "json" || data.language === "xml";
+
+  // Reset state when data changes
+  const prevKey = useRef(data.title);
+  if (prevKey.current !== data.title) {
+    prevKey.current = data.title;
+    setDisplayContent(data.content);
+    setBeautified(false);
+  }
+
+  const toggleBeautify = useCallback(() => {
+    if (beautified) {
+      setDisplayContent(data.content);
+      setBeautified(false);
+    } else {
+      if (data.language === "json") {
+        try { setDisplayContent(JSON.stringify(JSON.parse(data.content.trim()), null, 2)); setBeautified(true); } catch { /* invalid */ }
+      } else if (data.language === "xml") {
+        // Simple XML indent
+        let depth = 0;
+        const formatted = data.content.trim().replace(/>\s*</g, ">\n<").split("\n").map((line) => {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("</")) depth = Math.max(0, depth - 1);
+          const indented = "  ".repeat(depth) + trimmed;
+          if (trimmed.startsWith("<") && !trimmed.startsWith("</") && !trimmed.endsWith("/>") && !trimmed.startsWith("<?")) depth++;
+          return indented;
+        }).join("\n");
+        setDisplayContent(formatted);
+        setBeautified(true);
+      }
+    }
+  }, [beautified, data.content, data.language]);
+
+  return (
+    <div className="shrink-0 border-t border-border flex flex-col" style={{ height: "40%" }}>
+      <div className="flex items-center gap-1 px-2 py-1 bg-muted/50 border-b border-border shrink-0">
+        <Eye className="size-3 text-muted-foreground" />
+        <span className="text-xs font-medium text-foreground truncate flex-1">{data.title}</span>
+        {canBeautify && (
+          <button type="button" onClick={toggleBeautify} title={beautified ? "Raw" : "Beautify"}
+            className={`p-0.5 rounded transition-colors ${beautified ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+            <Sparkles className="size-3" />
+          </button>
+        )}
+        <button type="button" onClick={() => setWordWrap(!wordWrap)} title={wordWrap ? "No wrap" : "Word wrap"}
+          className={`p-0.5 rounded transition-colors ${wordWrap ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+          <WrapText className="size-3" />
+        </button>
+        <button type="button" onClick={onOpenInTab} title="Open in new tab"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+          <ExternalLink className="size-3" />
+          <span className="hidden sm:inline">Open in Tab</span>
+        </button>
+        <button type="button" onClick={onClose} title="Close preview (Esc)"
+          className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors">
+          <X className="size-3" />
+        </button>
+      </div>
+      <div className="flex-1 min-h-0">
+        <Editor
+          height="100%"
+          language={data.language === "plaintext" ? undefined : data.language}
+          value={displayContent}
+          theme={monacoTheme}
+          options={{
+            readOnly: true, minimap: { enabled: false }, scrollBeyondLastLine: false,
+            wordWrap: wordWrap ? "on" : "off", lineNumbers: "on", fontSize: 12,
+            folding: true, bracketPairColorization: { enabled: true },
+            domReadOnly: true, contextmenu: false, overviewRulerLanes: 0,
+          }}
+          loading={<Loader2 className="size-4 animate-spin text-muted-foreground" />}
+        />
+      </div>
+    </div>
+  );
 }
 
 /** Column search dropdown — owns query/index state internally to avoid re-rendering DataGrid */
@@ -651,7 +751,7 @@ const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggle
   onSetEditValue: (v: string) => void;
   showDelete: boolean; confirmingDelete: boolean;
   onDelete: (i: number) => void; onConfirmDelete: (i: number | null) => void;
-  onViewCell: (cell: { col: string; value: string }) => void;
+  onViewCell: (cell: { col: string; value: string; pkVal: string }) => void;
   onViewRow: (row: Record<string, unknown>) => void;
   pinned: boolean; onTogglePin: (i: number) => void;
   pinnedCols: Set<string>; pinnedColOffsets: Map<string, number>;
@@ -702,7 +802,7 @@ const DataRow = memo(function DataRow({ row, rowIdx, columns, selected, onToggle
                 </span>
                 {showEye && (
                   <button type="button" title="View full content"
-                    onClick={() => onViewCell({ col, value: formatCellValue(val) })}
+                    onClick={() => onViewCell({ col, value: formatCellValue(val), pkVal: pkCol ? String(row[pkCol] ?? rowIdx) : String(rowIdx) })}
                     className="shrink-0 p-0.5 rounded text-muted-foreground/50 hover:text-foreground transition-colors">
                     <Eye className="size-3" />
                   </button>

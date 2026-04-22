@@ -299,9 +299,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     return () => window.removeEventListener("file:changed", handler);
   }, [filePath, projectName, isExternalFile, inlineContent, isUntitled]);
 
-  // Update tab title unsaved indicator
+  // Update tab title unsaved indicator (skip for inline content — title set by caller)
   useEffect(() => {
-    if (!ownTab) return;
+    if (!ownTab || inlineContent != null) return;
     const baseName = isUntitled
       ? `Untitled-${metadata?.untitledNumber ?? 1}`
       : (filePath ? basename(filePath) : "Untitled");
