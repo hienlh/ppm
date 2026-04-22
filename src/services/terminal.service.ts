@@ -144,7 +144,10 @@ class TerminalService {
     };
     const onExit = () => {
       const listener = this.outputListeners.get(id);
-      if (listener) listener(id, "\r\n[Process exited]\r\n");
+      if (listener) {
+        listener(id, "\r\n[Process exited]\r\n");
+        listener(id, JSON.stringify({ type: "exited" }));
+      }
     };
 
     const pty = isWindows

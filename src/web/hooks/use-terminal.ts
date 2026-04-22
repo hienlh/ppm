@@ -66,8 +66,10 @@ interface UseTerminalOptions {
 interface UseTerminalReturn {
   connected: boolean;
   reconnecting: boolean;
+  exited: boolean;
   sendData: (data: string) => void;
   getSelection: () => string;
+  restart: () => void;
 }
 
 const RESIZE_PREFIX = "\x01RESIZE:";
@@ -83,6 +85,7 @@ export function useTerminal(
   const reconnectAttempts = useRef(0);
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [exited, setExited] = useState(false);
   const actualSessionId = useRef(sessionId); // Track server-assigned session ID
 
   const sendData = useCallback((data: string) => {
@@ -103,6 +106,20 @@ export function useTerminal(
       ws.send(`${RESIZE_PREFIX}${term.cols},${term.rows}`);
     }
   }, []);
+
+  const restart = useCallback(() => {
+    // Close existing WS, reset to "new" session, reconnect
+    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+    wsRef.current?.close();
+    wsRef.current = null;
+    actualSessionId.current = "new";
+    reconnectAttempts.current = 0;
+    setExited(false);
+    setConnected(false);
+    setReconnecting(false);
+    // connectWs will be called after this via setTimeout to allow state to settle
+    setTimeout(() => connectWs(), 0);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const connectWs = useCallback(() => {
     const term = termRef.current;
@@ -130,12 +147,15 @@ export function useTerminal(
         if (event.data.startsWith("{")) {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.type === "session" || msg.type === "error") {
+            if (msg.type === "session" || msg.type === "error" || msg.type === "exited") {
               if (msg.type === "session" && msg.id) {
                 actualSessionId.current = msg.id; // Save for reconnect
               }
               if (msg.type === "error") {
                 term.write(`\r\n\x1b[31mError: ${msg.message}\x1b[0m\r\n`);
+              }
+              if (msg.type === "exited") {
+                setExited(true);
               }
               return; // Don't write raw JSON to terminal
             }
@@ -234,5 +254,5 @@ export function useTerminal(
     };
   }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting, sendData, getSelection };
+  return { connected, reconnecting, exited, sendData, getSelection, restart };
 }

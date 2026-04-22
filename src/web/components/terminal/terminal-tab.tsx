@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useTerminal } from "@/hooks/use-terminal";
 import { cn } from "@/lib/utils";
-import { Copy, ClipboardPaste } from "lucide-react";
+import { Copy, ClipboardPaste, RotateCcw } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalTabProps {
@@ -22,7 +22,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata }: TerminalTabPr
   const sessionId = (metadata?.sessionId as string) ?? "new";
   const projectName = metadata?.projectName as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
-  const { connected, reconnecting, sendData, getSelection } = useTerminal({ sessionId, projectName, containerRef });
+  const { connected, reconnecting, exited, sendData, getSelection, restart } = useTerminal({ sessionId, projectName, containerRef });
   const [ctrlMode, setCtrlMode] = useState(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
@@ -97,16 +97,27 @@ export const TerminalTab = memo(function TerminalTab({ metadata }: TerminalTabPr
         <span
           className={cn(
             "size-2 rounded-full",
-            connected ? "bg-success" : reconnecting ? "bg-warning" : "bg-error",
+            exited ? "bg-error" : connected ? "bg-success" : reconnecting ? "bg-warning" : "bg-error",
           )}
         />
         <span className="text-text-secondary">
-          {connected
-            ? "Connected"
-            : reconnecting
-              ? "Reconnecting..."
-              : "Disconnected"}
+          {exited
+            ? "Process exited"
+            : connected
+              ? "Connected"
+              : reconnecting
+                ? "Reconnecting..."
+                : "Disconnected"}
         </span>
+        {exited && (
+          <button
+            onClick={restart}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-surface-elevated text-text-primary hover:bg-primary hover:text-primary-foreground active:bg-primary active:text-primary-foreground transition-colors"
+          >
+            <RotateCcw size={10} />
+            Restart
+          </button>
+        )}
         <span className="text-text-subtle ml-auto font-mono">{sessionId}</span>
       </div>
 

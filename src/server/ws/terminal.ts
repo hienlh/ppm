@@ -83,6 +83,10 @@ export const terminalWebSocket = {
 
   close(ws: { data: { type: string; id: string } }) {
     const sessionId = ws.data.id;
+    const session = terminalService.get(sessionId);
+    // Only clean up if this WS is still the active connection.
+    // Prevents race: stale WS close fires after new WS open, removing the new listener.
+    if (!session || session.ws !== ws) return;
     terminalService.removeOutputListener(sessionId);
     terminalService.setDisconnected(sessionId);
   },
