@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from "react";
 import {
   Terminal,
   MessageSquare,
@@ -25,7 +25,10 @@ import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
-import { scoreFileSearch, compareScores, type FileSearchScore } from "@/lib/score-file-search";
+import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
+
+/** Max results to display — prevents rendering thousands of matches */
+const MAX_RESULTS = 100;
 
 interface CommandItem {
   id: string;
@@ -108,6 +111,7 @@ const fsCache = new Map<string, string[]>();
 
 export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boolean; onClose: () => void; initialQuery?: string }) {
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [fsFiles, setFsFiles] = useState<string[]>([]);
   const [fsLoading, setFsLoading] = useState(false);
@@ -305,11 +309,29 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     [actionCommands, fileCommands],
   );
 
+  /**
+   * Precomputed lowercase search index — avoids re-allocating thousands of
+   * lowercased strings per keystroke. Recomputed only when allCommands changes.
+   */
+  const searchIndex = useMemo(() => {
+    return allCommands.map((cmd) => {
+      const path = cmd.keywords ?? cmd.label;
+      const pathLower = path.toLowerCase();
+      return {
+        cmd,
+        filenameLower: getFilename(pathLower),
+        pathLower,
+        labelLen: cmd.label.length,
+        depth: path.split("/").length,
+      };
+    });
+  }, [allCommands]);
+
   const filtered = useMemo(() => {
     // Path mode — search filesystem results using filename portion only
-    if (isPathQuery(query)) {
-      const lastSlash = query.lastIndexOf("/");
-      const fileFilter = lastSlash >= 0 ? query.slice(lastSlash + 1).toLowerCase() : "";
+    if (isPathQuery(deferredQuery)) {
+      const lastSlash = deferredQuery.lastIndexOf("/");
+      const fileFilter = lastSlash >= 0 ? deferredQuery.slice(lastSlash + 1).toLowerCase() : "";
       if (!fileFilter) return fsCommands.slice(0, 50);
       return fsCommands.filter((c) => {
         const name = c.label.toLowerCase();
@@ -319,17 +341,18 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     }
 
     // Normal mode
-    if (!query.trim()) return actionCommands;
+    if (!deferredQuery.trim()) return actionCommands;
+    const qLower = deferredQuery.toLowerCase();
     const scored: Array<{ cmd: CommandItem; score: FileSearchScore }> = [];
-    for (const c of allCommands) {
-      const s = scoreFileSearch(query, c.label, c.keywords ?? c.label);
-      if (s) scored.push({ cmd: c, score: s });
+    for (const entry of searchIndex) {
+      const s = scoreFileSearchFast(qLower, entry.filenameLower, entry.pathLower, entry.labelLen, entry.depth);
+      if (s) scored.push({ cmd: entry.cmd, score: s });
     }
     scored.sort((a, b) => compareScores(a.score, b.score));
-    const matched = scored.map((s) => s.cmd);
+    const matched = scored.slice(0, MAX_RESULTS).map((s) => s.cmd);
     // Prepend DB results (already filtered server-side) when query is 2+ chars
-    return query.trim().length >= 2 ? [...dbCommands, ...matched] : matched;
-  }, [allCommands, actionCommands, fsCommands, dbCommands, query]);
+    return deferredQuery.trim().length >= 2 ? [...dbCommands, ...matched] : matched;
+  }, [searchIndex, actionCommands, fsCommands, dbCommands, deferredQuery]);
 
   // Reset state when opening
   useEffect(() => {

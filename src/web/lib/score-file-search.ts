@@ -6,6 +6,10 @@
  *      > path contains(3) > fuzzy filename(4) > fuzzy path(5)
  *
  * Tie-breakers: shorter filename, fewer path segments.
+ *
+ * Hot-path note: callers pass PRE-LOWERCASED strings to avoid repeated
+ * allocations per keystroke. Use `scoreFileSearch` (convenience wrapper)
+ * for ad-hoc calls; use `scoreFileSearchFast` for the inner loop.
  */
 
 export interface FileSearchScore {
@@ -20,7 +24,7 @@ export interface FileSearchScore {
 }
 
 /** Extract filename from a path */
-function getFilename(path: string): string {
+export function getFilename(path: string): string {
   const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return i >= 0 ? path.slice(i + 1) : path;
 }
@@ -43,40 +47,56 @@ function fuzzyGap(query: string, text: string): number {
   return gap;
 }
 
+/**
+ * Fast scoring — requires pre-lowercased inputs. Use for tight loops.
+ * All string params MUST already be lowercase.
+ */
+export function scoreFileSearchFast(
+  qLower: string,
+  filenameLower: string,
+  pathLower: string,
+  labelLen: number,
+  depth: number,
+): FileSearchScore | null {
+  // Tier 0: exact filename match
+  if (filenameLower === qLower) return { tier: 0, offset: 0, nameLen: labelLen, depth };
+
+  // Tier 1: filename starts with query
+  if (filenameLower.startsWith(qLower)) return { tier: 1, offset: 0, nameLen: labelLen, depth };
+
+  // Tier 2: filename contains query as substring
+  const fnIdx = filenameLower.indexOf(qLower);
+  if (fnIdx >= 0) return { tier: 2, offset: fnIdx, nameLen: labelLen, depth };
+
+  // Tier 3: full path contains query as substring
+  const pathIdx = pathLower.indexOf(qLower);
+  if (pathIdx >= 0) return { tier: 3, offset: pathIdx, nameLen: labelLen, depth };
+
+  // Tier 4: fuzzy match on filename
+  const fnGap = fuzzyGap(qLower, filenameLower);
+  if (fnGap >= 0) return { tier: 4, offset: fnGap, nameLen: labelLen, depth };
+
+  // Tier 5: fuzzy match on full path
+  const pathGap = fuzzyGap(qLower, pathLower);
+  if (pathGap >= 0) return { tier: 5, offset: pathGap, nameLen: labelLen, depth };
+
+  return null;
+}
+
+/** Convenience wrapper — lowers inputs on the fly. Use for ad-hoc calls. */
 export function scoreFileSearch(
   query: string,
   label: string,
   path: string,
 ): FileSearchScore | null {
-  const q = query.toLowerCase();
-  const nameLower = label.toLowerCase();
   const pathLower = path.toLowerCase();
-  const filename = getFilename(pathLower);
-  const depth = path.split("/").length;
-
-  // Tier 0: exact filename match
-  if (filename === q) return { tier: 0, offset: 0, nameLen: label.length, depth };
-
-  // Tier 1: filename starts with query
-  if (filename.startsWith(q)) return { tier: 1, offset: 0, nameLen: label.length, depth };
-
-  // Tier 2: filename contains query as substring
-  const fnIdx = filename.indexOf(q);
-  if (fnIdx >= 0) return { tier: 2, offset: fnIdx, nameLen: label.length, depth };
-
-  // Tier 3: full path contains query as substring
-  const pathIdx = pathLower.indexOf(q);
-  if (pathIdx >= 0) return { tier: 3, offset: pathIdx, nameLen: label.length, depth };
-
-  // Tier 4: fuzzy match on filename
-  const fnGap = fuzzyGap(q, filename);
-  if (fnGap >= 0) return { tier: 4, offset: fnGap, nameLen: label.length, depth };
-
-  // Tier 5: fuzzy match on full path
-  const pathGap = fuzzyGap(q, pathLower);
-  if (pathGap >= 0) return { tier: 5, offset: pathGap, nameLen: label.length, depth };
-
-  return null;
+  return scoreFileSearchFast(
+    query.toLowerCase(),
+    getFilename(pathLower),
+    pathLower,
+    label.length,
+    path.split("/").length,
+  );
 }
 
 /** Compare two scores — for Array.sort (ascending = best first) */
