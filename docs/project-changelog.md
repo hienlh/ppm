@@ -20,9 +20,17 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Lazy-Load File Tree + Palette Index, Session Tagging, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
+## [Unreleased] — Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
 
 ### Added
+- **File Compare** — Side-by-side diff viewer for comparing two files or file versions
+  - Four triggers: (1) tab right-click "Select for Compare" / "Compare with Selected", (2) file tree right-click (same), (3) command palette "Compare Files...", (4) keyboard shortcut `Mod+Alt+D`
+  - Reuses existing `DiffViewer` component + `git-diff` tab type + `/files/compare` API — no new backend endpoints
+  - Supports dirty buffer content: unsaved editor changes captured at select-time
+  - New zustand store `useCompareStore` persists selection across reload (strips dirty content >500KB to keep localStorage fast)
+  - Auto-clears selection on project switch via store subscription
+  - New keybinding action `compare-files` with customizable default `Mod+Alt+D` in Settings > Keybindings
+
 - **Lazy-Load File Tree + Palette Index** — Instant project opening on large codebases
   - Backend: `GET /api/project/:name/files/list?path=<rel>` for 1-level directory listing with gitignore decoration
   - Backend: `GET /api/project/:name/files/index` for flat full-project index (cached, watcher-invalidated)

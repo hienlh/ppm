@@ -16,6 +16,7 @@ import {
   Mic,
   RefreshCw,
   Plus,
+  Columns2,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -23,6 +24,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useExtensionStore } from "@/stores/extension-store";
+import { useCompareStore } from "@/stores/compare-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
@@ -40,6 +42,8 @@ interface CommandItem {
   group: "action" | "file" | "fs" | "db";
   connectionColor?: string | null;
   shortcut?: string;
+  /** True if gitignored — rendered with muted style for visual cue */
+  isIgnored?: boolean;
 }
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -190,6 +194,29 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },
       {
+        id: "compare-files",
+        label: "Compare Files...",
+        icon: Columns2,
+        group: "action",
+        keywords: "diff compare two files select",
+        shortcut: formatShortcut(getBinding("compare-files")),
+        action: () => {
+          const { activeTabId: tid, tabs: ts } = useTabStore.getState();
+          const active = ts.find((t) => t.id === tid);
+          const meta = active?.metadata as { filePath?: string; projectName?: string; unsavedContent?: string } | undefined;
+          if (active?.type === "editor" && meta?.filePath && meta?.projectName) {
+            useCompareStore.getState().setSelection({
+              filePath: meta.filePath,
+              projectName: meta.projectName,
+              dirtyContent: meta.unsavedContent,
+              label: basename(meta.filePath),
+            });
+          }
+          window.dispatchEvent(new CustomEvent("open-compare-picker"));
+          onClose();
+        },
+      },
+      {
         id: "settings", label: "Settings", icon: Settings,
         action: () => {
           if (sidebarCollapsed) toggleSidebar();
@@ -244,6 +271,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       icon: FileCode,
       group: "file" as const,
       keywords: f.path,
+      // Propagate gitignore flag for muted rendering (only present on /files/index entries)
+      isIgnored: "isIgnored" in f ? f.isIgnored : undefined,
       action: () => {
         openTab({
           type: "editor",

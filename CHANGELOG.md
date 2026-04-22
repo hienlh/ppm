@@ -2,6 +2,19 @@
 
 ## [0.13.3] - 2026-04-22
 
+### Added
+- **File Compare** — Side-by-side diff viewer for comparing two files or file versions
+  - Four ways to trigger: (1) tab context menu "Select for Compare" / "Compare with Selected", (2) file tree context menu (same), (3) command palette "Compare Files...", (4) keyboard shortcut `Mod+Alt+D`
+  - Reuses existing `DiffViewer` component + `/files/compare` API endpoint
+  - Supports dirty buffer content: unsaved editor changes captured at select-time
+  - New zustand store `useCompareStore` persists selection across reload (strips dirty content >500KB)
+  - Auto-clears selection on project switch
+  - New keybinding action `compare-files` with customizable default `Mod+Alt+D`
+
+### Changed
+- **Tab tag indicator moved to left-edge bar (VS Code style)**: Previously, tag colored the chat icon directly — caused false positives where untagged active tabs looked tagged (inherited `text-primary` blue). Now tag renders as a floating `2px × 60%-height` rounded-right bar at `left-0` of the tab wrapper. Zero layout shift (absolute positioned), no conflict with `border-b-2` active indicator. Icon color reverts to normal active/inactive states
+- **Streaming icon + typing dots now amber** (matches favicon streaming color `#f59e0b`) so the "in process" signal is consistent across tab icon and browser favicon. Applied via `text-amber-500` on icon wrapper during `isStreaming`; dots inherit via `bg-current`
+
 ### Fixed
 - **Compact indicator stuck after turn ends**: `compactStatus="compacting"` was only cleared by a matching `compact_boundary` from the SDK. SDK can emit `status: compacting` without a subsequent boundary (turn finishes first, stream tears down, or compaction is deferred), so the indicator stayed on the UI even after the session returned to idle. Fix:
   - Server persists `compactStatus` on `SessionEntry` and force-clears + broadcasts `compact_status: done` on turn `done` and in the consumer `finally` block (covers errors, closes, deferred compaction)

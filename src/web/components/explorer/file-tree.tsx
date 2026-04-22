@@ -25,6 +25,9 @@ import { useShallow } from "zustand/react/shallow";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
+import { useCompareStore } from "@/stores/compare-store";
+import { openCompareTab } from "@/lib/open-compare-tab";
+import { toast } from "sonner";
 import { cn, basename } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -119,6 +122,7 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
     })),
   );
   const openTab = useTabStore((s) => s.openTab);
+  const compareSelection = useCompareStore((s) => s.selection);
   const isExpanded = expandedPaths.has(node.path);
   const isDir = node.type === "directory";
   const isSelected = selectedFiles.includes(node.path);
@@ -270,6 +274,19 @@ const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, on
             <Download className="size-3.5 mr-2" />
             Download{isDir ? " as Zip" : ""}
           </ContextMenuItem>
+          {!isDir && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => onAction("select-for-compare", node)}>
+                Select for Compare
+              </ContextMenuItem>
+              {compareSelection && compareSelection.projectName === projectName && compareSelection.filePath !== node.path && (
+                <ContextMenuItem onClick={() => onAction("compare-with-selected", node)}>
+                  Compare with Selected ({compareSelection.label})
+                </ContextMenuItem>
+              )}
+            </>
+          )}
           {!isDir && selectedFiles.length === 2 && (
             <>
               <ContextMenuSeparator />
@@ -445,9 +462,33 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     if (e.dataTransfer.files.length > 0) uploadFiles("", e.dataTransfer.files);
   }
 
-  function handleAction(action: string, node: FileNode) {
+  async function handleAction(action: string, node: FileNode) {
     if (action === "copy-path") {
       navigator.clipboard.writeText(node.path).catch(() => {});
+      return;
+    }
+    if (action === "select-for-compare") {
+      useCompareStore.getState().setSelection({
+        filePath: node.path,
+        projectName: activeProject!.name,
+        label: node.name,
+      });
+      return;
+    }
+    if (action === "compare-with-selected") {
+      const sel = useCompareStore.getState().selection;
+      if (!sel) return;
+      try {
+        await openCompareTab(
+          { path: sel.filePath, dirtyContent: sel.dirtyContent },
+          { path: node.path },
+          activeProject!.name,
+        );
+        useCompareStore.getState().clearSelection();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Compare failed";
+        toast.error(msg);
+      }
       return;
     }
     if (action === "download") {

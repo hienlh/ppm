@@ -24,6 +24,7 @@ import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
 import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
+import { ComparePicker } from "@/components/editor/compare-picker";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { UpgradeBanner } from "@/components/layout/upgrade-banner";
 import { ImageOverlay } from "@/components/shared/image-overlay";
@@ -298,6 +299,9 @@ export function App() {
 
         {/* Command palette (Shift+Shift) */}
         <CommandPalette open={paletteOpen} onClose={closePalette} initialQuery={paletteInitialQuery} />
+
+        {/* Compare Files picker (Mod+Alt+D, palette, context menus) — singleton */}
+        <ComparePicker />
 
         {/* Global bug report popup */}
         <BugReportPopup />

@@ -16,6 +16,9 @@ import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
+import { useCompareStore } from "@/stores/compare-store";
+import { openCompareTab } from "@/lib/open-compare-tab";
+import { toast } from "sonner";
 import { useTabDrag } from "@/hooks/use-tab-drag";
 import { useTouchTabDrag, wasTouchDragRecent } from "@/hooks/use-touch-tab-drag";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
@@ -25,7 +28,8 @@ import {
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
   ContextMenuItem, ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import { Tag, Check } from "lucide-react";
+import { Tag, Check, Columns2 } from "lucide-react";
+import { basename } from "@/lib/utils";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
@@ -128,8 +132,73 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
     }
   }, []);
 
+  // Compare selection — re-renders menu when selection changes
+  const compareSelection = useCompareStore((s) => s.selection);
+
   // File action dialog state for tab context menu (rename/delete)
   const [fileActionState, setFileActionState] = useState<{ action: string; node: FileNode; tabId: string } | null>(null);
+
+  /**
+   * Build "Select for Compare" + "Compare with Selected" menu items for a tab.
+   * Returns null for non-file tabs so menu stays clean.
+   */
+  function compareMenuItems(tab: Tab): React.ReactNode {
+    if (tab.type !== "editor") return null;
+    const filePath = tab.metadata?.filePath as string | undefined;
+    const projectName = tab.metadata?.projectName as string | undefined;
+    if (!filePath || !projectName) return null;
+
+    // Only show "Compare with Selected" when same project (cross-project
+    // selection is auto-cleared on project switch, but guard covers the
+    // brief window before the subscription fires).
+    const hasDifferentSelection =
+      compareSelection != null &&
+      compareSelection.projectName === projectName &&
+      compareSelection.filePath !== filePath;
+
+    return (
+      <>
+        <ContextMenuItem
+          onClick={() => {
+            const unsaved = tab.metadata?.unsavedContent as string | undefined;
+            useCompareStore.getState().setSelection({
+              filePath,
+              projectName,
+              dirtyContent: unsaved,
+              label: basename(filePath),
+            });
+          }}
+        >
+          <Columns2 className="size-3.5 mr-2" />
+          Select for Compare
+        </ContextMenuItem>
+        {hasDifferentSelection && (
+          <ContextMenuItem
+            onClick={async () => {
+              const sel = useCompareStore.getState().selection;
+              if (!sel) return;
+              const unsaved = tab.metadata?.unsavedContent as string | undefined;
+              try {
+                await openCompareTab(
+                  { path: sel.filePath, dirtyContent: sel.dirtyContent },
+                  { path: filePath, dirtyContent: unsaved },
+                  projectName,
+                );
+                useCompareStore.getState().clearSelection();
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : "Compare failed";
+                toast.error(msg);
+              }
+            }}
+          >
+            <Columns2 className="size-3.5 mr-2" />
+            Compare with Selected ({compareSelection!.label})
+          </ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
+      </>
+    );
+  }
 
   /** Handle context menu actions on a tab */
   const handleTabContextAction = useCallback((tab: Tab, action: string) => {
@@ -257,34 +326,39 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               onRename={tab.type === "chat" ? (title) => handleRenameTab(tab, title) : undefined}
               onContextAction={(action) => handleTabContextAction(tab, action)}
               tagColor={sessionId ? sessionTagMap[sessionId]?.color : undefined}
-              extraMenuContent={sessionId && projectTags.length > 0 ? (
+              extraMenuContent={
                 <>
-                  <ContextMenuSub>
-                    <ContextMenuSubTrigger>
-                      <Tag className="size-3.5 mr-2" />
-                      Set Tag
-                    </ContextMenuSubTrigger>
-                    <ContextMenuSubContent>
-                      {projectTags.map((pt) => (
-                        <ContextMenuItem key={pt.id} onClick={() => assignTagToSession(sessionId, pt.id)}>
-                          <span className="size-2.5 rounded-full mr-2 shrink-0" style={{ backgroundColor: pt.color }} />
-                          {pt.name}
-                          {sessionTagMap[sessionId]?.id === pt.id && <Check className="size-3 ml-auto" />}
-                        </ContextMenuItem>
-                      ))}
-                      {sessionTagMap[sessionId] && (
-                        <>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem onClick={() => assignTagToSession(sessionId, null)}>
-                            Remove tag
-                          </ContextMenuItem>
-                        </>
-                      )}
-                    </ContextMenuSubContent>
-                  </ContextMenuSub>
-                  <ContextMenuSeparator />
+                  {compareMenuItems(tab)}
+                  {sessionId && projectTags.length > 0 && (
+                    <>
+                      <ContextMenuSub>
+                        <ContextMenuSubTrigger>
+                          <Tag className="size-3.5 mr-2" />
+                          Set Tag
+                        </ContextMenuSubTrigger>
+                        <ContextMenuSubContent>
+                          {projectTags.map((pt) => (
+                            <ContextMenuItem key={pt.id} onClick={() => assignTagToSession(sessionId, pt.id)}>
+                              <span className="size-2.5 rounded-full mr-2 shrink-0" style={{ backgroundColor: pt.color }} />
+                              {pt.name}
+                              {sessionTagMap[sessionId]?.id === pt.id && <Check className="size-3 ml-auto" />}
+                            </ContextMenuItem>
+                          ))}
+                          {sessionTagMap[sessionId] && (
+                            <>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem onClick={() => assignTagToSession(sessionId, null)}>
+                                Remove tag
+                              </ContextMenuItem>
+                            </>
+                          )}
+                        </ContextMenuSubContent>
+                      </ContextMenuSub>
+                      <ContextMenuSeparator />
+                    </>
+                  )}
                 </>
-              ) : undefined}
+              }
             />
             );
           })}

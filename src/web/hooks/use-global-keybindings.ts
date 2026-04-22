@@ -4,6 +4,8 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useKeybindingsStore, parseCombo, eventMatchesCombo } from "@/stores/keybindings-store";
 import { useExtensionStore } from "@/stores/extension-store";
+import { useCompareStore } from "@/stores/compare-store";
+import { basename } from "@/lib/utils";
 
 /** Dispatch this event to open the command palette from anywhere, optionally with initial query */
 export function openCommandPalette(initialQuery?: string) {
@@ -153,6 +155,24 @@ export function useGlobalKeybindings() {
       if (match(e, "voice-input")) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("toggle-voice-input"));
+        return;
+      }
+
+      // Compare Files — seed A from active editor tab if applicable, then open picker
+      if (match(e, "compare-files")) {
+        e.preventDefault();
+        const { activeTabId, tabs } = useTabStore.getState();
+        const active = tabs.find((t) => t.id === activeTabId);
+        const meta = active?.metadata as { filePath?: string; projectName?: string; unsavedContent?: string } | undefined;
+        if (active?.type === "editor" && meta?.filePath && meta?.projectName) {
+          useCompareStore.getState().setSelection({
+            filePath: meta.filePath,
+            projectName: meta.projectName,
+            dirtyContent: meta.unsavedContent,
+            label: basename(meta.filePath),
+          });
+        }
+        window.dispatchEvent(new CustomEvent("open-compare-picker"));
         return;
       }
 

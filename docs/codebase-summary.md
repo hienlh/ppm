@@ -347,6 +347,8 @@ src/
   - **PanelStore** — Grid layout, panel creation, keep-alive snapshots
   - **FileStore** — File cache
   - **SettingsStore** — Theme, sidebar, git view, device name
+  - **CompareStore** — File compare selection (path, project, dirty content); persists to localStorage with >500KB guard; auto-clears on project switch
+  - **KeybindingsStore** — Custom keybinding overrides (includes `compare-files` action with default `Mod+Alt+D`)
 - **Pattern:** Zustand for state, React.lazy() for tab content splitting
 
 ## Data Flow Diagrams
