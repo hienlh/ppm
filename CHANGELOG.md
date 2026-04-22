@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.4] - 2026-04-22
+
+### Fixed
+- **Command palette: `.git` files leaked into results + `.env` was missing**: Two compounding bugs. (1) Glob regex treated `**/X` as requiring at least one parent segment, so hardcoded `**/.git` exclude silently failed at repo root — users searching for e.g. `refs` got flooded with `.git/refs/heads/...` entries. (2) Gitignore logic hard-excluded all ignored paths, so `.env` never reached the index. Fix:
+  - `globPatternToRegex`: detect `**/` prefix, emit `(^|.*/)X(/|$)` so root-level matches work
+  - `walkForIndex`: soft-exclude gitignored FILES (surface with `isIgnored: true` flag), hard-exclude gitignored DIRECTORIES (skip recursion to avoid walking huge dirs)
+  - Palette: render `isIgnored` entries with `opacity-60` + tooltip so `.env` shows up visibly-muted, distinguishable from tracked files
+  - Tests updated — previously asserted the buggy behavior as correct
+
 ## [0.13.3] - 2026-04-22
 
 ### Added
