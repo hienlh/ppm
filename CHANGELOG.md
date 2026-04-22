@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.13.8] - 2026-04-23
+
+### Added
+- **DB viewer inline preview panel**: Eye icon opens a Monaco editor preview panel at the bottom of the data grid with syntax highlighting, beautify (JSON/XML), and word wrap toggles. "Open in Tab" button creates uniquely-named tabs (e.g. `Row #42 — users`) for side-by-side comparison
+
+### Fixed
+- **DB viewer duplicate "Untitled" tabs**: Cell/row viewer tabs now have unique IDs via `viewerKey` metadata in `deriveTabId`, allowing multiple viewer tabs to coexist
+- **Inline content tab title override**: Code editor no longer overrides caller-set titles for inline content tabs to "Untitled"
+- **Tab hover tooltip**: Tab bar now shows full title on hover for truncated tab names
+
 ## [0.13.7] - 2026-04-23
 
 ### Added
