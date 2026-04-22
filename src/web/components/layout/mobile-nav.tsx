@@ -15,9 +15,11 @@ import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
+import { useStreamingStore } from "@/stores/streaming-store";
 import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
 import { downloadFile } from "@/lib/file-download";
 import { FileActions } from "@/components/explorer/file-actions";
+import { api, projectUrl } from "@/lib/api-client";
 
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
@@ -63,6 +65,9 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const mobileScrollRef = useRef<HTMLDivElement>(null);
   const prevTabCount = useRef(tabs.length);
   const notifications = useNotificationStore((s) => s.notifications);
+  const streamingSessions = useStreamingStore((s) => s.sessions);
+  const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
+
   const { canScrollLeft, canScrollRight, scrollRight: doScrollRight } =
     useTabOverflow(mobileScrollRef);
   const hiddenUnread = getHiddenUnreadDirection(mobileScrollRef.current, tabRefs.current as Map<string, HTMLElement>, tabs, notifications);
@@ -154,6 +159,19 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
   // Active project avatar for the Projects button
   const { activeProject, projects, customOrder } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject, projects: s.projects, customOrder: s.customOrder })));
+
+  // Session tag map — same fetch pattern as desktop tab-bar so mobile tabs can show tag bar
+  const chatSessionIds = tabs.filter((t) => t.type === "chat" && t.metadata?.sessionId).map((t) => t.metadata!.sessionId as string);
+  useEffect(() => {
+    if (!activeProject?.name || chatSessionIds.length === 0) return;
+    api.get<{ sessions: { id: string; tag?: { id: number; name: string; color: string } | null }[] }>(
+      `${projectUrl(activeProject.name)}/chat/sessions?limit=50`,
+    ).then((data) => {
+      const map: Record<string, { id: number; name: string; color: string }> = {};
+      for (const s of data.sessions) { if (s.tag) map[s.id] = s.tag; }
+      setSessionTagMap(map);
+    }).catch(() => {});
+  }, [activeProject?.name, chatSessionIds.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   const ordered = resolveOrder(projects, customOrder ?? null);
   const allNames = ordered.map((p) => p.name);
   const activeIdx = ordered.findIndex((p) => p.name === activeProject?.name);
@@ -218,6 +236,8 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
             const entry = sessionId ? notifications.get(sessionId) : undefined;
             const notiType = entry && entry.count > 0 ? entry.type : null;
+            const tagColor = sessionId ? sessionTagMap[sessionId]?.color : undefined;
+            const isStreaming = sessionId ? streamingSessions.has(sessionId) : false;
             return (
               <button
                 key={tab.id}
@@ -231,15 +251,30 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
                 onTouchMove={cancelLongPress}
                 onContextMenu={(e) => e.preventDefault()}
                 className={cn(
-                  "flex items-center gap-1 px-3 h-12 whitespace-nowrap text-xs shrink-0 border-t-2 transition-colors",
+                  "relative flex items-center gap-1 px-3 h-12 whitespace-nowrap text-xs shrink-0 border-t-2 transition-colors",
                   isActive ? "border-primary bg-surface text-primary" : "border-transparent text-text-secondary",
                 )}
               >
-                <span className="relative">
+                {tagColor && (
+                  // Tag identity marker — VS Code-style vertical bar on left edge, matches desktop tab
+                  <span
+                    aria-hidden
+                    className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full pointer-events-none"
+                    style={{ backgroundColor: tagColor }}
+                  />
+                )}
+                <span className={cn("relative", isStreaming && "text-amber-500")}>
                   <Icon className="size-4" />
-                  {notiType && !isActive && (
+                  {isStreaming ? (
+                    // Messenger-style typing dots inside chat bubble — inherits amber via bg-current
+                    <span aria-hidden className="absolute inset-0 flex items-center justify-center gap-[1.5px]">
+                      <span className="tab-typing-dot size-[2px] rounded-full bg-current" />
+                      <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.15s" }} />
+                      <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.3s" }} />
+                    </span>
+                  ) : notiType && !isActive ? (
                     <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notiType))} />
-                  )}
+                  ) : null}
                 </span>
                 <span className="max-w-[80px] truncate">{tab.title}</span>
                 {tab.closable && (
