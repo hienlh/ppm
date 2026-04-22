@@ -101,14 +101,14 @@ export function DraggableTab({
       )}
     >
       <span
-        // No-tag: force neutral gray (overrides parent text-primary for active tabs) so untagged
-        // tabs don't look like they have a blue tag. Active state is still signaled via border + title color.
-        className={cn("relative", !tagColor && "text-text-secondary")}
-        style={tagColor ? { color: tagColor } : undefined}
+        // Streaming: force amber (matches favicon streaming bg) so typing state is unmistakable
+        // regardless of tab active state. Otherwise inherits parent button's color (primary/text-secondary).
+        // Tag identity is now shown as a separate left-edge bar (see wrapper div below), not icon color.
+        className={cn("relative", isStreaming && "text-amber-500")}
       >
         <Icon className="size-4" />
         {isStreaming ? (
-          // Messenger-style typing dots inside chat bubble — inherits current icon color
+          // Messenger-style typing dots inside chat bubble — inherits current icon color (amber while streaming)
           <span aria-hidden className="absolute inset-0 flex items-center justify-center gap-[1.5px]">
             <span className="tab-typing-dot size-[2px] rounded-full bg-current" />
             <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.15s" }} />
@@ -161,6 +161,14 @@ export function DraggableTab({
     <div className="relative flex items-center">
       {showDropBefore && (
         <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-primary rounded-full z-10" />
+      )}
+      {tagColor && (
+        // Tag identity marker — VS Code-style vertical bar on left edge (centered, ~60% height, rounded right)
+        <span
+          aria-hidden
+          className="absolute left-0 top-2 bottom-2 w-[2px] rounded-r-full pointer-events-none"
+          style={{ backgroundColor: tagColor }}
+        />
       )}
       {onContextAction ? (
         <ContextMenu>
