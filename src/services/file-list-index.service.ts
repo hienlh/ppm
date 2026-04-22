@@ -151,20 +151,24 @@ function walkForIndex(
     const relPosix = relPath.split("\\").join("/");
 
     // Apply glob exclusion (check full relative path and bare entry name)
+    // These are HARD excludes — .git, node_modules, dist, etc.
     if (matchesGlob(relPosix, allExclude)) continue;
     if (matchesGlob(entry.name, allExclude)) continue;
 
-    // Apply gitignore rules
+    // Apply gitignore rules — SOFT exclude for files (include with isIgnored flag),
+    // HARD exclude for directories (skip recursion to avoid walking huge gitignored dirs).
+    let isIgnored = false;
     if (ig) {
       const checkPath = entry.isDirectory() ? `${relPosix}/` : relPosix;
-      if (ig.ignores(checkPath) || ig.ignores(relPosix)) continue;
+      isIgnored = ig.ignores(checkPath) || ig.ignores(relPosix);
+      if (isIgnored && entry.isDirectory()) continue;
     }
 
     if (entry.isDirectory()) {
       results.push({ path: relPosix, name: entry.name, type: "directory" });
       walkForIndex(rootPath, fullPath, allExclude, ig, results);
     } else {
-      results.push({ path: relPosix, name: entry.name, type: "file" });
+      results.push({ path: relPosix, name: entry.name, type: "file", ...(isIgnored && { isIgnored: true }) });
     }
   }
 }

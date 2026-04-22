@@ -25,6 +25,8 @@ export interface FileEntry {
   path: string;
   name: string;
   type: "file" | "directory";
+  /** True if file is excluded by .gitignore but still surfaced in palette for discoverability (e.g. .env) */
+  isIgnored?: boolean;
 }
 
 /** Entry returned by /files/list (single directory level) */

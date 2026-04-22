@@ -272,7 +272,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       group: "file" as const,
       keywords: f.path,
       // Propagate gitignore flag for muted rendering (only present on /files/index entries)
-      isIgnored: "isIgnored" in f ? f.isIgnored : undefined,
+      isIgnored: ("isIgnored" in f ? f.isIgnored : undefined) as boolean | undefined,
       action: () => {
         openTab({
           type: "editor",
@@ -529,7 +529,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
                     i === selectedIdx
                       ? "bg-accent/15 text-text-primary"
                       : "text-text-secondary hover:bg-surface-elevated"
-                  }`}
+                  } ${cmd.isIgnored ? "opacity-60" : ""}`}
+                  title={cmd.isIgnored ? "Gitignored file" : undefined}
                 >
                   <Icon className="size-4 shrink-0" />
                   <span className="truncate">{cmd.label}</span>

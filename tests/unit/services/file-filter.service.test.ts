@@ -31,24 +31,25 @@ describe("file-filter.service", () => {
   });
 
   describe("matchesGlob", () => {
-    it("matches **/.git patterns at depth with slash", () => {
-      // **/.git means: any path segment(s), then /.git
-      expect(matchesGlob("src/.git", ["**/.git"])).toBe(true);
-      expect(matchesGlob("src/.git/HEAD", ["**/.git"])).toBe(true);
-      expect(matchesGlob("deep/src/.git", ["**/.git"])).toBe(true);
+    it("matches **/.git patterns at any depth INCLUDING root", () => {
+      // VS Code glob spec: **/X matches X at any depth, including root level
+      expect(matchesGlob(".git", ["**/.git"])).toBe(true);         // root
+      expect(matchesGlob("src/.git", ["**/.git"])).toBe(true);     // nested
+      expect(matchesGlob("src/.git/HEAD", ["**/.git"])).toBe(true); // inside dir
+      expect(matchesGlob("deep/src/.git", ["**/.git"])).toBe(true); // deeply nested
     });
 
-    it("does not match partial .git names or shallow .git", () => {
-      expect(matchesGlob(".git", ["**/.git"])).toBe(false); // no leading path
+    it("does not match partial .git names", () => {
       expect(matchesGlob("dotgit.txt", ["**/.git"])).toBe(false);
       expect(matchesGlob(".git.lock", ["**/.git"])).toBe(false);
+      expect(matchesGlob(".gitignore", ["**/.git"])).toBe(false);
     });
 
-    it("matches **/node_modules pattern at depth", () => {
-      // **/node_modules with trailing slash in pattern: ^.*/node_modules(/|$)
-      expect(matchesGlob("src/node_modules", ["**/node_modules"])).toBe(true);
-      expect(matchesGlob("a/b/node_modules", ["**/node_modules"])).toBe(true);
-      expect(matchesGlob("node_modules", ["**/node_modules"])).toBe(false); // doesn't have leading path
+    it("matches **/node_modules pattern at any depth INCLUDING root", () => {
+      expect(matchesGlob("node_modules", ["**/node_modules"])).toBe(true);       // root
+      expect(matchesGlob("src/node_modules", ["**/node_modules"])).toBe(true);   // nested
+      expect(matchesGlob("a/b/node_modules", ["**/node_modules"])).toBe(true);   // deep
+      expect(matchesGlob("node_modules/pkg", ["**/node_modules"])).toBe(true);   // contents
     });
 
     it("matches *.log pattern at any level (no slash means any depth)", () => {

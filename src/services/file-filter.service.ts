@@ -104,6 +104,12 @@ function globPatternToRegex(pattern: string): RegExp {
   // Strip leading ./
   if (p.startsWith("./")) p = p.slice(2);
 
+  // Leading `**/` should match zero-or-more path segments, INCLUDING root.
+  // So `**/.git` matches both `.git` (at root) and `src/.git` (nested).
+  // Strip `**/` prefix here so it doesn't force a leading path; we handle it via optional group below.
+  const hasStarstarPrefix = p.startsWith("**/");
+  if (hasStarstarPrefix) p = p.slice(3);
+
   const escaped = p
     .replace(/[.+^${}()|[\]]/g, "\\$&") // escape regex special chars (not * ?)
     .replace(/\*\*/g, "\x00")            // temp: ** placeholder
@@ -111,10 +117,17 @@ function globPatternToRegex(pattern: string): RegExp {
     .replace(/\x00/g, ".*")             // ** = any path
     .replace(/\?/g, "[^/]");            // ? = single non-slash char
 
-  // Pattern with no slash (e.g. *.log) → match at any depth
-  const re = p.includes("/")
-    ? new RegExp(`^${escaped}(/|$)`)
-    : new RegExp(`(^|/)${escaped}(/|$)`);
+  let re: RegExp;
+  if (hasStarstarPrefix) {
+    // `**/X` → match X at any depth including root: `(^|.*/)X(/|$)`
+    re = new RegExp(`(^|.*/)${escaped}(/|$)`);
+  } else if (p.includes("/")) {
+    // Anchored pattern with explicit path
+    re = new RegExp(`^${escaped}(/|$)`);
+  } else {
+    // Pattern with no slash (e.g. *.log) → match at any depth
+    re = new RegExp(`(^|/)${escaped}(/|$)`);
+  }
 
   regexCache.set(pattern, re);
   return re;
