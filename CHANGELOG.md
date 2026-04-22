@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.7] - 2026-04-23
+
+### Added
+- **Mobile code editor toolbar**: Bottom toolbar on touch devices with paste, undo/redo, tab and 18 symbol keys (brackets, quotes, operators). Matches terminal toolbar pattern. Paste uses Clipboard API on HTTPS, textarea fallback on HTTP. Visual viewport tracking keeps toolbar above mobile keyboard
+
 ## [0.13.6] - 2026-04-22
 
 ### Added
