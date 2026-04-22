@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.9] - 2026-04-23
+
+### Added
+- **Inline SQL result panel**: Run button in .sql files now executes queries inline, showing results in a bottom panel with DataGrid (supports eye icon preview, export, etc.). "Open in Tab" button opens full DB Viewer for advanced use
+- **Resizable preview panels**: Both DataGrid cell/row preview and SQL result panels now have drag-to-resize handles (min 80px)
+
 ## [0.13.8] - 2026-04-23
 
 ### Added

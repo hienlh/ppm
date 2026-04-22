@@ -1,6 +1,6 @@
 {
   "name": "@hienlh/ppm",
-  "version": "0.13.8",
+  "version": "0.13.9",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "author": "hienlh",
   "license": "MIT",
@@ -45,6 +45,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.81",
     "@codemirror/lang-sql": "^6.10.0",
+    "@glideapps/glide-data-grid": "^6.0.3",
     "@inquirer/prompts": "^8.3.0",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-switch": "^1.2.6",
