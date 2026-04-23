@@ -147,7 +147,7 @@ export function useTerminal(
         if (event.data.startsWith("{")) {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.type === "session" || msg.type === "error" || msg.type === "exited") {
+            if (msg.type === "session" || msg.type === "error" || msg.type === "exited" || msg.type === "ping") {
               if (msg.type === "session" && msg.id) {
                 actualSessionId.current = msg.id; // Save for reconnect
               }
