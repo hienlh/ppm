@@ -15,8 +15,9 @@ import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
 import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
 import { useConnections, type Connection } from "../database/use-connections";
-import { DataGrid } from "../database/data-grid";
-import type { DbQueryResult, DbColumnInfo } from "../database/use-database";
+import { GlideDataGrid } from "../database/glide-data-grid";
+import type { GridColumnSchema } from "../database/glide-grid-types";
+import type { DbQueryResult } from "../database/use-database";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -673,7 +674,7 @@ function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab
       : null
   ), [result]);
 
-  const querySchema = useMemo<DbColumnInfo[]>(() => (
+  const querySchema = useMemo<GridColumnSchema[]>(() => (
     (result?.columns ?? []).map((c) => ({ name: c, type: "text", nullable: true, pk: false, defaultValue: null }))
   ), [result?.columns]);
 
@@ -727,8 +728,9 @@ function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab
           </div>
         )}
         {tableData && (
-          <DataGrid
-            tableData={tableData} schema={querySchema} loading={false}
+          <GlideDataGrid
+            columns={tableData.columns} rows={tableData.rows} total={tableData.total} limit={tableData.limit}
+            schema={querySchema} loading={false}
             page={1} onPageChange={NOOP} onCellUpdate={NOOP}
             orderBy={null} orderDir="ASC" onToggleSort={NOOP}
             connectionName={connName}

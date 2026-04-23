@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Database, Loader2, AlertCircle } from "lucide-react";
 import { useSqlite } from "./use-sqlite";
 import { SqliteTableList } from "./sqlite-table-list";
-import { SqliteDataGrid } from "./sqlite-data-grid";
+import { GlideDataGrid } from "../database/glide-data-grid";
 import { SqliteQueryEditor } from "./sqlite-query-editor";
 
 interface SqliteViewerProps {
@@ -118,17 +118,26 @@ function SqliteViewerInner({
           </div>
         </div>
 
-        {/* Data grid */}
+        {/* Data grid — adapter from sqlite rowid-based API to GlideDataGrid's pk-based API */}
         <div className={`flex-1 overflow-hidden ${queryPanelOpen ? "max-h-[60%]" : ""}`}>
-          <SqliteDataGrid
-            tableData={sqlite.tableData}
-            schema={sqlite.schema}
-            loading={sqlite.loading}
-            page={sqlite.page}
-            onPageChange={sqlite.setPage}
-            onCellUpdate={sqlite.updateCell}
-            onRowDelete={sqlite.deleteRow}
-          />
+          {sqlite.tableData ? (
+            <GlideDataGrid
+              columns={sqlite.tableData.columns}
+              rows={sqlite.tableData.rows}
+              total={sqlite.tableData.total}
+              limit={sqlite.tableData.limit}
+              schema={sqlite.schema.map((c) => ({ name: c.name, type: c.type, nullable: !c.notnull, pk: !!c.pk, defaultValue: c.dflt_value, fk: c.fk ?? null }))}
+              loading={sqlite.loading}
+              page={sqlite.page}
+              onPageChange={sqlite.setPage}
+              onCellUpdate={(_pkCol, pkVal, col, val) => sqlite.updateCell(pkVal as number, col, val)}
+              onRowDelete={(_pkCol, pkVal) => sqlite.deleteRow(pkVal as number)}
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
+              {sqlite.loading ? <Loader2 className="size-4 animate-spin" /> : "Select a table"}
+            </div>
+          )}
         </div>
 
         {/* Query editor (collapsible) */}

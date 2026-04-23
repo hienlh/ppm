@@ -4,7 +4,7 @@ import { api } from "@/lib/api-client";
 import { useDatabase, type DbColumnInfo } from "./use-database";
 import { SqlQueryEditor } from "./sql-query-editor";
 import { ExportButton } from "./export-button";
-import { DataGrid } from "./data-grid";
+import { GlideDataGrid } from "./glide-data-grid";
 import type { SchemaInfo } from "./sql-completion-provider";
 
 /** Parse WHERE "col" ILIKE '%val%' clauses from SQL */
@@ -141,6 +141,10 @@ export function DatabaseViewer({ metadata }: Props) {
     setShowingQueryResult(false);
     db.toggleSort(col);
   }, [db.toggleSort]);
+  const handleClearSort = useCallback(() => {
+    setShowingQueryResult(false);
+    db.clearSort();
+  }, [db.clearSort]);
   const handlePageChange = useCallback((p: number) => {
     setShowingQueryResult(false);
     db.setPage(p);
@@ -178,7 +182,8 @@ export function DatabaseViewer({ metadata }: Props) {
         <div className="shrink-0 border-b border-border" style={{ height: queryHeight }}>
           <SqlQueryEditor
             onExecute={handleExecuteQuery} loading={db.queryLoading}
-            defaultValue={defaultQuery} schemaInfo={schemaInfo} />
+            defaultValue={defaultQuery} schemaInfo={schemaInfo}
+            cacheKey={connectionId ? String(connectionId) : undefined} />
         </div>
 
         {/* Resize handle */}
@@ -189,10 +194,14 @@ export function DatabaseViewer({ metadata }: Props) {
 
         {/* Bottom panel: table data OR query results */}
         <div className="flex-1 overflow-hidden">
-          {showTableGrid && (
-            <DataGrid tableData={db.tableData} schema={db.schema} loading={db.loading}
-              page={db.page} onPageChange={handlePageChange} onCellUpdate={db.updateCell} onRowDelete={db.deleteRow}
-              orderBy={db.orderBy} orderDir={db.orderDir} onToggleSort={handleToggleSort}
+          {showTableGrid && db.tableData && (
+            <GlideDataGrid
+              columns={db.tableData.columns} rows={db.tableData.rows}
+              total={db.tableData.total} limit={db.tableData.limit}
+              schema={db.schema} loading={db.loading}
+              page={db.page} onPageChange={handlePageChange}
+              onCellUpdate={db.updateCell} onRowDelete={db.deleteRow}
+              orderBy={db.orderBy} orderDir={db.orderDir} onToggleSort={handleToggleSort} onClearSort={handleClearSort}
               onBulkDelete={db.bulkDelete} onInsertRow={db.insertRow}
               connectionId={connectionId} selectedTable={db.selectedTable} selectedSchema={db.selectedSchema}
               connectionName={connectionName} columnFilters={columnFilters} onColumnFilter={handleColumnFilter} />
@@ -244,8 +253,10 @@ function QueryResultPanel({ result, error, loading, schema, connectionName }: {
 
       {queryTableData && (
         <div className="flex-1 overflow-hidden">
-          <DataGrid
-            tableData={queryTableData} schema={querySchema} loading={!!loading}
+          <GlideDataGrid
+            columns={queryTableData.columns} rows={queryTableData.rows}
+            total={queryTableData.total} limit={queryTableData.limit}
+            schema={querySchema} loading={!!loading}
             page={1} onPageChange={NOOP} onCellUpdate={NOOP}
             orderBy={null} orderDir="ASC" onToggleSort={NOOP}
             connectionName={connectionName}

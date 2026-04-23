@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { api } from "@/lib/api-client";
 
 export interface DbTableInfo { name: string; schema: string; rowCount: number }
-export interface DbColumnInfo { name: string; type: string; nullable: boolean; pk: boolean; defaultValue: string | null }
+export interface DbColumnInfo { name: string; type: string; nullable: boolean; pk: boolean; defaultValue: string | null; fk?: { table: string; column: string } | null }
 export interface DbQueryResult { columns: string[]; rows: Record<string, unknown>[]; rowsAffected: number; changeType: "select" | "modify"; executionTimeMs?: number }
 interface DbTableData { columns: string[]; rows: Record<string, unknown>[]; total: number; page: number; limit: number }
 
@@ -146,6 +146,14 @@ export function useDatabase(connectionId: number) {
     fetchTableData(undefined, undefined, 1, newCol, newDir);
   }, [orderBy, orderDir, fetchTableData]);
 
+  /** Clear sort entirely */
+  const clearSort = useCallback(() => {
+    setOrderBy(null);
+    setOrderDir("ASC");
+    setPageState(1);
+    fetchTableData(undefined, undefined, 1, null, "ASC");
+  }, [fetchTableData]);
+
   /** Bulk delete rows */
   const bulkDelete = useCallback(async (pkColumn: string, pkValues: unknown[]) => {
     if (!selectedTable) return;
@@ -191,7 +199,7 @@ export function useDatabase(connectionId: number) {
   return {
     selectedTable, selectedSchema, selectTable, tableData, schema,
     loading, error, page, setPage: changePage,
-    orderBy, orderDir, toggleSort,
+    orderBy, orderDir, toggleSort, clearSort,
     queryResult, queryError, queryLoading, executeQuery,
     updateCell, deleteRow, bulkDelete, insertRow,
     refreshData: fetchTableData, queryAsTable,
