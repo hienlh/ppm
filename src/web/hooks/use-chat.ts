@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, startTransition } from "react";
 import { useWebSocket } from "./use-websocket";
 import { api, getAuthToken, projectUrl } from "@/lib/api-client";
 import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expansions";
@@ -172,32 +172,39 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     return true;
   }, []);
 
-  /** Flush refs into React state (called from rAF or directly) */
+  /** Flush refs into React state (called from throttled timer or directly) */
   const flushMessages = useCallback(() => {
     syncRafRef.current = 0;
     const content = streamingContentRef.current;
     const events = [...streamingEventsRef.current];
     const account = streamingAccountRef.current;
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.role === "assistant" && !last.id.startsWith("final-")) {
-        return [...prev.slice(0, -1), { ...last, content, events, ...account }];
-      }
-      return [...prev, {
-        id: `streaming-${Date.now()}`,
-        role: "assistant" as const,
-        content,
-        events,
-        timestamp: new Date().toISOString(),
-        ...account,
-      }];
+    // startTransition marks streaming updates as low-priority so React
+    // yields to user interactions (text selection, copy, scroll) first.
+    startTransition(() => {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant" && !last.id.startsWith("final-")) {
+          return [...prev.slice(0, -1), { ...last, content, events, ...account }];
+        }
+        return [...prev, {
+          id: `streaming-${Date.now()}`,
+          role: "assistant" as const,
+          content,
+          events,
+          timestamp: new Date().toISOString(),
+          ...account,
+        }];
+      });
     });
   }, []);
 
-  /** Throttled sync — batches rapid WS events into one render per animation frame */
+  /** Throttled sync — batches rapid WS events into one render per ~100ms.
+   *  Previously used rAF (~16ms / 60fps) which blocked the main thread with
+   *  frequent ReactMarkdown re-parses, causing lag during text selection/copy.
+   *  100ms (10fps) keeps streaming smooth while leaving idle time for interactions. */
   const syncMessages = useCallback(() => {
     if (!syncRafRef.current) {
-      syncRafRef.current = requestAnimationFrame(flushMessages);
+      syncRafRef.current = window.setTimeout(flushMessages, 100) as unknown as number;
     }
   }, [flushMessages]);
 
@@ -414,7 +421,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           playNotificationSound("done");
         }
         // Cancel any pending throttled sync — done handler writes final state directly
-        if (syncRafRef.current) { cancelAnimationFrame(syncRafRef.current); syncRafRef.current = 0; }
+        if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
         // Finalize the streaming message — preserve SDK UUID for fork/rewind
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];
@@ -624,7 +631,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     bashOutputRef.current.clear();
-    if (syncRafRef.current) { cancelAnimationFrame(syncRafRef.current); syncRafRef.current = 0; }
+    if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
     setIsConnected(false);
     // Reset team state
     teamActivityRef.current = { teamNames: new Set(), messages: [] };
@@ -669,7 +676,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
       if (isFollowUp) {
         // Cancel pending throttled sync before finalizing
-        if (syncRafRef.current) { cancelAnimationFrame(syncRafRef.current); syncRafRef.current = 0; }
+        if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
         // Streaming follow-up: finalize current assistant message, then send
         const finalContent = streamingContentRef.current;
         const finalEvents = [...streamingEventsRef.current];

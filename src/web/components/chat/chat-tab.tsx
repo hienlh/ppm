@@ -288,6 +288,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     setSlashFilter("");
   }, []);
 
+  // Stable callback: clear external paths once consumed (avoids inline lambda breaking MessageInput memo)
+  const handleExternalPathsConsumed = useCallback(() => setExternalPaths(null), []);
+
   // --- Disambiguation picker handler (OS drag resolve with multiple matches) ---
   const handleDisambiguate = useCallback((matches: FileNode[]) => {
     setDisambiguateItems(matches);
@@ -470,7 +473,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           fileSelected={fileSelected}
           externalFiles={externalFiles}
           externalPaths={externalPaths}
-          onExternalPathsConsumed={() => setExternalPaths(null)}
+          onExternalPathsConsumed={handleExternalPathsConsumed}
           onDisambiguate={handleDisambiguate}
           permissionMode={permissionMode}
           onModeChange={setPermissionMode}

@@ -107,9 +107,9 @@ export const MessageInput = memo(function MessageInput({
     typeof CSS === "undefined" || !CSS.supports("field-sizing", "content"),
   );
 
-  // File index from store — replaces /files/tree?depth=5 fetch
-  const fileIndex = useFileStore((s) => s.fileIndex);
-  const indexStatus = useFileStore((s) => s.indexStatus);
+  // File index: subscribe imperatively to avoid re-renders on every file store update.
+  // The component only needs fileIndex for the effect below (populating fileItemsRef),
+  // not for rendering — so we use Zustand's subscribe() instead of selector hooks.
 
   /** Write value to both textareas + ref + update hasText state */
   const writeTextareas = useCallback((newValue: string) => {
@@ -208,18 +208,32 @@ export const MessageInput = memo(function MessageInput({
     return () => window.removeEventListener("ppm:slash-items-refresh", handler);
   }, [fetchSlashItems]);
 
-  // Sync file picker items from store index — no network call needed
+  // Sync file picker items from store index — subscribe imperatively to avoid re-renders.
+  // Reads fileIndex on mount + whenever fileIndex/indexStatus changes in the store.
   useEffect(() => {
-    if (!projectName) {
-      fileItemsRef.current = [];
-      onFileItemsLoaded?.([]);
-      return;
-    }
-    // Convert FileEntry[] to FileNode[] — type field is now present on FileEntry
-    const nodes: FileNode[] = fileIndex.map((e) => ({ name: e.name, path: e.path, type: e.type }));
-    fileItemsRef.current = nodes;
-    onFileItemsLoaded?.(nodes);
-  }, [projectName, fileIndex, indexStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+    const syncFromStore = () => {
+      if (!projectName) {
+        fileItemsRef.current = [];
+        onFileItemsLoaded?.([]);
+        return;
+      }
+      const { fileIndex } = useFileStore.getState();
+      const nodes: FileNode[] = fileIndex.map((e) => ({ name: e.name, path: e.path, type: e.type }));
+      fileItemsRef.current = nodes;
+      onFileItemsLoaded?.(nodes);
+    };
+    syncFromStore();
+    // Track previous values to only sync on relevant changes
+    let prevIdx = useFileStore.getState().fileIndex;
+    let prevStatus = useFileStore.getState().indexStatus;
+    return useFileStore.subscribe((state) => {
+      if (state.fileIndex !== prevIdx || state.indexStatus !== prevStatus) {
+        prevIdx = state.fileIndex;
+        prevStatus = state.indexStatus;
+        syncFromStore();
+      }
+    });
+  }, [projectName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle parent selecting a slash item
   useEffect(() => {

@@ -68,6 +68,18 @@ export function useGlobalKeybindings() {
       // Skip all shortcuts during IME composition
       if (composing || e.isComposing) return;
 
+      // When focus is inside a text input, skip most keybinding checks to
+      // avoid lag on every keystroke (Shift+arrows, Ctrl+A, Ctrl+C, etc.).
+      // Only "locked" shortcuts that override browser defaults still fire.
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isTextInput = tag === "TEXTAREA" || tag === "INPUT" || (e.target as HTMLElement)?.isContentEditable;
+      if (isTextInput) {
+        // Still need to intercept Mod+S (save-prevent) inside text fields
+        const { matchesEvent: m } = useKeybindingsStore.getState();
+        if (m(e, "save-prevent")) { e.preventDefault(); }
+        return;
+      }
+
       // Re-read matchesEvent on each keydown to pick up live overrides
       const { matchesEvent: match } = useKeybindingsStore.getState();
 
