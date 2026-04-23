@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.11] - 2026-04-24
+
+### Fixed
+- **Chat input lag on text selection**: Shift+arrow, Ctrl+A, Ctrl+C keystrokes in textarea no longer run through 21+ global keybinding checks — early return guard skips all but save-prevent (Mod+S) when focus is inside text inputs
+- **Chat input re-renders from file store**: MessageInput now uses imperative Zustand subscribe() instead of hook selectors, preventing re-renders on file index updates
+- **Inline lambda breaking MessageInput memo**: Stabilized `onExternalPathsConsumed` callback with useCallback in ChatTab
+- **Streaming re-renders blocking main thread**: Replaced requestAnimationFrame (~16ms/60fps) with setTimeout(100ms) throttle and wrapped setMessages in startTransition for low-priority rendering
+
 ## [0.13.9] - 2026-04-23
 
 ### Added
