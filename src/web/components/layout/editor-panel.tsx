@@ -67,13 +67,13 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
             const isActive = tab.id === panel.activeTabId;
             if (!Component) {
               return (
-                <div key={tab.id} className={isActive ? "h-full w-full flex items-center justify-center text-muted-foreground" : "hidden"}>
+                <div key={tab.id} className={isActive ? "absolute inset-0 flex items-center justify-center text-muted-foreground" : "hidden"}>
                   Unknown tab type: {tab.type}
                 </div>
               );
             }
             return (
-              <div key={tab.id} className={isActive ? "h-full w-full" : "hidden"}>
+              <div key={tab.id} className="absolute inset-0" style={isActive ? undefined : { opacity: 0, pointerEvents: "none" }}>
                 <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-6 animate-spin text-primary" /></div>}>
                   <Component metadata={tab.metadata} tabId={tab.id} />
                 </Suspense>
