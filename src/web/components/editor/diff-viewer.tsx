@@ -4,7 +4,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { Loader2, FileCode, PanelLeftOpen, PanelRightOpen, Columns2, WrapText } from "lucide-react";
+import { Loader2, FileCode, WrapText } from "lucide-react";
 
 function getMonacoLanguage(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -41,12 +41,13 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const [fullFileDiff, setFullFileDiff] = useState<{ original: string; modified: string } | null>(null);
   const [loading, setLoading] = useState(!isInline);
   const [error, setError] = useState<string | null>(null);
-  const [expandMode, setExpandMode] = useState<"both" | "left" | "right">("both");
   const { wordWrap, toggleWordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap })));
   const monacoTheme = useMonacoTheme();
 
   // Measure container height — Monaco needs explicit pixel height on mobile
   const containerRef = useRef<HTMLDivElement>(null);
+  const diffEditorRef = useRef<import("monaco-editor").editor.IStandaloneDiffEditor | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
   const [containerHeight, setContainerHeight] = useState<number | undefined>();
 
   useEffect(() => {
@@ -125,7 +126,18 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
 
   // Force inline on mobile (<768px) since side-by-side is too narrow
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-  const renderSideBySide = !isMobile && expandMode === "both";
+  const renderSideBySide = !isMobile;
+
+  // Sync word wrap directly on EACH sub-editor, bypassing DiffEditor option propagation.
+  // Monaco DiffEditor uses wordWrapOverride1 internally for diff word wrap.
+  useEffect(() => {
+    const editor = diffEditorRef.current;
+    if (!editor) return;
+    const val: "on" | "off" = isMobile ? "on" : wordWrap ? "on" : "off";
+    editor.updateOptions({ diffWordWrap: val });
+    editor.getOriginalEditor().updateOptions({ wordWrapOverride1: val } as any);
+    editor.getModifiedEditor().updateOptions({ wordWrapOverride1: val } as any);
+  }, [wordWrap, isMobile, editorReady]);
 
   if (!projectName && !isInline) {
     return (
@@ -166,28 +178,6 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       {/* Toolbar */}
       {!isMobile && (
         <div className="flex items-center justify-end gap-0.5 px-2 py-0.5 border-b border-border shrink-0">
-          <button type="button"
-            onClick={() => setExpandMode(expandMode === "left" ? "both" : "left")}
-            className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "left" ? "bg-muted text-foreground" : ""}`}
-            title="Expand original"
-          >
-            <PanelLeftOpen className="size-3.5" />
-          </button>
-          <button type="button"
-            onClick={() => setExpandMode("both")}
-            className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "both" ? "bg-muted text-foreground" : ""}`}
-            title="Side by side"
-          >
-            <Columns2 className="size-3.5" />
-          </button>
-          <button type="button"
-            onClick={() => setExpandMode(expandMode === "right" ? "both" : "right")}
-            className={`p-1 rounded hover:bg-muted transition-colors ${expandMode === "right" ? "bg-muted text-foreground" : ""}`}
-            title="Expand modified"
-          >
-            <PanelRightOpen className="size-3.5" />
-          </button>
-          <div className="w-px h-3.5 bg-border mx-0.5 shrink-0" />
           <button type="button" onClick={toggleWordWrap} title="Toggle word wrap"
             className={`p-1 rounded hover:bg-muted transition-colors ${wordWrap ? "bg-muted text-foreground" : ""}`}
           >
@@ -204,10 +194,14 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
             original={original}
             modified={modified}
             theme={monacoTheme}
+            onMount={(editor) => {
+              diffEditorRef.current = editor;
+              setEditorReady(true);
+            }}
             options={{
               fontSize: isMobile ? 11 : 13,
               fontFamily: "Menlo, Monaco, Consolas, monospace",
-              wordWrap: isMobile ? "on" : wordWrap ? "on" : "off",
+              diffWordWrap: isMobile ? "on" : wordWrap ? "on" : "off",
               renderSideBySide,
               readOnly: true,
               automaticLayout: true,
