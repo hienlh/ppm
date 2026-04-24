@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.13] - 2026-04-24
+
+### Added
+- **DB CLI run command**: `ppm db run <name> <file.sql>` executes SQL files against saved connections. Supports multi-statement files and transactions (`BEGIN...COMMIT`). Respects readonly flag. Works with both SQLite (`db.exec()`) and PostgreSQL (`sql.unsafe()`)
+
 ## [0.13.12] - 2026-04-24
 
 ### Fixed
