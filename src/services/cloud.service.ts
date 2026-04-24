@@ -426,6 +426,61 @@ export function stopHeartbeat(): void {
   }
 }
 
+// ─── Alias Management ───────────────────────────────────────────────────
+
+/** Set or update device alias slug. Uses secret_key auth (no JWT needed). */
+export async function setAlias(slug: string): Promise<{ slug: string }> {
+  const device = getCloudDevice();
+  if (!device) throw new Error("Not linked to PPM Cloud. Run: ppm cloud link");
+
+  const res = await fetch(`${device.cloud_url}/api/devices/${device.device_id}/slug`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug, secret_key: device.secret_key }),
+  });
+
+  const data = await res.json() as { slug?: string; error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return { slug: data.slug! };
+}
+
+/** Remove device alias slug. Uses secret_key auth (no JWT needed). */
+export async function removeAlias(): Promise<void> {
+  const device = getCloudDevice();
+  if (!device) throw new Error("Not linked to PPM Cloud. Run: ppm cloud link");
+
+  const res = await fetch(`${device.cloud_url}/api/devices/${device.device_id}/slug`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug: null, secret_key: device.secret_key }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json() as { error?: string };
+    throw new Error(data.error ?? `HTTP ${res.status}`);
+  }
+}
+
+/** Get current device alias slug. Uses JWT auth. */
+export async function getAlias(): Promise<{ slug: string | null }> {
+  const device = getCloudDevice();
+  if (!device) throw new Error("Not linked to PPM Cloud. Run: ppm cloud link");
+
+  const auth = getCloudAuth();
+  if (!auth) throw new Error("Not logged in. Run: ppm cloud login");
+
+  const res = await fetch(`${device.cloud_url}/api/devices/${device.device_id}/slug`, {
+    headers: { Authorization: `Bearer ${auth.access_token}` },
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("Session expired. Run: ppm cloud login");
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const data = await res.json() as { slug?: string | null };
+  return { slug: data.slug ?? null };
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function ensurePpmDir(): void {
