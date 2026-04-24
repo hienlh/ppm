@@ -1,9 +1,14 @@
 # Changelog
 
+## [0.13.14] - 2026-04-24
+
+### Fixed
+- **DB CLI run multi-statement**: PostgreSQL `ppm db run` now splits SQL into individual statements and executes within `sql.begin()` transaction. Handles strings, comments, dollar-quoting. Strips user-supplied `BEGIN`/`COMMIT`/`ROLLBACK` to avoid conflicts with managed transaction
+
 ## [0.13.13] - 2026-04-24
 
 ### Added
-- **DB CLI run command**: `ppm db run <name> <file.sql>` executes SQL files against saved connections. Supports multi-statement files and transactions (`BEGIN...COMMIT`). Respects readonly flag. Works with both SQLite (`db.exec()`) and PostgreSQL (`sql.unsafe()`)
+- **DB CLI run command**: `ppm db run <name> <file.sql>` executes SQL files against saved connections. Supports multi-statement files and transactions (`BEGIN...COMMIT`). Respects readonly flag. Works with both SQLite (`db.exec()`) and PostgreSQL
 
 ## [0.13.12] - 2026-04-24
 
