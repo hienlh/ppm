@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { splitSqlStatements } from "./database/split-sql-statements.ts";
 
 export interface PgTableInfo {
   name: string;
@@ -178,6 +179,23 @@ class PostgresService {
     const result = await sql.unsafe(sqlText);
     const executionTimeMs = Math.round(performance.now() - start);
     return { columns: [], rows: [], rowsAffected: result.count ?? 0, changeType: "modify", executionTimeMs };
+  }
+
+  /** Execute multi-statement SQL script inside a transaction via sql.begin().
+   *  Strips user-supplied BEGIN/COMMIT/ROLLBACK since sql.begin() manages the transaction. */
+  async executeScript(connectionString: string, scriptText: string): Promise<{ statementsRun: number; executionTimeMs: number }> {
+    const sql = this.connect(connectionString);
+    const txControl = /^(BEGIN|COMMIT|ROLLBACK|END)(;|\s|$)/i;
+    const statements = splitSqlStatements(scriptText).filter((s) => !txControl.test(s));
+    if (statements.length === 0) return { statementsRun: 0, executionTimeMs: 0 };
+
+    const start = performance.now();
+    await sql.begin(async (tx) => {
+      for (const stmt of statements) {
+        await tx.unsafe(stmt);
+      }
+    });
+    return { statementsRun: statements.length, executionTimeMs: Math.round(performance.now() - start) };
   }
 
   /** Update a single cell value */

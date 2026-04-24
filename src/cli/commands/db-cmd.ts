@@ -401,13 +401,9 @@ export function registerDbCommands(program: Command): void {
 
         if (conn.type === "postgres") {
           const { postgresService } = await import("../../services/postgres.service.ts");
-          const result = await postgresService.executeQuery(cfg.connectionString!, sql);
+          const result = await postgresService.executeScript(cfg.connectionString!, sql);
           await postgresService.closeAll();
-          if (result.changeType === "select") {
-            formatRows(result.columns, result.rows);
-          } else {
-            console.log(`${C.green}OK${C.reset} — ${result.rowsAffected} row(s) affected (${result.executionTimeMs}ms)`);
-          }
+          console.log(`${C.green}OK${C.reset} — ${result.statementsRun} statement(s) executed (${result.executionTimeMs}ms)`);
         } else {
           const { sqliteService } = await import("../../services/sqlite.service.ts");
           const result = sqliteService.executeScript(cfg.path!, cfg.path!, sql);
