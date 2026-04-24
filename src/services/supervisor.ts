@@ -554,12 +554,14 @@ async function notifyStateChange(from: string, to: string, reason: string) {
 async function connectCloud(opts: { port: number }, serverArgs: string[], logFd: number): Promise<boolean> {
   try {
     const { getCloudDevice, saveCloudDevice } = await import("./cloud.service.ts");
-    const { configService } = await import("./config.service.ts");
     const device = getCloudDevice();
     if (!device) return false; // not linked to cloud
 
     const { connect, onCommand } = await import("./cloud-ws.service.ts");
     const { VERSION } = await import("../version.ts");
+    // Import getConfigValue for fresh SQLite reads — supervisor's in-memory configService
+    // is a separate process singleton and won't see changes made by the server process.
+    const { getConfigValue } = await import("./db.service.ts");
     const startTime = Date.now();
 
     connect({
@@ -570,8 +572,13 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
         const status = readStatus();
         // Re-read device file each heartbeat to pick up name changes
         const currentDevice = getCloudDevice();
-        // Sync device name from config if user changed it in settings
-        const configName = configService.get("device_name") as string;
+        // Read device_name fresh from SQLite — configService.get() is stale in the supervisor
+        // process (server process writes to SQLite but can't update supervisor's in-memory cache).
+        let configName = "";
+        try {
+          const raw = getConfigValue("device_name");
+          if (raw) configName = JSON.parse(raw) || "";
+        } catch {}
         if (configName && currentDevice && configName !== currentDevice.name) {
           currentDevice.name = configName;
           saveCloudDevice(currentDevice);
