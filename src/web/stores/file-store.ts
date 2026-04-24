@@ -16,6 +16,21 @@ export interface FileNode {
   ignored?: boolean;
 }
 
+/** State for inline create/rename in the file tree */
+export interface InlineAction {
+  type: "new-file" | "new-folder" | "rename";
+  /** Parent directory path (for new-file/new-folder) or parent of the renamed file */
+  parentPath: string;
+  /** Existing node being renamed (only for type=rename) */
+  existingNode?: FileNode;
+}
+
+/** Clipboard state for cut/copy/paste */
+export interface ClipboardState {
+  paths: string[];
+  operation: "cut" | "copy";
+}
+
 interface FileStore {
   tree: FileNode[];
   fileIndex: FileEntry[];
@@ -27,7 +42,14 @@ interface FileStore {
   inflight: Map<string, AbortController>;
   indexStatus: "idle" | "loading" | "ready" | "error";
   selectedFiles: string[];
+  inlineAction: InlineAction | null;
+  clipboard: ClipboardState | null;
+  focusedPath: string | null;
 
+  setInlineAction(action: InlineAction | null): void;
+  clearInlineAction(): void;
+  setClipboard(clipboard: ClipboardState | null): void;
+  setFocusedPath(path: string | null): void;
   loadRoot(projectName: string): Promise<void>;
   loadChildren(projectName: string, folderPath: string): Promise<void>;
   loadIndex(projectName: string): Promise<void>;
@@ -35,7 +57,9 @@ interface FileStore {
   invalidateFolder(projectName: string, folderPath: string): Promise<void>;
   toggleExpand(projectName: string, path: string): void;
   setExpanded(path: string, expanded: boolean): void;
+  collapseAll(): void;
   toggleFileSelect(path: string): void;
+  setSelectedFiles(paths: string[]): void;
   clearSelection(): void;
   reset(): void;
   /** @deprecated Use loadRoot instead */
@@ -52,6 +76,14 @@ export const useFileStore = create<FileStore>((set, get) => ({
   inflight: new Map<string, AbortController>(),
   indexStatus: "idle",
   selectedFiles: [],
+  inlineAction: null,
+  clipboard: null,
+  focusedPath: null,
+
+  setInlineAction: (action) => set({ inlineAction: action }),
+  clearInlineAction: () => set({ inlineAction: null }),
+  setClipboard: (clipboard) => set({ clipboard }),
+  setFocusedPath: (path) => set({ focusedPath: path }),
 
   loadRoot: async (projectName: string) => {
     set({ loading: true, error: null });
@@ -169,17 +201,21 @@ export const useFileStore = create<FileStore>((set, get) => ({
     set({ expandedPaths: paths });
   },
 
+  collapseAll: () => {
+    set({ expandedPaths: new Set<string>() });
+  },
+
   toggleFileSelect: (path: string) => {
     const current = get().selectedFiles;
     const idx = current.indexOf(path);
     if (idx >= 0) {
       set({ selectedFiles: current.filter((p) => p !== path) });
     } else {
-      // Max 2 selected files
-      const next = current.length >= 2 ? [current[1]!, path] : [...current, path];
-      set({ selectedFiles: next });
+      set({ selectedFiles: [...current, path] });
     }
   },
+
+  setSelectedFiles: (paths) => set({ selectedFiles: paths }),
 
   clearSelection: () => set({ selectedFiles: [] }),
 
@@ -196,6 +232,9 @@ export const useFileStore = create<FileStore>((set, get) => ({
       inflight: new Map(),
       indexStatus: "idle",
       selectedFiles: [],
+      inlineAction: null,
+      clipboard: null,
+      focusedPath: null,
     });
   },
 
@@ -205,3 +244,35 @@ export const useFileStore = create<FileStore>((set, get) => ({
     get().loadIndex(projectName);
   },
 }));
+
+/** Compute flat visible path list from current tree state (for range selection) */
+export function getVisiblePaths(): string[] {
+  const { tree, expandedPaths } = useFileStore.getState();
+  const result: string[] = [];
+  function walk(nodes: FileNode[]) {
+    const sorted = [...nodes].sort((a, b) => {
+      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const n of sorted) {
+      // Skip compacted intermediate dirs (matches compact folder rendering)
+      let effective = n;
+      if (n.type === "directory" && expandedPaths.has(n.path) && n.children) {
+        while (
+          effective.children &&
+          effective.children.length === 1 &&
+          effective.children[0]!.type === "directory" &&
+          expandedPaths.has(effective.children[0]!.path)
+        ) {
+          effective = effective.children[0]!;
+        }
+      }
+      result.push(effective.path);
+      if (effective.type === "directory" && expandedPaths.has(effective.path) && effective.children) {
+        walk(effective.children);
+      }
+    }
+  }
+  walk(tree);
+  return result;
+}

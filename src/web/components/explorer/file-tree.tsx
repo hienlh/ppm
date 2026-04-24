@@ -1,25 +1,14 @@
-import { useEffect, useCallback, useState, useRef, memo } from "react";
+/**
+ * FileTree — the main file explorer container.
+ * Renders toolbar, tree nodes via TreeNode, root-level drag/drop, and file actions.
+ */
+import { useEffect, useCallback, useState, useRef } from "react";
 import {
-  Folder,
-  FolderOpen,
-  File,
-  FileCode,
-  FileJson,
-  FileText,
-  FileType,
-  FileImage,
-  FileVideo,
-  FileAudio,
-  FileSpreadsheet,
-  FileArchive,
-  Database,
-  ChevronRight,
-  ChevronDown,
-  Download,
-  Loader2,
   FilePlus,
   FolderPlus,
   RefreshCw,
+  ChevronsDownUp,
+  Crosshair,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useFileStore, type FileNode } from "@/stores/file-store";
@@ -36,282 +25,18 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+} from "@/components/ui/adaptive-context-menu";
 import { FileActions } from "./file-actions";
+import { TreeNode } from "./tree-node";
+import { InlineTreeInput } from "./inline-tree-input";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
-import { getAuthToken, projectUrl } from "@/lib/api-client";
-
-/** Check if drag event is from OS files (not internal PPM drag) */
-function isExternalFileDrag(e: React.DragEvent): boolean {
-  return e.dataTransfer.types.includes("Files") && !e.dataTransfer.types.includes("application/x-ppm-path");
-}
+import { api, projectUrl } from "@/lib/api-client";
+import { useFileUploadDrag } from "./use-file-upload-drag";
+import { Loader2 } from "lucide-react";
+import { useTreeKeyboardNav } from "./use-tree-keyboard-nav";
 
 /** Synthetic root node for creating files/folders at project root */
 const ROOT_NODE: FileNode = { name: "", path: "", type: "directory" };
-
-type FileIconInfo = { icon: React.ComponentType<{ className?: string }>; color?: string };
-
-const FILE_ICON_MAP: Record<string, FileIconInfo> = {
-  // Code
-  ts: { icon: FileCode, color: "text-blue-400" }, tsx: { icon: FileCode, color: "text-blue-400" },
-  js: { icon: FileCode, color: "text-yellow-400" }, jsx: { icon: FileCode, color: "text-yellow-400" },
-  py: { icon: FileCode, color: "text-green-400" }, rs: { icon: FileCode, color: "text-orange-400" },
-  go: { icon: FileCode, color: "text-cyan-400" }, c: { icon: FileCode, color: "text-blue-300" },
-  cpp: { icon: FileCode, color: "text-blue-300" }, java: { icon: FileCode, color: "text-red-400" },
-  rb: { icon: FileCode, color: "text-red-400" }, php: { icon: FileCode, color: "text-purple-400" },
-  swift: { icon: FileCode, color: "text-orange-400" }, kt: { icon: FileCode, color: "text-purple-400" },
-  dart: { icon: FileCode, color: "text-cyan-400" }, sh: { icon: FileCode, color: "text-green-300" },
-  html: { icon: FileCode, color: "text-orange-400" }, css: { icon: FileCode, color: "text-blue-400" },
-  scss: { icon: FileCode, color: "text-pink-400" },
-  // Data
-  json: { icon: FileJson, color: "text-yellow-400" },
-  yaml: { icon: FileType, color: "text-orange-300" }, yml: { icon: FileType, color: "text-orange-300" },
-  toml: { icon: FileType, color: "text-orange-300" }, ini: { icon: FileType, color: "text-orange-300" },
-  env: { icon: FileType, color: "text-yellow-300" },
-  csv: { icon: FileSpreadsheet, color: "text-green-400" },
-  xls: { icon: FileSpreadsheet, color: "text-green-400" }, xlsx: { icon: FileSpreadsheet, color: "text-green-400" },
-  // Text/Docs
-  md: { icon: FileText, color: "text-text-secondary" }, txt: { icon: FileText, color: "text-text-secondary" },
-  log: { icon: FileText, color: "text-text-subtle" }, pdf: { icon: FileText, color: "text-red-400" },
-  // Images
-  png: { icon: FileImage, color: "text-green-400" }, jpg: { icon: FileImage, color: "text-green-400" },
-  jpeg: { icon: FileImage, color: "text-green-400" }, gif: { icon: FileImage, color: "text-green-400" },
-  svg: { icon: FileImage, color: "text-yellow-400" }, webp: { icon: FileImage, color: "text-green-400" },
-  ico: { icon: FileImage, color: "text-green-400" }, bmp: { icon: FileImage, color: "text-green-400" },
-  // Video
-  mp4: { icon: FileVideo, color: "text-purple-400" }, webm: { icon: FileVideo, color: "text-purple-400" },
-  mov: { icon: FileVideo, color: "text-purple-400" }, avi: { icon: FileVideo, color: "text-purple-400" },
-  mkv: { icon: FileVideo, color: "text-purple-400" },
-  // Audio
-  mp3: { icon: FileAudio, color: "text-pink-400" }, wav: { icon: FileAudio, color: "text-pink-400" },
-  ogg: { icon: FileAudio, color: "text-pink-400" }, flac: { icon: FileAudio, color: "text-pink-400" },
-  // Database
-  db: { icon: Database, color: "text-amber-400" }, sqlite: { icon: Database, color: "text-amber-400" },
-  sqlite3: { icon: Database, color: "text-amber-400" }, sql: { icon: Database, color: "text-amber-400" },
-  // Archives
-  zip: { icon: FileArchive, color: "text-amber-300" }, tar: { icon: FileArchive, color: "text-amber-300" },
-  gz: { icon: FileArchive, color: "text-amber-300" }, rar: { icon: FileArchive, color: "text-amber-300" },
-  "7z": { icon: FileArchive, color: "text-amber-300" },
-};
-
-const DEFAULT_FILE_ICON: FileIconInfo = { icon: File };
-
-function getFileIcon(name: string): FileIconInfo {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  return FILE_ICON_MAP[ext] ?? DEFAULT_FILE_ICON;
-}
-
-interface TreeNodeProps {
-  node: FileNode;
-  depth: number;
-  projectName: string;
-  onAction: (action: string, node: FileNode) => void;
-  onFileDrop: (targetDir: string, files: FileList) => void;
-  onFileOpen?: () => void;
-}
-
-const TreeNode = memo(function TreeNode({ node, depth, projectName, onAction, onFileDrop, onFileOpen }: TreeNodeProps) {
-  const { expandedPaths, loadedPaths, inflight, toggleExpand, selectedFiles, toggleFileSelect } = useFileStore(
-    useShallow((s) => ({
-      expandedPaths: s.expandedPaths,
-      loadedPaths: s.loadedPaths,
-      inflight: s.inflight,
-      toggleExpand: s.toggleExpand,
-      selectedFiles: s.selectedFiles,
-      toggleFileSelect: s.toggleFileSelect,
-    })),
-  );
-  const openTab = useTabStore((s) => s.openTab);
-  const compareSelection = useCompareStore((s) => s.selection);
-  const isExpanded = expandedPaths.has(node.path);
-  const isDir = node.type === "directory";
-  const isSelected = selectedFiles.includes(node.path);
-  const isIgnored = node.ignored === true;
-  const isLoadingChildren = isDir && isExpanded && !loadedPaths.has(node.path) && inflight.has(node.path);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const dragCounter = useRef(0);
-
-  function handleClick(e: React.MouseEvent) {
-    if (isDir) {
-      toggleExpand(projectName, node.path);
-      return;
-    }
-    // Ctrl/Cmd+Click: toggle file selection for compare
-    if (e.metaKey || e.ctrlKey) {
-      toggleFileSelect(node.path);
-      return;
-    }
-    const ext = node.name.split(".").pop()?.toLowerCase() ?? "";
-    const isSqlite = ext === "db" || ext === "sqlite" || ext === "sqlite3";
-    openTab({
-      type: isSqlite ? "sqlite" : "editor",
-      title: node.name,
-      metadata: { filePath: node.path, projectName },
-      projectId: projectName,
-      closable: true,
-    });
-    onFileOpen?.();
-  }
-
-  function handleDragStart(e: React.DragEvent) {
-    const pathValue = isDir ? `${node.path}/` : node.path;
-    e.dataTransfer.setData("application/x-ppm-path", pathValue);
-    e.dataTransfer.setData("text/plain", node.name);
-    e.dataTransfer.effectAllowed = "copy";
-  }
-
-  function handleNodeDragEnter(e: React.DragEvent) {
-    if (!isDir || !isExternalFileDrag(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter.current++;
-    if (dragCounter.current === 1) setIsDragOver(true);
-  }
-  function handleNodeDragLeave(e: React.DragEvent) {
-    if (!isDir) return;
-    e.stopPropagation();
-    dragCounter.current--;
-    if (dragCounter.current === 0) setIsDragOver(false);
-  }
-  function handleNodeDragOver(e: React.DragEvent) {
-    if (!isDir || !isExternalFileDrag(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-  }
-  function handleNodeDrop(e: React.DragEvent) {
-    if (!isDir || !isExternalFileDrag(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter.current = 0;
-    setIsDragOver(false);
-    if (e.dataTransfer.files.length > 0) {
-      onFileDrop(node.path, e.dataTransfer.files);
-    }
-  }
-
-  const { icon: FileIcon, color: fileIconColor } = isDir
-    ? { icon: isExpanded ? FolderOpen : Folder, color: "text-primary" }
-    : getFileIcon(node.name);
-
-  const sortedChildren = node.children
-    ? [...node.children].sort((a, b) => {
-        if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      })
-    : [];
-
-  return (
-    <div
-      onDragEnter={isDir ? handleNodeDragEnter : undefined}
-      onDragLeave={isDir ? handleNodeDragLeave : undefined}
-      onDragOver={isDir ? handleNodeDragOver : undefined}
-      onDrop={isDir ? handleNodeDrop : undefined}
-    >
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <button
-            draggable
-            onDragStart={handleDragStart}
-            onClick={handleClick}
-            className={cn(
-              "flex items-center w-full gap-1.5 px-2 py-1 rounded-sm text-sm",
-              "min-h-[32px] hover:bg-surface-elevated transition-colors text-left",
-              "select-none",
-              isIgnored && "opacity-40",
-              isSelected && "bg-primary/15 ring-1 ring-primary/40",
-              isDragOver && "ring-1 ring-dashed ring-primary bg-primary/10",
-            )}
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
-          >
-            {isDir ? (
-              isLoadingChildren ? (
-                <Loader2 className="size-3.5 shrink-0 text-text-subtle animate-spin" />
-              ) : isExpanded ? (
-                <ChevronDown className="size-3.5 shrink-0 text-text-subtle" />
-              ) : (
-                <ChevronRight className="size-3.5 shrink-0 text-text-subtle" />
-              )
-            ) : (
-              <span className="w-3.5 shrink-0" />
-            )}
-            <FileIcon
-              className={cn(
-                "size-4 shrink-0",
-                fileIconColor ?? "text-text-secondary",
-              )}
-            />
-            <span className="truncate">{node.name}</span>
-          </button>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          {isDir && (
-            <>
-              <ContextMenuItem onClick={() => onAction("new-file", node)}>
-                New File
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => onAction("new-folder", node)}>
-                New Folder
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-            </>
-          )}
-          <ContextMenuItem onClick={() => onAction("rename", node)}>
-            Rename
-          </ContextMenuItem>
-          <ContextMenuItem
-            variant="destructive"
-            onClick={() => onAction("delete", node)}
-          >
-            Delete
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => onAction("copy-path", node)}>
-            Copy Path
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={() => onAction("download", node)}>
-            <Download className="size-3.5 mr-2" />
-            Download{isDir ? " as Zip" : ""}
-          </ContextMenuItem>
-          {!isDir && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onAction("select-for-compare", node)}>
-                Select for Compare
-              </ContextMenuItem>
-              {compareSelection && compareSelection.projectName === projectName && compareSelection.filePath !== node.path && (
-                <ContextMenuItem onClick={() => onAction("compare-with-selected", node)}>
-                  Compare with Selected ({compareSelection.label})
-                </ContextMenuItem>
-              )}
-            </>
-          )}
-          {!isDir && selectedFiles.length === 2 && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onAction("compare-selected", node)}>
-                Compare Selected
-              </ContextMenuItem>
-            </>
-          )}
-        </ContextMenuContent>
-      </ContextMenu>
-
-      {isDir && isExpanded && sortedChildren.map((child) => (
-        <TreeNode
-          key={child.path}
-          node={child}
-          depth={depth + 1}
-          projectName={projectName}
-          onAction={onAction}
-          onFileDrop={onFileDrop}
-          onFileOpen={onFileOpen}
-        />
-      ))}
-    </div>
-  );
-});
 
 interface FileTreeProps {
   onFileOpen?: () => void;
@@ -322,8 +47,9 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     tree, loading, error,
     loadRoot, loadIndex, loadChildren, invalidateIndex, invalidateFolder,
     reset, selectedFiles, clearSelection, setExpanded,
-    // fetchTree kept for uploadFiles refresh
-    fetchTree,
+    fetchTree, inlineAction, setInlineAction, clearInlineAction,
+    clipboard, setClipboard, collapseAll,
+    focusedPath, setFocusedPath, expandedPaths, toggleExpand,
   } = useFileStore(
     useShallow((s) => ({
       tree: s.tree,
@@ -339,6 +65,16 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       clearSelection: s.clearSelection,
       setExpanded: s.setExpanded,
       fetchTree: s.fetchTree,
+      inlineAction: s.inlineAction,
+      setInlineAction: s.setInlineAction,
+      clearInlineAction: s.clearInlineAction,
+      clipboard: s.clipboard,
+      setClipboard: s.setClipboard,
+      collapseAll: s.collapseAll,
+      focusedPath: s.focusedPath,
+      setFocusedPath: s.setFocusedPath,
+      expandedPaths: s.expandedPaths,
+      toggleExpand: s.toggleExpand,
     })),
   );
   const activeProject = useProjectStore((s) => s.activeProject);
@@ -348,7 +84,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     node: FileNode;
   } | null>(null);
 
-  /** Full reload used by toolbar Refresh button and post-upload */
   const reloadTree = useCallback(() => {
     if (!activeProject) return;
     reset();
@@ -356,22 +91,90 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     loadIndex(activeProject.name);
   }, [activeProject, reset, loadRoot, loadIndex]);
 
-  // On project switch: reset + load root + load index in parallel + auto-expand root (1 level)
+  /** Reveal (scroll to + highlight) the file that's open in the active tab */
+  const revealActiveFile = useCallback(async () => {
+    if (!activeProject) return;
+    const { tabs, activeTabId } = useTabStore.getState();
+    const activeTab = tabs.find((t) => t.id === activeTabId);
+    const filePath = activeTab?.metadata?.filePath as string | undefined;
+    if (!filePath) return;
+
+    // Expand all parent folders
+    const parts = filePath.split("/");
+    const projectName = activeProject.name;
+    for (let i = 1; i < parts.length; i++) {
+      const parentPath = parts.slice(0, i).join("/");
+      setExpanded(parentPath, true);
+      // Ensure children are loaded
+      await loadChildren(projectName, parentPath);
+    }
+    setFocusedPath(filePath);
+  }, [activeProject, setExpanded, loadChildren, setFocusedPath]);
+
+  /** Paste clipboard files into a target directory */
+  const pasteFiles = useCallback(async (targetDir: string) => {
+    if (!activeProject || !clipboard) return;
+    const projectName = activeProject.name;
+    const endpoint = clipboard.operation === "cut" ? "move" : "copy";
+    for (const source of clipboard.paths) {
+      const name = source.includes("/") ? source.slice(source.lastIndexOf("/") + 1) : source;
+      const destination = targetDir ? `${targetDir}/${name}` : name;
+      try {
+        await api.post(`${projectUrl(projectName)}/files/${endpoint}`, { source, destination });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : `Failed to ${endpoint}`);
+      }
+    }
+    if (clipboard.operation === "cut") setClipboard(null);
+    reloadTree();
+  }, [activeProject, clipboard, setClipboard, reloadTree]);
+
+  const treeContainerRef = useRef<HTMLDivElement>(null);
+
+  /** Ctrl+X / Ctrl+C / Ctrl+V — scoped to file tree container focus */
+  const handleClipboardKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!activeProject) return;
+    const target = e.target as HTMLElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+
+    if (e.key === "x" && selectedFiles.length > 0) {
+      e.preventDefault();
+      setClipboard({ paths: [...selectedFiles], operation: "cut" });
+    } else if (e.key === "c" && selectedFiles.length > 0) {
+      e.preventDefault();
+      setClipboard({ paths: [...selectedFiles], operation: "copy" });
+    } else if (e.key === "v" && clipboard) {
+      e.preventDefault();
+      pasteFiles("");
+    }
+  }, [activeProject, selectedFiles, clipboard, setClipboard, pasteFiles]);
+
+  const { handleTreeKeyDown } = useTreeKeyboardNav({
+    tree,
+    expandedPaths,
+    focusedPath,
+    setFocusedPath,
+    setExpanded,
+    toggleExpand,
+    projectName: activeProject?.name,
+    onAction: handleAction,
+  });
+
+  // On project switch: reset + load root + load index + auto-expand root
   useEffect(() => {
     if (!activeProject) return;
     reset();
     const name = activeProject.name;
-
-    // Load root entries, then auto-expand the root node itself (path="")
     loadRoot(name).then(() => {
-      // Auto-expand root — marks "" as expanded so root-level dirs show children on next expand
-      // Root entries are already visible; no deeper auto-expand per plan decision
       useFileStore.getState().setExpanded("", true);
     });
     loadIndex(name);
   }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Handle WS file:changed → invalidate folder + index instead of full tree refetch
+  // Handle WS file:changed → invalidate folder + index
   useEffect(() => {
     if (!activeProject) return;
     const projectName = activeProject.name;
@@ -384,7 +187,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         const store = useFileStore.getState();
-        // Derive parent folder from changed file path
         const changedPath: string = detail.path ?? "";
         const parentPath = changedPath.includes("/")
           ? changedPath.slice(0, changedPath.lastIndexOf("/"))
@@ -402,67 +204,43 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     };
   }, [activeProject]);
 
-  const uploadFiles = useCallback(async (targetDir: string, files: FileList) => {
-    if (!activeProject) return;
-    const form = new FormData();
-    form.append("targetDir", targetDir);
-    for (const file of files) form.append("files", file);
-    const headers: HeadersInit = {};
-    const token = getAuthToken();
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    try {
-      const res = await fetch(`${projectUrl(activeProject.name)}/files/upload`, {
-        method: "POST",
-        headers,
-        body: form,
-      });
-      if (!res.ok) {
-        const json = await res.json();
-        console.error("Upload failed:", json.error);
-      }
-      // Invalidate the target folder so it refreshes
-      const store = useFileStore.getState();
-      const folderPath = targetDir;
-      const folderLoadedPaths = store.loadedPaths;
-      if (folderLoadedPaths.has(folderPath)) {
-        const lp = new Set(store.loadedPaths);
-        lp.delete(folderPath);
-        // Force reload by clearing and re-expanding
-        await store.invalidateFolder(activeProject.name, folderPath);
-      }
-      if (targetDir) setExpanded(targetDir, true);
-    } catch (e) {
-      console.error("Upload error:", e);
-    }
-  }, [activeProject, setExpanded]);
-
-  const [isRootDragOver, setIsRootDragOver] = useState(false);
-  const rootDragCounter = useRef(0);
-
-  function handleRootDragEnter(e: React.DragEvent) {
-    if (!isExternalFileDrag(e)) return;
-    e.preventDefault();
-    rootDragCounter.current++;
-    if (rootDragCounter.current === 1) setIsRootDragOver(true);
-  }
-  function handleRootDragLeave() {
-    rootDragCounter.current--;
-    if (rootDragCounter.current === 0) setIsRootDragOver(false);
-  }
-  function handleRootDragOver(e: React.DragEvent) {
-    if (!isExternalFileDrag(e)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
-  }
-  function handleRootDrop(e: React.DragEvent) {
-    if (!isExternalFileDrag(e)) return;
-    e.preventDefault();
-    rootDragCounter.current = 0;
-    setIsRootDragOver(false);
-    if (e.dataTransfer.files.length > 0) uploadFiles("", e.dataTransfer.files);
-  }
+  const {
+    uploadFiles, isRootDragOver,
+    handleRootDragEnter, handleRootDragLeave, handleRootDragOver, handleRootDrop,
+  } = useFileUploadDrag({ projectName: activeProject?.name, setExpanded });
 
   async function handleAction(action: string, node: FileNode) {
+    if (action === "toggle-expand" && node.type === "directory") {
+      toggleExpand(activeProject!.name, node.path);
+      return;
+    }
+    if (action === "open-file" && node.type === "file") {
+      const ext = node.name.split(".").pop()?.toLowerCase() ?? "";
+      const isSqlite = ext === "db" || ext === "sqlite" || ext === "sqlite3";
+      openTab({
+        type: isSqlite ? "sqlite" : "editor",
+        title: node.name,
+        metadata: { filePath: node.path, projectName: activeProject!.name },
+        projectId: activeProject!.name,
+        closable: true,
+      });
+      onFileOpen?.();
+      return;
+    }
+    if (action === "cut") {
+      const paths = selectedFiles.length > 0 && selectedFiles.includes(node.path) ? [...selectedFiles] : [node.path];
+      setClipboard({ paths, operation: "cut" });
+      return;
+    }
+    if (action === "copy-file") {
+      const paths = selectedFiles.length > 0 && selectedFiles.includes(node.path) ? [...selectedFiles] : [node.path];
+      setClipboard({ paths, operation: "copy" });
+      return;
+    }
+    if (action === "paste" && node.type === "directory") {
+      pasteFiles(node.path);
+      return;
+    }
     if (action === "copy-path") {
       navigator.clipboard.writeText(node.path).catch(() => {});
       return;
@@ -518,6 +296,19 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       clearSelection();
       return;
     }
+    if (action === "new-file" || action === "new-folder") {
+      const parentPath = node.type === "directory" ? node.path : "";
+      if (parentPath) setExpanded(parentPath, true);
+      setInlineAction({ type: action as "new-file" | "new-folder", parentPath });
+      return;
+    }
+    if (action === "rename") {
+      const parentPath = node.path.includes("/")
+        ? node.path.slice(0, node.path.lastIndexOf("/"))
+        : "";
+      setInlineAction({ type: "rename", parentPath, existingNode: node });
+      return;
+    }
     setActionState({ action, node });
   }
 
@@ -558,14 +349,17 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
 
   return (
     <div
-      className={cn("flex flex-col h-full", isRootDragOver && "bg-primary/5")}
+      ref={treeContainerRef}
+      className={cn("flex flex-col h-full outline-none", isRootDragOver && "bg-primary/5")}
+      tabIndex={0}
+      onKeyDown={(e) => { handleClipboardKeyDown(e); handleTreeKeyDown(e); }}
       onDragEnter={handleRootDragEnter}
       onDragLeave={handleRootDragLeave}
       onDragOver={handleRootDragOver}
       onDrop={handleRootDrop}
     >
       {/* Toolbar */}
-      <div className="flex items-center gap-0.5 px-2 h-8 border-b border-border shrink-0">
+      <div className="flex items-center gap-0.5 px-2 h-8 border-b border-border shrink-0 sticky top-0 z-10 bg-surface">
         <button onClick={() => handleAction("new-file", ROOT_NODE)} title="New File" className={toolbarBtnClass}>
           <FilePlus className="size-3.5" />
         </button>
@@ -573,6 +367,12 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
           <FolderPlus className="size-3.5" />
         </button>
         <div className="flex-1" />
+        <button onClick={revealActiveFile} title="Reveal Active File" className={toolbarBtnClass}>
+          <Crosshair className="size-3.5" />
+        </button>
+        <button onClick={collapseAll} title="Collapse All" className={toolbarBtnClass}>
+          <ChevronsDownUp className="size-3.5" />
+        </button>
         <button onClick={reloadTree} title="Refresh" className={toolbarBtnClass}>
           <RefreshCw className="size-3.5" />
         </button>
@@ -583,6 +383,21 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
         <ContextMenuTrigger asChild>
           <ScrollArea className="flex-1">
             <div className="py-1">
+              {inlineAction && inlineAction.parentPath === "" && inlineAction.type !== "rename" && (
+                <InlineTreeInput
+                  defaultValue=""
+                  placeholder={inlineAction.type === "new-file" ? "filename.ts" : "folder-name"}
+                  depth={0}
+                  icon={inlineAction.type === "new-file" ? "file" : "folder"}
+                  onConfirm={async (name) => {
+                    const type = inlineAction.type === "new-file" ? "file" : "directory";
+                    await api.post(`${projectUrl(activeProject!.name)}/files/create`, { path: name, type });
+                    clearInlineAction();
+                    reloadTree();
+                  }}
+                  onCancel={clearInlineAction}
+                />
+              )}
               {sorted.map((node) => (
                 <TreeNode
                   key={node.path}
@@ -617,9 +432,9 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
         </ContextMenuContent>
       </ContextMenu>
 
-      {actionState && (
+      {actionState?.action === "delete" && (
         <FileActions
-          action={actionState.action}
+          action="delete"
           node={actionState.node}
           projectName={activeProject.name}
           onClose={() => setActionState(null)}

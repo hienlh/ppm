@@ -76,6 +76,11 @@ When creating or modifying any UI component, you MUST read and follow `docs/desi
 - Thumb zone: primary actions in bottom 1/3 of screen for one-handed use
 - Always test both mobile and desktop layouts
 
+### Reusable Adaptive Components
+
+- **Context menus**: Always use `@/components/ui/adaptive-context-menu` instead of `@/components/ui/context-menu`. It auto-detects mobile (< 768px) and renders a bottom sheet with long-press trigger instead of radix right-click menu. Same API — just swap the import path. Sub-menus are flattened inline on mobile.
+- **Mobile detection**: Use `useIsMobile()` from `@/hooks/use-is-mobile` for reactive mobile breakpoint checks.
+
 ## Roadmap & Context
 
 Before planning or implementing a new feature, read `docs/project-roadmap.md` to understand:

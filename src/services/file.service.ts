@@ -8,6 +8,7 @@ import {
   unlinkSync,
   rmSync,
   renameSync,
+  cpSync,
 } from "node:fs";
 import { resolve, relative, dirname, join, normalize, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
@@ -252,6 +253,20 @@ class FileService {
   /** Move a file or directory to a new location */
   moveFile(projectPath: string, source: string, destination: string): void {
     this.renameFile(projectPath, source, destination);
+  }
+
+  copyFile(projectPath: string, source: string, destination: string): void {
+    const absSrc = this.resolveSafe(projectPath, source);
+    const absDest = this.resolveSafe(projectPath, destination);
+    this.blockSensitive(source);
+    this.blockSensitive(destination);
+
+    if (!existsSync(absSrc)) throw new NotFoundError(`Not found: ${source}`);
+    if (existsSync(absDest)) throw new ValidationError(`Already exists: ${destination}`);
+
+    const dir = dirname(absDest);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    cpSync(absSrc, absDest, { recursive: true });
   }
 
   /**

@@ -20,6 +20,7 @@ import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overfl
 import { downloadFile } from "@/lib/file-download";
 import { FileActions } from "@/components/explorer/file-actions";
 import { api, projectUrl } from "@/lib/api-client";
+import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
@@ -300,91 +301,79 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
       </div>
 
       {/* New tab action sheet */}
-      {newTabSheetOpen && (
-        <>
-          <div className="fixed inset-0 z-50" onClick={() => setNewTabSheetOpen(false)} />
-          <div className="fixed bottom-14 left-2 right-2 z-50 bg-surface border border-border rounded-lg shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-150">
-            <div className="px-3 py-2 text-xs text-text-secondary border-b border-border">New Tab</div>
-            {NEW_TAB_OPTIONS.map((opt) => {
-              const Icon = TAB_ICONS[opt.type];
-              return (
-                <button
-                  key={opt.type}
-                  onClick={() => handleNewTab(opt.type)}
-                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated"
-                >
-                  <Icon className="size-4" /> {opt.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
+      <BottomSheet open={newTabSheetOpen} onClose={() => setNewTabSheetOpen(false)}>
+        <div className="px-3 py-2 text-xs text-text-secondary border-b border-border">New Tab</div>
+        {NEW_TAB_OPTIONS.map((opt) => {
+          const Icon = TAB_ICONS[opt.type];
+          return (
+            <button
+              key={opt.type}
+              onClick={() => handleNewTab(opt.type)}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated"
+            >
+              <Icon className="size-4" /> {opt.label}
+            </button>
+          );
+        })}
+      </BottomSheet>
 
-      {/* Long-press action sheet */}
-      {menuTab && (
-        <>
-          {/* Backdrop */}
-          <div className="fixed inset-0 z-50" onClick={() => setMenuTabId(null)} />
-          {/* Action sheet */}
-          <div className="fixed bottom-14 left-2 right-2 z-50 bg-surface border border-border rounded-lg shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-150">
-            <div className="px-3 py-2 text-xs text-text-secondary border-b border-border truncate">
-              {menuTab.title}
-            </div>
-            {menuTab.type === "editor" && (
-              <>
-                <button onClick={() => handleFileAction(menuTab, "copy-path")}
-                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                  <Copy className="size-4" /> Copy Path
-                </button>
-                <button onClick={() => handleFileAction(menuTab, "download")}
-                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                  <Download className="size-4" /> Download
-                </button>
-                <button onClick={() => handleFileAction(menuTab, "rename")}
-                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                  <Pencil className="size-4" /> Rename
-                </button>
-                <button onClick={() => handleFileAction(menuTab, "delete")}
-                  className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-error active:bg-surface-elevated">
-                  <Trash2 className="size-4" /> Delete
-                </button>
-                <div className="h-px bg-border mx-2" />
-              </>
-            )}
-            {menuTab.closable && (
-              <button onClick={() => { usePanelStore.getState().closeTab(menuTabId!); setMenuTabId(null); }}
-                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                <X className="size-4" /> Close
-              </button>
-            )}
-            {menuTabIdx > 0 && (
-              <button onClick={() => { moveTabLeft(menuTabId!); setMenuTabId(null); }}
-                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                <ArrowLeft className="size-4" /> Move Left
-              </button>
-            )}
-            {menuTabIdx < menuTabPanelTabs.length - 1 && (
-              <button onClick={() => { moveTabRight(menuTabId!); setMenuTabId(null); }}
-                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                <ArrowRight className="size-4" /> Move Right
-              </button>
-            )}
-            {canSplitDown && menuTabPanelTabs.length > 1 && (
-              <button onClick={() => { splitDown(menuTabId!); setMenuTabId(null); }}
-                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                <SplitSquareVertical className="size-4" /> Split to Bottom
-              </button>
-            )}
-            {otherPanelIds.map((pid, i) => (
-              <button key={pid} onClick={() => { moveToPanel(menuTabId!, pid); setMenuTabId(null); }}
-                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-                <MoveVertical className="size-4" /> Move to Panel {i + 1 === 1 ? "Top" : "Bottom"}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      {/* Long-press tab action sheet */}
+      <BottomSheet open={!!menuTab} onClose={() => setMenuTabId(null)}>
+        <div className="px-3 py-2 text-xs text-text-secondary border-b border-border truncate">
+          {menuTab?.title}
+        </div>
+        {menuTab?.type === "editor" && (
+          <>
+            <button onClick={() => handleFileAction(menuTab, "copy-path")}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              <Copy className="size-4" /> Copy Path
+            </button>
+            <button onClick={() => handleFileAction(menuTab, "download")}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              <Download className="size-4" /> Download
+            </button>
+            <button onClick={() => handleFileAction(menuTab, "rename")}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              <Pencil className="size-4" /> Rename
+            </button>
+            <button onClick={() => handleFileAction(menuTab, "delete")}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-error active:bg-surface-elevated">
+              <Trash2 className="size-4" /> Delete
+            </button>
+            <div className="h-px bg-border mx-2" />
+          </>
+        )}
+        {menuTab?.closable && (
+          <button onClick={() => { usePanelStore.getState().closeTab(menuTabId!); setMenuTabId(null); }}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <X className="size-4" /> Close
+          </button>
+        )}
+        {menuTabIdx > 0 && (
+          <button onClick={() => { moveTabLeft(menuTabId!); setMenuTabId(null); }}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <ArrowLeft className="size-4" /> Move Left
+          </button>
+        )}
+        {menuTabIdx < menuTabPanelTabs.length - 1 && (
+          <button onClick={() => { moveTabRight(menuTabId!); setMenuTabId(null); }}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <ArrowRight className="size-4" /> Move Right
+          </button>
+        )}
+        {canSplitDown && menuTabPanelTabs.length > 1 && (
+          <button onClick={() => { splitDown(menuTabId!); setMenuTabId(null); }}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <SplitSquareVertical className="size-4" /> Split to Bottom
+          </button>
+        )}
+        {otherPanelIds.map((pid, i) => (
+          <button key={pid} onClick={() => { moveToPanel(menuTabId!, pid); setMenuTabId(null); }}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <MoveVertical className="size-4" /> Move to Panel {i + 1 === 1 ? "Top" : "Bottom"}
+          </button>
+        ))}
+      </BottomSheet>
 
       {fileActionState && (
         <FileActions

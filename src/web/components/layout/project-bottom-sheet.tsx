@@ -8,6 +8,7 @@ import { AddProjectForm } from "@/components/layout/add-project-form";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
 import { getProjectInitials } from "@/lib/project-avatar";
 import { cn } from "@/lib/utils";
+import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 
 interface ProjectBottomSheetProps {
   isOpen: boolean;
@@ -170,29 +171,8 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className={cn(
-          "fixed inset-0 z-50 md:hidden transition-opacity duration-200",
-          isOpen ? "opacity-100" : "opacity-0 pointer-events-none",
-        )}
-        onClick={handleClose}
-        style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-      />
-
-      {/* Sheet */}
-      <div
-        className={cn(
-          "fixed bottom-0 left-0 right-0 z-50 md:hidden bg-background rounded-t-2xl border-t border-border shadow-2xl",
-          "transition-transform duration-300 ease-out",
-          isOpen ? "translate-y-0" : "translate-y-full",
-        )}
-      >
-        {/* Drag handle */}
-        <div className="flex justify-center pt-3 pb-1">
-          <div className="w-10 h-1 rounded-full bg-border" />
-        </div>
-
+      {/* Main project sheet */}
+      <BottomSheet open={isOpen} onClose={handleClose} className="bg-background">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2 border-b border-border">
           <div className="flex items-center gap-2">
@@ -293,69 +273,68 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
           </button>
           {version && <span className="text-xs text-text-subtle">v{version}</span>}
         </div>
-      </div>
+      </BottomSheet>
 
       {/* Long-press action sheet */}
-      {actionTarget && !colorPickerOpen && (
-        <>
-          <div className="fixed inset-0 z-[60] md:hidden" onClick={() => setActionTarget(null)} />
-          <div className="fixed bottom-0 left-0 right-0 z-[61] md:hidden bg-surface border-t border-border rounded-t-2xl shadow-2xl animate-in slide-in-from-bottom-2 duration-150">
-            <div className="px-4 py-2 border-b border-border">
-              <p className="text-xs font-medium text-text-secondary">{actionTarget}</p>
-            </div>
-            {actionItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.label}
-                  onClick={item.onClick}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors active:bg-surface-elevated",
-                    item.destructive ? "text-destructive" : "text-foreground",
-                  )}
-                >
-                  <Icon className="size-4 shrink-0" />
-                  {item.label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
+      <BottomSheet
+        open={!!actionTarget && !colorPickerOpen}
+        onClose={() => setActionTarget(null)}
+        zIndex={60}
+      >
+        <div className="px-4 py-2 border-b border-border">
+          <p className="text-xs font-medium text-text-secondary">{actionTarget}</p>
+        </div>
+        {actionItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.label}
+              onClick={item.onClick}
+              className={cn(
+                "w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors active:bg-surface-elevated",
+                item.destructive ? "text-destructive" : "text-foreground",
+              )}
+            >
+              <Icon className="size-4 shrink-0" />
+              {item.label}
+            </button>
+          );
+        })}
+      </BottomSheet>
 
       {/* Color picker sheet */}
-      {colorPickerOpen && actionTarget && (
-        <>
-          <div className="fixed inset-0 z-[60] md:hidden" onClick={() => { setColorPickerOpen(false); setActionTarget(null); }} />
-          <div className="fixed bottom-0 left-0 right-0 z-[61] md:hidden bg-surface border-t border-border rounded-t-2xl shadow-2xl p-4 space-y-4">
-            <p className="text-sm font-medium">Change Color</p>
-            <div className="flex flex-wrap gap-3">
-              {PROJECT_PALETTE.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setActionColor(c)}
-                  className={cn(
-                    "size-9 rounded-full border-2 transition-all",
-                    actionColor === c ? "border-primary scale-110" : "border-transparent",
-                  )}
-                  style={{ background: c }}
-                />
-              ))}
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => { setColorPickerOpen(false); setActionTarget(null); }}
-                className="flex-1 py-2 text-sm text-text-secondary border border-border rounded-md"
-              >Cancel</button>
-              <button
-                onClick={() => handleColorSave(actionTarget, actionColor)}
-                className="flex-1 py-2 text-sm bg-primary text-white rounded-md"
-              >Save</button>
-            </div>
-          </div>
-        </>
-      )}
+      <BottomSheet
+        open={colorPickerOpen && !!actionTarget}
+        onClose={() => { setColorPickerOpen(false); setActionTarget(null); }}
+        zIndex={60}
+        className="p-4 space-y-4"
+      >
+        <p className="text-sm font-medium">Change Color</p>
+        <div className="flex flex-wrap gap-3">
+          {PROJECT_PALETTE.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setActionColor(c)}
+              className={cn(
+                "size-9 rounded-full border-2 transition-all",
+                actionColor === c ? "border-primary scale-110" : "border-transparent",
+              )}
+              style={{ background: c }}
+            />
+          ))}
+        </div>
+        <div className="flex gap-2 pt-2">
+          <button
+            onClick={() => { setColorPickerOpen(false); setActionTarget(null); }}
+            className="flex-1 py-2 text-sm text-text-secondary border border-border rounded-md"
+          >Cancel</button>
+          <button
+            onClick={() => handleColorSave(actionTarget!, actionColor)}
+            className="flex-1 py-2 text-sm bg-primary text-white rounded-md"
+          >Save</button>
+        </div>
+      </BottomSheet>
     </>
   );
 }

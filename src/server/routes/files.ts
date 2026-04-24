@@ -333,3 +333,18 @@ fileRoutes.post("/move", async (c) => {
     return c.json(err((e as Error).message), errorStatus(e));
   }
 });
+
+/** POST /files/copy — body: { source, destination } */
+fileRoutes.post("/copy", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const body = await c.req.json<{ source: string; destination: string }>();
+    if (!body.source || !body.destination) {
+      return c.json(err("Missing required fields: source, destination"), 400);
+    }
+    fileService.copyFile(projectPath, body.source, body.destination);
+    return c.json(ok({ copied: { from: body.source, to: body.destination } }));
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.13.16] - 2026-04-25
+
+### Added
+- **File tree explorer overhaul**: VS Code-style file explorer with git decorations, inline rename/create, drag-to-move, cut/copy/paste, collapse all, keyboard navigation (arrow keys, Enter, F2, Delete), multi-selection (Ctrl+Click, Shift+Click), compact folders, reveal active file
+- **File copy API**: `POST /files/copy` endpoint for copying files/folders within a project
+- **File icon map**: 40+ file type icons with color coding in the explorer tree
+- **Adaptive context menu**: Unified component (`adaptive-context-menu.tsx`) — right-click menu on desktop, long-press bottom sheet on mobile. Drop-in replacement for radix ContextMenu
+- **Reusable bottom sheet**: Shared `BottomSheet` component with swipe-to-dismiss gesture, used by context menus, project selector, and mobile nav action sheets
+- **Mobile detection hook**: Centralized `useIsMobile()` hook for reactive breakpoint checks
+
+### Changed
+- **Project bottom sheet**: Migrated to shared `BottomSheet` component with swipe-to-dismiss
+- **Mobile nav action sheets**: Migrated to shared `BottomSheet` component with swipe-to-dismiss
+- **File tree modularized**: Split into tree-node, context menu, inline input, keyboard nav, file upload drag, and file icon map modules
+
+### Fixed
+- **Double context menu on mobile**: Nested radix ContextMenus caused two menus to open on long-press — resolved by adaptive component with stopPropagation
+- **File opens during long-press**: Click event suppressed after long-press context menu trigger on mobile
+- **Git folder decorations broken**: `isDir` variable used before declaration in tree-node git status selector
+- **Missing useState import**: `useState` removed from file-tree.tsx imports but still used — restored
+- **Global clipboard shortcuts**: Ctrl+X/C/V was intercepting all keyboard events globally — scoped to file tree container focus
+
 ## [0.13.15] - 2026-04-24
 
 ### Fixed

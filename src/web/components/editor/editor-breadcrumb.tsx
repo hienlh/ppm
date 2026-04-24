@@ -12,6 +12,7 @@ import {
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
+import { useProjectStore } from "@/stores/project-store";
 import { basename } from "@/lib/utils";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -34,11 +35,14 @@ interface BreadcrumbSegment {
   fullPath: string;
   node: FileNode | null;
   siblings: FileNode[];
+  /** Folder path whose children are the siblings (empty string = root) */
+  parentPath: string;
 }
 
 function walkTree(tree: FileNode[], segments: string[]): BreadcrumbSegment[] {
   const result: BreadcrumbSegment[] = [];
   let current: FileNode[] = tree;
+  let parentPath = "";
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!;
@@ -49,17 +53,20 @@ function walkTree(tree: FileNode[], segments: string[]): BreadcrumbSegment[] {
       fullPath,
       node: match ?? null,
       siblings: current,
+      parentPath,
     });
     if (match?.children) {
+      parentPath = match.path;
       current = match.children;
     } else {
-      // Remaining segments have no tree data — add as plain
+      // Remaining segments — parent children not loaded yet
       for (let j = i + 1; j < segments.length; j++) {
         result.push({
           name: segments[j]!,
           fullPath: segments.slice(0, j + 1).join("/"),
           node: null,
           siblings: [],
+          parentPath: segments.slice(0, j).join("/"),
         });
       }
       break;
@@ -85,11 +92,23 @@ interface EditorBreadcrumbProps {
 export function EditorBreadcrumb({ filePath, projectName, tabId, className }: EditorBreadcrumbProps) {
   const tree = useFileStore((s) => s.tree);
   const { updateTab, openTab } = useTabStore(useShallow((s) => ({ updateTab: s.updateTab, openTab: s.openTab })));
+  const projectPath = useProjectStore((s) => s.projects.find((p) => p.name === projectName)?.path ?? "");
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Strip project root prefix so segments align with the relative-path file tree
+  const { prefixParts, relativePath } = useMemo(() => {
+    const norm = filePath.startsWith("/") ? filePath.slice(1) : filePath;
+    const normRoot = projectPath.startsWith("/") ? projectPath.slice(1) : projectPath;
+    if (normRoot && norm.startsWith(normRoot + "/")) {
+      const rel = norm.slice(normRoot.length + 1);
+      return { prefixParts: normRoot.split("/"), relativePath: rel };
+    }
+    return { prefixParts: [] as string[], relativePath: norm };
+  }, [filePath, projectPath]);
+
   const segments = useMemo(
-    () => walkTree(tree, filePath.split("/").filter(Boolean)),
-    [tree, filePath],
+    () => walkTree(tree, relativePath.split("/").filter(Boolean)),
+    [tree, relativePath],
   );
 
   // Auto-scroll to rightmost segment
@@ -110,19 +129,21 @@ export function EditorBreadcrumb({ filePath, projectName, tabId, className }: Ed
 
   return (
     <div ref={scrollRef} className={className}>
+      {prefixParts.map((part, i) => (
+        <div key={`prefix-${i}`} className="flex items-center shrink-0">
+          {i > 0 && <ChevronRight className="size-3 text-muted-foreground shrink-0 mx-0.5" />}
+          <span className="text-xs text-muted-foreground px-1 py-0.5">{part}</span>
+        </div>
+      ))}
       {segments.map((seg, i) => (
         <div key={seg.fullPath} className="flex items-center shrink-0">
-          {i > 0 && <ChevronRight className="size-3 text-muted-foreground shrink-0 mx-0.5" />}
-          {seg.siblings.length > 0 ? (
-            <SegmentDropdown
-              segment={seg}
-              isLast={i === segments.length - 1}
-              projectName={projectName}
-              onFileClick={handleFileClick}
-            />
-          ) : (
-            <span className="text-xs text-muted-foreground px-1 py-0.5">{seg.name}</span>
-          )}
+          {(i > 0 || prefixParts.length > 0) && <ChevronRight className="size-3 text-muted-foreground shrink-0 mx-0.5" />}
+          <SegmentDropdown
+            segment={seg}
+            isLast={i === segments.length - 1}
+            projectName={projectName}
+            onFileClick={handleFileClick}
+          />
         </div>
       ))}
     </div>
@@ -137,10 +158,19 @@ interface SegmentDropdownProps {
 }
 
 function SegmentDropdown({ segment, isLast, projectName, onFileClick }: SegmentDropdownProps) {
+  const loadChildren = useFileStore((s) => s.loadChildren);
+  const loadedPaths = useFileStore((s) => s.loadedPaths);
   const sorted = useMemo(() => sortNodes(segment.siblings), [segment.siblings]);
+  const isLoaded = loadedPaths.has(segment.parentPath);
+
+  function handleOpenChange(open: boolean) {
+    if (open && !isLoaded) {
+      loadChildren(projectName, segment.parentPath);
+    }
+  }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -152,15 +182,21 @@ function SegmentDropdown({ segment, isLast, projectName, onFileClick }: SegmentD
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-[300px] p-1">
-        {sorted.map((node) => (
-          <NodeMenuItem
-            key={node.path}
-            node={node}
-            projectName={projectName}
-            activePath={segment.fullPath}
-            onFileClick={onFileClick}
-          />
-        ))}
+        {sorted.length === 0 ? (
+          <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+            Loading…
+          </DropdownMenuItem>
+        ) : (
+          sorted.map((node) => (
+            <NodeMenuItem
+              key={node.path}
+              node={node}
+              projectName={projectName}
+              activePath={segment.fullPath}
+              onFileClick={onFileClick}
+            />
+          ))
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -176,24 +212,41 @@ interface NodeMenuItemProps {
 function NodeMenuItem({ node, projectName, activePath, onFileClick }: NodeMenuItemProps) {
   const Icon = getIcon(node.name, node.type === "directory");
   const isActive = node.path === activePath;
+  const loadChildren = useFileStore((s) => s.loadChildren);
+  const loadedPaths = useFileStore((s) => s.loadedPaths);
 
-  if (node.type === "directory" && node.children && node.children.length > 0) {
+  if (node.type === "directory") {
+    const children = node.children ?? [];
+    const isLoaded = loadedPaths.has(node.path);
+
+    function handleSubOpen(open: boolean) {
+      if (open && !isLoaded) {
+        loadChildren(projectName, node.path);
+      }
+    }
+
     return (
-      <DropdownMenuSub>
+      <DropdownMenuSub onOpenChange={handleSubOpen}>
         <DropdownMenuSubTrigger className={`text-xs gap-1.5 ${isActive ? "bg-muted" : ""}`}>
           <Icon className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{node.name}</span>
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className="max-h-[300px] overflow-y-auto p-1">
-          {sortNodes(node.children).map((child) => (
-            <NodeMenuItem
-              key={child.path}
-              node={child}
-              projectName={projectName}
-              activePath={activePath}
-              onFileClick={onFileClick}
-            />
-          ))}
+          {children.length === 0 ? (
+            <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+              Loading…
+            </DropdownMenuItem>
+          ) : (
+            sortNodes(children).map((child) => (
+              <NodeMenuItem
+                key={child.path}
+                node={child}
+                projectName={projectName}
+                activePath={activePath}
+                onFileClick={onFileClick}
+              />
+            ))
+          )}
         </DropdownMenuSubContent>
       </DropdownMenuSub>
     );
@@ -206,7 +259,6 @@ function NodeMenuItem({ node, projectName, activePath, onFileClick }: NodeMenuIt
         // onSelect doesn't give MouseEvent, use click handler for Ctrl detection
       }}
       onClick={(e) => {
-        if (node.type === "directory") return;
         onFileClick(node.path, e);
       }}
     >
