@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.15] - 2026-04-24
+
+### Fixed
+- **File compare with absolute paths**: Comparing files outside the project (e.g. `/tmp/`) no longer fails with "Path traversal not allowed" — absolute paths now use `readSystemFile` instead of project-scoped read
+
 ## [0.13.14] - 2026-04-24
 
 ### Fixed

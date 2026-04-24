@@ -1,7 +1,8 @@
 import { Hono } from "hono";
-import { resolve } from "node:path";
+import { resolve, isAbsolute } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { fileService, SecurityError, NotFoundError, ValidationError } from "../../services/file.service.ts";
+import { readSystemFile } from "../../services/fs-browse.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { errorStatus } from "../helpers/error-status.ts";
 
@@ -196,9 +197,12 @@ fileRoutes.get("/compare", (c) => {
     if (!file1 || !file2) {
       return c.json(err("Missing query parameters: file1, file2"), 400);
     }
-    const original = fileService.readFile(projectPath, file1);
-    const modified = fileService.readFile(projectPath, file2);
-    return c.json(ok({ original: original.content, modified: modified.content }));
+    // Support absolute paths (files outside project, e.g. /tmp/)
+    const readSide = (p: string) =>
+      isAbsolute(p) ? readSystemFile(p).content : fileService.readFile(projectPath, p).content;
+    const original = readSide(file1);
+    const modified = readSide(file2);
+    return c.json(ok({ original, modified }));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }
