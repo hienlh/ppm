@@ -940,6 +940,16 @@ export async function runSupervisor(opts: {
       else if (cmd.action === "resume") {
         if (getState() === "stopped" || getState() === "paused") triggerResume();
       }
+      else if (cmd.action === "upgrade") {
+        log("INFO", "Windows command: upgrade, starting self-replace");
+        selfReplace().then((result) => {
+          if (!result.success) {
+            log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
+            spawnServer(serverArgs, logFd);
+            if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(opts.port);
+          }
+        });
+      }
     }, 1000);
   }
 

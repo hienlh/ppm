@@ -1,8 +1,9 @@
 # Changelog
 
-## [0.13.18] - 2026-04-25
+## [0.13.19] - 2026-04-25
 
 ### Fixed
+- **Windows upgrade no auto-restart**: `ppm upgrade` on Windows upgraded files but didn't restart the server — SIGUSR1 doesn't exist on Windows. Now writes command file that supervisor polls every 1s
 - **Windows path traversal rejection**: File tree lazy-loading and zip downloads failed on Windows hosts — `assertWithinProject` hardcoded `/` separator instead of `path.sep`
 - **Upload response backslash paths**: Upload endpoint returned `input\file.jpg` on Windows instead of `input/file.jpg`, breaking frontend path matching
 

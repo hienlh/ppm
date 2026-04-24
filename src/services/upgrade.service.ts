@@ -3,7 +3,7 @@
  * detects install method, runs install command.
  */
 import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { VERSION } from "../version.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { getPpmDir } from "./ppm-dir.ts";
@@ -99,14 +99,21 @@ export async function applyUpgrade(): Promise<{
   }
 }
 
-/** Send SIGUSR1 to supervisor to trigger self-replace after upgrade */
+/** Signal supervisor to trigger self-replace after upgrade.
+ *  Unix: SIGUSR1. Windows: command file (supervisor polls every 1s). */
 export function signalSupervisorUpgrade(): { sent: boolean; error?: string } {
   try {
     const data = JSON.parse(readFileSync(resolve(getPpmDir(), "status.json"), "utf-8"));
     const pid = data.supervisorPid;
     if (!pid) return { sent: false, error: "No supervisor PID" };
     process.kill(pid, 0); // check alive
-    process.kill(pid, "SIGUSR1");
+
+    if (process.platform === "win32") {
+      const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
+      writeFileSync(cmdFile, JSON.stringify({ action: "upgrade" }));
+    } else {
+      process.kill(pid, "SIGUSR1");
+    }
     return { sent: true };
   } catch (e) {
     return { sent: false, error: (e as Error).message };
