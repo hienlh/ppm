@@ -164,7 +164,7 @@ fileRoutes.post("/upload", async (c) => {
       const absPath = resolve(absTargetDir, safeName);
       if (!absPath.startsWith(projectPath)) return c.json(err("Access denied"), 403);
       await Bun.write(absPath, file);
-      uploaded.push({ name: safeName, path: absPath.slice(projectPath.length + 1), size: file.size });
+      uploaded.push({ name: safeName, path: absPath.slice(projectPath.length + 1).split("\\").join("/"), size: file.size });
     }
 
     return c.json(ok({ uploaded }), 201);

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { resolve, basename } from "node:path";
+import { resolve, basename, sep } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import archiver from "archiver";
 import { createDownloadToken } from "../../services/download-token.service.ts";
@@ -24,7 +24,7 @@ downloadRoutes.get("/zip", async (c) => {
     if (!dirPath) return c.json(err("Missing query parameter: path"), 400);
 
     const absPath = resolve(projectPath, dirPath);
-    if (!absPath.startsWith(projectPath + "/") && absPath !== projectPath) {
+    if (!absPath.startsWith(projectPath + sep) && absPath !== projectPath) {
       return c.json(err("Access denied"), 403);
     }
     if (!existsSync(absPath)) return c.json(err("Directory not found"), 404);

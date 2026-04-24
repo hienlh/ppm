@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.18] - 2026-04-25
+
+### Fixed
+- **Windows path traversal rejection**: File tree lazy-loading and zip downloads failed on Windows hosts — `assertWithinProject` hardcoded `/` separator instead of `path.sep`
+- **Upload response backslash paths**: Upload endpoint returned `input\file.jpg` on Windows instead of `input/file.jpg`, breaking frontend path matching
+
 ## [0.13.17] - 2026-04-25
 
 ### Fixed

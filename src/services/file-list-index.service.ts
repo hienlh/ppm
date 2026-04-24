@@ -6,7 +6,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { resolve, relative, join } from "node:path";
+import { resolve, relative, join, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
 import type { FileEntry, FileDirEntry } from "../types/project.ts";
 import { matchesGlob, resolveFilter } from "./file-filter.service.ts";
@@ -50,7 +50,7 @@ function loadGitignore(projectPath: string): Ignore {
 
 function assertWithinProject(relPath: string, projectPath: string): void {
   const abs = resolve(projectPath, relPath);
-  if (!abs.startsWith(projectPath + "/") && abs !== projectPath) {
+  if (!abs.startsWith(projectPath + sep) && abs !== projectPath) {
     throw new SecurityError("Path traversal not allowed");
   }
 }
