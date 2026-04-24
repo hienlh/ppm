@@ -1336,6 +1336,7 @@ ppm db connections           # List all connections
 ppm db connect               # Add new connection (interactive)
 ppm db remove <name>         # Delete connection
 ppm db query <name> <sql>    # Execute query (respects readonly)
+ppm db run <name> <file>     # Execute SQL file (multi-statement, transactions)
 ppm db tables <name>         # List tables
 ppm db schema <name> <table> # Show table schema
 ppm db data <name> <table>   # Show table data (paginated)

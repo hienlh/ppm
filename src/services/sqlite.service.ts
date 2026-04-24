@@ -140,6 +140,15 @@ class SqliteService {
     return { columns: [], rows: [], rowsAffected: result.changes, changeType: "modify", executionTimeMs };
   }
 
+  /** Execute multi-statement SQL script (no result rows returned) */
+  executeScript(projectPath: string, dbPath: string, sql: string): { executionTimeMs: number } {
+    const abs = this.resolvePath(projectPath, dbPath);
+    const db = this.open(abs);
+    const start = performance.now();
+    db.exec(sql);
+    return { executionTimeMs: Math.round(performance.now() - start) };
+  }
+
   /** Update a single cell value */
   updateCell(
     projectPath: string, dbPath: string, table: string,

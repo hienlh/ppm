@@ -363,4 +363,60 @@ export function registerDbCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // ── ppm db run ──────────────────────────────────────────────────────
+  db.command("run <name> <file>")
+    .description("Execute a SQL file against a saved connection")
+    .action(async (nameOrId: string, filePath: string) => {
+      try {
+        const { resolveConnection } = await import("../../services/db.service.ts");
+        const conn = resolveConnection(nameOrId);
+        if (!conn) {
+          console.error(`${C.red}Connection not found:${C.reset} ${nameOrId}`);
+          process.exit(1);
+        }
+
+        const { resolve } = await import("node:path");
+        const absFile = resolve(filePath);
+        const file = Bun.file(absFile);
+        if (!(await file.exists())) {
+          console.error(`${C.red}File not found:${C.reset} ${absFile}`);
+          process.exit(1);
+        }
+        const sql = await file.text();
+        if (!sql.trim()) {
+          console.error(`${C.yellow}File is empty:${C.reset} ${absFile}`);
+          return;
+        }
+
+        // Enforce readonly
+        if (conn.readonly && !isReadOnlyQuery(sql)) {
+          console.error(`${C.red}Error:${C.reset} Connection "${conn.name}" is readonly — file contains write statements.`);
+          console.error(`  To allow writes, toggle the readonly switch in the PPM web UI.`);
+          process.exit(1);
+        }
+
+        const cfg = parseConfig(conn);
+        console.log(`${C.cyan}Running${C.reset} ${absFile} ${C.dim}on${C.reset} ${conn.name} (${conn.type})...\n`);
+
+        if (conn.type === "postgres") {
+          const { postgresService } = await import("../../services/postgres.service.ts");
+          const result = await postgresService.executeQuery(cfg.connectionString!, sql);
+          await postgresService.closeAll();
+          if (result.changeType === "select") {
+            formatRows(result.columns, result.rows);
+          } else {
+            console.log(`${C.green}OK${C.reset} — ${result.rowsAffected} row(s) affected (${result.executionTimeMs}ms)`);
+          }
+        } else {
+          const { sqliteService } = await import("../../services/sqlite.service.ts");
+          const result = sqliteService.executeScript(cfg.path!, cfg.path!, sql);
+          sqliteService.closeAll();
+          console.log(`${C.green}OK${C.reset} — script executed (${result.executionTimeMs}ms)`);
+        }
+      } catch (err) {
+        console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
+        process.exit(1);
+      }
+    });
 }

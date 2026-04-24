@@ -297,6 +297,16 @@ Execute a SQL query against a saved connection
 
 **Usage:** `ppm db query [options] <name> <sql>`
 
+### `ppm db run`
+
+Execute a SQL file against a saved connection. Supports multi-statement files and transactions (`BEGIN...COMMIT`).
+
+- **PostgreSQL**: sends entire file via `sql.unsafe()` (multi-statement native)
+- **SQLite**: uses `db.exec()` for multi-statement execution
+- Respects `readonly` flag — rejects files containing write statements
+
+**Usage:** `ppm db run [options] <name> <file>`
+
 ## `ppm down`
 
 Fully shut down PPM (supervisor + server + tunnel)
