@@ -246,6 +246,13 @@ export function App() {
         {/* Upgrade banner — shown when new version available */}
         <UpgradeBanner onVisibilityChange={setUpgradeBannerVisible} />
 
+        {/* Beta ribbon — top-left on desktop, top-right on mobile */}
+        <div className="fixed z-50 overflow-hidden pointer-events-none max-md:right-0 max-md:top-0 md:left-0 md:top-0 w-10 h-10">
+          <div className="absolute flex items-center justify-center max-md:rotate-45 max-md:right-[-18px] max-md:top-[4px] md:-rotate-45 md:left-[-18px] md:top-[4px] w-[60px] bg-amber-500 text-white text-[6px] font-bold leading-none py-[2.5px] shadow-sm">
+            BETA
+          </div>
+        </div>
+
         {/* Mobile device name badge — floating top-left */}
         {deviceName && (
           <div className={cn("md:hidden fixed left-0 z-50 px-2 py-0.5 bg-primary/80 text-primary-foreground text-[10px] font-medium rounded-br transition-[top]", upgradeBannerVisible ? "top-7" : "top-0")}>
