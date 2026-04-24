@@ -160,13 +160,22 @@ class ConfigService {
 
   private syncProjectsToDb(projects: ProjectConfig[]): void {
     const db = getDb();
-    db.exec("DELETE FROM projects");
-    const stmt = db.query(
-      "INSERT INTO projects (path, name, color, sort_order) VALUES (?, ?, ?, ?)",
-    );
-    for (let i = 0; i < projects.length; i++) {
-      const p = projects[i]!;
-      stmt.run(p.path, p.name, p.color ?? null, i);
+    // Wrap in a transaction so a mid-operation SIGKILL cannot leave the table empty
+    // (DELETE committed but INSERTs never ran would permanently wipe all projects).
+    db.exec("BEGIN");
+    try {
+      db.exec("DELETE FROM projects");
+      const stmt = db.query(
+        "INSERT INTO projects (path, name, color, sort_order) VALUES (?, ?, ?, ?)",
+      );
+      for (let i = 0; i < projects.length; i++) {
+        const p = projects[i]!;
+        stmt.run(p.path, p.name, p.color ?? null, i);
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
     }
   }
 }
