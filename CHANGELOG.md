@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.17] - 2026-04-25
+
+### Fixed
+- **Swipe-to-dismiss stale closure**: Bottom sheet swipe gesture could fail to dismiss due to stale `dragY` state in touch end handler — now uses ref for reliable threshold check
+- **No upload progress feedback**: Dragging files into the file tree showed no visual feedback — now shows toast with loading spinner, success/error result
+- **Duplicate Loader2 import**: Consolidated duplicate lucide-react import in file-tree.tsx
+
 ## [0.13.16] - 2026-04-25
 
 ### Added

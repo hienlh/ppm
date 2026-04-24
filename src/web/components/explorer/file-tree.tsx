@@ -9,6 +9,7 @@ import {
   RefreshCw,
   ChevronsDownUp,
   Crosshair,
+  Loader2,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useFileStore, type FileNode } from "@/stores/file-store";
@@ -32,7 +33,6 @@ import { InlineTreeInput } from "./inline-tree-input";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
 import { api, projectUrl } from "@/lib/api-client";
 import { useFileUploadDrag } from "./use-file-upload-drag";
-import { Loader2 } from "lucide-react";
 import { useTreeKeyboardNav } from "./use-tree-keyboard-nav";
 
 /** Synthetic root node for creating files/folders at project root */

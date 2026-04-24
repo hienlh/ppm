@@ -5,6 +5,7 @@ import { useCallback, useState, useRef } from "react";
 import { useFileStore } from "@/stores/file-store";
 import { getAuthToken, projectUrl } from "@/lib/api-client";
 import { isExternalFileDrag } from "./tree-node";
+import { toast } from "sonner";
 
 interface UseFileUploadDragOptions {
   projectName: string | undefined;
@@ -17,6 +18,10 @@ export function useFileUploadDrag({ projectName, setExpanded }: UseFileUploadDra
 
   const uploadFiles = useCallback(async (targetDir: string, files: FileList) => {
     if (!projectName) return;
+    const count = files.length;
+    const label = count === 1 ? files[0]!.name : `${count} files`;
+    const toastId = toast.loading(`Uploading ${label}…`);
+
     const form = new FormData();
     form.append("targetDir", targetDir);
     for (const file of files) form.append("files", file);
@@ -31,15 +36,17 @@ export function useFileUploadDrag({ projectName, setExpanded }: UseFileUploadDra
       });
       if (!res.ok) {
         const json = await res.json();
-        console.error("Upload failed:", json.error);
+        toast.error(`Upload failed: ${json.error ?? "Unknown error"}`, { id: toastId });
+        return;
       }
+      toast.success(`Uploaded ${label}`, { id: toastId });
       const store = useFileStore.getState();
       if (store.loadedPaths.has(targetDir)) {
         await store.invalidateFolder(projectName, targetDir);
       }
       if (targetDir) setExpanded(targetDir, true);
     } catch (e) {
-      console.error("Upload error:", e);
+      toast.error(e instanceof Error ? e.message : "Upload failed", { id: toastId });
     }
   }, [projectName, setExpanded]);
 
