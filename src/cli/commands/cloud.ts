@@ -200,4 +200,57 @@ export function registerCloudCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  // ── alias subcommand group ────────────────────────────────────────────
+  const alias = cmd.command("alias").description("Manage machine alias (vanity URL slug)");
+
+  alias
+    .command("set <slug>")
+    .description("Set alias for this machine (e.g. ppm cloud alias set macbook)")
+    .action(async (slug: string) => {
+      try {
+        const { setAlias, getCloudDevice } = await import("../../services/cloud.service.ts");
+        const device = getCloudDevice();
+        if (!device) { console.error("Not linked. Run: ppm cloud link"); process.exit(1); }
+        const result = await setAlias(slug);
+        console.log(`Alias set: ${device.cloud_url}/${result.slug}`);
+      } catch (err: unknown) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+    });
+
+  alias
+    .command("get")
+    .description("Show current alias for this machine")
+    .action(async () => {
+      try {
+        const { getAlias, getCloudDevice } = await import("../../services/cloud.service.ts");
+        const device = getCloudDevice();
+        if (!device) { console.error("Not linked. Run: ppm cloud link"); process.exit(1); }
+        const { slug } = await getAlias();
+        if (slug) {
+          console.log(`Current alias: ${device.cloud_url}/${slug}`);
+        } else {
+          console.log("No alias set. Run: ppm cloud alias set <slug>");
+        }
+      } catch (err: unknown) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+    });
+
+  alias
+    .command("remove")
+    .description("Remove alias for this machine")
+    .action(async () => {
+      try {
+        const { removeAlias } = await import("../../services/cloud.service.ts");
+        await removeAlias();
+        console.log("Alias removed.");
+      } catch (err: unknown) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+    });
 }
