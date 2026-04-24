@@ -128,15 +128,19 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
   const renderSideBySide = !isMobile;
 
-  // Sync word wrap directly on EACH sub-editor, bypassing DiffEditor option propagation.
-  // Monaco DiffEditor uses wordWrapOverride1 internally for diff word wrap.
+  // Sync word wrap on both sub-editors.
+  // Monaco DiffEditor has a bug: during init when container width is 0,
+  // useInlineViewWhenSpaceIsLimited briefly triggers inline mode which sets
+  // wordWrapOverride2='off' on the original editor. When side-by-side resumes,
+  // wordWrapOverride2 is never cleared, permanently blocking word wrap on the
+  // left side. We disable that option and also force wordWrapOverride2 to clear it.
   useEffect(() => {
     const editor = diffEditorRef.current;
     if (!editor) return;
     const val: "on" | "off" = isMobile ? "on" : wordWrap ? "on" : "off";
     editor.updateOptions({ diffWordWrap: val });
-    editor.getOriginalEditor().updateOptions({ wordWrapOverride1: val } as any);
-    editor.getModifiedEditor().updateOptions({ wordWrapOverride1: val } as any);
+    editor.getOriginalEditor().updateOptions({ wordWrapOverride2: val } as any);
+    editor.getModifiedEditor().updateOptions({ wordWrapOverride2: val } as any);
   }, [wordWrap, isMobile, editorReady]);
 
   if (!projectName && !isInline) {
@@ -203,6 +207,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
               fontFamily: "Menlo, Monaco, Consolas, monospace",
               diffWordWrap: isMobile ? "on" : wordWrap ? "on" : "off",
               renderSideBySide,
+              useInlineViewWhenSpaceIsLimited: false,
               readOnly: true,
               automaticLayout: true,
               scrollBeyondLastLine: false,
