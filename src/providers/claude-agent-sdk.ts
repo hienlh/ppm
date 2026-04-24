@@ -988,9 +988,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               const retryEnv = this.buildQueryEnv(meta.projectPath, account);
               closeCurrentStream();
               const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
-              const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
-              if (!hasHistory) earlyAuthCtrl.push(firstMsg);
-              const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
+              // Always re-push firstMsg — SDK needs a user message from the generator
+              // even with resume (resume loads JSONL history, generator provides current turn)
+              earlyAuthCtrl.push(firstMsg);
+              const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
               const rq = query({
                 prompt: earlyAuthGen,
                 options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1144,9 +1145,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const retryEnv = this.buildQueryEnv(meta.projectPath, account);
                 closeCurrentStream();
                 const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
-                const hasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
-                if (!hasHistory) authRetryCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: hasHistory ? sessionId : undefined, env: retryEnv };
+                authRetryCtrl.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1184,9 +1184,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               closeCurrentStream();
               const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
               const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
-              const rlHasHistory = (this.messageCount.get(sessionId) ?? 0) > 0;
-              if (!rlHasHistory) rlRetryCtrl.push(firstMsg);
-              const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlHasHistory ? sessionId : undefined, env: rlRetryEnv };
+              rlRetryCtrl.push(firstMsg);
+              const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: rlRetryEnv };
               const rq = query({
                 prompt: rlRetryGen,
                 options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1280,9 +1279,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 closeCurrentStream();
                 const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
-                const rlHasHistory2 = (this.messageCount.get(sessionId) ?? 0) > 0;
-                if (!rlHasHistory2) rlRetryCtrl.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: rlHasHistory2 ? sessionId : undefined, env: rlRetryEnv };
+                rlRetryCtrl.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: rlRetryEnv };
                 const rq = query({
                   prompt: rlRetryGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
@@ -1309,9 +1307,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 closeCurrentStream();
                 const retryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
-                const authHasHistory2 = (this.messageCount.get(sessionId) ?? 0) > 0;
-                if (!authHasHistory2) authRetryCtrl2.push(firstMsg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: authHasHistory2 ? sessionId : undefined, env: retryEnv };
+                authRetryCtrl2.push(firstMsg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen2,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
