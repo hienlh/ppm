@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.12] - 2026-04-24
+
+### Fixed
+- **CLI project add/remove missing config**: `configService.load()` now called before project operations in CLI context to ensure SQLite config is loaded
+- **Project sync data loss on SIGKILL**: `syncProjectsToDb` wrapped in transaction — DELETE + INSERT are atomic, preventing wiped project list on forced kill
+- **Supervisor stale device name**: `device_name` is now read directly from SQLite instead of in-memory `configService` cache, which was never updated when server process wrote changes
+
 ## [0.13.11] - 2026-04-24
 
 ### Fixed
