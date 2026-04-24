@@ -76,6 +76,8 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (projectPath: string, options: { name?: string }) => {
       try {
         const { projectService } = await import("../../services/project.service.ts");
+        const { configService } = await import("../../services/config.service.ts");
+        configService.load();
         const entry = projectService.add(projectPath, options.name);
         console.log(`${C.green}Added project:${C.reset} ${entry.name} → ${entry.path}`);
       } catch (err) {
@@ -90,6 +92,8 @@ export function registerProjectsCommands(program: Command): void {
     .action(async (nameOrPath: string) => {
       try {
         const { projectService } = await import("../../services/project.service.ts");
+        const { configService } = await import("../../services/config.service.ts");
+        configService.load();
         projectService.remove(nameOrPath);
         console.log(`${C.green}Removed project:${C.reset} ${nameOrPath}`);
       } catch (err) {
