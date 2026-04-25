@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.30] - 2026-04-25
+
+### Fixed
+- **Session read 404**: `clearForSession` in notification store called `/api/chat/sessions/{id}/read` — missing project prefix. Now uses `/api/project/{name}/chat/sessions/{id}/read`
+- **Workspace sync 404 for `__global__`**: Virtual `__global__` project is not a real server project. Skip workspace fetch/sync to avoid 404 noise
+
 ## [0.13.29] - 2026-04-25
 
 ### Fixed
