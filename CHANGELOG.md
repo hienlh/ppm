@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.21] - 2026-04-25
+
+### Fixed
+- **systemd kills PPM during self-replace upgrade**: selfReplace() spawned a new supervisor via Bun.spawn() that systemd couldn't track ("not our child"), leading to service death on daemon-reload. Now exits cleanly under systemd and lets Restart=always bring it back with updated code
+- **Service not auto-restarting**: Changed systemd Restart=on-failure → Restart=always so PPM always recovers regardless of exit reason
+- **Autostart tests kill production PPM**: integration tests overwrote the real ppm.service file with test config and triggered daemon-reload, killing the running server. Tests now skip when PPM service is already active
+
 ## [0.13.20] - 2026-04-25
 
 ### Fixed
