@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.34] - 2026-04-25
+
+### Fixed
+- **Infinite re-render loop (React #185) from DOM patches**: v0.13.29 preemptive `parentNode` check in `removeChild`/`insertBefore` silently skipped DOM operations, leaving React's state inconsistent → infinite retry loop. Switched to try/catch that only swallows `NotFoundError`, preserving normal DOM behavior
+
 ## [0.13.33] - 2026-04-25
 
 ### Added
