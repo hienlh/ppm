@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.35] - 2026-04-25
+
+### Fixed
+- **Infinite re-render loop crashes app (React #185)**: `NotificationBellPopover` used `useProjectStore` selector returning new object without `useShallow` — zustand's `Object.is` comparison always detected "change", triggering infinite re-renders. Added `useShallow` to match all other components
+
 ## [0.13.34] - 2026-04-25
 
 ### Fixed
