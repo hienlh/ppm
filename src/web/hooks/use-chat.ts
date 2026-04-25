@@ -507,8 +507,14 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         setCompactStatus("compacting");
       } else if (status === "done") {
         setCompactStatus(null);
-        // Refresh messages to show compacted history
-        refetchRef.current?.();
+        // Do NOT refetch here — compact_done arrives mid-stream while the SDK
+        // continues processing.  Calling refetchMessages() would: (1) replace
+        // all messages with REST history (killing the in-progress streaming
+        // assistant message), (2) reset streamingContentRef/streamingEventsRef,
+        // and (3) let the next flushMessages overwrite the last REST message
+        // with empty streaming content — making the UI appear frozen.
+        // The turn-end idle transition already calls refetchRef (phase→idle
+        // handler) which safely loads compacted history after streaming stops.
       }
       return;
     }
