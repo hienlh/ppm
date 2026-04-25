@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.39] - 2026-04-25
+
+### Fixed
+- **Blank panel after split**: Splitting a tab caused the original panel's content to disappear. The `useEffect` cleanup in EditorPanel fired asynchronously after the new EditorPanel had already registered its slot, deregistering it again. Removed the redundant cleanup — callback ref already handles deregistration synchronously
+
 ## [0.13.38] - 2026-04-25
 
 ### Fixed
