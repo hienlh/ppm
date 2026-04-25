@@ -300,7 +300,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         });
         if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
           const nType = ev.tool === "AskUserQuestion" ? "question" : "approval_request";
-          useNotificationStore.getState().addNotification(sessionIdRef.current, nType, projectNameRef.current);
+          // Unread state added via server-side session:unread_changed broadcast — only play sound + toast here
           playNotificationSound(nType);
           // Persistent toast with action to navigate to the waiting session
           const sid = sessionIdRef.current;
@@ -417,7 +417,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           setContextWindowPct(ev.contextWindowPct);
         }
         if (sessionIdRef.current && !isSessionTabActive(sessionIdRef.current)) {
-          useNotificationStore.getState().addNotification(sessionIdRef.current, "done", projectNameRef.current);
+          // Unread state added via server-side session:unread_changed broadcast — only play sound here
           playNotificationSound("done");
         }
         // Cancel any pending throttled sync — done handler writes final state directly
@@ -478,6 +478,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // Dispatch file change events for real-time editor reload
     if ((data as any).type === "file:changed") {
       window.dispatchEvent(new CustomEvent("file:changed", { detail: data }));
+      return;
+    }
+
+    // Cross-tab/device unread sync — server broadcasts when unread state changes
+    if ((data as any).type === "session:unread_changed") {
+      const { sessionId: sid, unreadCount, unreadType, projectName: pn } = data as any;
+      useNotificationStore.getState().handleUnreadChanged(sid, unreadCount, unreadType, pn);
       return;
     }
 

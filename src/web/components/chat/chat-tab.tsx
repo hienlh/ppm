@@ -137,9 +137,12 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     maybeClear();
     document.addEventListener("visibilitychange", maybeClear);
     const unsub = usePanelStore.subscribe(maybeClear);
+    // Also auto-clear when notification store changes (cross-tab broadcast may add for active session)
+    const unsub2 = useNotificationStore.subscribe(maybeClear);
     return () => {
       document.removeEventListener("visibilitychange", maybeClear);
       unsub();
+      unsub2();
     };
   }, [sessionId, tabId]);
 

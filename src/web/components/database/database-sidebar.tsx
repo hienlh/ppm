@@ -24,7 +24,7 @@ export function DatabaseSidebar() {
 
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this connection?")) return;
-    await deleteConnection(id);
+    try { await deleteConnection(id); } catch { /* server error — connection list will stay in sync on next fetch */ }
   };
 
   const handleCreate = async (data: CreateConnectionData) => {

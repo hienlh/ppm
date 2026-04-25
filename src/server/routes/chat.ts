@@ -10,7 +10,7 @@ import { upsertSlashRecent, getSlashRecents } from "../../services/db.service.ts
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
-import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle } from "../../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -106,6 +106,7 @@ chatRoutes.get("/sessions", async (c) => {
     const providerId = c.req.query("providerId");
     const tagIdParam = c.req.query("tag_id");
     const filterTagId = tagIdParam ? parseInt(tagIdParam, 10) : null;
+    const searchQuery = c.req.query("q")?.toLowerCase().trim() || "";
     const limit = Math.min(parseInt(c.req.query("limit") ?? "50", 10) || 50, 200);
     const offset = parseInt(c.req.query("offset") ?? "0", 10) || 0;
 
@@ -143,8 +144,10 @@ chatRoutes.get("/sessions", async (c) => {
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
-    // Server-side tag filter
-    const filtered = filterTagId !== null ? enriched.filter((s) => s.tag?.id === filterTagId) : enriched;
+    // Server-side search + tag filter
+    let filtered = enriched;
+    if (searchQuery) filtered = filtered.filter((s) => (s.title || "").toLowerCase().includes(searchQuery));
+    if (filterTagId !== null) filtered = filtered.filter((s) => s.tag?.id === filterTagId);
     const hasMore = sessions.length >= limit;
     return c.json(ok({ sessions: filtered, hasMore }));
   } catch (e) {
@@ -181,6 +184,50 @@ chatRoutes.post("/sessions", async (c) => {
     return c.json(ok(session), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** DELETE /chat/sessions — bulk delete sessions older than N days */
+chatRoutes.delete("/sessions", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const providerId = c.req.query("providerId") ?? "claude";
+    const olderThanDays = parseInt(c.req.query("olderThanDays") ?? "0", 10);
+    if (!olderThanDays || olderThanDays < 1) return c.json(err("olderThanDays must be >= 1"), 400);
+
+    const cutoff = new Date(Date.now() - olderThanDays * 86400_000);
+    // Fetch all sessions (paginate through) to find old ones
+    const allSessions: { id: string; createdAt: string; providerId: string }[] = [];
+    let offset = 0;
+    const batchSize = 200;
+    while (true) {
+      const batch = await chatService.listSessions(providerId, projectPath, { limit: batchSize, offset });
+      allSessions.push(...batch);
+      if (batch.length < batchSize) break;
+      offset += batchSize;
+    }
+
+    const pinnedIds = getPinnedSessionIds();
+    const toDelete = allSessions.filter((s) =>
+      new Date(s.createdAt) < cutoff && !pinnedIds.has(s.id),
+    );
+
+    let deleted = 0;
+    for (const s of toDelete) {
+      try {
+        await chatService.deleteSession(s.providerId ?? providerId, s.id);
+        deleteSessionMapping(s.id);
+        setSessionTag(s.id, null, projectPath);
+        deleteSessionMetadata(s.id);
+        deleteSessionTitle(s.id);
+        unpinSession(s.id);
+        deleted++;
+      } catch { /* skip individual failures */ }
+    }
+
+    return c.json(ok({ deleted, total: toDelete.length }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
   }
 });
 
@@ -241,6 +288,29 @@ chatRoutes.delete("/sessions/:id/pin", (c) => {
     const id = c.req.param("id");
     unpinSession(id);
     return c.json(ok({ id, pinned: false }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /chat/sessions/unread — get all sessions with unread notifications */
+chatRoutes.get("/sessions/unread", (c) => {
+  try {
+    return c.json(ok(getAllUnread()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /chat/sessions/:id/read — mark a session as read */
+chatRoutes.post("/sessions/:id/read", async (c) => {
+  try {
+    const id = c.req.param("id");
+    clearSessionUnread(id);
+    // Broadcast to all WS clients so other tabs/devices sync
+    const { broadcastGlobalEvent } = await import("../ws/chat.ts");
+    broadcastGlobalEvent({ type: "session:unread_changed", sessionId: id, unreadCount: 0, unreadType: null, projectName: "" });
+    return c.json(ok({ id, unreadCount: 0 }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

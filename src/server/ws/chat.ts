@@ -3,7 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread } from "../../services/db.service.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
@@ -370,6 +370,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
             if (session) session.title = title;
           }
         }).catch(() => {});
+        // Persist unread to DB + broadcast to all tabs/devices
+        incrementSessionUnread(sessionId, "done");
+        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "" });
+
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
@@ -384,12 +388,17 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         }).catch(() => {});
       } else if (evType === "approval_request") {
         entry.pendingApprovalEvent = ev;
+
+        const isQuestion = ev.tool === "AskUserQuestion";
+        const nType = isQuestion ? "question" : "approval_request";
+        // Persist unread to DB + broadcast to all tabs/devices
+        incrementSessionUnread(sessionId, nType);
+        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: nType, projectName: entry.projectName || "" });
+
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
           const session = chatService.getSession(sessionId);
           const sTitle = session?.title || `Session ${sessionId.slice(0, 8)}`;
-          const isQuestion = ev.tool === "AskUserQuestion";
-          const nType = isQuestion ? "question" : "approval_request";
           const title = isQuestion ? "AI has a question" : "Waiting for approval";
           const body = isQuestion
             ? `${project} — ${sTitle}`

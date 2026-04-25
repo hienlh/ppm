@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot, Tags } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -11,6 +11,7 @@ import { UsageDetailPanel } from "./usage-badge";
 import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
 import { formatRelativeDate } from "@/lib/format-date";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { SessionInfo, SessionListResponse, ProjectTag } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
 import type { TeamMessageItem } from "@/hooks/use-chat";
@@ -99,6 +100,7 @@ export function ChatHistoryBar({
   const hasUnread = useNotificationStore((s) => sessionId ? s.notifications.has(sessionId) : false);
   const clearForSession = useNotificationStore((s) => s.clearForSession);
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [hasMore, setHasMore] = useState(false);
@@ -115,11 +117,13 @@ export function ChatHistoryBar({
     setActivePanel((prev) => prev === panel ? null : panel);
   };
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (query?: string) => {
     if (!projectName) return;
     setLoading(true);
     try {
-      const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?limit=${PAGE_SIZE}&offset=0`);
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: "0" });
+      if (query) params.set("q", query);
+      const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?${params}`);
       setSessions(data.sessions);
       setHasMore(data.hasMore);
     } catch {
@@ -135,7 +139,9 @@ export function ChatHistoryBar({
     try {
       // Offset by count of non-pinned sessions (pinned are injected separately by backend)
       const unpinnedCount = sessions.filter((s) => !s.pinned).length;
-      const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?limit=${PAGE_SIZE}&offset=${unpinnedCount}`);
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(unpinnedCount) });
+      if (debouncedSearch) params.set("q", debouncedSearch);
+      const data = await api.get<SessionListResponse>(`${projectUrl(projectName)}/chat/sessions?${params}`);
       setSessions((prev) => {
         const existingIds = new Set(prev.map((s) => s.id));
         const newSessions = data.sessions.filter((s) => !existingIds.has(s.id));
@@ -147,12 +153,17 @@ export function ChatHistoryBar({
     } finally {
       setLoadingMore(false);
     }
-  }, [projectName, loadingMore, hasMore, sessions]);
+  }, [projectName, loadingMore, hasMore, sessions, debouncedSearch]);
 
   // Load sessions when history panel opens
   useEffect(() => {
     if (activePanel === "history" && sessions.length === 0) load();
   }, [activePanel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch when debounced search query changes (server-side search)
+  useEffect(() => {
+    if (activePanel === "history") load(debouncedSearch || undefined);
+  }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch tags
   const loadTags = useCallback(async () => {
@@ -242,6 +253,20 @@ export function ChatHistoryBar({
     loadTags(); // Refetch counts from API for accuracy
   }, [loadTags]);
 
+  const bulkDelete = useCallback(async () => {
+    if (!projectName) return;
+    const days = window.prompt("Delete sessions older than how many days? (pinned sessions are kept)", "30");
+    if (!days) return;
+    const num = parseInt(days, 10);
+    if (!num || num < 1) return;
+    if (!window.confirm(`Delete all unpinned sessions older than ${num} days? This cannot be undone.`)) return;
+    setLoading(true);
+    try {
+      await api.del(`${projectUrl(projectName)}/chat/sessions?olderThanDays=${num}`);
+      load(debouncedSearch || undefined);
+    } catch { /* silent */ }
+  }, [projectName, load, debouncedSearch]);
+
   // Keyboard shortcuts: 1-9 to assign tags to current session
   useEffect(() => {
     if (activePanel !== "history") return;
@@ -260,12 +285,10 @@ export function ChatHistoryBar({
     return () => window.removeEventListener("keydown", handler);
   }, [activePanel, projectTags, sessionId, projectName, handleTagChanged]);
 
-  // Filter sessions by search query + tag
-  const filteredSessions = sessions.filter((s) => {
-    if (searchQuery.trim() && !(s.title || "").toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    if (selectedTagId !== null && s.tag?.id !== selectedTagId) return false;
-    return true;
-  });
+  // Filter by tag client-side (search is now server-side via ?q=)
+  const filteredSessions = selectedTagId !== null
+    ? sessions.filter((s) => s.tag?.id === selectedTagId)
+    : sessions;
 
   // Usage badge display — only meaningful for Claude (SDK) provider
   const isClaudeProvider = !providerId || providerId === "claude";
@@ -399,7 +422,14 @@ export function ChatHistoryBar({
               className="flex-1 bg-transparent text-[11px] text-text-primary outline-none placeholder:text-text-subtle"
             />
             <button
-              onClick={load}
+              onClick={bulkDelete}
+              className="p-0.5 rounded text-text-subtle hover:text-red-400 transition-colors"
+              title="Delete old sessions..."
+            >
+              <CalendarX2 className="size-3" />
+            </button>
+            <button
+              onClick={() => load(debouncedSearch || undefined)}
               disabled={loading}
               className="p-0.5 rounded text-text-subtle hover:text-text-secondary transition-colors disabled:opacity-50"
               title="Refresh"
@@ -543,7 +573,7 @@ export function ChatHistoryBar({
                   </div>
                   </SessionContextMenu>
                 ))}
-                {hasMore && !searchQuery && (
+                {hasMore && (
                   <button
                     onClick={loadMore}
                     disabled={loadingMore}

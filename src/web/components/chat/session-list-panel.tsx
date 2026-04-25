@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { ChevronDown, ChevronUp, MessageSquare, Pin, PinOff, Search, X } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { formatRelativeDate } from "@/lib/format-date";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useProjectTags, TagChipBar } from "./tag-filter-chips";
 import { SessionContextMenu } from "./session-context-menu";
 import type { SessionInfo, ProjectTag } from "../../../types/chat";
@@ -20,14 +21,17 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
   const [loading, setLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
   const { projectTags, tagCounts, loadTags } = useProjectTags(projectName);
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (query?: string) => {
     if (!projectName) return;
     setLoading(true);
     try {
-      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions?limit=${FETCH_SESSIONS_LIMIT}`);
+      const params = new URLSearchParams({ limit: String(FETCH_SESSIONS_LIMIT) });
+      if (query) params.set("q", query);
+      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions?${params}`);
       setSessions(data.sessions.slice(0, FETCH_SESSIONS_LIMIT));
     } catch {
       // silently ignore
@@ -37,6 +41,11 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
   }, [projectName]);
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  // Re-fetch when debounced search query changes
+  useEffect(() => {
+    loadSessions(debouncedSearch || undefined);
+  }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const togglePin = useCallback(async (e: React.MouseEvent, session: SessionInfo) => {
     e.stopPropagation();
@@ -66,12 +75,10 @@ export function SessionListPanel({ projectName, onSelectSession, className }: Se
     loadTags();
   }, [loadTags]);
 
-  const query = searchQuery.toLowerCase().trim();
-  const filtered = sessions.filter((s) => {
-    if (selectedTagId !== null && s.tag?.id !== selectedTagId) return false;
-    if (query && !(s.title || "").toLowerCase().includes(query)) return false;
-    return true;
-  });
+  // Tag filter is client-side; search is now server-side via ?q=
+  const filtered = selectedTagId !== null
+    ? sessions.filter((s) => s.tag?.id === selectedTagId)
+    : sessions;
   const pinnedSessions = filtered.filter((s) => s.pinned);
   const allRecentSessions = filtered.filter((s) => !s.pinned);
   const recentSessions = showAll ? allRecentSessions : allRecentSessions.slice(0, MAX_RECENT_SESSIONS);

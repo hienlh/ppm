@@ -599,6 +599,12 @@ function runMigrations(database: Database): void {
     }
     database.exec("PRAGMA user_version = 21");
   }
+
+  if (current < 22) {
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN unread_count INTEGER NOT NULL DEFAULT 0"); } catch { /* column exists */ }
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN unread_type TEXT"); } catch { /* column exists */ }
+    database.exec("PRAGMA user_version = 22");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -753,6 +759,39 @@ export function setSessionMetadata(sessionId: string, projectName?: string, proj
 
 export function deleteSessionMetadata(sessionId: string): void {
   getDb().query("DELETE FROM session_metadata WHERE session_id = ?").run(sessionId);
+}
+
+// ---------------------------------------------------------------------------
+// Unread tracking
+// ---------------------------------------------------------------------------
+
+export interface UnreadEntry {
+  sessionId: string;
+  unreadCount: number;
+  unreadType: string | null;
+  projectName: string | null;
+}
+
+/** Increment unread count for a session and set the notification type */
+export function incrementSessionUnread(sessionId: string, type: string): void {
+  getDb().query(
+    "UPDATE session_metadata SET unread_count = unread_count + 1, unread_type = ? WHERE session_id = ?",
+  ).run(type, sessionId);
+}
+
+/** Mark a session as read (reset unread count) */
+export function clearSessionUnread(sessionId: string): void {
+  getDb().query(
+    "UPDATE session_metadata SET unread_count = 0, unread_type = NULL WHERE session_id = ?",
+  ).run(sessionId);
+}
+
+/** Get all sessions with unread > 0 */
+export function getAllUnread(): UnreadEntry[] {
+  const rows = getDb().query(
+    "SELECT session_id, unread_count, unread_type, project_name FROM session_metadata WHERE unread_count > 0",
+  ).all() as { session_id: string; unread_count: number; unread_type: string | null; project_name: string | null }[];
+  return rows.map((r) => ({ sessionId: r.session_id, unreadCount: r.unread_count, unreadType: r.unread_type, projectName: r.project_name }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1074,7 +1113,7 @@ export function deleteConnection(nameOrId: string): boolean {
 }
 
 export function updateConnection(
-  id: number, updates: { name?: string; config?: ConnectionConfig; groupName?: string | null; color?: string | null; readonly?: number },
+  id: number, updates: { name?: string; config?: ConnectionConfig; groupName?: string | null; color?: string | null; readonly?: number; sortOrder?: number },
 ): void {
   const sets: string[] = [];
   const vals: unknown[] = [];
@@ -1083,6 +1122,7 @@ export function updateConnection(
   if (updates.groupName !== undefined) { sets.push("group_name = ?"); vals.push(updates.groupName); }
   if (updates.color !== undefined) { sets.push("color = ?"); vals.push(updates.color); }
   if (updates.readonly !== undefined) { sets.push("readonly = ?"); vals.push(updates.readonly); }
+  if (updates.sortOrder !== undefined) { sets.push("sort_order = ?"); vals.push(updates.sortOrder); }
   if (sets.length === 0) return;
   sets.push("updated_at = datetime('now')");
   vals.push(id);

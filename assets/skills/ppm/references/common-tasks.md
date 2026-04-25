@@ -52,9 +52,6 @@ ppm db test staging
 # Run a SQL query against a registered connection
 ppm db query staging "SELECT count(*) AS total FROM users"
 
-# Execute a SQL file (supports multi-statement and transactions)
-ppm db run staging migration.sql
-
 # Output as JSON for scripting
 ppm db query staging "SELECT id, email FROM users LIMIT 10" --json
 ```

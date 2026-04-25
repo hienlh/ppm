@@ -384,9 +384,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       // SDK's listSessions drops sessions whose first user message exceeds its
       // 64KB head buffer (e.g. large pasted docs). Scan JSONL dir to recover them.
+      // Cached with TTL to avoid thousands of sync FS reads per request.
       if (dir && offset === 0) {
         const knownIds = new Set(sessions.map((s) => s.id));
-        const missing = findMissingSessions(dir, knownIds, this.id);
+        const cached = missingSessionsCache.get(dir);
+        const missing = (cached && Date.now() - cached.ts < MISSING_SESSIONS_TTL_MS)
+          ? cached.sessions.filter((s) => !knownIds.has(s.id))
+          : (() => {
+              const result = findMissingSessions(dir, knownIds, this.id);
+              missingSessionsCache.set(dir, { sessions: result, ts: Date.now() });
+              return result;
+            })();
         if (missing.length > 0) {
           const missingIds = missing.map((s) => s.id);
           const missingDbTitles = getSessionTitles(missingIds);
@@ -1594,6 +1602,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
  * (e.g., pasted API docs) can't be parsed and are silently dropped.
  * We extract title from queue-operation content or first user message.
  */
+// Cache findMissingSessions results to avoid thousands of sync FS reads per request
+const missingSessionsCache = new Map<string, { sessions: SessionInfo[]; ts: number }>();
+const MISSING_SESSIONS_TTL_MS = 60_000; // 60 seconds
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 function findMissingSessions(
   dir: string,

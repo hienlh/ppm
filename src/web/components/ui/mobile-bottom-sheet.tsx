@@ -45,7 +45,7 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
       {/* Panel */}
       <div
         className={cn(
-          "absolute bottom-0 left-0 right-0 rounded-t-2xl bg-popover border-t border-border",
+          "absolute bottom-0 left-0 right-0 rounded-t-2xl bg-popover text-popover-foreground border-t border-border",
           "pb-[max(0.5rem,env(safe-area-inset-bottom))]",
           !isDragging && "animate-in slide-in-from-bottom duration-200",
           className,

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api, projectUrl } from "@/lib/api-client";
-import { Plus, Trash2, MessageSquare, ChevronDown, Pin, PinOff } from "lucide-react";
+import { Plus, Trash2, MessageSquare, ChevronDown, Pin, PinOff, Search, X } from "lucide-react";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { ProviderBadge } from "./provider-selector";
 import type { SessionInfo } from "../../../types/chat";
 
@@ -20,12 +21,16 @@ export function SessionPicker({
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 300);
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (query?: string) => {
     if (!projectName) return;
     setLoading(true);
     try {
-      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions`);
+      const params = new URLSearchParams({ limit: "50" });
+      if (query) params.set("q", query);
+      const data = await api.get<{ sessions: SessionInfo[]; hasMore: boolean }>(`${projectUrl(projectName)}/chat/sessions?${params}`);
       setSessions(data.sessions);
     } catch {
       // Silently fail — sessions list is non-critical
@@ -40,8 +45,13 @@ export function SessionPicker({
 
   // Reload when dropdown opens
   useEffect(() => {
-    if (open) loadSessions();
-  }, [open, loadSessions]);
+    if (open) loadSessions(debouncedSearch || undefined);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch on search
+  useEffect(() => {
+    if (open) loadSessions(debouncedSearch || undefined);
+  }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentSession = sessions.find((s) => s.id === currentSessionId);
 
@@ -162,6 +172,24 @@ export function SessionPicker({
               <Plus className="size-4" />
               <span>New Chat</span>
             </button>
+
+            {/* Search */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
+              <Search className="size-3 text-text-subtle shrink-0" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search sessions..."
+                className="flex-1 bg-transparent text-xs text-text-primary outline-none placeholder:text-text-subtle"
+                autoFocus
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery("")} className="text-text-subtle hover:text-text-primary">
+                  <X className="size-3" />
+                </button>
+              )}
+            </div>
 
             {/* Sessions list */}
             <div className="max-h-60 overflow-y-auto">

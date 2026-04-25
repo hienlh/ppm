@@ -204,6 +204,14 @@ export function App() {
     useTabStore.getState().switchProject(projectName);
   }, [activeProject?.name]);
 
+  // Hydrate unread notification state from server (persisted across refresh / tabs)
+  useEffect(() => {
+    if (authState !== "authenticated" || !activeProject?.name) return;
+    import("@/stores/notification-store").then(({ useNotificationStore }) => {
+      useNotificationStore.getState().loadFromServer(activeProject.name);
+    });
+  }, [authState, activeProject?.name]);
+
   // Keep-alive: mount workspace on first visit, never unmount
   useEffect(() => {
     const projectName = activeProject?.name ?? "__global__";

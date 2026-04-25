@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../../lib/api-client";
 
 export interface Connection {
@@ -104,17 +104,20 @@ export function useConnections() {
   }, []);
 
   /** Fetch column metadata for a table (lazy loaded for schema tree) */
-  const [columnCache, setColumnCache] = useState<Map<string, { name: string; type: string; nullable: boolean; pk: boolean; fk: { table: string; column: string } | null }[]>>(new Map());
-  const fetchColumns = useCallback(async (connId: number, table: string, schema?: string): Promise<{ name: string; type: string; nullable: boolean; pk: boolean; fk: { table: string; column: string } | null }[]> => {
+  type ColumnInfo = { name: string; type: string; nullable: boolean; pk: boolean; fk: { table: string; column: string } | null };
+  const [columnCache, setColumnCache] = useState<Map<string, ColumnInfo[]>>(new Map());
+  const columnCacheRef = useRef(columnCache);
+  columnCacheRef.current = columnCache;
+  const fetchColumns = useCallback(async (connId: number, table: string, schema?: string): Promise<ColumnInfo[]> => {
     const cacheKey = `${connId}:${schema ?? "main"}.${table}`;
-    const cached = columnCache.get(cacheKey);
+    const cached = columnCacheRef.current.get(cacheKey);
     if (cached) return cached;
-    const cols = await api.get<{ name: string; type: string; nullable: boolean; pk: boolean; fk: { table: string; column: string } | null }[]>(
+    const cols = await api.get<ColumnInfo[]>(
       `/api/db/connections/${connId}/schema?table=${encodeURIComponent(table)}${schema ? `&schema=${encodeURIComponent(schema)}` : ""}`,
     );
     setColumnCache((prev) => new Map(prev).set(cacheKey, cols));
     return cols;
-  }, [columnCache]);
+  }, []);
 
   const exportConnections = useCallback(async () => {
     return api.get<{ version: number; exported_at: string; connections: unknown[] }>("/api/db/connections/export");

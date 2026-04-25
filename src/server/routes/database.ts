@@ -31,6 +31,11 @@ function isValidHex(color: string): boolean {
   return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(color);
 }
 
+/** Validate SQL identifier (table/column/schema name) to prevent injection */
+function isSafeIdentifier(name: string): boolean {
+  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+}
+
 /** Resolve connection + parse config, return 404 on miss */
 function resolveConn(id: string) {
   const numId = parseInt(id, 10);
@@ -396,10 +401,14 @@ databaseRoutes.post("/connections/:id/row", async (c) => {
       return c.json(err("table and values are required"), 400);
     }
 
+    // Validate identifiers to prevent SQL injection
+    if (!isSafeIdentifier(body.table)) return c.json(err("Invalid table name"), 400);
+    if (body.schema && !isSafeIdentifier(body.schema)) return c.json(err("Invalid schema name"), 400);
+    const cols = Object.keys(body.values);
+    if (cols.some((col) => !isSafeIdentifier(col))) return c.json(err("Invalid column name"), 400);
+
     const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
-    // Build and execute INSERT query
-    const cols = Object.keys(body.values);
     const vals = Object.values(body.values);
     const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
     const schema = body.schema && conn.type === "postgres" ? `"${body.schema}".` : "";

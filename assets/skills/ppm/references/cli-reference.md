@@ -211,6 +211,26 @@ List all registered devices from cloud
 **Options:**
 - `--json` — Output as JSON
 
+### `ppm cloud alias`
+
+Manage machine alias (vanity URL slug)
+
+**Usage:** `ppm cloud alias [options] [command]`
+
+#### `ppm cloud alias set`
+
+Set alias for this machine (e.g. ppm cloud alias set macbook)
+
+**Usage:** `ppm cloud alias set [options] <slug>`
+
+#### `ppm cloud alias get`
+
+Show current alias for this machine
+
+#### `ppm cloud alias remove`
+
+Remove alias for this machine
+
 ## `ppm config`
 
 Get or set PPM configuration
@@ -299,11 +319,7 @@ Execute a SQL query against a saved connection
 
 ### `ppm db run`
 
-Execute a SQL file against a saved connection. Supports multi-statement files and transactions (`BEGIN...COMMIT`).
-
-- **PostgreSQL**: sends entire file via `sql.unsafe()` (multi-statement native)
-- **SQLite**: uses `db.exec()` for multi-statement execution
-- Respects `readonly` flag — rejects files containing write statements
+Execute a SQL file against a saved connection
 
 **Usage:** `ppm db run [options] <name> <file>`
 
