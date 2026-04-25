@@ -31,7 +31,6 @@ import { UpgradeBanner } from "@/components/layout/upgrade-banner";
 import { ImageOverlay } from "@/components/shared/image-overlay";
 import { DiagramOverlay } from "@/components/shared/diagram-overlay";
 import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overlay";
-import { StatusBar } from "@/components/layout/status-bar";
 import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
 import { useExtensionWs } from "@/hooks/use-extension-ws";
@@ -293,7 +292,7 @@ export function App() {
             {/* TabPool renders all tab components persistently and portals them into panel slots.
                 Placed after PanelLayout so slot refs are registered before portals render. */}
             <TabPool />
-            <StatusBar />
+
           </div>
         </div>
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.45] - 2026-04-26
+
+### Fixed
+- **Debug: enable source maps** for production build to trace runtime errors with real file names
+
 ## [0.13.44] - 2026-04-25
 
 ### Fixed

@@ -14,9 +14,9 @@
     <div id="portal" style="position: fixed; left: 0; top: 0; z-index: 9999;" /></div>
     <div id="root"></div>
     <script type="module" src="./main.tsx"></script>
-    <!-- Eruda: mobile console for debugging. Activate with ?eruda in URL -->
+    <!-- Eruda: mobile console for debugging. Activate with ?debug in URL -->
     <script>
-      if (/eruda=true|eruda(&|$)/.test(location.search)) {
+      if (/debug=true|debug(&|$)/.test(location.search)) {
         var s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/eruda';
         s.onload = function () { eruda.init(); };
