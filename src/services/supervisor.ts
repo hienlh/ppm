@@ -425,6 +425,7 @@ function killStaleTunnel() {
 /** Spawn new supervisor from updated code, wait for it to be healthy, then exit */
 async function selfReplace(): Promise<{ success: boolean; error?: string }> {
   log("INFO", "Starting self-replace for upgrade");
+  const underSystemd = !!process.env.INVOCATION_ID && process.platform === "linux";
   const currentSupervisorPid = process.pid;
 
   try {
@@ -454,7 +455,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
 
     // Kill server child to free the port; keep tunnel alive for domain continuity
     // Use SIGKILL + process group kill to ensure grandchildren (SDK subprocesses) die too
-    log("INFO", "Stopping server before spawning new supervisor (tunnel kept alive)");
+    log("INFO", "Stopping server before upgrade (tunnel kept alive)");
     if (serverChild) {
       const pid = serverChild.pid;
       try { process.kill(-pid, "SIGKILL"); } catch {} // kill process group
@@ -462,6 +463,24 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
       serverChild = null;
     }
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+
+    // ── systemd path: exit cleanly, let Restart=always bring us back ────
+    // The old approach (Bun.spawn new supervisor + sd_notify MAINPID) causes
+    // systemd to lose track ("not our child"), leading to service death on
+    // daemon-reload. Instead, just exit — systemd restarts us with new code.
+    if (underSystemd) {
+      log("INFO", "Under systemd: exiting for automatic restart with updated code");
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
+      if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
+      if (cloudMonitorTimer) clearInterval(cloudMonitorTimer);
+      // Disconnect Cloud WS so new supervisor can reconnect cleanly
+      try { const { disconnect } = await import("./cloud-ws.service.ts"); disconnect(); } catch {}
+      // Don't kill tunnel — it lives in its own systemd-run scope and survives cgroup teardown
+      process.exit(0);
+    }
+
+    // ── Non-systemd path: spawn new supervisor directly (macOS/Windows) ─
     // Poll until port is actually free (max 10s) — never guess with fixed sleep
     const portFreeStart = Date.now();
     while (Date.now() - portFreeStart < 10_000) {
@@ -495,15 +514,9 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
         const data = JSON.parse(readFileSync(STATUS_FILE(), "utf-8"));
         if (data.supervisorPid && data.supervisorPid !== currentSupervisorPid) {
           log("INFO", `New supervisor detected (PID: ${data.supervisorPid}), handing off MainPID to systemd`);
-          // Tell systemd the new supervisor is now MainPID — required so that
-          // systemd does NOT tear down the ppm.service cgroup when this old
-          // supervisor exits 0. Needs NotifyAccess=all in unit file.
-          // No-op on non-systemd platforms (NOTIFY_SOCKET unset).
           await sdNotify(`MAINPID=${data.supervisorPid}`);
-          // Small delay so systemd processes the datagram before our exit.
           await Bun.sleep(300);
           log("INFO", `Old supervisor exiting`);
-          // Children already killed, just clear remaining timers and exit
           if (heartbeatTimer) clearInterval(heartbeatTimer);
           if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
           if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);

@@ -352,8 +352,9 @@ export function getAutoStartStatus(): AutoStartStatus {
 
 /**
  * Detect whether an existing systemd unit file is outdated and needs
- * regeneration. Currently flags units missing Type=notify (introduced to fix
- * the WSL/systemd upgrade-kill bug). Linux-only; returns false elsewhere.
+ * regeneration. Flags units missing Type=notify or still using Restart=on-failure
+ * (should be Restart=always to survive upgrade-induced systemd restarts).
+ * Linux-only; returns false elsewhere.
  */
 export function isAutoStartUnitStale(): boolean {
   if (process.platform !== "linux") return false;
@@ -361,7 +362,9 @@ export function isAutoStartUnitStale(): boolean {
     const path = getServicePath();
     if (!existsSync(path)) return false;
     const content = readFileSync(path, "utf-8");
-    return !content.includes("Type=notify");
+    if (!content.includes("Type=notify")) return true;
+    if (content.includes("Restart=on-failure")) return true;
+    return false;
   } catch {
     return false;
   }
