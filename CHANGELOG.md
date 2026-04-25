@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.38] - 2026-04-25
+
+### Fixed
+- **Closed tab ghost stays visible**: Closing a tab left its DOM wrapper orphaned in the panel slot (React's `removeChild` failed because the node was reparented). Added `useLayoutEffect` cleanup to move wrapper back to hidden container before React unmounts it
+
 ## [0.13.37] - 2026-04-25
 
 ### Added
