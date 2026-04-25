@@ -80,6 +80,8 @@ export function registerPanelSlot(panelId: string, el: HTMLDivElement | null) {
 // TabPool — renders all tabs in a hidden container, reparents into slots
 // ---------------------------------------------------------------------------
 export function TabPool() {
+  const hiddenRef = useRef<HTMLDivElement>(null);
+
   // Re-render when slots change (panel mount/unmount)
   useSyncExternalStore(
     (cb) => registry.subscribe(cb),
@@ -115,7 +117,7 @@ export function TabPool() {
   return (
     // Off-screen mount point. React mounts tab wrappers here, then
     // useLayoutEffect moves them into panel slots before the browser paints.
-    <div style={{ position: "fixed", top: 0, left: 0, width: 0, height: 0, overflow: "hidden", pointerEvents: "none", visibility: "hidden" }}>
+    <div ref={hiddenRef} style={{ position: "fixed", top: 0, left: 0, width: 0, height: 0, overflow: "hidden", pointerEvents: "none", visibility: "hidden" }}>
       {tabEntries.map((entry) => (
         <ReparentingTab
           key={entry.tabId}
@@ -124,6 +126,7 @@ export function TabPool() {
           type={entry.type}
           metadata={entry.metadata}
           isActive={entry.isActive}
+          hiddenContainer={hiddenRef}
         />
       ))}
     </div>
@@ -139,9 +142,10 @@ interface ReparentingTabProps {
   type: TabType;
   metadata?: Record<string, unknown>;
   isActive: boolean;
+  hiddenContainer: React.RefObject<HTMLDivElement | null>;
 }
 
-function ReparentingTab({ tabId, panelId, type, metadata, isActive }: ReparentingTabProps) {
+function ReparentingTab({ tabId, panelId, type, metadata, isActive, hiddenContainer }: ReparentingTabProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const Component = TAB_COMPONENTS[type];
 
@@ -154,7 +158,19 @@ function ReparentingTab({ tabId, panelId, type, metadata, isActive }: Reparentin
   useLayoutEffect(() => {
     const wrapper = wrapperRef.current;
     const slot = registry.get(panelId);
-    if (!wrapper || !slot || wrapper.parentElement === slot) return;
+    if (!wrapper) return;
+
+    // Panel slot not mounted (e.g., mobile renders only the focused panel).
+    // Move wrapper back to hidden container so it doesn't overlap in the wrong slot.
+    if (!slot) {
+      const hidden = hiddenContainer.current;
+      if (hidden && wrapper.parentElement !== hidden) {
+        hidden.appendChild(wrapper);
+      }
+      return;
+    }
+
+    if (wrapper.parentElement === slot) return;
 
     // Save scroll positions — appendChild resets them during the DOM move
     const scrollables: { el: Element; top: number; left: number }[] = [];
