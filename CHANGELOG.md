@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.32] - 2026-04-25
+
+### Fixed
+- **Windows restart timeout with old supervisor**: `ppm restart` command file approach requires supervisor v0.13.31+. Old supervisors ignore unknown `restart` action. Added fallback: if server PID doesn't change within 5s, kill server process directly — supervisor auto-respawns it
+
 ## [0.13.31] - 2026-04-25
 
 ### Fixed

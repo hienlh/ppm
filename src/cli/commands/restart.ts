@@ -75,8 +75,31 @@ export async function restartServer(options: { force?: boolean }) {
     console.log("  If you're using PPM terminal, wait a few seconds for auto-reconnect.\n");
 
     if (process.platform === "win32") {
+      // Write restart command file — new supervisors (v0.13.31+) handle it
       const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
       writeFileSync(cmdFile, JSON.stringify({ action: "restart" }));
+
+      // Wait up to 5s for new supervisor to handle the command
+      const cmdStart = Date.now();
+      let handled = false;
+      while (Date.now() - cmdStart < 5_000) {
+        await Bun.sleep(500);
+        try {
+          const newStatus = JSON.parse(readFileSync(statusFile(), "utf-8"));
+          const newPid = newStatus.pid as number | undefined;
+          if (newPid && newPid !== oldServerPid) {
+            try { process.kill(newPid, 0); } catch { continue; }
+            console.log(`  ✓  Restart complete (new PID: ${newPid})`);
+            if (newStatus.shareUrl) console.log(`  ➜  Share:   ${newStatus.shareUrl}`);
+            process.exit(0);
+          }
+        } catch {}
+      }
+
+      // Fallback for old supervisors: kill server PID directly, supervisor auto-respawns
+      if (!handled && oldServerPid) {
+        try { process.kill(oldServerPid); } catch {}
+      }
     } else {
       try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
         console.error(`  ✗  Failed to signal supervisor: ${e}`);
