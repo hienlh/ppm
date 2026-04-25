@@ -396,14 +396,22 @@ export function ChatHistoryBar({
           <DebugCopyButton sessionId={sessionId} projectName={projectName} />
         )}
 
-        {/* Connection indicator */}
+        {/* Reload messages + connection status */}
         {onReload && (
           <button
-            onClick={onReload}
-            className="size-4 flex items-center justify-center"
-            title={isConnected ? "Connected" : "Disconnected — click to reconnect"}
+            onClick={(e: MouseEvent<HTMLButtonElement>) => {
+              const icon = e.currentTarget.querySelector("svg");
+              if (icon) {
+                icon.classList.add("animate-spin");
+                setTimeout(() => icon.classList.remove("animate-spin"), 600);
+              }
+              onReload();
+            }}
+            className="relative size-4 flex items-center justify-center"
+            title={isConnected ? "Reload messages" : "Disconnected — click to reload"}
           >
-            <span className={`size-2 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"}`} />
+            <RefreshCw className={`size-3 ${isConnected ? "text-muted-foreground/60" : "text-red-400"}`} strokeWidth={2.5} />
+            <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"}`} />
           </button>
         )}
       </div>

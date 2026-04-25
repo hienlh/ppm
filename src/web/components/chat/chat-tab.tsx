@@ -424,7 +424,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           onSelectSession={handleSelectSession}
           onBugReport={sessionId ? () => openBugReportPopup(version, { sessionId, projectName }) : undefined}
           isConnected={isConnected}
-          onReconnect={() => {
+          onReload={() => {
             if (!isConnected) reconnect();
             refetchMessages();
           }}
