@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.27] - 2026-04-25
+
+### Fixed
+- **Chat UI crashes with "removeChild" error, preventing page load**: `rehype-raw` in MarkdownRenderer creates DOM nodes that desync with React's virtual DOM. Browser extensions modifying the DOM worsen the issue. Added error boundary around markdown rendering — falls back to plain text instead of crashing the entire app
+- **Compact history expansion refactored**: Replaced manual "Load more" button with IntersectionObserver sentinel that auto-loads previous messages and expands compact history when scrolled near top
+
 ## [0.13.26] - 2026-04-25
 
 ### Changed
