@@ -91,25 +91,41 @@ export function TabPool() {
   const panels = usePanelStore((s) => s.panels);
   const grid = usePanelStore((s) => s.grid);
   const currentProject = usePanelStore((s) => s.currentProject);
+  const projectGrids = usePanelStore((s) => s.projectGrids);
 
-  // Collect all tabs across visible panels (only panels in current grid)
-  const visiblePanelIds = new Set(grid.flat());
+  // Collect tabs from ALL mounted projects (not just active) to preserve
+  // tab state across project switches (keep-alive). Each project's
+  // PanelLayout stays mounted (CSS hidden), so slots remain registered.
   const tabEntries: { tabId: string; panelId: string; type: TabType; metadata?: Record<string, unknown>; isActive: boolean }[] = [];
+  const seenTabs = new Set<string>();
 
-  for (const panelId of visiblePanelIds) {
-    const panel = panels[panelId];
-    if (!panel) continue;
-    for (const tab of panel.tabs) {
-      // Skip tabs from other projects (race condition in openTab during project switch)
-      if (tab.projectId && currentProject && tab.projectId !== currentProject) continue;
-      tabEntries.push({
-        tabId: tab.id,
-        panelId,
-        type: tab.type,
-        metadata: tab.metadata,
-        isActive: tab.id === panel.activeTabId,
-      });
+  const collectFromGrid = (projectGrid: string[][], projectName: string | null) => {
+    for (const panelId of projectGrid.flat()) {
+      const panel = panels[panelId];
+      if (!panel) continue;
+      for (const tab of panel.tabs) {
+        if (seenTabs.has(tab.id)) continue;
+        // Skip tabs from other projects (race condition in openTab during project switch)
+        if (tab.projectId && projectName && tab.projectId !== projectName) continue;
+        seenTabs.add(tab.id);
+        tabEntries.push({
+          tabId: tab.id,
+          panelId,
+          type: tab.type,
+          metadata: tab.metadata,
+          isActive: tab.id === panel.activeTabId,
+        });
+      }
     }
+  };
+
+  // Active project uses s.grid
+  collectFromGrid(grid, currentProject);
+
+  // Non-active projects use projectGrids (keep-alive)
+  for (const [projectName, projectGrid] of Object.entries(projectGrids)) {
+    if (projectName === currentProject) continue;
+    collectFromGrid(projectGrid, projectName);
   }
 
   // Stable key order — prevents React from calling insertBefore() to reorder

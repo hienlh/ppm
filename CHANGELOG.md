@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.42] - 2026-04-25
+
+### Fixed
+- **Tab reload on project switch**: Switching projects caused all chat/terminal tabs to reload and lose state. TabPool only rendered the active project's tabs, unmounting old ones. Now renders tabs from all visited projects via `projectGrids`, preserving component state across project switches
+
 ## [0.13.41] - 2026-04-25
 
 ### Fixed
