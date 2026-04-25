@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.36] - 2026-04-25
+
+### Fixed
+- **Mobile tab overlap**: Tabs from non-focused panels overlapped in the visible panel's slot because their wrappers stayed reparented from a previous render. Now moves orphaned wrappers back to the hidden container when their panel slot isn't mounted
+
 ## [0.13.35] - 2026-04-25
 
 ### Fixed
