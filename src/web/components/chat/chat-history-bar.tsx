@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react";
 import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
-import { useNotificationStore } from "@/stores/notification-store";
+import { useNotificationStore, notificationTint } from "@/stores/notification-store";
+import { cn } from "@/lib/utils";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
@@ -36,7 +37,7 @@ interface ChatHistoryBarProps {
   onSelectSession?: (session: SessionInfo) => void;
   onBugReport?: () => void;
   isConnected?: boolean;
-  onReconnect?: () => void;
+  onReload?: () => void;
   teamActivity?: TeamActivityState;
   teamMessages?: TeamMessageItem[];
   onTeamOpen?: () => void;
@@ -91,12 +92,13 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
 
 export function ChatHistoryBar({
   projectName, usageInfo, usageLoading, refreshUsage, lastFetchedAt,
-  sessionId, providerId, onSelectSession, onBugReport, isConnected, onReconnect,
+  sessionId, providerId, onSelectSession, onBugReport, isConnected, onReload,
   teamActivity, teamMessages, onTeamOpen,
 }: ChatHistoryBarProps) {
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const notifications = useNotificationStore((s) => s.notifications);
   const hasUnread = useNotificationStore((s) => sessionId ? s.notifications.has(sessionId) : false);
   const clearForSession = useNotificationStore((s) => s.clearForSession);
   const [searchQuery, setSearchQuery] = useState("");
@@ -395,9 +397,9 @@ export function ChatHistoryBar({
         )}
 
         {/* Connection indicator */}
-        {onReconnect && (
+        {onReload && (
           <button
-            onClick={onReconnect}
+            onClick={onReload}
             className="size-4 flex items-center justify-center"
             title={isConnected ? "Connected" : "Disconnected — click to reconnect"}
           >
@@ -488,7 +490,10 @@ export function ChatHistoryBar({
               </div>
             ) : (
               <>
-                {filteredSessions.map((session) => (
+                {filteredSessions.map((session) => {
+                  const notif = notifications.get(session.id);
+                  const isUnread = !!notif;
+                  return (
                   <SessionContextMenu
                     key={session.id}
                     session={session}
@@ -500,7 +505,12 @@ export function ChatHistoryBar({
                     onTagChanged={handleTagChanged}
                   >
                   <div
-                    className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group"
+                    className={cn(
+                      "flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-surface-elevated transition-colors group",
+                      isUnread && "font-medium text-foreground",
+                      isUnread && notificationTint(notif.type),
+                      !isUnread && "text-text-secondary",
+                    )}
                   >
                     <ProviderBadge providerId={session.providerId} />
                     {session.tag && (
@@ -572,7 +582,8 @@ export function ChatHistoryBar({
                     )}
                   </div>
                   </SessionContextMenu>
-                ))}
+                  );
+                })}
                 {hasMore && (
                   <button
                     onClick={loadMore}

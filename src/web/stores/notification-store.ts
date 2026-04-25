@@ -27,6 +27,18 @@ export function notificationColor(type: string | null | undefined): string {
   return (type && TYPE_COLORS[type]) || "bg-red-500";
 }
 
+/** Subtle bg tint per notification type (for unread row highlights) */
+const TYPE_TINTS: Record<string, string> = {
+  approval_request: "bg-red-500/10",
+  question: "bg-amber-500/10",
+  done: "bg-blue-500/10",
+};
+
+/** Get subtle background tint class for a notification type */
+export function notificationTint(type: string | null | undefined): string {
+  return (type && TYPE_TINTS[type]) || "bg-red-500/10";
+}
+
 interface NotificationStore {
   notifications: Map<string, NotificationEntry>;
   addNotification: (sessionId: string, type: string, projectName: string) => void;
