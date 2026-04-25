@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.33] - 2026-04-25
+
+### Added
+- **Notification bell in project bar**: Bell button with unread session count badge in sidebar footer. Popover lists unread sessions grouped by project with session titles — click to navigate directly
+- **Session titles in notifications**: Backend `getAllUnread()` JOINs session titles, WS broadcasts include `sessionTitle` for display in bell popover
+
+### Fixed
+- **Web title unread count inflated**: `selectTotalUnread` was summing event counts instead of counting sessions — reading one session could subtract multiple from the `(N)` title badge. Now counts unique sessions
+
 ## [0.13.32] - 2026-04-25
 
 ### Fixed
