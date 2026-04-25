@@ -5,11 +5,12 @@ import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
-import { extractJsonlPath, PreCompactButton, type PreCompactStatus } from "./pre-compact-button";
+import { extractJsonlPath } from "./pre-compact-button";
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
 );
 import { cn, basename } from "@/lib/utils";
+import { MarkdownErrorBoundary } from "@/components/shared/markdown-error-boundary";
 
 import {
   AlertCircle,
@@ -102,7 +103,7 @@ export function MessageList({
     return filtered.slice(start);
   }, [filtered, visibleCount]);
 
-  const hasMore = visibleCount < filtered.length;
+  const hasMoreInMemory = visibleCount < filtered.length;
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
@@ -110,22 +111,53 @@ export function MessageList({
   }, [onFork]);
 
   // Scroll anchor bridge published from inside StickToBottom (needs the context's scrollRef).
-  // MessageList captures pre-expand scroll metrics and restores post-render so the compact
-  // message stays at the same viewport offset when history is prepended.
   const scrollAnchorRef = useRef<ScrollAnchorHandle | null>(null);
 
-  // Wrap expandCompact: bump visibleCount, then restore scroll after React commits the new DOM.
-  // Pre-compact messages land at top of flattened array, above pagination window — bumping
-  // visibleCount by loaded count ensures they render immediately.
-  const handleExpandCompact = useCallback(async (compactId: string, jsonlPath: string): Promise<number> => {
-    if (!onExpandCompact) throw new Error("Expansion not wired");
-    scrollAnchorRef.current?.capture();
-    const count = await onExpandCompact(compactId, jsonlPath);
-    setVisibleCount((c) => c + count);
-    // rAF fires after React commits + layout; two rAFs to cover any async measure (lazy markdown).
-    requestAnimationFrame(() => requestAnimationFrame(() => scrollAnchorRef.current?.restore()));
-    return count;
-  }, [onExpandCompact]);
+  // Find the topmost displayed message that has an unexpanded compact JSONL path.
+  const findTopUnexpandedCompact = useCallback((): { id: string; jsonlPath: string } | null => {
+    if (!onExpandCompact || !isCompactExpanded) return null;
+    for (const msg of displayed) {
+      if (isCompactExpanded(msg.id)) continue;
+      // Check user message content for JSONL path
+      const path = extractJsonlPath(msg.content || "");
+      if (path) return { id: msg.id, jsonlPath: path };
+      // Check assistant events for JSONL path
+      if (msg.events) {
+        for (const ev of msg.events) {
+          if (ev.type === "text") {
+            const evPath = extractJsonlPath(ev.content || "");
+            if (evPath) return { id: msg.id, jsonlPath: evPath };
+          }
+        }
+      }
+    }
+    return null;
+  }, [displayed, onExpandCompact, isCompactExpanded]);
+
+  // Unified load-more: first show more in-memory messages, then auto-expand compact history
+  const [autoLoadingCompact, setAutoLoadingCompact] = useState(false);
+  const loadMore = useCallback(async () => {
+    if (hasMoreInMemory) {
+      scrollAnchorRef.current?.capture();
+      setVisibleCount((c) => c + PAGE_SIZE);
+      requestAnimationFrame(() => requestAnimationFrame(() => scrollAnchorRef.current?.restore()));
+      return;
+    }
+    // All in-memory messages visible — try expanding topmost compact
+    const compact = findTopUnexpandedCompact();
+    if (!compact || !onExpandCompact || autoLoadingCompact) return;
+    setAutoLoadingCompact(true);
+    try {
+      scrollAnchorRef.current?.capture();
+      const count = await onExpandCompact(compact.id, compact.jsonlPath);
+      setVisibleCount((c) => c + count);
+      requestAnimationFrame(() => requestAnimationFrame(() => scrollAnchorRef.current?.restore()));
+    } finally {
+      setAutoLoadingCompact(false);
+    }
+  }, [hasMoreInMemory, findTopUnexpandedCompact, onExpandCompact, autoLoadingCompact]);
+
+  const hasMore = hasMoreInMemory || !!findTopUnexpandedCompact();
 
   if (messagesLoading) {
     return (
@@ -151,10 +183,7 @@ export function MessageList({
         <StickToBottom.Content className="p-4 space-y-4 select-none [&>*]:[overflow-anchor:auto]">
           <ScrollAnchorBridge bridgeRef={scrollAnchorRef} />
           {hasMore && (
-            <button onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-              className="w-full py-2 text-xs text-text-secondary hover:text-text-primary bg-surface-elevated/50 hover:bg-surface-elevated rounded-md border border-border/50 transition-colors">
-              Load {Math.min(PAGE_SIZE, filtered.length - visibleCount)} more messages...
-            </button>
+            <LoadMoreSentinel onLoadMore={loadMore} loading={autoLoadingCompact} />
           )}
           {displayed.map((msg, idx) => {
             const globalIdx = filtered.length - displayed.length + idx;
@@ -168,8 +197,6 @@ export function MessageList({
                 onFork={msg.role === "user" && onFork ? handleFork : undefined}
                 prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
                 bashPartialOutput={bashPartialOutput}
-                onExpandCompact={handleExpandCompact}
-                isCompactExpanded={isCompactExpanded}
               />
             );
           })}
@@ -240,13 +267,35 @@ function ScrollToBottomButton() {
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId, bashPartialOutput, onExpandCompact, isCompactExpanded }: {
+/** IntersectionObserver sentinel — auto-triggers loadMore when scrolled near top */
+function LoadMoreSentinel({ onLoadMore, loading }: { onLoadMore: () => void; loading: boolean }) {
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const onLoadMoreRef = useRef(onLoadMore);
+  onLoadMoreRef.current = onLoadMore;
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry?.isIntersecting) onLoadMoreRef.current(); },
+      { rootMargin: "200px 0px 0px 0px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={sentinelRef} className="flex items-center justify-center py-2 text-xs text-text-secondary">
+      {loading && <><Loader2 className="size-3 animate-spin mr-1.5" />Loading previous conversation...</>}
+    </div>
+  );
+}
+
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId, bashPartialOutput }: {
   message: ChatMessage; isStreaming: boolean; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
   prevMsgId?: string;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
-  onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
-  isCompactExpanded?: (compactMessageId: string) => boolean;
 }) {
   if (message.role === "user") {
     const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
@@ -256,8 +305,6 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
         messageId={message.id}
         projectName={projectName}
         onFork={handleFork}
-        onExpandCompact={onExpandCompact}
-        isCompactExpanded={isCompactExpanded}
       />
     );
   }
@@ -275,7 +322,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
   return (
     <div className="flex flex-col gap-2">
       {message.events && message.events.length > 0
-        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} messageId={message.id} onExpandCompact={onExpandCompact} isCompactExpanded={isCompactExpanded} />
+        ? <InterleavedEvents events={message.events} isStreaming={isStreaming} projectName={projectName} bashPartialOutput={bashPartialOutput} />
         : message.content && (
             <div className="text-sm text-text-primary select-text">
               <MarkdownContent content={message.content} projectName={projectName} />
@@ -382,41 +429,21 @@ function isPdfPath(path: string): boolean {
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details"]);
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function UserBubble({ content, messageId, projectName, onFork, onExpandCompact, isCompactExpanded }: {
+function UserBubble({ content, messageId, projectName, onFork }: {
   content: string;
   messageId?: string;
   projectName?: string;
   onFork?: () => void;
-  onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
-  isCompactExpanded?: (compactMessageId: string) => boolean;
 }) {
-  const { files, text, tags, command, jsonlPath } = useMemo(() => {
+  const { files, text, tags, command } = useMemo(() => {
     const parsed = parseUserAttachments(content);
     const { cleanText: noSysTags, tags } = extractSystemTags(parsed.text);
     const { command, cleanText } = parseCommandTags(noSysTags);
-    // Merge command args into body text so line-clamp + Show more applies uniformly
     const bodyText = command?.args
       ? (cleanText ? `${command.args}\n\n${cleanText}` : command.args)
       : cleanText;
-    return { files: parsed.files, text: bodyText, tags, command, jsonlPath: extractJsonlPath(cleanText) };
+    return { files: parsed.files, text: bodyText, tags, command };
   }, [content]);
-
-  // Pre-compact expansion state — local per button instance
-  const [preCompactStatus, setPreCompactStatus] = useState<PreCompactStatus>(() =>
-    messageId && isCompactExpanded?.(messageId) ? "loaded" : "idle",
-  );
-  const [preCompactCount, setPreCompactCount] = useState<number | undefined>();
-  const handleExpand = useCallback(async () => {
-    if (!jsonlPath || !messageId || !onExpandCompact) return;
-    setPreCompactStatus("loading");
-    try {
-      const count = await onExpandCompact(messageId, jsonlPath);
-      setPreCompactCount(count);
-      setPreCompactStatus("loaded");
-    } catch {
-      setPreCompactStatus("error");
-    }
-  }, [jsonlPath, messageId, onExpandCompact]);
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
 
@@ -496,15 +523,6 @@ function UserBubble({ content, messageId, projectName, onFork, onExpandCompact, 
         >
           {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
         </button>
-      )}
-      {/* Expand compacted conversation: detect JSONL path in compact summary user message.
-          Prepends pre-compact messages into main flattened list (see useChat.expandCompact). */}
-      {jsonlPath && messageId && onExpandCompact && (
-        <PreCompactButton
-          status={preCompactStatus}
-          onLoad={preCompactStatus === "idle" || preCompactStatus === "error" ? handleExpand : undefined}
-          count={preCompactCount}
-        />
       )}
       {/* Fork/Rewind button — only for real user messages */}
       {!isSystemContext && onFork && (
@@ -780,31 +798,12 @@ type EventGroup =
   | { kind: "thinking"; content: string }
   | { kind: "tool"; tool: ChatEvent; result?: ChatEvent; completed?: boolean };
 
-function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput, messageId, onExpandCompact, isCompactExpanded }: {
+function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput }: {
   events: ChatEvent[];
   isStreaming: boolean;
   projectName?: string;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
-  messageId?: string;
-  onExpandCompact?: (compactMessageId: string, jsonlPath: string) => Promise<number>;
-  isCompactExpanded?: (compactMessageId: string) => boolean;
 }) {
-  // Local state for the /compact slash-command path (assistant-authored summary)
-  const [preCompactStatus, setPreCompactStatus] = useState<PreCompactStatus>(() =>
-    messageId && isCompactExpanded?.(messageId) ? "loaded" : "idle",
-  );
-  const [preCompactCount, setPreCompactCount] = useState<number | undefined>();
-  const handleExpand = useCallback(async (jsonlPath: string) => {
-    if (!messageId || !onExpandCompact) return;
-    setPreCompactStatus("loading");
-    try {
-      const count = await onExpandCompact(messageId, jsonlPath);
-      setPreCompactCount(count);
-      setPreCompactStatus("loaded");
-    } catch {
-      setPreCompactStatus("error");
-    }
-  }, [messageId, onExpandCompact]);
   // Group: consecutive text → merged text block; tool_use + tool_result paired by toolUseId
   const groups: EventGroup[] = [];
   let textBuffer = "";
@@ -919,17 +918,9 @@ function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput
         }
         if (group.kind === "text") {
           const isLast = isStreaming && i === groups.length - 1;
-          const jsonlPath = extractJsonlPath(group.content);
           return (
             <div key={`text-${i}`} className="text-sm text-text-primary select-text">
               <StreamingText content={group.content} animate={isLast} projectName={projectName} />
-              {jsonlPath && messageId && onExpandCompact && (
-                <PreCompactButton
-                  status={preCompactStatus}
-                  onLoad={preCompactStatus === "idle" || preCompactStatus === "error" ? () => handleExpand(jsonlPath) : undefined}
-                  count={preCompactCount}
-                />
-              )}
             </div>
           );
         }
@@ -1053,9 +1044,11 @@ function MarkdownContent({ content, projectName, isStreaming }: { content: strin
   const cleaned = stripTeammateMessages(content);
   if (!cleaned) return null;
   return (
-    <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded" />}>
-      <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} />
-    </Suspense>
+    <MarkdownErrorBoundary fallbackContent={cleaned}>
+      <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded" />}>
+        <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} />
+      </Suspense>
+    </MarkdownErrorBoundary>
   );
 }
 

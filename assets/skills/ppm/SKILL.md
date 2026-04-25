@@ -71,4 +71,4 @@ This skill covers the `ppm` CLI, its HTTP API, and its config DB. It does **not*
 - Third-party extensions (inspect via `ppm ext list`).
 - The Claude Agent SDK internals (separate skill).
 
-<!-- Generated for PPM v0.13.20 at build time. Re-run `ppm export skill --install` to refresh. -->
+<!-- Generated for PPM v0.13.26 at build time. Re-run `ppm export skill --install` to refresh. -->
