@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useShallow } from "zustand/shallow";
 import { useNotificationStore, selectTotalUnread, notificationTint } from "@/stores/notification-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -11,7 +12,7 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
   const notifications = useNotificationStore((s) => s.notifications);
   const clearAll = useNotificationStore((s) => s.clearAll);
   const totalUnread = useNotificationStore(selectTotalUnread);
-  const { projects, setActiveProject } = useProjectStore((s) => ({ projects: s.projects, setActiveProject: s.setActiveProject }));
+  const { projects, setActiveProject } = useProjectStore(useShallow((s) => ({ projects: s.projects, setActiveProject: s.setActiveProject })));
   const openTab = useTabStore((s) => s.openTab);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
