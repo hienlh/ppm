@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { Terminal, MessageSquare, FilePlus } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -30,13 +30,13 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
   });
 
   // Register this panel's content area as a portal slot for TabPool.
-  // Using callback ref so registration happens synchronously when the DOM mounts,
-  // avoiding a frame delay that useEffect would cause.
+  // Callback ref fires synchronously: with element on mount, with null on unmount.
+  // No separate useEffect cleanup needed — callback ref handles both cases.
+  // (A useEffect cleanup would fire async AFTER a new EditorPanel with the same
+  // panelId already re-registered, deregistering the new slot and causing blank panels.)
   const slotCallbackRef = useCallback((el: HTMLDivElement | null) => {
     registerPanelSlot(panelId, el);
   }, [panelId]);
-  // Cleanup on unmount (panelId change is handled by callback ref re-firing)
-  useEffect(() => () => registerPanelSlot(panelId, null), [panelId]);
 
   if (!panel) return null;
 
