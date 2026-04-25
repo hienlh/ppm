@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.44] - 2026-04-25
+
+### Fixed
+- **PWA icon 404**: Manifest and service worker referenced `.png` icons but only `.svg` files existed, causing download errors. Updated icon refs to match actual SVG assets
+- **Tab reload on project switch**: TabPool only rendered active project's tabs, causing all chat/terminal tabs to reload when switching projects. Now renders tabs from all visited projects via `projectGrids` for keep-alive
+
 ## [0.13.43] - 2026-04-25
 
 ### Changed

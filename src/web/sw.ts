@@ -24,8 +24,8 @@ self.addEventListener("push", (event) => {
         };
         return self.registration.showNotification(data.title, {
           body: data.body,
-          icon: "/icon-192.png",
-          badge: "/icon-192.png",
+          icon: "/icon-192.svg",
+          badge: "/icon-192.svg",
           tag: "ppm-chat-done",
           silent: false,
           data: { url: self.location.origin },
