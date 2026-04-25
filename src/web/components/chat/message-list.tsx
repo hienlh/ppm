@@ -144,20 +144,20 @@ export function MessageList({
       return;
     }
     // All in-memory messages visible — try expanding topmost compact
-    const compact = findTopUnexpandedCompact();
-    if (!compact || !onExpandCompact || autoLoadingCompact) return;
+    if (!topUnexpandedCompact || !onExpandCompact || autoLoadingCompact) return;
     setAutoLoadingCompact(true);
     try {
       scrollAnchorRef.current?.capture();
-      const count = await onExpandCompact(compact.id, compact.jsonlPath);
+      const count = await onExpandCompact(topUnexpandedCompact.id, topUnexpandedCompact.jsonlPath);
       setVisibleCount((c) => c + count);
       requestAnimationFrame(() => requestAnimationFrame(() => scrollAnchorRef.current?.restore()));
     } finally {
       setAutoLoadingCompact(false);
     }
-  }, [hasMoreInMemory, findTopUnexpandedCompact, onExpandCompact, autoLoadingCompact]);
+  }, [hasMoreInMemory, topUnexpandedCompact, onExpandCompact, autoLoadingCompact]);
 
-  const hasMore = hasMoreInMemory || !!findTopUnexpandedCompact();
+  const topUnexpandedCompact = findTopUnexpandedCompact();
+  const hasMore = hasMoreInMemory || !!topUnexpandedCompact;
 
   if (messagesLoading) {
     return (
@@ -268,17 +268,24 @@ function ScrollToBottomButton() {
   );
 }
 
-/** IntersectionObserver sentinel — auto-triggers loadMore when scrolled near top */
+/** IntersectionObserver sentinel — auto-triggers loadMore when scrolled near top.
+ *  Debounced to prevent cascade: after each trigger, waits 150ms before re-arming. */
 function LoadMoreSentinel({ onLoadMore, loading }: { onLoadMore: () => void; loading: boolean }) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const onLoadMoreRef = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
+  const cooldownRef = useRef(false);
 
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
-      ([entry]) => { if (entry?.isIntersecting) onLoadMoreRef.current(); },
+      ([entry]) => {
+        if (!entry?.isIntersecting || cooldownRef.current) return;
+        cooldownRef.current = true;
+        onLoadMoreRef.current();
+        setTimeout(() => { cooldownRef.current = false; }, 150);
+      },
       { rootMargin: "200px 0px 0px 0px" },
     );
     observer.observe(el);
