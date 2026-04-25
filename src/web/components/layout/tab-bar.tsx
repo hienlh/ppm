@@ -66,7 +66,9 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
 
   // Read tabs from panel-store if panelId given, else from tab-store (focused)
   const panel = usePanelStore((s) => panelId ? s.panels[panelId] : s.panels[s.focusedPanelId]);
-  const tabs = panel?.tabs ?? [];
+  const projectName = activeProject?.name ?? null;
+  // Filter out cross-project tabs (race condition in openTab during project switch)
+  const tabs = (panel?.tabs ?? []).filter((t) => !t.projectId || !projectName || t.projectId === projectName);
   const activeTabId = panel?.activeTabId ?? null;
   const effectivePanelId = panel?.id ?? usePanelStore.getState().focusedPanelId;
 

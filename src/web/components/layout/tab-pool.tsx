@@ -90,6 +90,7 @@ export function TabPool() {
 
   const panels = usePanelStore((s) => s.panels);
   const grid = usePanelStore((s) => s.grid);
+  const currentProject = usePanelStore((s) => s.currentProject);
 
   // Collect all tabs across visible panels (only panels in current grid)
   const visiblePanelIds = new Set(grid.flat());
@@ -99,6 +100,8 @@ export function TabPool() {
     const panel = panels[panelId];
     if (!panel) continue;
     for (const tab of panel.tabs) {
+      // Skip tabs from other projects (race condition in openTab during project switch)
+      if (tab.projectId && currentProject && tab.projectId !== currentProject) continue;
       tabEntries.push({
         tabId: tab.id,
         panelId,

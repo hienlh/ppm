@@ -44,6 +44,8 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const panels = usePanelStore((s) => s.panels);
   const grid = usePanelStore((s) => s.grid);
 
+  const currentProject = usePanelStore((s) => s.currentProject);
+
   // Merge tabs from all panels in grid (mobile shows single merged tab bar)
   const { tabs, tabPanelMap } = useMemo(() => {
     const panelIds = grid.flat();
@@ -53,13 +55,15 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
       const p = panels[pid];
       if (p) {
         for (const t of p.tabs) {
+          // Skip cross-project tabs (race condition in openTab during project switch)
+          if (t.projectId && currentProject && t.projectId !== currentProject) continue;
           allTabs.push(t);
           map[t.id] = pid;
         }
       }
     }
     return { tabs: allTabs, tabPanelMap: map };
-  }, [panels, grid]);
+  }, [panels, grid, currentProject]);
 
   const activeTabId = panels[focusedPanelId]?.activeTabId ?? null;
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
