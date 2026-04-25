@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.26] - 2026-04-25
+
+### Changed
+- **Connection dot → reload button**: Green/red status dot replaced with RefreshCw icon + small status dot overlay. Click spins the icon and reloads chat messages (+ reconnects WS if disconnected)
+
 ## [0.13.25] - 2026-04-25
 
 ### Fixed
