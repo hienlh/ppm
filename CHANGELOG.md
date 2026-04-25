@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.41] - 2026-04-25
+
+### Fixed
+- **Cross-project tab leak**: Tabs from other projects could appear in the current project's tab bar due to a race condition in `openTab` during fast project switching. Added defensive `projectId` filter in TabPool, TabBar, and MobileNav
+
 ## [0.13.40] - 2026-04-25
 
 ### Fixed
