@@ -157,8 +157,8 @@ export function savePanelLayout(projectName: string, layout: PanelLayout): void 
   try {
     const withTimestamp = { ...layout, updatedAt: new Date().toISOString() };
     localStorage.setItem(storageKey(projectName), JSON.stringify(withTimestamp));
-    // Debounced server sync
-    syncWorkspaceToServer(projectName, layout);
+    // Debounced server sync — skip virtual __global__ project (not a real server project)
+    if (projectName !== "__global__") syncWorkspaceToServer(projectName, layout);
   } catch { /* ignore */ }
 }
 
@@ -187,6 +187,7 @@ export interface PanelLayoutWithTimestamp extends PanelLayout {
 export async function fetchWorkspaceFromServer(
   projectName: string,
 ): Promise<PanelLayoutWithTimestamp | null> {
+  if (projectName === "__global__") return null;
   try {
     const headers: Record<string, string> = {};
     const token = localStorage.getItem("ppm-auth-token");

@@ -67,6 +67,9 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
   },
 
   clearForSession: (sessionId) => {
+    // Grab projectName before deleting the entry
+    const entry = useNotificationStore.getState().notifications.get(sessionId);
+    const projectName = entry?.projectName;
     set((state) => {
       if (!state.notifications.has(sessionId)) return state;
       const next = new Map(state.notifications);
@@ -74,7 +77,9 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
       return { notifications: next };
     });
     // Fire-and-forget: persist to server so other tabs/devices sync
-    api.post(`/api/chat/sessions/${encodeURIComponent(sessionId)}/read`).catch(() => {});
+    if (projectName) {
+      api.post(`/api/project/${encodeURIComponent(projectName)}/chat/sessions/${encodeURIComponent(sessionId)}/read`).catch(() => {});
+    }
   },
 
   clearAll: () => set({ notifications: new Map() }),
