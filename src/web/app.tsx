@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { PanelLayout } from "@/components/layout/panel-layout";
+import { TabPool } from "@/components/layout/tab-pool";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ProjectBar } from "@/components/layout/project-bar";
 import { MobileNav } from "@/components/layout/mobile-nav";
@@ -289,6 +290,9 @@ export function App() {
                 <PanelLayout projectName={projectName} />
               </div>
             ))}
+            {/* TabPool renders all tab components persistently and portals them into panel slots.
+                Placed after PanelLayout so slot refs are registered before portals render. */}
+            <TabPool />
             <StatusBar />
           </div>
         </div>

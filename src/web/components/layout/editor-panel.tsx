@@ -1,5 +1,5 @@
-import { Suspense, lazy, useCallback } from "react";
-import { Loader2, Terminal, MessageSquare, FilePlus } from "lucide-react";
+import { useCallback, useEffect } from "react";
+import { Terminal, MessageSquare, FilePlus } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";
@@ -7,6 +7,7 @@ import { SessionListPanel } from "@/components/chat/session-list-panel";
 import type { SessionInfo } from "../../../types/chat";
 import { TabBar } from "./tab-bar";
 import { SplitDropOverlay } from "./split-drop-overlay";
+import { registerPanelSlot } from "./tab-pool";
 import { cn } from "@/lib/utils";
 
 const QUICK_OPEN_TABS: { type: TabType; label: string; icon: React.ElementType }[] = [
@@ -14,21 +15,6 @@ const QUICK_OPEN_TABS: { type: TabType; label: string; icon: React.ElementType }
   { type: "chat", label: "AI Chat", icon: MessageSquare },
   { type: "editor", label: "New File", icon: FilePlus },
 ];
-
-const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentType<{ metadata?: Record<string, unknown>; tabId?: string }>>> = {
-  terminal: lazy(() => import("@/components/terminal/terminal-tab").then((m) => ({ default: m.TerminalTab }))),
-  chat: lazy(() => import("@/components/chat/chat-tab").then((m) => ({ default: m.ChatTab }))),
-  editor: lazy(() => import("@/components/editor/code-editor").then((m) => ({ default: m.CodeEditor }))),
-  database: lazy(() => import("@/components/database/database-viewer").then((m) => ({ default: m.DatabaseViewer }))),
-  sqlite: lazy(() => import("@/components/sqlite/sqlite-viewer").then((m) => ({ default: m.SqliteViewer }))),
-  postgres: lazy(() => import("@/components/postgres/postgres-viewer").then((m) => ({ default: m.PostgresViewer }))),
-  "git-diff": lazy(() => import("@/components/editor/diff-viewer").then((m) => ({ default: m.DiffViewer }))),
-  settings: lazy(() => import("@/components/settings/settings-tab").then((m) => ({ default: m.SettingsTab }))),
-  ports: lazy(() => import("@/components/ports/port-forwarding-tab").then((m) => ({ default: m.PortForwardingTab }))),
-  extension: lazy(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
-  "extension-webview": lazy(() => import("@/components/extensions/extension-webview").then((m) => ({ default: m.ExtensionWebview }))),
-  "conflict-editor": lazy(() => import("@/components/editor/conflict-editor").then((m) => ({ default: m.ConflictEditor }))),
-};
 
 interface EditorPanelProps {
   panelId: string;
@@ -42,6 +28,15 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
     const grid = s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? [[]]);
     return grid.flat().length;
   });
+
+  // Register this panel's content area as a portal slot for TabPool.
+  // Using callback ref so registration happens synchronously when the DOM mounts,
+  // avoiding a frame delay that useEffect would cause.
+  const slotCallbackRef = useCallback((el: HTMLDivElement | null) => {
+    registerPanelSlot(panelId, el);
+  }, [panelId]);
+  // Cleanup on unmount (panelId change is handled by callback ref re-firing)
+  useEffect(() => () => registerPanelSlot(panelId, null), [panelId]);
 
   if (!panel) return null;
 
@@ -57,28 +52,10 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
       <TabBar panelId={panelId} />
 
       <div className="flex-1 overflow-hidden relative" data-panel-drop-zone={panelId}>
-        {panel.tabs.length === 0 ? (
-          <EmptyPanel panelId={panelId} />
-        ) : (
-          panel.tabs.map((tab) => {
-            const Component = TAB_COMPONENTS[tab.type];
-            const isActive = tab.id === panel.activeTabId;
-            if (!Component) {
-              return (
-                <div key={tab.id} className={isActive ? "absolute inset-0 flex items-center justify-center text-muted-foreground" : "hidden"}>
-                  Unknown tab type: {tab.type}
-                </div>
-              );
-            }
-            return (
-              <div key={tab.id} className="absolute inset-0" style={isActive ? undefined : { opacity: 0, pointerEvents: "none" }}>
-                <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="size-6 animate-spin text-primary" /></div>}>
-                  <Component metadata={tab.metadata} tabId={tab.id} />
-                </Suspense>
-              </div>
-            );
-          })
-        )}
+        {panel.tabs.length === 0 && <EmptyPanel panelId={panelId} />}
+        {/* Always render the slot so TabPool can portal into it immediately.
+            Hidden when empty to let EmptyPanel show through. */}
+        <div ref={slotCallbackRef} className="absolute inset-0" style={panel.tabs.length === 0 ? { display: "none" } : undefined} />
         <SplitDropOverlay panelId={panelId} />
       </div>
     </div>

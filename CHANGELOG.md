@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.22] - 2026-04-25
+
+### Fixed
+- **Tab state lost on move/split**: Moving or splitting tabs caused full component remount, losing chat scroll, terminal buffer, editor cursor/undo. Now uses DOM reparenting (TabPool) — components mount once and physically move between panel slots without unmounting
+
 ## [0.13.21] - 2026-04-25
 
 ### Fixed

@@ -371,7 +371,8 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
 
     // Normal mode
     if (!deferredQuery.trim()) return actionCommands;
-    const qLower = deferredQuery.toLowerCase();
+    // Strip leading ./ or ../ — index paths are relative without dot prefix
+    const qLower = deferredQuery.toLowerCase().replace(/^\.\.?\//, "");
     const scored: Array<{ cmd: CommandItem; score: FileSearchScore }> = [];
     for (const entry of searchIndex) {
       const s = scoreFileSearchFast(qLower, entry.filenameLower, entry.pathLower, entry.labelLen, entry.depth);
@@ -382,6 +383,13 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     // Prepend DB results (already filtered server-side) when query is 2+ chars
     return deferredQuery.trim().length >= 2 ? [...dbCommands, ...matched] : matched;
   }, [searchIndex, actionCommands, fsCommands, dbCommands, deferredQuery]);
+
+  // Auto-load file index when palette opens and index isn't ready
+  useEffect(() => {
+    if (open && indexStatus === "idle" && activeProject) {
+      loadIndex(activeProject.name);
+    }
+  }, [open, indexStatus, activeProject, loadIndex]);
 
   // Reset state when opening
   useEffect(() => {
@@ -484,7 +492,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         )}
 
         {/* Index status hints — non-blocking, muted */}
-        {!pathMode && indexStatus === "loading" && (
+        {!pathMode && (indexStatus === "loading" || indexStatus === "idle") && (
           <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border/50">
             <Loader2 className="size-3 animate-spin text-text-subtle shrink-0" />
             <span className="text-[11px] text-text-subtle italic">Indexing project…</span>
