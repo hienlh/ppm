@@ -269,15 +269,26 @@ export async function startServer(options: {
             const state = status.state as string;
             const runningVersion = status.serverVersion as string;
 
+            // Helper: send signal (Unix) or write command file (Windows)
+            const signalSupervisor = (signal: "SIGUSR1" | "SIGUSR2", cmdAction?: string) => {
+              if (process.platform === "win32") {
+                const cmdFile = resolve(ppmDir, ".supervisor-cmd");
+                const action = cmdAction ?? (signal === "SIGUSR1" ? "upgrade" : "restart");
+                writeFileSync(cmdFile, JSON.stringify({ action }));
+              } else {
+                process.kill(supervisorPid, signal);
+              }
+            };
+
             if (state === "stopped") {
               console.log("  Supervisor is alive (stopped state). Resuming server...");
               if (runningVersion !== VERSION) {
                 console.log(`  Upgrading: ${runningVersion} -> ${VERSION}`);
-                process.kill(supervisorPid, "SIGUSR1");
+                signalSupervisor("SIGUSR1");
                 await waitForNewSupervisor(statusFile, supervisorPid);
               } else {
                 writeCmd("resume");
-                process.kill(supervisorPid, "SIGUSR2");
+                signalSupervisor("SIGUSR2", "resume");
                 await waitForServerReady(statusFile, port);
               }
               return;
@@ -286,7 +297,7 @@ export async function startServer(options: {
             if (state === "running") {
               if (runningVersion !== VERSION) {
                 console.log(`  Supervisor running (v${runningVersion}). Upgrading to v${VERSION}...`);
-                process.kill(supervisorPid, "SIGUSR1");
+                signalSupervisor("SIGUSR1");
                 await waitForNewSupervisor(statusFile, supervisorPid);
               } else {
                 console.log(`\n  PPM is already running (PID: ${supervisorPid}).`);
@@ -299,7 +310,7 @@ export async function startServer(options: {
             if (state === "paused") {
               console.log("  Supervisor is paused (max restarts). Sending resume...");
               writeCmd("resume");
-              process.kill(supervisorPid, "SIGUSR2");
+              signalSupervisor("SIGUSR2", "resume");
               await waitForServerReady(statusFile, port);
               return;
             }

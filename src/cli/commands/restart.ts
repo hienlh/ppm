@@ -74,9 +74,14 @@ export async function restartServer(options: { force?: boolean }) {
     console.log("\n  Restarting PPM server via supervisor...");
     console.log("  If you're using PPM terminal, wait a few seconds for auto-reconnect.\n");
 
-    try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
-      console.error(`  ✗  Failed to signal supervisor: ${e}`);
-      process.exit(1);
+    if (process.platform === "win32") {
+      const cmdFile = resolve(getPpmDir(), ".supervisor-cmd");
+      writeFileSync(cmdFile, JSON.stringify({ action: "restart" }));
+    } else {
+      try { process.kill(supervisorPid, "SIGUSR2"); } catch (e) {
+        console.error(`  ✗  Failed to signal supervisor: ${e}`);
+        process.exit(1);
+      }
     }
 
     // Wait for new server PID to appear in status.json (up to 15s)

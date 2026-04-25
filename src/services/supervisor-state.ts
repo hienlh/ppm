@@ -71,7 +71,7 @@ export function writeStatus(data: Record<string, unknown>) {
 }
 
 // ─── Command file protocol ─────────────────────────────────────────────
-export type CmdAction = "soft_stop" | "resume";
+export type CmdAction = "soft_stop" | "resume" | "restart";
 
 /** Atomically claim + read command file (rename to .claimed, read, delete) */
 export function readAndDeleteCmd(): { action: CmdAction } | null {

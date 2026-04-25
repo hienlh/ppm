@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.31] - 2026-04-25
+
+### Fixed
+- **Windows restart fails with SIGUSR2 error**: `ppm restart` on Windows threw `TypeError [ERR_UNKNOWN_SIGNAL]: Unknown signal: SIGUSR2` — Unix signals don't exist on Windows. Now writes command file that supervisor polls every 1s (same mechanism as upgrade). Also fixed `ppm start` sending SIGUSR1/SIGUSR2 directly on Windows for resume/upgrade paths
+
 ## [0.13.30] - 2026-04-25
 
 ### Fixed

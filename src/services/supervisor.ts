@@ -985,6 +985,15 @@ export async function runSupervisor(opts: {
       else if (cmd.action === "resume") {
         if (getState() === "stopped" || getState() === "paused") triggerResume();
       }
+      else if (cmd.action === "restart") {
+        log("INFO", "Windows command: restart server only");
+        if (getState() === "paused" || getState() === "stopped") {
+          triggerResume();
+        } else if (serverChild) {
+          serverRestartRequested = true;
+          try { serverChild.kill(); } catch {}
+        }
+      }
       else if (cmd.action === "upgrade") {
         log("INFO", "Windows command: upgrade, starting self-replace");
         selfReplace().then((result) => {
