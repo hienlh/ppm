@@ -605,6 +605,11 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN unread_type TEXT"); } catch { /* column exists */ }
     database.exec("PRAGMA user_version = 22");
   }
+
+  if (current < 23) {
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN last_known_title TEXT"); } catch { /* column exists */ }
+    database.exec("PRAGMA user_version = 23");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -773,11 +778,17 @@ export interface UnreadEntry {
   sessionTitle: string | null;
 }
 
-/** Increment unread count for a session and set the notification type */
-export function incrementSessionUnread(sessionId: string, type: string): void {
-  getDb().query(
-    "UPDATE session_metadata SET unread_count = unread_count + 1, unread_type = ? WHERE session_id = ?",
-  ).run(type, sessionId);
+/** Increment unread count for a session and set the notification type + title snapshot */
+export function incrementSessionUnread(sessionId: string, type: string, title?: string | null): void {
+  if (title) {
+    getDb().query(
+      "UPDATE session_metadata SET unread_count = unread_count + 1, unread_type = ?, last_known_title = ? WHERE session_id = ?",
+    ).run(type, title, sessionId);
+  } else {
+    getDb().query(
+      "UPDATE session_metadata SET unread_count = unread_count + 1, unread_type = ? WHERE session_id = ?",
+    ).run(type, sessionId);
+  }
 }
 
 /** Mark a session as read (reset unread count) */
@@ -790,7 +801,7 @@ export function clearSessionUnread(sessionId: string): void {
 /** Get all sessions with unread > 0 */
 export function getAllUnread(): UnreadEntry[] {
   const rows = getDb().query(
-    `SELECT m.session_id, m.unread_count, m.unread_type, m.project_name, t.title
+    `SELECT m.session_id, m.unread_count, m.unread_type, m.project_name, COALESCE(t.title, m.last_known_title) AS title
      FROM session_metadata m LEFT JOIN session_titles t ON m.session_id = t.session_id
      WHERE m.unread_count > 0`,
   ).all() as { session_id: string; unread_count: number; unread_type: string | null; project_name: string | null; title: string | null }[];

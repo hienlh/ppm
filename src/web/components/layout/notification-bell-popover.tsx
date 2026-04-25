@@ -2,17 +2,19 @@ import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useShallow } from "zustand/shallow";
 import { useNotificationStore, selectTotalUnread, notificationTint } from "@/stores/notification-store";
-import { useProjectStore } from "@/stores/project-store";
+import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { Bell, BellOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveProjectColor } from "@/lib/project-palette";
 
 /** Bell button with unread count badge + popover listing unread sessions */
 export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
   const notifications = useNotificationStore((s) => s.notifications);
   const clearAll = useNotificationStore((s) => s.clearAll);
   const totalUnread = useNotificationStore(selectTotalUnread);
-  const { projects, setActiveProject } = useProjectStore(useShallow((s) => ({ projects: s.projects, setActiveProject: s.setActiveProject })));
+  const { projects, setActiveProject, customOrder } = useProjectStore(useShallow((s) => ({ projects: s.projects, setActiveProject: s.setActiveProject, customOrder: s.customOrder })));
+  const ordered = resolveOrder(projects, customOrder);
   const openTab = useTabStore((s) => s.openTab);
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -37,6 +39,13 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
       closable: true,
     });
     setOpen(false);
+  };
+
+  // Resolve project color by name
+  const getProjectColor = (name: string) => {
+    const idx = ordered.findIndex((p) => p.name === name);
+    if (idx === -1) return undefined;
+    return resolveProjectColor(ordered[idx]!.color, idx);
   };
 
   // Group notifications by projectName
@@ -97,7 +106,10 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
               <div className="py-1">
                 {[...grouped.entries()].map(([projectName, sessions]) => (
                   <div key={projectName}>
-                    <div className="px-3 py-1 text-[10px] font-medium text-text-subtle uppercase tracking-wider">{projectName}</div>
+                    <div className="px-3 py-1 text-[10px] font-medium text-text-subtle uppercase tracking-wider flex items-center gap-1.5">
+                      <span className="size-2 rounded-full shrink-0" style={{ background: getProjectColor(projectName) || "currentColor" }} />
+                      {projectName}
+                    </div>
                     {sessions.map(({ sessionId, type, sessionTitle }) => (
                       <button
                         key={sessionId}
