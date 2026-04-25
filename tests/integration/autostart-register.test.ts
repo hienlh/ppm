@@ -6,9 +6,13 @@
  * Designed for GitHub Actions CI matrix (macOS/Linux/Windows runners).
  *
  * IMPORTANT: Tests clean up after themselves (disable in afterEach).
+ * WARNING: On Linux/macOS, these tests overwrite the real ppm.service/plist file
+ * and trigger daemon-reload. If PPM is already running as a system service,
+ * this WILL kill it. Tests are skipped when PPM service is already active.
  */
 import { describe, test, expect, afterEach } from "bun:test";
 import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import {
   enableAutoStart,
   disableAutoStart,
@@ -29,6 +33,21 @@ const isMac = process.platform === "darwin";
 const isLinux = process.platform === "linux";
 const isWindows = process.platform === "win32";
 
+// Skip autostart tests when PPM service is already running — these tests
+// overwrite the real service file + daemon-reload, which kills production PPM.
+function isPpmServiceActive(): boolean {
+  if (isLinux) {
+    const r = spawnSync("systemctl", ["--user", "is-active", "ppm.service"], { encoding: "utf-8" });
+    return r.stdout?.trim() === "active";
+  }
+  if (isMac) {
+    const r = spawnSync("launchctl", ["list"], { encoding: "utf-8" });
+    return r.stdout?.includes("com.ppm.agent") ?? false;
+  }
+  return false;
+}
+const ppmAlreadyRunning = isPpmServiceActive();
+
 // Always clean up after each test
 afterEach(async () => {
   try { await disableAutoStart(); } catch {}
@@ -36,7 +55,7 @@ afterEach(async () => {
 
 // ─── macOS (launchd) ────────────────────────────────────────────────────
 
-describe.if(isMac)("macOS autostart (launchd)", () => {
+describe.if(isMac && !ppmAlreadyRunning)("macOS autostart (launchd)", () => {
   test("enable creates plist file", async () => {
     const servicePath = await enableAutoStart(TEST_CONFIG);
     expect(servicePath).toBe(getPlistPath());
@@ -82,7 +101,7 @@ describe.if(isMac)("macOS autostart (launchd)", () => {
 
 // ─── Linux (systemd) ───────────────────────────────────────────────────
 
-describe.if(isLinux)("Linux autostart (systemd)", () => {
+describe.if(isLinux && !ppmAlreadyRunning)("Linux autostart (systemd)", () => {
   test("enable creates service file", async () => {
     const servicePath = await enableAutoStart(TEST_CONFIG);
     expect(servicePath).toBe(getServicePath());
@@ -182,8 +201,8 @@ describe("cross-platform autostart", () => {
   });
 
   test("enable and disable round-trip works", async () => {
-    if (!isMac && !isLinux && !isWindows) {
-      // Skip on unsupported platforms
+    if ((!isMac && !isLinux && !isWindows) || ppmAlreadyRunning) {
+      // Skip on unsupported platforms or when PPM service is running
       return;
     }
     await enableAutoStart(TEST_CONFIG);
