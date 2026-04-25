@@ -149,6 +149,19 @@ function ReparentingTab({ tabId, panelId, type, metadata, isActive, hiddenContai
   const wrapperRef = useRef<HTMLDivElement>(null);
   const Component = TAB_COMPONENTS[type];
 
+  // On unmount: move wrapper back to hidden container so React's removeChild
+  // can find it. Without this, the wrapper stays orphaned in the slot (the DOM
+  // patch swallows the NotFoundError) and covers other tabs.
+  useLayoutEffect(() => {
+    return () => {
+      const wrapper = wrapperRef.current;
+      const hidden = hiddenContainer.current;
+      if (wrapper && hidden && wrapper.parentElement !== hidden) {
+        hidden.appendChild(wrapper);
+      }
+    };
+  }, [hiddenContainer]);
+
   // Imperatively move the wrapper DOM node into the correct panel slot.
   // appendChild on an already-mounted node moves it (DOM spec — no clone/destroy).
   // useLayoutEffect runs before paint, so the user never sees the off-screen state.
