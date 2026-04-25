@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.29] - 2026-04-25
+
+### Fixed
+- **removeChild crash persists despite error boundaries (v0.13.27-28)**: Error boundaries cannot catch this — the error occurs in React's commit-phase DOM operations before React can route it to any boundary. Browser extensions inject DOM nodes that desync React's virtual DOM. Patched `Node.prototype.removeChild` and `insertBefore` to silently skip mismatched nodes (standard React #11538 workaround)
+
 ## [0.13.28] - 2026-04-25
 
 ### Fixed
