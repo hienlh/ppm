@@ -180,8 +180,7 @@ export function MessageList({
             : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
         )}
 
-        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={statusMessage} />}
-        {!isStreaming && compactStatus === "compacting" && <ThinkingIndicator lastMessage={undefined} phase="thinking" elapsed={undefined} statusMessage="Compacting messages..." />}
+        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
       </StickToBottom.Content>
       <ScrollToBottomButton />
     </StickToBottom>

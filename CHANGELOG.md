@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.24] - 2026-04-25
+
+### Fixed
+- **Compact indicator shows "Thinking..." instead of "Compacting messages..."**: During compaction, `phase` is `"thinking"` so `isStreaming` is true — the streaming ThinkingIndicator rendered with generic "Thinking..." label. The compact-specific indicator (`!isStreaming && compactStatus`) was dead code during actual compaction since it required `!isStreaming`. Fix: pass `"Compacting messages..."` as `statusMessage` to the streaming indicator when `compactStatus === "compacting"`, removed the dead `!isStreaming` branch
+
 ## [0.13.23] - 2026-04-25
 
 ### Fixed
