@@ -6,6 +6,7 @@ interface NotificationEntry {
   /** Last notification type: done, approval_request, question */
   type: string;
   projectName: string;
+  sessionTitle: string | null;
 }
 
 /** Badge color per notification type (Tailwind bg class) */
@@ -41,19 +42,19 @@ export function notificationTint(type: string | null | undefined): string {
 
 interface NotificationStore {
   notifications: Map<string, NotificationEntry>;
-  addNotification: (sessionId: string, type: string, projectName: string) => void;
+  addNotification: (sessionId: string, type: string, projectName: string, sessionTitle?: string | null) => void;
   clearForSession: (sessionId: string) => void;
   clearAll: () => void;
   /** Hydrate from backend on app load */
   loadFromServer: (projectName: string) => Promise<void>;
   /** Handle WS broadcast for cross-tab/device sync */
-  handleUnreadChanged: (sessionId: string, unreadCount: number, unreadType: string | null, projectName: string) => void;
+  handleUnreadChanged: (sessionId: string, unreadCount: number, unreadType: string | null, projectName: string, sessionTitle?: string | null) => void;
 }
 
 export const useNotificationStore = create<NotificationStore>()((set) => ({
   notifications: new Map(),
 
-  addNotification: (sessionId, type, projectName) => {
+  addNotification: (sessionId, type, projectName, sessionTitle) => {
     set((state) => {
       const next = new Map(state.notifications);
       const existing = next.get(sessionId);
@@ -61,6 +62,7 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
         count: (existing?.count ?? 0) + 1,
         type,
         projectName,
+        sessionTitle: sessionTitle ?? existing?.sessionTitle ?? null,
       });
       return { notifications: next };
     });
@@ -86,14 +88,14 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 
   loadFromServer: async (projectName: string) => {
     try {
-      const entries = await api.get<Array<{ sessionId: string; unreadCount: number; unreadType: string | null; projectName: string | null }>>(
+      const entries = await api.get<Array<{ sessionId: string; unreadCount: number; unreadType: string | null; projectName: string | null; sessionTitle: string | null }>>(
         `/api/project/${encodeURIComponent(projectName)}/chat/sessions/unread`,
       );
       set(() => {
         const next = new Map<string, NotificationEntry>();
         for (const e of entries) {
           if (e.unreadCount > 0) {
-            next.set(e.sessionId, { count: e.unreadCount, type: e.unreadType || "done", projectName: e.projectName || "" });
+            next.set(e.sessionId, { count: e.unreadCount, type: e.unreadType || "done", projectName: e.projectName || "", sessionTitle: e.sessionTitle ?? null });
           }
         }
         return { notifications: next };
@@ -101,7 +103,7 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
     } catch { /* server may not support yet — keep empty */ }
   },
 
-  handleUnreadChanged: (sessionId, unreadCount, unreadType, projectName) => {
+  handleUnreadChanged: (sessionId, unreadCount, unreadType, projectName, sessionTitle) => {
     set((state) => {
       const next = new Map(state.notifications);
       if (unreadCount === 0) {
@@ -113,6 +115,7 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
           count: unreadCount > 0 ? unreadCount : (existing?.count ?? 0) + 1,
           type: unreadType || "done",
           projectName: projectName || existing?.projectName || "",
+          sessionTitle: sessionTitle ?? existing?.sessionTitle ?? null,
         });
       }
       return { notifications: next };
@@ -120,11 +123,9 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
   },
 }));
 
-/** Derived: total unread count across all sessions */
+/** Derived: number of sessions with unread notifications */
 export function selectTotalUnread(state: { notifications: Map<string, NotificationEntry> }): number {
-  let total = 0;
-  for (const [, entry] of state.notifications) total += entry.count;
-  return total;
+  return state.notifications.size;
 }
 
 /** Derived: most urgent notification type for a project (null = no unread) */

@@ -372,7 +372,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         }).catch(() => {});
         // Persist unread to DB + broadcast to all tabs/devices
         incrementSessionUnread(sessionId, "done");
-        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "" });
+        const doneSession = chatService.getSession(sessionId);
+        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneSession?.title || null });
 
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";
@@ -393,7 +394,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         const nType = isQuestion ? "question" : "approval_request";
         // Persist unread to DB + broadcast to all tabs/devices
         incrementSessionUnread(sessionId, nType);
-        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: nType, projectName: entry.projectName || "" });
+        const approvalSession = chatService.getSession(sessionId);
+        broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: nType, projectName: entry.projectName || "", sessionTitle: approvalSession?.title || null });
 
         import("../../services/notification.service.ts").then(({ notificationService }) => {
           const project = entry.projectName || "Project";

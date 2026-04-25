@@ -770,6 +770,7 @@ export interface UnreadEntry {
   unreadCount: number;
   unreadType: string | null;
   projectName: string | null;
+  sessionTitle: string | null;
 }
 
 /** Increment unread count for a session and set the notification type */
@@ -789,9 +790,11 @@ export function clearSessionUnread(sessionId: string): void {
 /** Get all sessions with unread > 0 */
 export function getAllUnread(): UnreadEntry[] {
   const rows = getDb().query(
-    "SELECT session_id, unread_count, unread_type, project_name FROM session_metadata WHERE unread_count > 0",
-  ).all() as { session_id: string; unread_count: number; unread_type: string | null; project_name: string | null }[];
-  return rows.map((r) => ({ sessionId: r.session_id, unreadCount: r.unread_count, unreadType: r.unread_type, projectName: r.project_name }));
+    `SELECT m.session_id, m.unread_count, m.unread_type, m.project_name, t.title
+     FROM session_metadata m LEFT JOIN session_titles t ON m.session_id = t.session_id
+     WHERE m.unread_count > 0`,
+  ).all() as { session_id: string; unread_count: number; unread_type: string | null; project_name: string | null; title: string | null }[];
+  return rows.map((r) => ({ sessionId: r.session_id, unreadCount: r.unread_count, unreadType: r.unread_type, projectName: r.project_name, sessionTitle: r.title }));
 }
 
 // ---------------------------------------------------------------------------

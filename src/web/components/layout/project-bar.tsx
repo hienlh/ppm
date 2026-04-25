@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { Plus, Settings, Pencil, Trash2, Palette, Bug, Cloud, X, Copy } from "lucide-react";
 import { CloudSharePopover } from "./cloud-share-popover";
+import { NotificationBellPopover } from "./notification-bell-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
@@ -307,8 +308,9 @@ export const ProjectBar = memo(function ProjectBar() {
         </button>
       </div>
 
-      {/* Footer: cloud + report bug + settings */}
+      {/* Footer: notifications + cloud + report bug + settings */}
       <div className={cn("shrink-0 flex flex-col gap-1 py-2 border-t border-border", expanded ? "items-stretch px-1.5" : "items-center")}>
+        <NotificationBellPopover expanded={expanded} />
         <button
           ref={cloudBtnRef}
           onClick={() => setCloudOpen(!cloudOpen)}
