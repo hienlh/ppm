@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.23] - 2026-04-25
+
+### Fixed
+- **systemd "not our child" prevents auto-restart**: When upgrading from v0.13.20 (old Bun.spawn path), systemd loses track of the new supervisor and silently ignores Restart=always on exit. Supervisor now self-heals on startup — detects stale unit file, regenerates it, and restarts through systemd to get properly tracked
+
 ## [0.13.22] - 2026-04-25
 
 ### Fixed

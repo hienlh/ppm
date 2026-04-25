@@ -838,6 +838,38 @@ export async function runSupervisor(opts: {
   const logFd = openSync(logFile(), "a");
   log("INFO", `Supervisor started (PID: ${process.pid}, port: ${opts.port}, share: ${opts.share})`);
 
+  // ── Systemd self-heal: if the unit file is stale (e.g. still has
+  // Restart=on-failure), we were likely spawned by the old Bun.spawn()
+  // upgrade path and systemd can't track us ("not our child").  Restart=always
+  // won't trigger on exit because systemd never notices we exited.
+  // Fix: regenerate the unit, then restart *through* systemd so it spawns a
+  // properly-tracked child.  The restart runs in a separate systemd-run scope
+  // so it survives our cgroup teardown.
+  const underSystemd = !!process.env.INVOCATION_ID && process.platform === "linux";
+  if (underSystemd) {
+    try {
+      const { isAutoStartUnitStale, enableAutoStart } = await import("./autostart-register.ts");
+      if (isAutoStartUnitStale()) {
+        log("INFO", "Stale systemd unit detected — regenerating and restarting through systemd for proper process tracking");
+        await enableAutoStart(
+          { port: opts.port, host: opts.host, share: opts.share, profile: opts.profile },
+          { skipStart: true },
+        );
+        // Schedule restart in a separate scope (survives our cgroup teardown)
+        Bun.spawn({
+          cmd: ["systemd-run", "--user", "--scope", "--quiet", "--collect",
+                "--", "systemctl", "--user", "restart", "ppm.service"],
+          stdio: ["ignore", "ignore", "ignore"],
+        }).unref();
+        // Give systemd-run a moment to register the scope, then exit
+        await Bun.sleep(1000);
+        process.exit(0);
+      }
+    } catch (e) {
+      log("WARN", `Systemd self-heal failed (non-fatal): ${e}`);
+    }
+  }
+
   // Global exception handlers — supervisor must never crash
   process.on("uncaughtException", (err) => {
     log("ERROR", `Uncaught exception: ${err.stack || err.message}`);
