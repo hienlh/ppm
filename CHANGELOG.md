@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.40] - 2026-04-25
+
+### Fixed
+- **Scroll jank in all tabs**: `opacity: 0` on inactive tab wrappers created a separate GPU compositing layer per tab, degrading scroll performance. Switched to `visibility: hidden` which skips painting entirely
+
 ## [0.13.39] - 2026-04-25
 
 ### Fixed
