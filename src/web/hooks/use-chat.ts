@@ -801,7 +801,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
   const refetchMessages = useCallback(() => {
     if (!sessionId || !projectName) return;
-    setMessagesLoading(true);
+    // No setMessagesLoading(true) here — keep current messages visible while
+    // fetching in the background (stale-while-revalidate). The initial load
+    // in the session-change useEffect already handles the first-time loading screen.
     fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
       headers: { Authorization: `Bearer ${getAuthToken()}` },
     })
@@ -813,8 +815,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           streamingEventsRef.current = [];
         }
       })
-      .catch(() => {})
-      .finally(() => setMessagesLoading(false));
+      .catch(() => {});
   }, [sessionId, providerId, projectName]);
 
   // Keep refetchRef in sync

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.20] - 2026-04-25
+
+### Fixed
+- **Loading messages flash on mobile**: "Loading messages..." screen flashed after every AI response and on WS reconnect (e.g. phone screen off/on). Now uses stale-while-revalidate — keeps current messages visible during background refetch
+
 ## [0.13.19] - 2026-04-25
 
 ### Fixed
