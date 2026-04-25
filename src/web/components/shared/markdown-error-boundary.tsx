@@ -1,7 +1,10 @@
 import { Component, type ReactNode } from "react";
 
 interface Props {
+  /** Plain text fallback when fallback ReactNode is not provided */
   fallbackContent?: string;
+  /** Custom fallback ReactNode — takes precedence over fallbackContent */
+  fallback?: ReactNode;
   children: ReactNode;
 }
 
@@ -12,9 +15,9 @@ interface State {
 /**
  * Error boundary that catches React DOM reconciliation errors
  * (e.g. "removeChild" failures from rehype-raw or browser extensions).
- * Falls back to plain text rendering instead of crashing the whole app.
+ * Falls back to provided content instead of crashing the whole app.
  */
-export class MarkdownErrorBoundary extends Component<Props, State> {
+export class RenderErrorBoundary extends Component<Props, State> {
   override state: State = { hasError: false };
 
   static getDerivedStateFromError(): State {
@@ -23,7 +26,7 @@ export class MarkdownErrorBoundary extends Component<Props, State> {
 
   override render() {
     if (this.state.hasError) {
-      // Show raw text as fallback — still readable, just not formatted
+      if (this.props.fallback) return this.props.fallback;
       return this.props.fallbackContent ? (
         <div className="text-sm whitespace-pre-wrap break-words text-text-primary opacity-80">
           {this.props.fallbackContent}

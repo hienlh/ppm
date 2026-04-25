@@ -10,7 +10,7 @@ const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
 );
 import { cn, basename } from "@/lib/utils";
-import { MarkdownErrorBoundary } from "@/components/shared/markdown-error-boundary";
+import { RenderErrorBoundary } from "@/components/shared/markdown-error-boundary";
 
 import {
   AlertCircle,
@@ -189,15 +189,16 @@ export function MessageList({
             const globalIdx = filtered.length - displayed.length + idx;
             const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
             return (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                isStreaming={isStreaming && msg.id.startsWith("streaming-")}
-                projectName={projectName}
-                onFork={msg.role === "user" && onFork ? handleFork : undefined}
-                prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
-                bashPartialOutput={bashPartialOutput}
-              />
+              <RenderErrorBoundary key={msg.id} fallbackContent={msg.content}>
+                <MessageBubble
+                  message={msg}
+                  isStreaming={isStreaming && msg.id.startsWith("streaming-")}
+                  projectName={projectName}
+                  onFork={msg.role === "user" && onFork ? handleFork : undefined}
+                  prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
+                  bashPartialOutput={bashPartialOutput}
+                />
+              </RenderErrorBoundary>
             );
           })}
 
@@ -1044,11 +1045,11 @@ function MarkdownContent({ content, projectName, isStreaming }: { content: strin
   const cleaned = stripTeammateMessages(content);
   if (!cleaned) return null;
   return (
-    <MarkdownErrorBoundary fallbackContent={cleaned}>
+    <RenderErrorBoundary fallbackContent={cleaned}>
       <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded" />}>
         <MarkdownRenderer content={cleaned} projectName={projectName} codeActions isStreaming={isStreaming} />
       </Suspense>
-    </MarkdownErrorBoundary>
+    </RenderErrorBoundary>
   );
 }
 
