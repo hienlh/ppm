@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.43] - 2026-04-25
+
+### Changed
+- **Chat infinite scroll**: Replaced manual "Load XX more messages" button with auto-loading IntersectionObserver sentinel. Scrolling up now seamlessly loads both in-memory paginated messages and pre-compact JSONL history without separate buttons. Includes 150ms debounce to prevent cascade triggers
+
 ## [0.13.42] - 2026-04-25
 
 ### Fixed
