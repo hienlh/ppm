@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.37] - 2026-04-25
+
+### Added
+- **Eruda mobile console**: Add optional Eruda debug console for mobile debugging — activated via `?eruda` URL query parameter. Loads on-demand, no impact on normal usage
+
 ## [0.13.36] - 2026-04-25
 
 ### Fixed
