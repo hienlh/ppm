@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.28] - 2026-04-25
+
+### Fixed
+- **removeChild crash still occurs (v0.13.27 boundary too deep)**: Error boundary was wrapping `MarkdownContent` only — the `removeChild` error fires higher up during React's commit phase at the `MessageBubble` level. Moved boundary to wrap each `MessageBubble` in the message list, so individual messages degrade to plain text instead of crashing the entire app
+
 ## [0.13.27] - 2026-04-25
 
 ### Fixed
