@@ -74,14 +74,15 @@ interface UseChatReturn {
   isConnected: boolean;
 }
 
-/** Check if the chat tab for this session is the active foreground tab */
+/** Check if the chat tab for this session is the active foreground tab (any panel) */
 function isSessionTabActive(sid: string): boolean {
   if (document.hidden) return false;
-  const { panels, focusedPanelId } = usePanelStore.getState();
-  const panel = panels[focusedPanelId];
-  if (!panel) return false;
-  const activeTab = panel.tabs.find((t) => t.id === panel.activeTabId);
-  return activeTab?.type === "chat" && activeTab.metadata?.sessionId === sid;
+  const { panels } = usePanelStore.getState();
+  for (const panel of Object.values(panels)) {
+    const activeTab = panel.tabs.find((t) => t.id === panel.activeTabId);
+    if (activeTab?.type === "chat" && activeTab.metadata?.sessionId === sid) return true;
+  }
+  return false;
 }
 
 export function useChat(sessionId: string | null, providerId = "claude", projectName = ""): UseChatReturn {

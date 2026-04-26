@@ -123,14 +123,14 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   }, [isConnected, sendMessage]);
 
   // Auto-clear notification badge when this tab is active and document is visible.
-  // Handles the case where notification arrived while browser tab was hidden.
+  // Checks ALL panels (not just focused) so split-panel scenarios also clear.
   useEffect(() => {
     if (!sessionId || !tabId) return;
     const maybeClear = () => {
       if (document.hidden) return;
-      const { panels, focusedPanelId } = usePanelStore.getState();
-      const panel = panels[focusedPanelId];
-      if (panel?.activeTabId === tabId) {
+      const { panels } = usePanelStore.getState();
+      const isActive = Object.values(panels).some((p) => p.activeTabId === tabId);
+      if (isActive) {
         useNotificationStore.getState().clearForSession(sessionId);
       }
     };
@@ -176,6 +176,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     setSessionId(session.id);
     setProviderId(session.providerId);
     if (tabId) updateTab(tabId, { title: session.title || "Chat" });
+    // Immediately clear notification for the selected session
+    useNotificationStore.getState().clearForSession(session.id);
   }, [tabId, updateTab]);
 
   /** Fork current session and open new tab with the forked session, resending userMessage */
