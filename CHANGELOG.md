@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.46] - 2026-04-26
+
+### Fixed
+- **Chat crash on load**: `ReferenceError: Cannot access 'O' before initialization` — `topUnexpandedCompact` was used in `useCallback` dependency array before its `const` declaration (temporal dead zone). Moved declaration above the callback
+
 ## [0.13.45] - 2026-04-26
 
 ### Fixed

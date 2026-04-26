@@ -134,6 +134,9 @@ export function MessageList({
     return null;
   }, [displayed, onExpandCompact, isCompactExpanded]);
 
+  const topUnexpandedCompact = findTopUnexpandedCompact();
+  const hasMore = hasMoreInMemory || !!topUnexpandedCompact;
+
   // Unified load-more: first show more in-memory messages, then auto-expand compact history
   const [autoLoadingCompact, setAutoLoadingCompact] = useState(false);
   const loadMore = useCallback(async () => {
@@ -155,9 +158,6 @@ export function MessageList({
       setAutoLoadingCompact(false);
     }
   }, [hasMoreInMemory, topUnexpandedCompact, onExpandCompact, autoLoadingCompact]);
-
-  const topUnexpandedCompact = findTopUnexpandedCompact();
-  const hasMore = hasMoreInMemory || !!topUnexpandedCompact;
 
   if (messagesLoading) {
     return (
