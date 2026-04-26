@@ -115,7 +115,7 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
                         key={sessionId}
                         onClick={() => handleGoToSession(sessionId, projectName)}
                         className={cn(
-                          "w-full px-3 py-1.5 text-left text-[11px] truncate hover:bg-surface-elevated transition-colors",
+                          "w-full px-3 py-1.5 text-left text-[11px] text-foreground truncate hover:bg-surface-elevated transition-colors",
                           notificationTint(type),
                         )}
                       >
