@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.13.47] - 2026-04-26
+
+### Added
+- **Unread tint in session list panel**: Session rows on the main session list page now show background tint + bold text for unread sessions (same treatment as sidebar history bar)
+
+### Fixed
+- **Bell popover text invisible on light theme**: Session title text was inheriting tint color, now uses `text-foreground` for readability
+- **Session titles missing in bell popover**: Added `last_known_title` column to `session_metadata` (migration v23), saved when incrementing unread. `getAllUnread()` uses `COALESCE(session_titles.title, last_known_title)` so SDK-generated titles display correctly
+- **Project identification in bell popover**: Added colored dot matching project avatar color in group headers
+
 ## [0.13.46] - 2026-04-26
 
 ### Fixed
