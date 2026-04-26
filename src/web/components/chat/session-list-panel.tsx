@@ -5,6 +5,8 @@ import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useProjectTags, TagChipBar } from "./tag-filter-chips";
 import { SessionContextMenu } from "./session-context-menu";
+import { useNotificationStore, notificationTint } from "@/stores/notification-store";
+import { cn } from "@/lib/utils";
 import type { SessionInfo, ProjectTag } from "../../../types/chat";
 
 const MAX_RECENT_SESSIONS = 5;
@@ -152,6 +154,7 @@ interface SessionRowProps {
 }
 
 function SessionRow({ session, projectName, projectTags, onSelect, onTogglePin, onTagChanged }: SessionRowProps) {
+  const notif = useNotificationStore((s) => s.notifications.get(session.id));
   return (
     <SessionContextMenu
       session={session}
@@ -162,13 +165,16 @@ function SessionRow({ session, projectName, projectTags, onSelect, onTogglePin, 
     >
       <button
         onClick={() => onSelect(session)}
-        className="group flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-elevated active:bg-surface-elevated transition-colors border-b border-border/50 last:border-0"
+        className={cn(
+          "group flex items-center gap-2.5 w-full px-3 py-2.5 text-left hover:bg-surface-elevated active:bg-surface-elevated transition-colors border-b border-border/50 last:border-0",
+          notif && notificationTint(notif.type),
+        )}
       >
         <MessageSquare className="size-3.5 shrink-0 text-text-subtle" />
         {session.tag && (
           <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
         )}
-        <span className="flex-1 min-w-0 text-xs font-medium truncate text-text-primary">
+        <span className={cn("flex-1 min-w-0 text-xs truncate", notif ? "font-semibold text-foreground" : "font-medium text-text-primary")}>
           {session.title || "Untitled"}
         </span>
         {session.updatedAt && (
