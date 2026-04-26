@@ -23,14 +23,14 @@ describe("ExtensionService.parseManifest", () => {
 
     it("parses scoped package names", () => {
       const pkg = {
-        name: "@ppm/ext-database",
+        name: "@ppm/ext-example",
         version: "1.0.0",
         main: "dist/index.js",
       };
 
       const manifest = service.parseManifest(pkg);
 
-      expect(manifest?.id).toBe("@ppm/ext-database");
+      expect(manifest?.id).toBe("@ppm/ext-example");
     });
 
     it("uses ppm.displayName over package displayName", () => {

@@ -75,10 +75,6 @@
         "typescript": "^5.9.3",
       },
     },
-    "packages/ext-database": {
-      "name": "@ppm/ext-database",
-      "version": "0.1.0",
-    },
     "packages/ext-git-graph": {
       "name": "@ppm/ext-git-graph",
       "version": "0.1.0",
@@ -503,8 +499,6 @@
     "@oxc-project/types": ["@oxc-project/types@0.115.0", "", {}, "sha512-4n91DKnebUS4yjUHl2g3/b2T+IUdCfmoZGhmwsovZCDaJSs+QkVAM+0AqqTxHSsHfeiMuueT75cZaZcT/m0pSw=="],
 
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
-
-    "@ppm/ext-database": ["@ppm/ext-database@workspace:packages/ext-database"],
 
     "@ppm/ext-git-graph": ["@ppm/ext-git-graph@workspace:packages/ext-git-graph"],
 

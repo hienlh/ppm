@@ -1,6 +1,6 @@
 /** Extension manifest — parsed from package.json of an installed extension */
 export interface ExtensionManifest {
-  id: string; // npm package name, e.g. @ppm/ext-database
+  id: string; // npm package name, e.g. @ppm/ext-myext
   version: string;
   main: string; // JS entry point relative to extension root
   displayName?: string;

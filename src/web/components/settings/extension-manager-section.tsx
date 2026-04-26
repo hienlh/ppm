@@ -97,7 +97,7 @@ export function ExtensionManagerSection() {
             value={installName}
             onChange={(e) => setInstallName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleInstall(); }}
-            placeholder="npm package name (e.g. @ppm/ext-database)"
+            placeholder="npm package name (e.g. @ppm/ext-myext)"
             className="h-8 text-xs flex-1"
           />
           <Button
@@ -122,7 +122,7 @@ export function ExtensionManagerSection() {
             <Input
               value={devPath}
               onChange={(e) => setDevPath(e.target.value)}
-              placeholder="Local path (e.g. ./packages/ext-database)"
+              placeholder="Local path (e.g. ./packages/ext-myext)"
               className="h-8 text-xs flex-1"
             />
             <Button

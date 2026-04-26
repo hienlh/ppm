@@ -610,6 +610,34 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN last_known_title TEXT"); } catch { /* column exists */ }
     database.exec("PRAGMA user_version = 23");
   }
+
+  if (current < 25) {
+    // Re-create extension tables if missing (e.g. after accidental drop)
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS extensions (
+        id TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        display_name TEXT,
+        description TEXT,
+        icon TEXT,
+        enabled INTEGER DEFAULT 1,
+        manifest TEXT NOT NULL,
+        installed_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS extension_storage (
+        ext_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        PRIMARY KEY (ext_id, scope, key),
+        FOREIGN KEY (ext_id) REFERENCES extensions(id) ON DELETE CASCADE
+      );
+
+      PRAGMA user_version = 25;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
