@@ -200,24 +200,31 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     }
   }, [sessionId, projectName, providerId]);
 
-  /** Build message content with file references prepended */
+  /** Build message content with file references and inline text snippets prepended */
   const buildMessageWithAttachments = useCallback(
     (content: string, attachments: ChatAttachment[]): string => {
       if (attachments.length === 0) return content;
 
-      const fileRefs = attachments
-        .filter((a) => a.serverPath)
-        .map((a) => a.serverPath!)
-        .join("\n");
+      const parts: string[] = [];
 
-      if (!fileRefs) return content;
+      // Inline text snippets (e.g. terminal output)
+      for (const att of attachments) {
+        if (att.textContent) parts.push(att.textContent);
+      }
 
-      // Prepend file paths so Claude Code can read them
-      const prefix = attachments.length === 1
-        ? `[Attached file: ${fileRefs}]\n\n`
-        : `[Attached files:\n${fileRefs}\n]\n\n`;
+      // Server-uploaded file references
+      const fileAtts = attachments.filter((a) => a.serverPath);
+      if (fileAtts.length > 0) {
+        const fileRefs = fileAtts.map((a) => a.serverPath!).join("\n");
+        parts.push(
+          fileAtts.length === 1
+            ? `[Attached file: ${fileRefs}]`
+            : `[Attached files:\n${fileRefs}\n]`,
+        );
+      }
 
-      return prefix + content;
+      if (parts.length === 0) return content;
+      return parts.join("\n\n") + "\n\n" + content;
     },
     [],
   );

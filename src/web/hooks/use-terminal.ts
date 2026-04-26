@@ -61,6 +61,8 @@ interface UseTerminalOptions {
   sessionId: string;
   projectName?: string;
   containerRef: React.RefObject<HTMLDivElement | null>;
+  /** Stable tab ID for persisting session across reload */
+  tabId?: string;
 }
 
 interface UseTerminalReturn {
@@ -69,6 +71,8 @@ interface UseTerminalReturn {
   exited: boolean;
   sendData: (data: string) => void;
   getSelection: () => string;
+  /** Read buffer from last command start to current cursor (for "Send to Chat"). */
+  getLastCommandOutput: () => string;
   restart: () => void;
 }
 
@@ -86,7 +90,17 @@ export function useTerminal(
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [exited, setExited] = useState(false);
-  const actualSessionId = useRef(sessionId); // Track server-assigned session ID
+  // Restore persisted session ID from localStorage (survives page reload)
+  const storageKey = options.tabId ? `ppm:terminal-session:${options.tabId}` : null;
+  const initialSessionId = (() => {
+    if (storageKey) {
+      try { return localStorage.getItem(storageKey) ?? sessionId; } catch { /* */ }
+    }
+    return sessionId;
+  })();
+  const actualSessionId = useRef(initialSessionId);
+  /** Absolute row where last command output starts (set when user presses Enter) */
+  const commandStartRow = useRef(0);
 
   const sendData = useCallback((data: string) => {
     const ws = wsRef.current;
@@ -97,6 +111,22 @@ export function useTerminal(
 
   const getSelection = useCallback(() => {
     return termRef.current?.getSelection() ?? "";
+  }, []);
+
+  const getLastCommandOutput = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return "";
+    const buf = term.buffer.active;
+    const startRow = commandStartRow.current;
+    const endRow = buf.baseY + buf.cursorY;
+    const lines: string[] = [];
+    for (let i = startRow; i <= endRow; i++) {
+      const line = buf.getLine(i);
+      if (line) lines.push(line.translateToString(true));
+    }
+    // Trim trailing empty lines
+    while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
+    return lines.join("\n");
   }, []);
 
   const sendResize = useCallback(() => {
@@ -113,6 +143,7 @@ export function useTerminal(
     wsRef.current?.close();
     wsRef.current = null;
     actualSessionId.current = "new";
+    if (storageKey) { try { localStorage.removeItem(storageKey); } catch { /* */ } }
     reconnectAttempts.current = 0;
     setExited(false);
     setConnected(false);
@@ -122,6 +153,18 @@ export function useTerminal(
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const connectWs = useCallback(() => {
+    // Prevent duplicate connections (e.g. React StrictMode re-mount racing
+    // with a scheduled reconnect from the previous mount's WS close event).
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.onclose = null; // prevent triggering scheduleReconnect
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
     const term = termRef.current;
     if (!term) return;
 
@@ -129,7 +172,12 @@ export function useTerminal(
     const projectName = options.projectName ?? "";
     // Use actual session ID from server on reconnect (not "new")
     const sid = actualSessionId.current;
-    const url = `${protocol}//${window.location.host}/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}`;
+    const path = `/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}`;
+    // In dev mode, connect directly to backend (port 8081) to bypass
+    // Vite's dev proxy which has unreliable WebSocket upgrade handling.
+    const url = import.meta.env.DEV
+      ? `ws://${window.location.hostname}:8081${path}`
+      : `${protocol}//${window.location.host}${path}`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -149,7 +197,11 @@ export function useTerminal(
             const msg = JSON.parse(event.data);
             if (msg.type === "session" || msg.type === "error" || msg.type === "exited" || msg.type === "ping") {
               if (msg.type === "session" && msg.id) {
-                actualSessionId.current = msg.id; // Save for reconnect
+                actualSessionId.current = msg.id;
+                // Persist to localStorage so reload reconnects to same PTY
+                if (storageKey) {
+                  try { localStorage.setItem(storageKey, msg.id); } catch { /* */ }
+                }
               }
               if (msg.type === "error") {
                 term.write(`\r\n\x1b[31mError: ${msg.message}\x1b[0m\r\n`);
@@ -175,7 +227,7 @@ export function useTerminal(
     ws.onerror = () => {
       ws.close();
     };
-  }, [sessionId, sendResize]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sendResize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function scheduleReconnect() {
     const delay = Math.min(
@@ -211,8 +263,13 @@ export function useTerminal(
     termRef.current = term;
     fitRef.current = fitAddon;
 
-    // Wire input to WS
+    // Wire input to WS + track command boundaries
     term.onData((data) => {
+      // When user presses Enter, mark next row as command output start
+      if (data.includes("\r") || data.includes("\n")) {
+        const buf = term.buffer.active;
+        commandStartRow.current = buf.baseY + buf.cursorY + 1;
+      }
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(data);
@@ -252,7 +309,7 @@ export function useTerminal(
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting, exited, sendData, getSelection, restart };
+  return { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, restart };
 }

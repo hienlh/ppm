@@ -1,13 +1,13 @@
 import type { Subprocess, Terminal as BunTerminal } from "bun";
 
-/** Max output buffer size per session (10KB) */
-const MAX_BUFFER_SIZE = 10 * 1024;
+/** Max output buffer size per session (200KB — enough for ~4000 lines) */
+const MAX_BUFFER_SIZE = 200 * 1024;
 
 /** Idle session timeout: 1 hour */
 const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 
-/** Reconnect grace period after WS disconnect */
-const RECONNECT_GRACE_MS = 30 * 1000;
+/** Reconnect grace period after WS disconnect (2 min — covers page reload) */
+const RECONNECT_GRACE_MS = 120 * 1000;
 
 const isWindows = process.platform === "win32";
 

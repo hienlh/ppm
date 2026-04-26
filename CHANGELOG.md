@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.13.48] - 2026-04-26
+
+### Added
+- **Send terminal content to chat**: "Chat" button in terminal status bar and mobile toolbar sends selected text (or last command output) to the chat input as a removable attachment chip
+- **Terminal attachment preview**: Click terminal attachment chip to expand/collapse inline code preview
+- **Text content attachments**: `ChatAttachment` supports inline `textContent` field for text snippets (no server upload needed)
+
+### Changed
+- **Terminal buffer size**: Increased max output buffer from 10KB to 200KB for better scrollback
+- **Terminal reconnect grace period**: Extended from 30s to 2min to survive page reloads
+
 ## [0.13.47] - 2026-04-26
 
 ### Added

@@ -1,11 +1,15 @@
 import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useTerminal } from "@/hooks/use-terminal";
 import { cn } from "@/lib/utils";
-import { Copy, ClipboardPaste, RotateCcw } from "lucide-react";
+import { Copy, ClipboardPaste, RotateCcw, MessageSquare } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
+import { toast } from "sonner";
+
+import { usePanelStore } from "@/stores/panel-store";
 
 interface TerminalTabProps {
   metadata?: Record<string, unknown>;
+  tabId?: string;
 }
 
 const MOBILE_KEYS = [
@@ -18,11 +22,12 @@ const MOBILE_KEYS = [
   { label: "\u2192", value: "\x1b[C" },
 ] as const;
 
-export const TerminalTab = memo(function TerminalTab({ metadata }: TerminalTabProps) {
+export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: TerminalTabProps) {
   const sessionId = (metadata?.sessionId as string) ?? "new";
   const projectName = metadata?.projectName as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
-  const { connected, reconnecting, exited, sendData, getSelection, restart } = useTerminal({ sessionId, projectName, containerRef });
+
+  const { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, restart } = useTerminal({ sessionId, projectName, containerRef, tabId });
   const [ctrlMode, setCtrlMode] = useState(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
@@ -85,6 +90,34 @@ export const TerminalTab = memo(function TerminalTab({ metadata }: TerminalTabPr
     }
   }, [sendData, focusTerminal]);
 
+  const handleSendToChat = useCallback(() => {
+    const selection = getSelection();
+    const text = selection || getLastCommandOutput();
+    if (!text.trim()) return;
+    const codeBlock = "```bash\n" + text + "\n```";
+    const label = selection ? "Terminal selection" : "Terminal output";
+
+    // Try to inject into an already-open chat tab as attachment chip
+    let handled = false;
+    const handler = () => { handled = true; };
+    window.addEventListener("ppm:send-to-chat:ack", handler, { once: true });
+    window.dispatchEvent(new CustomEvent("ppm:send-to-chat", { detail: { text: codeBlock, label, projectName } }));
+    window.removeEventListener("ppm:send-to-chat:ack", handler);
+
+    if (handled) {
+      toast.success("Sent to chat", { duration: 1500 });
+    } else {
+      // No chat tab mounted — open a new one with the content as initialValue
+      usePanelStore.getState().openTab({
+        type: "chat",
+        title: "Chat",
+        projectId: null,
+        metadata: { projectName, pendingMessage: codeBlock },
+        closable: true,
+      });
+    }
+  }, [getSelection, getLastCommandOutput, projectName]);
+
   const isMobile = typeof window !== "undefined" && "ontouchstart" in window;
 
   return (
@@ -118,7 +151,15 @@ export const TerminalTab = memo(function TerminalTab({ metadata }: TerminalTabPr
             Restart
           </button>
         )}
-        <span className="text-text-subtle ml-auto font-mono">{sessionId}</span>
+        <button
+          onClick={handleSendToChat}
+          title="Send to Chat"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-surface-elevated text-text-primary hover:bg-primary hover:text-primary-foreground active:bg-primary active:text-primary-foreground transition-colors ml-auto"
+        >
+          <MessageSquare size={10} />
+          Chat
+        </button>
+        <span className="text-text-subtle font-mono">{sessionId}</span>
       </div>
 
       {/* Terminal container */}
@@ -138,6 +179,13 @@ export const TerminalTab = memo(function TerminalTab({ metadata }: TerminalTabPr
             className="px-2 py-1.5 rounded text-xs min-w-[36px] min-h-[32px] bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground transition-colors select-none"
           >
             <ClipboardPaste size={14} />
+          </button>
+          <button
+            onClick={handleSendToChat}
+            className="px-2 py-1.5 rounded text-xs min-w-[36px] min-h-[32px] bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground transition-colors select-none"
+            aria-label="Send to Chat"
+          >
+            <MessageSquare size={14} />
           </button>
           <div className="w-px h-5 bg-border mx-0.5" />
           {MOBILE_KEYS.map((key) => (

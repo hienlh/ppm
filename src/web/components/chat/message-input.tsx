@@ -19,6 +19,8 @@ export interface ChatAttachment {
   previewUrl?: string;
   /** Server-side path after upload */
   serverPath?: string;
+  /** Inline text content (e.g. terminal output) — no upload needed */
+  textContent?: string;
   status: "uploading" | "ready" | "error";
 }
 
@@ -160,6 +162,27 @@ export const MessageInput = memo(function MessageInput({
     window.addEventListener("toggle-voice-input", handler);
     return () => window.removeEventListener("toggle-voice-input", handler);
   }, [voice.supported, handleVoiceToggle]);
+
+  // Listen for "Send to Chat" from terminal or other tabs — add as attachment chip
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { text, label } = (e as CustomEvent).detail ?? {};
+      if (!text) return;
+      window.dispatchEvent(new Event("ppm:send-to-chat:ack"));
+      const att: ChatAttachment = {
+        id: randomId(),
+        name: label ?? "Terminal output",
+        file: new File([], "terminal-output.txt"),
+        isImage: false,
+        textContent: text,
+        status: "ready",
+      };
+      setAttachments((prev) => [...prev, att]);
+      getVisibleTextarea()?.focus();
+    };
+    window.addEventListener("ppm:send-to-chat", handler);
+    return () => window.removeEventListener("ppm:send-to-chat", handler);
+  }, [getVisibleTextarea]);
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette)
   useEffect(() => {
