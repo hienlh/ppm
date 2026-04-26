@@ -323,6 +323,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (!panel) return;
       const pid = panel.id;
 
+      // Clear persisted terminal session so reopening creates a fresh PTY
+      if (tabId.startsWith("terminal:")) {
+        try { localStorage.removeItem(`ppm:terminal-session:${tabId}`); } catch { /* */ }
+      }
+
       set((s) => {
         const p = s.panels[pid]!;
         const newTabs = p.tabs.filter((t) => t.id !== tabId);

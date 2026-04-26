@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.50] - 2026-04-26
+
+### Fixed
+- **Terminal session persistence across reload**: Terminal tabs now reconnect to the same PTY session after page reload, preserving output history
+- **Terminal WS bypass Vite proxy**: Dev mode connects terminal WebSocket directly to backend (port 8081), bypassing Vite's unreliable WS proxy
+- **Duplicate buffer on reconnect**: Prevent React StrictMode from creating duplicate WebSocket connections that replay buffer twice
+- **Fresh terminal on tab reopen**: Closing a terminal tab clears persisted session so reopening creates a new PTY instead of reconnecting to the old one
+
 ## [0.13.48] - 2026-04-26
 
 ### Added
