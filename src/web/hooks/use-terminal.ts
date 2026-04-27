@@ -195,10 +195,13 @@ export function useTerminal(
         if (event.data.startsWith("{")) {
           try {
             const msg = JSON.parse(event.data);
-            if (msg.type === "session" || msg.type === "error" || msg.type === "exited" || msg.type === "ping") {
+            // Any valid JSON with a "type" field is a control/system message —
+            // real PTY output is raw text/escape sequences, never typed JSON.
+            // Handle known terminal control types, silently drop everything else
+            // (e.g. chat events that may leak via WS under race conditions).
+            if (msg.type) {
               if (msg.type === "session" && msg.id) {
                 actualSessionId.current = msg.id;
-                // Persist to localStorage so reload reconnects to same PTY
                 if (storageKey) {
                   try { localStorage.setItem(storageKey, msg.id); } catch { /* */ }
                 }
@@ -209,7 +212,7 @@ export function useTerminal(
               if (msg.type === "exited") {
                 setExited(true);
               }
-              return; // Don't write raw JSON to terminal
+              return; // Never write typed JSON to terminal
             }
           } catch {
             // Not JSON, write as terminal output
