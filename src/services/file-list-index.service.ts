@@ -155,13 +155,12 @@ function walkForIndex(
     if (matchesGlob(relPosix, allExclude)) continue;
     if (matchesGlob(entry.name, allExclude)) continue;
 
-    // Apply gitignore rules — SOFT exclude for files (include with isIgnored flag),
-    // HARD exclude for directories (skip recursion to avoid walking huge gitignored dirs).
+    // Apply gitignore rules — SOFT exclude only (mark with isIgnored flag).
+    // Huge dirs like node_modules/dist/build are already hard-excluded by glob above.
     let isIgnored = false;
     if (ig) {
       const checkPath = entry.isDirectory() ? `${relPosix}/` : relPosix;
       isIgnored = ig.ignores(checkPath) || ig.ignores(relPosix);
-      if (isIgnored && entry.isDirectory()) continue;
     }
 
     if (entry.isDirectory()) {

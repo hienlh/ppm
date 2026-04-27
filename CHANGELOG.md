@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.52] - 2026-04-27
+
+### Fixed
+- **Gitignored directories missing from palette search**: Typing an exact path like `output/.../file.png` found nothing because gitignored directories were hard-skipped (no recursion). Now gitignored directories are walked and their files surfaced with `isIgnored` flag — large dirs like `node_modules`/`dist`/`build` are still hard-excluded by the glob pattern list
+
 ## [0.13.51] - 2026-04-27
 
 ### Fixed
