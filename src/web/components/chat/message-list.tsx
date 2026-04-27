@@ -436,6 +436,19 @@ function isPdfPath(path: string): boolean {
 /** Detect if tags contain system-injected content (not real user input) */
 const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details"]);
 
+/** Extract leading terminal code fences from message text */
+function extractTerminalBlocks(text: string): { blocks: string[]; remainingText: string } {
+  const blocks: string[] = [];
+  let remaining = text;
+  const re = /^```(?:bash|sh|shell|zsh)\n([\s\S]*?)\n```\s*(?:\n\n?)?/;
+  let match;
+  while ((match = remaining.match(re)) !== null) {
+    blocks.push(match[1]!);
+    remaining = remaining.slice(match[0].length);
+  }
+  return { blocks, remainingText: remaining.trim() };
+}
+
 /** User message bubble — full width, collapsible, with system tag badges */
 function UserBubble({ content, messageId, projectName, onFork }: {
   content: string;
@@ -443,14 +456,15 @@ function UserBubble({ content, messageId, projectName, onFork }: {
   projectName?: string;
   onFork?: () => void;
 }) {
-  const { files, text, tags, command } = useMemo(() => {
-    const parsed = parseUserAttachments(content);
+  const { files, text, tags, command, terminalBlocks } = useMemo(() => {
+    const { blocks, remainingText: afterBlocks } = extractTerminalBlocks(content);
+    const parsed = parseUserAttachments(afterBlocks);
     const { cleanText: noSysTags, tags } = extractSystemTags(parsed.text);
     const { command, cleanText } = parseCommandTags(noSysTags);
     const bodyText = command?.args
       ? (cleanText ? `${command.args}\n\n${cleanText}` : command.args)
       : cleanText;
-    return { files: parsed.files, text: bodyText, tags, command };
+    return { files: parsed.files, text: bodyText, tags, command, terminalBlocks: blocks };
   }, [content]);
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
@@ -508,6 +522,15 @@ function UserBubble({ content, messageId, projectName, onFork }: {
         </div>
       )}
 
+      {/* Terminal output previews */}
+      {terminalBlocks.length > 0 && (
+        <div className="space-y-1.5">
+          {terminalBlocks.map((block, i) => (
+            <TerminalBlockPreview key={i} content={block} />
+          ))}
+        </div>
+      )}
+
       {/* Text content — 2-line clamp by default, expandable */}
       {text && (
         <div
@@ -541,6 +564,34 @@ function UserBubble({ content, messageId, projectName, onFork }: {
         >
           <RotateCcw className="size-3" />
         </button>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible terminal output preview in user messages */
+function TerminalBlockPreview({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className={cn(
+          "flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors",
+          expanded
+            ? "border-primary/50 bg-surface-elevated text-text-primary"
+            : "border-border/60 bg-background/40 text-text-secondary hover:bg-surface",
+        )}
+      >
+        <TerminalSquare className="size-3.5 shrink-0" />
+        <span>Terminal output</span>
+        <ChevronDown className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-180")} />
+      </button>
+      {expanded && (
+        <pre className="mt-1 max-h-40 overflow-auto rounded-md border border-border bg-background p-2 text-xs text-text-primary font-mono whitespace-pre-wrap break-words">
+          {content}
+        </pre>
       )}
     </div>
   );
