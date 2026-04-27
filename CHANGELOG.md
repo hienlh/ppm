@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.51] - 2026-04-27
+
+### Fixed
+- **Diff view covers other tabs**: Monaco DiffEditor sets `visibility: visible` on internal elements, overriding the wrapper's `visibility: hidden`. Switched inactive tab hiding to `display: none` which cannot be overridden by children
+- **Disable production source maps**: Removed source maps from production build to reduce bundle size
+
 ## [0.13.50] - 2026-04-26
 
 ### Fixed

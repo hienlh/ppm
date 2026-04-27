@@ -227,7 +227,7 @@ function ReparentingTab({ tabId, panelId, type, metadata, isActive, hiddenContai
     <div
       ref={wrapperRef}
       className="absolute inset-0"
-      style={isActive ? undefined : { visibility: "hidden", pointerEvents: "none" }}
+      style={isActive ? undefined : { display: "none" }}
       data-tab-pool-id={tabId}
     >
       <Suspense
