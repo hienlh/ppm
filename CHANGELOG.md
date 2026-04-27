@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.53] - 2026-04-28
+
+### Fixed
+- **Terminal rendering leaked chat events**: JSON messages with a `type` field (e.g. `session:unread_changed`, `phase_changed`, `thinking`) were written as raw text into xterm instead of being silently dropped — broadened the terminal WS message filter to reject all typed JSON, not just 4 known control types
+
 ## [0.13.52] - 2026-04-27
 
 ### Fixed
