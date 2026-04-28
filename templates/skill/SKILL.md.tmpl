@@ -46,7 +46,7 @@ Invoke when the user asks to:
 
 - Always run `ppm status` before assuming the server is up.
 - Commands exit non-zero on failure and print to stderr. Capture both streams.
-- Listing commands accept `--json` for structured output; prefer JSON when parsing.
+- Most listing commands accept `--json` for structured output; prefer JSON when parsing. Check `--help` if unsure.
 - The config DB is **SQLite**. You may open `~/.ppm/ppm.db` read-only for inspection — see [references/db-schema.md](references/db-schema.md).
 - Do NOT edit the config DB directly while the server is running; use `ppm config set` or the HTTP API.
 

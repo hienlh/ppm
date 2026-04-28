@@ -259,6 +259,9 @@ Manage database connections and execute queries
 
 List all saved database connections
 
+**Options:**
+- `--json` — Output as JSON
+
 ### `ppm db add`
 
 Add a new database connection
@@ -287,6 +290,9 @@ Test a saved connection
 
 List tables in a database connection
 
+**Options:**
+- `--json` — Output as JSON
+
 **Usage:** `ppm db tables [options] <name>`
 
 ### `ppm db schema`
@@ -295,6 +301,7 @@ Show table schema (columns, types, constraints)
 
 **Options:**
 - `-s, --schema <schema>` — PostgreSQL schema name (default: `"public"`)
+- `--json` — Output as JSON
 
 **Usage:** `ppm db schema [options] <name> <table>`
 
@@ -308,12 +315,16 @@ View table data (paginated)
 - `--order <column>` — Order by column
 - `--desc` — Descending order
 - `-s, --schema <schema>` — PostgreSQL schema name (default: `"public"`)
+- `--json` — Output as JSON
 
 **Usage:** `ppm db data [options] <name> <table>`
 
 ### `ppm db query`
 
 Execute a SQL query against a saved connection
+
+**Options:**
+- `--json` — Output as JSON
 
 **Usage:** `ppm db query [options] <name> <sql>`
 

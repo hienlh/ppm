@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.54] - 2026-04-28
+
+### Added
+- **`--json` flag for all db CLI commands**: `ppm db list`, `tables`, `schema`, `data`, `query` now accept `--json` for structured JSON output — fixes AI agents failing on `ppm db list --json`
+
+### Fixed
+- **Misleading docs about `--json` support**: Skill docs claimed all listing commands support `--json`; updated to be accurate and added `--help` guidance
+
 ## [0.13.53] - 2026-04-28
 
 ### Fixed

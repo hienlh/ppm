@@ -161,6 +161,7 @@ ppm chat delete <session-id>
 \`\`\`
 ppm db list
   List all saved database connections
+  --json — Output as JSON
 
 ppm db add
   Add a new database connection
@@ -179,10 +180,12 @@ ppm db test <name>
 
 ppm db tables <name>
   List tables in a database connection
+  --json — Output as JSON
 
 ppm db schema <name> <table>
   Show table schema (columns, types, constraints)
   -s, --schema <schema> — PostgreSQL schema name [default: public]
+  --json — Output as JSON
 
 ppm db data <name> <table>
   View table data (paginated)
@@ -191,9 +194,11 @@ ppm db data <name> <table>
   --order <column> — Order by column
   --desc — Descending order
   -s, --schema <schema> — PostgreSQL schema name [default: public]
+  --json — Output as JSON
 
 ppm db query <name> <sql>
   Execute a SQL query against a saved connection
+  --json — Output as JSON
 \`\`\`
 ## ppm autostart — Auto-start on boot
 \`\`\`
@@ -322,6 +327,6 @@ ppm bot memory forget "<topic>"
 \`\`\`
 
 ## Tips
-- Use \`--json\` flag when parsing command output programmatically
+- Use \`--json\` flag when parsing command output programmatically (available on most list/status commands — check \`--help\`)
 - For git/chat/db operations: always specify \`--project <name>\` or connection name
 `;

@@ -67,12 +67,24 @@ export function registerDbCommands(program: Command): void {
   // ── ppm db list ──────────────────────────────────────────────────────
   db.command("list")
     .description("List all saved database connections")
-    .action(async () => {
+    .option("--json", "Output as JSON")
+    .action(async (options: { json?: boolean }) => {
       try {
         const { getConnections } = await import("../../services/db.service.ts");
         const conns = getConnections();
         if (conns.length === 0) {
+          if (options.json) { console.log("[]"); return; }
           console.log(`${C.yellow}No connections saved.${C.reset} Run: ppm db add`);
+          return;
+        }
+        if (options.json) {
+          const data = conns.map((c) => {
+            const cfg = parseConfig(c);
+            let target = cfg.connectionString ?? cfg.path ?? null;
+            if (cfg.connectionString) target = maskPassword(target!);
+            return { id: c.id, name: c.name, type: c.type, group: c.group_name ?? null, readonly: !!c.readonly, connection: target };
+          });
+          console.log(JSON.stringify(data, null, 2));
           return;
         }
         const rows = conns.map((c) => {
@@ -197,7 +209,8 @@ export function registerDbCommands(program: Command): void {
   // ── ppm db tables ────────────────────────────────────────────────────
   db.command("tables <name>")
     .description("List tables in a database connection")
-    .action(async (nameOrId: string) => {
+    .option("--json", "Output as JSON")
+    .action(async (nameOrId: string, options: { json?: boolean }) => {
       try {
         const { resolveConnection } = await import("../../services/db.service.ts");
         const conn = resolveConnection(nameOrId);
@@ -212,9 +225,11 @@ export function registerDbCommands(program: Command): void {
           const tables = await postgresService.getTables(cfg.connectionString!);
           await postgresService.closeAll();
           if (tables.length === 0) {
+            if (options.json) { console.log("[]"); return; }
             console.log(`${C.dim}No tables found.${C.reset}`);
             return;
           }
+          if (options.json) { console.log(JSON.stringify(tables, null, 2)); return; }
           printTable(
             ["Schema", "Table", "Rows (est.)"],
             tables.map((t) => [t.schema, t.name, String(t.rowCount)]),
@@ -224,9 +239,11 @@ export function registerDbCommands(program: Command): void {
           const tables = sqliteService.getTables(cfg.path!, cfg.path!);
           sqliteService.closeAll();
           if (tables.length === 0) {
+            if (options.json) { console.log("[]"); return; }
             console.log(`${C.dim}No tables found.${C.reset}`);
             return;
           }
+          if (options.json) { console.log(JSON.stringify(tables, null, 2)); return; }
           printTable(
             ["Table", "Rows"],
             tables.map((t) => [t.name, String(t.rowCount)]),
@@ -242,7 +259,8 @@ export function registerDbCommands(program: Command): void {
   db.command("schema <name> <table>")
     .description("Show table schema (columns, types, constraints)")
     .option("-s, --schema <schema>", "PostgreSQL schema name", "public")
-    .action(async (nameOrId: string, table: string, options: { schema: string }) => {
+    .option("--json", "Output as JSON")
+    .action(async (nameOrId: string, table: string, options: { schema: string; json?: boolean }) => {
       try {
         const { resolveConnection } = await import("../../services/db.service.ts");
         const conn = resolveConnection(nameOrId);
@@ -256,6 +274,7 @@ export function registerDbCommands(program: Command): void {
           const { postgresService } = await import("../../services/postgres.service.ts");
           const cols = await postgresService.getTableSchema(cfg.connectionString!, table, options.schema);
           await postgresService.closeAll();
+          if (options.json) { console.log(JSON.stringify(cols, null, 2)); return; }
           printTable(
             ["Column", "Type", "Nullable", "PK", "Default"],
             cols.map((c) => [c.name, c.type, c.nullable ? "YES" : "NO", c.pk ? "PK" : "", c.defaultValue ?? ""]),
@@ -264,6 +283,7 @@ export function registerDbCommands(program: Command): void {
           const { sqliteService } = await import("../../services/sqlite.service.ts");
           const cols = sqliteService.getTableSchema(cfg.path!, cfg.path!, table);
           sqliteService.closeAll();
+          if (options.json) { console.log(JSON.stringify(cols, null, 2)); return; }
           printTable(
             ["Column", "Type", "Not Null", "PK", "Default"],
             cols.map((c) => [c.name, c.type, c.notnull ? "YES" : "NO", c.pk ? "PK" : "", c.dflt_value ?? ""]),
@@ -283,6 +303,7 @@ export function registerDbCommands(program: Command): void {
     .option("--order <column>", "Order by column")
     .option("--desc", "Descending order")
     .option("-s, --schema <schema>", "PostgreSQL schema name", "public")
+    .option("--json", "Output as JSON")
     .action(async (nameOrId: string, table: string, options) => {
       try {
         const { resolveConnection } = await import("../../services/db.service.ts");
@@ -302,6 +323,7 @@ export function registerDbCommands(program: Command): void {
             cfg.connectionString!, table, options.schema, page, limit, options.order, orderDir,
           );
           await postgresService.closeAll();
+          if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
           console.log(`${C.cyan}${table}${C.reset} — page ${result.page}, ${result.total} total rows\n`);
           formatRows(result.columns, result.rows, limit);
         } else {
@@ -310,6 +332,7 @@ export function registerDbCommands(program: Command): void {
             cfg.path!, cfg.path!, table, page, limit, options.order, orderDir,
           );
           sqliteService.closeAll();
+          if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
           console.log(`${C.cyan}${table}${C.reset} — page ${result.page}, ${result.total} total rows\n`);
           formatRows(result.columns, result.rows, limit);
         }
@@ -322,7 +345,8 @@ export function registerDbCommands(program: Command): void {
   // ── ppm db query ─────────────────────────────────────────────────────
   db.command("query <name> <sql>")
     .description("Execute a SQL query against a saved connection")
-    .action(async (nameOrId: string, sql: string) => {
+    .option("--json", "Output as JSON")
+    .action(async (nameOrId: string, sql: string, options: { json?: boolean }) => {
       try {
         const { resolveConnection } = await import("../../services/db.service.ts");
         const conn = resolveConnection(nameOrId);
@@ -343,6 +367,7 @@ export function registerDbCommands(program: Command): void {
           const { postgresService } = await import("../../services/postgres.service.ts");
           const result = await postgresService.executeQuery(cfg.connectionString!, sql);
           await postgresService.closeAll();
+          if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
           if (result.changeType === "select") {
             formatRows(result.columns, result.rows);
           } else {
@@ -352,6 +377,7 @@ export function registerDbCommands(program: Command): void {
           const { sqliteService } = await import("../../services/sqlite.service.ts");
           const result = sqliteService.executeQuery(cfg.path!, cfg.path!, sql);
           sqliteService.closeAll();
+          if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
           if (result.changeType === "select") {
             formatRows(result.columns, result.rows);
           } else {
