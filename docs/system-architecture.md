@@ -122,6 +122,9 @@ GET    /api/project/:name/chat/sessions           → List sessions
 POST   /api/project/:name/chat/sessions           → Create session
 GET    /api/project/:name/chat/sessions/:id/messages → Get history
 DELETE /api/project/:name/chat/sessions/:id       → Delete session
+GET    /api/project/:name/chat/drafts/:sessionId  → Get draft (or null)
+PUT    /api/project/:name/chat/drafts/:sessionId  → Save/update draft
+DELETE /api/project/:name/chat/drafts/:sessionId  → Clear draft
 GET    /api/project/:name/git/status              → Git status
 GET    /api/project/:name/git/diff                → Diff
 POST   /api/project/:name/git/stage               → Stage file
@@ -223,9 +226,11 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **ClawBotStreamerService** | LEGACY streamer | (deprecated v0.9.11) |
 | **BashOutputSpy** | Monitor bash tool output in real-time via /proc/PID/fd (Linux/WSL2) or lsof (macOS) | startSpy, stopSpy, stopAllForSession |
 | **TagService** | Session tagging CRUD, bulk operations, tag-session enrichment | seedDefaultTags, getTagsByProject, createTag, updateTag, deleteTag, setSessionTag, bulkSetSessionTag, getSessionTags, getTagSessionCounts |
+| **DraftService** | Chat draft auto-save per session, 50KB cap | get, upsert, delete, deleteOrphaned |
 | **FileFilterService** | Glob pattern matching + precedence-enforced filtering (hardcoded ⊂ global ⊂ project) | mergeFilters, isPathIgnored, matchesPattern |
+| **ResourceMonitorService** | System resource monitoring with process tree, SSE streaming, 30-min history ring buffer | subscribe, unsubscribe, getLatest, getHistory, poll |
 
-**Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/services/file-filter.service.ts`, `src/cli/commands/bot-cmd.ts`
+**Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/services/resource-monitor.service.ts`, `src/services/file-filter.service.ts`, `src/cli/commands/bot-cmd.ts`
 
 ---
 

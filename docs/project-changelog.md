@@ -20,9 +20,55 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
+## [Unreleased] — Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
 
 ### Added
+- **System Resource Monitor** — Real-time process monitoring with SSE streaming, sidebar status bar, and dedicated System Monitor tab
+  - Backend: `ResourceMonitorService` polls `ps` command every 3s, builds process tree from PPM root PID, categorizes processes (server/terminal/ai-tool/build/unknown), maintains 30-min ring buffer (600 snapshots)
+  - Backend: SSE streaming route at `GET /api/system/resources/stream` with client count cap (max 5), manual reconnect with exponential backoff
+  - Backend: JSON snapshot endpoint at `GET /api/system/resources` + history endpoint at `GET /api/system/resources/history`
+  - Backend: Cross-platform support (`ps` on macOS/Linux, graceful skip on Windows native)
+  - Frontend: `useResourceMonitor()` hook provides shared EventSource with ref-counted singleton pattern, auto-reconnect, history ring buffer
+  - Frontend: Compact resource status bar in sidebar footer showing CPU%/RAM/process count with color-coded CPU thresholds (green <50%, yellow 50-80%, red >80%)
+  - Frontend: Full System Monitor tab with grouped processes, collapsible rows, individual process details, canvas-based sparklines (last 200 data points = ~10min)
+  - Frontend: Chat session status badges (streaming/idle) pulled from streaming store
+  - Frontend: Mobile-responsive layout with compact sparklines, touch-friendly collapsible groups
+  - Auth: Token in URL query param for SSE EventSource (standard fetch credentials for auth)
+  - Tests: Integration + unit tests for service, routes, hook, and components
+
+**Technical Details:**
+- **Files Created:**
+  - `src/services/resource-monitor.service.ts` — Process polling, categorization, ring buffer
+  - `src/server/routes/resources.ts` — SSE + JSON endpoints, client count tracking
+  - `src/web/hooks/use-resource-monitor.ts` — EventSource hook with singleton ref counting
+  - `src/web/components/system/resource-status-bar.tsx` — Compact status bar widget
+  - `src/web/components/system/system-monitor-tab.tsx` — Full monitoring dashboard
+  - `src/web/components/system/sparkline-canvas.tsx` — Canvas-based sparkline renderer
+  - `tests/integration/resource-monitor.test.ts` — Service integration tests
+  - `tests/integration/resources-route.test.ts` — Route integration tests
+  - `tests/integration/use-resource-monitor.test.ts` — Hook integration tests
+- **Files Modified:**
+  - `src/server/index.ts` — Mount resources route
+  - `src/web/components/layout/tab-content.tsx` — Lazy-load system-monitor tab
+  - `src/web/stores/tab-store.ts` — Add "system-monitor" TabType
+  - `src/web/components/layout/sidebar.tsx` — Add ResourceStatusBar to footer
+- **Type Changes:**
+  - New: `ProcessEntry` = { pid, ppid, cpu, ramMB, command }
+  - New: `ResourceGroup` = { type, label, cpu, ramMB, processes[] }
+  - New: `ResourceSnapshot` = { timestamp, server, total, groups[] }
+- **Breaking Changes:** None (additive feature)
+- **Performance:** ~50KB ring buffer (negligible), 3s polling lazy-started, SSE capped at 5 concurrent clients
+
+### Added (continued)
+- **Draft Messages** — Auto-save chat input as drafts per session
+  - Database: Schema v26 migration creates `chat_drafts` table with (project_path, session_id, content, attachments, updated_at) composite key
+  - Service: `DraftService` with get/upsert/delete/deleteOrphaned CRUD operations; 50KB content cap with silent truncation
+  - API: GET/PUT/DELETE `/chat/drafts/:sessionId` endpoints for draft persistence
+  - Hook: `useDraft()` with debounced 1s save, attachment tracking, draft loading + clearing
+  - UI: `onContentChange` callback in message-input.tsx triggers draft auto-save when user types
+  - Session routing: Drafts stored per session + special `__new__` draft for unsaved sessions
+  - Orphan cleanup: `deleteOrphaned()` removes drafts whose sessions no longer exist
+
 - **File Compare** — Side-by-side diff viewer for comparing two files or file versions
   - Four triggers: (1) tab right-click "Select for Compare" / "Compare with Selected", (2) file tree right-click (same), (3) command palette "Compare Files...", (4) keyboard shortcut `Mod+Alt+D`
   - Reuses existing `DiffViewer` component + `git-diff` tab type + `/files/compare` API — no new backend endpoints

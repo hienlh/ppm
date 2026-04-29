@@ -25,6 +25,15 @@ export async function authMiddleware(c: Context, next: Next) {
     }
   }
 
+  // Fallback: ?token= query param for SSE/EventSource (can't set custom headers)
+  // Scoped to /stream paths only to avoid leaking token in logs/referer on all GET routes
+  if (c.req.method === "GET" && c.req.path.endsWith("/stream")) {
+    const queryToken = c.req.query("token");
+    if (queryToken && queryToken === authConfig.token) {
+      return next();
+    }
+  }
+
   // Fallback: short-lived download token for browser-initiated downloads only
   if (c.req.method === "GET") {
     const path = c.req.path;

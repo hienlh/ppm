@@ -139,6 +139,10 @@ app.route("/api/preview", portForwardingRoutes);
 // Filesystem operations (browse, list, read, write) — consolidated in fs-browse route
 app.route("/api/fs", fsBrowseRoutes);
 
+// System resource monitoring (SSE + JSON)
+import { resourceRoutes } from "./routes/resources.ts";
+app.route("/api/system", resourceRoutes);
+
 // API routes
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings/mcp", mcpRoutes);

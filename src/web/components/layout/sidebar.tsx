@@ -13,6 +13,7 @@ import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { useGitStatusStore, useGitChangesPoller } from "@/stores/git-status-store";
 import { useJiraStore } from "@/stores/jira-store";
+import { ResourceStatusBar } from "@/components/system/resource-status-bar";
 import { cn } from "@/lib/utils";
 
 const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
@@ -181,6 +182,11 @@ export const Sidebar = memo(function Sidebar() {
         {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (
           <ExtensionTreeView viewId={sidebarActiveTab.slice(4)} className="h-full" />
         )}
+      </div>
+
+      {/* Resource monitor status bar */}
+      <div className="shrink-0 border-t border-border">
+        <ResourceStatusBar />
       </div>
 
       {/* Resize handle */}
