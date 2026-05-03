@@ -165,7 +165,14 @@ function SegmentDropdown({ segment, isLast, projectName, onFileClick }: SegmentD
 
   function handleOpenChange(open: boolean) {
     if (open && !isLoaded) {
-      loadChildren(projectName, segment.parentPath);
+      // Load ancestor directories top-down so mergeChildren can traverse
+      // the tree to the target (needed when file opened via search/quick-open)
+      const parts = segment.parentPath.split("/").filter(Boolean);
+      (async () => {
+        for (let i = 0; i <= parts.length; i++) {
+          await loadChildren(projectName, parts.slice(0, i).join("/"));
+        }
+      })();
     }
   }
 

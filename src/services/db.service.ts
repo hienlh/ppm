@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-const CURRENT_SCHEMA_VERSION = 21;
+const CURRENT_SCHEMA_VERSION = 26;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -636,6 +636,21 @@ function runMigrations(database: Database): void {
       );
 
       PRAGMA user_version = 25;
+    `);
+  }
+
+  if (current < 26) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS chat_drafts (
+        project_path TEXT NOT NULL,
+        session_id TEXT NOT NULL DEFAULT '__new__',
+        content TEXT NOT NULL DEFAULT '',
+        attachments TEXT DEFAULT '[]',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (project_path, session_id)
+      );
+
+      PRAGMA user_version = 26;
     `);
   }
 }

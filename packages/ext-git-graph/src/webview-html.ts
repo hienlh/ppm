@@ -261,13 +261,16 @@ button:active { background: var(--surface); }
 .col-date { width: 80px; min-width: 80px; color: var(--subtext); font-size: 11px; }
 .col-hash { width: 60px; min-width: 60px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; color: var(--subtle); }
 
-/* Ref badges */
-.ref-badge { display: inline-block; padding: 0px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; margin-right: 3px; vertical-align: middle; line-height: 16px; }
-.ref-head { background: var(--green); color: #fff; }
-.ref-local { background: var(--blue); color: #fff; }
-.ref-remote { background: var(--purple); color: #fff; }
-.ref-tag { background: var(--yellow); color: #000; }
-.ref-stash { background: #808080; color: #fff; }
+/* Ref badges — border + tinted bg + dark text */
+.ref-badge { display: inline-flex; align-items: center; gap: 3px; padding: 0px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; margin-right: 3px; vertical-align: middle; line-height: 16px; border: 1px solid; color: #1a1a1a; }
+.ref-head { border-color: var(--green); background: color-mix(in srgb, var(--green) 12%, transparent); }
+.ref-local { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 12%, transparent); }
+.ref-remote { border-color: var(--purple); background: color-mix(in srgb, var(--purple) 12%, transparent); }
+.ref-tag { border-color: var(--yellow); background: color-mix(in srgb, var(--yellow) 12%, transparent); }
+.ref-stash { border-color: #808080; background: color-mix(in srgb, #808080 12%, transparent); }
+@media (prefers-color-scheme: dark) {
+  .ref-badge { color: #e4e4e7; }
+}
 
 /* SVG graph — single SVG overlay */
 #commit-list-wrapper { position: relative; }
@@ -1469,10 +1472,28 @@ function renderCommitList() {
     msgCol.className = 'col-message';
     let badges = '';
     if (commit.refs) {
+      // Merge remote+local refs: if origin/X and X both exist, show one "synced" badge
+      const localNames = new Set(commit.refs.filter(r => r.type === 'head' || r.type === 'local').map(r => r.name));
+      const mergedRemotes = new Set();
+      commit.refs.forEach(ref => {
+        if (ref.type === 'remote') {
+          // Strip remote prefix (e.g. "origin/main" → "main")
+          const slashIdx = ref.name.indexOf('/');
+          const branchName = slashIdx >= 0 ? ref.name.slice(slashIdx + 1) : ref.name;
+          if (localNames.has(branchName)) {
+            mergedRemotes.add(ref.name); // skip this remote, local badge covers it
+          }
+        }
+      });
       commit.refs.forEach(ref => {
         if (ref.type === 'tag' && !state.settings.showTags) return;
         if (ref.type === 'remote' && !state.settings.showRemoteBranches) return;
-        badges += '<span class="ref-badge ref-' + ref.type + '">' + escHtml(ref.name) + '</span>';
+        if (mergedRemotes.has(ref.name)) return; // merged into local badge
+        // For local/head refs that have a matching remote, add sync icon
+        const isSynced = (ref.type === 'head' || ref.type === 'local') &&
+          commit.refs.some(r => r.type === 'remote' && r.name.endsWith('/' + ref.name));
+        const syncIcon = isSynced ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg> ' : '';
+        badges += '<span class="ref-badge ref-' + ref.type + '">' + syncIcon + escHtml(ref.name) + '</span>';
       });
     }
     msgCol.innerHTML = badges + formatCommitMessage(commit.message);

@@ -3,6 +3,7 @@ import { resolve, join, basename } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
+import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
@@ -221,9 +222,12 @@ chatRoutes.delete("/sessions", async (c) => {
         deleteSessionMetadata(s.id);
         deleteSessionTitle(s.id);
         unpinSession(s.id);
+        try { draftService.delete(projectPath, s.id); } catch { /* ignore */ }
         deleted++;
       } catch { /* skip individual failures */ }
     }
+    // Clean up any orphaned drafts left behind
+    try { draftService.deleteOrphaned(); } catch { /* ignore */ }
 
     return c.json(ok({ deleted, total: toDelete.length }));
   } catch (e) {
@@ -244,6 +248,8 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     deleteSessionMetadata(id);
     deleteSessionTitle(id);
     unpinSession(id);
+    // Fire-and-forget draft cleanup
+    try { draftService.delete(c.get("projectPath"), id); } catch { /* ignore */ }
     return c.json(ok({ deleted: id }));
   } catch (e) {
     return c.json(err((e as Error).message), 404);
@@ -512,6 +518,49 @@ chatRoutes.get("/uploads/:filename", async (c) => {
     return new Response(file.stream(), {
       headers: { "Content-Type": file.type || "application/octet-stream" },
     });
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Draft endpoints — auto-save / restore chat input per session
+// ---------------------------------------------------------------------------
+
+/** GET /chat/drafts/:sessionId — load draft for a session (or null) */
+chatRoutes.get("/drafts/:sessionId", (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const sessionId = c.req.param("sessionId");
+    const draft = draftService.get(projectPath, sessionId);
+    return c.json(ok(draft));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PUT /chat/drafts/:sessionId — upsert draft content + attachments */
+chatRoutes.put("/drafts/:sessionId", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const sessionId = c.req.param("sessionId");
+    const body = await c.req.json<{ content?: string; attachments?: string }>();
+    const content = typeof body.content === "string" ? body.content : "";
+    const attachments = typeof body.attachments === "string" ? body.attachments : undefined;
+    draftService.upsert(projectPath, sessionId, content, attachments);
+    return c.json(ok({ saved: true }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** DELETE /chat/drafts/:sessionId — remove draft */
+chatRoutes.delete("/drafts/:sessionId", (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const sessionId = c.req.param("sessionId");
+    draftService.delete(projectPath, sessionId);
+    return c.json(ok({ deleted: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

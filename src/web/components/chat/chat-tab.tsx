@@ -14,6 +14,7 @@ import { MessageInput, type ChatAttachment, type MessagePriority } from "./messa
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
 import { ChatHistoryBar } from "./chat-history-bar";
+import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
 
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
@@ -68,6 +69,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   // Usage runs independently — auto-refreshes on interval
   const { usageInfo, usageLoading, lastFetchedAt, refreshUsage } =
     useUsage(projectName, providerId);
+
+  // Draft auto-save/restore
+  const { draft, draftLoading, saveDraft, clearDraft } = useDraft(projectName, sessionId);
 
   // Load global default permission mode on mount (if no per-session override)
   useEffect(() => {
@@ -258,13 +262,22 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode],
   );
 
-  /** Stable wrapper for MessageInput onSend — clears forkDraft and delegates to handleSend */
+  /** Stable wrapper for MessageInput onSend — clears forkDraft + draft and delegates to handleSend */
   const handleInputSend = useCallback(
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
       setForkDraft(undefined);
+      clearDraft();
       handleSend(content, attachments, priority);
     },
-    [handleSend],
+    [handleSend, clearDraft],
+  );
+
+  /** Draft auto-save callback — called by MessageInput on content change */
+  const handleContentChange = useCallback(
+    (content: string, attachments?: DraftAttachment[]) => {
+      saveDraft(content, attachments);
+    },
+    [saveDraft],
   );
 
   /** Stable callback for slash items loaded — prevents MessageInput memo break */
@@ -469,29 +482,32 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           />
         )}
 
-        {/* Input */}
-        <MessageInput
-          onSend={handleInputSend}
-          isStreaming={isStreaming}
-          onCancel={cancelStreaming}
-          autoFocus={!(metadata?.sessionId) || !!forkDraft}
-          initialValue={forkDraft}
-          projectName={projectName}
-          onSlashStateChange={handleSlashStateChange}
-          onSlashItemsLoaded={handleSlashItemsLoaded}
-          slashSelected={slashSelected}
-          onFileStateChange={handleFileStateChange}
-          onFileItemsLoaded={setFileItems}
-          fileSelected={fileSelected}
-          externalFiles={externalFiles}
-          externalPaths={externalPaths}
-          onExternalPathsConsumed={handleExternalPathsConsumed}
-          onDisambiguate={handleDisambiguate}
-          permissionMode={permissionMode}
-          onModeChange={setPermissionMode}
-          providerId={providerId}
-          onProviderChange={!sessionId ? setProviderId : undefined}
-        />
+        {/* Input — gate on draftLoading to avoid empty→filled flash */}
+        {!draftLoading && (
+          <MessageInput
+            onSend={handleInputSend}
+            isStreaming={isStreaming}
+            onCancel={cancelStreaming}
+            autoFocus={!(metadata?.sessionId) || !!forkDraft}
+            initialValue={forkDraft ?? draft?.content}
+            projectName={projectName}
+            onSlashStateChange={handleSlashStateChange}
+            onSlashItemsLoaded={handleSlashItemsLoaded}
+            slashSelected={slashSelected}
+            onFileStateChange={handleFileStateChange}
+            onFileItemsLoaded={setFileItems}
+            fileSelected={fileSelected}
+            externalFiles={externalFiles}
+            externalPaths={externalPaths}
+            onExternalPathsConsumed={handleExternalPathsConsumed}
+            onDisambiguate={handleDisambiguate}
+            onContentChange={handleContentChange}
+            permissionMode={permissionMode}
+            onModeChange={setPermissionMode}
+            providerId={providerId}
+            onProviderChange={!sessionId ? setProviderId : undefined}
+          />
+        )}
       </div>
 
       {/* Bug report popup is now global — see BugReportPopup in app.tsx */}

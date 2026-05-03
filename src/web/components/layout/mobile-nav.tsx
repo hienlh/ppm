@@ -35,6 +35,8 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   extension: Puzzle,
   "extension-webview": Puzzle,
   "conflict-editor": FileDiff,
+  "system-monitor": Settings,
+  "git-log": FileCode,
 };
 
 interface MobileNavProps { onMenuPress: () => void; onProjectsPress: () => void; }

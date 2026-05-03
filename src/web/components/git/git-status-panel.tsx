@@ -12,6 +12,7 @@ import {
   ChevronRight,
   ChevronDown,
   FileText,
+  GitCommitHorizontal,
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
@@ -329,6 +330,23 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
             title="Tree view"
           >
             <FolderTree className="size-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => {
+              openTab({
+                type: "git-log",
+                title: "Git Log",
+                projectId: projectName ?? null,
+                closable: true,
+                metadata: { projectName },
+              });
+              onNavigate?.();
+            }}
+            title="View Git Log"
+          >
+            <GitCommitHorizontal className="size-3.5" />
           </Button>
           <Button
             variant="ghost"

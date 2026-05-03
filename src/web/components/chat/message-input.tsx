@@ -50,6 +50,8 @@ interface MessageInputProps {
   onDisambiguate?: (matches: FileNode[]) => void;
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
+  /** Called on content change for draft auto-save */
+  onContentChange?: (content: string, attachments?: Array<{ name: string; path: string }>) => void;
   /** Auto-focus textarea on mount */
   autoFocus?: boolean;
   /** Current permission mode */
@@ -79,6 +81,7 @@ export const MessageInput = memo(function MessageInput({
   onExternalPathsConsumed,
   onDisambiguate,
   initialValue,
+  onContentChange,
   autoFocus,
   permissionMode,
   onModeChange,
@@ -561,6 +564,8 @@ export const MessageInput = memo(function MessageInput({
       setHasText(text.trim().length > 0);
       // Update picker state (slash/file autocomplete)
       updatePickerState(text, el.selectionStart);
+      // Notify parent for draft auto-save (debounced in hook)
+      onContentChange?.(text, attachments.filter((a) => a.status === "ready" && a.serverPath).map((a) => ({ name: a.name, path: a.serverPath! })));
       // JS auto-resize fallback — only when CSS field-sizing: content is unsupported
       if (needsJsResize.current) {
         if (resizeRafRef.current) cancelAnimationFrame(resizeRafRef.current);
@@ -571,7 +576,7 @@ export const MessageInput = memo(function MessageInput({
         });
       }
     },
-    [updatePickerState],
+    [updatePickerState, onContentChange, attachments],
   );
 
   /** Handle paste — intercept images from clipboard */
