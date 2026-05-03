@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.55] - 2026-05-03
+
+### Added
+- **Chat draft auto-save**: Message input content is automatically saved per session and restored when switching tabs or reloading — no more lost drafts
+- **Git Log panel**: New tab type accessible from Git Status panel showing commit history with ref badges, authored dates, and commit details
+- **Git ref badge component**: Reusable ref badge with deterministic color hashing, sync/remote/tag/stash indicators
+
+### Changed
+- **Git Graph ref badges redesign**: Switched from solid-fill badges to border + tinted-bg style with dark-mode support; merged local+remote refs into single "synced" badge with cloud icon
+- **Breadcrumb lazy-load fix**: Segment dropdown now loads ancestor directories top-down so deep files opened via search/quick-open resolve correctly
+
+### Fixed
+- **Draft cleanup on session delete**: Drafts are cleaned up when deleting individual sessions or bulk-clearing history; orphaned drafts are also pruned
+
 ## [0.13.54] - 2026-04-28
 
 ### Added
