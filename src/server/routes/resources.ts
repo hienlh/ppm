@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { resourceMonitor, type ResourceSnapshot } from "../../services/resource-monitor.service.ts";
-import { ok } from "../../types/api.ts";
+import { ok, err } from "../../types/api.ts";
 
 export const resourceRoutes = new Hono();
 
@@ -15,6 +15,33 @@ resourceRoutes.get("/resources", (c) => {
 /** GET /resources/history — full ring buffer */
 resourceRoutes.get("/resources/history", (c) => {
   return c.json(ok(resourceMonitor.getHistory()));
+});
+
+/** POST /resources/kill/:pid — send SIGTERM to a process in PPM's tree */
+resourceRoutes.post("/resources/kill/:pid", async (c) => {
+  const pid = parseInt(c.req.param("pid"), 10);
+  if (isNaN(pid) || pid <= 0) {
+    return c.json(err("Invalid PID"), 400);
+  }
+  // Safety: only allow killing processes in PPM's own tree
+  const snapshot = resourceMonitor.getLatest();
+  if (!snapshot) {
+    return c.json(err("No resource data available"), 400);
+  }
+  const allPids = snapshot.groups.flatMap((g) => g.processes.map((p) => p.pid));
+  if (!allPids.includes(pid)) {
+    return c.json(err("PID not in PPM process tree"), 403);
+  }
+  // Don't allow killing the server itself
+  if (pid === process.pid) {
+    return c.json(err("Cannot kill PPM server process"), 403);
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+    return c.json(ok({ pid, signal: "SIGTERM" }));
+  } catch (e: any) {
+    return c.json(err(`Failed to kill PID ${pid}: ${e.message}`), 500);
+  }
 });
 
 /** GET /resources/stream — SSE stream of snapshots every 3s */

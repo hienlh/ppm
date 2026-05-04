@@ -1,12 +1,17 @@
-import { useState, useMemo, memo } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import {
   Server, Monitor, Bot, Hammer, HelpCircle,
-  ChevronRight, ChevronDown, Wifi, WifiOff,
+  Wifi, WifiOff,
 } from "lucide-react";
 import { useResourceMonitor, type ResourceGroup } from "@/hooks/use-resource-monitor";
-import { SparklineCanvas } from "./sparkline-canvas";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { api } from "@/lib/api-client";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  GroupRow, SortableHeader, cpuColor, formatRam,
+  type SortKey, type SortDir,
+} from "./system-monitor-group-row";
 
 const GROUP_ICONS: Record<ResourceGroup["type"], React.ElementType> = {
   server: Server,
@@ -16,24 +21,33 @@ const GROUP_ICONS: Record<ResourceGroup["type"], React.ElementType> = {
   unknown: HelpCircle,
 };
 
-const SPARKLINE_POINTS = 200; // ~10 min at 3s intervals
+const SPARKLINE_POINTS = 200;
 
-function cpuColor(cpu: number) {
-  if (cpu > 80) return "text-red-500";
-  if (cpu > 50) return "text-yellow-500";
-  return "text-green-500";
+function toggleSort(
+  current: SortKey, dir: SortDir, clicked: "cpu" | "ram",
+): [SortKey, SortDir] {
+  if (current !== clicked) return [clicked, "desc"];
+  if (dir === "desc") return [clicked, "asc"];
+  return [null, "desc"]; // third click resets
 }
 
-function formatRam(mb: number) {
-  return mb < 1024 ? `${mb.toFixed(0)} MB` : `${(mb / 1024).toFixed(1)} GB`;
+function sortGroups(groups: ResourceGroup[], key: SortKey, dir: SortDir) {
+  if (!key) return groups;
+  const sorted = [...groups].sort((a, b) => {
+    const av = key === "cpu" ? a.cpu : a.ramMB;
+    const bv = key === "cpu" ? b.cpu : b.ramMB;
+    return dir === "asc" ? av - bv : bv - av;
+  });
+  return sorted;
 }
 
 export const SystemMonitorTab = memo(function SystemMonitorTab() {
   const { latest, history, isConnected } = useResourceMonitor();
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(["server"]));
+  const [sortKey, setSortKey] = useState<SortKey>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const isMobile = useIsMobile();
 
-  // Extract per-group CPU history for sparklines
   const groupSparklines = useMemo(() => {
     const map = new Map<string, number[]>();
     const recentHistory = history.slice(-SPARKLINE_POINTS);
@@ -48,6 +62,20 @@ export const SystemMonitorTab = memo(function SystemMonitorTab() {
     return map;
   }, [history]);
 
+  const sortedGroups = useMemo(() => {
+    if (!latest) return [];
+    return sortGroups(latest.groups, sortKey, sortDir);
+  }, [latest, sortKey, sortDir]);
+
+  const killProcess = useCallback(async (pid: number) => {
+    try {
+      await api.post(`/api/system/resources/kill/${pid}`);
+      toast.success(`Sent SIGTERM to PID ${pid}`);
+    } catch (e: any) {
+      toast.error(e.message || `Failed to kill PID ${pid}`);
+    }
+  }, []);
+
   const toggle = (key: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -55,6 +83,12 @@ export const SystemMonitorTab = memo(function SystemMonitorTab() {
       else next.add(key);
       return next;
     });
+  };
+
+  const handleSort = (clicked: "cpu" | "ram") => {
+    const [newKey, newDir] = toggleSort(sortKey, sortDir, clicked);
+    setSortKey(newKey);
+    setSortDir(newDir);
   };
 
   if (!latest) {
@@ -86,15 +120,29 @@ export const SystemMonitorTab = memo(function SystemMonitorTab() {
           <thead>
             <tr className="text-text-subtle border-b border-border">
               <th className="text-left py-1.5 px-3 font-medium">Process</th>
-              <th className="text-right py-1.5 px-2 font-medium w-16">CPU</th>
-              <th className="text-right py-1.5 px-2 font-medium w-20">RAM</th>
+              <SortableHeader
+                label="CPU"
+                field="cpu"
+                activeKey={sortKey}
+                activeDir={sortDir}
+                onClick={handleSort}
+                className="w-16"
+              />
+              <SortableHeader
+                label="RAM"
+                field="ram"
+                activeKey={sortKey}
+                activeDir={sortDir}
+                onClick={handleSort}
+                className="w-20"
+              />
               {!isMobile && (
                 <th className="py-1.5 px-2 font-medium w-[130px]">Trend</th>
               )}
             </tr>
           </thead>
           <tbody>
-            {latest.groups.map((group) => {
+            {sortedGroups.map((group) => {
               const key = `${group.type}:${group.label}`;
               const Icon = GROUP_ICONS[group.type] ?? HelpCircle;
               const isExpanded = expanded.has(key);
@@ -108,7 +156,10 @@ export const SystemMonitorTab = memo(function SystemMonitorTab() {
                   isExpanded={isExpanded}
                   sparkData={sparkData}
                   isMobile={isMobile}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
                   onToggle={() => toggle(key)}
+                  onKill={killProcess}
                 />
               );
             })}
@@ -131,64 +182,5 @@ export const SystemMonitorTab = memo(function SystemMonitorTab() {
         </table>
       </div>
     </div>
-  );
-});
-
-// ── Group row with collapsible children ────────────────────────────────
-
-interface GroupRowProps {
-  group: ResourceGroup;
-  Icon: React.ElementType;
-  isExpanded: boolean;
-  sparkData: number[];
-  isMobile: boolean;
-  onToggle: () => void;
-}
-
-const GroupRow = memo(function GroupRow({
-  group, Icon, isExpanded, sparkData, isMobile, onToggle,
-}: GroupRowProps) {
-  const Chevron = isExpanded ? ChevronDown : ChevronRight;
-
-  return (
-    <>
-      <tr
-        className="hover:bg-surface-hover cursor-pointer transition-colors"
-        onClick={onToggle}
-      >
-        <td className="py-1.5 px-3">
-          <div className="flex items-center gap-1.5">
-            <Chevron className="size-3 text-text-subtle shrink-0" />
-            <Icon className="size-3.5 text-text-secondary shrink-0" />
-            <span className="truncate">{group.label}</span>
-            <span className="text-text-subtle">({group.processes.length})</span>
-          </div>
-        </td>
-        <td className={cn("text-right py-1.5 px-2", cpuColor(group.cpu))}>
-          {group.cpu.toFixed(1)}%
-        </td>
-        <td className="text-right py-1.5 px-2 text-text-secondary">
-          {formatRam(group.ramMB)}
-        </td>
-        {!isMobile && (
-          <td className="py-1.5 px-2">
-            {sparkData.length > 1 && (
-              <SparklineCanvas data={sparkData} width={120} height={20} />
-            )}
-          </td>
-        )}
-      </tr>
-      {isExpanded && group.processes.map((proc) => (
-        <tr key={proc.pid} className="text-text-subtle">
-          <td className="py-1 px-3 pl-10">
-            <span className="text-text-subtle mr-1.5">{proc.pid}</span>
-            <span className="truncate">{proc.command}</span>
-          </td>
-          <td className="text-right py-1 px-2">{proc.cpu.toFixed(1)}%</td>
-          <td className="text-right py-1 px-2">{formatRam(proc.ramMB)}</td>
-          {!isMobile && <td />}
-        </tr>
-      ))}
-    </>
   );
 });
