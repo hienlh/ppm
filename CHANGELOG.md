@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.60] - 2026-05-05
+
+### Fixed
+- **Stale message replay after token refresh**: When OAuth token refresh triggered during a follow-up message, retry paths replayed the first message of the session instead of the current one — now tracks latest user message per streaming session
+
 ## [0.13.59] - 2026-05-04
 
 ### Added
