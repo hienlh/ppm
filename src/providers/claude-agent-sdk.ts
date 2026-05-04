@@ -102,6 +102,10 @@ interface StreamingSession {
   meta: Session;
   query: any;
   controller: MessageController;
+  /** Latest user message content — updated on follow-ups for accurate retry */
+  lastUserContent: string;
+  /** Latest user message images — updated on follow-ups for accurate retry */
+  lastUserImages?: Array<{ data: string; mediaType: string }>;
 }
 
 /**
@@ -550,6 +554,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       session_id: sessionId,
       priority: opts?.priority ?? 'next',
     });
+    // Track latest message for retry paths (fixes stale firstMsg bug)
+    ss.lastUserContent = content;
+    ss.lastUserImages = opts?.images;
     console.log(`[sdk] pushMessage: session=${sessionId} priority=${opts?.priority ?? 'next'}`);
   }
 
@@ -607,6 +614,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         session_id: sessionId,
         priority: opts?.priority ?? 'next',
       });
+      // Track latest message for retry paths (fixes stale firstMsg bug)
+      existingStream.lastUserContent = message;
+      existingStream.lastUserImages = opts?.images;
       console.log(`[sdk] sendMessage follow-up: session=${sessionId} pushed to generator`);
       return; // Events flow through first-message's consumer loop
     }
@@ -864,8 +874,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         session_id: sessionId,
       };
 
+      // Build a retry message from the LATEST user content (not the stale firstMsg).
+      // Follow-ups via pushMessage update lastUserContent on the streaming session,
+      // so retries after token refresh correctly replay the current turn.
+      // Also returns the raw content/images for re-populating the new streaming session.
+      const buildRetryMsg = () => {
+        const ss = this.streamingSessions.get(sessionId);
+        const content = ss?.lastUserContent ?? message;
+        const images = ss?.lastUserImages;
+        return {
+          msg: {
+            type: 'user' as const,
+            message: buildMessageParam(content, images),
+            parent_tool_use_id: null,
+            session_id: sessionId,
+          },
+          lastUserContent: content,
+          lastUserImages: images,
+        };
+      };
+
       const { generator: streamGen, controller: initialCtrl } = createMessageChannel();
-      initialCtrl.push(firstMsg);
+      // On crash retry, use buildRetryMsg to get the latest user message (not the stale firstMsg)
+      const initRetry = crashRetryCount > 0 ? buildRetryMsg() : null;
+      initialCtrl.push(initRetry?.msg ?? firstMsg);
+      const initContent = initRetry?.lastUserContent ?? message;
+      const initImages = initRetry?.lastUserImages ?? opts?.images;
 
       const initialQuery = query({
         prompt: streamGen,
@@ -875,7 +909,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           canUseTool,
         } as any,
       });
-      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl });
+      this.streamingSessions.set(sessionId, { meta, query: initialQuery, controller: initialCtrl, lastUserContent: initContent, lastUserImages: initImages });
       this.activeQueries.set(sessionId, initialQuery);
       let eventSource: AsyncIterable<any> = initialQuery;
       console.log(`[sdk] session=${sessionId} query() created, waiting for first SDK event...`);
@@ -924,16 +958,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             retryCount++;
             console.warn(`[sdk] transient error on first event — retrying (attempt ${retryCount}/${MAX_RETRIES})`);
             // Close current streaming session (uses streamingSessions, not stale closure refs)
+            const retry1 = buildRetryMsg();
             closeCurrentStream();
             const { generator: retryGen, controller: retryCtrl } = createMessageChannel();
-            retryCtrl.push(firstMsg);
+            retryCtrl.push(retry1.msg);
             // Retry with resume (safe even if JSONL doesn't exist yet — SDK handles gracefully)
             const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId };
             const rq = query({
               prompt: retryGen,
               options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
             });
-            this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl });
+            this.streamingSessions.set(sessionId, { meta, query: rq, controller: retryCtrl, lastUserContent: retry1.lastUserContent, lastUserImages: retry1.lastUserImages });
             this.activeQueries.set(sessionId, rq);
             eventSource = rq;
             continue retryLoop;
@@ -994,17 +1029,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               authRetryCount = recovered.newRetryCount;
               account = recovered.account;
               const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+              const retry2 = buildRetryMsg();
               closeCurrentStream();
               const { generator: earlyAuthGen, controller: earlyAuthCtrl } = createMessageChannel();
-              // Always re-push firstMsg — SDK needs a user message from the generator
+              // Re-push current turn's message — SDK needs a user message from the generator
               // even with resume (resume loads JSONL history, generator provides current turn)
-              earlyAuthCtrl.push(firstMsg);
+              earlyAuthCtrl.push(retry2.msg);
               const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
               const rq = query({
                 prompt: earlyAuthGen,
                 options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
               });
-              this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl });
+              this.streamingSessions.set(sessionId, { meta, query: rq, controller: earlyAuthCtrl, lastUserContent: retry2.lastUserContent, lastUserImages: retry2.lastUserImages });
               this.activeQueries.set(sessionId, rq);
               eventSource = rq;
               continue retryLoop;
@@ -1151,15 +1187,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 authRetryCount = recovered.newRetryCount;
                 account = recovered.account;
                 const retryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const retry3 = buildRetryMsg();
                 closeCurrentStream();
                 const { generator: authRetryGen, controller: authRetryCtrl } = createMessageChannel();
-                authRetryCtrl.push(firstMsg);
+                authRetryCtrl.push(retry3.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl, lastUserContent: retry3.lastUserContent, lastUserImages: retry3.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
@@ -1189,16 +1226,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
               await new Promise((r) => setTimeout(r, backoff));
               // Close current streaming session and recreate with (potentially new) account env.
+              const retry4 = buildRetryMsg();
               closeCurrentStream();
               const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
               const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
-              rlRetryCtrl.push(firstMsg);
+              rlRetryCtrl.push(retry4.msg);
               const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: rlRetryEnv };
               const rq = query({
                 prompt: rlRetryGen,
                 options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
               });
-              this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl });
+              this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl, lastUserContent: retry4.lastUserContent, lastUserImages: retry4.lastUserImages });
               this.activeQueries.set(sessionId, rq);
               eventSource = rq;
               continue retryLoop;
@@ -1284,16 +1322,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 }
                 yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
                 await new Promise((r) => setTimeout(r, backoff));
+                const retry5 = buildRetryMsg();
                 closeCurrentStream();
                 const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
-                rlRetryCtrl.push(firstMsg);
+                rlRetryCtrl.push(retry5.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: rlRetryEnv };
                 const rq = query({
                   prompt: rlRetryGen,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl, lastUserContent: retry5.lastUserContent, lastUserImages: retry5.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
@@ -1312,16 +1351,17 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               if (recovered) {
                 authRetryCount = recovered.newRetryCount;
                 account = recovered.account;
+                const retry6 = buildRetryMsg();
                 closeCurrentStream();
                 const retryEnv = this.buildQueryEnv(meta.projectPath, account);
                 const { generator: authRetryGen2, controller: authRetryCtrl2 } = createMessageChannel();
-                authRetryCtrl2.push(firstMsg);
+                authRetryCtrl2.push(retry6.msg);
                 const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: retryEnv };
                 const rq = query({
                   prompt: authRetryGen2,
                   options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
                 });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2 });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: authRetryCtrl2, lastUserContent: retry6.lastUserContent, lastUserImages: retry6.lastUserImages });
                 this.activeQueries.set(sessionId, rq);
                 eventSource = rq;
                 continue retryLoop;
