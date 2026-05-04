@@ -1,35 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, FileWarning, ExternalLink } from "lucide-react";
-import { useBlobUrl } from "./use-blob-url";
+import { projectUrl, getAuthToken } from "@/lib/api-client";
 
 export function PdfPreview({ filePath, projectName }: { filePath: string; projectName: string }) {
-  const [refreshKey, setRefreshKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const pageHashRef = useRef("");
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
 
-  const { blobUrl, error } = useBlobUrl(filePath, projectName, "application/pdf", refreshKey);
+  // Build stable direct URL (no blob) so reload() preserves scroll
+  const iframeSrc = useMemo(() => {
+    const isExternal = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
+    const base = isExternal
+      ? `/api/fs/raw?path=${encodeURIComponent(filePath)}`
+      : `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}`;
+    const token = getAuthToken();
+    return token ? `${base}&token=${encodeURIComponent(token)}` : base;
+  }, [filePath, projectName]);
 
-  // Auto-reload: listen for file:changed WS events
+  // Auto-reload on file change — reload() preserves browser PDF viewer scroll
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail.projectName !== projectName || detail.path !== filePath) return;
-      // Save current page hash before re-fetch (Chrome PDF viewer uses #page=N&zoom=...)
       try {
-        pageHashRef.current = iframeRef.current?.contentWindow?.location.hash || "";
-      } catch { /* cross-origin */ }
-      setRefreshKey((k) => k + 1);
+        iframeRef.current?.contentWindow?.location.reload();
+      } catch { /* cross-origin fallback — shouldn't happen for same-origin */ }
     };
     window.addEventListener("file:changed", handler);
     return () => window.removeEventListener("file:changed", handler);
   }, [filePath, projectName]);
 
-  const openInNewTab = useCallback(() => { if (blobUrl) window.open(blobUrl, "_blank"); }, [blobUrl]);
-
-  // Append saved page hash to blob URL so PDF viewer restores position
-  const iframeSrc = blobUrl
-    ? `${blobUrl}${pageHashRef.current}`
-    : undefined;
+  const openInNewTab = useCallback(() => { window.open(iframeSrc, "_blank"); }, [iframeSrc]);
 
   if (error) {
     return (
@@ -39,18 +40,27 @@ export function PdfPreview({ filePath, projectName }: { filePath: string; projec
       </div>
     );
   }
-  if (!blobUrl) {
-    return <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>;
-  }
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-background shrink-0">
-        <span className="text-xs text-text-secondary truncate">{filePath}</span>
-        <button onClick={openInNewTab} className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors">
-          <ExternalLink className="size-3" /> Open in new tab
-        </button>
+      {!loaded && (
+        <div className="flex items-center justify-center h-full"><Loader2 className="size-5 animate-spin text-text-subtle" /></div>
+      )}
+      <div className={`flex flex-col h-full ${loaded ? "" : "hidden"}`}>
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-background shrink-0">
+          <span className="text-xs text-text-secondary truncate">{filePath}</span>
+          <button onClick={openInNewTab} className="flex items-center gap-1 text-xs text-text-secondary hover:text-text-primary transition-colors">
+            <ExternalLink className="size-3" /> Open in new tab
+          </button>
+        </div>
+        <iframe
+          ref={iframeRef}
+          src={iframeSrc}
+          title={filePath}
+          className="flex-1 w-full border-none"
+          onLoad={() => setLoaded(true)}
+          onError={() => setError(true)}
+        />
       </div>
-      <iframe ref={iframeRef} src={iframeSrc} title={filePath} className="flex-1 w-full border-none" />
     </div>
   );
 }

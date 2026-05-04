@@ -25,12 +25,15 @@ export async function authMiddleware(c: Context, next: Next) {
     }
   }
 
-  // Fallback: ?token= query param for SSE/EventSource (can't set custom headers)
-  // Scoped to /stream paths only to avoid leaking token in logs/referer on all GET routes
-  if (c.req.method === "GET" && c.req.path.endsWith("/stream")) {
-    const queryToken = c.req.query("token");
-    if (queryToken && queryToken === authConfig.token) {
-      return next();
+  // Fallback: ?token= query param for SSE/EventSource & iframe embeds (can't set custom headers)
+  // Scoped to /stream and /files/raw paths to avoid leaking token on all GET routes
+  if (c.req.method === "GET") {
+    const p = c.req.path;
+    if (p.endsWith("/stream") || p.endsWith("/files/raw") || p === "/api/fs/raw") {
+      const queryToken = c.req.query("token");
+      if (queryToken && queryToken === authConfig.token) {
+        return next();
+      }
     }
   }
 
