@@ -1,13 +1,13 @@
 # Changelog
 
-## [0.13.58] - 2026-05-04
+## [0.13.59] - 2026-05-04
 
 ### Added
 - **PDF auto-reload**: PDF preview tab auto-reloads when file changes on disk via WebSocket file watcher — no more manual refresh while editing LaTeX/docs
 - **Seamless blob URL swap**: `useBlobUrl` hook revokes old URL only after new one is ready, avoiding blank flash during refresh
 
 ### Fixed
-- **PDF scroll preservation**: Save Chrome PDF viewer `#page=N` hash before reload and append to new blob URL — viewer reopens at the same page
+- **PDF scroll preservation**: Switched from blob URL to direct server URL so `location.reload()` preserves browser PDF viewer scroll position. Auth middleware extended to accept `?token=` for `/files/raw` paths
 
 ## [0.13.55] - 2026-05-03
 
