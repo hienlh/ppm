@@ -5,7 +5,7 @@ import { useBlobUrl } from "./use-blob-url";
 export function PdfPreview({ filePath, projectName }: { filePath: string; projectName: string }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const scrollYRef = useRef(0);
+  const pageHashRef = useRef("");
 
   const { blobUrl, error } = useBlobUrl(filePath, projectName, "application/pdf", refreshKey);
 
@@ -14,31 +14,22 @@ export function PdfPreview({ filePath, projectName }: { filePath: string; projec
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail.projectName !== projectName || detail.path !== filePath) return;
-      // Save scroll position before re-fetch (best-effort for browser PDF viewer)
+      // Save current page hash before re-fetch (Chrome PDF viewer uses #page=N&zoom=...)
       try {
-        const win = iframeRef.current?.contentWindow;
-        if (win) scrollYRef.current = win.scrollY || 0;
-      } catch { /* cross-origin or plugin restriction */ }
+        pageHashRef.current = iframeRef.current?.contentWindow?.location.hash || "";
+      } catch { /* cross-origin */ }
       setRefreshKey((k) => k + 1);
     };
     window.addEventListener("file:changed", handler);
     return () => window.removeEventListener("file:changed", handler);
   }, [filePath, projectName]);
 
-  // Restore scroll after new blob loads
-  useEffect(() => {
-    if (!blobUrl || !iframeRef.current || scrollYRef.current === 0) return;
-    const iframe = iframeRef.current;
-    const saved = scrollYRef.current;
-    const onLoad = () => {
-      try { iframe.contentWindow?.scrollTo(0, saved); } catch { /* ignore */ }
-      scrollYRef.current = 0;
-    };
-    iframe.addEventListener("load", onLoad);
-    return () => iframe.removeEventListener("load", onLoad);
-  }, [blobUrl]);
-
   const openInNewTab = useCallback(() => { if (blobUrl) window.open(blobUrl, "_blank"); }, [blobUrl]);
+
+  // Append saved page hash to blob URL so PDF viewer restores position
+  const iframeSrc = blobUrl
+    ? `${blobUrl}${pageHashRef.current}`
+    : undefined;
 
   if (error) {
     return (
@@ -59,7 +50,7 @@ export function PdfPreview({ filePath, projectName }: { filePath: string; projec
           <ExternalLink className="size-3" /> Open in new tab
         </button>
       </div>
-      <iframe ref={iframeRef} src={blobUrl} title={filePath} className="flex-1 w-full border-none" />
+      <iframe ref={iframeRef} src={iframeSrc} title={filePath} className="flex-1 w-full border-none" />
     </div>
   );
 }
