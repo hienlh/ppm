@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.57] - 2026-05-04
+
+### Added
+- **PDF auto-reload**: PDF preview tab auto-reloads when file changes on disk via WebSocket file watcher — no more manual refresh while editing LaTeX/docs
+- **Seamless blob URL swap**: `useBlobUrl` hook revokes old URL only after new one is ready, avoiding blank flash during refresh
+
 ## [0.13.55] - 2026-05-03
 
 ### Added
