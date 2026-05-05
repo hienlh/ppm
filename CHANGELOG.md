@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.61] - 2026-05-05
+
+### Fixed
+- **Command palette multi-word search**: Typing space-separated words (e.g. "company parent") now matches files like `company.parent.entity.ts` and DB tables like `company_parents` — each word is matched independently instead of requiring exact substring
+
 ## [0.13.60] - 2026-05-05
 
 ### Fixed
