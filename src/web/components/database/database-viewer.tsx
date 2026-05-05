@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Database, RefreshCw, GripHorizontal, Loader2 } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { useTabStore } from "@/stores/tab-store";
 import { useDatabase, type DbColumnInfo } from "./use-database";
 import { SqlQueryEditor } from "./sql-query-editor";
 import { ExportButton } from "./export-button";
@@ -21,12 +22,22 @@ function parseSqlFilters(sql: string): Record<string, string> {
 interface Props { metadata?: Record<string, unknown>; tabId?: string }
 
 /** Generic database viewer — works for any DB type via unified API */
-export function DatabaseViewer({ metadata }: Props) {
+export function DatabaseViewer({ metadata, tabId }: Props) {
   const connectionId = metadata?.connectionId as number;
   const connectionName = metadata?.connectionName as string | undefined;
   const initialTable = metadata?.tableName as string | undefined;
   const initialSchema = (metadata?.schemaName as string) ?? "public";
   const initialSql = metadata?.initialSql as string | undefined;
+  const persistedSql = metadata?.currentSql as string | undefined;
+
+  // Persist SQL text to tab metadata (debounced via updateTab's built-in persist)
+  const updateTab = useTabStore((s) => s.updateTab);
+  const metadataRef = useRef(metadata);
+  metadataRef.current = metadata;
+  const handleSqlChange = useCallback((sql: string) => {
+    if (!tabId) return;
+    updateTab(tabId, { metadata: { ...metadataRef.current, currentSql: sql } });
+  }, [tabId, updateTab]);
 
   const db = useDatabase(connectionId);
   const [cachedTableNames, setCachedTableNames] = useState<{ name: string; schema: string }[]>([]);
@@ -183,7 +194,7 @@ export function DatabaseViewer({ metadata }: Props) {
           <SqlQueryEditor
             onExecute={handleExecuteQuery} loading={db.queryLoading}
             defaultValue={defaultQuery} schemaInfo={schemaInfo}
-            cacheKey={connectionId ? String(connectionId) : undefined} />
+            onSqlChange={handleSqlChange} persistedSql={persistedSql} />
         </div>
 
         {/* Resize handle */}

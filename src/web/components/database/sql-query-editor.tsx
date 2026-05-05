@@ -9,8 +9,10 @@ interface SqlQueryEditorProps {
   loading: boolean;
   defaultValue?: string;
   schemaInfo?: SchemaInfo;
-  /** Unique key for caching query text in sessionStorage (e.g. connectionId) */
-  cacheKey?: string;
+  /** Called when the user edits the SQL text (for external persistence) */
+  onSqlChange?: (sql: string) => void;
+  /** Persisted SQL to restore on mount (takes priority over defaultValue if user hasn't edited) */
+  persistedSql?: string;
 }
 
 /** Find the SQL statement surrounding the cursor line (split by ;) */
@@ -43,13 +45,9 @@ export function getStatementAtCursor(text: string, cursorLine: number): string {
 }
 
 /** Shared Monaco-based SQL query editor (editor only, no results) */
-export function SqlQueryEditor({ onExecute, loading, defaultValue = "SELECT * FROM ", schemaInfo, cacheKey }: SqlQueryEditorProps) {
-  const storageKey = cacheKey ? `ppm:sql-query:${cacheKey}` : null;
-  const [query, setQuery] = useState(() => {
-    if (storageKey) { try { return sessionStorage.getItem(storageKey) ?? defaultValue; } catch { /* */ } }
-    return defaultValue;
-  });
-  const userEditedRef = useRef(false);
+export function SqlQueryEditor({ onExecute, loading, defaultValue = "SELECT * FROM ", schemaInfo, onSqlChange, persistedSql }: SqlQueryEditorProps) {
+  const [query, setQuery] = useState(() => persistedSql ?? defaultValue);
+  const userEditedRef = useRef(!!persistedSql);
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof MonacoType | null>(null);
   const disposableRef = useRef<MonacoType.IDisposable | null>(null);
@@ -107,7 +105,7 @@ export function SqlQueryEditor({ onExecute, loading, defaultValue = "SELECT * FR
         language="sql"
         theme={monacoTheme}
         value={query}
-        onChange={(v) => { const val = v ?? ""; setQuery(val); userEditedRef.current = true; if (storageKey) try { sessionStorage.setItem(storageKey, val); } catch {} }}
+        onChange={(v) => { const val = v ?? ""; setQuery(val); userEditedRef.current = true; onSqlChange?.(val); }}
         onMount={handleMount}
         options={{
           minimap: { enabled: false },
