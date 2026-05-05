@@ -138,6 +138,13 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
       case "copy-path":
         if (filePath) navigator.clipboard.writeText(filePath).catch(() => {});
         break;
+      case "copy-full-path": {
+        if (filePath) {
+          const project = projectName ? useProjectStore.getState().projects.find((p) => p.name === projectName) : null;
+          navigator.clipboard.writeText(project ? `${project.path}/${filePath}` : filePath).catch(() => {});
+        }
+        break;
+      }
       case "download":
         if (filePath && projectName) downloadFile(projectName, filePath);
         break;
@@ -333,6 +340,10 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             <button onClick={() => handleFileAction(menuTab, "copy-path")}
               className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
               <Copy className="size-4" /> Copy Path
+            </button>
+            <button onClick={() => handleFileAction(menuTab, "copy-full-path")}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              <Copy className="size-4" /> Copy Full Path
             </button>
             <button onClick={() => handleFileAction(menuTab, "download")}
               className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">

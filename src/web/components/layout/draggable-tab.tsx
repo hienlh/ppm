@@ -182,6 +182,9 @@ export function DraggableTab({
                 <ContextMenuItem onClick={() => onContextAction("copy-path")}>
                   Copy Path
                 </ContextMenuItem>
+                <ContextMenuItem onClick={() => onContextAction("copy-full-path")}>
+                  Copy Full Path
+                </ContextMenuItem>
                 <ContextMenuItem onClick={() => onContextAction("download")}>
                   <Download className="size-3.5 mr-2" />
                   Download

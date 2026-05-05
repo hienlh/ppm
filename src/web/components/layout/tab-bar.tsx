@@ -231,6 +231,15 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         if (filePath) navigator.clipboard.writeText(filePath).catch(() => {});
         break;
       }
+      case "copy-full-path": {
+        const filePath = tab.metadata?.filePath as string | undefined;
+        const projectName = tab.metadata?.projectName as string | undefined;
+        if (filePath) {
+          const project = projectName ? useProjectStore.getState().projects.find((p) => p.name === projectName) : null;
+          navigator.clipboard.writeText(project ? `${project.path}/${filePath}` : filePath).catch(() => {});
+        }
+        break;
+      }
       case "download": {
         const filePath = tab.metadata?.filePath as string | undefined;
         const projectName = tab.metadata?.projectName as string | undefined;

@@ -245,6 +245,11 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       navigator.clipboard.writeText(node.path).catch(() => {});
       return;
     }
+    if (action === "copy-full-path") {
+      const root = activeProject?.path;
+      navigator.clipboard.writeText(root ? `${root}/${node.path}` : node.path).catch(() => {});
+      return;
+    }
     if (action === "select-for-compare") {
       useCompareStore.getState().setSelection({
         filePath: node.path,

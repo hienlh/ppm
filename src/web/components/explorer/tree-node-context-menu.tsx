@@ -66,6 +66,9 @@ export function TreeNodeContextMenu({
       <ContextMenuItem onClick={() => onAction("copy-path", node)}>
         Copy Path
       </ContextMenuItem>
+      <ContextMenuItem onClick={() => onAction("copy-full-path", node)}>
+        Copy Full Path
+      </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => onAction("download", node)}>
         <Download className="size-3.5 mr-2" />
