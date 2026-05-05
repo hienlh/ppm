@@ -44,7 +44,7 @@ export function CommandPaletteFilterChips({
             aria-checked={isActive}
             aria-label={`Filter by ${meta.label}`}
             onClick={() => onToggle(group)}
-            className={`inline-flex items-center gap-1 shrink-0 rounded-full border px-2.5 min-h-[44px] text-xs font-medium transition-colors ${
+            className={`inline-flex items-center gap-1 shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
               isActive
                 ? "bg-accent/15 border-accent text-accent"
                 : "bg-surface border-border text-text-subtle hover:bg-surface-elevated"
