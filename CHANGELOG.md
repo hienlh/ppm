@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.64] - 2026-05-05
+
+### Added
+- **DOCX file preview**: Open `.docx` files in the editor to see rendered HTML preview — powered by mammoth.js backend conversion with responsive styling for mobile
+
 ## [0.13.63] - 2026-05-05
 
 ### Added
