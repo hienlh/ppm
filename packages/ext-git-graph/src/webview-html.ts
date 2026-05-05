@@ -1472,35 +1472,41 @@ function renderCommitList() {
     msgCol.className = 'col-message';
     let badges = '';
     if (commit.refs) {
-      // Merge remote+local refs: if origin/X and X both exist, show one "synced" badge
-      const localNames = new Set(commit.refs.filter(r => r.type === 'head' || r.type === 'local').map(r => r.name));
+      // Known remote prefixes from repo info (e.g. "origin/", "upstream/")
+      const remotePrefixes = state.remotes.map(r => r.name + '/');
+      // Re-classify refs using known remotes (parser may misclassify local branches with "/" as remote)
+      const classified = commit.refs.map(ref => {
+        if (ref.type === 'head' || ref.type === 'tag' || ref.type === 'stash') return ref;
+        const isActualRemote = remotePrefixes.some(p => ref.name.startsWith(p));
+        return { ...ref, type: isActualRemote ? 'remote' : 'local' };
+      });
+      // Merge remote+local: if origin/X and X both exist, show one synced badge
+      const localNames = new Set(classified.filter(r => r.type === 'head' || r.type === 'local').map(r => r.name));
       const mergedRemotes = new Set();
-      commit.refs.forEach(ref => {
+      classified.forEach(ref => {
         if (ref.type === 'remote') {
-          // Strip remote prefix (e.g. "origin/main" → "main")
-          const slashIdx = ref.name.indexOf('/');
-          const branchName = slashIdx >= 0 ? ref.name.slice(slashIdx + 1) : ref.name;
+          const prefix = remotePrefixes.find(p => ref.name.startsWith(p));
+          const branchName = prefix ? ref.name.slice(prefix.length) : ref.name;
           if (localNames.has(branchName)) {
-            mergedRemotes.add(ref.name); // skip this remote, local badge covers it
+            mergedRemotes.add(ref.name);
           }
         }
       });
-      commit.refs.forEach(ref => {
+      classified.forEach(ref => {
         if (ref.type === 'tag' && !state.settings.showTags) return;
         if (ref.type === 'remote' && !state.settings.showRemoteBranches) return;
-        if (mergedRemotes.has(ref.name)) return; // merged into local badge
-        // For local/head refs that have a matching remote, add sync icon
+        if (mergedRemotes.has(ref.name)) return;
         const isSynced = (ref.type === 'head' || ref.type === 'local') &&
-          commit.refs.some(r => r.type === 'remote' && r.name.endsWith('/' + ref.name));
+          classified.some(r => r.type === 'remote' && remotePrefixes.some(p => r.name === p + ref.name));
         const syncIcon = isSynced ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg> ' : '';
-        badges += '<span class="ref-badge ref-' + ref.type + '">' + syncIcon + escHtml(ref.name) + '</span>';
+        badges += '<span class="ref-badge ref-' + ref.type + '" data-ref="' + escHtml(ref.name) + '">' + syncIcon + escHtml(ref.name) + '</span>';
       });
     }
     msgCol.innerHTML = badges + formatCommitMessage(commit.message);
 
     // Attach context menu and double-click to ref badges
     msgCol.querySelectorAll('.ref-badge').forEach(badge => {
-      const refName = badge.textContent;
+      const refName = badge.dataset.ref || badge.textContent.trim();
       const refType = badge.className.includes('ref-head') ? 'head'
                     : badge.className.includes('ref-remote') ? 'remote'
                     : badge.className.includes('ref-tag') ? 'tag'
