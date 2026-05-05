@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.63] - 2026-05-05
+
+### Added
+- **Command palette filter chips**: Result type filtering via chips (files, DB tables, commands) in command palette
+- **Persist SQL queries**: Database tab SQL editor content now survives page reloads — stored in tab metadata with automatic localStorage + server sync, fixing shared sessionStorage key bug
+
 ## [0.13.62] - 2026-05-05
 
 ### Added
