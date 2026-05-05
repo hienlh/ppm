@@ -83,8 +83,8 @@ fsBrowseRoutes.get("/docx-html", async (c) => {
     if (!filePath) return c.json(err("path is required"), 400);
     if (!existsSync(filePath)) return c.json(err("File not found"), 404);
 
-    const buffer = await Bun.file(filePath).arrayBuffer();
-    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+    const arrayBuf = await Bun.file(filePath).arrayBuffer();
+    const result = await mammoth.convertToHtml({ buffer: Buffer.from(arrayBuf) });
     return c.json(ok({ html: result.value, warnings: result.messages }));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));

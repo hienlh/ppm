@@ -105,8 +105,8 @@ fileRoutes.get("/docx-html", async (c) => {
     if (!absPath.startsWith(projectPath)) return c.json(err("Access denied"), 403);
     if (!existsSync(absPath)) return c.json(err("File not found"), 404);
 
-    const buffer = await Bun.file(absPath).arrayBuffer();
-    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+    const arrayBuf = await Bun.file(absPath).arrayBuffer();
+    const result = await mammoth.convertToHtml({ buffer: Buffer.from(arrayBuf) });
     return c.json(ok({ html: result.value, warnings: result.messages }));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
