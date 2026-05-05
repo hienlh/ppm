@@ -20,9 +20,18 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements
+## [Unreleased] — Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements, Command Palette Filter Chips
 
 ### Added
+- **Command Palette Filter Chips** — Filter palette results by type with toggle chips
+  - Chips appear above results when 2+ groups are available (Actions, Files, Database, Filesystem)
+  - Each chip shows group label, icon, and live result count for the current query
+  - Toggling a chip includes/excludes that group; multiple chips can be active simultaneously
+  - Chips hidden when only one group has results (no filtering value)
+  - Mobile-friendly: 44px touch targets, horizontally scrollable chip row
+  - Files: `command-palette-filter-chips.tsx` (new presentational component), `command-palette.tsx` (filter state + `availableGroups` + `groupCounts` + `displayItems` logic)
+
+
 - **System Resource Monitor** — Real-time process monitoring with SSE streaming, sidebar status bar, and dedicated System Monitor tab
   - Backend: `ResourceMonitorService` polls `ps` command every 3s, builds process tree from PPM root PID, categorizes processes (server/terminal/ai-tool/build/unknown), maintains 30-min ring buffer (600 snapshots)
   - Backend: SSE streaming route at `GET /api/system/resources/stream` with client count cap (max 5), manual reconnect with exponential backoff

@@ -210,7 +210,8 @@ src/
 │           │   ├── draggable-tab.tsx  # Draggable tab with context menu, rename, connection color
 │           │   ├── tab-content.tsx    # Router for tab content (v0.9.85+: fallback guards)
 │           │   ├── split-drop-overlay.tsx # Drop zone for tab splitting
-│           │   ├── command-palette.tsx # Global command palette (Shift+Shift, DB table search)
+│           │   ├── command-palette.tsx # Global command palette (Shift+Shift, DB table search, filter chips for Actions/Files/DB/Filesystem)
+│           │   ├── command-palette-filter-chips.tsx # Presentational filter chip bar — group toggle buttons with count badges (hidden when ≤1 group)
 │           │   ├── add-project-form.tsx # Modal form to add projects
 │           │   ├── mobile-nav.tsx    # Bottom navigation for mobile (v0.9.85+: fallback guards)
 │           │   └── mobile-drawer.tsx # Mobile overlay drawer

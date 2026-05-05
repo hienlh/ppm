@@ -28,6 +28,7 @@ import { useCompareStore } from "@/stores/compare-store";
 import { api } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { scoreFileSearchFast, compareScores, getFilename, type FileSearchScore } from "@/lib/score-file-search";
+import { CommandPaletteFilterChips } from "@/components/layout/command-palette-filter-chips";
 
 /** Max results to display — prevents rendering thousands of matches */
 const MAX_RESULTS = 100;
@@ -120,6 +121,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   const [fsFiles, setFsFiles] = useState<string[]>([]);
   const [fsLoading, setFsLoading] = useState(false);
   const [dbResults, setDbResults] = useState<DbSearchResult[]>([]);
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -384,6 +386,38 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     return deferredQuery.trim().length >= 2 ? [...dbCommands, ...matched] : matched;
   }, [searchIndex, actionCommands, fsCommands, dbCommands, deferredQuery]);
 
+  // Stable set of groups that have data (pre-query) — prevents chip flashing
+  const availableGroups = useMemo(() => {
+    const groups = new Set<string>();
+    for (const cmd of allCommands) groups.add(cmd.group);
+    if (dbResults.length > 0) groups.add("db");
+    if (fsFiles.length > 0) groups.add("fs");
+    return Array.from(groups);
+  }, [allCommands, dbResults.length, fsFiles.length]);
+
+  // Per-group counts from search-filtered results (updates with query)
+  const groupCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const cmd of filtered) counts[cmd.group] = (counts[cmd.group] ?? 0) + 1;
+    return counts;
+  }, [filtered]);
+
+  // Final display list — apply group filters as post-process
+  const displayItems = useMemo(() => {
+    if (activeFilters.size === 0) return filtered;
+    return filtered.filter((cmd) => activeFilters.has(cmd.group));
+  }, [filtered, activeFilters]);
+
+  const toggleFilter = useCallback((group: string) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+    setSelectedIdx(0);
+  }, []);
+
   // Auto-load file index when palette opens and index isn't ready
   useEffect(() => {
     if (open && indexStatus === "idle" && activeProject) {
@@ -398,14 +432,15 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       setSelectedIdx(0);
       setFsFiles([]);
       setDbResults([]);
+      setActiveFilters(new Set());
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open]);
 
-  // Clamp selected index when filter changes
+  // Clamp selected index when display list changes
   useEffect(() => {
-    setSelectedIdx((prev) => Math.min(prev, Math.max(filtered.length - 1, 0)));
-  }, [filtered.length]);
+    setSelectedIdx((prev) => Math.min(prev, Math.max(displayItems.length - 1, 0)));
+  }, [displayItems.length]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -430,7 +465,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
   }, [query, activeProject, openTab, onClose]);
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    const len = filtered.length;
+    const len = displayItems.length;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
@@ -443,7 +478,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       case "Enter":
         e.preventDefault();
         if (len > 0) {
-          filtered[selectedIdx]?.action();
+          displayItems[selectedIdx]?.action();
         } else if (query.trim()) {
           askAi();
         }
@@ -510,11 +545,23 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
           </div>
         )}
 
+        {/* Filter chips — hidden in path mode */}
+        {!pathMode && (
+          <CommandPaletteFilterChips
+            availableGroups={availableGroups}
+            groupCounts={groupCounts}
+            activeFilters={activeFilters}
+            onToggle={toggleFilter}
+          />
+        )}
+
         {/* Results */}
         <div ref={listRef} className="max-h-72 overflow-y-auto py-1">
-          {filtered.length === 0 ? (
+          {displayItems.length === 0 ? (
             fsLoading ? (
               <p className="px-3 py-4 text-sm text-text-subtle text-center">Searching...</p>
+            ) : activeFilters.size > 0 && filtered.length > 0 ? (
+              <p className="px-3 py-4 text-sm text-text-subtle text-center">No results in selected filters</p>
             ) : query.trim() ? (
               <button
                 onClick={askAi}
@@ -527,7 +574,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
               <p className="px-3 py-4 text-sm text-text-subtle text-center">No results</p>
             )
           ) : (
-            filtered.map((cmd, i) => {
+            displayItems.map((cmd, i) => {
               const Icon = cmd.icon;
               return (
                 <button
