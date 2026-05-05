@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.65] - 2026-05-05
+
+### Fixed
+- **DOCX preview**: Fix mammoth.js conversion error — use `Buffer` instead of `arrayBuffer` for Node.js API
+
 ## [0.13.64] - 2026-05-05
 
 ### Added
