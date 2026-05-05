@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.62] - 2026-05-05
+
+### Added
+- **Copy Full Path**: Context menus now include "Copy Full Path" option (absolute path) alongside "Copy Path" (relative) — available in file explorer, tab bar, and mobile nav
+
 ## [0.13.61] - 2026-05-05
 
 ### Fixed
