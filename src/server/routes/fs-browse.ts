@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, rmSync, statSync } from "fs";
 import { resolve } from "path";
 import { $ } from "bun";
+import mammoth from "mammoth";
 import {
   browse,
   list,
@@ -70,6 +71,21 @@ fsBrowseRoutes.get("/raw", (c) => {
         "Cache-Control": "private, max-age=3600",
       },
     });
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** GET /api/fs/docx-html?path=/some/file.docx — convert .docx to HTML via mammoth */
+fsBrowseRoutes.get("/docx-html", async (c) => {
+  try {
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("path is required"), 400);
+    if (!existsSync(filePath)) return c.json(err("File not found"), 404);
+
+    const buffer = await Bun.file(filePath).arrayBuffer();
+    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+    return c.json(ok({ html: result.value, warnings: result.messages }));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }

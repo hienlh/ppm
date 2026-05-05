@@ -27,6 +27,7 @@ const ImagePreview = lazy(() => import("./image-preview").then((m) => ({ default
 const PdfPreview = lazy(() => import("./pdf-preview").then((m) => ({ default: m.PdfPreview })));
 const VideoPreview = lazy(() => import("./video-preview").then((m) => ({ default: m.VideoPreview })));
 const AudioPreview = lazy(() => import("./audio-preview").then((m) => ({ default: m.AudioPreview })));
+const DocxPreview = lazy(() => import("./docx-preview").then((m) => ({ default: m.DocxPreview })));
 
 /** Image extensions renderable inline */
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
@@ -87,6 +88,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const ext = filePath ? getFileExt(filePath) : "";
   const isImage = IMAGE_EXTS.has(ext);
   const isPdf = ext === "pdf";
+  const isDocx = ext === "docx";
   const isVideo = VIDEO_EXTS.has(ext);
   const isAudio = AUDIO_EXTS.has(ext);
   const isSqlite = SQLITE_EXTS.has(ext);
@@ -273,7 +275,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     }
     if (!filePath) return;
     if (!isExternalFile && !projectName) return;
-    if (isImage || isPdf || isVideo || isAudio) { setLoading(false); return; }
+    if (isImage || isPdf || isDocx || isVideo || isAudio) { setLoading(false); return; }
 
     setLoading(true);
     setError(null);
@@ -296,7 +298,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       });
 
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [filePath, projectName, isImage, isPdf, isExternalFile, isUntitled]);
+  }, [filePath, projectName, isImage, isPdf, isDocx, isExternalFile, isUntitled]);
 
   // Real-time reload: listen for file:changed WS events, re-fetch if editor is clean
   const unsavedRef = useRef(unsaved);
@@ -511,6 +513,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
 
   if (isImage) return <Suspense fallback={<LoadingSpinner />}><ImagePreview filePath={filePath!} projectName={projectName!} /></Suspense>;
   if (isPdf) return <Suspense fallback={<LoadingSpinner />}><PdfPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
+  if (isDocx) return <Suspense fallback={<LoadingSpinner />}><DocxPreview filePath={filePath!} projectName={projectName} /></Suspense>;
   if (isVideo) return <Suspense fallback={<LoadingSpinner />}><VideoPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
   if (isAudio) return <Suspense fallback={<LoadingSpinner />}><AudioPreview filePath={filePath!} projectName={projectName!} /></Suspense>;
 

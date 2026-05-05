@@ -5,6 +5,7 @@ import { fileService, SecurityError, NotFoundError, ValidationError } from "../.
 import { readSystemFile } from "../../services/fs-browse.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { errorStatus } from "../helpers/error-status.ts";
+import mammoth from "mammoth";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
@@ -88,6 +89,25 @@ fileRoutes.get("/raw", (c) => {
         "Content-Disposition": download ? `attachment; filename="${filename}"` : "inline",
       },
     });
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** GET /files/docx-html?path=... — convert project .docx to HTML via mammoth */
+fileRoutes.get("/docx-html", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("Missing query parameter: path"), 400);
+
+    const absPath = resolve(projectPath, filePath);
+    if (!absPath.startsWith(projectPath)) return c.json(err("Access denied"), 403);
+    if (!existsSync(absPath)) return c.json(err("File not found"), 404);
+
+    const buffer = await Bun.file(absPath).arrayBuffer();
+    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+    return c.json(ok({ html: result.value, warnings: result.messages }));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }
