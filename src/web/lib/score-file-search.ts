@@ -58,6 +58,24 @@ export function scoreFileSearchFast(
   labelLen: number,
   depth: number,
 ): FileSearchScore | null {
+  // Multi-word query: score each word independently, require all to match
+  if (qLower.includes(" ")) {
+    const words = qLower.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return null;
+    if (words.length === 1) {
+      return scoreFileSearchFast(words[0]!, filenameLower, pathLower, labelLen, depth);
+    }
+    let maxTier = 0;
+    let totalOffset = 0;
+    for (const word of words) {
+      const s = scoreFileSearchFast(word, filenameLower, pathLower, labelLen, depth);
+      if (!s) return null;
+      maxTier = Math.max(maxTier, s.tier);
+      totalOffset += s.offset;
+    }
+    return { tier: maxTier, offset: totalOffset, nameLen: labelLen, depth };
+  }
+
   // Tier 0: exact filename match
   if (filenameLower === qLower) return { tier: 0, offset: 0, nameLen: labelLen, depth };
 

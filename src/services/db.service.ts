@@ -1219,16 +1219,19 @@ export function deleteTableCache(connectionId: number): void {
 }
 
 export function searchTableCache(query: string): Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }> {
-  // Escape LIKE wildcards so user input is treated as literal text
-  const escaped = query.replace(/[%_\\]/g, "\\$&");
+  // Split on spaces so "company parent" matches "company_parents", "company.parent", etc.
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const params = words.map((w) => `%${w.replace(/[%_\\]/g, "\\$&")}%`);
+  const whereClauses = params.map(() => `tc.table_name LIKE ? ESCAPE '\\'`).join(" AND ");
   return getDb().query(
     `SELECT tc.*, c.name as connection_name, c.type as connection_type, c.color as connection_color
      FROM connection_table_cache tc
      JOIN connections c ON tc.connection_id = c.id
-     WHERE tc.table_name LIKE ? ESCAPE '\\'
+     WHERE ${whereClauses}
      ORDER BY tc.table_name, c.name
      LIMIT 50`,
-  ).all(`%${escaped}%`) as Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }>;
+  ).all(...params) as Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }>;
 }
 
 // ---------------------------------------------------------------------------
