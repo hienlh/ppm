@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.67] - 2026-05-06
+
+### Fixed
+- **Extension tabs auto-focus**: Git Graph and other extension tabs no longer steal focus on page load, project switch, or WS reconnect — only explicit user opens (Cmd+G, command palette) trigger focus
+
+### Added
+- **Commit-to-commit diff**: Diff viewer now supports comparing a file between two commits via `ref2` parameter, not just commit vs working tree
+- **Process age column**: System monitor shows how long each process has been running
+
 ## [0.13.66] - 2026-05-06
 
 ### Fixed
