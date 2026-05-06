@@ -17,6 +17,18 @@ function formatRam(mb: number) {
   return mb < 1024 ? `${mb.toFixed(0)} MB` : `${(mb / 1024).toFixed(1)} GB`;
 }
 
+function formatAge(startedAt?: number) {
+  if (!startedAt) return "";
+  const secs = Math.round((Date.now() - startedAt) / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ${hrs % 24}h`;
+}
+
 export interface GroupRowProps {
   group: ResourceGroup;
   Icon: React.ElementType;
@@ -85,13 +97,21 @@ export const GroupRow = memo(function GroupRow({
           <td className="text-right py-1 px-2 align-top">{formatRam(proc.ramMB)}</td>
           {!isMobile && (
             <td className="align-top py-1 px-2">
-              <button
-                onClick={(e) => { e.stopPropagation(); onKill(proc.pid); }}
-                className="opacity-0 group-hover/proc:opacity-100 p-0.5 rounded hover:bg-red-500/20 hover:text-red-500 transition-all"
-                title={`End process ${proc.pid}`}
-              >
-                <X className="size-3" />
-              </button>
+              <div className="flex items-center justify-between gap-1">
+                <span
+                  className="text-text-subtle"
+                  title={proc.startedAt ? new Date(proc.startedAt).toLocaleString() : ""}
+                >
+                  {formatAge(proc.startedAt)}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onKill(proc.pid); }}
+                  className="opacity-0 group-hover/proc:opacity-100 p-0.5 rounded hover:bg-red-500/20 hover:text-red-500 transition-all"
+                  title={`End process ${proc.pid}`}
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
             </td>
           )}
         </tr>

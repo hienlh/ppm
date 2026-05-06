@@ -8,7 +8,7 @@ export interface ResourceGroup {
   label: string;
   cpu: number;
   ramMB: number;
-  processes: { pid: number; cpu: number; ramMB: number; command: string }[];
+  processes: { pid: number; cpu: number; ramMB: number; startedAt?: number; command: string }[];
 }
 
 export interface ResourceSnapshot {

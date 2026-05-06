@@ -25,23 +25,25 @@ function categorize(cmd: string): ResourceGroup["type"] {
 
 // ── Parser ─────────────────────────────────────────────────────────────
 
-/** Parse `ps -e -o pid,ppid,%cpu,rss,args` output into structured entries */
+/** Parse `ps -e -o pid,ppid,%cpu,rss,etimes,args` output into structured entries */
 export function parseProcessList(stdout: string): ProcessEntry[] {
   const lines = stdout.trim().split("\n");
   if (lines.length < 2) return [];
 
+  const now = Date.now();
   const entries: ProcessEntry[] = [];
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]?.trim();
     if (!line) continue;
     const parts = line.split(/\s+/);
-    if (parts.length < 5) continue;
+    if (parts.length < 6) continue;
 
     const pid = parseInt(parts[0]!, 10);
     const ppid = parseInt(parts[1]!, 10);
     const cpu = parseFloat(parts[2]!);
     const rssKB = parseInt(parts[3]!, 10);
-    const command = parts.slice(4).join(" ");
+    const etimes = parseInt(parts[4]!, 10);
+    const command = parts.slice(5).join(" ");
 
     if (isNaN(pid) || pid === 0 || !command) continue;
 
@@ -50,6 +52,7 @@ export function parseProcessList(stdout: string): ProcessEntry[] {
       ppid,
       cpu: Math.round(cpu * 10) / 10,
       ramMB: Math.round((rssKB / 1024) * 10) / 10,
+      startedAt: isNaN(etimes) ? now : now - etimes * 1000,
       command,
     });
   }
@@ -104,7 +107,7 @@ export function groupProcesses(
       label: "PPM Server",
       cpu: serverEntry.cpu,
       ramMB: serverEntry.ramMB,
-      processes: [{ pid: serverEntry.pid, cpu: serverEntry.cpu, ramMB: serverEntry.ramMB, command: serverEntry.command }],
+      processes: [{ pid: serverEntry.pid, cpu: serverEntry.cpu, ramMB: serverEntry.ramMB, startedAt: serverEntry.startedAt, command: serverEntry.command }],
     });
   }
 
@@ -130,7 +133,7 @@ export function groupProcesses(
       label: TYPE_LABELS[type],
       cpu: Math.round(procs.reduce((s, p) => s + p.cpu, 0) * 10) / 10,
       ramMB: Math.round(procs.reduce((s, p) => s + p.ramMB, 0) * 10) / 10,
-      processes: procs.map((p) => ({ pid: p.pid, cpu: p.cpu, ramMB: p.ramMB, command: p.command })),
+      processes: procs.map((p) => ({ pid: p.pid, cpu: p.cpu, ramMB: p.ramMB, startedAt: p.startedAt, command: p.command })),
     });
   }
 

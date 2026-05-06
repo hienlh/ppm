@@ -13,6 +13,7 @@ export interface ProcessEntry {
   ppid: number;
   cpu: number;
   ramMB: number;
+  startedAt: number;
   command: string;
 }
 
@@ -78,7 +79,7 @@ class ResourceMonitorService {
   private async poll() {
     try {
       const proc = Bun.spawn({
-        cmd: ["ps", "-e", "-o", "pid,ppid,%cpu,rss,args"],
+        cmd: ["ps", "-e", "-o", "pid,ppid,%cpu,rss,etimes,args"],
         stdout: "pipe",
         stderr: "ignore",
       });

@@ -137,7 +137,7 @@ export const SystemMonitorTab = memo(function SystemMonitorTab() {
                 className="w-20"
               />
               {!isMobile && (
-                <th className="py-1.5 px-2 font-medium w-[130px]">Trend</th>
+                <th className="py-1.5 px-2 font-medium w-[130px]">Trend / Age</th>
               )}
             </tr>
           </thead>
