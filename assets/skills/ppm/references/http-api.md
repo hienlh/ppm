@@ -81,7 +81,9 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/fs/browse`
 - `GET    /api/fs/list`
 - `GET    /api/fs/read`
+- `POST   /api/fs/download/token`
 - `GET    /api/fs/raw`
+- `GET    /api/fs/docx-html`
 - `DELETE /api/fs/rmdir`
 - `POST   /api/fs/mkdir`
 - `PUT    /api/fs/write`
@@ -208,4 +210,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.13.12 -->
+<!-- Generated from src/server/routes/ for PPM v0.13.66 -->
