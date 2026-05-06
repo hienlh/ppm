@@ -66,7 +66,8 @@ gitRoutes.get("/file-full-diff", async (c) => {
     const file = c.req.query("file");
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || "HEAD";
-    const result = await gitService.fileFullDiff(projectPath, file, ref);
+    const ref2 = c.req.query("ref2") || undefined;
+    const result = await gitService.fileFullDiff(projectPath, file, ref, ref2);
     return c.json(ok(result));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

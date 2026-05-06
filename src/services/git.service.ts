@@ -132,9 +132,9 @@ class GitService {
     projectPath: string,
     filePath: string,
     ref: string = "HEAD",
+    ref2?: string,
   ): Promise<{ original: string; modified: string }> {
     const git = this.git(projectPath);
-    const absPath = path.resolve(projectPath, filePath);
 
     let original = "";
     try {
@@ -145,12 +145,22 @@ class GitService {
     }
 
     let modified = "";
-    try {
-      const f = Bun.file(absPath);
-      if (await f.exists()) modified = await f.text();
-    } catch {
-      // File missing on disk (deleted) → empty modified
-      modified = "";
+    if (ref2) {
+      // Commit-to-commit diff: read modified from git object store
+      try {
+        modified = await git.show([`${ref2}:${filePath}`]);
+      } catch {
+        modified = "";
+      }
+    } else {
+      // Working tree diff: read from disk
+      try {
+        const absPath = path.resolve(projectPath, filePath);
+        const f = Bun.file(absPath);
+        if (await f.exists()) modified = await f.text();
+      } catch {
+        modified = "";
+      }
     }
 
     return { original, modified };

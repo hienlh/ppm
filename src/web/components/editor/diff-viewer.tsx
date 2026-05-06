@@ -86,6 +86,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     if (filePath) {
       const params = new URLSearchParams({ file: filePath });
       if (ref1) params.set("ref", ref1);
+      if (ref2) params.set("ref2", ref2);
       api
         .get<{ original: string; modified: string }>(
           `${projectUrl(projectName)}/git/file-full-diff?${params}`,
