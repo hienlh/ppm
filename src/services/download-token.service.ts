@@ -16,7 +16,7 @@ export function createDownloadToken(): string {
   return token;
 }
 
-/** Validate and consume a download token (one-time use) */
+/** Validate a download token (TTL-based, allows multiple uses within window) */
 export function consumeDownloadToken(token: string): boolean {
   const entry = tokens.get(token);
   if (!entry) return false;
@@ -24,7 +24,6 @@ export function consumeDownloadToken(token: string): boolean {
     tokens.delete(token);
     return false;
   }
-  tokens.delete(token);
   return true;
 }
 

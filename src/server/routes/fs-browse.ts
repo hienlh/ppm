@@ -8,8 +8,11 @@ import {
   list,
   readSystemFile,
   writeSystemFile,
+  isAllowedPath,
+  resolvePath,
 } from "../../services/fs-browse.service.ts";
 import { ok, err } from "../../types/api.ts";
+import { createDownloadToken } from "../../services/download-token.service.ts";
 
 export const fsBrowseRoutes = new Hono();
 
@@ -56,18 +59,29 @@ fsBrowseRoutes.get("/read", (c) => {
   }
 });
 
+/** POST /api/fs/download/token — generate a short-lived token for external file downloads */
+fsBrowseRoutes.post("/download/token", (c) => {
+  const token = createDownloadToken();
+  return c.json(ok({ token }));
+});
+
 /** GET /api/fs/raw?path=/some/file — serve file as binary (for images in markdown, etc.) */
 fsBrowseRoutes.get("/raw", (c) => {
   try {
     const filePath = c.req.query("path");
     if (!filePath) return c.json(err("path is required"), 400);
-    if (!existsSync(filePath)) return c.json(err("File not found"), 404);
 
-    const file = Bun.file(filePath);
+    const resolved = resolvePath(filePath);
+    if (!isAllowedPath(resolved)) return c.json(err("Access denied"), 403);
+    if (!existsSync(resolved)) return c.json(err("File not found"), 404);
+
+    const download = c.req.query("download") === "true";
+    const filename = resolved.split("/").pop() ?? "download";
+    const file = Bun.file(resolved);
     return new Response(file.stream(), {
       headers: {
-        "Content-Type": file.type || "application/octet-stream",
-        "Content-Disposition": "inline",
+        "Content-Type": download ? "application/octet-stream" : (file.type || "application/octet-stream"),
+        "Content-Disposition": download ? `attachment; filename="${filename}"` : "inline",
         "Cache-Control": "private, max-age=3600",
       },
     });

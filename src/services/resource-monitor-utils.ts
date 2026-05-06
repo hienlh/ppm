@@ -14,6 +14,8 @@ const CATEGORY_PATTERNS: [ResourceGroup["type"], RegExp][] = [
 ];
 
 function categorize(cmd: string): ResourceGroup["type"] {
+  // Check full command for well-known AI tool paths before extracting basename
+  if (/claude-agent-sdk|@anthropic-ai\/claude/.test(cmd)) return "ai-tool";
   const basename = cmd.split("/").pop()?.split(" ")[0] ?? cmd;
   for (const [type, re] of CATEGORY_PATTERNS) {
     if (re.test(basename)) return type;
@@ -92,6 +94,7 @@ const TYPE_LABELS: Record<ResourceGroup["type"], string> = {
 export function groupProcesses(
   serverEntry: ProcessEntry | undefined,
   children: ProcessEntry[],
+  allEntries: ProcessEntry[] = [],
 ): ResourceGroup[] {
   const groups: ResourceGroup[] = [];
 
@@ -105,8 +108,14 @@ export function groupProcesses(
     });
   }
 
+  // Include external AI tool processes not in PPM's process tree (e.g. Claude Code sessions)
+  const ppmPids = new Set([serverEntry?.pid, ...children.map((c) => c.pid)].filter(Boolean));
+  const externalAiProcs = allEntries.filter(
+    (e) => !ppmPids.has(e.pid) && categorize(e.command) === "ai-tool",
+  );
+
   const buckets = new Map<ResourceGroup["type"], ProcessEntry[]>();
-  for (const child of children) {
+  for (const child of [...children, ...externalAiProcs]) {
     const type = categorize(child.command);
     const list = buckets.get(type) ?? [];
     list.push(child);

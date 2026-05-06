@@ -2,6 +2,14 @@ import { api, projectUrl } from "./api-client";
 
 /** Trigger browser-native file download via hidden <a> tag */
 export async function downloadFile(projectName: string, filePath: string): Promise<void> {
+  // Absolute paths (external files opened from filesystem browser) use /api/fs routes
+  const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
+  if (isAbsolute) {
+    const { token } = await api.post<{ token: string }>("/api/fs/download/token");
+    const url = `/api/fs/raw?path=${encodeURIComponent(filePath)}&download=true&dl_token=${encodeURIComponent(token)}`;
+    triggerDownload(url, filePath.split("/").pop() ?? "download");
+    return;
+  }
   const { token } = await api.post<{ token: string }>(`${projectUrl(projectName)}/files/download/token`);
   const url = `${projectUrl(projectName)}/files/raw?path=${encodeURIComponent(filePath)}&download=true&dl_token=${encodeURIComponent(token)}`;
   triggerDownload(url, filePath.split("/").pop() ?? "download");

@@ -89,7 +89,7 @@ class ResourceMonitorService {
       const rootPid = process.pid;
       const serverEntry = entries.find((e) => e.pid === rootPid);
       const children = buildTree(entries, rootPid);
-      const groups = groupProcesses(serverEntry, children);
+      const groups = groupProcesses(serverEntry, children, entries);
 
       const allProcs = serverEntry ? [serverEntry, ...children] : children;
       const snapshot: ResourceSnapshot = {

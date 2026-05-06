@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.66] - 2026-05-06
+
+### Fixed
+- **System monitor**: Claude Code sessions (claude-agent-sdk) now appear under "AI Tools" group — fixed two bugs: (1) external processes outside PPM's process tree were not collected, (2) `categorize()` extracted `cli.js` as basename instead of detecting `claude-agent-sdk` path pattern
+
 ## [0.13.65] - 2026-05-05
 
 ### Fixed

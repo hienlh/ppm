@@ -40,7 +40,7 @@ export async function authMiddleware(c: Context, next: Next) {
   // Fallback: short-lived download token for browser-initiated downloads only
   if (c.req.method === "GET") {
     const path = c.req.path;
-    const isDownloadPath = path.endsWith("/files/raw") || path.endsWith("/files/download/zip");
+    const isDownloadPath = path.endsWith("/files/raw") || path.endsWith("/files/download/zip") || path.endsWith("/fs/raw");
     if (isDownloadPath) {
       const dlToken = c.req.query("dl_token");
       if (dlToken && consumeDownloadToken(dlToken)) {
