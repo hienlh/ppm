@@ -17,6 +17,13 @@ import { toast } from "sonner";
 const recentlyClosedViews = new Set<string>();
 
 /**
+ * Track viewTypes whose command dispatch was auto-recovery (not user-initiated).
+ * When `webview:create` arrives for a recovery viewType, skip setActiveTab
+ * to prevent stealing focus from the user's current tab.
+ */
+const recoveryViews = new Set<string>();
+
+/**
  * Hook that manages the WebSocket connection for extension UI bridge.
  * Dispatches server messages into the extension Zustand store.
  * Only connects when `enabled` is true (after auth).
@@ -161,8 +168,11 @@ export function useExtensionWs(enabled = true) {
               title: msg.title,
               metadata: { ...existingTab, viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
             });
-            // Focus the existing tab so Cmd+G / command palette switches to it
-            useTabStore.getState().setActiveTab(existingTabId);
+            // Focus the existing tab only if user explicitly opened it (not auto-recovery)
+            if (!recoveryViews.has(viewTypeSlug)) {
+              useTabStore.getState().setActiveTab(existingTabId);
+            }
+            recoveryViews.delete(viewTypeSlug);
           } else if (!recentlyClosedViews.has(viewTypeSlug)) {
             // Only create a new tab if this viewType wasn't recently closed by user
             const currentProject = useTabStore.getState().currentProject;
@@ -223,10 +233,13 @@ export function useExtensionWs(enabled = true) {
 
     // Listen for command:execute requests (dispatched by StatusBar / TreeView)
     const commandHandler = (e: Event) => {
-      const { command, args } = (e as CustomEvent).detail;
+      const { command, args, recovery } = (e as CustomEvent).detail;
       // User explicitly opened an extension — clear "recently closed" so tab can be created
       const slug = (command as string).replace(/\.view$/, "");
       recentlyClosedViews.delete(slug);
+      // Track recovery dispatches to avoid stealing focus on webview:create
+      if (recovery) recoveryViews.add(slug);
+      else recoveryViews.delete(slug);
       client.send(JSON.stringify({ type: "command:execute", command, args }));
     };
     window.addEventListener("ext:command:execute", commandHandler);

@@ -83,7 +83,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
       }
       if (cancelled) return;
       window.dispatchEvent(new CustomEvent("ext:command:execute", {
-        detail: { command, args },
+        detail: { command, args, recovery: true },
       }));
     }
 
@@ -117,7 +117,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
         const match = json.data?.find((p) => p.name === projectName);
         const args = match ? [match.path] : [];
         window.dispatchEvent(new CustomEvent("ext:command:execute", {
-          detail: { command, args },
+          detail: { command, args, recovery: true },
         }));
       } catch {}
     })();
