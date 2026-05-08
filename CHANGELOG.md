@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.68] - 2026-05-08
+
+### Added
+- **Git clone in Add Project**: Clone a repo directly from the Add Project dialog — paste a Git URL (HTTPS or SSH), choose a parent directory, and PPM clones and registers the project automatically. Last-used clone directory is persisted.
+
 ## [0.13.67] - 2026-05-06
 
 ### Fixed
