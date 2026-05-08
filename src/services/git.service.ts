@@ -541,6 +541,21 @@ class GitService {
     await this.git(projectPath).raw(["worktree", "prune"]);
   }
 
+  /** Clone a git repo into targetDir/repoName. Returns the full cloned path. */
+  async cloneRepo(url: string, targetDir: string, name?: string): Promise<string> {
+    const repoName = name || this.parseRepoNameFromUrl(url);
+    if (!repoName) throw new Error("Cannot determine repo name from URL");
+    const fullPath = path.resolve(targetDir, repoName);
+    await simpleGit().clone(url, fullPath);
+    return fullPath;
+  }
+
+  private parseRepoNameFromUrl(url: string): string | null {
+    // Handles SSH (git@host:owner/repo.git) and HTTPS (https://host/owner/repo.git)
+    const match = url.match(/[/:]([^/:]+?)(?:\.git)?\s*$/);
+    return match?.[1] ?? null;
+  }
+
   private parseRemoteUrl(
     url: string,
   ): { host: string; owner: string; repo: string } | null {

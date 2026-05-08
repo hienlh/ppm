@@ -1,6 +1,9 @@
 import { Hono } from "hono";
+import { homedir } from "node:os";
 import { projectService } from "../../services/project.service.ts";
 import { configService } from "../../services/config.service.ts";
+import { gitService } from "../../services/git.service.ts";
+import { getConfigValue, setConfigValue } from "../../services/db.service.ts";
 import { searchGitDirs } from "../../services/git-dirs.service.ts";
 import { invalidateIndexCache } from "../../services/file-list-index.service.ts";
 import { ok, err } from "../../types/api.ts";
@@ -43,6 +46,40 @@ projectRoutes.get("/suggest-dirs", (c) => {
     const query = c.req.query("q") ?? "";
     const results = searchGitDirs(query, root);
     return c.json(ok(results));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /api/projects/last-clone-dir — return last used clone directory */
+projectRoutes.get("/last-clone-dir", (c) => {
+  const dir = getConfigValue("lastCloneDir") as string | null;
+  return c.json(ok({ dir: dir ?? null }));
+});
+
+/** POST /api/projects/git/clone — clone a git repo and register as project */
+projectRoutes.post("/git/clone", async (c) => {
+  try {
+    const { url, targetDir, name } = await c.req.json<{
+      url: string;
+      targetDir: string;
+      name?: string;
+    }>();
+    if (!url) return c.json(err("Missing: url"), 400);
+    if (!targetDir) return c.json(err("Missing: targetDir"), 400);
+
+    // Expand ~ to home directory (path.resolve does not do this)
+    const resolvedDir = targetDir.startsWith("~")
+      ? targetDir.replace(/^~/, homedir())
+      : targetDir;
+
+    const clonedPath = await gitService.cloneRepo(url, resolvedDir, name);
+    const project = projectService.add(clonedPath);
+
+    // Persist last clone dir (store raw value with ~ if user typed it)
+    setConfigValue("lastCloneDir", targetDir);
+
+    return c.json(ok({ path: clonedPath, project }), 201);
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
