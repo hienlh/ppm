@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { ExtensionManifest, ExtensionInfo, RpcMessage } from "../types/extension.ts";
-import { getExtensions, getExtensionById, insertExtension, updateExtension, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
+import { getExtensions, getExtensionById, insertExtension, updateExtension, deleteExtension, deleteExtensionStorage, getExtensionStorage, setExtensionStorageValue } from "./db.service.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import { RpcChannel } from "./extension-rpc.ts";
 import { parseManifest, discoverManifests, discoverBundledManifests } from "./extension-manifest.ts";
@@ -243,7 +243,15 @@ class ExtensionService {
         });
       }
     }
+    // Clean up stale DB records for extensions no longer on disk
+    const discoveredIds = new Set(manifests.map((m) => m.id));
     for (const row of getExtensions()) {
+      if (!discoveredIds.has(row.id)) {
+        console.log(`[ExtService] startup: removing stale DB record for ${row.id}`);
+        deleteExtensionStorage(row.id);
+        deleteExtension(row.id);
+        continue;
+      }
       if (row.enabled !== 1) continue;
       console.log(`[ExtService] startup: activating ${row.id}...`);
       try { await this.activate(row.id); } catch (e) {

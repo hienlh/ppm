@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.69] - 2026-05-10
+
+### Fixed
+- **Stale extension cleanup**: Extensions removed from codebase (e.g. `@ppm/ext-database`) are now auto-cleaned from DB on startup — previously caused "Entry point not found" error toast on every page load
+
 ## [0.13.68] - 2026-05-08
 
 ### Added
