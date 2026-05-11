@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.71] - 2026-05-11
+
+### Added
+- **Readonly toggle on Database Viewer toolbar**: Same ShieldCheck/WRITE toggle added to the database viewer tab toolbar
+
 ## [0.13.70] - 2026-05-11
 
 ### Fixed

@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { Database, RefreshCw, GripHorizontal, Loader2 } from "lucide-react";
+import { Database, RefreshCw, GripHorizontal, Loader2, ShieldCheck, ShieldOff } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useDatabase, type DbColumnInfo } from "./use-database";
+import { useConnections } from "./use-connections";
 import { SqlQueryEditor } from "./sql-query-editor";
 import { ExportButton } from "./export-button";
 import { GlideDataGrid } from "./glide-data-grid";
@@ -40,6 +41,8 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
   }, [tabId, updateTab]);
 
   const db = useDatabase(connectionId);
+  const { connections, updateConnection } = useConnections();
+  const conn = useMemo(() => connections.find((c) => c.id === connectionId), [connections, connectionId]);
   const [cachedTableNames, setCachedTableNames] = useState<{ name: string; schema: string }[]>([]);
   const [queryHeight, setQueryHeight] = useState(180);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -181,6 +184,20 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
                 filename={connectionName ? `${connectionName}-${db.selectedTable ?? "data"}` : db.selectedTable ?? "data"}
                 exportAllUrl={db.selectedTable ? `/api/db/connections/${connectionId}/export?table=${encodeURIComponent(db.selectedTable)}&schema=${db.selectedSchema}` : undefined}
               />
+            )}
+            {conn && (
+              <button
+                type="button"
+                onClick={() => updateConnection(conn.id, { readonly: conn.readonly ? 0 : 1 })}
+                className={`flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] transition-colors ${
+                  conn.readonly
+                    ? "text-muted-foreground hover:text-foreground"
+                    : "bg-destructive/15 text-destructive"
+                }`}
+                title={conn.readonly ? "Readonly — click to allow writes" : "WRITE mode — click to enable readonly"}
+              >
+                {conn.readonly ? <ShieldCheck className="size-3" /> : <><ShieldOff className="size-3" /><span className="font-medium">WRITE</span></>}
+              </button>
             )}
             <button type="button" onClick={() => db.refreshData()} title="Reload data"
               className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors">
