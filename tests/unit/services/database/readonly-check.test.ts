@@ -83,6 +83,23 @@ describe("isReadOnlyQuery", () => {
     expect(isReadOnlyQuery("insert into users values (1)")).toBe(false);
   });
 
+  // ── String literals (should NOT trigger false positives) ──────────
+  it("allows SELECT with write keyword inside string literal", () => {
+    expect(isReadOnlyQuery("SELECT CASE WHEN x THEN 'NEEDS UPDATE' ELSE 'OK' END FROM t")).toBe(true);
+  });
+
+  it("allows SELECT with DELETE inside string literal", () => {
+    expect(isReadOnlyQuery("SELECT 'DELETE ME' AS label FROM t")).toBe(true);
+  });
+
+  it("allows SELECT with INSERT inside string literal", () => {
+    expect(isReadOnlyQuery("SELECT * FROM t WHERE status = 'INSERT PENDING'")).toBe(true);
+  });
+
+  it("still blocks real UPDATE even with string literals", () => {
+    expect(isReadOnlyQuery("UPDATE t SET x = 'hello' WHERE id = 1")).toBe(false);
+  });
+
   // ── Edge cases ─────────────────────────────────────────────────────
   it("rejects empty string", () => {
     expect(isReadOnlyQuery("")).toBe(false);

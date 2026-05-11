@@ -8,7 +8,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal } from "lucide-react";
+import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal, ShieldCheck, ShieldOff } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
 import { SaveAsDialog } from "./save-as-dialog";
@@ -99,7 +99,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const [csvMode, setCsvMode] = useState<"table" | "raw">("table");
 
   // SQL file: connection picker + autocomplete + run in DB viewer
-  const { connections, cachedTables, refreshTables } = useConnections();
+  const { connections, cachedTables, refreshTables, updateConnection } = useConnections();
   const [sqlConnId, setSqlConnId] = useState<number | null>(() => {
     if (!isSql || !filePath) return null;
     const stored = localStorage.getItem(`ppm:sql-conn:${filePath}`);
@@ -549,6 +549,20 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       >
         <Play className="size-3.5" />
       </button>
+      {selectedSqlConn && (
+        <button
+          type="button"
+          onClick={() => updateConnection(selectedSqlConn.id, { readonly: selectedSqlConn.readonly ? 0 : 1 })}
+          className={`flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] transition-colors ${
+            selectedSqlConn.readonly
+              ? "text-muted-foreground hover:text-foreground"
+              : "bg-destructive/15 text-destructive"
+          }`}
+          title={selectedSqlConn.readonly ? "Readonly — click to allow writes" : "WRITE mode — click to enable readonly"}
+        >
+          {selectedSqlConn.readonly ? <ShieldCheck className="size-3" /> : <><ShieldOff className="size-3" /><span className="font-medium">WRITE</span></>}
+        </button>
+      )}
     </div>
   ) : null;
 

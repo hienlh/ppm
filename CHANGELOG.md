@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.70] - 2026-05-11
+
+### Fixed
+- **SQL readonly false positive**: `isReadOnlyQuery` no longer blocks SELECT queries containing write keywords inside string literals (e.g. `'NEEDS UPDATE'`)
+
+### Added
+- **Readonly toggle on SQL toolbar**: Quick toggle button next to Play button — shows ShieldCheck when readonly, destructive `WRITE` badge when writes enabled
+
 ## [0.13.69] - 2026-05-10
 
 ### Fixed
