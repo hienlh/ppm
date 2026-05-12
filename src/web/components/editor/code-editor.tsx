@@ -516,6 +516,27 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
           },
         });
         codeLensDisposable.current.push(provider);
+
+        // Folding ranges for BEGIN...COMMIT/ROLLBACK/END blocks
+        const foldingProvider = monaco.languages.registerFoldingRangeProvider("sql", {
+          provideFoldingRanges: (model: MonacoType.editor.ITextModel) => {
+            if (model !== thisModel) return [];
+            const ranges: MonacoType.languages.FoldingRange[] = [];
+            const lineCount = model.getLineCount();
+            const beginStack: number[] = [];
+            for (let i = 1; i <= lineCount; i++) {
+              const line = model.getLineContent(i).trim();
+              if (/^BEGIN(;|\s|$)/i.test(line)) {
+                beginStack.push(i);
+              } else if (/^(COMMIT|ROLLBACK|END)(;|\s|$)/i.test(line) && beginStack.length > 0) {
+                const startLine = beginStack.pop()!;
+                ranges.push({ start: startLine, end: i, kind: monaco.languages.FoldingRangeKind.Region });
+              }
+            }
+            return ranges;
+          },
+        });
+        codeLensDisposable.current.push(foldingProvider);
       }
     }
   }, [sqlSchemaInfo]); // eslint-disable-line react-hooks/exhaustive-deps

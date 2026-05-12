@@ -1,10 +1,11 @@
 # Changelog
 
-## [0.13.73] - 2026-05-12
+## [0.13.74] - 2026-05-12
 
 ### Fixed
 - **SQL BEGIN transaction error in Postgres**: Running `BEGIN;` in SQL editor no longer throws `UNSAFE_TRANSACTION` — transaction control statements are now handled gracefully via `sql.begin()` instead of raw `sql.unsafe()`
 - **SQL CodeLens groups transaction blocks**: `BEGIN...COMMIT/ROLLBACK` blocks now show a single "▷ Run Transaction" button that executes the entire block atomically; individual statements inside still get their own "▷ Run" buttons
+- **SQL transaction block folding**: `BEGIN...COMMIT/ROLLBACK/END` blocks are now collapsible in the editor so users can see where the transaction starts and ends
 
 ## [0.13.72] - 2026-05-12
 
