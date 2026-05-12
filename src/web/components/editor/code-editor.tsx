@@ -448,12 +448,17 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             let stmtLines: string[] = [];
             let dollarBlock = false; // Track DO $$ ... $$ blocks
 
-            const addLens = (line: number, stmt: string) => {
+            // Transaction block tracking: group BEGIN...COMMIT into single Run Transaction
+            const txPattern = /^(BEGIN|COMMIT|ROLLBACK|END)(;|\s|$)/i;
+            let txBlockStartLine = -1;
+            let txBlockStmts: string[] = [];
+
+            const addLens = (line: number, stmt: string, title = "\u25B7 Run") => {
               const trimmed = stmt.trim();
               if (!trimmed || trimmed.startsWith("--")) return;
               lenses.push({
                 range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
-                command: { id: cmdId, title: "\u25B7 Run", arguments: [trimmed] },
+                command: { id: cmdId, title, arguments: [trimmed] },
               });
             };
 
@@ -472,10 +477,37 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
 
               // Only split on ; when NOT inside a $$ block
               if (!dollarBlock && trimmed.endsWith(";")) {
-                addLens(stmtStartLine, stmtLines.join("\n"));
+                const stmt = stmtLines.join("\n").trim();
+                const isTxStart = /^BEGIN(;|\s|$)/i.test(stmt);
+                const isTxEnd = /^(COMMIT|ROLLBACK|END)(;|\s|$)/i.test(stmt);
+
+                if (txBlockStartLine === -1 && isTxStart) {
+                  // Start collecting transaction block
+                  txBlockStartLine = stmtStartLine;
+                  txBlockStmts = [stmt];
+                } else if (txBlockStartLine > -1) {
+                  txBlockStmts.push(stmt);
+                  // Individual Run for non-tx-control statements inside block
+                  if (!isTxEnd && !txPattern.test(stmt)) {
+                    addLens(stmtStartLine, stmt);
+                  }
+                  if (isTxEnd) {
+                    // Complete block — add Run Transaction at BEGIN line
+                    addLens(txBlockStartLine, txBlockStmts.join("\n"), "\u25B7 Run Transaction");
+                    txBlockStartLine = -1;
+                    txBlockStmts = [];
+                  }
+                } else {
+                  addLens(stmtStartLine, stmt);
+                }
+
                 stmtStartLine = -1;
                 stmtLines = [];
               }
+            }
+            // Unclosed transaction block — still offer Run Transaction
+            if (txBlockStartLine > -1 && txBlockStmts.length > 1) {
+              addLens(txBlockStartLine, txBlockStmts.join("\n"), "\u25B7 Run Transaction");
             }
             if (stmtStartLine > 0 && stmtLines.join("").trim()) {
               addLens(stmtStartLine, stmtLines.join("\n"));

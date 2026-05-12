@@ -164,9 +164,28 @@ class PostgresService {
   /** Execute arbitrary SQL */
   async executeQuery(connectionString: string, sqlText: string): Promise<PgQueryResult> {
     const sql = this.connect(connectionString);
-    const trimmed = sqlText.trim().toUpperCase();
-    const isSelect = trimmed.startsWith("SELECT") || trimmed.startsWith("EXPLAIN") ||
-      trimmed.startsWith("SHOW") || trimmed.startsWith("\\D");
+    const trimmed = sqlText.trim();
+    const upper = trimmed.toUpperCase();
+
+    // postgres.js blocks raw BEGIN/COMMIT/ROLLBACK with connection pooling (max > 1).
+    // Detect transaction control and route through executeScript which uses sql.begin().
+    const txPattern = /^(BEGIN|COMMIT|ROLLBACK|END)(;|\s|$)/i;
+    const statements = splitSqlStatements(trimmed);
+    const hasTxControl = statements.some((s) => txPattern.test(s.trim()));
+    if (hasTxControl) {
+      const realStatements = statements.filter((s) => !txPattern.test(s.trim()));
+      if (realStatements.length === 0) {
+        // Only transaction control statements (e.g. bare "BEGIN;") — no-op
+        return { columns: [], rows: [], rowsAffected: 0, changeType: "modify", executionTimeMs: 0 };
+      }
+      // Multi-statement block with tx control — run as transaction via sql.begin()
+      const start = performance.now();
+      const result = await this.executeScript(connectionString, trimmed);
+      return { columns: [], rows: [], rowsAffected: result.statementsRun, changeType: "modify", executionTimeMs: result.executionTimeMs };
+    }
+
+    const isSelect = upper.startsWith("SELECT") || upper.startsWith("EXPLAIN") ||
+      upper.startsWith("SHOW") || upper.startsWith("\\D");
 
     const start = performance.now();
     if (isSelect) {
