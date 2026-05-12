@@ -1222,16 +1222,25 @@ export function searchTableCache(query: string): Array<TableCacheRow & { connect
   // Split on spaces so "company parent" matches "company_parents", "company.parent", etc.
   const words = query.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return [];
-  const params = words.map((w) => `%${w.replace(/[%_\\]/g, "\\$&")}%`);
-  const whereClauses = params.map(() => `tc.table_name LIKE ? ESCAPE '\\'`).join(" AND ");
+  const escaped = words.map((w) => w.replace(/[%_\\]/g, "\\$&"));
+  const likeParams = escaped.map((w) => `%${w}%`);
+  const whereClauses = likeParams.map(() => `tc.table_name LIKE ? ESCAPE '\\'`).join(" AND ");
+  // Scoring: exact match (0) > prefix (1) > contains (2), then shorter name first
+  const scoreExpr = `CASE
+    WHEN LOWER(tc.table_name) = ? THEN 0
+    WHEN LOWER(tc.table_name) LIKE ? ESCAPE '\\' THEN 1
+    ELSE 2
+  END`;
+  const exactParam = words.join("_").toLowerCase();
+  const prefixParam = `${escaped[0]}%`;
   return getDb().query(
     `SELECT tc.*, c.name as connection_name, c.type as connection_type, c.color as connection_color
      FROM connection_table_cache tc
      JOIN connections c ON tc.connection_id = c.id
      WHERE ${whereClauses}
-     ORDER BY tc.table_name, c.name
+     ORDER BY (${scoreExpr}), LENGTH(tc.table_name), tc.table_name, c.name
      LIMIT 50`,
-  ).all(...params) as Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }>;
+  ).all(...likeParams, exactParam, prefixParam) as Array<TableCacheRow & { connection_name: string; connection_type: string; connection_color: string | null }>;
 }
 
 // ---------------------------------------------------------------------------

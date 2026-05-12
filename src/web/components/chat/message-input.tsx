@@ -3,7 +3,7 @@ import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clo
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
-import { isSupportedFile, isImageFile } from "@/lib/file-support";
+import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
@@ -79,7 +79,6 @@ export const MessageInput = memo(function MessageInput({
   externalFiles,
   externalPaths,
   onExternalPathsConsumed,
-  onDisambiguate,
   initialValue,
   onContentChange,
   autoFocus,
@@ -364,40 +363,10 @@ export const MessageInput = memo(function MessageInput({
     [projectName],
   );
 
-  /** Process dropped/pasted/selected files — resolves paths via server when possible */
+  /** Process files — always uploads to server. Path resolution only happens via @ picker. */
   const processFiles = useCallback(
     async (files: File[]) => {
       for (const file of files) {
-        // Step 1: Try server-side filename resolution for all files
-        if (projectName) {
-          try {
-            const data = await api.get<{ matches: FileNode[] }>(
-              `${projectUrl(projectName)}/files/resolve?name=${encodeURIComponent(file.name)}`,
-            );
-            if (data.matches.length === 1) {
-              const cur = valueRef.current;
-              const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
-              writeTextareas(cur + sep + `@${data.matches[0]!.path} `);
-              continue;
-            }
-            if (data.matches.length > 1) {
-              onDisambiguate?.(data.matches);
-              continue;
-            }
-            // 0 matches → fall through to existing behavior
-          } catch {
-            // Resolve failed → fall through
-          }
-        }
-
-        // Step 2: Fallback — upload supported files, insert name for unsupported
-        if (!isSupportedFile(file)) {
-          const cur = valueRef.current;
-          const sep = cur.length > 0 && !cur.endsWith(" ") ? " " : "";
-          writeTextareas(cur + sep + file.name);
-          continue;
-        }
-
         const id = randomId();
         const isImg = isImageFile(file);
         const previewUrl = isImg ? URL.createObjectURL(file) : undefined;
@@ -426,7 +395,7 @@ export const MessageInput = memo(function MessageInput({
       }
       (mobileTextareaRef.current ?? textareaRef.current)?.focus();
     },
-    [uploadFile, writeTextareas, projectName, onDisambiguate],
+    [uploadFile],
   );
 
   const removeAttachment = useCallback((id: string) => {

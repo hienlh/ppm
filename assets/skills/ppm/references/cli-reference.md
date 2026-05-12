@@ -700,7 +700,7 @@ Restart the server (keeps tunnel alive)
 Manage and inspect discovered skills & commands
 
 **Options:**
-- `--project <path>` — Project path (default: `"/Users/hienlh/Projects/ppm"`)
+- `--project <path>` — Project path (default: `"/home/hienlh/Projects/ppm"`)
 
 **Usage:** `ppm skills [options] [command]`
 
@@ -710,7 +710,7 @@ List all discovered skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"/Users/hienlh/Projects/ppm"`)
+- `--project <path>` — Project path (default: `"/home/hienlh/Projects/ppm"`)
 
 ### `ppm skills search`
 
@@ -718,7 +718,7 @@ Fuzzy search skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"/Users/hienlh/Projects/ppm"`)
+- `--project <path>` — Project path (default: `"/home/hienlh/Projects/ppm"`)
 
 **Usage:** `ppm skills search [options] <query>`
 
@@ -728,7 +728,7 @@ Show detailed info for a specific skill
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"/Users/hienlh/Projects/ppm"`)
+- `--project <path>` — Project path (default: `"/home/hienlh/Projects/ppm"`)
 
 **Usage:** `ppm skills info [options] <name>`
 

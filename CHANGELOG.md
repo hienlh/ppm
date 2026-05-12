@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.72] - 2026-05-12
+
+### Fixed
+- **File upload sends path instead of content**: Attaching files via paperclip, paste, or drag-drop now always uploads file content to server instead of resolving to project paths — fixes broken references when host machine differs from PPM server
+
 ## [0.13.71] - 2026-05-11
 
 ### Added

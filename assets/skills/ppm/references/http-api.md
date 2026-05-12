@@ -108,6 +108,8 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/projects`
 - `POST   /api/projects`
 - `GET    /api/projects/suggest-dirs`
+- `GET    /api/projects/last-clone-dir`
+- `POST   /api/projects/git/clone`
 - `PATCH  /api/projects/reorder`
 - `GET    /api/projects/projects`
 - `PATCH  /api/projects/:name/color`
@@ -210,4 +212,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.13.66 -->
+<!-- Generated from src/server/routes/ for PPM v0.13.71 -->
