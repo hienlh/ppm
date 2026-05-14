@@ -184,8 +184,8 @@ class PostgresService {
       return { columns: [], rows: [], rowsAffected: result.statementsRun, changeType: "modify", executionTimeMs: result.executionTimeMs };
     }
 
-    const isSelect = upper.startsWith("SELECT") || upper.startsWith("EXPLAIN") ||
-      upper.startsWith("SHOW") || upper.startsWith("\\D");
+    const isSelect = upper.startsWith("SELECT") || upper.startsWith("WITH") ||
+      upper.startsWith("EXPLAIN") || upper.startsWith("SHOW") || upper.startsWith("\\D");
 
     const start = performance.now();
     if (isSelect) {

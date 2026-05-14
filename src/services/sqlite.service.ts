@@ -124,7 +124,8 @@ class SqliteService {
     const abs = this.resolvePath(projectPath, dbPath);
     const db = this.open(abs);
     const trimmed = sql.trim().toUpperCase();
-    const isSelect = trimmed.startsWith("SELECT") || trimmed.startsWith("PRAGMA") || trimmed.startsWith("EXPLAIN");
+    const isSelect = trimmed.startsWith("SELECT") || trimmed.startsWith("WITH") ||
+      trimmed.startsWith("PRAGMA") || trimmed.startsWith("EXPLAIN");
 
     const start = performance.now();
     if (isSelect) {
