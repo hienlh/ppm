@@ -158,6 +158,41 @@ describe("Session Fork — route dispatch", () => {
     expect(json.error).toContain("does not support forking");
   });
 
+  it("fork with messageId that SDK can't find returns 400 (not silent empty session)", async () => {
+    // Regression: previously, when SDK forkSession threw "Message not found"
+    // (e.g., ghost uuid from interrupted streaming), backend silently created
+    // a fresh empty session and returned 201. This produced an empty fork tab
+    // with no user feedback. New behavior: return 400 with the SDK error.
+    const { providerRegistry } = await import("../../../src/providers/registry.ts");
+    const mock = providerRegistry.get("mock") as any;
+    const original = mock.forkAtMessage;
+    mock.forkAtMessage = async () => {
+      throw new Error("Message ghost-uuid not found in session");
+    };
+    try {
+      const createRes = await req("/chat/sessions", {
+        method: "POST",
+        body: JSON.stringify({ providerId: "mock", title: "Ghost Fork" }),
+      });
+      const { data: source } = (await createRes.json()) as any;
+
+      const forkRes = await req(`/chat/sessions/${source.id}/fork?providerId=mock`, {
+        method: "POST",
+        body: JSON.stringify({ messageId: "ghost-uuid" }),
+      });
+      const json = (await forkRes.json()) as any;
+
+      expect(forkRes.status).toBe(400);
+      expect(json.ok).toBe(false);
+      expect(json.error).toContain("Cannot fork at message");
+      expect(json.error).toContain("not found");
+    } finally {
+      // Restore: delete property so provider goes back to not supporting fork
+      if (original === undefined) delete mock.forkAtMessage;
+      else mock.forkAtMessage = original;
+    }
+  });
+
   it("fork with unknown provider returns 404", async () => {
     const createRes = await req("/chat/sessions", {
       method: "POST",

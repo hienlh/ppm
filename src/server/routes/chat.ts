@@ -401,12 +401,13 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         };
         return c.json(ok({ ...forkedSession, forkedFrom: sourceId }), 201);
       } catch (forkErr) {
-        // Message UUID may no longer exist after SDK compaction — fall back to fresh session
-        console.warn(`[chat] forkAtMessage failed (message may be compacted): ${(forkErr as Error).message}`);
-        const session = await chatService.createSession(providerId, {
-          projectName, projectPath, title: "Forked Chat",
-        });
-        return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
+        // SDK forkSession throws when upToMessageId is invalid or missing from the
+        // source JSONL (e.g., ghost uuid never persisted, message belongs to another session).
+        // Surface as 400 instead of silently creating an empty session — FE can show a toast
+        // and let the user pick a different fork point.
+        const msg = (forkErr as Error).message;
+        console.warn(`[chat] forkAtMessage failed: ${msg}`);
+        return c.json(err(`Cannot fork at message: ${msg}`), 400);
       }
     } else {
       // No messageId (fork at first message) — create a fresh empty session

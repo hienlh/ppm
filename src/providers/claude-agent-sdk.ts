@@ -1112,8 +1112,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // Partial assistant message — streaming text deltas
         if ((msg as any).type === "partial" || (msg as any).type === "stream_event") {
           const partial = msg as any;
-          // Track assistant UUID from top-level messages (not subagent children)
-          if (!parentId && partial.uuid) lastAssistantUuid = partial.uuid;
+          // NOTE: Do NOT capture lastAssistantUuid from stream_event/partial here.
+          // SDKPartialAssistantMessage.uuid is a per-event uuid (not the persisted message uuid).
+          // Per SDK contract: "The message ID should be from SDKAssistantMessage.uuid".
+          // Capturing it here produces ghost uuids when the final `assistant` message never
+          // arrives (e.g., auto-compact mid-turn, account rotation abort) — causing fork to fail.
+          // Canonical uuid is captured below in the `assistant` branch only.
           // Handle stream_event (raw API events) for text deltas
           if ((msg as any).type === "stream_event") {
             const event = partial.event;

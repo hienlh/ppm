@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.76] - 2026-05-15
+
+### Fixed
+- **Fork session returns empty session**: Forking a chat at a specific message no longer silently creates an empty session when the SDK can't find the message UUID. Backend now returns `400` with clear error and FE shows a toast — common after auto-compaction or interrupted streams.
+- **Ghost message UUIDs in streaming**: Provider no longer captures `lastMessageUuid` from `stream_event` partial envelopes (per-event UUIDs that aren't persisted to JSONL). Only canonical `SDKAssistantMessage.uuid` is used, eliminating ghost UUIDs that broke fork/rewind around auto-compact boundaries.
+
 ## [0.13.74] - 2026-05-12
 
 ### Fixed

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Loader2, Upload, X } from "lucide-react";
+import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
 import { useChat } from "@/hooks/use-chat";
 import { useUsage } from "@/hooks/use-usage";
@@ -203,6 +204,15 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       });
     } catch (e) {
       console.error("Fork failed:", e);
+      // Backend returns 400 when upToMessageId is missing from source JSONL (ghost uuid
+      // from interrupted streams, compaction edge cases). Surface to user instead of
+      // silent failure / empty session.
+      const msg = (e as Error)?.message || "Unknown error";
+      toast.error("Cannot fork from this message", {
+        description: msg.includes("not found") || msg.includes("Invalid upToMessageId")
+          ? "The original message is no longer available in the session transcript. Try forking from a different message."
+          : msg,
+      });
     }
   }, [sessionId, projectName, providerId]);
 
