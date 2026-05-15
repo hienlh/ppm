@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "./sql-completion-provider";
+import { createSqlCompletionProvider, clearCompletionCache, getStatementAtCursor, type SchemaInfo } from "./sql-completion-provider";
 
 interface SqlQueryEditorProps {
   onExecute: (sql: string) => void;
@@ -13,35 +13,6 @@ interface SqlQueryEditorProps {
   onSqlChange?: (sql: string) => void;
   /** Persisted SQL to restore on mount (takes priority over defaultValue if user hasn't edited) */
   persistedSql?: string;
-}
-
-/** Find the SQL statement surrounding the cursor line (split by ;) */
-export function getStatementAtCursor(text: string, cursorLine: number): string {
-  const lines = text.split("\n");
-  // Find statement boundaries (lines where a statement ends with ;)
-  let stmtStart = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i]!.trim();
-    if (i < cursorLine - 1 && trimmed.endsWith(";")) {
-      stmtStart = i + 1;
-    }
-  }
-  // Find statement end
-  let stmtEnd = lines.length - 1;
-  for (let i = cursorLine - 1; i < lines.length; i++) {
-    const trimmed = lines[i]!.trim();
-    if (trimmed.endsWith(";")) {
-      stmtEnd = i;
-      break;
-    }
-  }
-  // Skip leading empty/comment lines
-  while (stmtStart <= stmtEnd) {
-    const t = lines[stmtStart]!.trim();
-    if (t && !t.startsWith("--")) break;
-    stmtStart++;
-  }
-  return lines.slice(stmtStart, stmtEnd + 1).join("\n").trim();
 }
 
 /** Shared Monaco-based SQL query editor (editor only, no results) */

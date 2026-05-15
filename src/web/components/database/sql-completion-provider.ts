@@ -22,6 +22,32 @@ export const AGGREGATE_FNS = ["COUNT", "SUM", "AVG", "MIN", "MAX"];
 export const OPERATORS = ["=", "!=", "<>", ">", "<", ">=", "<=", "LIKE", "ILIKE", "IN", "NOT IN", "BETWEEN", "IS NULL", "IS NOT NULL"];
 export const SORT_DIRS = ["ASC", "DESC"];
 
+/** Find the SQL statement surrounding the cursor line (split by ;) */
+export function getStatementAtCursor(text: string, cursorLine: number): string {
+  const lines = text.split("\n");
+  let stmtStart = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    if (i < cursorLine - 1 && trimmed.endsWith(";")) {
+      stmtStart = i + 1;
+    }
+  }
+  let stmtEnd = lines.length - 1;
+  for (let i = cursorLine - 1; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    if (trimmed.endsWith(";")) {
+      stmtEnd = i;
+      break;
+    }
+  }
+  while (stmtStart <= stmtEnd) {
+    const t = lines[stmtStart]!.trim();
+    if (t && !t.startsWith("--")) break;
+    stmtStart++;
+  }
+  return lines.slice(stmtStart, stmtEnd + 1).join("\n").trim();
+}
+
 /** Client-side column cache to avoid redundant fetches */
 const columnCache = new Map<string, { name: string; type: string }[]>();
 
@@ -153,7 +179,8 @@ export function createSqlCompletionProvider(
           startColumn: word.startColumn, endColumn: word.endColumn,
         };
         const fullText = model.getValue();
-        const { tableRefs, aliasMap } = extractTableRefs(fullText);
+        const currentStmt = getStatementAtCursor(fullText, position.lineNumber);
+        const { tableRefs, aliasMap } = extractTableRefs(currentStmt);
         const suggestions: MonacoType.languages.CompletionItem[] = [];
         const ctx = getCompletionContext(textUntilPosition);
 
