@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.78] - 2026-05-15
+
+### Fixed
+- **Ctrl/Cmd+Enter not working in SQL files**: SQL files opened in code editor now support Ctrl/Cmd+Enter to run the statement at cursor, matching database viewer behavior
+
 ## [0.13.77] - 2026-05-15
 
 ### Fixed
