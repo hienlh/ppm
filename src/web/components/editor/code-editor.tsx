@@ -13,7 +13,7 @@ import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
-import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
+import { createSqlCompletionProvider, clearCompletionCache, getStatementAtCursor, type SchemaInfo } from "../database/sql-completion-provider";
 import { useConnections, type Connection } from "../database/use-connections";
 import { GlideDataGrid } from "../database/glide-data-grid";
 import type { GridColumnSchema } from "../database/glide-grid-types";
@@ -427,6 +427,19 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
 
     // Register CodeLens for inline Run buttons on .sql files (scoped to this editor's model)
     if (isSql) {
+      // Ctrl/Cmd+Enter → run statement at cursor
+      editor.addAction({
+        id: "run-sql-at-cursor",
+        label: "Run Statement at Cursor",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+        run: (ed) => {
+          const pos = ed.getPosition();
+          if (!pos) return;
+          const stmt = getStatementAtCursor(ed.getValue(), pos.lineNumber);
+          if (stmt) runSqlRef.current(stmt);
+        },
+      });
+
       codeLensDisposable.current.forEach((d) => d.dispose());
       codeLensDisposable.current = [];
 
