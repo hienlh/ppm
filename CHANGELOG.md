@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.77] - 2026-05-15
+
+### Fixed
+- **SQL autocomplete suggests columns from wrong table**: When editor contains multiple statements, autocomplete now scopes table references to the current statement at cursor instead of all statements in the editor
+
 ## [0.13.76] - 2026-05-15
 
 ### Fixed
