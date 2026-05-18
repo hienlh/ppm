@@ -48,8 +48,11 @@ function isPpmServiceActive(): boolean {
 }
 const ppmAlreadyRunning = isPpmServiceActive();
 
-// Always clean up after each test
+// Always clean up after each test — but only if PPM wasn't already running,
+// because disableAutoStart() calls `systemctl --user stop ppm.service` which
+// would kill the real production PPM service.
 afterEach(async () => {
+  if (ppmAlreadyRunning) return;
   try { await disableAutoStart(); } catch {}
 });
 
