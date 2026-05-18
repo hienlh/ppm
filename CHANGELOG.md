@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.79] - 2026-05-18
+
+### Fixed
+- **Running `bun test` on host kills PPM service**: Module-level `afterEach` in autostart-register test called `disableAutoStart()` after every test (including always-run cross-platform tests), which executed `systemctl --user stop ppm.service` and killed the production PPM
+
 ## [0.13.78] - 2026-05-15
 
 ### Fixed
