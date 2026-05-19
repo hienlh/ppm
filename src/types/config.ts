@@ -1,9 +1,3 @@
-export interface PushConfig {
-  vapid_public_key: string;
-  vapid_private_key: string;
-  vapid_subject: string;
-}
-
 export interface TelegramConfig {
   bot_token: string;
 }
@@ -28,7 +22,6 @@ export interface PpmConfig {
   auth: AuthConfig;
   projects: ProjectConfig[];
   ai: AIConfig;
-  push?: PushConfig;
   telegram?: TelegramConfig;
   clawbot?: PPMBotConfig;
   cloud_url?: string;

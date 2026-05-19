@@ -34,11 +34,19 @@ import { basename } from "@/lib/utils";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
+import { useSettingsStore } from "@/stores/settings-store";
 import { DraggableTab } from "./draggable-tab";
 import { cn } from "@/lib/utils";
 import type { Tab } from "@/stores/tab-store";
 import { downloadFile } from "@/lib/file-download";
 import { FileActions } from "@/components/explorer/file-actions";
+import {
+  ContextMenu as BarContextMenu,
+  ContextMenuContent as BarContextMenuContent,
+  ContextMenuItem as BarContextMenuItem,
+  ContextMenuTrigger as BarContextMenuTrigger,
+  ContextMenuSeparator as BarContextMenuSeparator,
+} from "@/components/ui/context-menu";
 
 const TAB_ICONS: Record<TabType, React.ElementType> = {
   terminal: Terminal,
@@ -112,6 +120,9 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
 
   const notifications = useNotificationStore((s) => s.notifications);
   const streamingSessions = useStreamingStore((s) => s.sessions);
+  const tabWrap = useSettingsStore((s) => s.tabWrap);
+  const toggleTabWrap = useSettingsStore((s) => s.toggleTabWrap);
+
   const { canScrollLeft, canScrollRight, scrollLeft: doScrollLeft, scrollRight: doScrollRight } =
     useTabOverflow(scrollRef);
 
@@ -269,25 +280,21 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
     openCommandPalette();
   }
 
-  /** Right-click on empty bar area → open command palette */
-  function handleBarContextMenu(e: React.MouseEvent) {
-    const target = e.target as HTMLElement;
-    if (target.closest("[data-tab-item]")) return;
-    e.preventDefault();
-    openCommandPalette();
-  }
-
   return (
     <>
+    <BarContextMenu>
+      <BarContextMenuTrigger asChild>
     <div
-      className="hidden md:flex items-center h-10 border-b border-border bg-background relative"
+      className={cn(
+        "hidden md:flex items-center border-b border-border bg-background relative",
+        tabWrap ? "min-h-10 flex-wrap" : "h-10",
+      )}
       onDragOver={handleDragOverBar}
       onDrop={handleDrop}
       onDoubleClick={handleBarDoubleClick}
-      onContextMenu={handleBarContextMenu}
     >
-      {/* Left scroll arrow */}
-      {canScrollLeft && (
+      {/* Left scroll arrow (hidden in wrap mode) */}
+      {!tabWrap && canScrollLeft && (
         <button
           onClick={doScrollLeft}
           className="absolute left-0 z-10 flex items-center justify-center size-8 bg-gradient-to-r from-background via-background to-transparent"
@@ -304,9 +311,12 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
       {/* Scrollable tabs + sticky + button */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-x-auto overflow-y-hidden min-w-0 scrollbar-none"
+        className={cn(
+          "flex-1 min-w-0 scrollbar-none",
+          tabWrap ? "overflow-y-auto overflow-x-hidden" : "overflow-x-auto overflow-y-hidden",
+        )}
       >
-        <div className="flex items-center h-10">
+        <div className={cn("flex items-center", tabWrap ? "flex-wrap min-h-10" : "h-10")}>
           {tabs.map((tab, i) => {
             const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
             const entry = sessionId ? notifications.get(sessionId) : undefined;
@@ -392,8 +402,8 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         </div>
       </div>
 
-      {/* Right scroll arrow */}
-      {canScrollRight && (
+      {/* Right scroll arrow (hidden in wrap mode) */}
+      {!tabWrap && canScrollRight && (
         <button
           onClick={doScrollRight}
           className="absolute right-10 z-10 flex items-center justify-center size-8 bg-gradient-to-l from-background via-background to-transparent"
@@ -407,6 +417,17 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         </button>
       )}
     </div>
+      </BarContextMenuTrigger>
+      <BarContextMenuContent>
+        <BarContextMenuItem onClick={toggleTabWrap}>
+          {tabWrap ? "Scroll Tabs" : "Wrap Tabs"}
+        </BarContextMenuItem>
+        <BarContextMenuSeparator />
+        <BarContextMenuItem onClick={() => openCommandPalette()}>
+          Open Command Palette
+        </BarContextMenuItem>
+      </BarContextMenuContent>
+    </BarContextMenu>
 
     {fileActionState && (
       <FileActions

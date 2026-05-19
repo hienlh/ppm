@@ -83,14 +83,6 @@ function runMigrations(database: Database): void {
         created_at TEXT DEFAULT (datetime('now'))
       );
 
-      CREATE TABLE IF NOT EXISTS push_subscriptions (
-        endpoint TEXT PRIMARY KEY,
-        p256dh TEXT NOT NULL,
-        auth TEXT NOT NULL,
-        expiration_time TEXT,
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-
       CREATE TABLE IF NOT EXISTS session_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT NOT NULL,
@@ -907,30 +899,6 @@ export function deleteSessionTitle(sessionId: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Push subscription helpers
-// ---------------------------------------------------------------------------
-
-export interface PushSubRow {
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-  expiration_time: string | null;
-}
-
-export function getPushSubscriptions(): PushSubRow[] {
-  return getDb().query("SELECT endpoint, p256dh, auth, expiration_time FROM push_subscriptions").all() as PushSubRow[];
-}
-
-export function upsertPushSubscription(endpoint: string, p256dh: string, auth: string, expirationTime?: string | null): void {
-  getDb().query(
-    "INSERT INTO push_subscriptions (endpoint, p256dh, auth, expiration_time) VALUES (?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, expiration_time = excluded.expiration_time",
-  ).run(endpoint, p256dh, auth, expirationTime ?? null);
-}
-
-export function deletePushSubscription(endpoint: string): void {
-  getDb().query("DELETE FROM push_subscriptions WHERE endpoint = ?").run(endpoint);
-}
-
 // ---------------------------------------------------------------------------
 // Session log helpers
 // ---------------------------------------------------------------------------

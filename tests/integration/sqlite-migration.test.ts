@@ -35,7 +35,6 @@ describe("SQLite schema migrations", () => {
     expect(names).toContain("projects");
     expect(names).toContain("session_map");
     expect(names).toContain("session_metadata");
-    expect(names).toContain("push_subscriptions");
     expect(names).toContain("session_logs");
     expect(names).toContain("usage_history");
     expect(names).toContain("connections");

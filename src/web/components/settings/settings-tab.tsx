@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
-  Moon, Sun, Monitor, Bell, BellOff, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug, FolderSearch,
+  Moon, Sun, Monitor, Bell, Check, ChevronRight, ArrowLeft,
+  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug, FolderSearch, WrapText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,17 +19,11 @@ import { ExtensionManagerSection } from "./extension-manager-section";
 import { PPMBotSettingsSection } from "./ppmbot-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
 import { FilesSettingsSection } from "./files-settings-section";
-import { usePushNotification } from "@/hooks/use-push-notification";
-
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
   { value: "system", label: "System", icon: Monitor },
 ];
-
-const pushSupported = "PushManager" in window && "serviceWorker" in navigator;
-const isIosNonPwa = /iPhone|iPad/.test(navigator.userAgent) &&
-  !window.matchMedia("(display-mode: standalone)").matches;
 
 type SettingsCategory = "ai" | "notifications" | "clawbot" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
 
@@ -46,8 +40,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
 ];
 
 export function SettingsTab() {
-  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled })));
-  const { permission, isSubscribed, loading, error: pushError, subscribe, unsubscribe } = usePushNotification();
+  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled, tabWrap, toggleTabWrap } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled, tabWrap: s.tabWrap, toggleTabWrap: s.toggleTabWrap })));
   const [activeCategory, setActiveCategory] = useState<SettingsCategory | null>(null);
   const [nameInput, setNameInput] = useState(deviceName ?? "");
   const [nameSaving, setNameSaving] = useState(false);
@@ -92,7 +85,7 @@ export function SettingsTab() {
         <ScrollArea className="flex-1 min-h-0">
           <div className="p-3">
             {activeCategory === "ai" && <AISettingsSection compact />}
-            {activeCategory === "notifications" && <NotificationsContent isSubscribed={isSubscribed} loading={loading} permission={permission} pushError={pushError} subscribe={subscribe} unsubscribe={unsubscribe} />}
+            {activeCategory === "notifications" && <NotificationsContent />}
             {activeCategory === "clawbot" && <PPMBotSettingsSection />}
             {/* Jira is now a sidebar tab with a toggle below */}
             {activeCategory === "proxy" && <ProxySettingsSection />}
@@ -183,6 +176,20 @@ export function SettingsTab() {
             </div>
           </section>
 
+          {/* Wrap Tabs toggle */}
+          <section className="space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <WrapText className="size-4 text-muted-foreground" />
+                <div>
+                  <p className="text-xs font-medium">Wrap Tabs</p>
+                  <p className="text-[11px] text-muted-foreground">Stack tabs in rows instead of scrolling</p>
+                </div>
+              </div>
+              <Switch checked={tabWrap} onCheckedChange={toggleTabWrap} />
+            </div>
+          </section>
+
           <Separator />
 
           {/* Category navigation list */}
@@ -231,67 +238,20 @@ export function SettingsTab() {
 }
 
 /** Notifications detail content — extracted to keep SettingsTab clean */
-function NotificationsContent({ isSubscribed, loading, permission, pushError, subscribe, unsubscribe }: {
-  isSubscribed: boolean;
-  loading: boolean;
-  permission: NotificationPermission;
-  pushError: string | null;
-  subscribe: () => void;
-  unsubscribe: () => void;
-}) {
+function NotificationsContent() {
   return (
     <div className="space-y-4">
-      {/* Push */}
+      {/* Cloud Push */}
       <section className="space-y-2">
         <h3 className="text-xs font-medium text-muted-foreground">Push Notifications</h3>
-        {!pushSupported ? (
-          <p className="text-[11px] text-muted-foreground">
-            Push notifications not supported in this browser.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                {isSubscribed ? <Bell className="size-3.5" /> : <BellOff className="size-3.5" />}
-                <span className="text-xs">Push notifications</span>
-              </div>
-              <Button
-                variant={isSubscribed ? "default" : "outline"}
-                size="sm"
-                className="h-7 text-xs cursor-pointer"
-                disabled={loading || permission === "denied"}
-                onClick={() => (isSubscribed ? unsubscribe() : subscribe())}
-              >
-                {loading ? "..." : isSubscribed ? "On" : "Off"}
-              </Button>
-            </div>
-            {isSubscribed && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs w-full cursor-pointer"
-                onClick={() => {
-                  new Notification("PPM Test", { body: "Push notifications are working!" });
-                }}
-              >
-                Test notification
-              </Button>
-            )}
-            {pushError && (
-              <p className="text-[11px] text-destructive">{pushError}</p>
-            )}
-            {permission === "denied" && (
-              <p className="text-[11px] text-destructive">
-                Notifications blocked. Enable in browser settings.
-              </p>
-            )}
-            {isIosNonPwa && (
-              <p className="text-[11px] text-muted-foreground">
-                On iOS, install PPM to Home Screen for push notifications.
-              </p>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-1.5">
+          <Bell className="size-3.5 text-muted-foreground" />
+          <span className="text-xs">Managed via PPM Cloud</span>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Push notifications are now dispatched through PPM Cloud.
+          Visit your Cloud dashboard to manage subscriptions.
+        </p>
       </section>
 
       <Separator />

@@ -44,7 +44,17 @@ interface CommandResultMsg extends WsMessage {
   data?: Record<string, unknown>;
 }
 
-type OutboundMsg = HeartbeatMsg | StateChangeMsg | CommandAckMsg | CommandResultMsg;
+interface NotificationMsg extends WsMessage {
+  type: "notification";
+  title: string;
+  body: string;
+  project: string;
+  sessionId: string;
+  sessionTitle?: string;
+  notificationType: "done" | "approval_request" | "question";
+}
+
+type OutboundMsg = HeartbeatMsg | StateChangeMsg | CommandAckMsg | CommandResultMsg | NotificationMsg;
 
 interface CommandMsg extends WsMessage {
   type: "command";
@@ -129,6 +139,23 @@ export function isConnected(): boolean {
   // external monitors from killing a valid WS during the 500ms auth delay.
   if (connected) return true;
   return ws !== null && ws.readyState <= WebSocket.OPEN;
+}
+
+/** Send a push notification via Cloud WS (Cloud dispatches Web Push to subscribed browsers) */
+export function sendNotification(payload: {
+  title: string;
+  body: string;
+  project: string;
+  sessionId: string;
+  sessionTitle?: string;
+  notificationType: "done" | "approval_request" | "question";
+}): void {
+  const msg: NotificationMsg = {
+    type: "notification",
+    ...payload,
+    timestamp: new Date().toISOString(),
+  };
+  send(msg);
 }
 
 // ─── Internal ───────────────────────────────────────

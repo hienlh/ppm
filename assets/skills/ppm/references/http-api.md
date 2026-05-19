@@ -121,12 +121,6 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PATCH  /api/projects/:name`
 - `DELETE /api/projects/:name`
 
-## /api/push
-
-- `GET    /api/push/vapid-key`
-- `POST   /api/push/subscribe`
-- `DELETE /api/push/subscribe`
-
 ## /api/settings
 
 - `PUT    /api/settings/device-name`
@@ -212,4 +206,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.13.72 -->
+<!-- Generated from src/server/routes/ for PPM v0.13.79 -->

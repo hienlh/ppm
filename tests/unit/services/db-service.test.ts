@@ -21,9 +21,6 @@ import {
   pinSession,
   unpinSession,
   getPinnedSessionIds,
-  getPushSubscriptions,
-  upsertPushSubscription,
-  deletePushSubscription,
   insertSessionLog,
   getSessionLogs,
   insertUsageRecord,
@@ -46,7 +43,6 @@ describe("db.service", () => {
       expect(tables).toContain("config");
       expect(tables).toContain("projects");
       expect(tables).toContain("session_metadata");
-      expect(tables).toContain("push_subscriptions");
       expect(tables).toContain("session_logs");
       expect(tables).toContain("usage_history");
       expect(tables).toContain("accounts");
@@ -245,39 +241,6 @@ describe("db.service", () => {
 
     it("unpin is safe on nonexistent key", () => {
       expect(() => unpinSession("nonexistent")).not.toThrow();
-    });
-  });
-
-  describe("push subscriptions CRUD", () => {
-    const ep1 = "https://fcm.googleapis.com/send/sub1";
-    const ep2 = "https://fcm.googleapis.com/send/sub2";
-
-    it("upsert and list subscriptions", () => {
-      upsertPushSubscription(ep1, "key1", "auth1");
-      upsertPushSubscription(ep2, "key2", "auth2", "1700000000000");
-      const subs = getPushSubscriptions();
-      expect(subs).toHaveLength(2);
-      expect(subs[0]!.endpoint).toBe(ep1);
-      expect(subs[1]!.expiration_time).toBe("1700000000000");
-    });
-
-    it("upserts on duplicate endpoint", () => {
-      upsertPushSubscription(ep1, "old-key", "old-auth");
-      upsertPushSubscription(ep1, "new-key", "new-auth");
-      const subs = getPushSubscriptions();
-      expect(subs).toHaveLength(1);
-      expect(subs[0]!.p256dh).toBe("new-key");
-    });
-
-    it("deletes by endpoint", () => {
-      upsertPushSubscription(ep1, "k", "a");
-      upsertPushSubscription(ep2, "k", "a");
-      deletePushSubscription(ep1);
-      expect(getPushSubscriptions()).toHaveLength(1);
-    });
-
-    it("returns empty array when no subscriptions", () => {
-      expect(getPushSubscriptions()).toEqual([]);
     });
   });
 

@@ -15,6 +15,7 @@ interface SettingsState {
   sidebarWidth: number;
   gitStatusViewMode: GitStatusViewMode;
   wordWrap: boolean;
+  tabWrap: boolean;
   sidebarActiveTab: SidebarActiveTab;
   jiraEnabled: boolean;
   deviceName: string | null;
@@ -26,6 +27,7 @@ interface SettingsState {
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleWordWrap: () => void;
+  toggleTabWrap: () => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
   fetchServerInfo: () => Promise<void>;
 }
@@ -36,6 +38,7 @@ interface PersistedSettings {
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
   wordWrap?: boolean;
+  tabWrap?: boolean;
   sidebarActiveTab?: SidebarActiveTab;
   jiraEnabled?: boolean;
 }
@@ -108,6 +111,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   wordWrap: _initial.wordWrap ?? false,
+  tabWrap: _initial.tabWrap ?? false,
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "explorer",
   jiraEnabled: _initial.jiraEnabled ?? false,
   deviceName: null,
@@ -172,6 +176,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().wordWrap;
     persistSettings({ wordWrap: next });
     set({ wordWrap: next });
+  },
+
+  toggleTabWrap: () => {
+    const next = !get().tabWrap;
+    persistSettings({ tabWrap: next });
+    set({ tabWrap: next });
   },
 
   setSidebarActiveTab: (tab) => {

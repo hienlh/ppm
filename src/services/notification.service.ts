@@ -19,15 +19,24 @@ class NotificationService {
     broadcastGlobalEvent(event);
   }
 
-  /** Broadcast notification to all channels (push, telegram). Fire-and-forget. */
-  async broadcast(_type: NotificationType, payload: NotificationPayload): Promise<void> {
+  /** Broadcast notification to all channels (cloud push, telegram). Fire-and-forget. */
+  async broadcast(type: NotificationType, payload: NotificationPayload): Promise<void> {
     const tasks: Promise<void>[] = [];
     const userOnline = hasActiveClient();
 
-    // Push notifications — always send (works as ambient alert)
+    // Cloud Push (replaces local Web Push) — Cloud dispatches to all subscribed browsers
     tasks.push(
-      import("./push-notification.service.ts")
-        .then(({ pushService }) => pushService.notifyAll(payload.title, payload.body))
+      import("./cloud-ws.service.ts")
+        .then(({ sendNotification }) => {
+          sendNotification({
+            title: payload.title,
+            body: payload.body,
+            project: payload.project,
+            sessionId: payload.sessionId,
+            sessionTitle: payload.sessionTitle,
+            notificationType: type,
+          });
+        })
         .catch(() => {}),
     );
 

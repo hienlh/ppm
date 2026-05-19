@@ -16,7 +16,7 @@ import {
 
 /** Top-level config keys stored in the config table (not projects) */
 const CONFIG_TABLE_KEYS: (keyof PpmConfig)[] = [
-  "device_name", "port", "host", "theme", "auth", "ai", "push", "telegram", "clawbot",
+  "device_name", "port", "host", "theme", "auth", "ai", "telegram", "clawbot",
 ];
 
 /** File filter config keys stored in the config table */
