@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.13.81] - 2026-05-19
+
+### Fixed
+- **Text not selectable in AI question dialog**: Question text, option labels, and descriptions in the AskUserQuestion card can now be selected and copied
+
+## [0.13.80] - 2026-05-18
+
+### Changed
+- **Cloud WS notification dispatch**: Replaced local web push with cloud WebSocket notification dispatch
+
 ## [0.13.79] - 2026-05-18
 
 ### Fixed
