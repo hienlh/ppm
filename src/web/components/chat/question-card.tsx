@@ -237,7 +237,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
           {!hasMultiple && currentQ.header && (
             <div className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">{currentQ.header}</div>
           )}
-          <div className="text-sm text-text-primary">{currentQ.question}</div>
+          <div className="text-sm text-text-primary select-text">{currentQ.question}</div>
           {currentQ.multiSelect && <div className="text-[11px] text-text-secondary">Select multiple</div>}
 
           {/* Options */}
@@ -246,10 +246,11 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
               const isSelected = (form.answers[form.activeTab] || []).includes(opt.label);
               const isFocused = kb.focusedOption === oi;
               return (
-                <button
+                <div
                   key={oi}
+                  role="button"
                   onClick={() => selectWithFocus(oi)}
-                  className={`text-left flex items-start gap-2.5 rounded px-2.5 py-2 text-xs border transition-all ${
+                  className={`text-left flex items-start gap-2.5 rounded px-2.5 py-2 text-xs border transition-all cursor-pointer select-text ${
                     isSelected
                       ? "border-primary bg-primary/10 text-text-primary"
                       : "border-border bg-background text-text-secondary hover:border-primary/40 hover:bg-primary/5"
@@ -264,7 +265,7 @@ export function QuestionCard({ questions, onSubmit, onSkip }: QuestionCardProps)
                     <span className="font-medium text-text-primary">{opt.label}</span>
                     {opt.description && <span className="text-[11px] text-text-secondary">{opt.description}</span>}
                   </div>
-                </button>
+                </div>
               );
             })}
 
