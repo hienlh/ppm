@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.82] - 2026-05-20
+
+### Fixed
+- **Compact command shows raw XML tags in chat UI**: SDK local-command tags (`<local-command-caveat>`, `<command-name>`, `<command-message>`, `<local-command-stdout>`) now properly parsed — compact messages render as clean slash command chip + plain text output instead of raw XML
+
 ## [0.13.81] - 2026-05-19
 
 ### Fixed
