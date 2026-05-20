@@ -363,12 +363,13 @@ const TAG_LABELS: Record<string, string> = {
   "available-deferred-tools": "Tools",
   "task-notification": "Task Result",
   "environment_details": "Environment",
+  "local-command-caveat": "System",
 };
 
 /** Extract system-injected XML tags into structured objects + clean text */
 function extractSystemTags(text: string): { cleanText: string; tags: SystemTag[] } {
   const tags: SystemTag[] = [];
-  const tagPattern = /<(system-reminder|available-deferred-tools|antml:[\w-]+|fast_mode_info|claudeMd|gitStatus|currentDate|task-notification|environment_details)[^>]*>([\s\S]*?)<\/\1>/g;
+  const tagPattern = /<(system-reminder|available-deferred-tools|antml:[\w-]+|fast_mode_info|claudeMd|gitStatus|currentDate|task-notification|environment_details|local-command-caveat)[^>]*>([\s\S]*?)<\/\1>/g;
   let match;
   while ((match = tagPattern.exec(text)) !== null) {
     const name = match[1]!;
@@ -387,14 +388,18 @@ interface SlashCommand {
   name: string;
   args?: string;
 }
-const COMMAND_TAG_RE = /<command-message>[\s\S]*?<\/command-message>\s*<command-name>([\s\S]*?)<\/command-name>(?:\s*<command-args>([\s\S]*?)<\/command-args>)?/;
-
 function parseCommandTags(text: string): { command: SlashCommand | null; cleanText: string } {
-  const match = text.match(COMMAND_TAG_RE);
-  if (!match) return { command: null, cleanText: text };
-  const name = match[1]!.trim();
-  const args = match[2]?.trim() || undefined;
-  const cleanText = text.replace(COMMAND_TAG_RE, "").trim();
+  const nameMatch = text.match(/<command-name>([\s\S]*?)<\/command-name>/);
+  if (!nameMatch) return { command: null, cleanText: text };
+  const name = nameMatch[1]!.trim();
+  const argsMatch = text.match(/<command-args>([\s\S]*?)<\/command-args>/);
+  const args = argsMatch?.[1]?.trim() || undefined;
+  // Strip all command tags regardless of order
+  const cleanText = text
+    .replace(/<command-name>[\s\S]*?<\/command-name>/g, "")
+    .replace(/<command-message>[\s\S]*?<\/command-message>/g, "")
+    .replace(/<command-args>[\s\S]*?<\/command-args>/g, "")
+    .trim();
   return { command: { name, args }, cleanText };
 }
 
@@ -434,7 +439,7 @@ function isPdfPath(path: string): boolean {
 }
 
 /** Detect if tags contain system-injected content (not real user input) */
-const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details"]);
+const SYSTEM_TAG_NAMES = new Set(["task-notification", "environment_details", "local-command-caveat"]);
 
 /** Extract leading terminal code fences from message text */
 function extractTerminalBlocks(text: string): { blocks: string[]; remainingText: string } {
@@ -459,7 +464,10 @@ function UserBubble({ content, messageId, projectName, onFork }: {
   const { files, text, tags, command, terminalBlocks } = useMemo(() => {
     const { blocks, remainingText: afterBlocks } = extractTerminalBlocks(content);
     const parsed = parseUserAttachments(afterBlocks);
-    const { cleanText: noSysTags, tags } = extractSystemTags(parsed.text);
+    // Strip local-command-stdout/stderr tags but keep their content as plain text
+    const withoutCmdOutput = parsed.text
+      .replace(/<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/g, "$1");
+    const { cleanText: noSysTags, tags } = extractSystemTags(withoutCmdOutput);
     const { command, cleanText } = parseCommandTags(noSysTags);
     const bodyText = command?.args
       ? (cleanText ? `${command.args}\n\n${cleanText}` : command.args)
