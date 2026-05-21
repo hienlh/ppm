@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.83] - 2026-05-21
+
+### Changed
+- **Upgrade Claude Agent SDK**: Upgraded `@anthropic-ai/claude-agent-sdk` from 0.2.81 to 0.3.146 — includes stability fixes for subprocess crash (JSON parse error on `◆` streaming token)
+
 ## [0.13.82] - 2026-05-20
 
 ### Fixed
