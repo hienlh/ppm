@@ -174,15 +174,30 @@ export function useExtensionWs(enabled = true) {
             }
             recoveryViews.delete(viewTypeSlug);
           } else if (!recentlyClosedViews.has(viewTypeSlug)) {
-            // Only create a new tab if this viewType wasn't recently closed by user
-            const currentProject = useTabStore.getState().currentProject;
-            useTabStore.getState().openTab({
-              type: "extension",
-              title: msg.title,
-              projectId: null,
-              closable: true,
-              metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(currentProject && { projectName: currentProject }) },
-            });
+            // Check non-active project grids — don't create a duplicate tab
+            // if this extension already exists in another project's layout
+            let existsInOtherProject = false;
+            for (const projectGrid of Object.values(ps.projectGrids || {})) {
+              for (const pid of projectGrid.flat()) {
+                const p = ps.panels[pid];
+                if (!p) continue;
+                if (p.tabs.some(tab => tab.id === baseTabId || tab.id.startsWith(`${baseTabId}@`))) {
+                  existsInOtherProject = true;
+                  break;
+                }
+              }
+              if (existsInOtherProject) break;
+            }
+            if (!existsInOtherProject) {
+              const currentProject = useTabStore.getState().currentProject;
+              useTabStore.getState().openTab({
+                type: "extension",
+                title: msg.title,
+                projectId: null,
+                closable: true,
+                metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(currentProject && { projectName: currentProject }) },
+              });
+            }
           }
           break;
         }

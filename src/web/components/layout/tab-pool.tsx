@@ -101,7 +101,7 @@ export function TabPool() {
   const tabEntries: { tabId: string; panelId: string; type: TabType; metadata?: Record<string, unknown>; isActive: boolean }[] = [];
   const seenTabs = new Set<string>();
 
-  const collectFromGrid = (projectGrid: string[][], projectName: string | null) => {
+  const collectFromGrid = (projectGrid: string[][], projectName: string | null, isActiveProject: boolean) => {
     for (const panelId of projectGrid.flat()) {
       const panel = panels[panelId];
       if (!panel) continue;
@@ -109,6 +109,9 @@ export function TabPool() {
         if (seenTabs.has(tab.id)) continue;
         // Skip tabs from other projects (race condition in openTab during project switch)
         if (tab.projectId && projectName && tab.projectId !== projectName) continue;
+        // Don't keep-alive extension tabs from non-active projects — their
+        // server-side recovery mechanism causes cross-project tab creation
+        if (!isActiveProject && (tab.type === "extension" || tab.type === "extension-webview")) continue;
         seenTabs.add(tab.id);
         tabEntries.push({
           tabId: tab.id,
@@ -122,12 +125,12 @@ export function TabPool() {
   };
 
   // Active project uses s.grid
-  collectFromGrid(grid, currentProject);
+  collectFromGrid(grid, currentProject, true);
 
   // Non-active projects use projectGrids (keep-alive)
   for (const [projectName, projectGrid] of Object.entries(projectGrids)) {
     if (projectName === currentProject) continue;
-    collectFromGrid(projectGrid, projectName);
+    collectFromGrid(projectGrid, projectName, false);
   }
 
   // Stable key order — prevents React from calling insertBefore() to reorder
