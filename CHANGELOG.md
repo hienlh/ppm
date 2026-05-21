@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.84] - 2026-05-21
+
+### Fixed
+- **Git Graph auto-reopens in wrong project**: Extension tabs (git-graph) from non-active projects no longer kept alive in TabPool — prevents recovery mechanism from creating phantom tabs showing another project's data on project switch
+
 ## [0.13.83] - 2026-05-21
 
 ### Changed
