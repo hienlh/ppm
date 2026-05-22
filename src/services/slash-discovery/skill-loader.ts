@@ -29,7 +29,7 @@ function walkDir(dir: string, visitor: (filePath: string) => void, visited = new
   const resolved = resolve(dir);
   if (visited.has(resolved)) return;
   // Prevent symlink escape: resolved path must stay within root boundary
-  if (rootBoundary && resolved !== rootBoundary && !resolved.startsWith(rootBoundary + "/")) return;
+  if (rootBoundary && resolved !== rootBoundary && !resolved.startsWith(rootBoundary + sep)) return;
   visited.add(resolved);
   let entries: string[];
   try { entries = readdirSync(dir); } catch { return; }
@@ -117,7 +117,7 @@ function loadSkills(root: SkillRoot): SlashItemWithSource[] {
       if (!filePath.endsWith(".md") || basename(filePath) === "SKILL.md") return;
       const dir = resolve(filePath, "..");
       let ancestor = dir;
-      while ((ancestor + "/").startsWith(boundary + "/") && ancestor !== boundary) {
+      while ((ancestor + sep).startsWith(boundary + sep) && ancestor !== boundary) {
         if (dirsWithSkillMd.has(ancestor)) return;
         ancestor = resolve(ancestor, "..");
       }

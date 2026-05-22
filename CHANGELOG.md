@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.85] - 2026-05-23
+
+### Fixed
+- **Skills not loading on Windows**: Slash skill/command discovery walker hardcoded `/` in its symlink-escape boundary check — on Windows `path.resolve()` returns backslash-separated paths, so every subdirectory under `.claude/skills` (and other ecosystem roots) was rejected and zero skills were discovered. Replaced literal `/` with `path.sep` in both boundary checks (`skill-loader.ts`)
+
 ## [0.13.84] - 2026-05-21
 
 ### Fixed
