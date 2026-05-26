@@ -325,7 +325,9 @@ function startServerHealthCheck(port: number) {
     healthFailCount++;
     if (healthFailCount >= SERVER_HEALTH_FAIL_THRESHOLD && serverChild) {
       log("WARN", `Server unresponsive (${healthFailCount} failures), killing`);
-      try { serverChild.kill(); } catch {}
+      const pid = serverChild.pid;
+      try { serverChild.kill("SIGTERM"); } catch {}
+      setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 1000).unref();
       healthFailCount = 0;
       // spawnServer loop handles respawn via exited promise
     }
@@ -461,12 +463,17 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     }
 
     // Kill server child to free the port; keep tunnel alive for domain continuity
-    // Use SIGKILL + process group kill to ensure grandchildren (SDK subprocesses) die too
+    // SIGTERM first for graceful socket release, then SIGKILL after brief wait
     log("INFO", "Stopping server before upgrade (tunnel kept alive)");
     if (serverChild) {
       const pid = serverChild.pid;
-      try { process.kill(-pid, "SIGKILL"); } catch {} // kill process group
-      try { serverChild.kill("SIGKILL"); } catch {}   // fallback: kill direct child
+      try { serverChild.kill("SIGTERM"); } catch {}
+      await Bun.sleep(500);
+      // Process group kill on Unix; direct kill on Windows (negative PID unsupported)
+      if (process.platform !== "win32") {
+        try { process.kill(-pid, "SIGKILL"); } catch {}
+      }
+      try { process.kill(pid, "SIGKILL"); } catch {}
       serverChild = null;
     }
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
@@ -505,13 +512,31 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
 
     // Spawn new supervisor using saved argv
     const cmd = originalArgv.slice();
-    const logFd = openSync(logFile(), "a");
-    const child = Bun.spawn({
-      cmd,
-      stdio: ["ignore", logFd, logFd],
-      env: process.env,
-    });
-    child.unref();
+    const newLogFd = openSync(logFile(), "a");
+    let killNewChild = () => {};
+
+    if (process.platform === "win32") {
+      // On Windows, Bun.spawn children die when parent exits (same job object).
+      // Use node:child_process with detached:true to create a truly independent process.
+      const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
+      const proc = nodeSpawn(cmd[0], cmd.slice(1), {
+        detached: true,
+        stdio: ["ignore", newLogFd, newLogFd],
+        env: process.env,
+        windowsHide: true,
+      });
+      killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };
+      proc.unref();
+      try { closeSync(newLogFd); } catch {} // child inherited fd, parent can close
+    } else {
+      const proc = Bun.spawn({
+        cmd,
+        stdio: ["ignore", newLogFd, newLogFd],
+        env: process.env,
+      });
+      killNewChild = () => { try { proc.kill(); } catch {} };
+      proc.unref();
+    }
 
     // Poll status.json for new supervisor PID (up to 30s)
     const start = Date.now();
@@ -534,7 +559,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
 
     // Timeout — new supervisor didn't start, restore old supervisor
     log("ERROR", "Self-replace timeout: new supervisor did not start");
-    try { child.kill(); } catch {}
+    killNewChild();
     try { unlinkSync(restartingFlag()); } catch {}
     shuttingDown = false;
     notifyStateChange("upgrading", "running", "upgrade_failed");
@@ -758,9 +783,11 @@ export async function softStop() {
   notifyStateChange(getState(), "stopped", "user_stop");
   setState("stopped");
 
-  // Kill server child
+  // SIGTERM for graceful socket release, then SIGKILL fallback
   if (serverChild) {
-    try { serverChild.kill(); } catch {}
+    const pid = serverChild.pid;
+    try { serverChild.kill("SIGTERM"); } catch {}
+    setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 1000).unref();
     serverChild = null;
   }
 
@@ -810,11 +837,14 @@ export function shutdown() {
   if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
   if (cloudMonitorTimer) clearInterval(cloudMonitorTimer);
 
-  // Use SIGKILL for children — SIGTERM leaves grandchildren (Claude SDK, etc.)
-  // alive, causing systemd to wait 90s then SIGKILL the entire cgroup
+  // SIGTERM first for graceful socket release, then SIGKILL after 2s
+  // to clean up grandchildren (Claude SDK subprocesses).
+  // On Windows, SIGTERM lets server.stop() run; SIGKILL is TerminateProcess.
   if (serverChild) {
     log("INFO", `Killing server child (PID: ${serverChild.pid})`);
-    try { serverChild.kill("SIGKILL"); } catch {}
+    try { serverChild.kill("SIGTERM"); } catch {}
+    const pid = serverChild.pid;
+    setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 2000).unref();
   }
   if (tunnelChild) {
     log("INFO", `Killing tunnel child (PID: ${tunnelChild.pid})`);
