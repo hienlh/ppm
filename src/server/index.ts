@@ -585,7 +585,7 @@ if (process.argv.includes("__serve__")) {
     }
   } catch { /* status.json missing or no shareUrl — normal */ }
 
-  Bun.serve({
+  const server = Bun.serve({
     port,
     hostname: host,
     fetch(req, server) {
@@ -687,10 +687,18 @@ if (process.argv.includes("__serve__")) {
       jiraWatcherService.startAll().catch((e) => {
         console.error("[jira] Failed to start watchers:", (e as Error).message);
       });
-      process.on("SIGTERM", () => jiraWatcherService.stopAll());
-      process.on("SIGINT", () => jiraWatcherService.stopAll());
     })
     .catch(() => {});
+
+  // Graceful shutdown: close the listening socket so the port is released
+  // before the process exits. Without this, SIGKILL leaves zombie sockets
+  // on Windows (the dead PID keeps the port in LISTENING state for hours).
+  const gracefulShutdown = () => {
+    try { server.stop(true); } catch {}
+    process.exit(0);
+  };
+  process.on("SIGTERM", gracefulShutdown);
+  process.on("SIGINT", gracefulShutdown);
 
   console.log(`Server child ready on port ${port}`);
 }
