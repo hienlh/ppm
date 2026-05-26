@@ -42,5 +42,22 @@ INF url=https://second-tunnel.trycloudflare.com
         "https://a-b-c-d-e.trycloudflare.com",
       );
     });
+
+    test("ignores api.trycloudflare.com from error message", () => {
+      // Regression: prior regex matched the API endpoint in cloudflared error
+      // output, causing supervisor to treat a failed tunnel as ready.
+      const stderr = `failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`;
+      expect(extractTunnelUrl(stderr)).toBeNull();
+    });
+
+    test("ignores api endpoint but extracts real tunnel URL after retry", () => {
+      const stderr = `
+INF Requesting new quick Tunnel on trycloudflare.com...
+INF Post https://api.trycloudflare.com/tunnel failed
+INF Retrying...
+INF url=https://real-tunnel-name.trycloudflare.com
+`;
+      expect(extractTunnelUrl(stderr)).toBe("https://real-tunnel-name.trycloudflare.com");
+    });
   });
 });

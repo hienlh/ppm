@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.86] - 2026-05-26
+
+### Fixed
+- **Tunnel permanently disabled on transient cloudflared API failure**: Regex `TUNNEL_URL_REGEX` matched `https://api.trycloudflare.com` from cloudflared error output (`failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel"`), causing supervisor to treat a failed tunnel as ready with a bogus URL. Combined with `tunnelRestarts > MAX_RESTARTS` permanently disabling the tunnel, a brief network blip left the server with no tunnel until full restart. Fix: negative-lookahead excludes `api.` subdomain (`tunnel.service.ts`, `supervisor.ts`); after MAX_RESTARTS the supervisor now waits 10min, resets the counter, and resumes spawning instead of giving up.
+
 ## [0.13.85] - 2026-05-23
 
 ### Fixed

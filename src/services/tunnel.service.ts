@@ -4,7 +4,7 @@ import { existsSync, unlinkSync, readFileSync, writeFileSync, renameSync } from 
 import { ensureCloudflared } from "./cloudflared.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 
-const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+const TUNNEL_URL_REGEX = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
 const decoder = new TextDecoder();
 
 /** Extract tunnel URL from cloudflared stderr output */

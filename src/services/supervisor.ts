@@ -25,12 +25,13 @@ import { sdNotify } from "./sd-notify.ts";
 const MAX_RESTARTS = 10;
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 60_000;
+const TUNNEL_COOLDOWN_MS = 600_000;     // 10min cooldown after MAX_RESTARTS before retrying tunnel
 const STABLE_WINDOW_MS = 300_000;       // 5min stable → reset restart counter
 const SERVER_HEALTH_INTERVAL_MS = 30_000;
 const SERVER_HEALTH_FAIL_THRESHOLD = 3;
 const TUNNEL_PROBE_INTERVAL_MS = 30_000;    // 30s — adopted tunnels have no `exited` promise
 const TUNNEL_PROBE_FAIL_THRESHOLD = 3;      // 3 HTTP failures before regenerating (PID check is instant)
-const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+const TUNNEL_URL_REGEX = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
 const UPGRADE_CHECK_INTERVAL_MS = 900_000;  // 15min
 const UPGRADE_SKIP_INITIAL_MS = 300_000;    // 5min delay before first check
 const SELF_REPLACE_TIMEOUT_MS = 30_000;     // 30s to wait for new supervisor
@@ -262,9 +263,12 @@ export async function spawnTunnel(port: number): Promise<void> {
     tunnelRestarts++;
 
     if (tunnelRestarts > MAX_RESTARTS) {
-      log("ERROR", `Tunnel exceeded ${MAX_RESTARTS} URL extraction failures, disabling tunnel`);
+      log("WARN", `Tunnel exceeded ${MAX_RESTARTS} URL extraction failures, cooldown ${TUNNEL_COOLDOWN_MS}ms before retry`);
       updateStatus({ shareUrl: null, tunnelPid: null });
-      return;
+      await Bun.sleep(TUNNEL_COOLDOWN_MS);
+      tunnelRestarts = 0;
+      if (shuttingDown) return;
+      return spawnTunnel(port);
     }
 
     const delay = backoffDelay(tunnelRestarts);
@@ -293,8 +297,11 @@ export async function spawnTunnel(port: number): Promise<void> {
   tunnelRestarts++;
 
   if (tunnelRestarts > MAX_RESTARTS) {
-    log("ERROR", `Tunnel exceeded ${MAX_RESTARTS} restarts, disabling tunnel`);
+    log("WARN", `Tunnel exceeded ${MAX_RESTARTS} restarts, cooldown ${TUNNEL_COOLDOWN_MS}ms before retry`);
     updateStatus({ shareUrl: null, tunnelPid: null });
+    await Bun.sleep(TUNNEL_COOLDOWN_MS);
+    tunnelRestarts = 0;
+    if (!shuttingDown) return spawnTunnel(port);
     return;
   }
 
