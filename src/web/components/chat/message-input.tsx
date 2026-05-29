@@ -7,6 +7,7 @@ import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
+import { ModelSelector } from "./model-selector";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
@@ -62,6 +63,10 @@ interface MessageInputProps {
   providerId?: string;
   /** Provider change handler — undefined when session is active (locked) */
   onProviderChange?: (providerId: string) => void;
+  /** Current per-session model (null = provider default) */
+  model?: string | null;
+  /** Model change handler — undefined when no active session */
+  onModelChange?: (model: string) => void;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -86,6 +91,8 @@ export const MessageInput = memo(function MessageInput({
   onModeChange,
   providerId,
   onProviderChange,
+  model,
+  onModelChange,
 }: MessageInputProps) {
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
@@ -643,6 +650,15 @@ export const MessageInput = memo(function MessageInput({
               projectName={projectName}
             />
           )}
+          {onModelChange && projectName && (
+            <ModelSelector
+              value={model ?? null}
+              onChange={onModelChange}
+              projectName={projectName}
+              providerId={providerId ?? "claude"}
+              disabled={isStreaming}
+            />
+          )}
           {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
         </div>
         {/* Mobile: single row — attach + textarea + mic + send */}
@@ -749,6 +765,15 @@ export const MessageInput = memo(function MessageInput({
                   value={providerId ?? "claude"}
                   onChange={onProviderChange}
                   projectName={projectName}
+                />
+              )}
+              {onModelChange && projectName && (
+                <ModelSelector
+                  value={model ?? null}
+                  onChange={onModelChange}
+                  projectName={projectName}
+                  providerId={providerId ?? "claude"}
+                  disabled={isStreaming}
                 />
               )}
               {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}

@@ -3,10 +3,20 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel } from "../../services/db.service.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
+import { configService } from "../../services/config.service.ts";
+
+/** Resolve the model shown in session_state: per-session override, else provider default. */
+function resolveSessionModel(sessionId: string): string | undefined {
+  const override = getSessionModel(sessionId);
+  if (override) return override;
+  const ai = configService.get("ai");
+  const pid = ai.default_provider ?? "claude";
+  return ai.providers[pid]?.model;
+}
 
 // Broadcast file changes to all WS clients for real-time editor reload
 onFileChange((projectName, path) => {
@@ -42,6 +52,8 @@ interface SessionEntry {
   currentUserMessage?: string;
   streamPromise?: Promise<void>;
   permissionMode?: string;
+  /** Per-session model override; falls back to provider default when undefined */
+  model?: string;
   /** Whether the persistent event consumer loop is running */
   isStreamingActive: boolean;
   /** Active team watchers keyed by team name */
@@ -203,7 +215,7 @@ function startCleanupTimer(sessionId: string): void {
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     console.error(`[chat] session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -255,7 +267,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       broadcast(sessionId, { type: "phase_changed", phase: "connecting", elapsed });
     }, 5_000);
 
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(model && { model }) })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -520,6 +532,7 @@ export const chatWebSocket = {
         pendingApproval: existing.pendingApprovalEvent ?? null,
         sessionTitle: session?.title || null,
         compactStatus: existing.compactStatus ?? null,
+        model: resolveSessionModel(sessionId),
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -561,6 +574,7 @@ export const chatWebSocket = {
       teamWatchers: new Map(),
       teamNames: new Set(),
       compactStatus: null,
+      model: getSessionModel(sessionId) ?? undefined,
     };
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
@@ -573,6 +587,7 @@ export const chatWebSocket = {
       pendingApproval: null,
       sessionTitle: session?.title || null,
       compactStatus: null,
+      model: resolveSessionModel(sessionId),
     }));
 
     // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
@@ -615,6 +630,7 @@ export const chatWebSocket = {
         providerId: pid, clients: new Set([ws]), projectPath: pp, projectName: pn,
         pingIntervals: new Map(), phase: "idle", turnEvents: [], isStreamingActive: false,
         teamWatchers: new Map(), teamNames: new Set(), compactStatus: null,
+        model: getSessionModel(sessionId) ?? undefined,
       };
       activeSessions.set(sessionId, newEntry);
       setupClientPing(newEntry, ws);
@@ -640,6 +656,7 @@ export const chatWebSocket = {
         pendingApproval: entry.pendingApprovalEvent ?? null,
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
+        model: resolveSessionModel(sessionId),
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
@@ -674,6 +691,11 @@ export const chatWebSocket = {
       // Store permission mode — sticky for this session
       if (parsed.permissionMode) {
         entry.permissionMode = parsed.permissionMode;
+      }
+      // Store model override — sticky for this session
+      if (parsed.model) {
+        entry.model = parsed.model;
+        setSessionModel(sessionId, parsed.model);
       }
 
       // Intercept PPM-handled built-in commands (e.g. /skills, /version)
@@ -717,10 +739,11 @@ export const chatWebSocket = {
         setPhase(sessionId, "initializing");
 
         const permMode = entry.permissionMode;
+        const msgModel = entry.model;
         const msgImages = parsed.type === "message" ? parsed.images : undefined;
         entry.streamPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
-            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages).then(resolve, resolve);
+            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel).then(resolve, resolve);
           }, 0);
         });
       } else {
@@ -737,6 +760,34 @@ export const chatWebSocket = {
         setPhase(sessionId, "thinking");
         console.log(`[chat] session=${sessionId} follow-up pushed to generator`);
       }
+    } else if (parsed.type === "set_model") {
+      // Persist per-session model override. If an idle subprocess is alive,
+      // abort it so the next message recreates the query with the new model
+      // (history preserved via the resume path). No-op if already streaming.
+      if (!parsed.model || typeof parsed.model !== "string") {
+        ws.send(JSON.stringify({ type: "error", message: "model is required" }));
+        return;
+      }
+      entry.model = parsed.model;
+      setSessionModel(sessionId, parsed.model);
+      const provider = providerRegistry.get(providerId);
+      const hasLiveStream = provider?.hasStreamingSession?.(sessionId) ?? false;
+      // Only abort when idle between turns — never interrupt an active turn.
+      // Aborting the idle-but-alive subprocess forces the next message to take
+      // the resume path, recreating the query with the new model.
+      if (hasLiveStream && entry.phase === "idle") {
+        provider?.abortQuery?.(sessionId, "set_model");
+      }
+      logSessionEvent(sessionId, "INFO", `Model switched to ${parsed.model}`);
+      ws.send(JSON.stringify({
+        type: "session_state",
+        sessionId,
+        phase: entry.phase,
+        pendingApproval: entry.pendingApprovalEvent ?? null,
+        sessionTitle: chatService.getSession(sessionId)?.title || null,
+        compactStatus: entry.compactStatus ?? null,
+        model: resolveSessionModel(sessionId),
+      }));
     } else if (parsed.type === "cancel") {
       // Fully teardown streaming session — user must resume to continue
       const provider = providerRegistry.get(providerId);

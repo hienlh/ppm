@@ -23,8 +23,9 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }
+  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; model?: string }
   | { type: "cancel" }
+  | { type: "set_model"; model: string }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
   | { type: "ready" };
 
@@ -42,7 +43,7 @@ export type ChatWsServerMessage =
   | { type: "error"; message: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
-  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string }
   | { type: "turn_events"; events: unknown[] }
   | { type: "title_updated"; title: string }
   | { type: "compact_status"; status: "compacting" | "done" }

@@ -645,6 +645,11 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 26;
     `);
   }
+
+  if (current < 27) {
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN model TEXT"); } catch {}
+    database.exec("PRAGMA user_version = 27;");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -799,6 +804,18 @@ export function setSessionMetadata(sessionId: string, projectName?: string, proj
 
 export function deleteSessionMetadata(sessionId: string): void {
   getDb().query("DELETE FROM session_metadata WHERE session_id = ?").run(sessionId);
+}
+
+/** Per-session model override; null when session uses provider default */
+export function getSessionModel(sessionId: string): string | null {
+  const row = getDb().query("SELECT model FROM session_metadata WHERE session_id = ?").get(sessionId) as { model: string | null } | null;
+  return row?.model ?? null;
+}
+
+export function setSessionModel(sessionId: string, model: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, model) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET model = excluded.model",
+  ).run(sessionId, model);
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.88] - 2026-05-29
+
+### Added
+- **Per-session model switcher in chat input**: A compact model chip (e.g. "Opus 4.8") next to the provider selector shows the active model and lets users switch it per session. The choice persists per session (new `session_metadata.model` column, DB migration v27) and falls back to the global provider default when unset. Switching while idle aborts the idle subprocess so the next message recreates the query with the new model via the resume path (history preserved); the chip is disabled mid-turn since the SDK can't change model in-flight.
+
 ## [0.13.87] - 2026-05-29
 
 ### Added

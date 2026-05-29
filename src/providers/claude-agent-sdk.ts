@@ -849,7 +849,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(hasMcp && { mcpServers }),
         permissionMode,
         allowDangerouslySkipPermissions: isBypass,
-        ...(providerConfig.model && { model: providerConfig.model }),
+        ...((opts?.model ?? providerConfig.model) && { model: opts?.model ?? providerConfig.model }),
         ...(providerConfig.effort && { effort: providerConfig.effort }),
         maxTurns: providerConfig.max_turns ?? 1000,
         ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),

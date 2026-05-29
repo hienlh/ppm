@@ -58,6 +58,10 @@ interface UseChatReturn {
   compactStatus: "compacting" | null;
   statusMessage: string | null;
   sessionTitle: string | null;
+  /** Per-session model override (null = provider default) */
+  model: string | null;
+  /** Switch the per-session model (persists + recreates query on next message) */
+  setModel: (model: string) => void;
   /** Team activity state from WS events */
   teamActivity: TeamActivityState;
   /** All team messages (ref-backed, updated live) */
@@ -99,6 +103,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [model, setModelState] = useState<string | null>(null);
+  const modelRef = useRef<string | null>(null);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const bashOutputRef = useRef<Map<string, BashPartialEntry>>(new Map());
@@ -540,6 +546,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       setPhase(p);
       phaseRef.current = p;
       if (state.sessionTitle) setSessionTitle(state.sessionTitle);
+      if (state.model) { setModelState(state.model); modelRef.current = state.model; }
       if (state.pendingApproval) {
         setPendingApproval({
           requestId: state.pendingApproval.requestId,
@@ -737,7 +744,17 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         permissionMode: opts?.permissionMode,
         priority: opts?.priority,
         images: opts?.images,
+        ...(modelRef.current && { model: modelRef.current }),
       }));
+    },
+    [send],
+  );
+
+  const setModel = useCallback(
+    (nextModel: string) => {
+      setModelState(nextModel); // optimistic
+      modelRef.current = nextModel;
+      send(JSON.stringify({ type: "set_model", model: nextModel }));
     },
     [send],
   );
@@ -879,6 +896,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     compactStatus,
     statusMessage,
     sessionTitle,
+    model,
+    setModel,
     teamActivity,
     teamMessages,
     markTeamRead,

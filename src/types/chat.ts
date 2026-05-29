@@ -2,6 +2,8 @@ export interface SendMessageOpts {
   permissionMode?: import("./config").PermissionMode | string;
   priority?: 'now' | 'next' | 'later';
   images?: Array<{ data: string; mediaType: string }>;
+  /** Per-session model override; falls back to provider config model when absent */
+  model?: string;
 }
 
 export interface AIProvider {
@@ -33,6 +35,8 @@ export interface AIProvider {
   markAsResumed?(sessionId: string): void;
   isAvailable?(): Promise<boolean>;
   listModels?(): Promise<ModelOption[]>;
+  /** True when a live streaming subprocess exists for this session */
+  hasStreamingSession?(sessionId: string): boolean;
 }
 
 export interface ModelOption {
@@ -47,6 +51,8 @@ export interface Session {
   projectName?: string;
   projectPath?: string;
   createdAt: string;
+  /** Per-session model override (e.g. claude-opus-4-8); falls back to provider config default */
+  model?: string;
 }
 
 export interface SessionConfig {

@@ -106,6 +106,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     compactStatus,
     statusMessage,
     sessionTitle,
+    model,
+    setModel,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -516,6 +518,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             onModeChange={setPermissionMode}
             providerId={providerId}
             onProviderChange={!sessionId ? setProviderId : undefined}
+            model={model}
+            onModelChange={setModel}
           />
         )}
       </div>
