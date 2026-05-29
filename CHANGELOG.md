@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.13.87] - 2026-05-29
+
+### Added
+- **Claude Opus 4.8 model support**: Add `claude-opus-4-8` as available model across SDK provider, CLI init, proxy test UI, JSON schema, and config validation. Released by Anthropic 2026-05-28 with improved agentic coding (64.3%→69.2%), 1M context window, fast mode 2.5× faster + 3× cheaper, same pricing as Opus 4.7 ($5/$25 per M tokens). Coexists with Opus 4.7/4.6.
+
+### Fixed
+- **Rate-limit detection misses quota variants**: Literal `"hit your limit"` match in `claude-agent-sdk.ts` failed against Anthropic's variants like `"hit your weekly limit"` / `"hit your 5-hour limit"`, so quota-exhausted sessions were classified as generic errors instead of `rate_limit` (no auto-switch, no proper hint). Replaced with regex `/hit your (?:[\w-]+\s+)*limit/i` in all three detection sites (HTTP error, assistant text content, error hint message).
+
+### Changed
+- **Refresh bundled PPM skill assets**: Regenerated `assets/skills/ppm/{SKILL,references/cli-reference,references/http-api}.md` to current version stamp.
+
 ## [0.13.86] - 2026-05-26
 
 ### Fixed

@@ -284,7 +284,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // SDK uses `errors: string[]` array for error details
       const errorsArr = Array.isArray(e.errors) ? (e.errors as string[]).join(" ") : "";
       const msg = errorsArr || String(e.error ?? "");
-      if (msg.includes("429") || msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("overloaded") || msg.toLowerCase().includes("hit your limit")) return 429;
+      if (msg.includes("429") || msg.toLowerCase().includes("rate limit") || msg.toLowerCase().includes("overloaded") || /hit your (?:[\w-]+\s+)*limit/i.test(msg)) return 429;
       if (msg.includes("401") || msg.toLowerCase().includes("unauthorized") || msg.toLowerCase().includes("invalid api key")) return 401;
     }
     return null;
@@ -518,6 +518,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   async listModels(): Promise<ModelOption[]> {
     return [
       { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
       { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
       { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
       { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
@@ -1167,7 +1168,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             if (textContent && /API Error:\s*401\b.*authentication_error/i.test(textContent)) {
               assistantError = "authentication_failed";
               console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
-            } else if (textContent && /hit your limit|you've hit your limit/i.test(textContent)) {
+            } else if (textContent && /hit your (?:[\w-]+\s+)*limit/i.test(textContent)) {
               assistantError = "rate_limit";
               console.warn(`[sdk] session=${sessionId} detected quota limit in assistant text content — treating as rate_limit`);
             }
@@ -1448,7 +1449,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               hint = "\n\nHint: Network connectivity issue. Check your internet connection and firewall/proxy settings.";
             } else if (detailLower.includes("401") || detailLower.includes("unauthorized") || detailLower.includes("invalid api key")) {
               hint = "\n\nHint: Authentication failed. Try re-adding your account in Settings → Accounts.";
-            } else if (detailLower.includes("hit your limit")) {
+            } else if (/hit your (?:[\w-]+\s+)*limit/i.test(detailLower)) {
               hint = "\n\nHint: Account quota exhausted. Will auto-switch on next message if other accounts are available.";
             }
             const fullMsg = sdkDetail ? `${baseMsg}\n${sdkDetail}${hint}` : baseMsg;
