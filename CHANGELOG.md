@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.89] - 2026-06-01
+
+### Fixed
+- **Markdown text wrongly struck through**: `remark-gfm` defaults to `singleTilde: true`, so any text wrapped in single tildes (`~text~`) — e.g. a stray pair of `~` on one line from shell paths or config — rendered as strikethrough in chat/tool-card markdown. Disabled `singleTilde` so only the explicit `~~double~~` form triggers strikethrough (`markdown-renderer.tsx`).
+
 ## [0.13.88] - 2026-05-29
 
 ### Added
