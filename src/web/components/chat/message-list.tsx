@@ -210,7 +210,7 @@ export function MessageList({
 
         {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
       </StickToBottom.Content>
-      <ScrollToBottomButton />
+      <ScrollNavButtons />
     </StickToBottom>
     </div>
   );
@@ -253,18 +253,105 @@ function ScrollAnchorBridge({ bridgeRef }: { bridgeRef: React.MutableRefObject<S
   return null;
 }
 
-/** Floating button to scroll back to bottom when user has scrolled up */
-function ScrollToBottomButton() {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
-  if (isAtBottom) return null;
+/**
+ * Floating bottom-right navigation between the user's own messages.
+ * Up jumps to the nearest user message above the viewport; Down jumps to the
+ * nearest one below, or to the very bottom if none. Buttons hide when their
+ * direction has no target (Up: no user message above; Down: already at bottom).
+ */
+function ScrollNavButtons() {
+  const { scrollRef, isAtBottom, scrollToBottom } = useStickToBottomContext();
+  const [hasAbove, setHasAbove] = useState(false);
+
+  const EPSILON = 8;
+
+  // Smooth-scroll so the chosen message sits ~12px below the container top.
+  const scrollMessageToTop = useCallback((el: HTMLElement) => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    const elTop = el.getBoundingClientRect().top;
+    container.scrollTo({ top: container.scrollTop + (elTop - containerTop) - 12, behavior: "smooth" });
+  }, [scrollRef]);
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    let raf = 0;
+    const recompute = () => {
+      const containerTop = container.getBoundingClientRect().top;
+      let above = false;
+      container.querySelectorAll<HTMLElement>("[data-user-message]").forEach((el) => {
+        if (el.getBoundingClientRect().top < containerTop - EPSILON) above = true;
+      });
+      setHasAbove((prev) => (prev === above ? prev : above));
+    };
+    const schedule = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(recompute);
+    };
+    recompute();
+    container.addEventListener("scroll", schedule, { passive: true });
+    const ro = new ResizeObserver(schedule);
+    ro.observe(container);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      container.removeEventListener("scroll", schedule);
+      ro.disconnect();
+    };
+  }, [scrollRef]);
+
+  const goUp = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let target: HTMLElement | null = null;
+    let bestTop = -Infinity;
+    container.querySelectorAll<HTMLElement>("[data-user-message]").forEach((el) => {
+      const top = el.getBoundingClientRect().top;
+      if (top < containerTop - EPSILON && top > bestTop) {
+        target = el;
+        bestTop = top;
+      }
+    });
+    if (target) scrollMessageToTop(target);
+  }, [scrollRef, scrollMessageToTop]);
+
+  const goDown = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let target: HTMLElement | null = null;
+    let bestTop = Infinity;
+    container.querySelectorAll<HTMLElement>("[data-user-message]").forEach((el) => {
+      const top = el.getBoundingClientRect().top;
+      if (top > containerTop + EPSILON && top < bestTop) {
+        target = el;
+        bestTop = top;
+      }
+    });
+    if (target) scrollMessageToTop(target);
+    else scrollToBottom();
+  }, [scrollRef, scrollMessageToTop, scrollToBottom]);
+
+  if (!hasAbove && isAtBottom) return null;
+
+  const btnClass =
+    "size-11 flex items-center justify-center rounded-full bg-surface-elevated border border-border text-text-secondary hover:text-foreground shadow-lg transition-all";
+
   return (
-    <button
-      onClick={() => scrollToBottom()}
-      className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 px-3 py-1 rounded-full bg-surface-elevated border border-border text-xs text-text-secondary hover:text-foreground shadow-lg transition-all"
-    >
-      <ChevronDown className="size-3" />
-      Scroll to bottom
-    </button>
+    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
+      {hasAbove && (
+        <button type="button" onClick={goUp} aria-label="Jump to previous message" className={btnClass}>
+          <ChevronUp className="size-4" />
+        </button>
+      )}
+      {!isAtBottom && (
+        <button type="button" onClick={goDown} aria-label="Jump to next message" className={btnClass}>
+          <ChevronDown className="size-4" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -492,8 +579,10 @@ function UserBubble({ content, messageId, projectName, onFork }: {
   }, [text]);
 
   return (
-    <div className={cn(
-      "group/user relative rounded-lg px-3 py-2 text-sm border shadow-sm",
+    <div
+      data-user-message={!isSystemContext ? "true" : undefined}
+      className={cn(
+        "group/user relative rounded-lg px-3 py-2 text-sm border shadow-sm",
       isSystemContext
         ? "bg-surface/40 border-border/40 text-text-secondary"
         : "bg-primary/10 border-primary/15 text-text-primary",
