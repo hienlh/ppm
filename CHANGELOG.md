@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.91] - 2026-06-02
+
+### Fixed
+- **Chat Down nav button got stuck**: The new bottom-right Down button only worked once in a while because its "below" selection threshold (`containerTop + 8px`) was smaller than the `12px` landing offset — after a jump, the just-landed user message still matched the threshold and got re-selected, scrolling ~0px. The threshold now clears the landing zone (`containerTop + SCROLL_OFFSET + EPSILON`), so Down steps through messages one by one and falls back to the bottom after the last (`message-list.tsx`).
+
 ## [0.13.90] - 2026-06-01
 
 ### Changed
