@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.90] - 2026-06-01
+
+### Changed
+- **Chat scroll buttons → user-message navigation**: Replaced the single centered "Scroll to bottom" pill with a stacked pair of bottom-right icon buttons that navigate between your own messages. Up jumps to the nearest user message above the viewport (hidden when none above); Down jumps to the nearest one below, falling back to the very bottom (hidden when already at bottom). Real user messages are tagged with `data-user-message` (system-context bubbles excluded); button visibility is tracked via an rAF-throttled scroll listener + `ResizeObserver`. Buttons use ≥44px touch targets per mobile-first guidelines (`message-list.tsx`).
+
 ## [0.13.89] - 2026-06-01
 
 ### Fixed
