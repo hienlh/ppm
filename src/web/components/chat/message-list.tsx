@@ -264,14 +264,17 @@ function ScrollNavButtons() {
   const [hasAbove, setHasAbove] = useState(false);
 
   const EPSILON = 8;
+  // Where a jumped-to message lands below the container top. The "below"
+  // selection threshold must exceed this, otherwise Down keeps re-selecting the
+  // message it just landed and scrolls ~0px.
+  const SCROLL_OFFSET = 12;
 
-  // Smooth-scroll so the chosen message sits ~12px below the container top.
   const scrollMessageToTop = useCallback((el: HTMLElement) => {
     const container = scrollRef.current;
     if (!container) return;
     const containerTop = container.getBoundingClientRect().top;
     const elTop = el.getBoundingClientRect().top;
-    container.scrollTo({ top: container.scrollTop + (elTop - containerTop) - 12, behavior: "smooth" });
+    container.scrollTo({ top: container.scrollTop + (elTop - containerTop) - SCROLL_OFFSET, behavior: "smooth" });
   }, [scrollRef]);
 
   useEffect(() => {
@@ -323,9 +326,11 @@ function ScrollNavButtons() {
     const containerTop = container.getBoundingClientRect().top;
     let target: HTMLElement | null = null;
     let bestTop = Infinity;
+    // Must clear the landing zone so a just-jumped-to message isn't re-selected.
+    const belowLine = containerTop + SCROLL_OFFSET + EPSILON;
     container.querySelectorAll<HTMLElement>("[data-user-message]").forEach((el) => {
       const top = el.getBoundingClientRect().top;
-      if (top > containerTop + EPSILON && top < bestTop) {
+      if (top > belowLine && top < bestTop) {
         target = el;
         bestTop = top;
       }
