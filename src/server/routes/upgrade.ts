@@ -44,11 +44,12 @@ upgradeRoutes.post("/apply", async (c) => {
   // Signal supervisor to self-replace
   const signal = signalSupervisorUpgrade();
   if (!signal.sent) {
+    console.warn(`[upgrade] Supervisor signal failed: ${signal.error ?? "unknown"}`);
     return c.json(ok({
       success: true,
       newVersion: result.newVersion,
       restart: false,
-      message: "Upgraded. Restart manually with ppm restart",
+      message: `Upgraded to v${result.newVersion}. Restart manually: ppm restart (signal failed: ${signal.error ?? "unknown"})`,
     }));
   }
 
