@@ -178,6 +178,7 @@ html, body {
   padding: 0.5rem 0.5rem 0.75rem;
   font-size: 0.75rem;
   font-family: var(--font-mono);
+  font-variant-ligatures: none;
   border: 1px solid var(--color-border);
   margin: 0.5rem 0;
   scrollbar-width: thin;
@@ -199,6 +200,7 @@ html, body {
 .markdown-content code {
   font-family: var(--font-mono);
   font-size: 0.75rem;
+  font-variant-ligatures: none;
 }
 
 /* Override highlight.js background so pre's background takes precedence */

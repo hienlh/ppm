@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.93] - 2026-06-02
+
+### Fixed
+- **Operators in code blocks looked struck through**: Geist Mono's contextual ligatures joined `===`, `!==`, `=>` etc. into a single connected bar glyph, which read like a strikethrough line cutting through adjacent code. Disabled `font-variant-ligatures` on markdown `pre`/`code` so each operator character renders distinctly (`globals.css`).
+
 ## [0.13.92] - 2026-06-02
 
 ### Fixed
