@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.92] - 2026-06-02
+
+### Fixed
+- **Zombie socket auto-recovery on Windows**: When a Bun.serve() process crashes, Windows can keep the listening socket bound to the dead PID indefinitely (no user-space API can reclaim it). PPM now detects zombie sockets via netstat PID liveness check and auto-selects a nearby free port (port+1..port+20) instead of failing with "Port in use". Also adds graceful shutdown (SIGTERM → server.stop() → SIGKILL fallback) to prevent zombie sockets from forming in the first place.
+- **Upgrade signal failure now shows error details**: When the supervisor signal fails during `POST /api/upgrade/apply`, the response now includes the specific error reason instead of a generic "Restart manually" message.
+
 ## [0.13.89] - 2026-06-01
 
 ### Fixed
