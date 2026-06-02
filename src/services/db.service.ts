@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-const CURRENT_SCHEMA_VERSION = 26;
+const CURRENT_SCHEMA_VERSION = 28;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -650,6 +650,26 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN model TEXT"); } catch {}
     database.exec("PRAGMA user_version = 27;");
   }
+
+  if (current < 28) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS proxy_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        endpoint TEXT NOT NULL,
+        model TEXT,
+        account_id TEXT,
+        account_label TEXT,
+        caller_ip TEXT,
+        caller_ua TEXT,
+        status TEXT NOT NULL,
+        duration_ms INTEGER,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_proxy_req_created ON proxy_requests(created_at);
+      CREATE INDEX IF NOT EXISTS idx_proxy_req_caller ON proxy_requests(caller_ip);
+      PRAGMA user_version = 28;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -980,6 +1000,68 @@ export function getUsageSince(since: string): UsageRow[] {
   return getDb().query(
     "SELECT * FROM usage_history WHERE recorded_at >= ? ORDER BY recorded_at DESC",
   ).all(since) as UsageRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Proxy request logging helpers
+// ---------------------------------------------------------------------------
+
+export type ProxyRequestStatus = "success" | "error" | "rate_limited";
+
+// Best-effort: a logging failure must never break the proxy request flow.
+export function insertProxyRequest(record: {
+  endpoint: string;
+  model?: string;
+  accountId?: string;
+  accountLabel?: string;
+  callerIp?: string;
+  callerUa?: string;
+  status: ProxyRequestStatus;
+  durationMs?: number;
+}): void {
+  try {
+    getDb().query(
+      "INSERT INTO proxy_requests (endpoint, model, account_id, account_label, caller_ip, caller_ua, status, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      record.endpoint, record.model ?? null, record.accountId ?? null,
+      record.accountLabel ?? null, record.callerIp ?? null, record.callerUa ?? null,
+      record.status, record.durationMs ?? null,
+    );
+  } catch (e) {
+    console.error(`[proxy] failed to log proxy request:`, (e as Error).message);
+  }
+}
+
+export function cleanupOldProxyRequests(days = 30): number {
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+  const result = getDb().run(
+    "DELETE FROM proxy_requests WHERE created_at < ?",
+    [cutoff],
+  );
+  return result.changes;
+}
+
+export interface ProxyStatsBucket {
+  model: string | null;
+  account_label: string | null;
+  caller_ip: string | null;
+  count: number;
+}
+
+export function getProxyStats(): { lastHour: ProxyStatsBucket[]; last24h: ProxyStatsBucket[]; total: number } {
+  const lastHour = getDb().query(
+    "SELECT model, account_label, caller_ip, COUNT(*) as count FROM proxy_requests WHERE created_at >= datetime('now', '-1 hour') GROUP BY model, account_label, caller_ip ORDER BY count DESC",
+  ).all() as ProxyStatsBucket[];
+
+  const last24h = getDb().query(
+    "SELECT model, account_label, caller_ip, COUNT(*) as count FROM proxy_requests WHERE created_at >= datetime('now', '-24 hours') GROUP BY model, account_label, caller_ip ORDER BY count DESC",
+  ).all() as ProxyStatsBucket[];
+
+  const totalRow = getDb().query(
+    "SELECT COUNT(*) as count FROM proxy_requests",
+  ).get() as { count: number };
+
+  return { lastHour, last24h, total: totalRow.count };
 }
 
 export function getDbFilePath(): string {

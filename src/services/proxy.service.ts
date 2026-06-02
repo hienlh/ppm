@@ -1,4 +1,4 @@
-import { getConfigValue, setConfigValue } from "./db.service.ts";
+import { getConfigValue, setConfigValue, insertProxyRequest, type ProxyRequestStatus } from "./db.service.ts";
 import { accountSelector } from "./account-selector.service.ts";
 import { accountService } from "./account.service.ts";
 import { forwardViaSdk } from "./proxy-sdk-bridge.ts";
@@ -9,6 +9,20 @@ const PROXY_ENABLED_KEY = "proxy_enabled";
 const PROXY_AUTH_KEY = "proxy_auth_key";
 
 const ANTHROPIC_API_BASE = "https://api.anthropic.com";
+
+export interface ProxyCallerMeta {
+  callerIp?: string;
+  callerUa?: string;
+}
+
+function parseModel(body: string | null): string | undefined {
+  if (!body) return undefined;
+  try {
+    return JSON.parse(body).model as string | undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 class ProxyService {
   private requestCount = 0;
@@ -51,10 +65,15 @@ class ProxyService {
     method: string,
     headers: Record<string, string>,
     body: string | null,
+    caller?: ProxyCallerMeta,
   ): Promise<Response> {
     // Pick account via rotation
     const account = accountSelector.next();
     if (!account) {
+      insertProxyRequest({
+        endpoint: path, model: parseModel(body),
+        callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
+      });
       return new Response(
         JSON.stringify({ type: "error", error: { type: "authentication_error", message: "No active accounts available" } }),
         { status: 401, headers: { "Content-Type": "application/json" } },
@@ -70,11 +89,24 @@ class ProxyService {
 
     // OAuth tokens: route through SDK query() — direct API doesn't work for Claude Max/Pro
     if (token.startsWith("sk-ant-oat") && body && path === "/v1/messages") {
+      const start = performance.now();
       try {
         const parsed = JSON.parse(body);
         this.requestCount++;
-        return await forwardViaSdk(parsed, { id: account.id, email: account.email, accessToken: token });
+        const response = await forwardViaSdk(parsed, { id: account.id, email: account.email, accessToken: token });
+        const durationMs = Math.round(performance.now() - start);
+        insertProxyRequest({
+          endpoint: path, model: parsed.model, accountId: account.id, accountLabel: account.email ?? account.id,
+          callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "success", durationMs,
+        });
+        console.log(`[proxy] ${method} ${path} → ${account.email ?? account.id} (sdk) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
+        return response;
       } catch (e) {
+        insertProxyRequest({
+          endpoint: path, model: parseModel(body), accountId: account.id, accountLabel: account.email ?? account.id,
+          callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
+          durationMs: Math.round(performance.now() - start),
+        });
         console.error(`[proxy] SDK bridge error:`, (e as Error).message);
         return new Response(
           JSON.stringify({ type: "error", error: { type: "api_error", message: (e as Error).message } }),
@@ -84,16 +116,20 @@ class ProxyService {
     }
 
     // API key accounts: direct HTTP forward to Anthropic API
-    return this.forwardDirect(path, method, headers, body, token, account);
+    return this.forwardDirect(path, method, headers, body, token, account, caller);
   }
 
   /**
    * Forward an OpenAI-format chat completions request via SDK query().
    * Always uses SDK bridge (works for both OAuth and API key accounts).
    */
-  async forwardOpenAi(body: string): Promise<Response> {
+  async forwardOpenAi(body: string, caller?: ProxyCallerMeta): Promise<Response> {
     const account = accountSelector.next();
     if (!account) {
+      insertProxyRequest({
+        endpoint: "/v1/chat/completions", model: parseModel(body),
+        callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
+      });
       return new Response(
         JSON.stringify({ error: { message: "No active accounts available", type: "server_error" } }),
         { status: 401, headers: { "Content-Type": "application/json" } },
@@ -106,11 +142,24 @@ class ProxyService {
       if (fresh) token = fresh.accessToken;
     }
 
+    const start = performance.now();
     try {
       const parsed = JSON.parse(body);
       this.requestCount++;
-      return await forwardOpenAiViaSdk(parsed, { id: account.id, email: account.email, accessToken: token });
+      const response = await forwardOpenAiViaSdk(parsed, { id: account.id, email: account.email, accessToken: token });
+      const durationMs = Math.round(performance.now() - start);
+      insertProxyRequest({
+        endpoint: "/v1/chat/completions", model: parsed.model, accountId: account.id, accountLabel: account.email ?? account.id,
+        callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "success", durationMs,
+      });
+      console.log(`[proxy] POST /v1/chat/completions → ${account.email ?? account.id} (openai) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
+      return response;
     } catch (e) {
+      insertProxyRequest({
+        endpoint: "/v1/chat/completions", model: parseModel(body), accountId: account.id, accountLabel: account.email ?? account.id,
+        callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
+        durationMs: Math.round(performance.now() - start),
+      });
       console.error(`[proxy] OpenAI bridge error:`, (e as Error).message);
       return new Response(
         JSON.stringify({ error: { message: (e as Error).message, type: "server_error" } }),
@@ -127,6 +176,7 @@ class ProxyService {
     body: string | null,
     token: string,
     account: { id: string; email: string | null },
+    caller?: ProxyCallerMeta,
   ): Promise<Response> {
     const upstreamHeaders: Record<string, string> = {
       "Content-Type": "application/json",
@@ -137,7 +187,8 @@ class ProxyService {
     if (headers["anthropic-beta"]) upstreamHeaders["anthropic-beta"] = headers["anthropic-beta"];
 
     const url = `${ANTHROPIC_API_BASE}${path}`;
-    console.log(`[proxy] ${method} ${path} → account ${account.email ?? account.id} (direct)`);
+    const accountLabel = account.email ?? account.id;
+    const start = performance.now();
 
     try {
       const upstream = await fetch(url, {
@@ -148,16 +199,26 @@ class ProxyService {
       });
 
       this.requestCount++;
+      const durationMs = Math.round(performance.now() - start);
 
+      let status: ProxyRequestStatus = "error";
       if (upstream.status === 429) {
         accountSelector.onRateLimit(account.id);
-        console.log(`[proxy] 429 — account ${account.email ?? account.id} rate limited`);
+        status = "rate_limited";
+        console.log(`[proxy] 429 — account ${accountLabel} rate limited`);
       } else if (upstream.status === 401) {
         accountSelector.onAuthError(account.id);
-        console.log(`[proxy] 401 — account ${account.email ?? account.id} auth error`);
+        console.log(`[proxy] 401 — account ${accountLabel} auth error`);
       } else if (upstream.status >= 200 && upstream.status < 300) {
         accountSelector.onSuccess(account.id);
+        status = "success";
       }
+
+      insertProxyRequest({
+        endpoint: path, model: parseModel(body), accountId: account.id, accountLabel,
+        callerIp: caller?.callerIp, callerUa: caller?.callerUa, status, durationMs,
+      });
+      console.log(`[proxy] ${method} ${path} → ${accountLabel} (direct) ${durationMs}ms caller=${caller?.callerIp ?? "unknown"}`);
 
       const responseHeaders = new Headers();
       for (const key of ["content-type", "x-request-id", "request-id"]) {
@@ -168,6 +229,11 @@ class ProxyService {
 
       return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
     } catch (e) {
+      insertProxyRequest({
+        endpoint: path, model: parseModel(body), accountId: account.id, accountLabel,
+        callerIp: caller?.callerIp, callerUa: caller?.callerUa, status: "error",
+        durationMs: Math.round(performance.now() - start),
+      });
       console.error(`[proxy] Error forwarding:`, (e as Error).message);
       return new Response(
         JSON.stringify({ type: "error", error: { type: "api_error", message: (e as Error).message } }),

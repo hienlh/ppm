@@ -1,5 +1,7 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { proxyService } from "../../services/proxy.service.ts";
+import { getProxyStats } from "../../services/db.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 /**
@@ -20,6 +22,16 @@ function validateProxyAuth(authHeader: string | undefined): boolean {
   // Accept both "Bearer <key>" and raw "<key>" (x-api-key style)
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
   return token === key;
+}
+
+/** Extract caller IP/UA from request headers for proxy logging */
+function getCallerMeta(c: Context): { callerIp?: string; callerUa?: string } {
+  return {
+    callerIp: c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
+      || c.req.header("x-real-ip")
+      || "unknown",
+    callerUa: c.req.header("user-agent") || "unknown",
+  };
 }
 
 /** CORS preflight for external tools */
@@ -54,7 +66,7 @@ proxyRoutes.post("/v1/messages", async (c) => {
     if (val) headers[key] = val;
   }
 
-  return proxyService.forward("/v1/messages", "POST", headers, body);
+  return proxyService.forward("/v1/messages", "POST", headers, body, getCallerMeta(c));
 });
 
 /** POST /proxy/v1/chat/completions — OpenAI-compatible chat completions proxy */
@@ -69,7 +81,7 @@ proxyRoutes.post("/v1/chat/completions", async (c) => {
   }
 
   const body = await c.req.text();
-  return proxyService.forwardOpenAi(body);
+  return proxyService.forwardOpenAi(body, getCallerMeta(c));
 });
 
 /** POST /proxy/v1/messages/count_tokens — token counting proxy */
@@ -90,5 +102,15 @@ proxyRoutes.post("/v1/messages/count_tokens", async (c) => {
     if (val) headers[key] = val;
   }
 
-  return proxyService.forward("/v1/messages/count_tokens", "POST", headers, body);
+  return proxyService.forward("/v1/messages/count_tokens", "POST", headers, body, getCallerMeta(c));
+});
+
+/** GET /proxy/stats — proxy request stats (behind proxy auth) */
+proxyRoutes.get("/stats", (c) => {
+  const authHeader = c.req.header("authorization") || c.req.header("x-api-key");
+  if (!validateProxyAuth(authHeader)) {
+    return c.json({ error: "Invalid proxy auth key" }, 401);
+  }
+  const stats = getProxyStats();
+  return c.json({ ...stats, requestCount: proxyService.getRequestCount() });
 });

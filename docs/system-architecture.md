@@ -650,7 +650,7 @@ ppm jira track <issue-key>                 — Manually track ticket (insert res
 - Enforce security (no parent directory access)
 
 **Key Patterns:**
-- SQLite: WAL mode, foreign keys, lazy init, schema v19 (18 tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, bot_tasks)
+- SQLite: WAL mode, foreign keys, lazy init, schema v28 (20+ tables: config, connections, accounts, usage_history, session_logs, push_subscriptions, session_map, table_metadata, workspace_state, extension_storage, mcp_servers, clawbot_sessions, clawbot_memories, clawbot_paired_chats, jira_config, jira_watchers, jira_watch_results, bot_tasks, proxy_requests, session_metadata)
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)

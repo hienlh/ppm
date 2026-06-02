@@ -625,6 +625,14 @@ if (process.argv.includes("__serve__")) {
     }
   } catch { /* status.json missing or no shareUrl — normal */ }
 
+  // Auto-cleanup old proxy request logs (30-day retention): on startup + daily
+  {
+    const { cleanupOldProxyRequests } = await import("../services/db.service.ts");
+    const deleted = cleanupOldProxyRequests(30);
+    if (deleted > 0) console.log(`[proxy] cleaned up ${deleted} proxy request logs older than 30 days`);
+    setInterval(() => cleanupOldProxyRequests(30), 24 * 60 * 60 * 1000);
+  }
+
   const server = Bun.serve({
     port,
     hostname: host,
