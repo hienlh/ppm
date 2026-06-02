@@ -25,7 +25,7 @@ interface MarkdownRendererProps {
 }
 
 /** Plugin arrays — stable references to avoid re-creating on each render */
-const remarkPlugins = [[remarkGfm, { singleTilde: false }], remarkMath, remarkBreaks] as any;
+const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
 const rehypePlugins = [rehypeRaw, rehypeKatex, rehypeHighlight] as any;
 
 /** Component map — stable references; dynamic state flows through MdContext */

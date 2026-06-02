@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.92] - 2026-06-02
+
+### Fixed
+- **Markdown wrongly rendered text as math (KaTeX)**: `remark-math` defaults to `singleDollarTextMath: true`, so any text with paired single `$` — bash variables (`$repo`, `$dir`), prices, regex — was parsed as inline math and rendered by KaTeX, mangling quotes/spacing and turning `===` into operator bars that looked like struck-through text. Disabled `singleDollarTextMath` so only explicit `$$block$$` math triggers KaTeX (`markdown-renderer.tsx`).
+
+### Changed
+- **Chat nav buttons always visible**: Up/down message-nav buttons now always render with a disabled state instead of mounting/unmounting conditionally, restyled smaller and translucent with backdrop blur to avoid layout shift as scroll position changes.
+
 ## [0.13.91] - 2026-06-02
 
 ### Fixed
