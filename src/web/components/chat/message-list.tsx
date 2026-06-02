@@ -339,23 +339,17 @@ function ScrollNavButtons() {
     else scrollToBottom();
   }, [scrollRef, scrollMessageToTop, scrollToBottom]);
 
-  if (!hasAbove && isAtBottom) return null;
-
   const btnClass =
-    "size-11 flex items-center justify-center rounded-full bg-surface-elevated border border-border text-text-secondary hover:text-foreground shadow-lg transition-all";
+    "size-8 flex items-center justify-center rounded-full bg-surface-elevated/60 border border-border/60 text-text-secondary shadow-md backdrop-blur-sm transition-all hover:bg-surface-elevated hover:text-foreground disabled:opacity-30 disabled:cursor-default disabled:hover:bg-surface-elevated/60 disabled:hover:text-text-secondary";
 
   return (
     <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
-      {hasAbove && (
-        <button type="button" onClick={goUp} aria-label="Jump to previous message" className={btnClass}>
-          <ChevronUp className="size-4" />
-        </button>
-      )}
-      {!isAtBottom && (
-        <button type="button" onClick={goDown} aria-label="Jump to next message" className={btnClass}>
-          <ChevronDown className="size-4" />
-        </button>
-      )}
+      <button type="button" onClick={goUp} disabled={!hasAbove} aria-label="Jump to previous message" className={btnClass}>
+        <ChevronUp className="size-4" />
+      </button>
+      <button type="button" onClick={goDown} disabled={isAtBottom} aria-label="Jump to next message" className={btnClass}>
+        <ChevronDown className="size-4" />
+      </button>
     </div>
   );
 }
