@@ -496,8 +496,11 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
 
     // ── Non-systemd path: spawn new supervisor directly (macOS/Windows) ─
     // Poll until port is actually free (max 10s) — never guess with fixed sleep
+    // On Windows, reusePort lets the new server bind over zombie sockets,
+    // so we only need a brief wait for the killed process to release.
     const portFreeStart = Date.now();
-    while (Date.now() - portFreeStart < 10_000) {
+    const portTimeout = process.platform === "win32" ? 3_000 : 10_000;
+    while (Date.now() - portFreeStart < portTimeout) {
       const inUse = await new Promise<boolean>((resolve) => {
         const net = require("node:net") as typeof import("node:net");
         const tester = net.createServer()
