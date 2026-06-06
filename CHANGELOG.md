@@ -1,6 +1,15 @@
 # Changelog
 
-## [0.13.93] - 2026-06-02
+## [0.13.94] - 2026-06-06
+
+### Added
+- **1M context window toggle**: New AI-settings switch to enable the `context-1m-2025-08-07` beta header. Requires an entitled account (Max/Team/Enterprise) and an Opus 4 / Sonnet 4 model; other accounts will error (`config.ts`, `ai-settings-section.tsx`, `claude-agent-sdk.ts`).
+
+### Fixed
+- **529 Overloaded errors repeated in chat**: A single 529 (server overloaded) turn rendered the same "API Error: 529 Overloaded…" block multiple times, plus duplicate user bubbles and a stray "No response requested." This came from three sources, now fixed: (1) the provider only detected 401/quota errors in raw assistant text, so 529 text fell through to normal rendering — now `API Error: 5xx` text is detected and routed into the existing retry branch (`claude-agent-sdk.ts`); (2) each retry attempt yielded its own `error` event that accumulated — retries now emit a single replaceable `status_update` ("Đang thử lại (N/M)...") and surface only one final error when retries are exhausted; (3) on reload, the persisted "No response requested." no-op assistant turn now gets filtered (`jsonl-transcript-parser.ts`). Added a frontend safety-net that replaces (not appends) consecutive identical error events (`use-chat.ts`).
+
+### Docs
+- **README demo**: Added desktop + mobile demo GIFs (with full-quality MP4 links) to the README.
 
 ### Fixed
 - **Operators in code blocks looked struck through**: Geist Mono's contextual ligatures joined `===`, `!==`, `=>` etc. into a single connected bar glyph, which read like a strikethrough line cutting through adjacent code. Disabled `font-variant-ligatures` on markdown `pre`/`code` so each operator character renders distinctly (`globals.css`).
