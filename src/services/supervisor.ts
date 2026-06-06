@@ -38,6 +38,7 @@ const SELF_REPLACE_TIMEOUT_MS = 30_000;     // 30s to wait for new supervisor
 
 const logFile = () => resolve(getPpmDir(), "ppm.log");
 const restartingFlag = () => resolve(getPpmDir(), ".restarting");
+const serverShutdownFile = () => resolve(getPpmDir(), ".server-shutdown");
 
 // ─── State ─────────────────────────────────────────────────────────────
 let serverChild: Subprocess | null = null;
@@ -84,6 +85,38 @@ function log(level: string, msg: string) {
 // ─── Backoff calc ──────────────────────────────────────────────────────
 function backoffDelay(restartCount: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (restartCount - 1), BACKOFF_MAX_MS);
+}
+
+// ─── Graceful server shutdown (Windows-safe) ──────────────────────────
+// On Windows, SIGTERM maps to TerminateProcess — graceful handlers never fire.
+// Instead, write a shutdown file that the server child polls for.
+function requestServerShutdown(child: Subprocess, timeoutMs: number = 2000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const pid = child.pid;
+    if (process.platform === "win32") {
+      try { writeFileSync(serverShutdownFile(), String(Date.now())); } catch {}
+      const deadline = Date.now() + timeoutMs;
+      const poll = setInterval(() => {
+        try { process.kill(pid, 0); } catch {
+          clearInterval(poll);
+          resolve();
+          return;
+        }
+        if (Date.now() > deadline) {
+          clearInterval(poll);
+          try { process.kill(pid, "SIGKILL"); } catch {}
+          resolve();
+        }
+      }, 100);
+    } else {
+      try { child.kill("SIGTERM"); } catch {}
+      setTimeout(() => {
+        try { process.kill(pid, "SIGKILL"); } catch {}
+        resolve();
+      }, timeoutMs).unref();
+      resolve();
+    }
+  });
 }
 
 // ─── Server management ─────────────────────────────────────────────────
@@ -316,8 +349,14 @@ export async function spawnTunnel(port: number): Promise<void> {
 function startServerHealthCheck(port: number) {
   healthTimer = setInterval(async () => {
     if (shuttingDown || !serverChild || getState() === "stopped") return;
+    // Read actual port from status.json in case server auto-selected a different port
+    let checkPort = port;
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      const status = readStatus();
+      if (status.port && typeof status.port === "number") checkPort = status.port;
+    } catch {}
+    try {
+      const res = await fetch(`http://127.0.0.1:${checkPort}/api/health`, {
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) { healthFailCount = 0; return; }
@@ -326,6 +365,9 @@ function startServerHealthCheck(port: number) {
     if (healthFailCount >= SERVER_HEALTH_FAIL_THRESHOLD && serverChild) {
       log("WARN", `Server unresponsive (${healthFailCount} failures), killing`);
       const pid = serverChild.pid;
+      if (process.platform === "win32") {
+        try { writeFileSync(serverShutdownFile(), String(Date.now())); } catch {}
+      }
       try { serverChild.kill("SIGTERM"); } catch {}
       setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 1000).unref();
       healthFailCount = 0;
@@ -463,17 +505,14 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     }
 
     // Kill server child to free the port; keep tunnel alive for domain continuity
-    // SIGTERM first for graceful socket release, then SIGKILL after brief wait
     log("INFO", "Stopping server before upgrade (tunnel kept alive)");
     if (serverChild) {
       const pid = serverChild.pid;
-      try { serverChild.kill("SIGTERM"); } catch {}
-      await Bun.sleep(500);
-      // Process group kill on Unix; direct kill on Windows (negative PID unsupported)
+      await requestServerShutdown(serverChild, 2000);
+      // Process group kill on Unix (catches grandchildren like Claude SDK subprocesses)
       if (process.platform !== "win32") {
         try { process.kill(-pid, "SIGKILL"); } catch {}
       }
-      try { process.kill(pid, "SIGKILL"); } catch {}
       serverChild = null;
     }
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
@@ -522,10 +561,10 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
       // On Windows, Bun.spawn children die when parent exits (same job object).
       // Use node:child_process with detached:true to create a truly independent process.
       const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
-      const proc = nodeSpawn(cmd[0], cmd.slice(1), {
+      const proc = nodeSpawn(cmd[0]!, cmd.slice(1), {
         detached: true,
-        stdio: ["ignore", newLogFd, newLogFd],
-        env: process.env,
+        stdio: ["ignore", newLogFd, newLogFd] as any,
+        env: process.env as NodeJS.ProcessEnv,
         windowsHide: true,
       });
       killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };
@@ -786,11 +825,8 @@ export async function softStop() {
   notifyStateChange(getState(), "stopped", "user_stop");
   setState("stopped");
 
-  // SIGTERM for graceful socket release, then SIGKILL fallback
   if (serverChild) {
-    const pid = serverChild.pid;
-    try { serverChild.kill("SIGTERM"); } catch {}
-    setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 1000).unref();
+    await requestServerShutdown(serverChild, 1000);
     serverChild = null;
   }
 
@@ -799,9 +835,6 @@ export async function softStop() {
 
   // Keep: tunnel, Cloud WS, upgrade checks, tunnel probe
   updateStatus({ state: "stopped", pid: null, stoppedAt: new Date().toISOString() });
-
-  // Start stopped page on the server port so tunnel URL still works
-  await Bun.sleep(500); // brief wait for port release
   startStoppedPage(_opts.port, _opts.host);
 
   // Wait for resume signal
@@ -840,13 +873,13 @@ export function shutdown() {
   if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
   if (cloudMonitorTimer) clearInterval(cloudMonitorTimer);
 
-  // SIGTERM first for graceful socket release, then SIGKILL after 2s
-  // to clean up grandchildren (Claude SDK subprocesses).
-  // On Windows, SIGTERM lets server.stop() run; SIGKILL is TerminateProcess.
   if (serverChild) {
     log("INFO", `Killing server child (PID: ${serverChild.pid})`);
-    try { serverChild.kill("SIGTERM"); } catch {}
+    if (process.platform === "win32") {
+      try { writeFileSync(serverShutdownFile(), String(Date.now())); } catch {}
+    }
     const pid = serverChild.pid;
+    try { serverChild.kill("SIGTERM"); } catch {}
     setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 2000).unref();
   }
   if (tunnelChild) {
@@ -869,8 +902,9 @@ export async function runSupervisor(opts: {
   const ppmDir = getPpmDir();
   if (!existsSync(ppmDir)) mkdirSync(ppmDir, { recursive: true });
 
-  // Clean up restarting flag from previous upgrade/restart
+  // Clean up flags from previous upgrade/restart
   try { unlinkSync(restartingFlag()); } catch {}
+  try { unlinkSync(serverShutdownFile()); } catch {}
 
   // Save original argv for self-replace
   originalArgv = [...process.argv];

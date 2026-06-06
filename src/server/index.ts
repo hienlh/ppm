@@ -345,7 +345,7 @@ export async function startServer(options: {
         const { execSync } = require("node:child_process") as typeof import("node:child_process");
         const out = execSync(`netstat -ano | findstr "0.0.0.0:${port}.*LISTENING"`, { encoding: "utf-8", timeout: 5000 });
         const match = out.trim().match(/LISTENING\s+(\d+)/);
-        if (!match) return -1;
+        if (!match?.[1]) return -1;
         const ownerPid = parseInt(match[1], 10);
         // Check if the process is alive
         try { process.kill(ownerPid, 0); return 0; } catch { return ownerPid; }
@@ -633,8 +633,50 @@ if (process.argv.includes("__serve__")) {
     setInterval(() => cleanupOldProxyRequests(30), 24 * 60 * 60 * 1000);
   }
 
+  // On Windows, check for zombie sockets before binding.
+  // After an upgrade, the old server's socket can stay in LISTENING state
+  // because SIGTERM maps to TerminateProcess (graceful handler never fires).
+  let actualPort = port;
+  if (process.platform === "win32") {
+    const portInUse = await new Promise<boolean>((resolve) => {
+      const net = require("node:net") as typeof import("node:net");
+      const tester = net.createServer()
+        .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
+        .once("listening", () => tester.close(() => resolve(false)))
+        .listen(port, host);
+    });
+    if (portInUse) {
+      try {
+        const { execSync } = require("node:child_process") as typeof import("node:child_process");
+        const out = execSync(`netstat -ano | findstr "0.0.0.0:${port}.*LISTENING"`, { encoding: "utf-8", timeout: 5000 });
+        const match = out.trim().match(/LISTENING\s+(\d+)/);
+        if (match?.[1]) {
+          const ownerPid = parseInt(match[1], 10);
+          let isZombie = false;
+          try { process.kill(ownerPid, 0); } catch { isZombie = true; }
+          if (isZombie) {
+            console.warn(`[serve] Port ${port} held by dead process (PID: ${ownerPid}) — zombie socket`);
+            for (let candidate = port + 1; candidate <= port + 20; candidate++) {
+              const busy = await new Promise<boolean>((resolve) => {
+                const net = require("node:net") as typeof import("node:net");
+                const tester = net.createServer()
+                  .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
+                  .once("listening", () => tester.close(() => resolve(false)))
+                  .listen(candidate, host);
+              });
+              if (!busy) { actualPort = candidate; break; }
+            }
+            if (actualPort !== port) {
+              console.warn(`[serve] Auto-selected port ${actualPort} instead`);
+            }
+          }
+        }
+      } catch {}
+    }
+  }
+
   const server = Bun.serve({
-    port,
+    port: actualPort,
     hostname: host,
     fetch(req, server) {
       const url = new URL(req.url);
@@ -738,9 +780,23 @@ if (process.argv.includes("__serve__")) {
     })
     .catch(() => {});
 
+  // If we auto-selected a different port, update status.json so supervisor
+  // health checks and tunnel proxy point at the correct port.
+  if (actualPort !== port) {
+    try {
+      const { resolve: r } = await import("node:path");
+      const { readFileSync: rf, writeFileSync: wf, renameSync: rn } = await import("node:fs");
+      const { getPpmDir: gd } = await import("../services/ppm-dir.ts");
+      const sf = r(gd(), "status.json");
+      const st = JSON.parse(rf(sf, "utf-8"));
+      st.port = actualPort;
+      const tmp = sf + ".tmp." + process.pid;
+      wf(tmp, JSON.stringify(st));
+      rn(tmp, sf);
+    } catch {}
+  }
+
   // Graceful shutdown: close the listening socket so the port is released
-  // before the process exits. Without this, SIGKILL leaves zombie sockets
-  // on Windows (the dead PID keeps the port in LISTENING state for hours).
   const gracefulShutdown = () => {
     try { server.stop(true); } catch {}
     process.exit(0);
@@ -748,5 +804,20 @@ if (process.argv.includes("__serve__")) {
   process.on("SIGTERM", gracefulShutdown);
   process.on("SIGINT", gracefulShutdown);
 
-  console.log(`Server child ready on port ${port}`);
+  // On Windows, SIGTERM maps to TerminateProcess — graceful handlers never fire.
+  // Poll for a shutdown file written by the supervisor instead.
+  if (process.platform === "win32") {
+    const { getPpmDir: gd } = await import("../services/ppm-dir.ts");
+    const { resolve: r } = await import("node:path");
+    const { existsSync: ex, unlinkSync: ul } = await import("node:fs");
+    const shutdownFile = r(gd(), ".server-shutdown");
+    setInterval(() => {
+      if (ex(shutdownFile)) {
+        try { ul(shutdownFile); } catch {}
+        gracefulShutdown();
+      }
+    }, 200);
+  }
+
+  console.log(`Server child ready on port ${actualPort}`);
 }
