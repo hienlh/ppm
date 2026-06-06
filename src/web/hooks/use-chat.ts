@@ -48,6 +48,10 @@ interface UseChatReturn {
   expandCompact: (compactMessageId: string, jsonlPath: string) => Promise<number>;
   /** Whether a given compactMessageId has been expanded. */
   isCompactExpanded: (compactMessageId: string) => boolean;
+  /** Remove a single message from the local view (not persisted history). */
+  dismissMessage: (id: string) => void;
+  /** Remove all system/error bubbles from the local view. */
+  clearErrors: () => void;
   messagesLoading: boolean;
   isStreaming: boolean;
   phase: SessionPhase;
@@ -882,6 +886,16 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
   const isCompactExpanded = useCallback((id: string) => expansions.has(id), [expansions]);
 
+  /** Remove a single message from the local view (e.g. dismiss an error bubble). */
+  const dismissMessage = useCallback((id: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  /** Remove all system/error bubbles from the local view. */
+  const clearErrors = useCallback(() => {
+    setMessages((prev) => prev.filter((m) => m.role !== "system"));
+  }, []);
+
   /** Flattened view: expansions prepended before their compact cards. */
   const renderedMessages = useMemo(
     () => flattenWithExpansions(messages, expansions),
@@ -893,6 +907,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     renderedMessages,
     expandCompact,
     isCompactExpanded,
+    dismissMessage,
+    clearErrors,
     messagesLoading,
     isStreaming,
     phase,

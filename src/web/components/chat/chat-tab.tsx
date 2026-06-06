@@ -96,6 +96,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     renderedMessages,
     expandCompact,
     isCompactExpanded,
+    dismissMessage,
+    clearErrors,
     messagesLoading,
     isStreaming,
     phase,
@@ -441,6 +443,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
         onSelectSession={handleSelectSession}
+        onDismissMessage={dismissMessage}
+        onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
       />
 

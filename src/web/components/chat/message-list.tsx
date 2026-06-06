@@ -55,6 +55,10 @@ interface MessageListProps {
   onFork?: (userMessage: string, messageId?: string) => void;
   /** Called when user selects a recent session from the welcome screen */
   onSelectSession?: (session: import("../../../types/chat").SessionInfo) => void;
+  /** Dismiss a single message (removes from local view only — not persisted history) */
+  onDismissMessage?: (messageId: string) => void;
+  /** Remove all system/error bubbles from the local view */
+  onClearErrors?: () => void;
   /** Partial bash output ref from useChat for real-time streaming */
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
   /** Fetches pre-compact transcript and prepends messages. Returns loaded count. */
@@ -79,6 +83,8 @@ export function MessageList({
   bashPartialOutput,
   onExpandCompact,
   isCompactExpanded,
+  onDismissMessage,
+  onClearErrors,
 }: MessageListProps) {
   // Scroll handled by StickToBottom wrapper — no manual scroll logic needed
 
@@ -109,6 +115,16 @@ export function MessageList({
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
     onFork?.(msgContent, msgId);
   }, [onFork]);
+
+  // Stable dismiss handler — avoids new closure per message (preserves MessageBubble memo)
+  const handleDismiss = useCallback((msgId: string) => {
+    onDismissMessage?.(msgId);
+  }, [onDismissMessage]);
+
+  const errorCount = useMemo(
+    () => filtered.reduce((n, m) => (m.role === "system" ? n + 1 : n), 0),
+    [filtered],
+  );
 
   // Scroll anchor bridge published from inside StickToBottom (needs the context's scrollRef).
   const scrollAnchorRef = useRef<ScrollAnchorHandle | null>(null);
@@ -182,6 +198,18 @@ export function MessageList({
       <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden [contain:strict] [overflow-anchor:auto]" resize="smooth" initial="instant">
         <StickToBottom.Content className="p-4 space-y-4 select-none [&>*]:[overflow-anchor:auto]">
           <ScrollAnchorBridge bridgeRef={scrollAnchorRef} />
+          {errorCount > 1 && onClearErrors && (
+            <div className="sticky top-0 z-10 flex justify-center">
+              <button
+                type="button"
+                onClick={onClearErrors}
+                className="flex items-center gap-1.5 rounded-full bg-red-500/15 border border-red-500/25 px-3 py-1 text-xs text-red-400 hover:bg-red-500/25"
+              >
+                <XCircle className="size-3.5" />
+                Clear all errors ({errorCount})
+              </button>
+            </div>
+          )}
           {hasMore && (
             <LoadMoreSentinel onLoadMore={loadMore} loading={autoLoadingCompact} />
           )}
@@ -195,6 +223,7 @@ export function MessageList({
                   isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                   projectName={projectName}
                   onFork={msg.role === "user" && onFork ? handleFork : undefined}
+                  onDismiss={msg.role === "system" && onDismissMessage ? handleDismiss : undefined}
                   prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
                   bashPartialOutput={bashPartialOutput}
                 />
@@ -385,9 +414,10 @@ function LoadMoreSentinel({ onLoadMore, loading }: { onLoadMore: () => void; loa
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, prevMsgId, bashPartialOutput }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, onDismiss, prevMsgId, bashPartialOutput }: {
   message: ChatMessage; isStreaming: boolean; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
+  onDismiss?: (messageId: string) => void;
   prevMsgId?: string;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }) {
@@ -405,9 +435,20 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
 
   if (message.role === "system") {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-400">
+      <div className="group flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-400">
         <AlertCircle className="size-4 shrink-0" />
-        <p>{message.content}</p>
+        <p className="flex-1">{message.content}</p>
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={() => onDismiss(message.id)}
+            aria-label="Dismiss"
+            title="Dismiss"
+            className="shrink-0 rounded p-1 text-red-400/70 hover:text-red-400 hover:bg-red-500/15 md:opacity-0 md:group-hover:opacity-100"
+          >
+            <XCircle className="size-4" />
+          </button>
+        )}
       </div>
     );
   }
