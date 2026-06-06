@@ -188,6 +188,18 @@ class AccountSelectorService {
     console.log(`[accounts] ${accountId} rate limited — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
   }
 
+  /** Called when account hits a hard usage/session limit (5h/weekly cap).
+   *  Cooldown until the real reset time (or ~1h fallback). Does NOT bump retryCounts —
+   *  this is a quota ceiling, not a transient failure, so it carries no escalating penalty. */
+  onUsageLimit(accountId: string, resetAtMs?: number): void {
+    const FALLBACK_MS = 60 * 60_000; // 1 hour
+    const cooldownUntilMs =
+      resetAtMs && resetAtMs > Date.now() ? resetAtMs : Date.now() + FALLBACK_MS;
+    accountService.setCooldown(accountId, cooldownUntilMs);
+    const mins = Math.round((cooldownUntilMs - Date.now()) / 60_000);
+    console.log(`[accounts] ${accountId} usage limit — cooldown ${mins}m (until reset)`);
+  }
+
   /** Called when auth error (401 / authentication_failed) — cooldown with longer backoff */
   onAuthError(accountId: string): void {
     const retries = (this.retryCounts.get(accountId) ?? 0) + 1;

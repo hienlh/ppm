@@ -77,6 +77,36 @@ function createMessageChannel(): {
   };
 }
 
+/**
+ * Parse a hard usage/session-limit reset hint from SDK error text.
+ * Returns the human-readable reset text and a best-effort absolute timestamp,
+ * or null if no reset time is present (caller treats that as a transient rate limit).
+ *
+ * Examples it handles: "resets 10:10am", "resets at 3pm", "resets 10:10am (Asia/Saigon)".
+ */
+function parseUsageLimitReset(text: string): { text?: string; atMs?: number } | null {
+  const m = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text);
+  if (!m) return null;
+  const rawText = m[0].replace(/^resets?\s+(?:at\s+)?/i, "").trim();
+
+  let hour = Number(m[1]);
+  const minute = m[2] ? Number(m[2]) : 0;
+  const ampm = m[3]?.toLowerCase();
+  if (Number.isNaN(hour) || hour > 23 || minute > 59) {
+    return { text: rawText || undefined };
+  }
+  if (ampm === "pm" && hour < 12) hour += 12;
+  if (ampm === "am" && hour === 12) hour = 0;
+
+  const now = new Date();
+  const reset = new Date(now);
+  reset.setHours(hour, minute, 0, 0);
+  // If the computed time already passed today, it must mean the next occurrence.
+  if (reset.getTime() <= now.getTime()) reset.setDate(reset.getDate() + 1);
+
+  return { text: rawText || undefined, atMs: reset.getTime() };
+}
+
 /** Build a MessageParam with optional image content blocks */
 function buildMessageParam(
   text: string,
@@ -962,6 +992,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let rateLimitRetryCount = 0;
       let authRetryCount = 0;
       let hadAnyEvents = false;
+      // Accounts that hit a hard usage/session limit this turn — never retried again here.
+      const usageLimitedAccounts = new Set<string>();
       retryLoop: while (true) {
       // Reset streaming state on retry — clears stale content from failed attempts
       // (e.g. "Failed to authenticate. API Error: 401..." text that was already streamed)
@@ -1180,6 +1212,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           if (!parentId && (msg as any).uuid) lastAssistantUuid = (msg as any).uuid;
           // SDK assistant messages can carry an error field for auth/billing/rate-limit failures
           let assistantError = (msg as any).error as string | undefined;
+          // Human-readable reset time + parsed timestamp for a hard usage/session limit
+          let usageLimitResetText: string | undefined;
+          let usageLimitResetAtMs: number | undefined;
 
           // SDK sometimes returns auth errors as text content without setting error field.
           // Detect 401 pattern in text: "Failed to authenticate. API Error: 401 ..."
@@ -1189,8 +1224,19 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               assistantError = "authentication_failed";
               console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
             } else if (textContent && /hit your (?:[\w-]+\s+)*limit/i.test(textContent)) {
-              assistantError = "rate_limit";
-              console.warn(`[sdk] session=${sessionId} detected quota limit in assistant text content — treating as rate_limit`);
+              // A hard usage/session limit carries a reset time ("...resets 10:10am").
+              // Treat those as usage_limit (switch accounts, don't backoff-loop); only
+              // wording without a reset hint falls through to transient rate_limit.
+              const reset = parseUsageLimitReset(textContent);
+              if (reset) {
+                assistantError = "usage_limit";
+                usageLimitResetText = reset.text;
+                usageLimitResetAtMs = reset.atMs;
+                console.warn(`[sdk] session=${sessionId} detected usage/session limit (resets ${reset.text ?? "?"}) — will switch account, no backoff loop`);
+              } else {
+                assistantError = "rate_limit";
+                console.warn(`[sdk] session=${sessionId} detected quota limit in assistant text content — treating as rate_limit`);
+              }
             } else if (textContent && /API Error:\s*5\d{2}\b/i.test(textContent)) {
               // 5xx (e.g. 529 Overloaded) — match the explicit "API Error: 5xx" text only.
               // Treat as server_error so it enters the retry branch and the raw error text is
@@ -1237,6 +1283,42 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // All recovery exhausted — tear down streaming session
               console.warn(`[sdk] session=${sessionId} auth permanently failed after ${authRetryCount} attempts — tearing down streaming session`);
               yield { type: "error", message: "API authentication failed. Check your account credentials in Settings → Accounts." };
+              break;
+            }
+
+            // Hard usage/session limit — never retry the same account (futile until reset).
+            // Switch to a fresh account if one exists; otherwise stop with one clear error.
+            if (assistantError === "usage_limit") {
+              if (account) {
+                usageLimitedAccounts.add(account.id);
+                accountSelector.onUsageLimit(account.id, usageLimitResetAtMs);
+              }
+              const nextAccount = accountSelector.next(usageLimitedAccounts);
+              if (nextAccount) {
+                account = nextAccount;
+                const label = nextAccount.label ?? nextAccount.email ?? "Unknown";
+                console.warn(`[sdk] session=${sessionId} usage limit — switching to fresh account ${nextAccount.id} (${label}), no backoff`);
+                yield { type: "account_retry" as const, reason: `Usage limit reached — switching account`, accountId: nextAccount.id, accountLabel: label };
+                // Rebuild query with the fresh account env, no backoff delay.
+                const retryU = buildRetryMsg();
+                closeCurrentStream();
+                const ulRetryEnv = this.buildQueryEnv(meta.projectPath, account);
+                const { generator: ulRetryGen, controller: ulRetryCtrl } = createMessageChannel();
+                ulRetryCtrl.push(retryU.msg);
+                const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: ulRetryEnv };
+                const rq = query({
+                  prompt: ulRetryGen,
+                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+                });
+                this.streamingSessions.set(sessionId, { meta, query: rq, controller: ulRetryCtrl, lastUserContent: retryU.lastUserContent, lastUserImages: retryU.lastUserImages });
+                this.activeQueries.set(sessionId, rq);
+                eventSource = rq;
+                continue retryLoop;
+              }
+              // No fresh account left — stop. One clear error, no retry loop.
+              const resetSuffix = usageLimitResetText ? ` Resets ${usageLimitResetText}.` : "";
+              console.warn(`[sdk] session=${sessionId} usage limit — no fresh account available, stopping`);
+              yield { type: "error", message: `All accounts have hit their usage limit.${resetSuffix} Add another account in Settings → Accounts or wait for the reset.` };
               break;
             }
 
