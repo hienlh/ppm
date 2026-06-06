@@ -833,6 +833,15 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         console.log(`[sdk] session=${sessionId} mcpServers: ${Object.keys(mcpServers).join(", ")}`);
       }
 
+      // 1M context (GA): the CLI enables a 1M window when the model name carries a
+      // [1m] suffix. The suffix is stripped before the API call. Requires an entitled
+      // account (Max/Team/Enterprise) and a supported model; otherwise the API errors.
+      const baseModel = opts?.model ?? providerConfig.model;
+      const resolvedModel =
+        baseModel && providerConfig.context_1m && !/\[1m\]$/i.test(baseModel)
+          ? `${baseModel}[1m]`
+          : baseModel;
+
       const queryOptions: Record<string, any> = {
         // On Windows, child_process.spawn("bun") fails with ENOENT — force node
         ...(process.platform === "win32" && { executable: "node" }),
@@ -849,7 +858,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(hasMcp && { mcpServers }),
         permissionMode,
         allowDangerouslySkipPermissions: isBypass,
-        ...((opts?.model ?? providerConfig.model) && { model: opts?.model ?? providerConfig.model }),
+        ...(resolvedModel && { model: resolvedModel }),
         ...(providerConfig.effort && { effort: providerConfig.effort }),
         maxTurns: providerConfig.max_turns ?? 1000,
         ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),

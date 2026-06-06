@@ -1,5 +1,10 @@
 import { tmpdir } from "node:os";
 import { ClaudeAgentSdkProvider } from "./src/providers/claude-agent-sdk.ts";
+import { configService } from "./src/services/config.service.ts";
+
+// Load real config from SQLite (provider reads model/context_1m from here).
+// Without this, configService falls back to DEFAULT_CONFIG (sonnet-4-6, no 1M).
+configService.load();
 
 // Remove CLAUDECODE to avoid nested session error
 delete process.env.CLAUDECODE;

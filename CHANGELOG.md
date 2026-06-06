@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.95] - 2026-06-06
+
+### Fixed
+- **1M context toggle now actually enables 1M**: The 0.13.94 toggle only forwarded the `context-1m-2025-08-07` beta header, which the current CLI ignores for newer models — `/context` still showed 200k on Opus 4.8. Two changes make it work: (1) the bundled `@anthropic-ai/claude-agent-sdk` is now synced to the pinned `0.3.146` (its CLI v2.1.146 recognizes `opus-4-8`; node_modules had drifted to `0.2.81`); (2) when the toggle is on, PPM appends a `[1m]` suffix to the model name — the CLI's GA mechanism for a 1M window — which it strips before the API call. Verified end-to-end: `contextWindow=1000000` on an entitled Team account (`claude-agent-sdk.ts`). Requires a Max/Team/Enterprise account and a supported model; others will error.
+
 ## [0.13.94] - 2026-06-06
 
 ### Added
