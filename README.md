@@ -8,6 +8,21 @@ A mobile-first web IDE with AI chat, terminal, git, database tools, and file exp
 [![npm license](https://img.shields.io/npm/l/@hienlh/ppm?style=flat-square)](https://www.npmjs.com/package/@hienlh/ppm)
 [![bun](https://img.shields.io/badge/runtime-bun-black?style=flat-square&logo=bun)](https://bun.sh)
 
+## Demo
+
+<table>
+  <tr>
+    <th>Desktop</th>
+    <th>Mobile</th>
+  </tr>
+  <tr>
+    <td width="70%"><img src="https://raw.githubusercontent.com/hienlh/ppm/main/docs/media/ppm-demo-desktop.gif" alt="PPM desktop demo" /></td>
+    <td width="30%"><img src="https://raw.githubusercontent.com/hienlh/ppm/main/docs/media/ppm-demo-mobile.gif" alt="PPM mobile demo" /></td>
+  </tr>
+</table>
+
+> Full-quality MP4: [desktop](https://raw.githubusercontent.com/hienlh/ppm/main/docs/media/ppm-demo-desktop.mp4) · [mobile](https://raw.githubusercontent.com/hienlh/ppm/main/docs/media/ppm-demo-mobile.mp4)
+
 ## Quick Start
 
 ### Binary (no dependencies)
