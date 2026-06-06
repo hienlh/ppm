@@ -285,6 +285,20 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
             {config?.agent_teams && (
               <TeamListSection compact={compact} />
             )}
+
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <Label htmlFor="ai-context-1m" className={compact ? labelSize : undefined}>1M Context Window</Label>
+                <p className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+                  Requires an entitled account (Max/Team/Enterprise) and an Opus 4 / Sonnet 4 model. Other accounts will error.
+                </p>
+              </div>
+              <Switch
+                id="ai-context-1m"
+                checked={config?.context_1m ?? false}
+                onCheckedChange={(v) => handleSave("context_1m", v)}
+              />
+            </div>
           </>
         )}
 

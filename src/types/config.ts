@@ -63,6 +63,9 @@ export interface AIProviderConfig {
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
   agent_teams?: boolean;
+  // Enable 1M context window via beta header. Requires an entitled account
+  // (Max/Team/Enterprise) and an opus-4/sonnet-4 model; otherwise the API errors.
+  context_1m?: boolean;
 
   // CLI-specific (Cursor, Codex, Gemini)
   cli_command?: string;

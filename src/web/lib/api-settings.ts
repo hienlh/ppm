@@ -179,6 +179,7 @@ export interface AIProviderSettings {
   permission_mode?: string;
   system_prompt?: string;
   agent_teams?: boolean;
+  context_1m?: boolean;
 }
 
 export interface AISettings {
