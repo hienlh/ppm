@@ -199,6 +199,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /proxy/v1/messages`
 - `POST   /proxy/v1/chat/completions`
 - `POST   /proxy/v1/messages/count_tokens`
+- `GET    /proxy/stats`
 
 ## WebSocket
 
@@ -206,4 +207,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.13.95 -->
+<!-- Generated from src/server/routes/ for PPM v0.13.96 -->

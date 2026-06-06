@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.96] - 2026-06-06
+
+### Added
+- **Proxy request logging to SQLite**: Every proxy request (success, error, rate_limited) is logged to a new `proxy_requests` table (migration v28) with metadata: endpoint, model, account ID/label, caller IP/UA, status, duration. Message content and tokens are not stored — metadata only.
+- **GET /proxy/stats endpoint**: New `GET /proxy/stats` endpoint (behind proxy auth) returns request statistics for the last hour, last 24 hours, and all-time totals, grouped by model, account label, and caller IP. Helps diagnose which caller/model/account is consuming quota.
+- **Auto-cleanup of proxy request logs**: 30-day retention on `proxy_requests` table — runs on server startup and daily thereafter, automatically purging older requests.
+- **Dismiss & clear chat error messages**: Each error/system bubble (rate limit, usage limit, auth failure) now has an X to dismiss it, and a sticky "Clear all errors" pill appears when more than one is present (`use-chat.ts`, `chat-tab.tsx`, `message-list.tsx`).
+
+### Changed
+- **Usage/session limit no longer retries futilely**: Hard usage limits (5-hour/weekly caps that carry a reset time) were lumped into transient `rate_limit` handling, so PPM kept retrying the same exhausted account with backoff and resurfacing the same error repeatedly. They are now classified separately — the exhausted account is cooled down until its real reset time (`onUsageLimit`) and the query rotates through fresh accounts once each, stopping with a single clear error when none remain (`claude-agent-sdk.ts`, `account-selector.service.ts`).
+
+### Fixed
+- **Windows graceful shutdown via shutdown file**: On Windows, `SIGTERM` maps to `TerminateProcess`, so the server child's graceful handlers never fired and could leave zombie sockets. The supervisor now writes a `.server-shutdown` file that the server child polls for (200ms), releasing the listening socket cleanly before exit. Auto-selected fallback ports are now persisted to `status.json` so supervisor health checks and the tunnel proxy follow the actual port (`server/index.ts`, `supervisor.ts`).
+- **Zombie socket auto-recovery on Windows**: When a `Bun.serve()` process crashes, Windows can keep the listening socket bound to the dead PID. PPM now detects zombie sockets via a `netstat` PID-liveness check and auto-selects a nearby free port (port+1..port+20) instead of failing with "Port in use".
+- **Upgrade signal failure now shows error details**: When the supervisor signal fails during `POST /api/upgrade/apply`, the response now includes the specific error reason instead of a generic "Restart manually" message.
+
 ## [0.13.95] - 2026-06-06
 
 ### Fixed
