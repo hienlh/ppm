@@ -80,6 +80,23 @@ describe("parseSessionMessage", () => {
     expect(msg.content).toBe("");
     expect(msg.events).toBeUndefined();
   });
+
+  test("drops 'No response requested.' no-op assistant turn", () => {
+    const msg = parseSessionMessage({
+      uuid: "u4", type: "assistant",
+      message: { content: [{ type: "text", text: "No response requested." }] },
+    });
+    expect(msg.content).toBe("");
+    expect(msg.events).toBeUndefined();
+  });
+
+  test("keeps real assistant text that merely mentions no response", () => {
+    const msg = parseSessionMessage({
+      uuid: "u5", type: "assistant",
+      message: { content: [{ type: "text", text: "No response requested. But here is some actual content." }] },
+    });
+    expect(msg.content).toContain("actual content");
+  });
 });
 
 describe("nestChildEvents", () => {

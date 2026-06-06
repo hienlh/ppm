@@ -49,7 +49,19 @@ export function parseSessionMessage(
         (b) => b.type === "text" && typeof b.text === "string" &&
           /Failed to authenticate|API Error: 40[13]|hit your limit|rate.?limit/i.test(b.text as string),
       ));
-  if (isSdkErrorMessage) {
+  // SDK emits a placeholder "No response requested." assistant turn after some
+  // interrupted/empty turns (e.g. following a 5xx/Overloaded failure). It carries no
+  // value — drop so it doesn't render as a stray bubble when reloading the session.
+  const isNoOpAssistant =
+    role === "assistant" &&
+    Array.isArray(message?.content) &&
+    (message!.content as Array<Record<string, unknown>>).length > 0 &&
+    (message!.content as Array<Record<string, unknown>>).every(
+      (b) => b.type === "text" && typeof b.text === "string" &&
+        (b.text as string).trim() === "No response requested.",
+    );
+
+  if (isSdkErrorMessage || isNoOpAssistant) {
     return {
       id: msg.uuid,
       role,

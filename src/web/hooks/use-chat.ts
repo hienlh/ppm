@@ -337,13 +337,20 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }
 
       case "error": {
-        streamingEventsRef.current.push(ev as ChatEvent);
-        const errEvents = [...streamingEventsRef.current];
+        // Safety net: dedupe identical consecutive errors (e.g. repeated 5xx) so a turn
+        // never accumulates duplicate error blocks — keep only one.
+        const evs = streamingEventsRef.current;
+        const lastErr = evs[evs.length - 1];
+        const isDupErr = lastErr?.type === "error" && (lastErr as { message?: string }).message === ev.message;
+        if (!isDupErr) evs.push(ev as ChatEvent);
+        const errEvents = [...evs];
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
             return [...prev.slice(0, -1), { ...last, events: errEvents }];
           }
+          // System-message fallback: skip if the trailing system message is the same error.
+          if (last?.role === "system" && last.content === ev.message) return prev;
           return [...prev, {
             id: `error-${Date.now()}`,
             role: "system" as const,

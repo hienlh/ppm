@@ -856,6 +856,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(providerConfig.thinking_budget_tokens != null && {
           maxThinkingTokens: providerConfig.thinking_budget_tokens,
         }),
+        ...(providerConfig.context_1m && { betas: ["context-1m-2025-08-07"] }),
         includePartialMessages: true,
         stderr: stderrCallback,
       };
@@ -875,18 +876,28 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         session_id: sessionId,
       };
 
-      // Build a retry message from the LATEST user content (not the stale firstMsg).
-      // Follow-ups via pushMessage update lastUserContent on the streaming session,
-      // so retries after token refresh correctly replay the current turn.
+      // Once the turn has produced output (top-level assistant text/tool_use), the user
+      // message + any tool_results are persisted to JSONL. Mid-turn retries must resume and
+      // continue — NOT re-push the original message, which restarts the turn and re-displays
+      // an already-answered AskUserQuestion. Persists across retryLoop iterations.
+      let turnProgressed = false;
+
+      // Build a retry message for token-refresh / transient-error retries.
+      // Pre-turn (nothing persisted yet): re-push the LATEST user content so the SDK has a
+      //   prompt (follow-ups via pushMessage keep lastUserContent current).
+      // Mid-turn (turnProgressed): the SDK's resume loads the pending tool_result and marks
+      //   the turn `interrupted_turn`; we push a continuation nudge to drive the generator so
+      //   it picks up where it stopped instead of duplicating the turn.
       // Also returns the raw content/images for re-populating the new streaming session.
       const buildRetryMsg = () => {
         const ss = this.streamingSessions.get(sessionId);
         const content = ss?.lastUserContent ?? message;
         const images = ss?.lastUserImages;
+        const retryContent = turnProgressed ? "Continue from where you left off." : content;
         return {
           msg: {
             type: 'user' as const,
-            message: buildMessageParam(content, images),
+            message: buildMessageParam(retryContent, turnProgressed ? undefined : images),
             parent_tool_use_id: null,
             session_id: sessionId,
           },
@@ -1165,12 +1176,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Detect 401 pattern in text: "Failed to authenticate. API Error: 401 ..."
           if (!assistantError) {
             const textContent = this.extractAssistantText(msg);
-            if (textContent && /API Error:\s*401\b.*authentication_error/i.test(textContent)) {
+            if (textContent && /API Error:\s*401\b/i.test(textContent)) {
               assistantError = "authentication_failed";
               console.warn(`[sdk] session=${sessionId} detected 401 in assistant text content — treating as auth error`);
             } else if (textContent && /hit your (?:[\w-]+\s+)*limit/i.test(textContent)) {
               assistantError = "rate_limit";
               console.warn(`[sdk] session=${sessionId} detected quota limit in assistant text content — treating as rate_limit`);
+            } else if (textContent && /API Error:\s*5\d{2}\b/i.test(textContent)) {
+              // 5xx (e.g. 529 Overloaded) — match the explicit "API Error: 5xx" text only.
+              // Treat as server_error so it enters the retry branch and the raw error text is
+              // not streamed as duplicated assistant content. Deliberately NOT keyed off
+              // isApiErrorMessage alone — that flag is also set for non-retryable 4xx errors
+              // (e.g. billing/invalid_request), which must surface immediately, not retry.
+              assistantError = "server_error";
+              console.warn(`[sdk] session=${sessionId} detected API 5xx server error — treating as server_error`);
             }
           }
 
@@ -1228,7 +1247,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               } else {
                 console.warn(`[sdk] session=${sessionId} rate limited — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
               }
-              yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
+              // Replaceable status line (not an `error` event) so repeated retries don't
+              // accumulate duplicate error blocks — only the final error (if any) is shown.
+              yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
               await new Promise((r) => setTimeout(r, backoff));
               // Close current streaming session and recreate with (potentially new) account env.
               const retry4 = buildRetryMsg();
@@ -1260,6 +1281,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             // Skip emitting the raw 401 error as text content — already shown as error event
             continue;
           }
+          // Successful top-level assistant output → turn is now persisted to JSONL.
+          // Subsequent retries this turn must continue, not re-push the original message.
+          if (!parentId) turnProgressed = true;
           const content = (msg as any).message?.content;
           if (Array.isArray(content)) {
             for (const block of content) {
@@ -1325,7 +1349,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 } else {
                   console.warn(`[sdk] session=${sessionId} result 429 — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
                 }
-                yield { type: "error", message: `Rate limited. Auto-retrying in ${backoff / 1000}s... (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})` };
+                // Replaceable status line (not an `error` event) — avoids accumulating
+                // duplicate error blocks across retries; only a final error is shown.
+                yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
                 await new Promise((r) => setTimeout(r, backoff));
                 const retry5 = buildRetryMsg();
                 closeCurrentStream();
