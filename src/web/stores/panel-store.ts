@@ -345,7 +345,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         if (newTabs.length === 0 && gridPanelCount > 1) {
           const { [pid]: _, ...rest } = s.panels;
           const newGrid = gridRemovePanel(s.grid, pid);
-          const newFocused = s.focusedPanelId === pid ? Object.keys(rest)[0]! : s.focusedPanelId;
+          // Focus must land on a panel still in the grid — Object.keys(rest)
+          // can return keep-alive panels from other projects (off-grid).
+          const newFocused = s.focusedPanelId === pid
+            ? (newGrid.flat()[0] ?? Object.keys(rest)[0]!)
+            : s.focusedPanelId;
           return { panels: rest, grid: newGrid, focusedPanelId: newFocused };
         }
 
