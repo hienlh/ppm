@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.99] - 2026-06-08
+
+### Fixed
+- **Chat session now reloads MCP/config when all tabs close**: PPM keeps a persistent streaming query per session, and it reads MCP servers only once at creation — so MCP servers added after a session started never took effect for follow-up messages (no in-app equivalent of terminal `Ctrl+C` + `claude --resume`). When the last listening client disconnects and Claude is idle (turn finished, no pending approval), PPM now tears down the streaming query. The next message recreates it via the resume path, reloading fresh MCP/config while preserving context from JSONL, and frees the idle subprocess. Reuses the existing `set_model` abort-when-idle flow (`server/ws/chat.ts`).
+- **Grid panel focus after closing the last tab in a split**: Closing the last tab in a split panel now focuses an adjacent grid panel instead of leaving focus orphaned (`tab-store.ts`).
+
 ## [0.13.98] - 2026-06-07
 
 ### Fixed
