@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.97] - 2026-06-07
+
+### Fixed
+- **Public tunnel no longer disappears after a network blip**: The supervisor's tunnel watchdog had two flaws that left users with no share URL. (1) After 10 quick regenerations it entered a **10-minute cooldown with `shareUrl=null`** — a multi-minute dark window. Removed: the tunnel now retries forever at a capped 60s backoff (+ jitter), so it's never dark longer than ~60s. (2) The health probe killed and **regenerated a brand-new URL after just ~90s** of public-URL unreachability, even though cloudflared self-heals transient QUIC drops on its own — churning URLs and burning the restart budget. The probe now only regenerates a truly-zombied URL (process alive but edge dropped) after ~5min (`TUNNEL_ZOMBIE_THRESHOLD`); real process death still respawns instantly (`supervisor.ts`).
+- **Tunnel now always starts with the daemon**: The supervisor still gated the tunnel on the deprecated `--share` flag, so a daemon launched at boot without it (e.g. a stale launchd plist) came up with no tunnel. The supervisor is now unconditional (`share = true`), matching the already-shipping "tunnel always enabled" behavior at `ppm start` (`supervisor.ts`).
+
 ## [0.13.96] - 2026-06-06
 
 ### Added
@@ -15,7 +21,6 @@
 - **Windows graceful shutdown via shutdown file**: On Windows, `SIGTERM` maps to `TerminateProcess`, so the server child's graceful handlers never fired and could leave zombie sockets. The supervisor now writes a `.server-shutdown` file that the server child polls for (200ms), releasing the listening socket cleanly before exit. Auto-selected fallback ports are now persisted to `status.json` so supervisor health checks and the tunnel proxy follow the actual port (`server/index.ts`, `supervisor.ts`).
 - **Zombie socket auto-recovery on Windows**: When a `Bun.serve()` process crashes, Windows can keep the listening socket bound to the dead PID. PPM now detects zombie sockets via a `netstat` PID-liveness check and auto-selects a nearby free port (port+1..port+20) instead of failing with "Port in use".
 - **Upgrade signal failure now shows error details**: When the supervisor signal fails during `POST /api/upgrade/apply`, the response now includes the specific error reason instead of a generic "Restart manually" message.
-
 ## [0.13.95] - 2026-06-06
 
 ### Fixed

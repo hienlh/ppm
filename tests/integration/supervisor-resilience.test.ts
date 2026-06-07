@@ -330,3 +330,37 @@ describe("Enhanced exception handling", () => {
     expect(serverCode).toContain("process.exit(1)");
   });
 });
+
+// ─── Tunnel resilience: always-on, no dark window, zombie net ───────────
+
+describe("Tunnel resilience", () => {
+  const supervisorCode = readFileSync(
+    resolve(import.meta.dir, "../../src/services/supervisor.ts"),
+    "utf-8",
+  );
+
+  test("tunnel is unconditional — supervisor does not gate on --share flag", () => {
+    // CLI entry forces share=true; --share is a deprecated no-op.
+    expect(supervisorCode).toMatch(/const share = true;/);
+    expect(supervisorCode).not.toContain('const share = process.argv.includes("--share")');
+  });
+
+  test("10-min cooldown dark window removed", () => {
+    // The cooldown constant and its shareUrl=null give-up branches must be gone.
+    expect(supervisorCode).not.toContain("TUNNEL_COOLDOWN_MS");
+    expect(supervisorCode).not.toMatch(/Tunnel exceeded .* cooldown/);
+  });
+
+  test("zombie threshold replaces eager probe regeneration", () => {
+    // Probe only regenerates a truly-zombied URL (~5min), not on transient blips.
+    expect(supervisorCode).toContain("TUNNEL_ZOMBIE_THRESHOLD = 10");
+    expect(supervisorCode).toContain("tunnelFailCount >= TUNNEL_ZOMBIE_THRESHOLD");
+    expect(supervisorCode).not.toContain("TUNNEL_PROBE_FAIL_THRESHOLD");
+  });
+
+  test("tunnel retry backoff is capped + jittered, never gives up", () => {
+    // Counter capped at MAX_RESTARTS so backoff plateaus; jitter added; loop always respawns.
+    expect(supervisorCode).toContain("if (tunnelRestarts > MAX_RESTARTS) tunnelRestarts = MAX_RESTARTS;");
+    expect(supervisorCode).toMatch(/backoffDelay\(tunnelRestarts\) \+ Math\.floor\(Math\.random\(\) \* 1000\)/);
+  });
+});
