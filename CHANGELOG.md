@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.98] - 2026-06-07
+
+### Fixed
+- **Windows: PPM no longer dies after upgrade (zombie-port root fix)**: On Windows the supervisor only killed the direct server-child PID. The server spawns Claude SDK grandchildren that are node-spawned (so they live outside Bun's job object); a single-PID kill orphaned them, and they kept the inherited listening socket open — leaving the port in a zombie `LISTENING` state owned by a dead PID. The previous workaround then shifted the server to a different port (`port+1..+20`), splitting the brain: the tunnel and supervisor still targeted the original port, so the app became unreachable after every restart/upgrade. The supervisor now tree-kills on Windows (`taskkill /PID <pid> /T /F` — the `/T` reaps grandchildren, the Windows analog of POSIX process-group kill) across all three kill paths (health-restart, self-replace/upgrade, shutdown), releasing the socket cleanly. The server child no longer shifts ports: it waits up to 10s for the original port to free and otherwise fails loud so the supervisor respawns on the same port (`supervisor.ts`, `server/index.ts`). macOS/Linux were never affected and their behavior is unchanged (and incidentally hardened to process-group kill).
+
 ## [0.13.97] - 2026-06-07
 
 ### Fixed
