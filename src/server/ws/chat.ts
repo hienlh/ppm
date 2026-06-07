@@ -832,6 +832,17 @@ export const chatWebSocket = {
     console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
     if (entry.clients.size === 0) {
+      // No clients listening anymore. If Claude is idle (turn finished, no pending
+      // approval), tear down the persistent streaming query so the next message
+      // recreates it via the resume path — picking up fresh MCP/config while
+      // preserving context from JSONL, and freeing the idle subprocess (RAM).
+      const provider = providerRegistry.get(entry.providerId);
+      const idle = entry.phase === "idle" && !entry.isStreamingActive && !entry.pendingApprovalEvent;
+      const hasLiveStream = provider?.hasStreamingSession?.(sessionId) ?? false;
+      if (idle && hasLiveStream) {
+        provider?.abortQuery?.(sessionId, "tab_closed");
+        logSessionEvent(sessionId, "INFO", "Streaming query torn down (all clients gone, idle) — next message resumes with fresh config");
+      }
       startCleanupTimer(sessionId);
     }
   },
