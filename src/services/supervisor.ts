@@ -86,31 +86,45 @@ function backoffDelay(restartCount: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (restartCount - 1), BACKOFF_MAX_MS);
 }
 
-// ─── Graceful server shutdown (Windows-safe) ──────────────────────────
-// On Windows, SIGTERM maps to TerminateProcess — graceful handlers never fire.
-// Instead, write a shutdown file that the server child polls for.
+// ─── Process-tree kill (orphan-safe) ───────────────────────────────────
+// The server child spawns grandchildren (Claude SDK subprocesses). On
+// Windows a forced single-PID kill leaves those grandchildren alive; they
+// keep the inherited TCP listening socket handle open, leaving the port in
+// a zombie LISTENING state owned by a dead PID. Killing the whole tree
+// releases the socket — the Windows analog of POSIX process-group kill.
+function killProcessTree(pid: number): void {
+  if (process.platform === "win32") {
+    try {
+      const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", timeout: 5000 });
+    } catch {
+      // Already dead, or taskkill unavailable — fall back to single-PID kill.
+      try { process.kill(pid, "SIGKILL"); } catch {}
+    }
+  } else {
+    try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch {} }
+  }
+}
+
+// ─── Server shutdown ───────────────────────────────────────────────────
+// On Windows the server's Claude SDK grandchildren are node-spawned (the
+// provider forces `executable: "node"`), so they live OUTSIDE Bun's job
+// object. If the server child exits gracefully on its own, those
+// grandchildren orphan and keep the inherited listening socket open →
+// zombie port. They can only be reaped by tree-killing WHILE the parent is
+// still alive, so on Windows we tree-kill immediately rather than waiting
+// for a graceful self-exit (which would let the orphans escape). This
+// mirrors the POSIX process-group kill used on macOS/Linux.
 function requestServerShutdown(child: Subprocess, timeoutMs: number = 2000): Promise<void> {
   return new Promise<void>((resolve) => {
     const pid = child.pid;
     if (process.platform === "win32") {
-      try { writeFileSync(serverShutdownFile(), String(Date.now())); } catch {}
-      const deadline = Date.now() + timeoutMs;
-      const poll = setInterval(() => {
-        try { process.kill(pid, 0); } catch {
-          clearInterval(poll);
-          resolve();
-          return;
-        }
-        if (Date.now() > deadline) {
-          clearInterval(poll);
-          try { process.kill(pid, "SIGKILL"); } catch {}
-          resolve();
-        }
-      }, 100);
+      killProcessTree(pid);
+      resolve();
     } else {
       try { child.kill("SIGTERM"); } catch {}
       setTimeout(() => {
-        try { process.kill(pid, "SIGKILL"); } catch {}
+        killProcessTree(pid);
         resolve();
       }, timeoutMs).unref();
       resolve();
@@ -351,10 +365,11 @@ function startServerHealthCheck(port: number) {
       log("WARN", `Server unresponsive (${healthFailCount} failures), killing`);
       const pid = serverChild.pid;
       if (process.platform === "win32") {
-        try { writeFileSync(serverShutdownFile(), String(Date.now())); } catch {}
+        killProcessTree(pid);
+      } else {
+        try { serverChild.kill("SIGTERM"); } catch {}
+        setTimeout(() => { killProcessTree(pid); }, 1000).unref();
       }
-      try { serverChild.kill("SIGTERM"); } catch {}
-      setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 1000).unref();
       healthFailCount = 0;
       // spawnServer loop handles respawn via exited promise
     }
@@ -519,9 +534,10 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     }
 
     // ── Non-systemd path: spawn new supervisor directly (macOS/Windows) ─
-    // Poll until port is actually free (max 10s) — never guess with fixed sleep
-    // On Windows, reusePort lets the new server bind over zombie sockets,
-    // so we only need a brief wait for the killed process to release.
+    // Poll until port is actually free (max 10s) — never guess with fixed sleep.
+    // The tree-kill above already reaped the server's grandchildren, so the
+    // listening socket is released; this loop just waits for the OS to finish
+    // tearing it down before the new supervisor binds.
     const portFreeStart = Date.now();
     const portTimeout = process.platform === "win32" ? 3_000 : 10_000;
     while (Date.now() - portFreeStart < portTimeout) {
@@ -860,12 +876,13 @@ export function shutdown() {
 
   if (serverChild) {
     log("INFO", `Killing server child (PID: ${serverChild.pid})`);
-    if (process.platform === "win32") {
-      try { writeFileSync(serverShutdownFile(), String(Date.now())); } catch {}
-    }
     const pid = serverChild.pid;
-    try { serverChild.kill("SIGTERM"); } catch {}
-    setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 2000).unref();
+    if (process.platform === "win32") {
+      killProcessTree(pid);
+    } else {
+      try { serverChild.kill("SIGTERM"); } catch {}
+      setTimeout(() => { killProcessTree(pid); }, 2000).unref();
+    }
   }
   if (tunnelChild) {
     log("INFO", `Killing tunnel child (PID: ${tunnelChild.pid})`);

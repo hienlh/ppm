@@ -633,50 +633,35 @@ if (process.argv.includes("__serve__")) {
     setInterval(() => cleanupOldProxyRequests(30), 24 * 60 * 60 * 1000);
   }
 
-  // On Windows, check for zombie sockets before binding.
-  // After an upgrade, the old server's socket can stay in LISTENING state
-  // because SIGTERM maps to TerminateProcess (graceful handler never fires).
-  let actualPort = port;
+  // On Windows the supervisor reaps the previous server's whole process tree
+  // before respawning, so the port is released cleanly. A lingering bind can
+  // still appear for a moment during an upgrade handoff, so wait for it to
+  // free instead of moving to a different port — shifting would split-brain
+  // the tunnel and supervisor, which still target the original port (this was
+  // the recurring "dies after upgrade" failure on Windows).
   if (process.platform === "win32") {
-    const portInUse = await new Promise<boolean>((resolve) => {
+    const isPortInUse = () => new Promise<boolean>((resolve) => {
       const net = require("node:net") as typeof import("node:net");
       const tester = net.createServer()
         .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
         .once("listening", () => tester.close(() => resolve(false)))
         .listen(port, host);
     });
-    if (portInUse) {
-      try {
-        const { execSync } = require("node:child_process") as typeof import("node:child_process");
-        const out = execSync(`netstat -ano | findstr "0.0.0.0:${port}.*LISTENING"`, { encoding: "utf-8", timeout: 5000 });
-        const match = out.trim().match(/LISTENING\s+(\d+)/);
-        if (match?.[1]) {
-          const ownerPid = parseInt(match[1], 10);
-          let isZombie = false;
-          try { process.kill(ownerPid, 0); } catch { isZombie = true; }
-          if (isZombie) {
-            console.warn(`[serve] Port ${port} held by dead process (PID: ${ownerPid}) — zombie socket`);
-            for (let candidate = port + 1; candidate <= port + 20; candidate++) {
-              const busy = await new Promise<boolean>((resolve) => {
-                const net = require("node:net") as typeof import("node:net");
-                const tester = net.createServer()
-                  .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
-                  .once("listening", () => tester.close(() => resolve(false)))
-                  .listen(candidate, host);
-              });
-              if (!busy) { actualPort = candidate; break; }
-            }
-            if (actualPort !== port) {
-              console.warn(`[serve] Auto-selected port ${actualPort} instead`);
-            }
-          }
-        }
-      } catch {}
+    const deadline = Date.now() + 10_000;
+    while (await isPortInUse()) {
+      if (Date.now() > deadline) {
+        console.error(`\n  ✗  Port ${port} is still in use after waiting 10s.`);
+        console.error(`     A stale process may be holding it. Run 'ppm stop', then start again.`);
+        console.error(`     If it persists, run PowerShell as Admin: netsh int tcp reset (then restart).\n`);
+        process.exit(1); // supervisor will back off and respawn on the same port
+      }
+      console.warn(`[serve] Port ${port} still releasing, waiting...`);
+      await Bun.sleep(250);
     }
   }
 
   const server = Bun.serve({
-    port: actualPort,
+    port,
     hostname: host,
     fetch(req, server) {
       const url = new URL(req.url);
@@ -780,22 +765,6 @@ if (process.argv.includes("__serve__")) {
     })
     .catch(() => {});
 
-  // If we auto-selected a different port, update status.json so supervisor
-  // health checks and tunnel proxy point at the correct port.
-  if (actualPort !== port) {
-    try {
-      const { resolve: r } = await import("node:path");
-      const { readFileSync: rf, writeFileSync: wf, renameSync: rn } = await import("node:fs");
-      const { getPpmDir: gd } = await import("../services/ppm-dir.ts");
-      const sf = r(gd(), "status.json");
-      const st = JSON.parse(rf(sf, "utf-8"));
-      st.port = actualPort;
-      const tmp = sf + ".tmp." + process.pid;
-      wf(tmp, JSON.stringify(st));
-      rn(tmp, sf);
-    } catch {}
-  }
-
   // Graceful shutdown: close the listening socket so the port is released
   const gracefulShutdown = () => {
     try { server.stop(true); } catch {}
@@ -819,5 +788,5 @@ if (process.argv.includes("__serve__")) {
     }, 200);
   }
 
-  console.log(`Server child ready on port ${actualPort}`);
+  console.log(`Server child ready on port ${port}`);
 }
