@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.13.101] - 2026-06-08
+## [0.13.102] - 2026-06-08
 
 ### Fixed
 - **Operators in tool cards looked struck through**: The ligature fix in 0.13.93 only scoped `.markdown-content` code, but Bash tool-card command/output render in plain `<pre class="font-mono">` outside that scope, so Geist Mono still joined `--`, `===`, `=>` into bar glyphs that read as strikethrough. Replaced the scoped rules with one global rule disabling ligatures on `pre`/`code`/`kbd`/`samp`/`.font-mono`, covering tool cards, Grep/Glob details, and markdown code blocks (`globals.css`).
