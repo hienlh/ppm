@@ -530,6 +530,18 @@ function parseCommandTags(text: string): { command: SlashCommand | null; cleanTe
   return { command: { name, args }, cleanText };
 }
 
+/** Extract the IDE-injected <ide_opened_file> context tag — returns the open file path + cleaned text */
+function parseIdeOpenedFile(text: string): { idePath: string | null; cleanText: string } {
+  const tagRe = /<ide_opened_file>([\s\S]*?)<\/ide_opened_file>/g;
+  const m = tagRe.exec(text);
+  if (!m) return { idePath: null, cleanText: text };
+  // Inner format: "The user opened the file <path> in the IDE. ..."
+  const pathMatch = m[1]!.match(/opened the file (.+?) in the IDE/);
+  const idePath = pathMatch?.[1]?.trim() ?? null;
+  const cleanText = text.replace(/<ide_opened_file>[\s\S]*?<\/ide_opened_file>/g, "").trim();
+  return { idePath, cleanText };
+}
+
 /** Parse user message content, extracting attached file paths and the actual text */
 function parseUserAttachments(content: string): { files: string[]; text: string } {
   // Match: [Attached file: /path] or [Attached files:\n/path1\n/path2\n]
@@ -588,8 +600,9 @@ function UserBubble({ content, messageId, projectName, onFork }: {
   projectName?: string;
   onFork?: () => void;
 }) {
-  const { files, text, tags, command, terminalBlocks } = useMemo(() => {
-    const { blocks, remainingText: afterBlocks } = extractTerminalBlocks(content);
+  const { files, text, tags, command, terminalBlocks, idePath } = useMemo(() => {
+    const { idePath, cleanText: afterIde } = parseIdeOpenedFile(content);
+    const { blocks, remainingText: afterBlocks } = extractTerminalBlocks(afterIde);
     const parsed = parseUserAttachments(afterBlocks);
     // Strip local-command-stdout/stderr tags but keep their content as plain text
     const withoutCmdOutput = parsed.text
@@ -599,7 +612,7 @@ function UserBubble({ content, messageId, projectName, onFork }: {
     const bodyText = command?.args
       ? (cleanText ? `${command.args}\n\n${cleanText}` : command.args)
       : cleanText;
-    return { files: parsed.files, text: bodyText, tags, command, terminalBlocks: blocks };
+    return { files: parsed.files, text: bodyText, tags, command, terminalBlocks: blocks, idePath };
   }, [content]);
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
@@ -637,6 +650,14 @@ function UserBubble({ content, messageId, projectName, onFork }: {
             <Slash className="size-3 shrink-0" />
             {command.name}
           </span>
+        </div>
+      )}
+
+      {/* IDE context — the file the user had open, as a clickable chip */}
+      {idePath && (
+        <div className="flex items-center gap-1.5 mb-1 text-[11px] text-text-subtle">
+          <span className="shrink-0">Opened in IDE:</span>
+          <FilePathChip path={idePath} projectName={projectName} />
         </div>
       )}
 
