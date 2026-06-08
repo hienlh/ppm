@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.101] - 2026-06-08
+
+### Fixed
+- **Windows: tunnel URL now survives upgrade + no blank console windows pop up**: After an in-place upgrade on Windows, two blank terminal windows (`bun.exe` server child + `cloudflared`) appeared and the public tunnel got a brand-new trycloudflare URL every time. Two root causes, both in the self-replace upgrade path. (1) **Tunnel killed on supervisor swap**: cloudflared was launched with `Bun.spawn`, which puts children in the supervisor's Windows job object — so the instant the old supervisor exited at the end of self-replace, the job object closed and killed the tunnel. The new supervisor's `adoptTunnel()` then found a dead PID and spawned a fresh tunnel with a new URL. The tunnel is now launched via `node:child_process` with `detached: true` + `unref()`, escaping the job object so cloudflared outlives the supervisor swap and the new supervisor adopts it by PID — the macOS/Linux orphaning behaviour achieved explicitly. (2) **Pop-up windows**: the new supervisor is itself spawned consoleless (`detached`), so its `Bun.spawn` console children each allocated a fresh visible console window. Added `windowsHide: true` to the server-child spawn, the detached tunnel spawn, and the `taskkill` tree-kill — children (and the Claude SDK grandchildren they spawn) are now windowless regardless of the parent's console state (`supervisor.ts`). Note: the very first upgrade onto this version still rotates the URL once (the still-running old supervisor predates the fix); every upgrade after that preserves it.
+
 ## [0.13.100] - 2026-06-08
 
 ### Fixed

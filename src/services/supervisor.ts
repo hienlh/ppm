@@ -96,7 +96,7 @@ function killProcessTree(pid: number): void {
   if (process.platform === "win32") {
     try {
       const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", timeout: 5000 });
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
     } catch {
       // Already dead, or taskkill unavailable — fall back to single-PID kill.
       try { process.kill(pid, "SIGKILL"); } catch {}
@@ -145,6 +145,10 @@ export async function spawnServer(
     cmd,
     stdio: ["ignore", logFd, logFd],
     env: process.env,
+    // No visible console window. Critical on Windows after an upgrade: the new
+    // supervisor is spawned consoleless (detached), so without this its console
+    // children — and the Claude SDK grandchildren they spawn — pop blank windows.
+    windowsHide: true,
   });
 
   const childPid = serverChild.pid;
@@ -224,7 +228,7 @@ const cloudflaredLogPath = () => resolve(getPpmDir(), "cloudflared.log");
  * Stderr is redirected to this file (not piped) so cloudflared survives
  * parent supervisor exit during self-replace (no SIGPIPE on closed pipe).
  */
-async function extractUrlFromLogFile(child: Subprocess): Promise<string> {
+async function extractUrlFromLogFile(getExitCode: () => number | null): Promise<string> {
   const path = cloudflaredLogPath();
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -235,7 +239,7 @@ async function extractUrlFromLogFile(child: Subprocess): Promise<string> {
         if (match) return match[0];
       } catch {}
     }
-    if (child.exitCode !== null) throw new Error("cloudflared exited without providing URL");
+    if (getExitCode() !== null) throw new Error("cloudflared exited without providing URL");
     await Bun.sleep(200);
   }
   throw new Error("Tunnel URL timeout (30s)");
@@ -264,6 +268,63 @@ export async function spawnTunnel(port: number): Promise<void> {
     return;
   }
 
+  // Redirect cloudflared stderr to a log file (not pipe). This way cloudflared
+  // survives parent supervisor exit during self-replace — a piped stderr would
+  // close when parent exits, causing SIGPIPE on next cloudflared log write and
+  // killing the tunnel ~10-15s later (silently breaking adoption).
+  const logPath = cloudflaredLogPath();
+  try { unlinkSync(logPath); } catch {}  // truncate stale URLs from prior run
+  const tunnelLogFd = openSync(logPath, "a");
+
+  // ── Windows: spawn detached + windowless via node:child_process ────────
+  // Bun.spawn ties children to the supervisor's job object, so the tunnel
+  // would be killed the moment the OLD supervisor exits during a self-replace
+  // upgrade — the new supervisor then finds a dead PID, spawns a fresh tunnel,
+  // and the trycloudflare URL changes on every upgrade. node's detached spawn
+  // (+ unref) escapes the job object so cloudflared outlives the swap and the
+  // new supervisor adopts it by PID — the macOS/Linux behaviour (orphaning)
+  // achieved explicitly. windowsHide stops a blank console window appearing
+  // when the supervisor itself was started consoleless by the upgrade path.
+  if (process.platform === "win32") {
+    const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
+    const proc = nodeSpawn(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`], {
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", tunnelLogFd] as ["ignore", "ignore", number],
+    });
+    proc.unref();
+    try { closeSync(tunnelLogFd); } catch {}  // child keeps its own fd
+    const pid = proc.pid ?? null;
+
+    try {
+      tunnelUrl = await extractUrlFromLogFile(() => proc.exitCode);
+    } catch (err) {
+      log("ERROR", `Tunnel URL extraction failed: ${err}`);
+      tunnelUrl = null;
+      try { if (pid) process.kill(pid, "SIGKILL"); } catch {}
+      if (shuttingDown) return;
+      const now = Date.now();
+      if (now - lastTunnelCrash > STABLE_WINDOW_MS) tunnelRestarts = 0;
+      lastTunnelCrash = now;
+      tunnelRestarts++;
+      if (tunnelRestarts > MAX_RESTARTS) tunnelRestarts = MAX_RESTARTS;
+      const delay = backoffDelay(tunnelRestarts) + Math.floor(Math.random() * 1000);
+      log("WARN", `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
+      await Bun.sleep(delay);
+      return spawnTunnel(port);
+    }
+
+    // The detached tunnel is independent of this supervisor, so there is no
+    // `.exited` promise to await for crash detection. Model it as adopted from
+    // the start: the tunnel probe (startTunnelProbe) owns liveness + respawn.
+    adoptedTunnelPid = pid;
+    tunnelChild = null;
+    updateStatus({ shareUrl: tunnelUrl, tunnelPid: pid });
+    log("INFO", `Tunnel ready: ${tunnelUrl} (PID: ${pid}, detached)`);
+    await syncUrlToCloud(tunnelUrl);
+    return;
+  }
+
   // Under systemd, wrap tunnel in a transient user scope so it lives in its
   // own cgroup instead of ppm.service. This prevents systemd from SIGKILLing
   // the tunnel when ppm.service cgroup is torn down during upgrade/restart,
@@ -278,13 +339,6 @@ export async function spawnTunnel(port: number): Promise<void> {
       ]
     : [bin, "tunnel", "--url", `http://127.0.0.1:${port}`];
 
-  // Redirect cloudflared stderr to a log file (not pipe). This way cloudflared
-  // survives parent supervisor exit during self-replace — a piped stderr would
-  // close when parent exits, causing SIGPIPE on next cloudflared log write and
-  // killing the tunnel ~10-15s later (silently breaking adoption).
-  const logPath = cloudflaredLogPath();
-  try { unlinkSync(logPath); } catch {}  // truncate stale URLs from prior run
-  const tunnelLogFd = openSync(logPath, "a");
   try {
     tunnelChild = Bun.spawn(tunnelCmd, { stderr: tunnelLogFd, stdout: "ignore", stdin: "ignore" });
   } finally {
@@ -294,7 +348,7 @@ export async function spawnTunnel(port: number): Promise<void> {
   if (underSystemd) log("INFO", "Tunnel spawned inside transient systemd-run scope (escapes ppm.service cgroup)");
 
   try {
-    tunnelUrl = await extractUrlFromLogFile(tunnelChild);
+    tunnelUrl = await extractUrlFromLogFile(() => tunnelChild?.exitCode ?? null);
   } catch (err) {
     log("ERROR", `Tunnel URL extraction failed: ${err}`);
     tunnelUrl = null;
