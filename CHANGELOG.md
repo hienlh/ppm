@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.100] - 2026-06-08
+
+### Fixed
+- **IDE "opened file" context no longer rendered as raw text in chat**: The `<ide_opened_file>` context tag injected by IDE extensions (reporting the file the user has open) was not parsed by the chat renderer, so the full `<ide_opened_file>The user opened the file …</ide_opened_file>` string leaked into the user message bubble as plain inline text. `UserBubble` now extracts the tag, pulls out the file path, and renders it as a clickable "Opened in IDE" chip (reusing `FilePathChip`) above the clean message text (`message-list.tsx`).
+
 ## [0.13.99] - 2026-06-08
 
 ### Fixed
