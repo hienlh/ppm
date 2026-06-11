@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.105] - 2026-06-11
+
+### Added
+- **Cancel an edit**: Editing a message now shows an "Editing message — your next send replaces it" bar above the input with a **✕ Cancel** button. Cancel disarms the pending fork, clears the prefilled input, and the next send goes out as a normal new message. Previously the armed edit state was invisible and could not be abandoned — clearing the input and typing something new would still fork at the old anchor (`chat-tab.tsx`, `message-input.tsx`).
+- **Editing highlight**: The user message being edited is highlighted (primary ring + stronger tint) in the transcript so it's clear which message the edit targets — including the first message of a session (`message-list.tsx`, `chat-tab.tsx`).
+- **Real-time command output on Windows**: PowerShell (and Bash) tool output now streams live into tool cards on native Windows. Without `pgrep`/`/proc`/`lsof`, the spy discovers the SDK's `.output` file by scanning `%LOCALAPPDATA%/Temp/claude/{project-slug}/*/tasks/` for the newest file born after the tool call started; previously Windows was a no-op and output only appeared when the tool finished (`bash-output-spy.ts`, `ws/chat.ts`).
+
+### Changed
+- **Flash-free version switching**: Swapping between edit versions (`‹ n/m ›` or sending an edit) no longer flashes the full-screen "Loading messages…" state — the old transcript stays on screen while the sibling loads, and since versions share an identical prefix only the divergent tail visibly changes (`message-list.tsx`, `chat-tab.tsx`).
+- **Input stays mounted across session swaps**: The message input no longer unmounts/remounts (flash + lost text) while the per-session draft reloads on a same-tab session swap; it now waits only for the first draft load, then stays mounted. Typed text survives version switches; a saved draft of the target session still replaces the input content when present (`chat-tab.tsx`).
+- **"View Diff" inline with the file path**: On Edit tool cards the View Diff link now sits on the same row as the file name (right beside the open-file button) instead of on its own line; long paths still wrap without pushing the link around (`tool-cards.tsx`).
+- **Lazy diff preview**: `EditDiffPreview` extracted from `tool-cards.tsx` into its own lazily-loaded module so the diff renderer loads on demand (`edit-diff-preview.tsx`, `tool-cards.tsx`).
+
+### Fixed
+- **WebSockets behind https tunnels**: When the dev UI is served over https (e.g. a Cloudflare tunnel), chat and terminal WebSockets no longer try to connect directly to `ws://host:8081` — which isn't reachable and is blocked as mixed content — and instead use the same-origin `wss://` proxy (`ws-client.ts`, `use-terminal.ts`).
+
 ## [0.13.104] - 2026-06-11
 
 ### Added
