@@ -85,9 +85,9 @@ export function ToolCard({
   // "file updated successfully" boilerplate is noise, so suppress it (but keep error output).
   const isFileMutation = ["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(toolName);
 
-  // Read partial bash output for streaming Bash tools
+  // Read partial output for streaming Bash/PowerShell tools
   const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
-  const partial = toolName === "Bash" && !hasResult && toolUseId
+  const partial = (toolName === "Bash" || toolName === "PowerShell") && !hasResult && toolUseId
     ? bashPartialOutput?.current?.get(toolUseId)
     : undefined;
   const isStreamingBash = !!partial;
@@ -149,7 +149,8 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
     case "MultiEdit":
     case "NotebookEdit":
       return <>{name} <span className="text-text-subtle">{basename(s(input.file_path))}</span></>;
-    case "Bash": {
+    case "Bash":
+    case "PowerShell": {
       const preview = input.description ? s(input.description) : s(input.command);
       return <>{name} <span className={`text-text-subtle${input.description ? "" : " font-mono"}`}>{truncate(preview, 60)}</span></>;
     }
@@ -219,6 +220,7 @@ function ToolDetails({
 
   switch (name) {
     case "Bash":
+    case "PowerShell":
       return (
         <div className="space-y-1">
           {!!input.description && <p className="text-text-subtle italic">{s(input.description)}</p>}
@@ -231,37 +233,40 @@ function ToolDetails({
     case "MultiEdit":
     case "NotebookEdit": {
       const filePath = s(input.file_path);
+      const hasEditDiff = name === "Edit" && (!!input.old_string || !!input.new_string);
       return (
         <div className="space-y-1">
-          <button
-            type="button"
-            className="font-mono text-text-secondary break-all hover:text-primary hover:underline text-left flex items-center gap-1"
-            onClick={() => openFile(filePath)}
-            title="Open file in editor"
-          >
-            <ExternalLink className="size-3 shrink-0" />
-            {filePath}
-          </button>
-          {name === "Edit" && (!!input.old_string || !!input.new_string) && (
-            <>
+          <div className="flex items-start gap-3">
+            <button
+              type="button"
+              className="font-mono text-text-secondary break-all hover:text-primary hover:underline text-left flex items-center gap-1 min-w-0"
+              onClick={() => openFile(filePath)}
+              title="Open file in editor"
+            >
+              <ExternalLink className="size-3 shrink-0" />
+              {filePath}
+            </button>
+            {hasEditDiff && (
               <button
                 type="button"
-                className="text-text-subtle hover:text-primary hover:underline text-left flex items-center gap-1"
+                className="text-text-subtle hover:text-primary hover:underline flex items-center gap-1 shrink-0 whitespace-nowrap"
                 onClick={() => openEditDiff(filePath, s(input.old_string), s(input.new_string))}
                 title="View diff in new tab"
               >
                 <Columns2 className="size-3 shrink-0" />
                 View Diff
               </button>
-              <EditDiffPreview oldStr={s(input.old_string)} newStr={s(input.new_string)} />
-            </>
+            )}
+          </div>
+          {hasEditDiff && (
+            <EditDiffPreview oldStr={s(input.old_string)} newStr={s(input.new_string)} filePath={filePath} />
           )}
           {name === "MultiEdit" && Array.isArray(input.edits) && (
             <div className="space-y-1.5">
               {(input.edits as Array<{ old_string?: string; new_string?: string }>).map((e, i) => (
                 <div key={i} className="space-y-0.5">
                   <p className="text-text-subtle text-[10px]">Edit {i + 1}</p>
-                  <EditDiffPreview oldStr={s(e.old_string)} newStr={s(e.new_string)} />
+                  <EditDiffPreview oldStr={s(e.old_string)} newStr={s(e.new_string)} filePath={filePath} />
                 </div>
               ))}
             </div>
@@ -553,28 +558,13 @@ function StreamingBashOutput({ content, lineCount }: { content: string; lineCoun
   );
 }
 
-/** Compact inline diff: old lines in red, new lines in green, each capped at maxLines. */
-function EditDiffPreview({ oldStr, newStr, maxLines = 8 }: { oldStr: string; newStr: string; maxLines?: number }) {
-  const block = (text: string, kind: "old" | "new") => {
-    if (!text) return null;
-    const lines = text.split("\n");
-    const shown = lines.slice(0, maxLines);
-    const extra = lines.length - shown.length;
-    const prefix = kind === "old" ? "-" : "+";
-    const cls = kind === "old" ? "bg-diff-removed text-text-primary" : "bg-diff-added text-text-primary";
-    const body = shown.map((l) => `${prefix} ${l}`).join("\n")
-      + (extra > 0 ? `\n… +${extra} more line${extra !== 1 ? "s" : ""}` : "");
-    return (
-      <pre className={`font-mono text-[11px] overflow-x-auto whitespace-pre-wrap rounded px-1.5 py-1 ${cls}`}>
-        {body}
-      </pre>
-    );
-  };
+/** Lazy wrapper — keeps highlight.js out of the main chunk until an Edit card renders */
+const LazyEditDiffPreview = lazy(() => import("./edit-diff-preview"));
+function EditDiffPreview(props: { oldStr: string; newStr: string; filePath?: string }) {
   return (
-    <div className="space-y-0.5">
-      {block(oldStr, "old")}
-      {block(newStr, "new")}
-    </div>
+    <Suspense fallback={<div className="animate-pulse h-8 bg-muted rounded" />}>
+      <LazyEditDiffPreview {...props} />
+    </Suspense>
   );
 }
 
