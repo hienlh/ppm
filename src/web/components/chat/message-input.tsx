@@ -51,6 +51,8 @@ interface MessageInputProps {
   onDisambiguate?: (matches: FileNode[]) => void;
   /** Pre-fill input value (e.g. from command palette "Ask AI") */
   initialValue?: string;
+  /** Bumping this counter clears the textarea (e.g. parent cancels an edit). */
+  clearSignal?: number;
   /** Called on content change for draft auto-save */
   onContentChange?: (content: string, attachments?: Array<{ name: string; path: string }>) => void;
   /** Auto-focus textarea on mount */
@@ -85,6 +87,7 @@ export const MessageInput = memo(function MessageInput({
   externalPaths,
   onExternalPathsConsumed,
   initialValue,
+  clearSignal,
   onContentChange,
   autoFocus,
   permissionMode,
@@ -204,6 +207,11 @@ export const MessageInput = memo(function MessageInput({
       }, 50);
     }
   }, [initialValue]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Parent-driven clear (e.g. cancelling an edit) — skip initial mount (0).
+  useEffect(() => {
+    if (clearSignal) writeTextareas("");
+  }, [clearSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-focus on mount when requested
   useEffect(() => {

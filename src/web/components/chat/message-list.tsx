@@ -45,6 +45,10 @@ import { useImageOverlay } from "@/stores/image-overlay-store";
 interface MessageListProps {
   messages: ChatMessage[];
   messagesLoading?: boolean;
+  /** Keep the current (stale) transcript on screen while loading instead of the
+   * full-screen loading state — used for same-tree version swaps where the
+   * prefix is identical, so only the divergent tail visibly changes. */
+  keepStaleWhileLoading?: boolean;
   pendingApproval: { requestId: string; tool: string; input: unknown } | null;
   onApprovalResponse: (requestId: string, approved: boolean, data?: unknown) => void;
   isStreaming: boolean;
@@ -55,8 +59,11 @@ interface MessageListProps {
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
   onFork?: (userMessage: string, messageId?: string) => void;
-  /** Called when user clicks Edit — prefills input, forks + continues in the SAME tab on send */
-  onEdit?: (userMessage: string, messageId?: string) => void;
+  /** Called when user clicks Edit — prefills input, forks + continues in the SAME tab on send.
+   * `messageId` = fork anchor (prev message), `ownMsgId` = the edited message's own id. */
+  onEdit?: (userMessage: string, messageId?: string, ownMsgId?: string) => void;
+  /** Own id of the message currently armed for edit — highlighted in the list. */
+  editingMsgId?: string;
   /** Current session id — used by the version switcher to resolve sibling edits */
   sessionId?: string;
   /** Provider id for version-switcher lookups */
@@ -80,6 +87,7 @@ interface MessageListProps {
 export function MessageList({
   messages,
   messagesLoading,
+  keepStaleWhileLoading,
   pendingApproval,
   onApprovalResponse,
   isStreaming,
@@ -91,6 +99,7 @@ export function MessageList({
   projectName,
   onFork,
   onEdit,
+  editingMsgId,
   sessionId,
   providerId,
   onNavigateVersion,
@@ -131,8 +140,8 @@ export function MessageList({
   }, [onFork]);
 
   // Stable edit handler — same-tab edit (preserves MessageBubble memo)
-  const handleEdit = useCallback((msgContent: string, msgId: string | undefined) => {
-    onEdit?.(msgContent, msgId);
+  const handleEdit = useCallback((msgContent: string, msgId: string | undefined, ownMsgId?: string) => {
+    onEdit?.(msgContent, msgId, ownMsgId);
   }, [onEdit]);
 
   // Stable dismiss handler — avoids new closure per message (preserves MessageBubble memo)
@@ -194,7 +203,7 @@ export function MessageList({
     }
   }, [hasMoreInMemory, topUnexpandedCompact, onExpandCompact, autoLoadingCompact]);
 
-  if (messagesLoading) {
+  if (messagesLoading && (!keepStaleWhileLoading || messages.length === 0)) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary">
         <Bot className="size-10 text-text-subtle animate-pulse" />
@@ -239,6 +248,8 @@ export function MessageList({
             const versionOrdinal = msg.role === "user"
               ? filtered.slice(0, globalIdx + 1).reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0)
               : 0;
+            // Highlight the user message armed for edit (matched by its own id).
+            const isEditing = msg.role === "user" && editingMsgId != null && msg.id === editingMsgId;
             return (
               <RenderErrorBoundary key={msg.id} fallbackContent={msg.content}>
                 <MessageBubble
@@ -247,6 +258,7 @@ export function MessageList({
                   projectName={projectName}
                   onFork={msg.role === "user" && onFork ? handleFork : undefined}
                   onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
+                  isEditing={isEditing}
                   onDismiss={msg.role === "system" && onDismissMessage ? handleDismiss : undefined}
                   prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
                   sessionId={sessionId}
@@ -443,10 +455,11 @@ function LoadMoreSentinel({ onLoadMore, loading }: { onLoadMore: () => void; loa
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, onEdit, onDismiss, prevMsgId, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
   message: ChatMessage; isStreaming: boolean; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
-  onEdit?: (content: string, messageId: string | undefined) => void;
+  onEdit?: (content: string, messageId: string | undefined, ownMsgId?: string) => void;
+  isEditing?: boolean;
   onDismiss?: (messageId: string) => void;
   prevMsgId?: string;
   sessionId?: string;
@@ -458,7 +471,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
 }) {
   if (message.role === "user") {
     const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
-    const handleEdit = onEdit ? () => onEdit(message.content, prevMsgId) : undefined;
+    const handleEdit = onEdit ? () => onEdit(message.content, prevMsgId, message.id) : undefined;
     return (
       <UserBubble
         content={message.content}
@@ -466,6 +479,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
         projectName={projectName}
         onFork={handleFork}
         onEdit={handleEdit}
+        isEditing={isEditing}
         sessionId={sessionId}
         providerId={providerId}
         versionOrdinal={versionOrdinal}
@@ -636,12 +650,13 @@ function extractTerminalBlocks(text: string): { blocks: string[]; remainingText:
 }
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function UserBubble({ content, messageId, projectName, onFork, onEdit, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled }: {
+function UserBubble({ content, messageId, projectName, onFork, onEdit, isEditing, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled }: {
   content: string;
   messageId?: string;
   projectName?: string;
   onFork?: () => void;
   onEdit?: () => void;
+  isEditing?: boolean;
   sessionId?: string;
   providerId?: string;
   versionOrdinal?: number;
@@ -683,10 +698,11 @@ function UserBubble({ content, messageId, projectName, onFork, onEdit, sessionId
     <div
       data-user-message={!isSystemContext ? "true" : undefined}
       className={cn(
-        "group/user relative rounded-lg px-3 py-2 text-sm border shadow-sm",
+        "group/user relative rounded-lg px-3 py-2 text-sm border shadow-sm transition-all",
       isSystemContext
         ? "bg-surface/40 border-border/40 text-text-secondary"
         : "bg-primary/10 border-primary/15 text-text-primary",
+      isEditing && "ring-2 ring-primary/60 border-primary/40 bg-primary/20",
     )}>
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}

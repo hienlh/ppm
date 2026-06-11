@@ -167,7 +167,28 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const [forkDraft, setForkDraft] = useState<string | undefined>(metadata?.pendingMessage as string | undefined);
   // Pending edit: when set, the next send forks at `anchorMsgId` and continues
   // in THIS tab (swap sessionId) instead of opening a new tab.
-  const [editFork, setEditFork] = useState<{ anchorMsgId?: string } | null>(null);
+  // anchorMsgId = fork anchor (prev message); ownMsgId = the edited message itself (for highlight).
+  const [editFork, setEditFork] = useState<{ anchorMsgId?: string; ownMsgId?: string } | null>(null);
+  // Bumped to tell MessageInput to clear its textarea when an edit is cancelled.
+  const [clearInputSignal, setClearInputSignal] = useState(0);
+  // True while a same-tree version swap loads: versions share an identical prefix,
+  // so we keep the stale transcript on screen (only the divergent tail visibly
+  // changes) instead of flashing the full-screen loading state.
+  const [staleSwap, setStaleSwap] = useState(false);
+  const prevMsgsLoadingRef = useRef(false);
+  useEffect(() => {
+    // Reset only on the true→false transition — the swap render happens before
+    // messagesLoading turns true, so resetting on any !loading would fire early.
+    if (prevMsgsLoadingRef.current && !messagesLoading) setStaleSwap(false);
+    prevMsgsLoadingRef.current = !!messagesLoading;
+  }, [messagesLoading]);
+  // Input mounts once the first draft load settles, then STAYS mounted across
+  // same-tab session swaps — unmounting would flash and lose typed text.
+  // Per-session drafts still apply via MessageInput's initialValue effect.
+  const [inputReady, setInputReady] = useState(false);
+  useEffect(() => {
+    if (!draftLoading) setInputReady(true);
+  }, [draftLoading]);
   useEffect(() => {
     if (forkDraft && isConnected && sessionId && tabId) {
       // Clear from tab metadata once consumed
@@ -225,10 +246,18 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   }, [sessionId, projectName, providerId]);
 
   /** Edit a user message: prefill input + arm same-tab fork on next send */
-  const handleEdit = useCallback((userMessage: string, messageId?: string) => {
+  const handleEdit = useCallback((userMessage: string, messageId?: string, ownMsgId?: string) => {
     setForkDraft(userMessage);
-    setEditFork({ anchorMsgId: messageId });
+    setEditFork({ anchorMsgId: messageId, ownMsgId });
   }, []);
+
+  /** Abandon an armed edit: disarm the fork, drop the prefill, clear the input. */
+  const handleCancelEdit = useCallback(() => {
+    setEditFork(null);
+    setForkDraft(undefined);
+    clearDraft();
+    setClearInputSignal((n) => n + 1);
+  }, [clearDraft]);
 
   /** Fork at the edit anchor, swap THIS tab to the forked session, queue the edited message */
   const handleEditSend = useCallback(
@@ -246,6 +275,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         // reconnects to the forked session.
         pendingSendRef.current = { content: fullContent, permissionMode };
         // Swap the current tab to the forked session (no new tab).
+        setStaleSwap(true);
         if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: forked.id } });
         setSessionId(forked.id);
       } catch (e) {
@@ -264,6 +294,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleSwitchVersion = useCallback(
     (targetSessionId: string) => {
       if (!targetSessionId || targetSessionId === sessionId) return;
+      setStaleSwap(true);
       if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: targetSessionId } });
       setSessionId(targetSessionId);
     },
@@ -489,6 +520,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
         messagesLoading={messagesLoading}
+        keepStaleWhileLoading={staleSwap}
         pendingApproval={pendingApproval}
         onApprovalResponse={respondToApproval}
         isStreaming={isStreaming}
@@ -499,6 +531,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
         onEdit={!isStreaming ? handleEdit : undefined}
+        editingMsgId={editFork?.ownMsgId}
         sessionId={sessionId ?? undefined}
         providerId={providerId}
         onNavigateVersion={handleSwitchVersion}
@@ -558,14 +591,31 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           />
         )}
 
-        {/* Input — gate on draftLoading to avoid empty→filled flash */}
-        {!draftLoading && (
+        {/* Editing indicator — makes the armed edit state visible + cancellable */}
+        {editFork && (
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs text-muted-foreground border-t border-border bg-muted/40">
+            <span>Editing message — your next send replaces it</span>
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              className="flex items-center gap-1 rounded px-2 py-1 min-h-[28px] hover:bg-accent hover:text-accent-foreground transition-colors"
+              title="Cancel edit (send as a new message instead)"
+            >
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* Input — gate on first draft load to avoid empty→filled flash, then keep mounted */}
+        {(inputReady || !draftLoading) && (
           <MessageInput
             onSend={handleInputSend}
             isStreaming={isStreaming}
             onCancel={cancelStreaming}
             autoFocus={!(metadata?.sessionId) || !!forkDraft}
             initialValue={forkDraft ?? draft?.content}
+            clearSignal={clearInputSignal}
             projectName={projectName}
             onSlashStateChange={handleSlashStateChange}
             onSlashItemsLoaded={handleSlashItemsLoaded}
