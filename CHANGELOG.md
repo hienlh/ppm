@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.13.103] - 2026-06-11
 
 ### Added
 - **Claude Fable 5 model**: Added `claude-fable-5` (Anthropic flagship) to the model picker and `ppm init`. The model list is now sorted by power (strongest first): Fable 5 → Opus 4.8 → Opus 4.7 → Opus 4.6 → Sonnet 4.6 → Haiku 4.5 (`claude-agent-sdk.ts`, `config.ts`, `init.ts`).
@@ -8,6 +8,11 @@
 
 ### Changed
 - **Default model is now Claude Opus 4.8** (was Sonnet 4.6) for new configs and `ppm init`. Note: Opus has a higher per-token cost than Sonnet; switch per-session in the model picker if you prefer the cheaper default (`config.ts`, `init.ts`).
+
+## [0.13.102] - 2026-06-08
+
+### Fixed
+- **Operators in tool cards looked struck through**: The ligature fix in 0.13.93 only scoped `.markdown-content` code, but Bash tool-card command/output render in plain `<pre class="font-mono">` outside that scope, so Geist Mono still joined `--`, `===`, `=>` into bar glyphs that read as strikethrough. Replaced the scoped rules with one global rule disabling ligatures on `pre`/`code`/`kbd`/`samp`/`.font-mono`, covering tool cards, Grep/Glob details, and markdown code blocks (`globals.css`).
 
 ## [0.13.101] - 2026-06-08
 
