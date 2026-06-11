@@ -40,6 +40,10 @@
   --color-error: #ef4444;
   --color-info: #06b6d4;
 
+  /* Diff line tints — match Monaco vs-dark diff editor */
+  --color-diff-added: rgba(63, 185, 80, 0.16);
+  --color-diff-removed: rgba(248, 81, 73, 0.16);
+
   --color-text-primary: #e5e7eb;
   --color-text-secondary: #9ca3af;
   --color-text-subtle: #6b7280;
@@ -100,6 +104,10 @@ samp,
   --color-warning: #d97706;
   --color-error: #dc2626;
   --color-info: #0891b2;
+
+  /* Diff line tints — match Monaco light diff editor */
+  --color-diff-added: rgba(46, 160, 67, 0.18);
+  --color-diff-removed: rgba(255, 129, 130, 0.28);
 
   --color-text-primary: #1a1f2e;
   --color-text-secondary: #64748b;

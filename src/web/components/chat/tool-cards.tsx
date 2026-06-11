@@ -81,6 +81,9 @@ export function ToolCard({
   const children = isSubagent ? (tool as any).children as ChatEvent[] | undefined : undefined;
   const hasChildren = children && children.length > 0;
   const isDone = hasResult || hasAnswers || wasApproved || completed;
+  // File-mutation tools show their change via the inline diff/content preview — the SDK's
+  // "file updated successfully" boilerplate is noise, so suppress it (but keep error output).
+  const isFileMutation = ["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(toolName);
 
   // Read partial bash output for streaming Bash tools
   const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
@@ -127,7 +130,7 @@ export function ToolCard({
           {hasChildren && (
             <SubagentChildren events={children!} projectName={projectName} />
           )}
-          {hasResult && (
+          {hasResult && !(isFileMutation && !isError) && (
             <ToolResultView toolName={toolName} output={(result as any).output} />
           )}
         </div>
@@ -241,7 +244,6 @@ function ToolDetails({
           </button>
           {name === "Edit" && (!!input.old_string || !!input.new_string) && (
             <>
-              <EditDiffPreview oldStr={s(input.old_string)} newStr={s(input.new_string)} />
               <button
                 type="button"
                 className="text-text-subtle hover:text-primary hover:underline text-left flex items-center gap-1"
@@ -251,6 +253,7 @@ function ToolDetails({
                 <Columns2 className="size-3 shrink-0" />
                 View Diff
               </button>
+              <EditDiffPreview oldStr={s(input.old_string)} newStr={s(input.new_string)} />
             </>
           )}
           {name === "MultiEdit" && Array.isArray(input.edits) && (
@@ -558,7 +561,7 @@ function EditDiffPreview({ oldStr, newStr, maxLines = 8 }: { oldStr: string; new
     const shown = lines.slice(0, maxLines);
     const extra = lines.length - shown.length;
     const prefix = kind === "old" ? "-" : "+";
-    const cls = kind === "old" ? "bg-red-500/10 text-red-300" : "bg-green-500/10 text-green-300";
+    const cls = kind === "old" ? "bg-diff-removed text-text-primary" : "bg-diff-added text-text-primary";
     const body = shown.map((l) => `${prefix} ${l}`).join("\n")
       + (extra > 0 ? `\n… +${extra} more line${extra !== 1 ? "s" : ""}` : "");
     return (
