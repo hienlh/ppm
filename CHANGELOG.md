@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.13.104] - 2026-06-11
+
+### Added
+- **Inline diff preview on Edit/MultiEdit tool cards**: Edit (and MultiEdit, per edit) cards now auto-expand and render a compact inline diff — old lines tinted red, new lines green — directly in the card, so changes are visible without clicking through. Each side caps at 8 lines with a `… +N more lines` indicator; the full Monaco "View Diff" tab is still one click away (`tool-cards.tsx`).
+- **Scrollable subagent step list**: The nested step list under Agent/Task cards is now height-capped (`max-h-64` mobile / `max-h-96` desktop) with internal scroll and guarded auto-scroll — it follows the newest step while streaming but pauses if you scroll up to read (`tool-cards.tsx`).
+
+### Changed
+- **Diff colors match the Monaco editor**: Inline tool-card diffs now use Monaco-style line tints (new `--color-diff-added` / `--color-diff-removed` tokens, light + dark) with neutral foreground text instead of saturated red/green text (`globals.css`, `tool-cards.tsx`).
+- **"View Diff" moved up**: The View Diff link now sits directly under the file name, above the inline diff (`tool-cards.tsx`).
+- **Suppressed edit success boilerplate**: Edit/Write/MultiEdit/NotebookEdit cards no longer show the SDK's "The file … has been updated successfully" result line — the inline diff/content already conveys the change. Error results are still shown (`tool-cards.tsx`).
+
 ## [0.13.103] - 2026-06-11
 
 ### Added
