@@ -459,8 +459,25 @@ function SubagentChildren({ events, projectName }: { events: ChatEvent[]; projec
   }
   if (textBuffer) groups.push({ kind: "text", content: textBuffer });
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const userScrolledRef = useRef(false);
+
+  // Follow newest step as it streams in, unless the user scrolled up to read.
+  useEffect(() => {
+    if (containerRef.current && !userScrolledRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [groups.length]);
+
   return (
-    <div className="border-l-2 border-accent/20 pl-2 space-y-1 mt-1">
+    <div
+      ref={containerRef}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        userScrolledRef.current = el.scrollTop + el.clientHeight < el.scrollHeight - 20;
+      }}
+      className="border-l-2 border-accent/20 pl-2 space-y-1 mt-1 max-h-64 md:max-h-96 overflow-y-auto"
+    >
       {groups.map((g, i) => {
         if (g.kind === "text") {
           return (
