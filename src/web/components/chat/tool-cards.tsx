@@ -57,7 +57,11 @@ export function ToolCard({
   projectName?: string;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => {
+    // Edit/MultiEdit cards open by default so the inline diff is visible without a click.
+    const t = tool.type === "tool_use" ? tool.tool : (tool as any).tool;
+    return t === "Edit" || t === "MultiEdit";
+  });
 
   if (tool.type === "error") {
     return (
@@ -236,15 +240,28 @@ function ToolDetails({
             {filePath}
           </button>
           {name === "Edit" && (!!input.old_string || !!input.new_string) && (
-            <button
-              type="button"
-              className="text-text-subtle hover:text-primary hover:underline text-left flex items-center gap-1"
-              onClick={() => openEditDiff(filePath, s(input.old_string), s(input.new_string))}
-              title="View diff in new tab"
-            >
-              <Columns2 className="size-3 shrink-0" />
-              View Diff
-            </button>
+            <>
+              <EditDiffPreview oldStr={s(input.old_string)} newStr={s(input.new_string)} />
+              <button
+                type="button"
+                className="text-text-subtle hover:text-primary hover:underline text-left flex items-center gap-1"
+                onClick={() => openEditDiff(filePath, s(input.old_string), s(input.new_string))}
+                title="View diff in new tab"
+              >
+                <Columns2 className="size-3 shrink-0" />
+                View Diff
+              </button>
+            </>
+          )}
+          {name === "MultiEdit" && Array.isArray(input.edits) && (
+            <div className="space-y-1.5">
+              {(input.edits as Array<{ old_string?: string; new_string?: string }>).map((e, i) => (
+                <div key={i} className="space-y-0.5">
+                  <p className="text-text-subtle text-[10px]">Edit {i + 1}</p>
+                  <EditDiffPreview oldStr={s(e.old_string)} newStr={s(e.new_string)} />
+                </div>
+              ))}
+            </div>
           )}
           {name === "Write" && !!input.content && (
             <pre className="font-mono text-text-subtle overflow-x-auto max-h-32 whitespace-pre-wrap">{truncate(s(input.content), 300)}</pre>
@@ -529,6 +546,31 @@ function StreamingBashOutput({ content, lineCount }: { content: string; lineCoun
       >
         {content.split("\n").slice(-200).join("\n")}
       </pre>
+    </div>
+  );
+}
+
+/** Compact inline diff: old lines in red, new lines in green, each capped at maxLines. */
+function EditDiffPreview({ oldStr, newStr, maxLines = 8 }: { oldStr: string; newStr: string; maxLines?: number }) {
+  const block = (text: string, kind: "old" | "new") => {
+    if (!text) return null;
+    const lines = text.split("\n");
+    const shown = lines.slice(0, maxLines);
+    const extra = lines.length - shown.length;
+    const prefix = kind === "old" ? "-" : "+";
+    const cls = kind === "old" ? "bg-red-500/10 text-red-300" : "bg-green-500/10 text-green-300";
+    const body = shown.map((l) => `${prefix} ${l}`).join("\n")
+      + (extra > 0 ? `\n… +${extra} more line${extra !== 1 ? "s" : ""}` : "");
+    return (
+      <pre className={`font-mono text-[11px] overflow-x-auto whitespace-pre-wrap rounded px-1.5 py-1 ${cls}`}>
+        {body}
+      </pre>
+    );
+  };
+  return (
+    <div className="space-y-0.5">
+      {block(oldStr, "old")}
+      {block(newStr, "new")}
     </div>
   );
 }
