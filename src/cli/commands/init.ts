@@ -104,7 +104,7 @@ export async function initProject(options: InitOptions = {}) {
         }));
 
   // 6. Advanced settings
-  let aiModel = "claude-sonnet-4-6";
+  let aiModel = "claude-opus-4-8";
   let aiEffort: "low" | "medium" | "high" | "max" = "high";
   let aiMaxTurns = 100;
   let aiApiKeyEnv = "ANTHROPIC_API_KEY";
@@ -119,13 +119,14 @@ export async function initProject(options: InitOptions = {}) {
       aiModel = await select({
         message: "AI model:",
         choices: [
-          { value: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (fast, recommended)" },
+          { value: "claude-fable-5", name: "Claude Fable 5 (flagship, most powerful)" },
           { value: "claude-opus-4-8", name: "Claude Opus 4.8 (most powerful)" },
           { value: "claude-opus-4-7", name: "Claude Opus 4.7 (powerful)" },
           { value: "claude-opus-4-6", name: "Claude Opus 4.6 (powerful)" },
+          { value: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (fast)" },
           { value: "claude-haiku-4-5", name: "Claude Haiku 4.5 (cheap)" },
         ],
-        default: "claude-sonnet-4-6",
+        default: "claude-opus-4-8",
       });
 
       aiEffort = await select({

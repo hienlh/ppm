@@ -942,8 +942,8 @@ interface AIProvider {
 }
 
 interface ModelOption {
-  value: string;    // Model ID (e.g., "claude-sonnet-4-6")
-  label: string;    // Display name (e.g., "Claude Sonnet 4.6")
+  value: string;    // Model ID (e.g., "claude-fable-5")
+  label: string;    // Display name (e.g., "Claude Fable 5 (flagship)")
 }
 ```
 

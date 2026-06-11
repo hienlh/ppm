@@ -84,7 +84,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
       claude: {
         type: "agent-sdk",
         api_key_env: "ANTHROPIC_API_KEY",
-        model: "claude-sonnet-4-6",
+        model: "claude-opus-4-8",
         effort: "high",
         max_turns: 1000,
         permission_mode: "bypassPermissions",
@@ -107,7 +107,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;
 const VALID_EFFORTS = ["low", "medium", "high"] as const;
-const VALID_MODELS = ["claude-sonnet-4-6", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-haiku-4-5"] as const;
+const VALID_MODELS = ["claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"] as const;
 /** Allowed CLI commands for CLI providers (prevents command injection) */
 const VALID_CLI_COMMANDS = ["cursor-agent", "codex", "gemini"] as const;
 /** Only these values are allowed for default_provider in config */

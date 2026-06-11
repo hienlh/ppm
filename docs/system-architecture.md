@@ -841,7 +841,7 @@ ai:
     claude:
       type: agent-sdk
       api_key_env: ANTHROPIC_API_KEY
-      model: claude-sonnet-4-6
+      model: claude-opus-4-8
       effort: high
       max_turns: 100
       max_budget_usd: 2.00
@@ -852,7 +852,7 @@ ai:
 - `default_provider`: Active provider name (e.g., `claude`)
 - `type`: Provider type (`agent-sdk` or `mock`)
 - `api_key_env`: Environment variable containing API key
-- `model`: Model ID (e.g., `claude-sonnet-4-6`, `claude-opus-4-6`)
+- `model`: Model ID (e.g., `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-4-6`). Default: `claude-opus-4-8`
 - `effort`: Processing level (`low`, `medium`, `high`, `max`)
 - `max_turns`: Maximum interaction turns (1-500, default 100)
 - `max_budget_usd`: Spending limit in USD (optional)

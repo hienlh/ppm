@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dialog";
 
 const DEFAULT_MESSAGE = "Hello! Reply briefly.";
-const DEFAULT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MODEL = "claude-opus-4-8";
 
 type EndpointFormat = "anthropic" | "openai";
 
@@ -159,11 +159,12 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
           onChange={(e) => setModel(e.target.value)}
           className="h-8 w-full rounded-md border bg-background px-2 text-[11px]"
         >
-          <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+          <option value="claude-fable-5">claude-fable-5</option>
           <option value="claude-opus-4-8">claude-opus-4-8</option>
           <option value="claude-opus-4-7">claude-opus-4-7</option>
-          <option value="claude-haiku-4-5-20251001">claude-haiku-4-5</option>
           <option value="claude-opus-4-6">claude-opus-4-6</option>
+          <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+          <option value="claude-haiku-4-5">claude-haiku-4-5</option>
         </select>
       </div>
 

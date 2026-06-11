@@ -41,16 +41,23 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(5);
+      expect(json.data.length).toBe(6);
 
       const values = json.data.map((m: any) => m.value);
+      expect(values).toContain("claude-fable-5");
       expect(values).toContain("claude-sonnet-4-6");
       expect(values).toContain("claude-opus-4-8");
       expect(values).toContain("claude-opus-4-7");
       expect(values).toContain("claude-opus-4-6");
       expect(values).toContain("claude-haiku-4-5");
 
+      // Strongest model listed first (power-sorted)
+      expect(json.data[0].value).toBe("claude-fable-5");
+
       // Check labels
+      const fableModel = json.data.find((m: any) => m.value === "claude-fable-5");
+      expect(fableModel.label).toBe("Claude Fable 5 (flagship)");
+
       const sonnetModel = json.data.find((m: any) => m.value === "claude-sonnet-4-6");
       expect(sonnetModel.label).toBe("Claude Sonnet 4.6");
 
@@ -103,14 +110,16 @@ describe("Provider Models API", () => {
       const json = (await res.json()) as any;
       expect(json.ok).toBe(true);
       expect(Array.isArray(json.data)).toBe(true);
-      expect(json.data.length).toBe(5);
+      expect(json.data.length).toBe(6);
 
       const values = json.data.map((m: any) => m.value);
+      expect(values).toContain("claude-fable-5");
       expect(values).toContain("claude-sonnet-4-6");
       expect(values).toContain("claude-opus-4-8");
       expect(values).toContain("claude-opus-4-7");
       expect(values).toContain("claude-opus-4-6");
       expect(values).toContain("claude-haiku-4-5");
+      expect(json.data[0].value).toBe("claude-fable-5");
     });
 
     it("returns empty array for mock provider in project context", async () => {

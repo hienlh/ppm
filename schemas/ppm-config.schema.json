@@ -56,8 +56,8 @@
         "api_key_env": { "type": "string" },
         "model": {
           "type": "string",
-          "description": "Model ID (e.g. claude-sonnet-4-6, claude-opus-4-8)",
-          "examples": ["claude-sonnet-4-6", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-haiku-4-5"]
+          "description": "Model ID (e.g. claude-fable-5, claude-opus-4-8, claude-sonnet-4-6)",
+          "examples": ["claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"]
         },
         "effort": {
           "type": "string",

@@ -129,7 +129,7 @@ The `-y` flag skips all prompts and applies these defaults:
 - Port: `3210`
 - Scan directory: `$HOME`
 - Auth: enabled, password auto-generated (printed at end of `init` output)
-- AI model: `claude-sonnet-4-6`
+- AI model: `claude-opus-4-8`
 
 Override any default with flags:
 

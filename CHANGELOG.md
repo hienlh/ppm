@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Claude Fable 5 model**: Added `claude-fable-5` (Anthropic flagship) to the model picker and `ppm init`. The model list is now sorted by power (strongest first): Fable 5 → Opus 4.8 → Opus 4.7 → Opus 4.6 → Sonnet 4.6 → Haiku 4.5 (`claude-agent-sdk.ts`, `config.ts`, `init.ts`).
+
+### Changed
+- **Default model is now Claude Opus 4.8** (was Sonnet 4.6) for new configs and `ppm init`. Note: Opus has a higher per-token cost than Sonnet; switch per-session in the model picker if you prefer the cheaper default (`config.ts`, `init.ts`).
+
 ## [0.13.101] - 2026-06-08
 
 ### Fixed

@@ -510,8 +510,8 @@ All tab routing and rendering components now include fallback guards for unknown
 ```typescript
 // src/types/chat.ts
 export interface ModelOption {
-  value: string;    // Model ID (e.g., "claude-sonnet-4-6")
-  label: string;    // Display name (e.g., "Claude Sonnet 4.6")
+  value: string;    // Model ID (e.g., "claude-fable-5")
+  label: string;    // Display name (e.g., "Claude Fable 5 (flagship)")
 }
 
 interface AIProvider {
@@ -529,7 +529,7 @@ interface AIProvider {
 ### Provider Implementations
 
 #### Claude (agent-sdk.ts)
-- `listModels()` returns hardcoded 2 models: Sonnet 4.6, Opus 4.6
+- `listModels()` returns hardcoded models, power-sorted: Fable 5, Opus 4.8/4.7/4.6, Sonnet 4.6, Haiku 4.5
 - Direct implementation (no subprocess)
 
 #### Cursor (cursor-provider.ts)
@@ -617,7 +617,7 @@ ai:
   providers:
     claude:
       type: agent-sdk
-      model: claude-sonnet-4-6  # from listModels()
+      model: claude-opus-4-8  # default; see listModels() for full list
       effort: high
       max_turns: 100
     cursor:
