@@ -173,9 +173,11 @@ export function useTerminal(
     // Use actual session ID from server on reconnect (not "new")
     const sid = actualSessionId.current;
     const path = `/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}`;
-    // In dev mode, connect directly to backend (port 8081) to bypass
-    // Vite's dev proxy which has unreliable WebSocket upgrade handling.
-    const url = import.meta.env.DEV
+    // Local dev over http: connect directly to backend (port 8081) to bypass
+    // Vite's dev proxy which has unreliable WebSocket upgrade handling. Over https
+    // (e.g. a Cloudflare tunnel) port 8081 isn't reachable and ws:// is blocked as
+    // mixed content, so use the same-origin wss:// proxy instead.
+    const url = import.meta.env.DEV && window.location.protocol !== "https:"
       ? `ws://${window.location.hostname}:8081${path}`
       : `${protocol}//${window.location.host}${path}`;
 

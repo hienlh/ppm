@@ -36,9 +36,11 @@ export class WsClient {
     let fullUrl: string;
     if (this.url.startsWith("ws")) {
       fullUrl = this.url;
-    } else if (import.meta.env.DEV && this.url.startsWith("/ws/")) {
-      // In dev mode, connect directly to the backend server (port 8081) to
-      // bypass Vite's dev proxy which has unreliable WebSocket upgrade handling.
+    } else if (import.meta.env.DEV && this.url.startsWith("/ws/") && window.location.protocol !== "https:") {
+      // Local dev over http: connect directly to backend (port 8081) to bypass
+      // Vite's dev proxy which has unreliable WebSocket upgrade handling.
+      // Over https (e.g. a Cloudflare tunnel) port 8081 isn't reachable and ws://
+      // is blocked as mixed content, so fall through to same-origin wss:// proxy.
       fullUrl = `ws://${window.location.hostname}:8081${this.url}`;
     } else {
       fullUrl = `${protocol}//${window.location.host}${this.url}`;
