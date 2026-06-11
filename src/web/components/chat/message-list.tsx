@@ -31,8 +31,10 @@ import {
   XCircle,
   ExternalLink,
   Slash,
+  Pencil,
 } from "lucide-react";
 import { ChatWelcome } from "./chat-welcome";
+import { VersionSwitcher } from "./version-switcher";
 import { QuestionCard } from "./question-card";
 import type { Question } from "./question-card";
 import { useTabStore } from "@/stores/tab-store";
@@ -53,6 +55,14 @@ interface MessageListProps {
   projectName?: string;
   /** Called when user clicks Fork/Rewind — opens new forked chat tab */
   onFork?: (userMessage: string, messageId?: string) => void;
+  /** Called when user clicks Edit — prefills input, forks + continues in the SAME tab on send */
+  onEdit?: (userMessage: string, messageId?: string) => void;
+  /** Current session id — used by the version switcher to resolve sibling edits */
+  sessionId?: string;
+  /** Provider id for version-switcher lookups */
+  providerId?: string;
+  /** Swap the tab to another version's session (used by the version switcher) */
+  onNavigateVersion?: (sessionId: string) => void;
   /** Called when user selects a recent session from the welcome screen */
   onSelectSession?: (session: import("../../../types/chat").SessionInfo) => void;
   /** Dismiss a single message (removes from local view only — not persisted history) */
@@ -80,6 +90,10 @@ export function MessageList({
   compactStatus,
   projectName,
   onFork,
+  onEdit,
+  sessionId,
+  providerId,
+  onNavigateVersion,
   bashPartialOutput,
   onExpandCompact,
   isCompactExpanded,
@@ -115,6 +129,11 @@ export function MessageList({
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
     onFork?.(msgContent, msgId);
   }, [onFork]);
+
+  // Stable edit handler — same-tab edit (preserves MessageBubble memo)
+  const handleEdit = useCallback((msgContent: string, msgId: string | undefined) => {
+    onEdit?.(msgContent, msgId);
+  }, [onEdit]);
 
   // Stable dismiss handler — avoids new closure per message (preserves MessageBubble memo)
   const handleDismiss = useCallback((msgId: string) => {
@@ -216,6 +235,10 @@ export function MessageList({
           {displayed.map((msg, idx) => {
             const globalIdx = filtered.length - displayed.length + idx;
             const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
+            // User-message ordinal (1-based) — stable version-group anchor across forks.
+            const versionOrdinal = msg.role === "user"
+              ? filtered.slice(0, globalIdx + 1).reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0)
+              : 0;
             return (
               <RenderErrorBoundary key={msg.id} fallbackContent={msg.content}>
                 <MessageBubble
@@ -223,8 +246,14 @@ export function MessageList({
                   isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                   projectName={projectName}
                   onFork={msg.role === "user" && onFork ? handleFork : undefined}
+                  onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
                   onDismiss={msg.role === "system" && onDismissMessage ? handleDismiss : undefined}
                   prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
+                  sessionId={sessionId}
+                  providerId={providerId}
+                  versionOrdinal={versionOrdinal}
+                  onNavigateVersion={onNavigateVersion}
+                  versionNavDisabled={isStreaming}
                   bashPartialOutput={bashPartialOutput}
                 />
               </RenderErrorBoundary>
@@ -414,21 +443,34 @@ function LoadMoreSentinel({ onLoadMore, loading }: { onLoadMore: () => void; loa
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, onDismiss, prevMsgId, bashPartialOutput }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, onEdit, onDismiss, prevMsgId, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
   message: ChatMessage; isStreaming: boolean; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
+  onEdit?: (content: string, messageId: string | undefined) => void;
   onDismiss?: (messageId: string) => void;
   prevMsgId?: string;
+  sessionId?: string;
+  providerId?: string;
+  versionOrdinal?: number;
+  onNavigateVersion?: (sessionId: string) => void;
+  versionNavDisabled?: boolean;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }) {
   if (message.role === "user") {
     const handleFork = onFork ? () => onFork(message.content, prevMsgId) : undefined;
+    const handleEdit = onEdit ? () => onEdit(message.content, prevMsgId) : undefined;
     return (
       <UserBubble
         content={message.content}
         messageId={message.id}
         projectName={projectName}
         onFork={handleFork}
+        onEdit={handleEdit}
+        sessionId={sessionId}
+        providerId={providerId}
+        versionOrdinal={versionOrdinal}
+        onNavigateVersion={onNavigateVersion}
+        versionNavDisabled={versionNavDisabled}
       />
     );
   }
@@ -594,11 +636,17 @@ function extractTerminalBlocks(text: string): { blocks: string[]; remainingText:
 }
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function UserBubble({ content, messageId, projectName, onFork }: {
+function UserBubble({ content, messageId, projectName, onFork, onEdit, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled }: {
   content: string;
   messageId?: string;
   projectName?: string;
   onFork?: () => void;
+  onEdit?: () => void;
+  sessionId?: string;
+  providerId?: string;
+  versionOrdinal?: number;
+  onNavigateVersion?: (sessionId: string) => void;
+  versionNavDisabled?: boolean;
 }) {
   const { files, text, tags, command, terminalBlocks, idePath } = useMemo(() => {
     const { idePath, cleanText: afterIde } = parseIdeOpenedFile(content);
@@ -713,15 +761,39 @@ function UserBubble({ content, messageId, projectName, onFork }: {
           {expanded ? <><ChevronUp className="size-3" />Show less</> : <><ChevronDown className="size-3" />Show more</>}
         </button>
       )}
-      {/* Fork/Rewind button — only for real user messages */}
-      {!isSystemContext && onFork && (
-        <button
-          onClick={onFork}
-          title="Retry from this message (fork session)"
-          className="absolute top-1.5 right-1.5 can-hover:opacity-0 can-hover:group-hover/user:opacity-100 transition-opacity size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
-        >
-          <RotateCcw className="size-3" />
-        </button>
+      {/* Version switcher — only when this message has edited siblings */}
+      {!isSystemContext && onNavigateVersion && (
+        <VersionSwitcher
+          projectName={projectName}
+          sessionId={sessionId}
+          providerId={providerId ?? "claude"}
+          ordinal={versionOrdinal}
+          onNavigate={onNavigateVersion}
+          disabled={versionNavDisabled}
+        />
+      )}
+      {/* Edit + Fork buttons — only for real user messages */}
+      {!isSystemContext && (onEdit || onFork) && (
+        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 can-hover:opacity-0 can-hover:group-hover/user:opacity-100 transition-opacity">
+          {onEdit && (
+            <button
+              onClick={onEdit}
+              title="Edit this message (continue in the same tab)"
+              className="size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
+            >
+              <Pencil className="size-3" />
+            </button>
+          )}
+          {onFork && (
+            <button
+              onClick={onFork}
+              title="Retry from this message (fork into a new tab)"
+              className="size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
+            >
+              <RotateCcw className="size-3" />
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

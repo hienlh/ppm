@@ -121,7 +121,8 @@ PATCH  /api/projects/:name/color → Set project color (hex string)
 GET    /api/project/:name/chat/sessions           → List sessions
 POST   /api/project/:name/chat/sessions           → Create session
 GET    /api/project/:name/chat/sessions/:id/messages → Get history
-DELETE /api/project/:name/chat/sessions/:id       → Delete session
+GET    /api/project/:name/chat/sessions/:id/versions → Edited-message version group (?ordinal= — user-msg ordinal, stable across forks)
+DELETE /api/project/:name/chat/sessions/:id       → Delete session (leaf-only: 409 if it has edited children)
 GET    /api/project/:name/chat/drafts/:sessionId  → Get draft (or null)
 PUT    /api/project/:name/chat/drafts/:sessionId  → Save/update draft
 DELETE /api/project/:name/chat/drafts/:sessionId  → Clear draft
@@ -187,6 +188,7 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | Service | Purpose | Key Methods |
 |---------|---------|-------------|
 | **ChatService** | Session management, message streaming | createSession, streamMessage, getHistory |
+| **SessionBranchService** | Edit-message global branch tree (`session_branches` table) — links forked sessions, resolves version groups, collapses history to per-tree heads | recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, getTreeByRoot |
 | **ConfigService** | Config loading (YAML→SQLite migration) | load, save, getToken |
 | **DbService** | SQLite persistence (10 tables, WAL, connections/accounts/workspace CRUD) | getDb, openTestDb, getWorkspace, setWorkspace, getConnections, insertConnection, deleteConnection, getTableCache |
 | **TableCacheService** | Cache table metadata, search tables | syncTables, searchTables, invalidateCache |

@@ -13,6 +13,7 @@ import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
+import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -138,15 +139,19 @@ chatRoutes.get("/sessions", async (c) => {
     const tagMap = getSessionTags(deduped.map((s) => s.id));
     const enriched = deduped.map((s) => ({ ...s, pinned: pinnedIds.has(s.id), tag: tagMap[s.id] ?? null }));
 
+    // Collapse edit-message branch trees: each tree shows a single row (its
+    // most recently active node). Pinned sessions are never collapsed.
+    const collapsed = collapseTreesToHeads(enriched);
+
     // Sort: pinned first, then by createdAt desc
-    enriched.sort((a, b) => {
+    collapsed.sort((a, b) => {
       if (a.pinned && !b.pinned) return -1;
       if (!a.pinned && b.pinned) return 1;
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
 
     // Server-side search + tag filter
-    let filtered = enriched;
+    let filtered = collapsed;
     if (searchQuery) filtered = filtered.filter((s) => (s.title || "").toLowerCase().includes(searchQuery));
     if (filterTagId !== null) filtered = filtered.filter((s) => s.tag?.id === filterTagId);
     const hasMore = sessions.length >= limit;
@@ -163,6 +168,39 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     const providerId = c.req.query("providerId") ?? "claude";
     const messages = await chatService.getMessages(providerId, id);
     return c.json(ok(messages));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /chat/sessions/:id/versions — list edited versions of a user message.
+ * `ordinal` is the 1-based user-message ordinal of the message (stable across
+ * forks — forkSession reassigns UUIDs). Returns ordered version sessions + the
+ * index of the current one, or 400 when no fork exists at that ordinal so the
+ * FE can hide the switcher. MUST be registered before the generic `/sessions/:id`.
+ */
+chatRoutes.get("/sessions/:id/versions", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const ordinal = parseInt(c.req.query("ordinal") ?? "", 10);
+    if (!Number.isInteger(ordinal) || ordinal < 1) return c.json(err("ordinal is required"), 400);
+    const providerId = c.req.query("providerId") ?? "claude";
+    const projectPath = c.get("projectPath");
+
+    const group = resolveVersionGroup(id, ordinal);
+    if (!group) return c.json(err("No versions at this ordinal"), 400);
+
+    const provider = providerRegistry.get(providerId) as any;
+    const versions = await Promise.all(
+      group.ids.map(async (vid) => {
+        const info = provider?.getSessionInfoById
+          ? await provider.getSessionInfoById(vid, projectPath).catch(() => null)
+          : null;
+        return info ?? { id: vid, providerId, title: "", createdAt: "" };
+      }),
+    );
+    return c.json(ok({ versions, currentIndex: group.currentIndex }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -210,7 +248,7 @@ chatRoutes.delete("/sessions", async (c) => {
 
     const pinnedIds = getPinnedSessionIds();
     const toDelete = allSessions.filter((s) =>
-      new Date(s.createdAt) < cutoff && !pinnedIds.has(s.id),
+      new Date(s.createdAt) < cutoff && !pinnedIds.has(s.id) && !hasChildren(s.id),
     );
 
     let deleted = 0;
@@ -222,6 +260,7 @@ chatRoutes.delete("/sessions", async (c) => {
         deleteSessionMetadata(s.id);
         deleteSessionTitle(s.id);
         unpinSession(s.id);
+        deleteBranchesFor(s.id);
         try { draftService.delete(projectPath, s.id); } catch { /* ignore */ }
         deleted++;
       } catch { /* skip individual failures */ }
@@ -240,6 +279,11 @@ chatRoutes.delete("/sessions/:id", async (c) => {
   try {
     const id = c.req.param("id");
     const providerId = c.req.query("providerId") ?? "claude";
+    // Leaf-only: a session with edited versions branched from it cannot be
+    // deleted (would orphan its children). Reparenting is out of scope.
+    if (hasChildren(id)) {
+      return c.json(err("Cannot delete: this session has edited versions branched from it"), 409);
+    }
     // Provider-specific cleanup (JSONL, process, etc.)
     await chatService.deleteSession(providerId, id);
     // Shared DB cleanup
@@ -248,6 +292,7 @@ chatRoutes.delete("/sessions/:id", async (c) => {
     deleteSessionMetadata(id);
     deleteSessionTitle(id);
     unpinSession(id);
+    deleteBranchesFor(id);
     // Fire-and-forget draft cleanup
     try { draftService.delete(c.get("projectPath"), id); } catch { /* ignore */ }
     return c.json(ok({ deleted: id }));
@@ -391,6 +436,20 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         setSessionMetadata(result.sessionId, projectName, projectPath);
         await provider.resumeSession(result.sessionId);
         provider.markAsResumed?.(result.sessionId);
+        // Persist the branch link (edit-message tree). Best-effort: a branch
+        // bookkeeping failure must not break the fork the user just performed.
+        try {
+          // Anchor on the divergent message's user-ordinal (stable across forks).
+          // The edited message is the first user message after the fork point;
+          // its ordinal = (user messages up to & including the fork point) + 1.
+          const parentMsgs = await chatService.getMessages(providerId, sourceId);
+          const k = parentMsgs.findIndex((m) => (m.sdkUuid ?? m.id) === body.messageId);
+          const userUpToFork = parentMsgs.slice(0, k + 1).filter((m) => m.role === "user").length;
+          const forkOrdinal = userUpToFork + 1;
+          recordBranch(result.sessionId, sourceId, body.messageId, forkOrdinal);
+        } catch (branchErr) {
+          console.warn(`[chat] recordBranch failed: ${(branchErr as Error).message}`);
+        }
         const forkedSession = {
           id: result.sessionId,
           providerId,

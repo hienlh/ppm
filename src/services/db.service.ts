@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-const CURRENT_SCHEMA_VERSION = 28;
+export const CURRENT_SCHEMA_VERSION = 30;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -669,6 +669,34 @@ function runMigrations(database: Database): void {
       CREATE INDEX IF NOT EXISTS idx_proxy_req_caller ON proxy_requests(caller_ip);
       PRAGMA user_version = 28;
     `);
+  }
+
+  if (current < 29) {
+    // Edit-message branch tree: each forked session is a node linked to its
+    // parent + the message it diverged at. root_id groups a whole tree without
+    // recursive CTEs (fast grouping for history + future tree-overview UI).
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS session_branches (
+        child_id    TEXT PRIMARY KEY,
+        parent_id   TEXT NOT NULL,
+        fork_msg_id TEXT NOT NULL,
+        root_id     TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_session_branches_root   ON session_branches(root_id);
+      CREATE INDEX IF NOT EXISTS idx_session_branches_parent ON session_branches(parent_id, fork_msg_id);
+      PRAGMA user_version = 29;
+    `);
+  }
+
+  if (current < 30) {
+    // forkSession reassigns message UUIDs in the forked transcript, so the
+    // parent-space fork_msg_id can't anchor the switcher on the child. Anchor
+    // the version group on the divergent message's user-ordinal instead —
+    // stable across forks since the copied prefix is identical.
+    try { database.exec("ALTER TABLE session_branches ADD COLUMN fork_ordinal INTEGER"); } catch { /* column exists */ }
+    database.exec("CREATE INDEX IF NOT EXISTS idx_session_branches_parent_ord ON session_branches(parent_id, fork_ordinal)");
+    database.exec("PRAGMA user_version = 30");
   }
 }
 

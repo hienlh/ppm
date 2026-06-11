@@ -48,11 +48,11 @@ describe("db.service", () => {
       expect(tables).toContain("accounts");
     });
 
-    it("sets user_version to 21 after all migrations", () => {
-      const { openTestDb: open } = require("../../../src/services/db.service.ts");
+    it("sets user_version to the current schema version after all migrations", () => {
+      const { openTestDb: open, CURRENT_SCHEMA_VERSION } = require("../../../src/services/db.service.ts");
       const db = open();
       const row = db.query("PRAGMA user_version").get() as { user_version: number };
-      expect(row.user_version).toBe(21);
+      expect(row.user_version).toBe(CURRENT_SCHEMA_VERSION);
       db.close();
     });
 

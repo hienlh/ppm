@@ -20,11 +20,11 @@ describe("SQLite schema migrations", () => {
   });
 
   it("DB schema has correct user_version after migrations", () => {
-    const { openTestDb } = require("../../src/services/db.service.ts");
+    const { openTestDb, CURRENT_SCHEMA_VERSION } = require("../../src/services/db.service.ts");
     const testDb = openTestDb();
 
     const row = testDb.query("PRAGMA user_version").get() as { user_version: number };
-    expect(row.user_version).toBe(21);
+    expect(row.user_version).toBe(CURRENT_SCHEMA_VERSION);
 
     // All tables should exist
     const tables = testDb.query(

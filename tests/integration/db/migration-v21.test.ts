@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import "../../test-setup.ts";
 import { Database } from "bun:sqlite";
-import { openTestDb } from "../../../src/services/db.service.ts";
+import { openTestDb, CURRENT_SCHEMA_VERSION } from "../../../src/services/db.service.ts";
 
 describe("DB migration v21 — add projects.settings column", () => {
   it("openTestDb creates fresh DB with settings column at v21", () => {
@@ -15,9 +15,9 @@ describe("DB migration v21 — add projects.settings column", () => {
 
     expect(hasSettings).toBe(true);
 
-    // Check version is 21
+    // Migrations run to the latest schema version (v21 added projects.settings)
     const version = db.query("PRAGMA user_version").get() as { user_version: number };
-    expect(version.user_version).toBe(21);
+    expect(version.user_version).toBe(CURRENT_SCHEMA_VERSION);
 
     db.close();
   });

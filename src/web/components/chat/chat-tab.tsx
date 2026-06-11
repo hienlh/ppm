@@ -11,6 +11,7 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { getAISettings } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
+import { clearVersionsCache } from "./version-switcher";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
@@ -164,6 +165,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
   // Pending fork message — show in input for user to edit, not auto-send
   const [forkDraft, setForkDraft] = useState<string | undefined>(metadata?.pendingMessage as string | undefined);
+  // Pending edit: when set, the next send forks at `anchorMsgId` and continues
+  // in THIS tab (swap sessionId) instead of opening a new tab.
+  const [editFork, setEditFork] = useState<{ anchorMsgId?: string } | null>(null);
   useEffect(() => {
     if (forkDraft && isConnected && sessionId && tabId) {
       // Clear from tab metadata once consumed
@@ -219,6 +223,52 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       });
     }
   }, [sessionId, projectName, providerId]);
+
+  /** Edit a user message: prefill input + arm same-tab fork on next send */
+  const handleEdit = useCallback((userMessage: string, messageId?: string) => {
+    setForkDraft(userMessage);
+    setEditFork({ anchorMsgId: messageId });
+  }, []);
+
+  /** Fork at the edit anchor, swap THIS tab to the forked session, queue the edited message */
+  const handleEditSend = useCallback(
+    async (fullContent: string, anchorMsgId?: string) => {
+      if (!fullContent.trim() || !sessionId || !projectName) return;
+      try {
+        const forked = await api.post<{ id: string }>(
+          `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
+          { messageId: anchorMsgId },
+        );
+        // The tree gained a sibling — drop cached version groups so switchers
+        // refetch fresh n/m counts instead of showing stale numbers.
+        clearVersionsCache();
+        // Queue the edited message — flushed by the connect effect once the WS
+        // reconnects to the forked session.
+        pendingSendRef.current = { content: fullContent, permissionMode };
+        // Swap the current tab to the forked session (no new tab).
+        if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: forked.id } });
+        setSessionId(forked.id);
+      } catch (e) {
+        const msg = (e as Error)?.message || "Unknown error";
+        toast.error("Cannot edit from this message", {
+          description: msg.includes("not found") || msg.includes("Invalid upToMessageId")
+            ? "The original message is no longer available in the session transcript."
+            : msg,
+        });
+      }
+    },
+    [sessionId, projectName, providerId, permissionMode, tabId, updateTab, metadata],
+  );
+
+  /** Swap THIS tab to another version's session (version switcher prev/next) */
+  const handleSwitchVersion = useCallback(
+    (targetSessionId: string) => {
+      if (!targetSessionId || targetSessionId === sessionId) return;
+      if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: targetSessionId } });
+      setSessionId(targetSessionId);
+    },
+    [sessionId, tabId, updateTab, metadata],
+  );
 
   /** Build message content with file references and inline text snippets prepended */
   const buildMessageWithAttachments = useCallback(
@@ -281,9 +331,15 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
       setForkDraft(undefined);
       clearDraft();
+      if (editFork && sessionId && projectName) {
+        const anchor = editFork.anchorMsgId;
+        setEditFork(null);
+        void handleEditSend(buildMessageWithAttachments(content, attachments), anchor);
+        return;
+      }
       handleSend(content, attachments, priority);
     },
-    [handleSend, clearDraft],
+    [handleSend, clearDraft, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments],
   );
 
   /** Draft auto-save callback — called by MessageInput on content change */
@@ -442,6 +498,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         compactStatus={compactStatus}
         projectName={projectName}
         onFork={!isStreaming ? handleFork : undefined}
+        onEdit={!isStreaming ? handleEdit : undefined}
+        sessionId={sessionId ?? undefined}
+        providerId={providerId}
+        onNavigateVersion={handleSwitchVersion}
         onSelectSession={handleSelectSession}
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}
