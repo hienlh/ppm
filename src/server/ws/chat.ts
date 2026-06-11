@@ -320,8 +320,8 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.pendingTeamCreate = ev.toolUseId;
           console.log(`[chat] session=${sessionId} TeamCreate tool_use detected, toolUseId=${ev.toolUseId}`);
         }
-        // Start bash output spy for real-time streaming
-        if (ev.tool === "Bash" && ev.toolUseId) {
+        // Start output spy for real-time streaming (Bash on Linux/macOS, PowerShell on Windows)
+        if ((ev.tool === "Bash" || ev.tool === "PowerShell") && ev.toolUseId) {
           const command = typeof ev.input === "object" && ev.input
             ? String((ev.input as any).command ?? "")
             : "";
@@ -333,7 +333,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
                 content: output.newContent,
                 lineCount: output.totalLineCount,
               });
-            });
+            }, entry.projectPath ?? "");
           }
         }
       } else if (evType === "tool_result") {
