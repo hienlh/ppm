@@ -107,6 +107,12 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  // Which session the live `session_state` greeting came from. The exposed
+  // isConnected is scoped to the CURRENT session: after a same-tab session swap
+  // (edit→fork / version switch) the stale `true` from the previous session
+  // must not leak into the same render commit — chat-tab's queued-send flush
+  // would fire into a still-CONNECTING socket and silently lose the message.
+  const [connectedSessionId, setConnectedSessionId] = useState<string | null>(null);
   const [model, setModelState] = useState<string | null>(null);
   const modelRef = useRef<string | null>(null);
   // Model the user explicitly picked but the server hasn't confirmed yet.
@@ -126,6 +132,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const isReplayingRef = useRef(false);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  // Mirror of `messages` for synchronous reads (e.g. snapshotting the previous
+  // session's messages when sessionId changes, without adding `messages` to
+  // effect deps).
+  const messagesRef = useRef<ChatMessage[]>([]);
+  messagesRef.current = messages;
   const projectNameRef = useRef(projectName);
   projectNameRef.current = projectName;
   /** Toast ID for the current pending approval notification */
@@ -346,19 +357,21 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }
 
       case "error": {
-        // Safety net: dedupe identical consecutive errors (e.g. repeated 5xx) so a turn
-        // never accumulates duplicate error blocks — keep only one.
-        const evs = streamingEventsRef.current;
-        const lastErr = evs[evs.length - 1];
-        const isDupErr = lastErr?.type === "error" && (lastErr as { message?: string }).message === ev.message;
-        if (!isDupErr) evs.push(ev as ChatEvent);
-        const errEvents = [...evs];
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
-            return [...prev.slice(0, -1), { ...last, events: errEvents }];
+            // Attach to the streaming assistant message. Dedupe identical consecutive
+            // errors (e.g. repeated 5xx) so a turn never accumulates duplicate blocks.
+            const evs = streamingEventsRef.current;
+            const lastErr = evs[evs.length - 1];
+            const isDupErr = lastErr?.type === "error" && (lastErr as { message?: string }).message === ev.message;
+            const nextEvents = isDupErr ? evs : [...evs, ev as ChatEvent];
+            streamingEventsRef.current = nextEvents;
+            return [...prev.slice(0, -1), { ...last, events: nextEvents }];
           }
-          // System-message fallback: skip if the trailing system message is the same error.
+          // No assistant message in progress — render as a standalone system message.
+          // Do NOT keep it in streamingEventsRef, or the `done` handler re-materializes
+          // the same error as a duplicate assistant message.
           if (last?.role === "system" && last.content === ev.message) return prev;
           return [...prev, {
             id: `error-${Date.now()}`,
@@ -557,6 +570,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // Handle session state (replaces connected + status)
     if ((data as any).type === "session_state") {
       setIsConnected(true);
+      setConnectedSessionId((data as any).sessionId ?? sessionIdRef.current);
       const state = data as any;
       const p = state.phase as SessionPhase;
       setPhase(p);
@@ -687,11 +701,20 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     bashOutputRef.current.clear();
     if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
     setIsConnected(false);
+    setConnectedSessionId(null);
     // Reset team state
     teamActivityRef.current = { teamNames: new Set(), messages: [] };
     teamUnreadRef.current = 0;
     setTeamActivity(EMPTY_TEAM_ACTIVITY);
     setTeamMessages([]);
+
+    // Snapshot the previous session's message ids. On a same-tab session swap
+    // (edit→fork / version switch) a queued send may append optimistic + live
+    // streaming messages BEFORE this history fetch resolves. We drop exactly the
+    // old session's messages and keep anything added after the swap, so the
+    // forked history shows immediately without a reload — and without clobbering
+    // the in-flight turn or blanking the screen on a plain version switch.
+    const staleIds = new Set(messagesRef.current.map((m) => m.id));
 
     if (sessionId && projectName) {
       setMessagesLoading(true);
@@ -700,15 +723,15 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       })
         .then((r) => r.json())
         .then((json: any) => {
-          if (cancelled || phaseRef.current !== "idle") return;
-          if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
-            setMessages(json.data);
-          } else {
-            setMessages([]);
-          }
+          if (cancelled) return;
+          const history: ChatMessage[] = json.ok && Array.isArray(json.data) ? json.data : [];
+          setMessages((prev) => {
+            const pending = prev.filter((m) => !staleIds.has(m.id));
+            return [...history, ...pending];
+          });
         })
         .catch(() => {
-          if (!cancelled && phaseRef.current === "idle") setMessages([]);
+          if (!cancelled) setMessages((prev) => prev.filter((m) => !staleIds.has(m.id)));
         })
         .finally(() => {
           if (!cancelled) setMessagesLoading(false);
@@ -953,6 +976,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     cancelStreaming,
     reconnect,
     refetchMessages,
-    isConnected,
+    // Session-scoped: true only once THIS session's session_state greeting
+    // arrived. Prevents the previous session's stale `true` from firing the
+    // queued-send flush into a still-connecting socket after a session swap.
+    isConnected: isConnected && connectedSessionId === sessionId,
   };
 }

@@ -58,9 +58,11 @@ export function ToolCard({
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
 }) {
   const [expanded, setExpanded] = useState(() => {
-    // Edit/MultiEdit cards open by default so the inline diff is visible without a click.
+    // Edit/MultiEdit cards open by default so the inline diff is visible without
+    // a click — unless the edit failed (diff was never applied, so it's noise).
     const t = tool.type === "tool_use" ? tool.tool : (tool as any).tool;
-    return t === "Edit" || t === "MultiEdit";
+    const failed = result?.type === "tool_result" && !!(result as any).isError;
+    return (t === "Edit" || t === "MultiEdit") && !failed;
   });
 
   if (tool.type === "error") {
@@ -96,6 +98,16 @@ export function ToolCard({
   useEffect(() => {
     if (isStreamingBash && !expanded) setExpanded(true);
   }, [isStreamingBash]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Collapse an auto-expanded Edit/MultiEdit card when its result comes back as
+  // an error — the diff was never applied. Once only, so a manual re-expand sticks.
+  const errorCollapsedRef = useRef(false);
+  useEffect(() => {
+    if (isError && (toolName === "Edit" || toolName === "MultiEdit") && !errorCollapsedRef.current) {
+      errorCollapsedRef.current = true;
+      setExpanded(false);
+    }
+  }, [isError, toolName]);
 
   return (
     <div className={`rounded border text-xs ${isSubagent ? "border-accent/30 bg-accent/5" : "border-border bg-background"}`}>
