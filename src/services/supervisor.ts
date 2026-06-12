@@ -124,6 +124,14 @@ export async function spawnServer(
   serverArgs: string[],
   logFd: number,
 ): Promise<void> {
+  // Windows: reap orphaned descendants of the previous server before binding.
+  // They hold an inherited handle to the listening socket — without this the
+  // new server can never bind (zombie port) and crash-loops to max_restarts.
+  // No-op when nothing is tracked.
+  if (process.platform === "win32") {
+    await reapTrackedDescendants((m) => log("INFO", m)).catch(() => {});
+  }
+
   const cmd = isCompiledBinary()
     ? [process.execPath, ...serverArgs]
     : [process.execPath, "run", resolve(import.meta.dir, "..", "server", "index.ts"), ...serverArgs];
@@ -771,7 +779,10 @@ async function connectCloud(opts: { port: number }, serverArgs: string[], logFd:
         case "restart":
           if (serverChild) {
             serverRestartRequested = true;
-            try { serverChild.kill(); } catch {}
+            // Tree-kill (not single-PID kill): on Windows orphaned SDK
+            // grandchildren keep the inherited listening-socket handle open
+            // and the respawned server can never bind (zombie port).
+            requestServerShutdown(serverChild).catch(() => {});
             sendResult(true);
           } else if (getState() === "paused" || getState() === "stopped") {
             triggerResume();
@@ -1077,7 +1088,7 @@ export async function runSupervisor(opts: {
     log("INFO", "SIGUSR2 received, restarting server only");
     if (serverChild) {
       serverRestartRequested = true; // flag so spawnServer skips backoff
-      try { serverChild.kill(); } catch {}
+      requestServerShutdown(serverChild).catch(() => {});
     }
   });
 
@@ -1093,12 +1104,9 @@ export async function runSupervisor(opts: {
     }
   });
 
-  // Windows: reap orphaned descendants left by a previous supervisor (they
-  // hold inherited listening-socket handles → zombie port), then track the
-  // new server's descendants so the next stop/upgrade can reap them too.
+  // Windows: track the server's descendants so stop/upgrade/restart can reap
+  // orphans that escape taskkill /T (spawnServer reaps before every bind).
   if (process.platform === "win32") {
-    const reaped = await reapTrackedDescendants((m) => log("INFO", m));
-    if (reaped > 0) log("INFO", `Reaped ${reaped} orphaned descendant(s) from previous run`);
     descendantSnapshotTimer = setInterval(() => {
       const pid = serverChild?.pid;
       if (pid && !shuttingDown) snapshotServerDescendants(pid).catch(() => {});
@@ -1129,7 +1137,10 @@ export async function runSupervisor(opts: {
           triggerResume();
         } else if (serverChild) {
           serverRestartRequested = true;
-          try { serverChild.kill(); } catch {}
+          // Tree-kill + reap — single-PID kill orphans SDK grandchildren that
+          // hold the inherited listening-socket handle (zombie port → the
+          // respawned server can't bind and `ppm restart` times out).
+          requestServerShutdown(serverChild).catch(() => {});
         }
       }
       else if (cmd.action === "upgrade") {
