@@ -34,6 +34,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { ChatWelcome } from "./chat-welcome";
+import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
 import { QuestionCard } from "./question-card";
 import type { Question } from "./question-card";
@@ -250,11 +251,28 @@ export function MessageList({
               : 0;
             // Highlight the user message armed for edit (matched by its own id).
             const isEditing = msg.role === "user" && editingMsgId != null && msg.id === editingMsgId;
+            // An assistant turn spans multiple consecutive assistant messages (text +
+            // tool segments). Show the action bar only on the last one of the run.
+            const nextMsg = filtered[globalIdx + 1];
+            const isLastAssistantInTurn = msg.role === "assistant" && nextMsg?.role !== "assistant";
+            // Copy gathers the whole turn: walk back over consecutive assistant
+            // messages and join their visible text (tool-only segments contribute nothing).
+            let turnCopyText: string | undefined;
+            if (isLastAssistantInTurn) {
+              const parts: string[] = [];
+              for (let j = globalIdx; j >= 0 && filtered[j]!.role === "assistant"; j--) {
+                const t = assistantMessageText(filtered[j]!);
+                if (t) parts.unshift(t);
+              }
+              turnCopyText = parts.join("\n\n");
+            }
             return (
               <RenderErrorBoundary key={msg.id} fallbackContent={msg.content}>
                 <MessageBubble
                   message={msg}
                   isStreaming={isStreaming && msg.id.startsWith("streaming-")}
+                  isLastAssistantInTurn={isLastAssistantInTurn}
+                  turnCopyText={turnCopyText}
                   projectName={projectName}
                   onFork={msg.role === "user" && onFork ? handleFork : undefined}
                   onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
@@ -455,8 +473,16 @@ function LoadMoreSentinel({ onLoadMore, loading }: { onLoadMore: () => void; loa
   );
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
-  message: ChatMessage; isStreaming: boolean; projectName?: string;
+/** Visible assistant text of a single message — text events only (skips tool cards),
+ *  falling back to raw content when there are no events. */
+function assistantMessageText(msg: ChatMessage): string {
+  return msg.events?.length
+    ? msg.events.filter((e) => e.type === "text").map((e) => e.content).join("")
+    : msg.content;
+}
+
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
+  message: ChatMessage; isStreaming: boolean; isLastAssistantInTurn?: boolean; turnCopyText?: string; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
   onEdit?: (content: string, messageId: string | undefined, ownMsgId?: string) => void;
   isEditing?: boolean;
@@ -476,6 +502,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
       <UserBubble
         content={message.content}
         messageId={message.id}
+        timestamp={message.timestamp}
         projectName={projectName}
         onFork={handleFork}
         onEdit={handleEdit}
@@ -519,10 +546,14 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, projec
               <MarkdownContent content={message.content} projectName={projectName} />
             </div>
           )}
-      {message.accountLabel && (
-        <p className="text-[10px] select-none" style={{ color: "var(--color-text-subtle)" }}>
-          via {message.accountLabel}
-        </p>
+      {/* Action bar: only on the last assistant message of the turn, after streaming ends */}
+      {!isStreaming && isLastAssistantInTurn && (
+        <MessageActionBar
+          timestamp={message.timestamp}
+          content={turnCopyText ?? assistantMessageText(message)}
+          accountLabel={message.accountLabel}
+          className="-mt-1.5"
+        />
       )}
     </div>
   );
@@ -650,9 +681,10 @@ function extractTerminalBlocks(text: string): { blocks: string[]; remainingText:
 }
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function UserBubble({ content, messageId, projectName, onFork, onEdit, isEditing, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled }: {
+function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, isEditing, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled }: {
   content: string;
   messageId?: string;
+  timestamp: string;
   projectName?: string;
   onFork?: () => void;
   onEdit?: () => void;
@@ -695,6 +727,7 @@ function UserBubble({ content, messageId, projectName, onFork, onEdit, isEditing
   }, [text]);
 
   return (
+    <div className="flex flex-col gap-1">
     <div
       data-user-message={!isSystemContext ? "true" : undefined}
       className={cn(
@@ -788,28 +821,27 @@ function UserBubble({ content, messageId, projectName, onFork, onEdit, isEditing
           disabled={versionNavDisabled}
         />
       )}
-      {/* Edit + Fork buttons — only for real user messages */}
-      {!isSystemContext && (onEdit || onFork) && (
-        <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 can-hover:opacity-0 can-hover:group-hover/user:opacity-100 transition-opacity">
+    </div>
+      {/* Action bar below the bubble — timestamp, copy, edit/fork (real user messages only) */}
+      {!isSystemContext && (
+        <MessageActionBar timestamp={timestamp} content={content}>
           {onEdit && (
-            <button
-              onClick={onEdit}
+            <ActionButton
+              icon={<Pencil className="size-3.5" />}
+              label="Edit"
               title="Edit this message (continue in the same tab)"
-              className="size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
-            >
-              <Pencil className="size-3" />
-            </button>
+              onClick={onEdit}
+            />
           )}
           {onFork && (
-            <button
-              onClick={onFork}
+            <ActionButton
+              icon={<RotateCcw className="size-3.5" />}
+              label="Fork"
               title="Retry from this message (fork into a new tab)"
-              className="size-5 flex items-center justify-center rounded text-text-subtle hover:text-text-primary"
-            >
-              <RotateCcw className="size-3" />
-            </button>
+              onClick={onFork}
+            />
           )}
-        </div>
+        </MessageActionBar>
       )}
     </div>
   );

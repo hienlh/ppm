@@ -33,7 +33,7 @@ export function extractText(message: unknown): string {
 
 /** Parse SDK SessionMessage into ChatMessage with events for tool_use blocks */
 export function parseSessionMessage(
-  msg: { uuid: string; type: string; message: unknown; parent_tool_use_id?: string | null },
+  msg: { uuid: string; type: string; message: unknown; parent_tool_use_id?: string | null; timestamp?: string },
 ): ChatMessage {
   const message = msg.message as Record<string, unknown> | undefined;
   const role = msg.type as "user" | "assistant";
@@ -66,7 +66,7 @@ export function parseSessionMessage(
       id: msg.uuid,
       role,
       content: "",
-      timestamp: new Date().toISOString(),
+      timestamp: msg.timestamp ?? new Date().toISOString(),
       sdkUuid: msg.uuid,
     };
   }
@@ -116,7 +116,7 @@ export function parseSessionMessage(
     role,
     content: textContent,
     events: events.length > 0 ? events : undefined,
-    timestamp: new Date().toISOString(),
+    timestamp: msg.timestamp ?? new Date().toISOString(),
     sdkUuid: msg.uuid,
   };
 }
