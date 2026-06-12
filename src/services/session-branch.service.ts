@@ -92,14 +92,25 @@ export interface VersionGroup {
  * exists at this ordinal (FE then hides the switcher).
  */
 export function resolveVersionGroup(sessionId: string, ordinal: number): VersionGroup | null {
-  const row = getBranchRow(sessionId);
-  // If the viewed session was itself forked at this ordinal, its siblings live
-  // under its parent; otherwise the viewed session IS the parent (original).
-  const parentId = row && row.fork_ordinal === ordinal ? row.parent_id : sessionId;
+  // Walk up the ancestor chain while the queried message lies in the INHERITED
+  // prefix (ordinal < the node's own divergence ordinal). A grandchild's
+  // transcript contains copies of every ancestor's pre-fork messages, so the
+  // branch point for such a message belongs to the ancestor that diverged
+  // there — this keeps the switcher visible on deep leaves of the tree.
+  let current = sessionId;
+  let row = getBranchRow(current);
+  for (let hops = 0; row && ordinal < row.fork_ordinal && hops < 100; hops++) {
+    current = row.parent_id;
+    row = getBranchRow(current);
+  }
+  // If `current` was itself forked at this ordinal, its siblings live under its
+  // parent; otherwise `current` IS the parent (original) of any group here.
+  const parentId = row && row.fork_ordinal === ordinal ? row.parent_id : current;
   const children = getSiblingsByOrdinal(parentId, ordinal);
   if (children.length === 0) return null;
   const ids = [parentId, ...children.map((c) => c.child_id)];
-  const idx = ids.indexOf(sessionId);
+  // Position by lineage: the viewed session counts as its ancestor in this group.
+  const idx = ids.indexOf(current);
   return { ids, currentIndex: idx < 0 ? 0 : idx };
 }
 

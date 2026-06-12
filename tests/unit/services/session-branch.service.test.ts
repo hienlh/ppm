@@ -109,6 +109,64 @@ describe("session-branch.service (SQLite-backed)", () => {
     });
   });
 
+  describe("resolveVersionGroup — multi-branch multi-leaf tree", () => {
+    // R ── A (ord 2) ── A1 (ord 3)
+    //   │            └─ A2 (ord 3)
+    //   └─ B (ord 2)
+    function buildTree() {
+      recordBranch("A", "R", "f1", 2);
+      recordBranch("B", "R", "f1", 2);
+      recordBranch("A1", "A", "f2", 3);
+      recordBranch("A2", "A", "f2", 3);
+    }
+
+    it("groups level-1 siblings from every member's perspective", () => {
+      buildTree();
+      expect(resolveVersionGroup("R", 2)!.ids).toEqual(["R", "A", "B"]);
+      expect(resolveVersionGroup("R", 2)!.currentIndex).toBe(0);
+      expect(resolveVersionGroup("A", 2)!.currentIndex).toBe(1);
+      expect(resolveVersionGroup("B", 2)!.currentIndex).toBe(2);
+    });
+
+    it("groups level-2 siblings under A", () => {
+      buildTree();
+      expect(resolveVersionGroup("A", 3)!.ids).toEqual(["A", "A1", "A2"]);
+      expect(resolveVersionGroup("A", 3)!.currentIndex).toBe(0);
+      expect(resolveVersionGroup("A1", 3)!.currentIndex).toBe(1);
+      expect(resolveVersionGroup("A2", 3)!.currentIndex).toBe(2);
+    });
+
+    it("viewing a grandchild still shows the ANCESTOR's branch point (inherited prefix)", () => {
+      buildTree();
+      // A1's transcript at ordinal 2 contains A's edited message (copied prefix).
+      // The switcher there must resolve to the level-1 group, positioned on the
+      // A lineage — this is what lets the user hop from a leaf back to branch B.
+      const g = resolveVersionGroup("A1", 2);
+      expect(g).not.toBeNull();
+      expect(g!.ids).toEqual(["R", "A", "B"]);
+      expect(g!.currentIndex).toBe(1); // A1 sits on A's lineage
+    });
+
+    it("walks multiple levels up for deep leaves", () => {
+      buildTree();
+      recordBranch("A1x", "A1", "f3", 5); // leaf under A1
+      const g = resolveVersionGroup("A1x", 2);
+      expect(g!.ids).toEqual(["R", "A", "B"]);
+      expect(g!.currentIndex).toBe(1); // still the A lineage
+      const g3 = resolveVersionGroup("A1x", 3);
+      expect(g3!.ids).toEqual(["A", "A1", "A2"]);
+      expect(g3!.currentIndex).toBe(1); // A1 lineage
+    });
+
+    it("R has no switcher at an ordinal where only a grandchild diverged", () => {
+      buildTree();
+      // ordinal 3 diverged under A, not under R — R's transcript has no group there
+      expect(resolveVersionGroup("R", 3)).toBeNull();
+      // B never diverged at 3 either
+      expect(resolveVersionGroup("B", 3)).toBeNull();
+    });
+  });
+
   describe("collapseTreesToHeads", () => {
     it("keeps one row per tree — the newest by updatedAt", () => {
       recordBranch("c1", "P", "F", 2); // c1 belongs to tree rooted at P
