@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.109] - 2026-06-12
+
+### Fixed
+- **Windows: `ppm restart` timed out and re-zombied the port**: All restart paths (`ppm restart` command file, cloud command, SIGUSR2) killed only the server PID, instantly orphaning SDK grandchildren that hold the inherited listening-socket handle — the respawned server could never bind and restart timed out. Restart now goes through the tree-kill + orphan-reap shutdown path, and `spawnServer` additionally reaps tracked orphans before **every** bind, so crash loops self-heal instead of pausing at max_restarts (`supervisor.ts`).
+
+### Known limitation
+- Detached daemons spawned from chat sessions whose parent exits immediately (e.g. `agent-browser`) are undiscoverable by the descendant snapshot (the parent chain breaks before the first 30s sample) and can still pin a port if they outlive the server. `ppm start` falls back to auto-selecting a nearby free port in that case.
+
 ## [0.13.108] - 2026-06-12
 
 ### Added
