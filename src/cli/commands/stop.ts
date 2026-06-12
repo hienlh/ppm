@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { getPpmDir } from "../../services/ppm-dir.ts";
+import { reapTrackedDescendants } from "../../services/windows-process-tree.ts";
 
 const pidFile = () => resolve(getPpmDir(), "ppm.pid");
 const statusFile = () => resolve(getPpmDir(), "status.json");
@@ -85,6 +86,10 @@ export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
         if (!isNaN(pid)) { killPid(pid, "supervisor/server (pidfile)"); killed++; }
       } catch {}
     }
+    // Windows: server grandchildren (Claude SDK subprocesses) survive the
+    // PID kills above and keep the inherited listening-socket handle open
+    // (zombie port). Reap them from the supervisor's descendant snapshot.
+    await reapTrackedDescendants((m) => console.log(`  ${m}`));
     cleanup();
     console.log(`\n  Done. Killed ${cfKilled} cloudflared + ${killed} PPM process(es).`);
     return;
@@ -214,6 +219,10 @@ async function hardStop() {
     try {
       Bun.spawnSync(["taskkill", "/F", "/IM", "cloudflared.exe"], { stdout: "ignore", stderr: "ignore" });
     } catch {}
+    // process.kill on Windows is TerminateProcess — the supervisor's shutdown
+    // handler never runs, so its server grandchildren survive and keep the
+    // inherited listening-socket handle open (zombie port). Reap them here.
+    await reapTrackedDescendants((m) => console.log(`  ${m}`));
   }
 
   cleanup();

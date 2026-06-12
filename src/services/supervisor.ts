@@ -20,6 +20,9 @@ import {
 } from "./supervisor-state.ts";
 import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts";
 import { sdNotify } from "./sd-notify.ts";
+import {
+  killProcessTree, snapshotServerDescendants, reapTrackedDescendants,
+} from "./windows-process-tree.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -67,6 +70,7 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let upgradeCheckTimer: ReturnType<typeof setInterval> | null = null;
 let upgradeDelayTimer: ReturnType<typeof setTimeout> | null = null;
 let cloudMonitorTimer: ReturnType<typeof setInterval> | null = null;
+let descendantSnapshotTimer: ReturnType<typeof setInterval> | null = null; // win32 only
 let cloudConnected = false; // tracks whether we've initiated a cloud WS connection
 
 // Saved at startup for self-replace
@@ -86,26 +90,6 @@ function backoffDelay(restartCount: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (restartCount - 1), BACKOFF_MAX_MS);
 }
 
-// ─── Process-tree kill (orphan-safe) ───────────────────────────────────
-// The server child spawns grandchildren (Claude SDK subprocesses). On
-// Windows a forced single-PID kill leaves those grandchildren alive; they
-// keep the inherited TCP listening socket handle open, leaving the port in
-// a zombie LISTENING state owned by a dead PID. Killing the whole tree
-// releases the socket — the Windows analog of POSIX process-group kill.
-function killProcessTree(pid: number): void {
-  if (process.platform === "win32") {
-    try {
-      const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", timeout: 5000, windowsHide: true });
-    } catch {
-      // Already dead, or taskkill unavailable — fall back to single-PID kill.
-      try { process.kill(pid, "SIGKILL"); } catch {}
-    }
-  } else {
-    try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch {} }
-  }
-}
-
 // ─── Server shutdown ───────────────────────────────────────────────────
 // On Windows the server's Claude SDK grandchildren are node-spawned (the
 // provider forces `executable: "node"`), so they live OUTSIDE Bun's job
@@ -120,7 +104,10 @@ function requestServerShutdown(child: Subprocess, timeoutMs: number = 2000): Pro
     const pid = child.pid;
     if (process.platform === "win32") {
       killProcessTree(pid);
-      resolve();
+      // taskkill /T can't reach descendants whose parent chain already broke
+      // (orphans) — reap them from the periodic snapshot so they don't keep
+      // the inherited listening-socket handle open (zombie port).
+      reapTrackedDescendants((m) => log("INFO", m)).finally(() => resolve());
     } else {
       try { child.kill("SIGTERM"); } catch {}
       setTimeout(() => {
@@ -420,6 +407,8 @@ function startServerHealthCheck(port: number) {
       const pid = serverChild.pid;
       if (process.platform === "win32") {
         killProcessTree(pid);
+        // Reap broken-chain orphans too, or the respawned server can't bind the port
+        await reapTrackedDescendants((m) => log("INFO", m));
       } else {
         try { serverChild.kill("SIGTERM"); } catch {}
         setTimeout(() => { killProcessTree(pid); }, 1000).unref();
@@ -449,6 +438,12 @@ function startTunnelProbe(port: number) {
         return;
       }
     }
+
+    // Skip the URL health probe while the server isn't actually running
+    // (crash-loop backoff, paused after max_restarts). The tunnel can't be
+    // healthy without an origin — regenerating it would just rotate the URL
+    // on every probe window while the real problem is the server.
+    if (getState() !== "running" || !serverChild) { tunnelFailCount = 0; return; }
 
     try {
       const res = await fetch(`${tunnelUrl}/api/health`, {
@@ -927,6 +922,7 @@ export function shutdown() {
   if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
   if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
   if (cloudMonitorTimer) clearInterval(cloudMonitorTimer);
+  if (descendantSnapshotTimer) clearInterval(descendantSnapshotTimer);
 
   if (serverChild) {
     log("INFO", `Killing server child (PID: ${serverChild.pid})`);
@@ -1096,6 +1092,18 @@ export async function runSupervisor(opts: {
       if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(opts.port);
     }
   });
+
+  // Windows: reap orphaned descendants left by a previous supervisor (they
+  // hold inherited listening-socket handles → zombie port), then track the
+  // new server's descendants so the next stop/upgrade can reap them too.
+  if (process.platform === "win32") {
+    const reaped = await reapTrackedDescendants((m) => log("INFO", m));
+    if (reaped > 0) log("INFO", `Reaped ${reaped} orphaned descendant(s) from previous run`);
+    descendantSnapshotTimer = setInterval(() => {
+      const pid = serverChild?.pid;
+      if (pid && !shuttingDown) snapshotServerDescendants(pid).catch(() => {});
+    }, 30_000);
+  }
 
   // Start health checks
   startServerHealthCheck(opts.port);

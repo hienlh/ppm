@@ -353,6 +353,16 @@ export async function startServer(options: {
     };
 
     let portInUse = await checkPort();
+    if (portInUse && process.platform === "win32") {
+      // Orphaned server descendants from a previous run may hold an inherited
+      // handle to this port's listening socket (zombie port). Reap them first.
+      const { reapTrackedDescendants } = await import("../services/windows-process-tree.ts");
+      const reaped = await reapTrackedDescendants((m) => console.warn(`  ${m}`));
+      if (reaped > 0) {
+        await Bun.sleep(500);
+        portInUse = await checkPort();
+      }
+    }
     if (portInUse) {
       // Retry — port may still be releasing after supervisor self-replace
       for (let attempt = 1; attempt <= 4; attempt++) {
