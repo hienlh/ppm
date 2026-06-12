@@ -388,17 +388,38 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     } catch { /* silent — user can retry */ }
   }, [tabId]);
 
-  // Jump to line when metadata.lineNumber is set (e.g. from search panel)
+  // Jump to line when metadata.lineNumber is set (e.g. from search panel or chat file:line refs)
   const lineNumber = metadata?.lineNumber as number | undefined;
+  const endLine = metadata?.endLine as number | undefined;
+  const revealAt = metadata?.revealAt as number | undefined;
+
+  // Reveal/select the target line(s). Re-runs on revealAt change so an already-open
+  // tab jumps to a newly-clicked line; selects the full range when endLine is set.
+  const revealTarget = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !lineNumber || lineNumber <= 0) return;
+    editor.revealLineInCenter(lineNumber);
+    editor.setPosition({ lineNumber, column: 1 });
+    if (endLine && endLine >= lineNumber) {
+      const model = editor.getModel();
+      const lastLine = model?.getLineCount() ?? lineNumber;
+      const selEnd = Math.min(endLine, lastLine);
+      const endColumn = model?.getLineMaxColumn(selEnd) ?? 1;
+      editor.setSelection({ startLineNumber: lineNumber, startColumn: 1, endLineNumber: selEnd, endColumn });
+    }
+    editor.focus();
+  }, [lineNumber, endLine]);
+
+  useEffect(() => {
+    if (revealAt == null) return;
+    revealTarget();
+  }, [revealAt, revealTarget]);
+
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     monacoInstanceRef.current = monaco;
     if (lineNumber && lineNumber > 0) {
-      setTimeout(() => {
-        editor.revealLineInCenter(lineNumber);
-        editor.setPosition({ lineNumber, column: 1 });
-        editor.focus();
-      }, 100);
+      setTimeout(() => revealTarget(), 100);
     }
     // Ctrl+S → Save As for untitled tabs
     if (isUntitled) {

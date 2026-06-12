@@ -64,19 +64,39 @@ export function MdPre({ children, node, ...rest }: any) {
   );
 }
 
-/** Code — inline code with file clicking; block code passes through */
+/** `path:line` or `path:start-end` — non-greedy + $ anchor binds to the LAST :digits (safe for Windows C:\...\f.ts:10) */
+const LINE_REF_RE = /^(.+?):(\d+)(?:-(\d+))?$/;
+
+/** A bare token is a clickable file path: no spaces, no glob chars, known extension */
+function isClickableFilePath(s: string): boolean {
+  return !!s && !s.includes(" ") && !GLOB_CHARS_RE.test(s) && FILE_EXT_RE.test(s);
+}
+
+/** Code — inline code with file clicking (incl. file:line refs); block code passes through */
 export function MdCode({ className, children, node, ...rest }: any) {
   const { openFileOrSearch } = useMdContext();
 
   // Block code (has language/hljs class from rehype-highlight) — render as-is
   if (className) return <code className={className} {...rest}>{children}</code>;
 
-  // Inline code — check for clickable file paths
+  // Inline code — resolve a clickable file target: `path`, `path:line`, or `path:start-end`
   const text = String(children ?? "").trim();
-  if (text && !text.includes(" ") && !GLOB_CHARS_RE.test(text) && FILE_EXT_RE.test(text)) {
+  let clickPath: string | null = null;
+  let line: { start: number; end?: number } | undefined;
+
+  const lineMatch = text.match(LINE_REF_RE);
+  if (lineMatch && isClickableFilePath(lineMatch[1]!)) {
+    clickPath = lineMatch[1]!;
+    line = { start: Number(lineMatch[2]), end: lineMatch[3] ? Number(lineMatch[3]) : undefined };
+  } else if (isClickableFilePath(text)) {
+    clickPath = text;
+  }
+
+  if (clickPath) {
+    const target = clickPath;
     return (
       <code
-        onClick={() => openFileOrSearch(text)}
+        onClick={() => openFileOrSearch(target, line)}
         style={{ cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" as const }}
         {...rest}
       >

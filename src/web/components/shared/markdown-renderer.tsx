@@ -42,20 +42,31 @@ function findInTree(nodes: FileNode[], name: string): string[] {
 
 export function MarkdownRenderer({ content, projectName, className = "", codeActions = false, isStreaming = false }: MarkdownRendererProps) {
   const openTab = useTabStore((s) => s.openTab);
+  const updateTab = useTabStore((s) => s.updateTab);
   const fileTree = useFileStore((s) => s.tree);
   const openImageOverlayFn = useImageOverlay((s) => s.open);
   const openDiagramOverlayFn = useDiagramOverlay((s) => s.open);
 
-  const openFileOrSearch = useCallback((filePath: string) => {
+  const openFileOrSearch = useCallback((filePath: string, line?: { start: number; end?: number }) => {
     if (!filePath) return;
     const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
     const isRelative = /^(\.\/|\.\.\/)/.test(filePath);
     const fileName = basename(filePath);
 
+    // Open editor tab; when a line target is given, also updateTab so an already-open
+    // tab (deduped by filePath) jumps to the new line. revealAt forces the editor's
+    // reveal effect to fire even when the same line is clicked again.
+    const openAt = (meta: Record<string, unknown>, title: string, projectId: string | null) => {
+      const full = { ...meta };
+      if (line) { full.lineNumber = line.start; full.endLine = line.end; full.revealAt = Date.now(); }
+      const id = openTab({ type: "editor", title, metadata: full, projectId, closable: true });
+      if (line && id) updateTab(id, { metadata: full });
+    };
+
     const searchAndOpen = (fp: string) => {
       const matches = findInTree(fileTree, basename(fp));
       if (matches.length === 1) {
-        openTab({ type: "editor", title: basename(fp), metadata: { filePath: matches[0], projectName }, projectId: projectName ?? null, closable: true });
+        openAt({ filePath: matches[0], projectName }, basename(fp), projectName ?? null);
       } else {
         openCommandPalette(fp);
       }
@@ -65,20 +76,20 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
       const meta: Record<string, unknown> = { filePath };
       if (projectName) meta.projectName = projectName;
       api.get(`/api/fs/read?path=${encodeURIComponent(filePath)}`).then(() => {
-        openTab({ type: "editor", title: fileName, metadata: meta, projectId: null, closable: true });
+        openAt(meta, fileName, null);
       }).catch(() => openCommandPalette(filePath));
       return;
     }
 
     if (isRelative && projectName) {
       api.get(`${projectUrl(projectName)}/files/read?path=${encodeURIComponent(filePath)}`)
-        .then(() => openTab({ type: "editor", title: fileName, metadata: { filePath, projectName }, projectId: projectName, closable: true }))
+        .then(() => openAt({ filePath, projectName }, fileName, projectName))
         .catch(() => searchAndOpen(filePath));
       return;
     }
 
     searchAndOpen(filePath);
-  }, [openTab, fileTree, projectName]);
+  }, [openTab, updateTab, fileTree, projectName]);
 
   const ctx = useMemo(() => ({
     projectName, codeActions, openFileOrSearch,

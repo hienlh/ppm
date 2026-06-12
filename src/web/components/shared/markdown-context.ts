@@ -11,7 +11,7 @@ export const LOCAL_PATH_RE = /^(\/|[A-Za-z]:[/\\])/;
 export interface MdContextValue {
   projectName?: string;
   codeActions: boolean;
-  openFileOrSearch: (path: string) => void;
+  openFileOrSearch: (path: string, line?: { start: number; end?: number }) => void;
   openImageOverlay: (url: string, alt: string) => void;
   openDiagramOverlay: (svg: string) => void;
 }
