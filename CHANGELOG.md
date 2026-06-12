@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.108] - 2026-06-12
+
+### Added
+- **Clickable `file:line` refs in chat**: Inline-code references like `utils.ts:6215` (and ranges `utils.ts:6215-6230`) in assistant messages are now clickable — they open the file in the editor scrolled to the line, with the range selected/highlighted. Parsing uses a non-greedy `path:line[-end]` regex anchored to the last `:digits` so Windows absolute paths (`C:\proj\utils.ts:6215`) resolve correctly. A `revealAt` nonce in tab metadata makes an already-open file (or a re-click of the same ref) re-jump, since editor reveal previously only ran on mount and tab dedup ignores the line. This also fixes the search panel's jump-to-line for files that are already open (`markdown-code-block.tsx`, `markdown-renderer.tsx`, `markdown-context.ts`, `code-editor.tsx`).
+
 ## [0.13.107] - 2026-06-12
 
 ### Fixed
