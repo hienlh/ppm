@@ -21,6 +21,7 @@ import {
   Globe,
   Code,
   Columns2,
+  Clock,
 } from "lucide-react";
 import type { ChatEvent } from "../../../types/chat";
 import { useShallow } from "zustand/react/shallow";
@@ -189,6 +190,8 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
       const hasAns = !!(input.answers);
       return <>{name} <span className="text-text-subtle">{qs.length} question{qs.length !== 1 ? "s" : ""}{hasAns ? " ✓" : ""}</span></>;
     }
+    case "ScheduleWakeup":
+      return <><Clock className="size-3 inline" /> {name} <span className="text-text-subtle">in {formatDelay(Number(input.delaySeconds))}{input.reason ? ` — ${truncate(s(input.reason), 50)}` : ""}</span></>;
     default:
       return <>{name}</>;
   }
@@ -352,6 +355,25 @@ function ToolDetails({
               )}
             </div>
           ))}
+        </div>
+      );
+    }
+    case "ScheduleWakeup": {
+      const secs = Number(input.delaySeconds) || 0;
+      return (
+        <div className="space-y-1">
+          <p className="text-text-secondary">
+            <Clock className="size-3 inline mr-1" />
+            Wake in <span className="font-medium text-text-primary">{formatDelay(secs)}</span>
+            <span className="text-text-subtle"> ({secs}s)</span>
+          </p>
+          {!!input.reason && <p className="text-text-secondary italic">{s(input.reason)}</p>}
+          {!!input.prompt && (
+            <div>
+              <p className="text-text-subtle text-[10px] mb-0.5">Prompt on wake</p>
+              <MiniMarkdown content={s(input.prompt)} maxHeight="max-h-48" />
+            </div>
+          )}
         </div>
       );
     }
@@ -583,4 +605,17 @@ function EditDiffPreview(props: { oldStr: string; newStr: string; filePath?: str
 function truncate(str?: string, max = 50): string {
   if (!str) return "";
   return str.length > max ? str.slice(0, max) + "…" : str;
+}
+
+/** Format seconds as human-readable delay, e.g. 1800 → "30m", 90 → "1m 30s" */
+function formatDelay(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "0s";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const sec = Math.round(seconds % 60);
+  const parts: string[] = [];
+  if (h) parts.push(`${h}h`);
+  if (m) parts.push(`${m}m`);
+  if (sec || parts.length === 0) parts.push(`${sec}s`);
+  return parts.join(" ");
 }
