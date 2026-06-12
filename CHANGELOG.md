@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.13.110] - 2026-06-12
+
+### Fixed
+- **Scannable, seamless QR codes in the web terminal**: `ppm status` QR codes were unscannable in the web terminal. The xterm DOM renderer drew block-element glyphs from the brand UI font (Geist Mono), leaving sub-pixel gaps between rows that broke the QR pattern. The terminal now uses a terminal-grade font stack (Consolas/Cascadia/Menlo) whose block glyphs fill the full cell, plus the WebGL renderer which draws block/box-drawing glyphs geometrically (gap-free, like a native terminal) with `onContextLoss` + `try/catch` fallback to the DOM renderer. QR output also uses full-block mode for robustness in plain OS terminals (`use-terminal.ts`, `status.ts`).
+- **Failed Edit cards no longer show a stale diff**: Edit/MultiEdit chat cards auto-expand to show the inline diff, but stayed expanded even when the tool result was an error (the diff was never applied). They now skip auto-expand on error and collapse once if the error arrives after expanding (`tool-cards.tsx`).
+- **Lost chat sends after same-tab session swap**: `isConnected` is now scoped to the current session, so an edit/fork or version switch can't leak a stale `connected=true` and flush a queued send into a still-CONNECTING socket. Error events also attach to the in-progress assistant message and dedupe identical consecutive errors instead of re-materializing duplicates (`use-chat.ts`).
+
+### Changed
+- **xterm upgraded to the 6.1 beta line**: `@xterm/xterm` `6.0.0` → `6.1.0-beta.285` (with matching `addon-fit`/`addon-web-links` betas and `addon-webgl` `0.20.0-beta`), required because WebGL renderer support for xterm 6 currently ships only on the beta line.
+
 ## [0.13.109] - 2026-06-12
 
 ### Fixed
