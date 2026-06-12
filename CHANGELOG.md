@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.13.107] - 2026-06-12
+
+### Fixed
+- **Windows: zombie port after upgrade/restart (524 + crash loop)**: The server's listening socket handle is inheritable on Windows, so Claude SDK grandchildren (and any long-running scripts they spawn) keep the port in a zombie `LISTENING` state owned by a dead PID when they outlive the server. `taskkill /T` can't reach descendants whose parent chain already broke, so after an upgrade the new server failed to bind (`exit 1` → supervisor `PAUSED — max_restarts`), the tunnel returned **524** (zombie socket completes the TCP handshake but never accepts), and `ppm stop --kill` couldn't free the port. The supervisor now snapshots the server's descendant PIDs (+ creation time, guarding against PID reuse) every 30s into `~/.ppm/tracked-descendants.json` and reaps survivors on server shutdown, supervisor startup, `ppm stop`, and when `ppm start` finds the port in use — so a stuck port self-heals (`windows-process-tree.ts`, `supervisor.ts`, `stop.ts`, `server/index.ts`).
+- **Tunnel URL no longer rotates while the server is down**: The tunnel probe treated a dead origin as a zombie tunnel and regenerated the trycloudflare URL every ~5 minutes during a server crash loop or paused state. It now skips the URL health probe unless the server is actually running (`supervisor.ts`).
+
 ## [0.13.106] - 2026-06-12
 
 ### Fixed

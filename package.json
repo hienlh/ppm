@@ -1,12 +1,14 @@
 {
   "name": "@hienlh/ppm",
-  "version": "0.13.106",
+  "version": "0.13.107",
   "description": "Personal Project Manager — mobile-first web IDE with AI assistance",
   "author": "hienlh",
   "license": "MIT",
   "module": "src/index.ts",
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "ppm": "src/index.ts"
   },
