@@ -109,6 +109,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [isConnected, setIsConnected] = useState(false);
   const [model, setModelState] = useState<string | null>(null);
   const modelRef = useRef<string | null>(null);
+  // Model the user explicitly picked but the server hasn't confirmed yet.
+  // On a draft chat the WS doesn't exist, so set_model is lost — without this
+  // guard the initial session_state (provider default) clobbers the selection.
+  const pendingModelRef = useRef<string | null>(null);
+  const prevSessionIdRef = useRef<string | null>(null);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
   const bashOutputRef = useRef<Map<string, BashPartialEntry>>(new Map());
@@ -557,7 +562,17 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       setPhase(p);
       phaseRef.current = p;
       if (state.sessionTitle) setSessionTitle(state.sessionTitle);
-      if (state.model) { setModelState(state.model); modelRef.current = state.model; }
+      if (state.model) {
+        if (pendingModelRef.current && state.model !== pendingModelRef.current) {
+          // Server reported a model that predates the user's unconfirmed pick
+          // (e.g. default sent on first connect of a draft chat). Keep the local
+          // choice — the first message carries it and the server will persist it.
+        } else {
+          if (state.model === pendingModelRef.current) pendingModelRef.current = null;
+          setModelState(state.model);
+          modelRef.current = state.model;
+        }
+      }
       if (state.pendingApproval) {
         setPendingApproval({
           requestId: state.pendingApproval.requestId,
@@ -652,6 +667,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   // Load history and reset state when session changes
   useEffect(() => {
     let cancelled = false;
+
+    // Keep the user's unconfirmed model pick across the draft→real transition
+    // (null → id), but drop it when switching between two existing sessions.
+    if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
+      pendingModelRef.current = null;
+    }
+    prevSessionIdRef.current = sessionId ?? null;
 
     setPhase("idle");
     phaseRef.current = "idle";
@@ -765,6 +787,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     (nextModel: string) => {
       setModelState(nextModel); // optimistic
       modelRef.current = nextModel;
+      pendingModelRef.current = nextModel; // guard against session_state clobber until server confirms
       send(JSON.stringify({ type: "set_model", model: nextModel }));
     },
     [send],
