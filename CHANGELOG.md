@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.111] - 2026-06-12
+
+### Added
+- **ScheduleWakeup tool card**: chat now renders a dedicated card for the SDK's `ScheduleWakeup` tool — summary row shows a clock icon with the human-readable delay (`30m`, `1m 30s`) and truncated reason; expanded view shows delay, reason, and the prompt that fires on wake (`tool-cards.tsx`).
+
+### Fixed
+- **UI prefs/theme now restore after login on a fresh origin**: `fetchServerInfo()` only ran once at mount — before auth — so on a brand-new origin (e.g. a new tunnel URL with empty localStorage) the auth-gated `/settings/theme` and `/settings/ui-prefs` requests got 401 and the 0.13.106 server-side prefs were never pulled. Server info is now re-fetched when auth state flips to authenticated, restoring Wrap Tabs & friends right after login (`app.tsx`).
+- **Version switcher visible on deep fork leaves**: `resolveVersionGroup` now walks up the ancestor chain while the queried message lies in the inherited pre-fork prefix, so a grandchild session still shows the `‹ n/m ›` switcher at an ancestor's branch point instead of losing it after two levels of edits (`session-branch.service.ts`).
+
 ## [0.13.110] - 2026-06-12
 
 ### Fixed
