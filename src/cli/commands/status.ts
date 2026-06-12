@@ -188,7 +188,7 @@ export async function showStatus(options: { json?: boolean; all?: boolean }) {
     console.log(`  Share:   ${status.shareUrl}`);
     const qr = await import("qrcode-terminal");
     console.log();
-    qr.generate(status.shareUrl, { small: true });
+    qr.generate(status.shareUrl, { small: false });
   }
   console.log();
 }

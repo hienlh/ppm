@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { useSettingsStore, type Theme } from "@/stores/settings-store";
 
 const DARK_THEME: ITheme = {
@@ -253,7 +254,9 @@ export function useTerminal(
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: "var(--font-mono)",
+      // Explicit terminal-grade stack: the WebGL renderer builds its glyph
+      // atlas via ctx.font and cannot resolve CSS var() values.
+      fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', 'Courier New', monospace",
       theme: resolveTheme(useSettingsStore.getState().theme),
     });
 
@@ -263,6 +266,19 @@ export function useTerminal(
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
     term.open(container);
+
+    // WebGL renderer draws block/box-drawing glyphs geometrically (gap-free),
+    // so QR codes render seamlessly like a native terminal. The DOM renderer
+    // leaves sub-pixel gaps between rows. Fall back to DOM if WebGL is
+    // unavailable or its context is lost.
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => webglAddon.dispose());
+      term.loadAddon(webglAddon);
+    } catch {
+      // WebGL unsupported — xterm keeps the DOM renderer.
+    }
+
     fitAddon.fit();
 
     termRef.current = term;
