@@ -76,10 +76,14 @@ export function App() {
     }
   }, [theme]);
 
-  // Fetch server info on mount (before auth — shown on login screen)
+  // Fetch server info on mount (before auth — shown on login screen) and
+  // again once authenticated: the pre-auth call has no token on a fresh
+  // origin (e.g. new tunnel URL), so the auth-gated settings endpoints
+  // (theme, ui-prefs) 401 and would otherwise never be restored.
+  const isAuthenticated = authState === "authenticated";
   useEffect(() => {
     fetchServerInfo();
-  }, [fetchServerInfo]);
+  }, [fetchServerInfo, isAuthenticated]);
 
   // Auth check on mount
   useEffect(() => {
