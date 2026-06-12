@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.106] - 2026-06-12
+
+### Fixed
+- **UI settings survive tunnel/origin changes**: View preferences (Wrap Tabs, Word Wrap, sidebar collapsed/width, git status view mode, active sidebar tab, Jira toggle) are now persisted server-side and restored on load, mirroring how `theme` already worked. Previously these lived only in `localStorage`, which is origin-scoped — switching the tunnel URL gave a fresh empty store, so the settings appeared to reset. New `GET`/`PUT /settings/ui-prefs` endpoints store them as a `ui_prefs` blob in the config table; the frontend pushes changes (debounced) and pulls them back via `fetchServerInfo` (`settings.ts`, `settings-store.ts`).
+
 ## [0.13.105] - 2026-06-11
 
 ### Added

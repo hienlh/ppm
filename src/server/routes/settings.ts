@@ -97,6 +97,49 @@ settingsRoutes.put("/theme", async (c) => {
   }
 });
 
+// ── UI Preferences ────────────────────────────────────────────────────
+// Device-agnostic UI prefs stored server-side so they survive origin changes
+// (e.g. switching tunnel URL wipes localStorage, which is origin-scoped).
+
+const UI_PREFS_KEY = "ui_prefs";
+
+/** Whitelisted UI pref keys with their validators */
+const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
+  wordWrap: (v) => typeof v === "boolean",
+  tabWrap: (v) => typeof v === "boolean",
+  sidebarCollapsed: (v) => typeof v === "boolean",
+  sidebarWidth: (v) => typeof v === "number" && v >= 200 && v <= 600,
+  gitStatusViewMode: (v) => v === "flat" || v === "tree",
+  sidebarActiveTab: (v) => typeof v === "string",
+  jiraEnabled: (v) => typeof v === "boolean",
+};
+
+/** GET /settings/ui-prefs — return stored UI preferences */
+settingsRoutes.get("/ui-prefs", (c) => {
+  const raw = getConfigValue(UI_PREFS_KEY);
+  const prefs: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+  return c.json(ok(prefs));
+});
+
+/** PUT /settings/ui-prefs — merge-patch UI preferences (only whitelisted keys) */
+settingsRoutes.put("/ui-prefs", async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>();
+    const raw = getConfigValue(UI_PREFS_KEY);
+    const current: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+    for (const [key, value] of Object.entries(body)) {
+      const validate = UI_PREF_VALIDATORS[key];
+      if (!validate) continue; // ignore unknown keys
+      if (!validate(value)) return c.json(err(`Invalid value for "${key}"`), 400);
+      current[key] = value;
+    }
+    setConfigValue(UI_PREFS_KEY, JSON.stringify(current));
+    return c.json(ok(current));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
 // ── AI ────────────────────────────────────────────────────────────────
 
 /** GET /settings/ai — return current AI config (strips api_key_env) */

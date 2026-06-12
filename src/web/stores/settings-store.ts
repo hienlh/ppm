@@ -63,6 +63,56 @@ function persistSettings(update: Partial<PersistedSettings>) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...current, ...update }));
 }
 
+// UI prefs are also pushed to the server so they survive origin changes
+// (localStorage is origin-scoped — switching tunnel URL gives an empty store).
+// `theme` has its own dedicated endpoint, so it's excluded here.
+let _serverPushTimer: ReturnType<typeof setTimeout> | null = null;
+let _pendingServerPatch: Partial<PersistedSettings> = {};
+
+function pushUiPrefsToServer(update: Partial<PersistedSettings>) {
+  const { theme: _theme, ...rest } = update;
+  if (Object.keys(rest).length === 0) return;
+  Object.assign(_pendingServerPatch, rest);
+  if (_serverPushTimer) clearTimeout(_serverPushTimer);
+  // Debounce so rapid changes (e.g. sidebar drag) collapse into one request.
+  _serverPushTimer = setTimeout(() => {
+    const patch = _pendingServerPatch;
+    _pendingServerPatch = {};
+    _serverPushTimer = null;
+    const token = getAuthToken();
+    fetch("/api/settings/ui-prefs", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(patch),
+    }).catch(() => {});
+  }, 400);
+}
+
+/** Persist UI prefs both locally (instant) and to the server (debounced). */
+function persistUiPref(update: Partial<PersistedSettings>) {
+  persistSettings(update);
+  pushUiPrefsToServer(update);
+}
+
+/** Apply server-stored UI prefs to the store + localStorage (no re-push). */
+function applyServerUiPrefs(data: Record<string, unknown>) {
+  const patch: Partial<PersistedSettings> = {};
+  if (typeof data.wordWrap === "boolean") patch.wordWrap = data.wordWrap;
+  if (typeof data.tabWrap === "boolean") patch.tabWrap = data.tabWrap;
+  if (typeof data.sidebarCollapsed === "boolean") patch.sidebarCollapsed = data.sidebarCollapsed;
+  if (typeof data.sidebarWidth === "number" && data.sidebarWidth >= 200 && data.sidebarWidth <= 600) {
+    patch.sidebarWidth = data.sidebarWidth;
+  }
+  if (data.gitStatusViewMode === "flat" || data.gitStatusViewMode === "tree") {
+    patch.gitStatusViewMode = data.gitStatusViewMode;
+  }
+  if (isValidSidebarTab(data.sidebarActiveTab)) patch.sidebarActiveTab = data.sidebarActiveTab;
+  if (typeof data.jiraEnabled === "boolean") patch.jiraEnabled = data.jiraEnabled;
+  if (Object.keys(patch).length === 0) return;
+  persistSettings(patch);
+  useSettingsStore.setState(patch as Partial<SettingsState>);
+}
+
 /** Apply the resolved theme class to <html> */
 export function applyThemeClass(theme: Theme) {
   const resolved =
@@ -145,47 +195,47 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setJiraEnabled: (enabled) => {
-    persistSettings({ jiraEnabled: enabled });
+    persistUiPref({ jiraEnabled: enabled });
     set({ jiraEnabled: enabled });
     // If disabling and currently on jira tab, switch to explorer
     if (!enabled && get().sidebarActiveTab === "jira") {
       const tab: SidebarActiveTab = "explorer";
-      persistSettings({ sidebarActiveTab: tab });
+      persistUiPref({ sidebarActiveTab: tab });
       set({ sidebarActiveTab: tab });
     }
   },
 
   toggleSidebar: () => {
     const next = !get().sidebarCollapsed;
-    persistSettings({ sidebarCollapsed: next });
+    persistUiPref({ sidebarCollapsed: next });
     set({ sidebarCollapsed: next });
   },
 
   setSidebarWidth: (width) => {
     const clamped = Math.max(200, Math.min(600, width));
-    persistSettings({ sidebarWidth: clamped });
+    persistUiPref({ sidebarWidth: clamped });
     set({ sidebarWidth: clamped });
   },
 
   setGitStatusViewMode: (mode) => {
-    persistSettings({ gitStatusViewMode: mode });
+    persistUiPref({ gitStatusViewMode: mode });
     set({ gitStatusViewMode: mode });
   },
 
   toggleWordWrap: () => {
     const next = !get().wordWrap;
-    persistSettings({ wordWrap: next });
+    persistUiPref({ wordWrap: next });
     set({ wordWrap: next });
   },
 
   toggleTabWrap: () => {
     const next = !get().tabWrap;
-    persistSettings({ tabWrap: next });
+    persistUiPref({ tabWrap: next });
     set({ tabWrap: next });
   },
 
   setSidebarActiveTab: (tab) => {
-    persistSettings({ sidebarActiveTab: tab });
+    persistUiPref({ sidebarActiveTab: tab });
     set({ sidebarActiveTab: tab });
   },
 
@@ -193,9 +243,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const token = getAuthToken();
       const authInit = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
-      const [infoRes, themeRes] = await Promise.all([
+      const [infoRes, themeRes, uiPrefsRes] = await Promise.all([
         fetch("/api/info", authInit),
         fetch("/api/settings/theme", authInit),
+        fetch("/api/settings/ui-prefs", authInit),
       ]);
       const infoJson = await infoRes.json();
       if (infoJson.ok) {
@@ -212,6 +263,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         persistSettings({ theme: serverTheme });
         applyThemeClass(serverTheme);
         set({ theme: serverTheme });
+      }
+      const uiPrefsJson = await uiPrefsRes.json();
+      if (uiPrefsJson.ok && uiPrefsJson.data) {
+        applyServerUiPrefs(uiPrefsJson.data as Record<string, unknown>);
       }
     } catch {}
   },
