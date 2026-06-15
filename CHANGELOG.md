@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.13.113] - 2026-06-15
+
+### Fixed
+- **Windows auto-start now uses Task Scheduler (at-logon)**: the HKCU `Run` key did not reliably launch PPM at logon and is swept by third-party startup-cleaner utilities. `ppm autostart enable` now registers an at-logon scheduled task via `schtasks` (no admin required) that runs the existing hidden VBS launcher, and removes the legacy `Run` key so older installs don't double-launch. `autostart status` reports the Task Scheduler state (`autostart-generator.ts`, `autostart-register.ts`).
+
 ## [0.13.112] - 2026-06-15
 
 ### Added
