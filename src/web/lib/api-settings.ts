@@ -180,6 +180,7 @@ export interface AIProviderSettings {
   system_prompt?: string;
   agent_teams?: boolean;
   context_1m?: boolean;
+  inherit_claude_mcp?: boolean;
 }
 
 export interface AISettings {

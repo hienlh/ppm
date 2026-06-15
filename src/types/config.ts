@@ -66,6 +66,10 @@ export interface AIProviderConfig {
   // Enable 1M context window via beta header. Requires an entitled account
   // (Max/Team/Enterprise) and an opus-4/sonnet-4 model; otherwise the API errors.
   context_1m?: boolean;
+  // Inherit MCP servers from Claude Code's ~/.claude.json (global + project-scoped
+  // by cwd). PPM's own MCP servers override inherited ones on name conflict.
+  // Defaults to true when unset.
+  inherit_claude_mcp?: boolean;
 
   // CLI-specific (Cursor, Codex, Gemini)
   cli_command?: string;
@@ -88,6 +92,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
         effort: "high",
         max_turns: 1000,
         permission_mode: "bypassPermissions",
+        inherit_claude_mcp: true,
       },
     },
   },

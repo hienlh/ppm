@@ -15,6 +15,7 @@ import type {
 } from "./provider.interface.ts";
 import { configService } from "../services/config.service.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
+import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
 import { getSessionProjectPath, setSessionMetadata, getSessionTitles } from "../services/db.service.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
@@ -849,8 +850,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       }
       console.log(`[sdk] query: session=${sessionId} isFirst=${isFirstMessage} fork=${shouldFork} cwd=${effectiveCwd} platform=${process.platform} accountMode=${!!account} permissionMode=${permissionMode} isBypass=${isBypass}`);
 
-      // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats)
-      const mcpServers = mcpConfigService.list();
+      // Read MCP servers from PPM DB (fresh per query — user may add/remove between chats),
+      // merged with servers inherited from Claude Code's ~/.claude.json for this project.
+      // PPM DB entries override inherited ones on name conflict.
+      const ownServers = mcpConfigService.list();
+      const inheritedServers = providerConfig.inherit_claude_mcp !== false
+        ? listInheritedClaudeMcpServers(effectiveCwd)
+        : {};
+      const mcpServers = { ...inheritedServers, ...ownServers };
       const hasMcp = Object.keys(mcpServers).length > 0;
 
       // Buffer subprocess stderr for crash diagnostics + log in real-time

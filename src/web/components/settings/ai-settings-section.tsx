@@ -299,6 +299,20 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                 onCheckedChange={(v) => handleSave("context_1m", v)}
               />
             </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <Label htmlFor="ai-inherit-mcp" className={compact ? labelSize : undefined}>Inherit Claude Code MCP</Label>
+                <p className={`${compact ? "text-[9px]" : "text-[11px]"} text-muted-foreground`}>
+                  Auto-load MCP servers from Claude Code's ~/.claude.json (global + per-project). Your own MCP servers override inherited ones.
+                </p>
+              </div>
+              <Switch
+                id="ai-inherit-mcp"
+                checked={config?.inherit_claude_mcp ?? true}
+                onCheckedChange={(v) => handleSave("inherit_claude_mcp", v)}
+              />
+            </div>
           </>
         )}
 
