@@ -161,7 +161,7 @@ describe.if(isWindows)("Windows autostart (Task Scheduler)", () => {
     const status = getAutoStartStatus();
     expect(status.enabled).toBe(true);
     expect(status.platform).toContain("windows");
-    expect(status.platform).toContain("Registry");
+    expect(status.platform).toContain("Task Scheduler");
   });
 
   test("disable removes VBS wrapper", async () => {

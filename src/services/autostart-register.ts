@@ -11,9 +11,10 @@ import {
   getServicePath,
   generateVbsWrapper,
   getVbsPath,
-  buildRegAddCommand,
   buildRegDeleteCommand,
-  buildRegQueryCommand,
+  buildSchtasksCreateCommand,
+  buildSchtasksDeleteCommand,
+  buildSchtasksQueryCommand,
 } from "./autostart-generator.ts";
 
 export interface AutoStartStatus {
@@ -263,14 +264,20 @@ async function enableWindows(config: AutoStartConfig): Promise<string> {
   if (!existsSync(vbsDir)) mkdirSync(vbsDir, { recursive: true });
   writeFileSync(vbsPath, generateVbsWrapper(config));
 
-  // Add to HKCU Run key (no admin required)
-  const cmd = buildRegAddCommand(vbsPath);
+  // Register an At-logon scheduled task (no admin). More reliable than the
+  // HKCU Run key, which startup-cleaner utilities sweep and which can silently
+  // fail to fire at logon.
+  const cmd = buildSchtasksCreateCommand(vbsPath);
   const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
 
   if (result.exitCode !== 0) {
-    const err = result.stderr.toString().trim();
-    throw new Error(`Registry add failed: ${err}`);
+    const err = result.stderr.toString().trim() || result.stdout.toString().trim();
+    throw new Error(`schtasks create failed: ${err}`);
   }
+
+  // Remove the legacy Run key entry so PPM isn't launched twice on machines
+  // that were registered by an older version.
+  Bun.spawnSync({ cmd: buildRegDeleteCommand(), stdout: "ignore", stderr: "ignore" });
 
   saveMetadata({
     enabled: true,
@@ -284,9 +291,9 @@ async function enableWindows(config: AutoStartConfig): Promise<string> {
 }
 
 async function disableWindows(): Promise<void> {
-  // Remove from registry
-  const cmd = buildRegDeleteCommand();
-  Bun.spawnSync({ cmd, stdout: "ignore", stderr: "ignore" });
+  // Remove the scheduled task and any legacy Run key entry
+  Bun.spawnSync({ cmd: buildSchtasksDeleteCommand(), stdout: "ignore", stderr: "ignore" });
+  Bun.spawnSync({ cmd: buildRegDeleteCommand(), stdout: "ignore", stderr: "ignore" });
 
   // Remove VBS wrapper
   const vbsPath = getVbsPath();
@@ -299,17 +306,16 @@ function statusWindows(): AutoStartStatus {
   const vbsPath = getVbsPath();
   const fileExists = existsSync(vbsPath);
 
-  // Check if registry entry exists
-  const cmd = buildRegQueryCommand();
-  const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
-  const regExists = result.exitCode === 0 && result.stdout.toString().includes(TASK_NAME);
+  // Check if the scheduled task exists
+  const result = Bun.spawnSync({ cmd: buildSchtasksQueryCommand(), stdout: "pipe", stderr: "ignore" });
+  const taskExists = result.exitCode === 0 && result.stdout.toString().includes(TASK_NAME);
 
   return {
-    enabled: regExists,
-    running: false, // Can't detect running state from registry
-    platform: "windows (Registry Run)",
+    enabled: taskExists,
+    running: false, // Can't detect running state from the task registration
+    platform: "windows (Task Scheduler)",
     servicePath: fileExists ? vbsPath : null,
-    details: regExists
+    details: taskExists
       ? "Registered (will run at next logon)"
       : "Not configured",
   };

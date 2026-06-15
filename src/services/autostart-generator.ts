@@ -162,18 +162,7 @@ export function getVbsPath(): string {
   return resolve(homedir(), ".ppm", "run-ppm.vbs");
 }
 
-/** Build reg command to add PPM to Windows startup (no admin) */
-export function buildRegAddCommand(vbsPath: string): string[] {
-  return [
-    "reg", "add", WIN_REG_KEY,
-    "/v", TASK_NAME,
-    "/t", "REG_SZ",
-    "/d", `cscript.exe "${vbsPath}"`,
-    "/f",
-  ];
-}
-
-/** Build reg command to remove PPM from Windows startup */
+/** Build reg command to remove the legacy PPM Run-key entry (migration cleanup) */
 export function buildRegDeleteCommand(): string[] {
   return [
     "reg", "delete", WIN_REG_KEY,
@@ -182,12 +171,35 @@ export function buildRegDeleteCommand(): string[] {
   ];
 }
 
-/** Build reg command to query PPM startup entry */
-export function buildRegQueryCommand(): string[] {
+// ─── Windows Task Scheduler (At-logon) ──────────────────────────────────
+// Preferred over the HKCU Run key: fires reliably at logon and is not swept
+// by third-party "startup cleaner" utilities that only target Run keys and
+// the Startup folder. No admin required for a current-user logon task.
+
+/** wscript runs the VBS without a console window; VBS in turn launches bun hidden. */
+function buildTaskRunString(vbsPath: string): string {
+  return `wscript.exe "${vbsPath}"`;
+}
+
+/** Build schtasks command to create the At-logon task (no admin) */
+export function buildSchtasksCreateCommand(vbsPath: string): string[] {
   return [
-    "reg", "query", WIN_REG_KEY,
-    "/v", TASK_NAME,
+    "schtasks", "/Create",
+    "/TN", TASK_NAME,
+    "/TR", buildTaskRunString(vbsPath),
+    "/SC", "ONLOGON",
+    "/F",
   ];
+}
+
+/** Build schtasks command to delete the PPM task */
+export function buildSchtasksDeleteCommand(): string[] {
+  return ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"];
+}
+
+/** Build schtasks command to query the PPM task */
+export function buildSchtasksQueryCommand(): string[] {
+  return ["schtasks", "/Query", "/TN", TASK_NAME];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────

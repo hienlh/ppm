@@ -3,9 +3,10 @@ import {
   generatePlist,
   generateSystemdService,
   generateVbsWrapper,
-  buildRegAddCommand,
   buildRegDeleteCommand,
-  buildRegQueryCommand,
+  buildSchtasksCreateCommand,
+  buildSchtasksDeleteCommand,
+  buildSchtasksQueryCommand,
   buildExecCommand,
   getPlistPath,
   getServicePath,
@@ -114,8 +115,8 @@ describe("generateSystemdService", () => {
 
   test("includes restart policy", () => {
     const service = generateSystemdService(TEST_CONFIG);
-    expect(service).toContain("Restart=on-failure");
-    expect(service).toContain("RestartSec=5");
+    expect(service).toContain("Restart=always");
+    expect(service).toContain("RestartSec=3");
   });
 
   test("includes [Install] section with default.target", () => {
@@ -168,58 +169,60 @@ describe("generateVbsWrapper", () => {
   });
 });
 
-// ─── Windows Registry commands ──────────────────────────────────────────
+// ─── Windows Task Scheduler commands ────────────────────────────────────
 
-describe("buildRegAddCommand", () => {
-  test("uses reg add with correct key", () => {
-    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
-    expect(cmd[0]).toBe("reg");
-    expect(cmd[1]).toBe("add");
-    expect(cmd.join(" ")).toContain("CurrentVersion\\Run");
+describe("buildSchtasksCreateCommand", () => {
+  test("uses schtasks /Create with task name", () => {
+    const cmd = buildSchtasksCreateCommand("C:\\path\\run-ppm.vbs");
+    expect(cmd[0]).toBe("schtasks");
+    expect(cmd).toContain("/Create");
+    const tnIdx = cmd.indexOf("/TN");
+    expect(tnIdx).toBeGreaterThan(-1);
+    expect(cmd[tnIdx + 1]).toBe(TASK_NAME);
   });
 
-  test("includes task name as value name", () => {
-    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
-    const vIdx = cmd.indexOf("/v");
-    expect(vIdx).toBeGreaterThan(-1);
-    expect(cmd[vIdx + 1]).toBe(TASK_NAME);
+  test("triggers at logon", () => {
+    const cmd = buildSchtasksCreateCommand("C:\\path\\run-ppm.vbs");
+    const scIdx = cmd.indexOf("/SC");
+    expect(scIdx).toBeGreaterThan(-1);
+    expect(cmd[scIdx + 1]).toBe("ONLOGON");
   });
 
-  test("includes cscript.exe to run VBS", () => {
-    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
-    const dIdx = cmd.indexOf("/d");
-    expect(dIdx).toBeGreaterThan(-1);
-    expect(cmd[dIdx + 1]).toContain("cscript.exe");
-  });
-
-  test("includes force flag", () => {
-    const cmd = buildRegAddCommand("/path/to/run-ppm.vbs");
-    expect(cmd).toContain("/f");
-  });
-
-  test("includes vbs path in /d argument", () => {
-    const cmd = buildRegAddCommand("/custom/path/run.vbs");
-    const dValue = cmd[cmd.indexOf("/d") + 1];
-    expect(dValue).toContain("/custom/path/run.vbs");
+  test("runs the VBS via wscript and includes force flag", () => {
+    const cmd = buildSchtasksCreateCommand("C:\\custom\\run.vbs");
+    const trValue = cmd[cmd.indexOf("/TR") + 1];
+    expect(trValue).toContain("wscript.exe");
+    expect(trValue).toContain("C:\\custom\\run.vbs");
+    expect(cmd).toContain("/F");
   });
 });
 
-describe("buildRegDeleteCommand", () => {
+describe("buildSchtasksDeleteCommand", () => {
+  test("uses schtasks /Delete with task name and force", () => {
+    const cmd = buildSchtasksDeleteCommand();
+    expect(cmd[0]).toBe("schtasks");
+    expect(cmd).toContain("/Delete");
+    expect(cmd).toContain(TASK_NAME);
+    expect(cmd).toContain("/F");
+  });
+});
+
+describe("buildSchtasksQueryCommand", () => {
+  test("uses schtasks /Query with task name", () => {
+    const cmd = buildSchtasksQueryCommand();
+    expect(cmd[0]).toBe("schtasks");
+    expect(cmd).toContain("/Query");
+    expect(cmd).toContain(TASK_NAME);
+  });
+});
+
+describe("buildRegDeleteCommand (legacy cleanup)", () => {
   test("uses reg delete with correct key and value", () => {
     const cmd = buildRegDeleteCommand();
     expect(cmd[0]).toBe("reg");
     expect(cmd[1]).toBe("delete");
     expect(cmd).toContain(TASK_NAME);
     expect(cmd).toContain("/f");
-  });
-});
-
-describe("buildRegQueryCommand", () => {
-  test("uses reg query with correct key and value", () => {
-    const cmd = buildRegQueryCommand();
-    expect(cmd[0]).toBe("reg");
-    expect(cmd[1]).toBe("query");
-    expect(cmd).toContain(TASK_NAME);
   });
 });
 
