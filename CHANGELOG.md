@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.1] - 2026-06-15
+
+### Added
+- **Inherit MCP servers from Claude Code**: PPM now auto-loads MCP servers configured in Claude Code's `~/.claude.json` (global top-level servers + project-scoped servers matching the session's cwd), so MCP installed via `claude mcp add` works in PPM without re-adding it. Read fresh per query and merged with PPM's own MCP registry, where PPM DB entries override inherited ones on name conflict. Toggle via the new `inherit_claude_mcp` provider flag (default on) exposed as "Inherit Claude Code MCP" in Settings → AI (`claude-code-mcp.service.ts`, `claude-agent-sdk.ts`).
+
 ## [0.14.0] - 2026-06-15
 
 ### Added
