@@ -171,8 +171,11 @@ export function validateJsonlPath(inputPath: string): string {
     throw new Error("File not found");
   }
 
-  const claudeDir = resolve(homedir(), ".claude") + "/";
-  if (!(real + "/").startsWith(claudeDir)) {
+  // Normalize separators: Windows realpathSync returns backslashes, so compare in a
+  // separator-insensitive form to keep the ~/.claude jail correct cross-platform.
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const claudeDir = norm(resolve(homedir(), ".claude")) + "/";
+  if (!(norm(real) + "/").startsWith(claudeDir)) {
     throw new Error("Access denied: path traversal detected");
   }
 

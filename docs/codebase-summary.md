@@ -57,6 +57,7 @@ src/
 │   └── registry.ts              # Provider routing (list() vs listAll())
 ├── services/                    # Business logic (30+ files)
 │   ├── chat.service.ts          # Session/message streaming
+│   ├── task-status-aggregator.ts # Rebuild Claude Task* state from session JSONL (TaskCreate/TaskUpdate/TaskStop tracking)
 │   ├── config.service.ts        # Config loading/persistence
 │   ├── db.service.ts            # SQLite CRUD (schema migrations, extension_storage)
 │   ├── file.service.ts          # File operations

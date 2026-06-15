@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { draftService } from "../../services/draft.service.ts";
@@ -11,6 +11,7 @@ import { upsertSlashRecent, getSlashRecents } from "../../services/db.service.ts
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
+import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
@@ -492,30 +493,74 @@ chatRoutes.get("/sessions/:id/logs", (c) => {
   }
 });
 
-/** GET /chat/sessions/:id/debug — session debug info (IDs, JSONL path) */
-chatRoutes.get("/sessions/:id/debug", (c) => {
-  const sessionId = c.req.param("id");
-  // Resolve JSONL path: ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl
+/**
+ * Resolve a session's SDK JSONL transcript path: ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl
+ * Tries the in-memory active session first, then the DB-persisted project_path.
+ */
+function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlDir: string; projectPath: string; exists: boolean } {
   const homedir = process.env.HOME ?? process.env.USERPROFILE ?? "";
   const provider = providerRegistry.get("claude") as any;
-  // Try in-memory first, fall back to DB-persisted project_path
   const projectPath = provider?.activeSessions?.get(sessionId)?.projectPath
     ?? getSessionProjectPath(sessionId)
     ?? "";
-  const encodedCwd = projectPath ? projectPath.replace(/\//g, "-") : "";
-  const jsonlDir = encodedCwd ? resolve(homedir, ".claude", "projects", encodedCwd) : "";
-  const jsonlPath = jsonlDir ? resolve(jsonlDir, `${sessionId}.jsonl`) : "";
-  const jsonlExists = jsonlPath ? existsSync(jsonlPath) : false;
+  const projectsRoot = homedir ? resolve(homedir, ".claude", "projects") : "";
+  // SDK encodes cwd by replacing path separators + drive colon with "-".
+  const encodedCwd = projectPath ? projectPath.replace(/[/\\:]/g, "-") : "";
+  let jsonlDir = encodedCwd && projectsRoot ? resolve(projectsRoot, encodedCwd) : "";
+  let jsonlPath = jsonlDir ? resolve(jsonlDir, `${sessionId}.jsonl`) : "";
+  let exists = jsonlPath ? existsSync(jsonlPath) : false;
+  // Fallback: the SDK dir name can differ from the stored project_path (drive-letter case,
+  // encoding drift). sessionId is a unique UUID, so locate the transcript by scanning project dirs.
+  if (!exists && projectsRoot && existsSync(projectsRoot)) {
+    for (const dir of readdirSync(projectsRoot)) {
+      const candidate = resolve(projectsRoot, dir, `${sessionId}.jsonl`);
+      if (existsSync(candidate)) {
+        jsonlDir = resolve(projectsRoot, dir);
+        jsonlPath = candidate;
+        exists = true;
+        break;
+      }
+    }
+  }
+  return { jsonlPath, jsonlDir, projectPath, exists };
+}
+
+/** GET /chat/sessions/:id/debug — session debug info (IDs, JSONL path) */
+chatRoutes.get("/sessions/:id/debug", (c) => {
+  const sessionId = c.req.param("id");
+  const { jsonlPath, jsonlDir, projectPath, exists } = resolveSessionJsonlPath(sessionId);
   // PPM session ID == SDK session ID (canonical — see claude-agent-sdk.ts:728).
   // Return both fields so FE debug UI shows them clearly; they are the same value.
   return c.json(ok({
     ppmSessionId: sessionId,
     sdkSessionId: sessionId,
     sessionId,
-    jsonlPath: jsonlExists ? jsonlPath : null,
+    jsonlPath: exists ? jsonlPath : null,
     jsonlDir,
     projectPath,
   }));
+});
+
+/**
+ * GET /chat/sessions/:id/tasks — rebuild Claude Task* state from the FULL session JSONL.
+ * Reading the whole file (not the FE's paginated window) means a TaskUpdate whose TaskCreate
+ * scrolled out of view is still resolved. Fresh/unknown session -> [] (not an error).
+ */
+chatRoutes.get("/sessions/:id/tasks", async (c) => {
+  try {
+    const sessionId = c.req.param("id");
+    const { jsonlPath, exists } = resolveSessionJsonlPath(sessionId);
+    if (!exists) return c.json(ok([]));
+    const validated = validateJsonlPath(jsonlPath);
+    const messages = await parseJsonlTranscript(validated);
+    return c.json(ok(aggregateTasks(messages)));
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    const status = /not found/i.test(message) ? 404
+      : /denied|traversal|Invalid path|too large|Not a regular/i.test(message) ? 403
+      : 500;
+    return c.json(err(message), status);
+  }
 });
 
 /** GET /chat/pre-compact-messages — read and parse a JSONL transcript file (for expand-compact feature) */

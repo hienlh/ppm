@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.112] - 2026-06-15
+
+### Added
+- **Live task tracker in chat**: Claude's `TaskCreate`/`TaskUpdate`/`TaskStop` calls are now tracked and shown in a pinned, collapsible tracker above the chat scroll area (collapsed by default; auto-hides once every task is completed/stopped; ✓/▶/○ status rows with `N/M done`). Task state is rebuilt on the backend from the full session JSONL via a new endpoint `GET /chat/sessions/:id/tasks` and a pure `aggregateTasks()` fold, so tasks resolve correctly even when the create scrolled out of the frontend's paginated window (`task-status-aggregator.ts`, `chat.ts`, `task-tracker.tsx`, `use-tasks.ts`).
+- **Readable inline Task cards**: `TaskCreate`/`TaskUpdate`/`TaskStop` tool cards now render subject + status badge instead of raw JSON (`tool-cards.tsx`).
+
+### Fixed
+- **Windows session-transcript resolution**: `resolveSessionJsonlPath` now replaces all path separators (`/ \ :`) and falls back to scanning `~/.claude/projects/*` for the session transcript, fixing drive-letter/casing mismatches that returned no data on Windows. `validateJsonlPath` now compares paths separator-insensitively, fixing a false "path traversal detected" on Windows that also affected the expand-compact (`/pre-compact-messages`) endpoint (`chat.ts`, `jsonl-transcript-parser.ts`).
+
 ## [0.13.111] - 2026-06-12
 
 ### Added

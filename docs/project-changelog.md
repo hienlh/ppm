@@ -20,9 +20,25 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements, Command Palette Filter Chips
+## [Unreleased] — Chat Live Task Tracker, Scheduled Agents, Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements, Command Palette Filter Chips
 
 ### Added
+- **Chat Live Task Tracker** — Real-time monitoring of Claude's Task* tool execution within chat
+  - Backend: `TaskStatusAggregatorService` (`src/services/task-status-aggregator.ts`) — rebuilds task state from session JSONL with `aggregateTasks(messages): TaskItem[]`
+  - Backend: New endpoint `GET /api/project/:projectName/chat/sessions/:id/tasks` — returns current tasks (immune to FE pagination); reuses session JSONL path resolution + parsing
+  - Frontend: `task-tracker.tsx` component — pinned, collapsible tracker above chat scroll area (collapsed by default); auto-hides when all tasks done/stopped
+  - Frontend: `use-tasks.ts` hook — fetches endpoint on Task events (TaskCreate/TaskUpdate/TaskStop), manages fetch gating
+  - Tool cards: TaskCreate/TaskUpdate/TaskStop now render human-readable summaries (subject + status badge) instead of raw JSON
+
+### Added
+- **Scheduled Agents (cron scheduler)** — periodically wake Claude sessions to work unattended
+  - SQLite v31: `schedules` + `schedule_runs` tables; per-job cron expr, project, prompt, permission mode, budgets (max_turns/timeout_ms), snapshot `provider_id`
+  - `scheduler-core.ts` (tick 60s, refcounted concurrency guard, skipped-run rows) + `scheduler-runner.ts` (1 persistent session per job, resume-or-create, 32KB head+tail output buffer, wall-clock timeout via `abortQuery`, session rotation at >80% context, Telegram summary via `notificationService.broadcast` offline-gate) + `scheduler-db.service.ts` (helpers, orphan cleanup >2h, 30-day run prune at boot)
+  - CLI: `ppm schedule add|list|rm|enable|disable|run-now|runs` (run-now bypasses guard with `wasRunning` warning)
+  - REST: `/api/schedules` CRUD + `/:id/run-now` + `/:id/runs` (cron + numeric budget validation)
+  - Settings UI: "Scheduled Agents" section — mobile-first (bottom-sheet form, adaptive long-press menu, 44px targets), 10s visibility-gated polling, run history with status pills
+  - SDK contract (additive): `done` ChatEvent now carries `costUsd`; `SendMessageOpts` accepts per-call `maxTurns`
+  - 34 tests (db/runner/core/routes) + `tests/README.md` Docker bun workflow
 - **Command Palette Filter Chips** — Filter palette results by type with toggle chips
   - Chips appear above results when 2+ groups are available (Actions, Files, Database, Filesystem)
   - Each chip shows group label, icon, and live result count for the current query

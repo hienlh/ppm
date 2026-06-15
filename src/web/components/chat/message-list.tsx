@@ -5,6 +5,7 @@ import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
+import { TaskTracker } from "./task-tracker";
 import { extractJsonlPath } from "./pre-compact-button";
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -224,6 +225,7 @@ export function MessageList({
 
   return (
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
+      <TaskTracker projectName={projectName} sessionId={sessionId} messages={messages} />
       <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden [contain:strict] [overflow-anchor:auto]" resize="smooth" initial="instant">
         <StickToBottom.Content className="p-4 space-y-4 select-none [&>*]:[overflow-anchor:auto]">
           <ScrollAnchorBridge bridgeRef={scrollAnchorRef} />

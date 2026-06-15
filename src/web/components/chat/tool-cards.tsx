@@ -192,6 +192,12 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
     }
     case "ScheduleWakeup":
       return <><Clock className="size-3 inline" /> {name} <span className="text-text-subtle">in {formatDelay(Number(input.delaySeconds))}{input.reason ? ` — ${truncate(s(input.reason), 50)}` : ""}</span></>;
+    case "TaskCreate":
+      return <><ListTodo className="size-3 inline" /> {name} <span className="text-text-subtle">{truncate(s(input.subject), 60)}</span></>;
+    case "TaskUpdate":
+      return <><ListTodo className="size-3 inline" /> {name} <span className="text-text-subtle">#{s(input.taskId)} → {s(input.status)}</span></>;
+    case "TaskStop":
+      return <><ListTodo className="size-3 inline" /> {name} <span className="text-text-subtle">#{s(input.taskId)} stopped</span></>;
     default:
       return <>{name}</>;
   }
@@ -377,6 +383,28 @@ function ToolDetails({
         </div>
       );
     }
+    case "TaskCreate":
+      return (
+        <div className="space-y-1">
+          <p className="text-text-primary font-medium">{s(input.subject)}</p>
+          {!!input.description && <p className="text-text-subtle">{s(input.description)}</p>}
+          {!!input.activeForm && <p className="text-text-subtle italic">{s(input.activeForm)}</p>}
+        </div>
+      );
+    case "TaskUpdate":
+      return (
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-text-secondary">#{s(input.taskId)}</span>
+          <TaskStatusBadge status={s(input.status)} />
+        </div>
+      );
+    case "TaskStop":
+      return (
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-text-secondary">#{s(input.taskId)}</span>
+          <TaskStatusBadge status="stopped" />
+        </div>
+      );
     default:
       return (
         <pre className="overflow-x-auto text-text-secondary font-mono whitespace-pre-wrap break-all">
@@ -384,6 +412,16 @@ function ToolDetails({
         </pre>
       );
   }
+}
+
+/** Small status pill for Task* cards — mirrors TodoDetails colors (stopped = neutral). */
+function TaskStatusBadge({ status }: { status: string }) {
+  const cls = status === "completed"
+    ? "text-green-400 border-green-400/30 bg-green-400/10"
+    : status === "in_progress"
+      ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10"
+      : "text-text-subtle border-border bg-surface";
+  return <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] border ${cls}`}>{status}</span>;
 }
 
 /** Todo list display with checkboxes */

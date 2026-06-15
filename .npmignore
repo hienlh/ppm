@@ -1,3 +1,10 @@
+# Scratch / POC files (not part of the published package)
+chat-mirror-poc.ts
+terminal-poc.ts
+tail-interactive-jsonl.ts
+verify-billing-signature.ts
+.out.txt
+
 # Dev files
 .claude/
 .github/
