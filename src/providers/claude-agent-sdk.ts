@@ -772,6 +772,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultSubtype: string | undefined;
     let resultNumTurns: number | undefined;
     let resultContextWindowPct: number | undefined;
+    let resultCostUsd: number | undefined;
     let lastAssistantUuid: string | undefined;
     let yieldedDone = false;
     try {
@@ -891,7 +892,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         allowDangerouslySkipPermissions: isBypass,
         ...(resolvedModel && { model: resolvedModel }),
         ...(providerConfig.effort && { effort: providerConfig.effort }),
-        maxTurns: providerConfig.max_turns ?? 1000,
+        maxTurns: opts?.maxTurns ?? providerConfig.max_turns ?? 1000,
         ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
         ...(providerConfig.thinking_budget_tokens != null && {
           maxThinkingTokens: providerConfig.thinking_budget_tokens,
@@ -1531,6 +1532,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Write cost to shared usage cache
           if (result.total_cost_usd != null) {
             updateFromSdkEvent(undefined, undefined, result.total_cost_usd);
+            resultCostUsd = result.total_cost_usd as number;
           }
 
           // Surface non-success subtypes as errors so FE can display them
@@ -1614,6 +1616,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             resultSubtype: resultSubtype as any,
             numTurns: resultNumTurns,
             contextWindowPct: resultContextWindowPct,
+            costUsd: resultCostUsd,
             lastMessageUuid: lastAssistantUuid,
           };
 
@@ -1624,6 +1627,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           resultSubtype = undefined;
           resultNumTurns = undefined;
           resultContextWindowPct = undefined;
+          resultCostUsd = undefined;
           lastAssistantUuid = undefined;
           sdkEventCount = 0;
           // Reset auth retry budget on successful turn — each new turn gets a fresh
@@ -1696,6 +1700,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         resultSubtype: resultSubtype as any,
         numTurns: resultNumTurns,
         contextWindowPct: resultContextWindowPct,
+        costUsd: resultCostUsd,
         lastMessageUuid: lastAssistantUuid,
       };
     }

@@ -4,6 +4,8 @@ export interface SendMessageOpts {
   images?: Array<{ data: string; mediaType: string }>;
   /** Per-session model override; falls back to provider config model when absent */
   model?: string;
+  /** Per-query turn cap; falls back to provider config max_turns when absent */
+  maxTurns?: number;
 }
 
 export interface AIProvider {
@@ -131,7 +133,7 @@ export type ChatEvent =
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
-  | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; lastMessageUuid?: string }
+  | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }
   | { type: "status_update"; phase: "routing" | "refreshing" | "switching" | "retrying"; message: string; accountLabel?: string }
