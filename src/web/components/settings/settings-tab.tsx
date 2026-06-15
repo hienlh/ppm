@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug, FolderSearch, WrapText,
+  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug, FolderSearch, WrapText, CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,18 +19,20 @@ import { ExtensionManagerSection } from "./extension-manager-section";
 import { PPMBotSettingsSection } from "./ppmbot-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
 import { FilesSettingsSection } from "./files-settings-section";
+import { SchedulesSettingsSection } from "./schedules/schedules-settings-section";
 const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
   { value: "system", label: "System", icon: Monitor },
 ];
 
-type SettingsCategory = "ai" | "notifications" | "clawbot" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
+type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
   { value: "notifications", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
   { value: "clawbot", label: "PPMBot", subtitle: "Telegram AI bot", icon: Bot },
+  { value: "schedules", label: "Scheduled Agents", subtitle: "Run Claude on a cron schedule", icon: CalendarClock },
   // Jira is now a toggle, not a full settings category
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
@@ -87,6 +89,7 @@ export function SettingsTab() {
             {activeCategory === "ai" && <AISettingsSection compact />}
             {activeCategory === "notifications" && <NotificationsContent />}
             {activeCategory === "clawbot" && <PPMBotSettingsSection />}
+            {activeCategory === "schedules" && <SchedulesSettingsSection />}
             {/* Jira is now a sidebar tab with a toggle below */}
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}

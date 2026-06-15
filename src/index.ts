@@ -160,6 +160,9 @@ export async function buildProgram(): Promise<Command> {
   const { registerJiraCommands } = await import("./cli/commands/jira-cmd.ts");
   await registerJiraCommands(program);
 
+  const { registerScheduleCommands } = await import("./cli/commands/schedule-cmd.ts");
+  registerScheduleCommands(program);
+
   const { registerExportCommands } = await import("./cli/commands/export-cmd.ts");
   registerExportCommands(program);
 

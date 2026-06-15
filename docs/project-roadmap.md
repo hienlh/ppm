@@ -45,6 +45,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 | **Auto-upgrade** | High | ✅ Done | Supervisor checks npm registry every 15min. UI banner shows when update available. One-click upgrade via API or CLI. Supervisor self-replaces after install (no OS autostart dependency). **Completed in v0.8.54** |
 | **Supervisor Always Alive** | High | ✅ Done | Soft stop (server shutdown, supervisor stays) vs full shutdown. New `stopped` state. Cloud WS + tunnel stay active when stopped. `ppm start` resumes without supervisor restart. Modularized: supervisor.ts, supervisor-state.ts, supervisor-stopped-page.ts. **Completed in v0.9.11** |
 | **AI Chat enhancements** | High | — | Tool allow/deny config per session. Chat modes (plan/code/ask). Model selector (opus/sonnet/haiku). Effort level. Max turns. System prompt customization. Better streaming UX (collapsible tool calls). |
+| **Scheduled Agents** | High | ✅ Done | Cron scheduler inside PPM server: periodically wakes Claude sessions to work unattended. 1 persistent session per job + rotation >80% context, concurrency guard, budgets (max turns/timeout), CLI `ppm schedule`, REST `/api/schedules`, Settings UI, Telegram summary. **Completed 2026-06-13** |
 
 **PPM Cloud — scope guard:**
 - Cloud is OPTIONAL convenience, never a dependency. PPM works 100% without it.

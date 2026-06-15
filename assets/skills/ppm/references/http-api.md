@@ -121,6 +121,17 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PATCH  /api/projects/:name`
 - `DELETE /api/projects/:name`
 
+## /api/schedules
+
+- `GET    /api/schedules`
+- `GET    /api/schedules/:id{[0-9]+}`
+- `POST   /api/schedules`
+- `GET    /api/schedules/ai`
+- `PATCH  /api/schedules/:id{[0-9]+}`
+- `DELETE /api/schedules/:id{[0-9]+}`
+- `POST   /api/schedules/:id{[0-9]+}/run-now`
+- `GET    /api/schedules/:id{[0-9]+}/runs`
+
 ## /api/settings
 
 - `PUT    /api/settings/device-name`
@@ -209,4 +220,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.13.111 -->
+<!-- Generated from src/server/routes/ for PPM v0.13.112 -->

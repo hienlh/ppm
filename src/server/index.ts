@@ -156,6 +156,10 @@ app.route("/api/accounts", accountsRoutes);
 import { jiraRoutes } from "./routes/jira.ts";
 app.route("/api/jira", jiraRoutes);
 
+// Scheduled agents
+import { schedulesRoutes } from "./routes/schedules.ts";
+app.route("/api/schedules", schedulesRoutes);
+
 // Agent Teams management
 import { teamRoutes } from "./routes/teams.ts";
 app.route("/api/teams", teamRoutes);
@@ -775,8 +779,20 @@ if (process.argv.includes("__serve__")) {
     })
     .catch(() => {});
 
+  // Start scheduled-agents cron scheduler
+  let schedulerStop: (() => void) | null = null;
+  import("../services/scheduler.service.ts")
+    .then(({ schedulerService }) => {
+      schedulerService.start();
+      schedulerStop = () => schedulerService.stop();
+    })
+    .catch((e) => {
+      console.error("[scheduler] Startup error:", e);
+    });
+
   // Graceful shutdown: close the listening socket so the port is released
   const gracefulShutdown = () => {
+    try { schedulerStop?.(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

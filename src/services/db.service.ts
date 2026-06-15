@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 30;
+export const CURRENT_SCHEMA_VERSION = 31;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -697,6 +697,46 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_branches ADD COLUMN fork_ordinal INTEGER"); } catch { /* column exists */ }
     database.exec("CREATE INDEX IF NOT EXISTS idx_session_branches_parent_ord ON session_branches(parent_id, fork_ordinal)");
     database.exec("PRAGMA user_version = 30");
+  }
+
+  if (current < 31) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS schedules (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        name            TEXT NOT NULL,
+        cron_expr       TEXT NOT NULL,
+        provider_id     TEXT NOT NULL,
+        project_path    TEXT NOT NULL,
+        prompt          TEXT NOT NULL,
+        permission_mode TEXT NOT NULL DEFAULT 'bypassPermissions',
+        max_turns       INTEGER,
+        timeout_ms      INTEGER NOT NULL DEFAULT 1800000,
+        enabled         INTEGER NOT NULL DEFAULT 1,
+        session_id      TEXT,
+        last_run_at     TEXT,
+        next_fire_at    TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_schedules_enabled_next ON schedules(enabled, next_fire_at);
+
+      CREATE TABLE IF NOT EXISTS schedule_runs (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        schedule_id           INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+        session_id            TEXT,
+        rotated_to_session_id TEXT,
+        status                TEXT NOT NULL DEFAULT 'running',
+        output_truncated      TEXT,
+        context_window_pct    REAL,
+        cost_usd              REAL,
+        error                 TEXT,
+        started_at            TEXT NOT NULL DEFAULT (datetime('now')),
+        ended_at              TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_schedule_runs_sched ON schedule_runs(schedule_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_schedule_runs_status ON schedule_runs(status);
+      PRAGMA user_version = 31;
+    `);
   }
 }
 

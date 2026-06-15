@@ -695,6 +695,69 @@ Restart the server (keeps tunnel alive)
 **Options:**
 - `--force` — Force resume from paused state
 
+## `ppm schedule`
+
+Scheduled Claude agents (cron)
+
+**Usage:** `ppm schedule [options] [command]`
+
+### `ppm schedule add`
+
+Add a scheduled agent. Cron uses local timezone. Do not embed secrets in --prompt.
+
+**Options:**
+- `--name <name>` — Schedule name
+- `--cron <expr>` — Cron expression (local timezone, e.g. "0 7 * * *")
+- `--project <nameOrPath>` — Project name or path
+- `--prompt <text>` — Prompt sent to the agent each run
+- `--permission-mode <mode>` — Permission mode (default: `"bypassPermissions"`)
+- `--max-turns <n>` — Max turns per run
+- `--timeout <ms>` — Timeout per run in ms (default: `"1800000"`)
+- `--disabled` — Create disabled
+
+### `ppm schedule list`
+
+List schedules
+
+**Options:**
+- `--enabled-only` — Only enabled schedules
+
+### `ppm schedule rm`
+
+Delete a schedule (cascades run history)
+
+**Options:**
+- `-y, --yes` — Skip confirmation
+
+**Usage:** `ppm schedule rm [options] <id>`
+
+### `ppm schedule enable`
+
+Enable a schedule
+
+**Usage:** `ppm schedule enable [options] <id>`
+
+### `ppm schedule disable`
+
+Disable a schedule
+
+**Usage:** `ppm schedule disable [options] <id>`
+
+### `ppm schedule run-now`
+
+Fire a schedule immediately (requires running PPM server)
+
+**Usage:** `ppm schedule run-now [options] <id>`
+
+### `ppm schedule runs`
+
+Show recent runs for a schedule
+
+**Options:**
+- `--limit <n>` — Max rows (default: `"20"`)
+
+**Usage:** `ppm schedule runs [options] <id>`
+
 ## `ppm skills`
 
 Manage and inspect discovered skills & commands
