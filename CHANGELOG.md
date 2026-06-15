@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.14.0] - 2026-06-15
+
+### Added
+- **Scheduled Agents (cron scheduler)**: PPM can now periodically wake a Claude session to work on a project unattended. SQLite v31 adds `schedules` + `schedule_runs` (per-job cron expression, project, prompt, permission mode, `max_turns`/`timeout_ms` budgets, snapshot `provider_id`). The in-process scheduler (`scheduler-core.ts`) ticks every 60s with a refcounted concurrency guard that records `skipped` runs when a prior run is still active; `scheduler-runner.ts` keeps one persistent session per job (resume-or-create), drains output into a 32KB head+tail buffer, enforces a wall-clock timeout via `abortQuery`, rotates to a fresh session past 80% context, and sends a Telegram summary through `notificationService.broadcast` (offline-gated). Boot-time hygiene orphans stale `running` rows (>2h) and prunes runs older than 30 days (`scheduler-db.service.ts`).
+- **CLI `ppm schedule`**: `add | list | rm | enable | disable | run-now | runs`. `run-now` bypasses the concurrency guard with a `wasRunning` warning.
+- **REST `/api/schedules`**: full CRUD + `:id/run-now` + `:id/runs`, with cron and numeric-budget validation.
+- **Settings → Scheduled Agents UI**: mobile-first section (bottom-sheet form on mobile, dialog on desktop, long-press adaptive context menu, 44px touch targets), 10s visibility-gated polling, and per-schedule run history with status pills (`src/web/components/settings/schedules/*`).
+
+### Changed
+- **Claude SDK provider**: the `done` event now carries `costUsd` (from `total_cost_usd`) and `SendMessageOpts` accepts a per-query `maxTurns` override (falls back to the global provider default). Both additive — existing chat flows are unaffected (`chat.ts`, `claude-agent-sdk.ts`).
+
 ## [0.13.113] - 2026-06-15
 
 ### Fixed
