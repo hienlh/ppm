@@ -332,6 +332,26 @@ export async function startServer(options: {
       } catch {}
     }
 
+    // ── Kill leftover processes from a previous run (stale status.json) ──
+    // Runs BEFORE the port check: a crashed/dead supervisor can leave an
+    // orphaned server alive, and its inherited listening-socket handle keeps
+    // the port bound. Reaping it here frees the port so the new server binds.
+    // Both supervisorPid AND pid are tree-killed — a dead supervisor entry must
+    // not stop us from reaping a still-alive orphaned server (the common case
+    // after an interrupted upgrade self-replace).
+    if (existsSync(statusFile)) {
+      try {
+        const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
+        const { killProcessTree } = await import("../services/windows-process-tree.ts");
+        for (const key of ["supervisorPid", "pid", "tunnelPid"] as const) {
+          const p = prev[key] as number | undefined;
+          if (!p) continue;
+          try { process.kill(p, 0); } catch { continue; } // already dead
+          killProcessTree(p);
+        }
+      } catch {}
+    }
+
     // ── Check port availability (retry up to 5x for upgrade race) ──────
     const checkPort = () => new Promise<boolean>((resolve) => {
       const net = require("node:net") as typeof import("node:net");
@@ -340,21 +360,6 @@ export async function startServer(options: {
         .once("listening", () => tester.close(() => resolve(false)))
         .listen(port, host);
     });
-
-    // On Windows, detect zombie sockets: port held by a dead process after crash.
-    // Returns the dead PID if zombie, 0 if the process is alive, -1 if can't determine.
-    const findZombiePortHolder = (): number => {
-      if (process.platform !== "win32") return -1;
-      try {
-        const { execSync } = require("node:child_process") as typeof import("node:child_process");
-        const out = execSync(`netstat -ano | findstr "0.0.0.0:${port}.*LISTENING"`, { encoding: "utf-8", timeout: 5000 });
-        const match = out.trim().match(/LISTENING\s+(\d+)/);
-        if (!match?.[1]) return -1;
-        const ownerPid = parseInt(match[1], 10);
-        // Check if the process is alive
-        try { process.kill(ownerPid, 0); return 0; } catch { return ownerPid; }
-      } catch { return -1; }
-    };
 
     let portInUse = await checkPort();
     if (portInUse && process.platform === "win32") {
@@ -375,45 +380,53 @@ export async function startServer(options: {
         portInUse = await checkPort();
         if (!portInUse) break;
       }
-      if (portInUse) {
-        const zombiePid = findZombiePortHolder();
-        if (zombiePid > 0) {
-          // Zombie socket from a dead process — Windows won't release it.
-          // Auto-find a free port nearby so the user isn't stuck.
-          console.warn(`  ⚠  Port ${port} held by dead process (PID: ${zombiePid}) — zombie socket.`);
-          const origPort = port;
-          for (let candidate = port + 1; candidate <= port + 20; candidate++) {
-            const candidateInUse = await new Promise<boolean>((resolve) => {
-              const net = require("node:net") as typeof import("node:net");
-              const tester = net.createServer()
-                .once("error", (err: NodeJS.ErrnoException) => resolve(err.code === "EADDRINUSE"))
-                .once("listening", () => tester.close(() => resolve(false)))
-                .listen(candidate, host);
-            });
-            if (!candidateInUse) { port = candidate; break; }
-          }
-          if (port === origPort) {
-            console.error(`\n  ✗  Port ${port} is blocked by a zombie socket and no nearby port is free.`);
-            console.error(`     Run PowerShell as Admin: netsh int tcp reset   (then restart)\n`);
-            process.exit(1);
-          }
-          console.warn(`     Auto-selected port ${port} instead.`);
-        } else {
-          console.error(`\n  ✗  Port ${port} is already in use.`);
-          console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
+    }
+
+    // Windows: still stuck — identify the real listener and recover. The
+    // tracked-descendant snapshot can miss an orphan (spawned after the last
+    // snapshot, or with a broken parent chain), so resolve the holder directly.
+    if (portInUse && process.platform === "win32") {
+      const { findPortListenerPid, isPpmProcess, killProcessTree } =
+        await import("../services/windows-process-tree.ts");
+      const holderPid = findPortListenerPid(port);
+      let holderAlive = false;
+      if (holderPid > 0) { try { process.kill(holderPid, 0); holderAlive = true; } catch {} }
+
+      if (holderPid > 0 && holderAlive && isPpmProcess(holderPid)) {
+        // Alive, but a stale PPM orphan — safe to reclaim the port.
+        console.warn(`  ⚠  Port ${port} held by stale PPM process (PID: ${holderPid}) — reclaiming.`);
+        killProcessTree(holderPid);
+        await Bun.sleep(800);
+        portInUse = await checkPort();
+      } else if (holderPid > 0 && !holderAlive) {
+        // Zombie socket from a dead process — Windows won't release it.
+        // Auto-find a free port nearby so the user isn't stuck.
+        console.warn(`  ⚠  Port ${port} held by dead process (PID: ${holderPid}) — zombie socket.`);
+        const origPort = port;
+        for (let candidate = port + 1; candidate <= port + 20; candidate++) {
+          const candidateInUse = await new Promise<boolean>((resolve) => {
+            const net = require("node:net") as typeof import("node:net");
+            const tester = net.createServer()
+              .once("error", (err: NodeJS.ErrnoException) => resolve(err.code === "EADDRINUSE"))
+              .once("listening", () => tester.close(() => resolve(false)))
+              .listen(candidate, host);
+          });
+          if (!candidateInUse) { port = candidate; break; }
+        }
+        if (port === origPort) {
+          console.error(`\n  ✗  Port ${port} is blocked by a zombie socket and no nearby port is free.`);
+          console.error(`     Run PowerShell as Admin: netsh int tcp reset   (then restart)\n`);
           process.exit(1);
         }
+        console.warn(`     Auto-selected port ${port} instead.`);
+        portInUse = false;
       }
     }
 
-    // Kill any leftover processes from previous run (stale status.json)
-    if (existsSync(statusFile)) {
-      try {
-        const prev = JSON.parse(readFileSync(statusFile, "utf-8"));
-        if (prev.supervisorPid) { try { process.kill(prev.supervisorPid); } catch {} }
-        else if (prev.pid) { try { process.kill(prev.pid); } catch {} }
-        if (prev.tunnelPid) { try { process.kill(prev.tunnelPid); } catch {} }
-      } catch {}
+    if (portInUse) {
+      console.error(`\n  ✗  Port ${port} is already in use.`);
+      console.error(`     Run 'ppm stop' first or use a different port with --port.\n`);
+      process.exit(1);
     }
 
     // Pre-download cloudflared if --share (so supervisor doesn't need to)

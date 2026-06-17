@@ -18,6 +18,55 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { getPpmDir } from "./ppm-dir.ts";
 
+/**
+ * Return the PID that owns the LISTENING socket for `port`, or 0 if none /
+ * undeterminable. Matches any local bind address (0.0.0.0, 127.0.0.1, [::], …)
+ * — the holder may bind a different address than the one we configured.
+ */
+export function findPortListenerPid(port: number): number {
+  if (process.platform !== "win32") return 0;
+  try {
+    const out = execFileSync("netstat", ["-ano"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      windowsHide: true,
+    });
+    for (const line of out.split("\n")) {
+      if (!line.includes("LISTENING")) continue;
+      // Columns: Proto  LocalAddress  ForeignAddress  State  PID
+      const cols = line.trim().split(/\s+/);
+      const local = cols[1] ?? "";
+      if (!local.endsWith(":" + port)) continue;
+      const pid = parseInt(cols[cols.length - 1] ?? "", 10);
+      if (!isNaN(pid)) return pid;
+    }
+  } catch {}
+  return 0;
+}
+
+/**
+ * Heuristic: does `pid`'s command line look like a PPM-owned process?
+ * Used to decide whether reclaiming a port held by an alive process is safe
+ * (a stale PPM orphan) vs. an unrelated app we must not kill.
+ */
+export function isPpmProcess(pid: number): boolean {
+  if (process.platform !== "win32") return false;
+  try {
+    const out = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile", "-NonInteractive", "-Command",
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+      ],
+      { encoding: "utf-8", timeout: 5000, windowsHide: true },
+    );
+    const cmd = out.toLowerCase();
+    return cmd.includes("ppm") || cmd.includes("__serve__") || cmd.includes("__supervise__");
+  } catch {
+    return false;
+  }
+}
+
 interface TrackedProc {
   pid: number;
   /** Win32_Process.CreationDate ticks — identity check against PID reuse */

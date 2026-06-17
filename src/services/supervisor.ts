@@ -22,6 +22,7 @@ import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts"
 import { sdNotify } from "./sd-notify.ts";
 import {
   killProcessTree, snapshotServerDescendants, reapTrackedDescendants,
+  findPortListenerPid,
 } from "./windows-process-tree.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
@@ -608,6 +609,29 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
       if (!inUse) break;
       log("DEBUG", `Port ${_opts.port} still in use, waiting...`);
       await Bun.sleep(200);
+    }
+
+    // Windows: the tracked-descendant snapshot can miss an orphan (an SDK
+    // grandchild spawned after the last snapshot, or whose parent chain already
+    // broke). If it still holds the inherited listening socket, the new
+    // supervisor can never bind. Resolve the real holder via netstat and
+    // tree-kill it so the handoff doesn't dead-end on a zombie port.
+    if (process.platform === "win32") {
+      const stillInUse = await new Promise<boolean>((resolve) => {
+        const net = require("node:net") as typeof import("node:net");
+        const tester = net.createServer()
+          .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
+          .once("listening", () => tester.close(() => resolve(false)))
+          .listen(_opts.port, _opts.host);
+      });
+      if (stillInUse) {
+        const holderPid = findPortListenerPid(_opts.port);
+        if (holderPid > 0) {
+          log("WARN", `Port ${_opts.port} still held by PID ${holderPid} before self-replace — tree-killing`);
+          killProcessTree(holderPid);
+          await Bun.sleep(500);
+        }
+      }
     }
 
     // Spawn new supervisor using saved argv

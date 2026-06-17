@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.14.2] - 2026-06-17
+
+### Fixed
+- **Claude SDK subprocess crash on OAuth/subscription accounts with 1M context**: when `context_1m` was enabled the provider always sent the `betas: ["context-1m-2025-08-07"]` header. Beta headers are honored only for API-key auth; OAuth/subscription sessions reject them ("Custom betas are only available for API key users. Ignoring provided betas.") and the subprocess crashed. The header is now sent only when authenticating with an API key (`ANTHROPIC_API_KEY` present); entitled OAuth accounts still get 1M context via the `[1m]` model suffix (`claude-agent-sdk.ts`).
+- **Windows port reclamation on restart and self-replace**: a crashed supervisor could leave an orphaned server holding the inherited listening socket, blocking the new server from binding. Startup now tree-kills the tracked supervisor/server/tunnel PIDs from a stale `status.json` before the port check, and when the port is still held it resolves the real listener via `netstat -ano` (`findPortListenerPid`) — an alive stale-PPM holder (`isPpmProcess`) is reclaimed by tree-kill, while a dead-process zombie socket auto-falls back to a nearby free port. The supervisor self-replace handoff applies the same netstat-based holder resolution before spawning its successor (`windows-process-tree.ts`, `index.ts`, `supervisor.ts`).
+
 ## [0.14.1] - 2026-06-15
 
 ### Added
