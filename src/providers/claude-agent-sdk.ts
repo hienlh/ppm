@@ -904,7 +904,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(providerConfig.thinking_budget_tokens != null && {
           maxThinkingTokens: providerConfig.thinking_budget_tokens,
         }),
-        ...(providerConfig.context_1m && { betas: ["context-1m-2025-08-07"] }),
+        // Beta headers are honored only for API-key auth; OAuth/subscription sessions
+        // reject them ("Custom betas are only available for API key users") and crash the
+        // subprocess. Entitled OAuth accounts still get 1M context via the [1m] model suffix.
+        ...(providerConfig.context_1m && !!queryEnv.ANTHROPIC_API_KEY && { betas: ["context-1m-2025-08-07"] }),
         includePartialMessages: true,
         stderr: stderrCallback,
       };
