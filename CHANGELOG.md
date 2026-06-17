@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.3] - 2026-06-17
+
+### Fixed
+- **In-app upgrade failed with "Executable not found in $PATH: bun"**: when PPM is launched via autostart (launchd/systemd), the spawned process does not inherit the shell `$PATH`, so the upgrade installer's bare `bun`/`npm` command could not be resolved. The installer now uses the absolute path of the running runtime (`process.execPath`) for the bun case, and resolves `npm` next to the runtime's bin dir (falling back to the bare name) for the npm case (`upgrade.service.ts`).
+
+### Changed
+- **Drop unused `action` prop from `FileActions`**: the component only ever handles delete, so the redundant `action: "delete"` prop was removed from all call sites; `adaptive-context-menu` `useRef` initialized explicitly to satisfy strict typings (`file-actions.tsx`, `file-tree.tsx`, `mobile-nav.tsx`, `tab-bar.tsx`, `adaptive-context-menu.tsx`).
+
 ## [0.14.2] - 2026-06-17
 
 ### Fixed
