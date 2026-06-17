@@ -431,7 +431,6 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
 
     {fileActionState && (
       <FileActions
-        action={fileActionState.action}
         node={fileActionState.node}
         projectName={activeProject?.name ?? ""}
         onClose={() => setFileActionState(null)}

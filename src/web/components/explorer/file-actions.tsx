@@ -16,7 +16,6 @@ import {
 import { Button } from "@/components/ui/button";
 
 interface FileActionsProps {
-  action: "delete";
   node: FileNode;
   projectName: string;
   onClose: () => void;

@@ -55,7 +55,7 @@ function ContextMenuTrigger({
 }: React.ComponentProps<typeof Radix.ContextMenuTrigger>) {
   const isMobile = React.useContext(IsMobileCtx);
   const { setOpen } = React.useContext(BottomSheetCtx);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const suppressRef = useRef(false);
 
   if (!isMobile) {

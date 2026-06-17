@@ -394,7 +394,6 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
       {fileActionState && (
         <FileActions
-          action={fileActionState.action}
           node={fileActionState.node}
           projectName={activeProjectForTab?.name ?? ""}
           onClose={() => setFileActionState(null)}

@@ -439,7 +439,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
 
       {actionState?.action === "delete" && (
         <FileActions
-          action="delete"
           node={actionState.node}
           projectName={activeProject.name}
           onClose={() => setActionState(null)}
