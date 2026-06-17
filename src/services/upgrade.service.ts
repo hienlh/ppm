@@ -2,8 +2,8 @@
  * Upgrade service — checks npm registry for latest version, compares with local,
  * detects install method, runs install command.
  */
-import { resolve } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { VERSION } from "../version.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { getPpmDir } from "./ppm-dir.ts";
@@ -56,6 +56,14 @@ export async function checkForUpdate(): Promise<{
   }
 }
 
+/** Resolve npm binary next to the running node runtime, falling back to bare "npm".
+ *  Same rationale as bun: autostart may not have npm's bin dir on $PATH. */
+function resolveNpmBin(): string {
+  const binDir = dirname(process.execPath);
+  const candidate = resolve(binDir, process.platform === "win32" ? "npm.cmd" : "npm");
+  return existsSync(candidate) ? candidate : "npm";
+}
+
 let upgradeInProgress = false;
 
 /** Install the latest version via bun/npm. Returns result with success/error. */
@@ -80,9 +88,13 @@ export async function applyUpgrade(): Promise<{
 
   upgradeInProgress = true;
   const pkg = `@hienlh/ppm@${update.latest}`;
+  // Use the absolute path of the running runtime (process.execPath) instead of a
+  // bare "bun"/"npm" name. When PPM is launched via autostart (launchd/systemd),
+  // $PATH may not include the runtime's bin dir, so a bare name fails with
+  // "Executable not found in $PATH".
   const cmd = method === "bun"
-    ? ["bun", "install", "-g", pkg]
-    : ["npm", "install", "-g", pkg];
+    ? [process.execPath, "install", "-g", pkg]
+    : [resolveNpmBin(), "install", "-g", pkg];
 
   try {
     const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
