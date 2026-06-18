@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.14.4] - 2026-06-18
+
+### Added
+- **Editor tab bar styles (Default / Boxed / Pill)**: new `editorTabStyle` UI preference (persisted + synced) selectable in Settings → Tab Style. Boxed and Pill render each tab as an independent bordered/filled shape so wrapped rows (Wrap Tabs) stay clean. Shared className recipes live in `tab-bar-style.ts`; `draggable-tab.tsx` and `tab-bar.tsx` read the chosen style (`settings-store.ts`, `settings.ts`).
+- **Git panel split commit button**: VSCode-style primary `Commit (N)` + caret dropdown (Commit & Push, Commit & Sync, Amend Last Commit, Push, Pull, Fetch). Amend support added to the commit service/route (`git.service.ts`, `git.ts`).
+
+### Changed
+- **Unified navigation rail (sidebar redesign)**: the standalone project bar and the horizontal section tab strip merge into one left region — a top bar with the PPM wordmark + project switcher flyout (search, select, add, plus rename/color/delete/reorder via context menu) over a vertical section rail (Explorer/Search/Git/Database/Settings + conditional Jira/extensions) with footer utilities. Collapses to an icon-only rail (`sidebar.tsx`, `project-switcher.tsx`, `nav-section-rail.tsx`; removes `project-bar.tsx`).
+- **Git panel commit-on-top**: on desktop the commit block sits directly under the branch header (above worktrees and the file list); mobile keeps it at the bottom. The standalone Push/Pull row is removed (now in the split-button dropdown).
+- **Git panel history button opens Git Graph**: the header history button now launches the Git Graph extension (`git-graph.view`), falling back to the built-in Git Log tab when the extension is disabled.
+
+### Fixed
+- **Git panel header divider color**: the branch-header `border-b` had no border color (Tailwind v4 defaults to `currentColor`, rendering near-black); now uses `border-border`.
+
 ## [0.14.3] - 2026-06-17
 
 ### Fixed
