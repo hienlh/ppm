@@ -4,6 +4,8 @@ import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { isDarkColor } from "@/lib/color-utils";
 import { notificationColor } from "@/stores/notification-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { tabButtonClass } from "@/lib/tab-bar-style";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -51,6 +53,7 @@ export function DraggableTab({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(tab.title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const editorTabStyle = useSettingsStore((s) => s.editorTabStyle);
 
   useEffect(() => {
     if (editing) {
@@ -91,14 +94,7 @@ export function DraggableTab({
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
       style={colorStyle}
-      className={cn(
-        "group flex items-center gap-1 px-3 h-10 whitespace-nowrap text-xs transition-colors",
-        "border-b-2 -mb-px cursor-grab active:cursor-grabbing",
-        !colorStyle && (isActive
-          ? "border-primary text-primary"
-          : "border-transparent text-text-secondary hover:text-foreground"),
-        colorStyle && "border-transparent",
-      )}
+      className={tabButtonClass(editorTabStyle, isActive, !!colorStyle)}
     >
       <span
         // Streaming: force amber (matches favicon streaming bg) so typing state is unmistakable

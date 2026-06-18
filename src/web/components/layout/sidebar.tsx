@@ -1,9 +1,8 @@
-import { useCallback, useRef, useMemo, memo } from "react";
-import { PanelLeftClose, PanelLeftOpen, FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug } from "lucide-react";
+import { useCallback, useRef, memo } from "react";
+import { PanelLeftOpen } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
-import { useExtensionStore } from "@/stores/extension-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
@@ -11,18 +10,10 @@ import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { JiraPanel } from "@/components/jira/jira-panel";
-import { useGitStatusStore, useGitChangesPoller } from "@/stores/git-status-store";
-import { useJiraStore } from "@/stores/jira-store";
+import { useGitChangesPoller } from "@/stores/git-status-store";
 import { ResourceStatusBar } from "@/components/system/resource-status-bar";
-import { cn } from "@/lib/utils";
-
-const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
-  { id: "explorer", label: "Explorer", icon: FolderOpen },
-  { id: "search", label: "Search", icon: Search },
-  { id: "git", label: "Git", icon: GitBranch },
-  { id: "database", label: "Database", icon: Database },
-  { id: "settings", label: "Settings", icon: Settings },
-];
+import { ProjectSwitcher } from "./project-switcher";
+import { NavSectionRail } from "./nav-section-rail";
 
 function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   const dragging = useRef(false);
@@ -38,10 +29,8 @@ function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!dragging.current) return;
-    // Sidebar starts after the project bar (48px wide)
-    const projectBarWidth = 48;
-    const newWidth = e.clientX - projectBarWidth;
-    onResize(newWidth);
+    // Unified rail starts at the viewport's left edge; width is the full aside.
+    onResize(e.clientX);
   }, [onResize]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
@@ -62,6 +51,19 @@ function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   );
 }
 
+function Wordmark({ version, onToggle }: { version: string | null; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      title="Toggle sidebar (⌘B)"
+      className="w-[52px] shrink-0 flex flex-col items-center justify-center gap-px border-r border-border hover:bg-surface-elevated transition-colors"
+    >
+      <span className="text-[11px] font-bold text-primary leading-none">PPM</span>
+      {version && <span className="text-[8px] text-text-subtle leading-none">v{version}</span>}
+    </button>
+  );
+}
+
 export const Sidebar = memo(function Sidebar() {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
@@ -69,42 +71,20 @@ export const Sidebar = memo(function Sidebar() {
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const setSidebarWidth = useSettingsStore((s) => s.setSidebarWidth);
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
-  const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
-  const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
-  const contributions = useExtensionStore((s) => s.contributions);
-  const gitChangesCount = useGitStatusStore((s) =>
-    activeProject?.name ? (s.counts.get(activeProject.name) ?? 0) : 0,
-  );
-  const jiraUnreadCount = useJiraStore((s) => s.unreadCount);
+  const version = useSettingsStore((s) => s.version);
   useGitChangesPoller(activeProject?.name, sidebarActiveTab === "git");
-
-  // Build tabs list: built-in + jira (conditional) + extension-contributed sidebar views
-  const TABS = useMemo(() => {
-    const tabs: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [...BUILTIN_TABS];
-    if (jiraEnabled) {
-      // Insert Jira before Settings
-      const settingsIdx = tabs.findIndex((t) => t.id === "settings");
-      tabs.splice(settingsIdx, 0, { id: "jira", label: "Jira", icon: Bug });
-    }
-    if (contributions?.views) {
-      const sidebarViews = contributions.views["sidebar"] ?? contributions.views["explorer"] ?? [];
-      for (const view of sidebarViews) {
-        tabs.push({ id: `ext:${view.id}` as SidebarActiveTab, label: view.name, icon: Puzzle });
-      }
-    }
-    return tabs;
-  }, [contributions, jiraEnabled]);
 
   if (sidebarCollapsed) {
     return (
-      <aside className="hidden md:flex flex-col w-10 min-w-10 bg-background border-r border-border">
+      <aside className="hidden md:flex flex-col w-[52px] min-w-[52px] bg-background border-r border-border">
         <button
           onClick={toggleSidebar}
           title="Expand sidebar (⌘B)"
-          className="flex items-center justify-center h-[41px] border-b border-border text-text-secondary hover:text-foreground transition-colors"
+          className="flex flex-col items-center justify-center gap-px h-[41px] border-b border-border text-primary hover:bg-surface-elevated transition-colors"
         >
-          <PanelLeftOpen className="size-4" />
+          <PanelLeftOpen className="size-4 text-text-secondary" />
         </button>
+        <NavSectionRail />
       </aside>
     );
   }
@@ -114,79 +94,47 @@ export const Sidebar = memo(function Sidebar() {
       className="hidden md:flex flex-col bg-background border-r border-border overflow-hidden relative"
       style={{ width: sidebarWidth, minWidth: 200, maxWidth: 600 }}
     >
-      {/* Tab bar */}
-      <div className="flex items-center h-[41px] border-b border-border shrink-0">
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = sidebarActiveTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setSidebarActiveTab(tab.id)}
-              className={cn(
-                "flex-1 flex items-center justify-center gap-1.5 h-full text-xs transition-colors border-b-2 -mb-px relative",
-                isActive
-                  ? "border-primary text-primary font-medium"
-                  : "border-transparent text-text-secondary hover:text-foreground",
-              )}
-            >
-              <Icon className="size-3.5" title={tab.label} />
-              {tab.id === "git" && gitChangesCount > 0 && (
-                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-medium leading-none">
-                  {gitChangesCount > 99 ? "99+" : gitChangesCount}
-                </span>
-              )}
-              {tab.id === "jira" && jiraUnreadCount > 0 && (
-                <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-medium leading-none">
-                  {jiraUnreadCount > 99 ? "99+" : jiraUnreadCount}
-                </span>
-              )}
-            </button>
-          );
-        })}
-        <button
-          onClick={toggleSidebar}
-          title="Collapse sidebar (⌘B)"
-          className="flex items-center justify-center w-8 h-full text-text-subtle hover:text-text-secondary transition-colors shrink-0"
-        >
-          <PanelLeftClose className="size-3.5" />
-        </button>
+      {/* Top bar: wordmark + project switcher */}
+      <div className="flex h-[41px] border-b border-border shrink-0">
+        <Wordmark version={version} onToggle={toggleSidebar} />
+        <div className="flex-1 min-w-0 flex items-center px-1.5">
+          <ProjectSwitcher />
+        </div>
       </div>
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        {sidebarActiveTab === "explorer" && (
-          activeProject ? (
-            <FileTree />
-          ) : (
-            <div className="flex items-center justify-center h-24 p-4">
-              <p className="text-xs text-text-subtle text-center">Select a project to browse files</p>
-            </div>
-          )
-        )}
-        {sidebarActiveTab === "git" && (
-          <GitStatusPanel metadata={{ projectName: activeProject?.name }} />
-        )}
-        {sidebarActiveTab === "search" && (
-          <SearchPanel />
-        )}
-        {sidebarActiveTab === "database" && (
-          <DatabaseSidebar />
-        )}
-        {sidebarActiveTab === "jira" && (
-          <JiraPanel />
-        )}
-        {sidebarActiveTab === "settings" && (
-          <SettingsTab />
-        )}
-        {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (
-          <ExtensionTreeView viewId={sidebarActiveTab.slice(4)} className="h-full" />
-        )}
-      </div>
+      {/* Row: section rail + section panel */}
+      <div className="flex-1 min-h-0 flex">
+        <NavSectionRail />
 
-      {/* Resource monitor status bar */}
-      <div className="shrink-0 border-t border-border">
-        <ResourceStatusBar />
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* Panel content */}
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {sidebarActiveTab === "explorer" && (
+              activeProject ? (
+                <FileTree />
+              ) : (
+                <div className="flex items-center justify-center h-24 p-4">
+                  <p className="text-xs text-text-subtle text-center">Select a project to browse files</p>
+                </div>
+              )
+            )}
+            {sidebarActiveTab === "git" && (
+              <GitStatusPanel metadata={{ projectName: activeProject?.name }} />
+            )}
+            {sidebarActiveTab === "search" && <SearchPanel />}
+            {sidebarActiveTab === "database" && <DatabaseSidebar />}
+            {sidebarActiveTab === "jira" && <JiraPanel />}
+            {sidebarActiveTab === "settings" && <SettingsTab />}
+            {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (
+              <ExtensionTreeView viewId={sidebarActiveTab.slice(4)} className="h-full" />
+            )}
+          </div>
+
+          {/* Resource monitor status bar */}
+          <div className="shrink-0 border-t border-border">
+            <ResourceStatusBar />
+          </div>
+        </div>
       </div>
 
       {/* Resize handle */}

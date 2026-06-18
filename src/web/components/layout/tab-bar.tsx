@@ -35,6 +35,7 @@ import { useNotificationStore, notificationColor } from "@/stores/notification-s
 import { useStreamingStore } from "@/stores/streaming-store";
 import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
 import { useSettingsStore } from "@/stores/settings-store";
+import { tabRowClass, tabAddButtonClass } from "@/lib/tab-bar-style";
 import { DraggableTab } from "./draggable-tab";
 import { cn } from "@/lib/utils";
 import type { Tab } from "@/stores/tab-store";
@@ -122,6 +123,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   const streamingSessions = useStreamingStore((s) => s.sessions);
   const tabWrap = useSettingsStore((s) => s.tabWrap);
   const toggleTabWrap = useSettingsStore((s) => s.toggleTabWrap);
+  const editorTabStyle = useSettingsStore((s) => s.editorTabStyle);
 
   const { canScrollLeft, canScrollRight, scrollLeft: doScrollLeft, scrollRight: doScrollRight } =
     useTabOverflow(scrollRef);
@@ -316,7 +318,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
           tabWrap ? "overflow-y-auto overflow-x-hidden" : "overflow-x-auto overflow-y-hidden",
         )}
       >
-        <div className={cn("flex items-center", tabWrap ? "flex-wrap min-h-10" : "h-10")}>
+        <div className={tabRowClass(editorTabStyle, tabWrap)}>
           {tabs.map((tab, i) => {
             const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
             const entry = sessionId ? notifications.get(sessionId) : undefined;
@@ -395,7 +397,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
           <button
             onClick={() => openCommandPalette()}
             title="Open command palette (Shift+Shift)"
-            className="flex items-center justify-center size-10 shrink-0 sticky right-0 border-b-2 border-transparent text-text-secondary hover:text-foreground transition-colors bg-background"
+            className={tabAddButtonClass(editorTabStyle)}
           >
             <Plus className="size-4" />
           </button>

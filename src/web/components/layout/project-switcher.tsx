@@ -1,0 +1,332 @@
+import { useState, useCallback, useMemo, useRef, memo } from "react";
+import { createPortal } from "react-dom";
+import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
+import { useProjectStore, resolveOrder } from "@/stores/project-store";
+import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
+import { getProjectInitials } from "@/lib/project-avatar";
+import { useNotificationStore, selectProjectUrgentType, notificationColor } from "@/stores/notification-store";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/adaptive-context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { AddProjectForm } from "@/components/layout/add-project-form";
+import { cn } from "@/lib/utils";
+
+// ---------------------------------------------------------------------------
+// Avatar circle (gradient + initials + urgent notification dot)
+// ---------------------------------------------------------------------------
+const Avatar = memo(function Avatar({ name, color, size, allNames }: {
+  name: string; color: string; size: number; allNames: string[];
+}) {
+  const initials = getProjectInitials(name, allNames);
+  const selector = useMemo(() => selectProjectUrgentType(name), [name]);
+  const urgentType = useNotificationStore(selector);
+  return (
+    <div className="relative shrink-0">
+      <div
+        className="rounded-full flex items-center justify-center font-bold text-white select-none"
+        style={{ background: color, width: size, height: size, fontSize: size <= 24 ? 10 : 11 }}
+      >
+        {initials}
+      </div>
+      {urgentType && (
+        <div className={cn("absolute -top-0.5 -right-0.5 size-2 rounded-full border-2 border-background", notificationColor(urgentType))} />
+      )}
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Color picker (inline in dialog)
+// ---------------------------------------------------------------------------
+function ColorPicker({ current, onChange }: { current: string; onChange: (c: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {PROJECT_PALETTE.map((c) => (
+        <button
+          key={c}
+          type="button"
+          onClick={() => onChange(c)}
+          className={cn(
+            "size-8 rounded-full border-2 transition-all",
+            current === c ? "border-primary scale-110" : "border-transparent hover:scale-105",
+          )}
+          style={{ background: c }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ProjectSwitcher — top-bar button + flyout list + project management
+// ---------------------------------------------------------------------------
+export const ProjectSwitcher = memo(function ProjectSwitcher() {
+  const {
+    projects, activeProject, setActiveProject, setProjectColor,
+    reorderProjects, renameProject, deleteProject, customOrder,
+  } = useProjectStore(useShallow((s) => ({
+    projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject,
+    setProjectColor: s.setProjectColor, reorderProjects: s.reorderProjects,
+    renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder,
+  })));
+
+  const ordered = resolveOrder(projects, customOrder);
+  const allNames = ordered.map((p) => p.name);
+  const active = activeProject ?? ordered[0] ?? null;
+  const activeIdx = active ? ordered.findIndex((p) => p.name === active.name) : -1;
+  const activeColor = active ? resolveProjectColor(active.color, activeIdx < 0 ? 0 : activeIdx) : "transparent";
+
+  // Flyout + search. Flyout is portaled to body (the sidebar aside is
+  // overflow-hidden, which would otherwise clip a 250px popover).
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [flyoutPos, setFlyoutPos] = useState<{ left: number; top: number } | null>(null);
+
+  const toggleFlyout = useCallback(() => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setFlyoutPos({ left: rect.left, top: rect.bottom + 4 });
+    }
+    setOpen((v) => !v);
+  }, [open]);
+
+  const closeFlyout = useCallback(() => { setOpen(false); setQuery(""); }, []);
+  const filtered = query.trim()
+    ? ordered.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()) || p.path.toLowerCase().includes(query.toLowerCase()))
+    : ordered;
+
+  // Drag-and-drop reorder
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const [dropIdx, setDropIdx] = useState<number | null>(null);
+
+  // Dialogs
+  const [addOpen, setAddOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState("");
+  const [renameValue, setRenameValue] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState("");
+  const [colorOpen, setColorOpen] = useState(false);
+  const [colorTarget, setColorTarget] = useState("");
+  const [colorValue, setColorValue] = useState("");
+  const [colorSaving, setColorSaving] = useState(false);
+
+  const openRename = useCallback((name: string) => { setRenameTarget(name); setRenameValue(name); setRenameOpen(true); }, []);
+  const openDelete = useCallback((name: string) => { setDeleteTarget(name); setDeleteOpen(true); }, []);
+  const openColor = useCallback((name: string, c: string) => { setColorTarget(name); setColorValue(c); setColorOpen(true); }, []);
+
+  async function handleRename() {
+    if (!renameValue.trim() || renameValue === renameTarget) { setRenameOpen(false); return; }
+    try { await renameProject(renameTarget, renameValue.trim()); } catch { /* ignore */ }
+    setRenameOpen(false);
+  }
+  async function handleDelete() {
+    try { await deleteProject(deleteTarget); } catch { /* ignore */ }
+    setDeleteOpen(false);
+  }
+  async function handleColorSave() {
+    setColorSaving(true);
+    try { await setProjectColor(colorTarget, colorValue); setColorOpen(false); }
+    catch (e) { console.error("Failed to save color:", e); }
+    finally { setColorSaving(false); }
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={toggleFlyout}
+        title="Switch project"
+        className={cn(
+          "flex items-center gap-[9px] w-full h-[31px] px-2 rounded-lg transition-colors border",
+          open ? "bg-surface-elevated border-border" : "border-transparent hover:bg-surface-elevated",
+        )}
+      >
+        {active ? (
+          <Avatar name={active.name} color={activeColor} size={24} allNames={allNames} />
+        ) : (
+          <div className="size-6 rounded-full bg-surface-elevated shrink-0" />
+        )}
+        <div className="min-w-0 flex-1 flex flex-col text-left leading-tight">
+          <span className="text-[13px] font-semibold text-foreground truncate">
+            {active?.name ?? "Select project"}
+          </span>
+          {active?.path && (
+            <span className="text-[10px] font-mono text-text-subtle truncate">
+              {active.path}
+            </span>
+          )}
+        </div>
+        <ChevronsUpDown className="size-3.5 text-text-subtle shrink-0" />
+      </button>
+
+      {open && flyoutPos && createPortal(
+        <>
+          {/* backdrop click-catcher */}
+          <div className="fixed inset-0 z-40" onClick={closeFlyout} />
+          <div
+            className="fixed z-50 w-[250px] max-h-[380px] flex flex-col rounded-xl border border-border bg-popover shadow-[0_12px_32px_rgba(0,0,0,.5)] overflow-hidden"
+            style={{ left: flyoutPos.left, top: flyoutPos.top }}
+          >
+            {/* search header */}
+            <div className="flex items-center gap-2 px-2.5 py-2 border-b border-border">
+              <Search className="size-3.5 text-text-subtle shrink-0" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search projects…"
+                autoFocus
+                className="flex-1 bg-transparent text-xs text-foreground placeholder:text-text-subtle focus:outline-none"
+              />
+            </div>
+
+            {/* rows */}
+            <div className="overflow-y-auto p-1.5">
+              {filtered.map((p) => {
+                const idx = ordered.findIndex((o) => o.name === p.name);
+                const color = resolveProjectColor(p.color, idx);
+                const isActive = active?.name === p.name;
+                const isDragging = dragIdx === idx;
+                const isDropTarget = dropIdx === idx && dragIdx !== idx;
+                return (
+                  <ContextMenu key={p.name}>
+                    <ContextMenuTrigger asChild>
+                      <button
+                        draggable
+                        onDragStart={() => setDragIdx(idx)}
+                        onDragOver={(e) => { e.preventDefault(); setDropIdx(idx); }}
+                        onDragLeave={() => setDropIdx(null)}
+                        onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                        onDrop={() => {
+                          if (dragIdx != null && dragIdx !== idx) {
+                            const names = ordered.map((o) => o.name);
+                            const [moved] = names.splice(dragIdx, 1);
+                            names.splice(idx, 0, moved!);
+                            reorderProjects(names);
+                          }
+                          setDragIdx(null);
+                          setDropIdx(null);
+                        }}
+                        onClick={() => { setActiveProject(p); closeFlyout(); }}
+                        className={cn(
+                          "flex items-center gap-2.5 w-full px-2 py-1.5 rounded-lg transition-colors text-left",
+                          isActive ? "bg-primary/[0.12]" : "hover:bg-surface-elevated",
+                          isDragging && "opacity-40",
+                          isDropTarget && "ring-2 ring-primary",
+                        )}
+                      >
+                        <Avatar name={p.name} color={color} size={26} allNames={allNames} />
+                        <div className="min-w-0">
+                          <div className={cn(
+                            "text-[13px] whitespace-nowrap overflow-hidden text-ellipsis",
+                            isActive ? "font-semibold text-primary" : "text-foreground",
+                          )}>{p.name}</div>
+                          <div className="text-[10px] font-mono text-text-subtle whitespace-nowrap overflow-hidden text-ellipsis">{p.path}</div>
+                        </div>
+                      </button>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem onClick={() => openRename(p.name)}>
+                        <Pencil className="size-3.5 mr-2" /> Rename
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => openColor(p.name, color)}>
+                        <Palette className="size-3.5 mr-2" /> Change Color
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => navigator.clipboard.writeText(p.path)}>
+                        <Copy className="size-3.5 mr-2" /> Copy Path
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => openDelete(p.name)}>
+                        <Trash2 className="size-3.5 mr-2" /> Delete
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="px-2 py-4 text-center text-xs text-text-subtle">No projects found</div>
+              )}
+            </div>
+
+            {/* footer: add project */}
+            <button
+              onClick={() => { setAddOpen(true); closeFlyout(); }}
+              className="flex items-center gap-2 px-3 py-2.5 border-t border-border text-text-secondary text-[13px] font-medium hover:bg-surface-elevated transition-colors"
+            >
+              <Plus className="size-[15px]" /> Add Project
+            </button>
+          </div>
+        </>,
+        document.body,
+      )}
+
+      {/* Add project dialog */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Add Project</DialogTitle></DialogHeader>
+          <AddProjectForm onSuccess={() => setAddOpen(false)} onCancel={() => setAddOpen(false)} />
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename dialog */}
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Rename Project</DialogTitle></DialogHeader>
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleRename(); }}
+            className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            autoFocus
+          />
+          <DialogFooter>
+            <button onClick={() => setRenameOpen(false)} className="px-3 py-1.5 text-sm text-text-secondary hover:text-foreground transition-colors">Cancel</button>
+            <button onClick={handleRename} className="px-3 py-1.5 text-sm bg-primary text-white rounded-md hover:bg-primary/90 transition-colors">Rename</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm dialog */}
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Delete Project</DialogTitle></DialogHeader>
+          <p className="text-sm text-text-secondary">
+            Remove <strong className="text-foreground">{deleteTarget}</strong> from PPM? The files on disk won't be deleted.
+          </p>
+          <DialogFooter>
+            <button onClick={() => setDeleteOpen(false)} className="px-3 py-1.5 text-sm text-text-secondary hover:text-foreground transition-colors">Cancel</button>
+            <button onClick={handleDelete} className="px-3 py-1.5 text-sm bg-destructive text-white rounded-md hover:bg-destructive/90 transition-colors">Delete</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Color picker dialog */}
+      <Dialog open={colorOpen} onOpenChange={setColorOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>Change Color</DialogTitle></DialogHeader>
+          <ColorPicker current={colorValue} onChange={setColorValue} />
+          <DialogFooter>
+            <button onClick={() => setColorOpen(false)} className="px-3 py-1.5 text-sm text-text-secondary hover:text-foreground transition-colors">Cancel</button>
+            <button onClick={handleColorSave} disabled={colorSaving} className="px-3 py-1.5 text-sm bg-primary text-white rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50">
+              {colorSaving ? "Saving…" : "Save"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+});

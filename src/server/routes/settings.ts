@@ -110,6 +110,7 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   sidebarCollapsed: (v) => typeof v === "boolean",
   sidebarWidth: (v) => typeof v === "number" && v >= 200 && v <= 600,
   gitStatusViewMode: (v) => v === "flat" || v === "tree",
+  editorTabStyle: (v) => v === "default" || v === "boxed" || v === "pill",
   sidebarActiveTab: (v) => typeof v === "string",
   jiraEnabled: (v) => typeof v === "boolean",
 };

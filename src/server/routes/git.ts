@@ -163,13 +163,13 @@ gitRoutes.post("/unstage", async (c) => {
   }
 });
 
-/** POST /git/commit { message } */
+/** POST /git/commit { message, amend? } */
 gitRoutes.post("/commit", async (c) => {
   try {
     const projectPath = c.get("projectPath");
-    const { message } = await c.req.json<{ message: string }>();
-    if (!message) return c.json(err("Missing: message"), 400);
-    const hash = await gitService.commit(projectPath, message);
+    const { message, amend } = await c.req.json<{ message?: string; amend?: boolean }>();
+    if (!amend && !message) return c.json(err("Missing: message"), 400);
+    const hash = await gitService.commit(projectPath, message ?? "", !!amend);
     return c.json(ok({ hash }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);

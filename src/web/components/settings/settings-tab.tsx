@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useShallow } from "zustand/react/shallow";
-import { useSettingsStore, type Theme } from "@/stores/settings-store";
+import { useSettingsStore, type Theme, type EditorTabStyle } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
@@ -24,6 +24,12 @@ const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] 
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
   { value: "system", label: "System", icon: Monitor },
+];
+
+const TAB_STYLE_OPTIONS: { value: EditorTabStyle; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "boxed", label: "Boxed" },
+  { value: "pill", label: "Pill" },
 ];
 
 type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
@@ -42,7 +48,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
 ];
 
 export function SettingsTab() {
-  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled, tabWrap, toggleTabWrap } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled, tabWrap: s.tabWrap, toggleTabWrap: s.toggleTabWrap })));
+  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled, tabWrap, toggleTabWrap, editorTabStyle, setEditorTabStyle } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled, tabWrap: s.tabWrap, toggleTabWrap: s.toggleTabWrap, editorTabStyle: s.editorTabStyle, setEditorTabStyle: s.setEditorTabStyle })));
   const [activeCategory, setActiveCategory] = useState<SettingsCategory | null>(null);
   const [nameInput, setNameInput] = useState(deviceName ?? "");
   const [nameSaving, setNameSaving] = useState(false);
@@ -190,6 +196,27 @@ export function SettingsTab() {
                 </div>
               </div>
               <Switch checked={tabWrap} onCheckedChange={toggleTabWrap} />
+            </div>
+          </section>
+
+          {/* Tab Style */}
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-muted-foreground">Tab Style</h3>
+            <div className="flex gap-1.5">
+              {TAB_STYLE_OPTIONS.map((opt) => (
+                <Button
+                  key={opt.value}
+                  variant={editorTabStyle === opt.value ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setEditorTabStyle(opt.value)}
+                  className={cn(
+                    "flex-1 text-xs h-8 cursor-pointer",
+                    editorTabStyle === opt.value && "ring-2 ring-primary",
+                  )}
+                >
+                  {opt.label}
+                </Button>
+              ))}
             </div>
           </section>
 

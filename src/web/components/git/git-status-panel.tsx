@@ -13,6 +13,8 @@ import {
   ChevronDown,
   FileText,
   GitCommitHorizontal,
+  GitBranch,
+  Check,
 } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
@@ -21,6 +23,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
+import { useExtensionStore } from "@/stores/extension-store";
 import { GitWorktreePanel } from "./git-worktree-panel";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -28,6 +31,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -126,6 +130,10 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     s.projects.find((p) => p.name === projectName)?.path,
   );
   const setGitChangesCount = useGitStatusStore((s) => s.setCount);
+  // Git Graph extension is available when it has registered its command.
+  const gitGraphAvailable = useExtensionStore(
+    (s) => s.contributions?.commands?.some((c) => c.command === "git-graph.view") ?? false,
+  );
 
   const fetchStatus = useCallback(async () => {
     if (!projectName) return;
@@ -241,6 +249,48 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     }
   };
 
+  const handleAmend = async () => {
+    if (!projectName) return;
+    setActing(true);
+    try {
+      await api.post(`${projectUrl(projectName)}/git/commit`, {
+        message: commitMsg.trim(),
+        amend: true,
+      });
+      setCommitMsg("");
+      await fetchStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Amend failed");
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const handleFetch = async () => {
+    if (!projectName) return;
+    setActing(true);
+    try {
+      await api.post(`${projectUrl(projectName)}/git/fetch`, {});
+      await fetchStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fetch failed");
+    } finally {
+      setActing(false);
+    }
+  };
+
+  // Composite actions sequence existing handlers (each guards on `acting` itself).
+  const handleCommitPush = async () => {
+    await handleCommit();
+    await handlePush();
+  };
+
+  const handleCommitSync = async () => {
+    await handleCommit();
+    await handlePull();
+    await handlePush();
+  };
+
   const openDiff = (file: GitFileChange) => {
     openTab({
       type: "git-diff",
@@ -307,10 +357,88 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     );
   }
 
+  const stagedCount = status?.staged.length ?? 0;
+  const commitDisabled = acting || !commitMsg.trim() || !stagedCount;
+
+  // Compact commit UI — rendered in two slots (top on desktop, bottom on mobile).
+  // State lives in the parent, so both instances stay in sync.
+  const commitBox = (
+    <div className="p-2 flex flex-col gap-2">
+      <textarea
+        className="w-full h-10 px-3 py-2 text-base md:text-sm text-foreground bg-surface border border-border rounded-lg resize-none focus:outline-none focus:border-ring placeholder:text-muted-foreground"
+        placeholder="Message (⌘↵)"
+        value={commitMsg}
+        onChange={(e) => setCommitMsg(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            handleCommit();
+          }
+        }}
+      />
+      <div className="flex h-8">
+        <Button
+          size="sm"
+          className="flex-1 rounded-r-none"
+          disabled={commitDisabled}
+          onClick={handleCommit}
+        >
+          {acting ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <>
+              <Check className="size-3.5" />
+              Commit ({stagedCount})
+            </>
+          )}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              className="w-8 px-0 rounded-l-none border-l border-white/20"
+              disabled={acting}
+              title="More commit actions"
+            >
+              <ChevronDown className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem onClick={handleCommitPush} disabled={commitDisabled}>
+              <ArrowUpFromLine className="size-3.5" />
+              Commit &amp; Push
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleCommitSync} disabled={commitDisabled}>
+              <RefreshCw className="size-3.5" />
+              Commit &amp; Sync
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handleAmend} disabled={acting}>
+              <GitCommitHorizontal className="size-3.5" />
+              Amend Last Commit
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={handlePush} disabled={acting}>
+              <ArrowUpFromLine className="size-3.5" />
+              Push
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handlePull} disabled={acting}>
+              <ArrowDownToLine className="size-3.5" />
+              Pull
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleFetch} disabled={acting}>
+              <RefreshCw className="size-3.5" />
+              Fetch
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b shrink-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
         <span className="text-sm font-medium">
           {status?.current ? `On: ${status.current}` : "Git Status"}
         </span>
@@ -335,18 +463,30 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
             variant="ghost"
             size="icon-xs"
             onClick={() => {
-              openTab({
-                type: "git-log",
-                title: "Git Log",
-                projectId: projectName ?? null,
-                closable: true,
-                metadata: { projectName },
-              });
+              if (gitGraphAvailable) {
+                // Open the Git Graph extension webview (command: git-graph.view, ⌘G)
+                const args: unknown[] = [];
+                if (activeProjectPath) args.push(activeProjectPath);
+                window.dispatchEvent(
+                  new CustomEvent("ext:command:execute", {
+                    detail: { command: "git-graph.view", args },
+                  }),
+                );
+              } else {
+                // Fallback when the extension is disabled: open the built-in Git Log tab.
+                openTab({
+                  type: "git-log",
+                  title: "Git Log",
+                  projectId: projectName ?? null,
+                  closable: true,
+                  metadata: { projectName },
+                });
+              }
               onNavigate?.();
             }}
-            title="View Git Log"
+            title={gitGraphAvailable ? "Open Git Graph (⌘G)" : "View Git Log"}
           >
-            <GitCommitHorizontal className="size-3.5" />
+            <GitBranch className="size-3.5" />
           </Button>
           <Button
             variant="ghost"
@@ -364,6 +504,9 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
           {error}
         </div>
       )}
+
+      {/* Commit block — top on web/desktop */}
+      <div className="hidden md:block border-b border-border">{commitBox}</div>
 
       {/* Worktrees collapsible section */}
       {projectName && (
@@ -431,57 +574,8 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
         </div>
       </ScrollArea>
 
-      {/* Commit section */}
-      <div className="border-t p-2 space-y-2 shrink-0">
-        <textarea
-          className="w-full h-16 px-3 py-2 text-base md:text-sm text-foreground bg-surface border border-border rounded-lg resize-none focus:outline-none focus:border-ring placeholder:text-muted-foreground"
-          placeholder="Commit message..."
-          value={commitMsg}
-          onChange={(e) => setCommitMsg(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              handleCommit();
-            }
-          }}
-        />
-        <Button
-          size="sm"
-          className="w-full"
-          disabled={
-            acting || !commitMsg.trim() || !status?.staged.length
-          }
-          onClick={handleCommit}
-        >
-          {acting ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            `Commit (${status?.staged.length ?? 0})`
-          )}
-        </Button>
-
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            disabled={acting}
-            onClick={handlePush}
-          >
-            <ArrowUpFromLine className="size-3" />
-            Push
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1"
-            disabled={acting}
-            onClick={handlePull}
-          >
-            <ArrowDownToLine className="size-3" />
-            Pull
-          </Button>
-        </div>
-      </div>
+      {/* Commit block — bottom on mobile */}
+      <div className="md:hidden border-t border-border shrink-0">{commitBox}</div>
 
       {/* Revert confirmation dialog */}
       <Dialog

@@ -4,7 +4,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { PanelLayout } from "@/components/layout/panel-layout";
 import { TabPool } from "@/components/layout/tab-pool";
 import { Sidebar } from "@/components/layout/sidebar";
-import { ProjectBar } from "@/components/layout/project-bar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileDrawer } from "@/components/layout/mobile-drawer";
 import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
@@ -274,10 +273,7 @@ export function App() {
 
         {/* Main layout */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Desktop project bar (far left, non-collapsible) */}
-          <ProjectBar />
-
-          {/* Desktop sidebar */}
+          {/* Desktop unified nav rail (wordmark + project switcher + section rail + panel) */}
           <Sidebar />
 
           {/* Content area — keep-alive per project */}

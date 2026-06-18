@@ -208,7 +208,14 @@ class GitService {
     await this.git(projectPath).reset(["HEAD", "--", ...files]);
   }
 
-  async commit(projectPath: string, message: string): Promise<string> {
+  async commit(projectPath: string, message: string, amend = false): Promise<string> {
+    if (amend) {
+      const args = ["commit", "--amend"];
+      if (message?.trim()) args.push("-m", message);
+      else args.push("--no-edit");
+      await this.git(projectPath).raw(args);
+      return (await this.git(projectPath).revparse(["HEAD"])).trim();
+    }
     const result = await this.git(projectPath).commit(message);
     return result.commit;
   }

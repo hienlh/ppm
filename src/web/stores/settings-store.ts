@@ -5,6 +5,7 @@ import hljsLightUrl from "highlight.js/styles/github.min.css?url";
 
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
+export type EditorTabStyle = "default" | "boxed" | "pill";
 export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
@@ -16,6 +17,7 @@ interface SettingsState {
   gitStatusViewMode: GitStatusViewMode;
   wordWrap: boolean;
   tabWrap: boolean;
+  editorTabStyle: EditorTabStyle;
   sidebarActiveTab: SidebarActiveTab;
   jiraEnabled: boolean;
   deviceName: string | null;
@@ -28,6 +30,7 @@ interface SettingsState {
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
   toggleWordWrap: () => void;
   toggleTabWrap: () => void;
+  setEditorTabStyle: (style: EditorTabStyle) => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
   fetchServerInfo: () => Promise<void>;
 }
@@ -39,6 +42,7 @@ interface PersistedSettings {
   gitStatusViewMode?: GitStatusViewMode;
   wordWrap?: boolean;
   tabWrap?: boolean;
+  editorTabStyle?: EditorTabStyle;
   sidebarActiveTab?: SidebarActiveTab;
   jiraEnabled?: boolean;
 }
@@ -106,6 +110,9 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (data.gitStatusViewMode === "flat" || data.gitStatusViewMode === "tree") {
     patch.gitStatusViewMode = data.gitStatusViewMode;
   }
+  if (data.editorTabStyle === "default" || data.editorTabStyle === "boxed" || data.editorTabStyle === "pill") {
+    patch.editorTabStyle = data.editorTabStyle;
+  }
   if (isValidSidebarTab(data.sidebarActiveTab)) patch.sidebarActiveTab = data.sidebarActiveTab;
   if (typeof data.jiraEnabled === "boolean") patch.jiraEnabled = data.jiraEnabled;
   if (Object.keys(patch).length === 0) return;
@@ -162,6 +169,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
   wordWrap: _initial.wordWrap ?? false,
   tabWrap: _initial.tabWrap ?? false,
+  editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "explorer",
   jiraEnabled: _initial.jiraEnabled ?? false,
   deviceName: null,
@@ -232,6 +240,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().tabWrap;
     persistUiPref({ tabWrap: next });
     set({ tabWrap: next });
+  },
+
+  setEditorTabStyle: (style) => {
+    persistUiPref({ editorTabStyle: style });
+    set({ editorTabStyle: style });
   },
 
   setSidebarActiveTab: (tab) => {
