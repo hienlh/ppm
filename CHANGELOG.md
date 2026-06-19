@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.5] - 2026-06-19
+
+### Fixed
+- **`ppm restart` self-heals an orphaned daemon after sleep/crash**: on Windows the Bun supervisor (and its job-object server child) can die on resume from hibernate while the detached cloudflared tunnel survives, leaving a half-alive daemon that `status.json` still names. `ppm restart` previously dead-ended with "Supervisor not running. Use 'ppm stop && ppm start'", forcing a manual two-step recovery. It now detects the dead supervisor, tears down the orphan tunnel + stale state (`stopServer({ kill: true })`), and starts a fresh daemon on the same port (`restart.ts`).
+
 ## [0.14.4] - 2026-06-18
 
 ### Added

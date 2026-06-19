@@ -28,9 +28,25 @@ export async function restartServer(options: { force?: boolean }) {
   // Supervisor-aware restart: send SIGUSR2 → supervisor restarts server child
   const supervisorPid = status.supervisorPid as number | undefined;
   if (supervisorPid) {
-    try { process.kill(supervisorPid, 0); } catch {
-      console.log("Supervisor not running. Use 'ppm stop && ppm start' instead.");
-      process.exit(1);
+    let supervisorAlive = true;
+    try { process.kill(supervisorPid, 0); } catch { supervisorAlive = false; }
+
+    if (!supervisorAlive) {
+      // Supervisor is dead but status.json still names it. This is the
+      // post-hibernate orphan state: on Windows the Bun supervisor (and its
+      // job-object server child) can die on resume while the detached
+      // cloudflared tunnel survives, leaving a half-alive daemon that `ppm
+      // status` reports as "running". Dead-ending with "use stop && start"
+      // forces a manual two-step recovery — instead, self-heal: tear down the
+      // orphan tunnel + stale state, then start a fresh daemon.
+      console.log("\n  Supervisor not running (orphaned after sleep/crash) — recovering...\n");
+      const port = status.port as number | undefined;
+      const profile = status.profile as string | undefined;
+      const { stopServer } = await import("./stop.ts");
+      await stopServer({ kill: true });
+      const { startServer } = await import("../../server/index.ts");
+      await startServer({ port: port ? String(port) : undefined, profile });
+      return;
     }
 
     // Check if supervisor is paused — require --force to resume
