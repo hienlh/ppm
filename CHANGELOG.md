@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.10] - 2026-06-21
+
+### Changed
+- **Mobile project switcher reaches desktop parity** — the mobile project bottom sheet gains the features that previously only existed in the desktop flyout: a **search** field (filter by name/path), a **sort selector** (Recent / Priority / Name, sharing the server-synced `projectSortMode`), per-row **recent open-time** labels, and **Open in New Tab** + **Copy Path** actions in the long-press action sheet. Move Up/Down reorder is now scoped to Priority mode with no active search (matching desktop drag rules). Sort logic (`applySort` + `SORT_OPTIONS`) is extracted into a shared `project-sort.ts` used by both the desktop and mobile switchers.
+
 ## [0.14.9] - 2026-06-21
 
 ### Added
