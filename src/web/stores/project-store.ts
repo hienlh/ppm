@@ -16,6 +16,7 @@ export interface ProjectInfo extends Project {
 // Recently-used tracking via localStorage
 // ---------------------------------------------------------------------------
 const RECENT_KEY = "ppm-recent-projects";
+const RECENT_TIMES_KEY = "ppm-recent-times";
 const CUSTOM_ORDER_KEY = "ppm-custom-order";
 
 function loadRecentOrder(): string[] {
@@ -33,11 +34,46 @@ function saveRecentOrder(order: string[]) {
   } catch { /* ignore */ }
 }
 
-/** Move project name to front of recent list */
+/** Map of project name → epoch ms it was last opened. Populated going forward. */
+export function loadRecentTimes(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(RECENT_TIMES_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveRecentTimes(times: Record<string, number>) {
+  try {
+    localStorage.setItem(RECENT_TIMES_KEY, JSON.stringify(times));
+  } catch { /* ignore */ }
+}
+
+/** Move project name to front of recent list + record last-opened timestamp.
+ *  Writes localStorage (instant) + syncs to server (so other tunnels/devices see it). */
 function touchRecent(name: string) {
   const order = loadRecentOrder().filter((n) => n !== name);
   order.unshift(name);
   saveRecentOrder(order);
+
+  const times = loadRecentTimes();
+  times[name] = Date.now();
+  saveRecentTimes(times);
+
+  // Merge the full map into the shared server-side UI prefs blob.
+  api.put("/api/settings/ui-prefs", { recentOpen: times }).catch(() => { /* offline cache still set */ });
+}
+
+// ---------------------------------------------------------------------------
+// Project list sort mode (persisted server-side + localStorage cache)
+// ---------------------------------------------------------------------------
+export type SortMode = "recent" | "priority" | "name";
+const SORT_KEY = "ppm-project-sort";
+
+function loadSortModeLS(): SortMode {
+  const v = localStorage.getItem(SORT_KEY);
+  return v === "recent" || v === "name" ? v : "priority";
 }
 
 /** Sort projects by recent usage (most recent first) */
@@ -84,9 +120,12 @@ interface ProjectStore {
   projects: ProjectInfo[];
   activeProject: ProjectInfo | null;
   customOrder: string[] | null;
+  projectSortMode: SortMode;
   loading: boolean;
   error: string | null;
   fetchProjects: () => Promise<void>;
+  hydrateUiPrefs: () => Promise<void>;
+  setProjectSortMode: (mode: SortMode) => void;
   setActiveProject: (project: ProjectInfo) => void;
   addProject: (path: string, name?: string) => Promise<ProjectInfo>;
   setProjectColor: (name: string, color: string | null) => Promise<void>;
@@ -100,6 +139,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   projects: [],
   activeProject: null,
   customOrder: loadCustomOrder(),
+  projectSortMode: loadSortModeLS(),
   loading: false,
   error: null,
 
@@ -114,6 +154,36 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         loading: false,
       });
     }
+  },
+
+  /** Load server-persisted UI prefs (sort mode + recent open-times) into the
+   *  local cache so a new tunnel/device reflects the last choice. Call once at startup. */
+  hydrateUiPrefs: async () => {
+    try {
+      // Shared server-side UI prefs blob (also holds sidebar/editor prefs — ignore those here).
+      const prefs = await api.get<{ projectSortMode?: string; recentOpen?: Record<string, number> }>(
+        "/api/settings/ui-prefs",
+      );
+      if (prefs.recentOpen && Object.keys(prefs.recentOpen).length > 0) {
+        saveRecentTimes(prefs.recentOpen);
+        // Rebuild the recent ORDER list from server timestamps (newest first)
+        // so sortByRecent works on a fresh browser with no local order.
+        const order = Object.entries(prefs.recentOpen)
+          .sort((a, b) => b[1] - a[1])
+          .map(([name]) => name);
+        saveRecentOrder(order);
+      }
+      if (prefs.projectSortMode === "recent" || prefs.projectSortMode === "priority" || prefs.projectSortMode === "name") {
+        try { localStorage.setItem(SORT_KEY, prefs.projectSortMode); } catch { /* ignore */ }
+        set({ projectSortMode: prefs.projectSortMode });
+      }
+    } catch { /* server unreachable — keep local cache */ }
+  },
+
+  setProjectSortMode: (mode) => {
+    try { localStorage.setItem(SORT_KEY, mode); } catch { /* ignore */ }
+    set({ projectSortMode: mode });
+    api.put("/api/settings/ui-prefs", { projectSortMode: mode }).catch(() => { /* offline cache still set */ });
   },
 
   setActiveProject: (project) => {

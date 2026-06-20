@@ -142,6 +142,8 @@ export function App() {
     import("@/stores/keybindings-store").then(({ useKeybindingsStore }) => {
       useKeybindingsStore.getState().loadFromServer();
     });
+    // Server-persisted project switcher prefs (sort mode + recent open-times)
+    useProjectStore.getState().hydrateUiPrefs();
   }, [authState]);
 
   // Fetch projects after auth, then restore workspace + URL

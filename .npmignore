@@ -3,6 +3,9 @@ chat-mirror-poc.ts
 terminal-poc.ts
 tail-interactive-jsonl.ts
 verify-billing-signature.ts
+codex-appserver-spike.ts
+codex-cli-poc.ts
+codex-sdk-poc.ts
 .out.txt
 
 # Dev files

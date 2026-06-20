@@ -113,6 +113,11 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   editorTabStyle: (v) => v === "default" || v === "boxed" || v === "pill",
   sidebarActiveTab: (v) => typeof v === "string",
   jiraEnabled: (v) => typeof v === "boolean",
+  // Project switcher prefs
+  projectSortMode: (v) => v === "recent" || v === "priority" || v === "name",
+  recentOpen: (v) =>
+    typeof v === "object" && v !== null && !Array.isArray(v) &&
+    Object.values(v as Record<string, unknown>).every((t) => typeof t === "number"),
 };
 
 /** GET /settings/ui-prefs — return stored UI preferences */

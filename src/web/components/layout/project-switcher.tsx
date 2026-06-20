@@ -2,8 +2,9 @@ import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
 import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Clock, ArrowDownUp, ArrowDownAZ } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useProjectStore, resolveOrder, sortByRecent, type ProjectInfo } from "@/stores/project-store";
+import { useProjectStore, resolveOrder, sortByRecent, loadRecentTimes, type ProjectInfo, type SortMode } from "@/stores/project-store";
 import { buildUrl } from "@/hooks/use-url-sync";
+import { formatRelativeDate } from "@/lib/format-date";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
 import { getProjectInitials } from "@/lib/project-avatar";
 import { useNotificationStore, selectProjectUrgentType, notificationColor } from "@/stores/notification-store";
@@ -25,20 +26,13 @@ import { AddProjectForm } from "@/components/layout/add-project-form";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
-// Sort modes for the project list
+// Sort modes for the project list (SortMode + persistence live in the store)
 // ---------------------------------------------------------------------------
-type SortMode = "recent" | "priority" | "name";
-const SORT_KEY = "ppm-project-sort";
 const SORT_OPTIONS: { mode: SortMode; label: string; Icon: typeof Clock }[] = [
   { mode: "recent", label: "Recent", Icon: Clock },
   { mode: "priority", label: "Priority", Icon: ArrowDownUp },
   { mode: "name", label: "Name", Icon: ArrowDownAZ },
 ];
-
-function loadSortMode(): SortMode {
-  const v = localStorage.getItem(SORT_KEY);
-  return v === "recent" || v === "name" ? v : "priority";
-}
 
 /** Apply the selected sort to the full project list. */
 function applySort(
@@ -102,10 +96,12 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
   const {
     projects, activeProject, setActiveProject, setProjectColor,
     reorderProjects, renameProject, deleteProject, customOrder,
+    sortMode, setProjectSortMode,
   } = useProjectStore(useShallow((s) => ({
     projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject,
     setProjectColor: s.setProjectColor, reorderProjects: s.reorderProjects,
     renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder,
+    sortMode: s.projectSortMode, setProjectSortMode: s.setProjectSortMode,
   })));
 
   const ordered = resolveOrder(projects, customOrder);
@@ -131,21 +127,17 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
 
   const closeFlyout = useCallback(() => { setOpen(false); setQuery(""); }, []);
 
-  // Sort + keyboard navigation
-  const [sortMode, setSortMode] = useState<SortMode>(loadSortMode);
+  // Sort (persisted in store) + keyboard navigation
   const [highlightIdx, setHighlightIdx] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-
-  const changeSort = useCallback((m: SortMode) => {
-    setSortMode(m);
-    try { localStorage.setItem(SORT_KEY, m); } catch { /* ignore */ }
-  }, []);
 
   // Re-sort on open so "recent" picks up fresh localStorage order
   const sortedList = useMemo(
     () => applySort(projects, customOrder, sortMode),
     [projects, customOrder, sortMode, open],
   );
+  // Last-opened timestamps (localStorage); refreshed each time the flyout opens
+  const recentTimes = useMemo(() => loadRecentTimes(), [open]);
   const q = query.trim().toLowerCase();
   const filtered = q
     ? sortedList.filter((p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))
@@ -252,7 +244,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
           {/* backdrop click-catcher */}
           <div className="fixed inset-0 z-40" onClick={closeFlyout} />
           <div
-            className="fixed z-50 w-[250px] max-h-[380px] flex flex-col rounded-xl border border-border bg-popover shadow-[0_12px_32px_rgba(0,0,0,.5)] overflow-hidden"
+            className="fixed z-50 w-[340px] max-h-[680px] flex flex-col rounded-xl border border-border bg-popover shadow-[0_12px_32px_rgba(0,0,0,.5)] overflow-hidden"
             style={{ left: flyoutPos.left, top: flyoutPos.top }}
           >
             {/* search header */}
@@ -273,7 +265,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
               {SORT_OPTIONS.map(({ mode, label, Icon }) => (
                 <button
                   key={mode}
-                  onClick={() => changeSort(mode)}
+                  onClick={() => setProjectSortMode(mode)}
                   title={`Sort by ${label.toLowerCase()}`}
                   className={cn(
                     "flex items-center justify-center gap-1 flex-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
@@ -294,6 +286,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
                 const isHighlighted = fIdx === highlightIdx;
                 const isDragging = dragIdx === idx;
                 const isDropTarget = dropIdx === idx && dragIdx !== idx;
+                const openedAt = recentTimes[p.name];
                 return (
                   <ContextMenu key={p.name}>
                     <ContextMenuTrigger asChild>
@@ -335,6 +328,14 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
                             <div className="text-[10px] font-mono text-text-subtle whitespace-nowrap overflow-hidden text-ellipsis">{p.path}</div>
                           </div>
                         </button>
+                        {openedAt && (
+                          <span
+                            title={`Last opened ${new Date(openedAt).toLocaleString()}`}
+                            className="shrink-0 mr-2 text-[10px] text-text-subtle whitespace-nowrap"
+                          >
+                            {formatRelativeDate(new Date(openedAt).toISOString())}
+                          </span>
+                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); openInNewTab(p); }}
                           title="Open in new browser tab"
