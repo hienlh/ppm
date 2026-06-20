@@ -9,6 +9,7 @@ import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
 import { UsageDetailPanel } from "./usage-badge";
+import { CodexUsagePanel } from "./codex-usage-panel";
 import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
 import { formatRelativeDate } from "@/lib/format-date";
@@ -292,8 +293,9 @@ export function ChatHistoryBar({
     ? sessions.filter((s) => s.tag?.id === selectedTagId)
     : sessions;
 
-  // Usage badge display — only meaningful for Claude (SDK) provider
+  // Usage badge display — Claude (SDK) and Codex both expose usage limits
   const isClaudeProvider = !providerId || providerId === "claude";
+  const isCodexProvider = providerId === "codex";
   const fiveHourPct = usageInfo.fiveHour != null ? Math.round(usageInfo.fiveHour * 100) : null;
   const sevenDayPct = usageInfo.sevenDay != null ? Math.round(usageInfo.sevenDay * 100) : null;
   const worstPct = Math.max(fiveHourPct ?? 0, sevenDayPct ?? 0);
@@ -338,8 +340,8 @@ export function ChatHistoryBar({
           </button>
         )}
 
-        {/* Usage & Accounts — full display for Claude, minimal for other providers */}
-        {isClaudeProvider ? (
+        {/* Usage & Accounts — Claude and Codex both surface usage + account mgmt here */}
+        {(isClaudeProvider || isCodexProvider) ? (
           <button
             onClick={() => togglePanel("usage")}
             className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-elevated ${
@@ -625,7 +627,7 @@ export function ChatHistoryBar({
         </div>
       )}
 
-      {/* Usage panel — only for Claude provider */}
+      {/* Usage panel — Claude shows full account rotation; Codex shows its own accounts */}
       {activePanel === "usage" && isClaudeProvider && (
         <UsageDetailPanel
           usage={usageInfo}
@@ -635,6 +637,9 @@ export function ChatHistoryBar({
           loading={usageLoading}
           lastFetchedAt={lastFetchedAt}
         />
+      )}
+      {activePanel === "usage" && isCodexProvider && (
+        <CodexUsagePanel onClose={() => setActivePanel(null)} />
       )}
 
     </div>
