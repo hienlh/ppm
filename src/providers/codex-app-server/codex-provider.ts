@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   ModelOption,
   SendMessageOpts,
+  UsageInfo,
 } from "../provider.interface.ts";
 import { configService } from "../../services/config.service.ts";
 import { setSessionMetadata, getSessionProjectPath, setSessionProvider } from "../../services/db.service.ts";
@@ -18,6 +19,7 @@ import { permissionModeToCodex, type CodexPermission } from "./codex-permission-
 import { mapCodexEvent } from "./codex-event-mapper.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
+import { parseCodexUsage } from "./codex-usage-parser.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import {
   listCodexRollouts,
@@ -30,12 +32,14 @@ import type {
   JsonRpcNotification,
   ToolRequestUserInputResponse,
   Thread,
+  GetAccountRateLimitsResponse,
 } from "./codex-protocol.ts";
 
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
 const CLIENT_INFO = { name: "ppm", title: "PPM", version: "0.0.0" };
 const CAPABILITIES = { experimentalApi: true, requestAttestation: false, optOutNotificationMethods: null };
 const MODELS_CACHE_TTL = 5 * 60 * 1000;
+const USAGE_CACHE_TTL = 60 * 1000;
 
 interface PendingApproval {
   codexId: number | string;
@@ -148,6 +152,7 @@ export class CodexAppServerProvider implements AIProvider {
   private sessions = new Map<string, Session>();
   private live = new Map<string, LiveSession>();
   private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
+  private usageCache: { usage: UsageInfo; expiry: number } | null = null;
 
   private get config() {
     try { return configService.get("ai").providers["codex"] ?? null; } catch { return null; }
@@ -514,6 +519,25 @@ export class CodexAppServerProvider implements AIProvider {
       return models;
     } catch {
       return [];
+    } finally {
+      client.close();
+    }
+  }
+
+  /** Codex quota via account/rateLimits/read (short-lived client, 60s cache). */
+  async getUsage(): Promise<UsageInfo> {
+    if (this.usageCache && Date.now() < this.usageCache.expiry) return this.usageCache.usage;
+    const client = new CodexJsonRpcClient();
+    try {
+      client.start({ cwd: process.cwd() });
+      await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
+      client.notify("initialized");
+      const res = await client.request<GetAccountRateLimitsResponse>("account/rateLimits/read", {});
+      const usage = parseCodexUsage(res);
+      this.usageCache = { usage, expiry: Date.now() + USAGE_CACHE_TTL };
+      return usage;
+    } catch {
+      return {};
     } finally {
       client.close();
     }

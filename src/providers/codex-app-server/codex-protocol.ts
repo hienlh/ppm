@@ -90,6 +90,22 @@ export interface ModelListResponse {
   nextCursor: string | null;
 }
 
+// ── Account rate limits / usage ──
+export interface RateLimitWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+export interface RateLimitSnapshot {
+  primary: RateLimitWindow | null;
+  secondary: RateLimitWindow | null;
+  planType?: string | null;
+}
+export interface GetAccountRateLimitsResponse {
+  rateLimits: RateLimitSnapshot;
+  rateLimitsByLimitId?: Record<string, RateLimitSnapshot> | null;
+}
+
 // ── JSON-RPC envelopes ──
 export interface JsonRpcRequest {
   id: number | string;

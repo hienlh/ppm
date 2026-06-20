@@ -60,6 +60,15 @@ chatRoutes.post("/slash-recents", async (c) => {
 
 /** GET /chat/usage — return cached usage. ?refresh=1 forces fresh fetch first. */
 chatRoutes.get("/usage", async (c) => {
+  // Non-Claude providers expose their own quota via provider.getUsage().
+  const providerId = c.req.query("providerId");
+  if (providerId && providerId !== "claude") {
+    const provider = providerRegistry.get(providerId) as { getUsage?: () => Promise<unknown> } | undefined;
+    if (provider?.getUsage) {
+      try { return c.json(ok(await provider.getUsage())); } catch { return c.json(ok({})); }
+    }
+    return c.json(ok({}));
+  }
   if (c.req.query("refresh")) {
     try { await refreshUsageNow(); } catch { /* use stale cache */ }
   }

@@ -37,6 +37,8 @@ export interface AIProvider {
   markAsResumed?(sessionId: string): void;
   isAvailable?(): Promise<boolean>;
   listModels?(): Promise<ModelOption[]>;
+  /** Provider-specific usage/quota (rate limits). Used by GET /chat/usage. */
+  getUsage?(): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
 }
