@@ -31,6 +31,23 @@ describe("parseRolloutJsonl", () => {
     expect(() => parseRolloutJsonl(corrupt)).not.toThrow();
   });
 
+  it("maps custom_tool_call (apply_patch) → Write/Edit tool_use in history", () => {
+    const patch = "*** Begin Patch\\n*** Add File: tests/x.txt\\n+hello\\n*** End Patch\\n";
+    const text =
+      `{"type":"event_msg","payload":{"type":"user_message","message":"make a file"}}\n` +
+      `{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call_p1","input":"${patch}"}}\n` +
+      `{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_p1","output":"Exit code: 0\\nSuccess"}}\n` +
+      `{"type":"event_msg","payload":{"type":"agent_message","message":"done"}}\n`;
+    const msgs = parseRolloutJsonl(text);
+    const asst = msgs.find((m) => m.role === "assistant" && m.events?.some((e) => e.type === "tool_use"));
+    expect(asst).toBeDefined();
+    const tu = asst!.events!.find((e) => e.type === "tool_use") as any;
+    expect(tu.tool).toBe("Write");
+    expect(tu.input.file_path).toBe("tests/x.txt");
+    expect(tu.input.content).toBe("hello");
+    expect(asst!.events!.some((e) => e.type === "tool_result" && (e as any).toolUseId === "call_p1")).toBe(true);
+  });
+
   it("compaction: replacement_history replaces pre-compact messages", () => {
     const pre =
       `{"type":"event_msg","payload":{"type":"user_message","message":"old q1"}}\n` +

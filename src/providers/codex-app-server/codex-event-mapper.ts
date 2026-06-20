@@ -1,5 +1,6 @@
 import type { ChatEvent } from "../provider.interface.ts";
 import { redactTruncate } from "./codex-redact.ts";
+import { diffToOldNew, changeToToolUse } from "./codex-patch.ts";
 
 /** ThreadItem variants that map to a PPM tool_use/tool_result pair. */
 const TOOL_ITEM_TYPES = new Set([
@@ -35,9 +36,18 @@ export function itemToToolUse(item: Item): ChatEvent {
       input = { command, cwd: item.cwd };
       break;
     }
-    case "fileChange":
+    case "fileChange": {
+      // Render like Claude's Edit/Write: first change → file_path + diff.
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      const ch = changes[0] as { path?: string; kind?: { type?: string }; diff?: string } | undefined;
+      if (ch) {
+        const { oldString, newString } = diffToOldNew(ch.diff ?? "");
+        const op = (ch.kind?.type as "add" | "update" | "delete") ?? "update";
+        return changeToToolUse({ path: ch.path ?? "", op, oldString, newString }, item.id);
+      }
       input = { changes: item.changes };
       break;
+    }
     case "mcpToolCall":
       tool = `${item.server ?? "mcp"}:${item.tool ?? "tool"}`;
       input = { server: item.server, tool: item.tool, arguments: item.arguments };
@@ -70,8 +80,10 @@ export function itemToToolResult(item: Item): ChatEvent {
     output = redactTruncate(item.result ?? item.error ?? "");
     isError = item.error != null;
   } else if (type === "fileChange") {
-    output = redactTruncate(item.changes ?? "");
-    isError = item.status === "failed";
+    const changes = Array.isArray(item.changes) ? item.changes : [];
+    output = changes.map((c) => `${(c as any)?.kind?.type ?? "update"} ${(c as any)?.path ?? ""}`.trim()).join("\n") || "applied";
+    const st = item.status as { type?: string } | string | undefined;
+    isError = (typeof st === "object" ? st?.type : st) === "failed";
   } else if (type === "dynamicToolCall") {
     output = redactTruncate(item.contentItems ?? "");
     isError = item.success === false;

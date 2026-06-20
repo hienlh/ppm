@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { redactTruncate } from "./codex-redact.ts";
+import { parseApplyPatch, changeToToolUse } from "./codex-patch.ts";
 
 /**
  * Independent parser for Codex rollout JSONL transcripts
@@ -68,7 +69,17 @@ function fnCallToToolUse(p: Record<string, unknown>): ChatEvent {
   return { type: "tool_use", tool: String(p.name ?? "tool"), input: args, toolUseId: callId };
 }
 
-/** rollout `function_call_output` → PPM tool_result (exit-code → isError). */
+/** rollout `custom_tool_call` (apply_patch / custom tools) → PPM tool_use. */
+function customToolCallToToolUse(p: Record<string, unknown>): ChatEvent {
+  const callId = typeof p.call_id === "string" ? p.call_id : undefined;
+  if (p.name === "apply_patch" && typeof p.input === "string") {
+    const changes = parseApplyPatch(p.input);
+    if (changes.length > 0) return changeToToolUse(changes[0]!, callId);
+  }
+  return { type: "tool_use", tool: String(p.name ?? "tool"), input: p.input ?? {}, toolUseId: callId };
+}
+
+/** rollout `function_call_output` / `custom_tool_call_output` → PPM tool_result. */
 function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
   const output = typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? "");
   const m = /exit code:\s*(\d+)/i.exec(output);
@@ -127,6 +138,9 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
     } else if (rec.type === "response_item") {
       if (p.type === "function_call") pendingEvents.push(fnCallToToolUse(p));
       else if (p.type === "function_call_output") pendingEvents.push(fnOutputToToolResult(p));
+      // File edits are recorded as custom_tool_call (name=apply_patch) + output.
+      else if (p.type === "custom_tool_call") pendingEvents.push(customToolCallToToolUse(p));
+      else if (p.type === "custom_tool_call_output") pendingEvents.push(fnOutputToToolResult(p));
     } else if (rec.type === "compacted") {
       // Pre-compact mode: everything accumulated so far IS the pre-compact history.
       if (opts?.preCompact) { if (pendingEvents.length) flushAssistant("", ts); break; }
