@@ -746,6 +746,24 @@ function runMigrations(database: Database): void {
     try { database.exec(`ALTER TABLE session_metadata ADD COLUMN provider_id TEXT`); } catch { /* exists */ }
     database.exec(`PRAGMA user_version = 32`);
   }
+
+  if (current < 33) {
+    // Codex multi-account: one CODEX_HOME dir per account; creds encrypted at rest.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS codex_accounts (
+        id         TEXT PRIMARY KEY,
+        label      TEXT,
+        type       TEXT NOT NULL,
+        home       TEXT NOT NULL,
+        plan_type  TEXT,
+        creds_enc  TEXT,
+        added_at   TEXT DEFAULT (datetime('now'))
+      );
+    `);
+    // Per-session codex account binding (sticky across restarts).
+    try { database.exec(`ALTER TABLE session_metadata ADD COLUMN codex_account_id TEXT`); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 33`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -912,6 +930,18 @@ export function setSessionProvider(sessionId: string, providerId: string): void 
   getDb().query(
     "INSERT INTO session_metadata (session_id, provider_id) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET provider_id = excluded.provider_id",
   ).run(sessionId, providerId);
+}
+
+/** Codex account bound to a session (sticky across restarts). */
+export function getSessionCodexAccount(sessionId: string): string | null {
+  const row = getDb().query("SELECT codex_account_id FROM session_metadata WHERE session_id = ?").get(sessionId) as { codex_account_id: string | null } | null;
+  return row?.codex_account_id ?? null;
+}
+
+export function setSessionCodexAccount(sessionId: string, accountId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, codex_account_id) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET codex_account_id = excluded.codex_account_id",
+  ).run(sessionId, accountId);
 }
 
 /** Per-session model override; null when session uses provider default */

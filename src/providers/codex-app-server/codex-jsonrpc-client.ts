@@ -49,12 +49,15 @@ export class CodexJsonRpcClient {
   private closeHandler: CloseHandler = () => {};
   private closed = false;
 
-  /** Spawn the subprocess. Injectable streams allow unit testing without a real spawn. */
-  start(opts?: { cwd?: string }): void {
+  /** Spawn the subprocess. Injectable streams allow unit testing without a real spawn.
+   * `codexHome` selects which account's auth the app-server uses (CODEX_HOME). */
+  start(opts?: { cwd?: string; codexHome?: string }): void {
+    const env = buildSpawnEnv();
+    if (opts?.codexHome) env.CODEX_HOME = opts.codexHome;
     this.proc = spawn(process.execPath, ["x", "@openai/codex", "app-server"], {
       cwd: opts?.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: buildSpawnEnv(),
+      env,
       windowsHide: true,
     });
     this.attach(this.proc.stdout!, this.proc.stderr);

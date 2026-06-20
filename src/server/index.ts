@@ -151,6 +151,8 @@ app.route("/api/project/:projectName", projectScopedRouter);
 app.route("/api/postgres", postgresRoutes);
 app.route("/api/db", databaseRoutes);
 app.route("/api/accounts", accountsRoutes);
+import { codexAccountsRoutes } from "./routes/codex-accounts.ts";
+app.route("/api/codex-accounts", codexAccountsRoutes);
 
 // Jira watcher
 import { jiraRoutes } from "./routes/jira.ts";

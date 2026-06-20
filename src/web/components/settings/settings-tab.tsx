@@ -12,6 +12,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore, type Theme, type EditorTabStyle } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
+import { CodexAccountsSection } from "./codex-accounts-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
 import { McpSettingsSection } from "./mcp-settings-section";
@@ -32,10 +33,11 @@ const TAB_STYLE_OPTIONS: { value: EditorTabStyle; label: string }[] = [
   { value: "pill", label: "Pill" },
 ];
 
-type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
+type SettingsCategory = "ai" | "codex" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
+  { value: "codex", label: "Codex Accounts", subtitle: "Multiple OpenAI/Codex logins", icon: Bot },
   { value: "notifications", label: "Notifications", subtitle: "Push & Telegram alerts", icon: BellRing },
   { value: "clawbot", label: "PPMBot", subtitle: "Telegram AI bot", icon: Bot },
   { value: "schedules", label: "Scheduled Agents", subtitle: "Run Claude on a cron schedule", icon: CalendarClock },
@@ -93,6 +95,7 @@ export function SettingsTab() {
         <ScrollArea className="flex-1 min-h-0">
           <div className="p-3">
             {activeCategory === "ai" && <AISettingsSection compact />}
+            {activeCategory === "codex" && <CodexAccountsSection />}
             {activeCategory === "notifications" && <NotificationsContent />}
             {activeCategory === "clawbot" && <PPMBotSettingsSection />}
             {activeCategory === "schedules" && <SchedulesSettingsSection />}

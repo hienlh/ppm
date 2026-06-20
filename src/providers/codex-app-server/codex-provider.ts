@@ -10,7 +10,8 @@ import type {
   UsageInfo,
 } from "../provider.interface.ts";
 import { configService } from "../../services/config.service.ts";
-import { setSessionMetadata, getSessionProjectPath, setSessionProvider } from "../../services/db.service.ts";
+import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount } from "../../services/db.service.ts";
+import { resolveCodexAccountForSession } from "../../services/codex-account.service.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ import { permissionModeToCodex, type CodexPermission } from "./codex-permission-
 import { mapCodexEvent } from "./codex-event-mapper.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
-import { parseCodexUsage } from "./codex-usage-parser.ts";
+import { fetchCodexUsage } from "./codex-usage-fetch.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import {
   listCodexRollouts,
@@ -32,14 +33,12 @@ import type {
   JsonRpcNotification,
   ToolRequestUserInputResponse,
   Thread,
-  GetAccountRateLimitsResponse,
 } from "./codex-protocol.ts";
 
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
 const CLIENT_INFO = { name: "ppm", title: "PPM", version: "0.0.0" };
 const CAPABILITIES = { experimentalApi: true, requestAttestation: false, optOutNotificationMethods: null };
 const MODELS_CACHE_TTL = 5 * 60 * 1000;
-const USAGE_CACHE_TTL = 60 * 1000;
 
 interface PendingApproval {
   codexId: number | string;
@@ -152,7 +151,6 @@ export class CodexAppServerProvider implements AIProvider {
   private sessions = new Map<string, Session>();
   private live = new Map<string, LiveSession>();
   private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
-  private usageCache: { usage: UsageInfo; expiry: number } | null = null;
 
   private get config() {
     try { return configService.get("ai").providers["codex"] ?? null; } catch { return null; }
@@ -275,10 +273,14 @@ export class CodexAppServerProvider implements AIProvider {
     };
     this.live.set(sessionId, live);
 
+    // Multi-account: resolve which codex account backs this session (sticky → strategy →
+    // null = default ~/.codex). Spawn the app-server with that account's CODEX_HOME.
+    const account = await resolveCodexAccountForSession(sessionId);
+
     client.onNotification((n) => this.handleNotification(live, n));
     client.onServerRequest((r) => this.handleServerRequest(live, r));
     client.onClose(() => this.handleClose(live));
-    client.start({ cwd });
+    client.start({ cwd, codexHome: account?.home });
 
     await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
     client.notify("initialized");
@@ -301,10 +303,12 @@ export class CodexAppServerProvider implements AIProvider {
       if (meta) { this.sessions.delete(sessionId); meta.id = threadId; this.sessions.set(threadId, meta); }
       setSessionMetadata(threadId, meta?.projectName, cwd);
       setSessionProvider(threadId, this.id); // route follow-ups to codex after restart
+      if (account) setSessionCodexAccount(threadId, account.id); // sticky account
       channel.push({ type: "session_migrated", oldSessionId: sessionId, newSessionId: threadId });
     } else {
       setSessionMetadata(threadId, meta?.projectName, cwd);
       setSessionProvider(threadId, this.id);
+      if (account) setSessionCodexAccount(threadId, account.id);
     }
     return live;
   }
@@ -524,22 +528,8 @@ export class CodexAppServerProvider implements AIProvider {
     }
   }
 
-  /** Codex quota via account/rateLimits/read (short-lived client, 60s cache). */
+  /** Codex quota for the default account (account/rateLimits/read, 60s cache). */
   async getUsage(): Promise<UsageInfo> {
-    if (this.usageCache && Date.now() < this.usageCache.expiry) return this.usageCache.usage;
-    const client = new CodexJsonRpcClient();
-    try {
-      client.start({ cwd: process.cwd() });
-      await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
-      client.notify("initialized");
-      const res = await client.request<GetAccountRateLimitsResponse>("account/rateLimits/read", {});
-      const usage = parseCodexUsage(res);
-      this.usageCache = { usage, expiry: Date.now() + USAGE_CACHE_TTL };
-      return usage;
-    } catch {
-      return {};
-    } finally {
-      client.close();
-    }
+    return fetchCodexUsage();
   }
 }
