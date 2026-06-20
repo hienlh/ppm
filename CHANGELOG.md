@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.14.8] - 2026-06-20
+
+### Changed
+- **Project switcher prefs sync across devices/tunnels** — the sort mode and the recently-opened timestamps are now persisted server-side (in the shared UI-prefs blob) instead of localStorage-only. On startup `hydrateUiPrefs()` pulls the server copy and rebuilds the local recent-order cache, so opening PPM on a fresh browser/device/tunnel reflects your last sort choice and recent-open history. New `projectSortMode` + `recentOpen` UI-pref validators (`settings.ts`); writes go to `PUT /api/settings/ui-prefs` on selection.
+- **Larger project switcher flyout** — widened to 340px and raised the max height to 680px for easier scanning of longer project lists.
+
 ## [0.14.7] - 2026-06-20
 
 ### Added
