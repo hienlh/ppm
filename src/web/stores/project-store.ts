@@ -117,6 +117,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   setActiveProject: (project) => {
+    touchRecent(project.name);
     set({ activeProject: project });
   },
 

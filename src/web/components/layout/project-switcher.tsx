@@ -1,8 +1,9 @@
-import { useState, useCallback, useMemo, useRef, memo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown } from "lucide-react";
+import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Clock, ArrowDownUp, ArrowDownAZ } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useProjectStore, resolveOrder } from "@/stores/project-store";
+import { useProjectStore, resolveOrder, sortByRecent, type ProjectInfo } from "@/stores/project-store";
+import { buildUrl } from "@/hooks/use-url-sync";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
 import { getProjectInitials } from "@/lib/project-avatar";
 import { useNotificationStore, selectProjectUrgentType, notificationColor } from "@/stores/notification-store";
@@ -22,6 +23,31 @@ import {
 } from "@/components/ui/dialog";
 import { AddProjectForm } from "@/components/layout/add-project-form";
 import { cn } from "@/lib/utils";
+
+// ---------------------------------------------------------------------------
+// Sort modes for the project list
+// ---------------------------------------------------------------------------
+type SortMode = "recent" | "priority" | "name";
+const SORT_KEY = "ppm-project-sort";
+const SORT_OPTIONS: { mode: SortMode; label: string; Icon: typeof Clock }[] = [
+  { mode: "recent", label: "Recent", Icon: Clock },
+  { mode: "priority", label: "Priority", Icon: ArrowDownUp },
+  { mode: "name", label: "Name", Icon: ArrowDownAZ },
+];
+
+function loadSortMode(): SortMode {
+  const v = localStorage.getItem(SORT_KEY);
+  return v === "recent" || v === "name" ? v : "priority";
+}
+
+/** Apply the selected sort to the full project list. */
+function applySort(
+  projects: ProjectInfo[], customOrder: string[] | null, mode: SortMode,
+): ProjectInfo[] {
+  if (mode === "recent") return sortByRecent(projects);
+  if (mode === "name") return [...projects].sort((a, b) => a.name.localeCompare(b.name));
+  return resolveOrder(projects, customOrder); // priority = manual/custom order
+}
 
 // ---------------------------------------------------------------------------
 // Avatar circle (gradient + initials + urgent notification dot)
@@ -104,9 +130,57 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
   }, [open]);
 
   const closeFlyout = useCallback(() => { setOpen(false); setQuery(""); }, []);
-  const filtered = query.trim()
-    ? ordered.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()) || p.path.toLowerCase().includes(query.toLowerCase()))
-    : ordered;
+
+  // Sort + keyboard navigation
+  const [sortMode, setSortMode] = useState<SortMode>(loadSortMode);
+  const [highlightIdx, setHighlightIdx] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const changeSort = useCallback((m: SortMode) => {
+    setSortMode(m);
+    try { localStorage.setItem(SORT_KEY, m); } catch { /* ignore */ }
+  }, []);
+
+  // Re-sort on open so "recent" picks up fresh localStorage order
+  const sortedList = useMemo(
+    () => applySort(projects, customOrder, sortMode),
+    [projects, customOrder, sortMode, open],
+  );
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? sortedList.filter((p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))
+    : sortedList;
+  const draggable = sortMode === "priority" && !q;
+
+  const openProject = useCallback((p: ProjectInfo) => { setActiveProject(p); closeFlyout(); }, [setActiveProject, closeFlyout]);
+  const openInNewTab = useCallback((p: ProjectInfo) => { window.open(buildUrl(p.name, null), "_blank", "noopener"); }, []);
+
+  // Reset highlight when the visible list changes
+  useEffect(() => { setHighlightIdx(0); }, [query, sortMode, open]);
+
+  // Keep the highlighted row in view
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-row-index="${highlightIdx}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [highlightIdx]);
+
+  const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIdx((i) => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const target = filtered[highlightIdx] ?? filtered[0];
+      if (!target) return;
+      if (e.ctrlKey || e.metaKey) openInNewTab(target);
+      else openProject(target);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeFlyout();
+    }
+  }, [filtered, highlightIdx, openInNewTab, openProject, closeFlyout]);
 
   // Drag-and-drop reorder
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -187,31 +261,51 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 placeholder="Search projects…"
                 autoFocus
                 className="flex-1 bg-transparent text-xs text-foreground placeholder:text-text-subtle focus:outline-none"
               />
             </div>
 
+            {/* sort selector */}
+            <div className="flex items-center gap-1 px-1.5 py-1.5 border-b border-border">
+              {SORT_OPTIONS.map(({ mode, label, Icon }) => (
+                <button
+                  key={mode}
+                  onClick={() => changeSort(mode)}
+                  title={`Sort by ${label.toLowerCase()}`}
+                  className={cn(
+                    "flex items-center justify-center gap-1 flex-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+                    sortMode === mode ? "bg-primary/[0.12] text-primary" : "text-text-subtle hover:bg-surface-elevated hover:text-foreground",
+                  )}
+                >
+                  <Icon className="size-3" /> {label}
+                </button>
+              ))}
+            </div>
+
             {/* rows */}
-            <div className="overflow-y-auto p-1.5">
-              {filtered.map((p) => {
+            <div ref={listRef} className="overflow-y-auto p-1.5">
+              {filtered.map((p, fIdx) => {
                 const idx = ordered.findIndex((o) => o.name === p.name);
                 const color = resolveProjectColor(p.color, idx);
                 const isActive = active?.name === p.name;
+                const isHighlighted = fIdx === highlightIdx;
                 const isDragging = dragIdx === idx;
                 const isDropTarget = dropIdx === idx && dragIdx !== idx;
                 return (
                   <ContextMenu key={p.name}>
                     <ContextMenuTrigger asChild>
-                      <button
-                        draggable
-                        onDragStart={() => setDragIdx(idx)}
-                        onDragOver={(e) => { e.preventDefault(); setDropIdx(idx); }}
+                      <div
+                        data-row-index={fIdx}
+                        draggable={draggable}
+                        onDragStart={() => draggable && setDragIdx(idx)}
+                        onDragOver={(e) => { if (draggable) { e.preventDefault(); setDropIdx(idx); } }}
                         onDragLeave={() => setDropIdx(null)}
                         onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
                         onDrop={() => {
-                          if (dragIdx != null && dragIdx !== idx) {
+                          if (draggable && dragIdx != null && dragIdx !== idx) {
                             const names = ordered.map((o) => o.name);
                             const [moved] = names.splice(dragIdx, 1);
                             names.splice(idx, 0, moved!);
@@ -220,25 +314,44 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
                           setDragIdx(null);
                           setDropIdx(null);
                         }}
-                        onClick={() => { setActiveProject(p); closeFlyout(); }}
+                        onMouseEnter={() => setHighlightIdx(fIdx)}
                         className={cn(
-                          "flex items-center gap-2.5 w-full px-2 py-1.5 rounded-lg transition-colors text-left",
-                          isActive ? "bg-primary/[0.12]" : "hover:bg-surface-elevated",
+                          "group relative flex items-center rounded-lg transition-colors",
+                          isActive ? "bg-primary/[0.12]" : isHighlighted ? "bg-surface-elevated" : "",
                           isDragging && "opacity-40",
                           isDropTarget && "ring-2 ring-primary",
                         )}
                       >
-                        <Avatar name={p.name} color={color} size={26} allNames={allNames} />
-                        <div className="min-w-0">
-                          <div className={cn(
-                            "text-[13px] whitespace-nowrap overflow-hidden text-ellipsis",
-                            isActive ? "font-semibold text-primary" : "text-foreground",
-                          )}>{p.name}</div>
-                          <div className="text-[10px] font-mono text-text-subtle whitespace-nowrap overflow-hidden text-ellipsis">{p.path}</div>
-                        </div>
-                      </button>
+                        <button
+                          onClick={() => openProject(p)}
+                          className="flex items-center gap-2.5 min-w-0 flex-1 px-2 py-1.5 text-left"
+                        >
+                          <Avatar name={p.name} color={color} size={26} allNames={allNames} />
+                          <div className="min-w-0">
+                            <div className={cn(
+                              "text-[13px] whitespace-nowrap overflow-hidden text-ellipsis",
+                              isActive ? "font-semibold text-primary" : "text-foreground",
+                            )}>{p.name}</div>
+                            <div className="text-[10px] font-mono text-text-subtle whitespace-nowrap overflow-hidden text-ellipsis">{p.path}</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openInNewTab(p); }}
+                          title="Open in new browser tab"
+                          className={cn(
+                            "shrink-0 mr-1 p-1.5 rounded-md text-text-subtle hover:bg-background hover:text-foreground transition-opacity",
+                            isHighlighted ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+                          )}
+                        >
+                          <ExternalLink className="size-3.5" />
+                        </button>
+                      </div>
                     </ContextMenuTrigger>
                     <ContextMenuContent>
+                      <ContextMenuItem onClick={() => openInNewTab(p)}>
+                        <ExternalLink className="size-3.5 mr-2" /> Open in New Tab
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
                       <ContextMenuItem onClick={() => openRename(p.name)}>
                         <Pencil className="size-3.5 mr-2" /> Rename
                       </ContextMenuItem>

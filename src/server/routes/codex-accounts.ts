@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
 import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, type CodexStrategy } from "../../services/codex-account.service.ts";
 import { addApiKeyAccount, startDeviceLogin, awaitDeviceLogin } from "../../services/codex-account-login.ts";
+import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
 export const codexAccountsRoutes = new Hono();
@@ -38,6 +39,27 @@ codexAccountsRoutes.post("/device-login", async (c) => {
 /** Long-poll until the device login completes; persists the account on success. */
 codexAccountsRoutes.post("/device-login/:id/await", async (c) => {
   try { return c.json(ok(await awaitDeviceLogin(c.req.param("id"))), 201); }
+  catch (e) { return c.json(err((e as Error).message), 400); }
+});
+
+/** Download a password-encrypted backup of codex accounts (auth.json + apiKey creds). */
+codexAccountsRoutes.post("/export", async (c) => {
+  const body = await c.req.json<{ password?: string; accountIds?: string[] }>().catch(() => ({} as { password?: string; accountIds?: string[] }));
+  if (!body.password) return c.json(err("Password required"), 400);
+  try {
+    const blob = exportCodexEncrypted(body.password, body.accountIds);
+    c.header("Content-Disposition", "attachment; filename=ppm-codex-accounts-backup.json");
+    c.header("Content-Type", "application/json");
+    return c.body(blob);
+  } catch (e) { return c.json(err((e as Error).message), 400); }
+});
+
+/** Restore codex accounts from a password-encrypted backup. */
+codexAccountsRoutes.post("/import", async (c) => {
+  const body = await c.req.json<{ data?: string; password?: string }>().catch(() => ({} as { data?: string; password?: string }));
+  if (!body.data) return c.json(err("Backup data required"), 400);
+  if (!body.password) return c.json(err("Password required"), 400);
+  try { return c.json(ok(importCodexEncrypted(body.data, body.password))); }
   catch (e) { return c.json(err((e as Error).message), 400); }
 });
 

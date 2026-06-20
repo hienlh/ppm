@@ -639,7 +639,7 @@ export function ChatHistoryBar({
         />
       )}
       {activePanel === "usage" && isCodexProvider && (
-        <CodexUsagePanel onClose={() => setActivePanel(null)} />
+        <CodexUsagePanel usage={usageInfo} onClose={() => setActivePanel(null)} />
       )}
 
     </div>

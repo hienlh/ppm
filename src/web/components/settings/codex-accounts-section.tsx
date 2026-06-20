@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
-import { api } from "@/lib/api-client";
-import { Trash2, Loader2, KeyRound, MonitorSmartphone, ExternalLink } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { api, getAuthToken } from "@/lib/api-client";
+import { Trash2, Loader2, KeyRound, MonitorSmartphone, ExternalLink, Download, Upload } from "lucide-react";
 
 type Strategy = "round-robin" | "fill-first" | "lowest-usage";
 interface CodexAccount { id: string; label: string; type: string; planType?: string | null }
@@ -28,6 +28,11 @@ export function CodexAccountsSection() {
   const [err, setErr] = useState<string | null>(null);
   const [device, setDevice] = useState<DevicePending | null>(null);
   const [deviceWaiting, setDeviceWaiting] = useState(false);
+  const [backupPassword, setBackupPassword] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,6 +68,37 @@ export function CodexAccountsSection() {
   const remove = async (id: string) => { await api.del(`/api/codex-accounts/${id}`); await load(); };
   const changeStrategy = async (s: Strategy) => { setStrategy(s); try { await api.put("/api/codex-accounts/strategy", { strategy: s }); } catch { /* revert on reload */ } };
 
+  const doExport = async () => {
+    if (!backupPassword.trim()) { setErr("Set a backup password first."); return; }
+    setExporting(true); setErr(null); setMsg(null);
+    try {
+      const headers: HeadersInit = { "Content-Type": "application/json" };
+      const token = getAuthToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/api/codex-accounts/export", { method: "POST", headers, body: JSON.stringify({ password: backupPassword }) });
+      if (!res.ok) { const j = await res.json().catch(() => ({})) as { error?: string }; throw new Error(j.error ?? `Export failed: ${res.status}`); }
+      const text = await res.text();
+      const blob = new Blob([text], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "ppm-codex-accounts-backup.json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setMsg("Backup downloaded.");
+    } catch (e) { setErr((e as Error).message); } finally { setExporting(false); }
+  };
+
+  const doImport = async (file: File) => {
+    if (!backupPassword.trim()) { setErr("Enter the backup password first."); return; }
+    setImporting(true); setErr(null); setMsg(null);
+    try {
+      const data = await file.text();
+      const r = await api.post<{ imported: number; skipped: number }>("/api/codex-accounts/import", { data, password: backupPassword });
+      setMsg(`Imported ${r.imported}${r.skipped ? `, skipped ${r.skipped}` : ""}.`);
+      await load();
+    } catch (e) { setErr((e as Error).message); } finally { setImporting(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
+  };
+
   return (
     <div className="space-y-4">
       <div>
@@ -71,6 +107,7 @@ export function CodexAccountsSection() {
       </div>
 
       {err && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-md p-2">{err}</div>}
+      {msg && <div className="text-xs text-green-500 bg-green-500/10 border border-green-500/30 rounded-md p-2">{msg}</div>}
 
       {/* Strategy */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -124,6 +161,25 @@ export function CodexAccountsSection() {
           className="inline-flex items-center justify-center gap-2 text-sm px-4 min-h-[44px] w-full sm:w-auto rounded-md border border-border bg-surface/50 hover:bg-surface text-text-primary disabled:opacity-60">
           {deviceWaiting ? <Loader2 className="size-4 animate-spin" /> : <MonitorSmartphone className="size-4" />} Sign in with ChatGPT (device code)
         </button>
+      </div>
+
+      {/* Backup: export / import (password-encrypted bundle of auth.json + apiKey creds) */}
+      <div className="border border-border rounded-md p-3 space-y-2">
+        <p className="text-xs text-text-secondary">Backup &amp; transfer — password-encrypted file with each account's login.</p>
+        <input value={backupPassword} onChange={(e) => setBackupPassword(e.target.value)} type="password" placeholder="Backup password"
+          className="w-full text-sm bg-surface border border-border rounded-md px-3 min-h-[44px] text-text-primary placeholder:text-text-subtle" />
+        <div className="flex gap-2 flex-col sm:flex-row">
+          <button type="button" onClick={doExport} disabled={exporting || !backupPassword.trim()}
+            className="flex-1 inline-flex items-center justify-center gap-2 text-sm px-4 min-h-[44px] rounded-md border border-border bg-surface/50 hover:bg-surface text-text-primary disabled:opacity-60">
+            {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />} Export
+          </button>
+          <button type="button" onClick={() => fileInputRef.current?.click()} disabled={importing || !backupPassword.trim()}
+            className="flex-1 inline-flex items-center justify-center gap-2 text-sm px-4 min-h-[44px] rounded-md border border-border bg-surface/50 hover:bg-surface text-text-primary disabled:opacity-60">
+            {importing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />} Import
+          </button>
+          <input ref={fileInputRef} type="file" accept="application/json,.json" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) doImport(f); }} />
+        </div>
       </div>
 
       {/* Device-code prompt */}

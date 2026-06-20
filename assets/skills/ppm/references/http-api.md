@@ -44,6 +44,16 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/cloud/login-url`
 - `GET    /api/cloud/cloud_url`
 
+## /api/codex-accounts
+
+- `GET    /api/codex-accounts`
+- `GET    /api/codex-accounts/usage`
+- `PUT    /api/codex-accounts/strategy`
+- `POST   /api/codex-accounts/api-key`
+- `POST   /api/codex-accounts/device-login`
+- `POST   /api/codex-accounts/device-login/:id/await`
+- `DELETE /api/codex-accounts/:id`
+
 ## /api/db
 
 - `GET    /api/db/connections`
@@ -220,4 +230,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.14.3 -->
+<!-- Generated from src/server/routes/ for PPM v0.14.6 -->

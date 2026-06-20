@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 import { api } from "@/lib/api-client";
 import { ProviderBadge } from "@/components/chat/provider-selector";
+import { CodexAccountsSection } from "./codex-accounts-section";
 import type { ModelOption } from "../../../types/chat";
 
 const EFFORT_OPTIONS = [
@@ -134,6 +135,9 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       )}
 
       <div className={innerGap}>
+        {/* Codex account login/management lives here (codex auth is per-CODEX_HOME) */}
+        {activeTab === "codex" && <CodexAccountsSection />}
+
         {/* Model selector — dynamic, works for all providers */}
         {models.length > 0 && (
           <div className={fieldGap}>
