@@ -1,9 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [0.14.6] - 2026-06-20
 
 ### Added
 - **Codex (OpenAI) chat provider** — PPM's 3rd chat provider, implementing `AIProvider` directly against `codex app-server` over newline-delimited JSON-RPC (stdio). Delivers token-by-token streaming, multi-turn in one live session (`pushMessage` → `turn/start` multiplexed over a single notification stream), subprocess lifecycle (abort SIGTERM→SIGKILL + Windows `killProcessTree`, `cleanupAll` on shutdown), resume + sidebar history (rollout JSONL parser with a fail-closed cwd filter so cross-project transcripts never leak), and a model picker (`model/list`, paginated, TTL-cached). Approval mode reuses PPM's existing `permissionMode` (mapped to codex `{sandbox, approvalPolicy}`); the inbound approval / ask-user-input bridge is protocol-correct but dormant under the default `bypassPermissions` (Full access). Registers only when the scoped `@openai/codex` binary resolves (`codex login` required); PPM never manages Codex auth. New code under `src/providers/codex-app-server/`; removed the unused `@openai/codex-sdk` devDependency.
+- **Codex multi-account** — manage multiple Codex logins (parity with Claude accounts). Each account owns its own `CODEX_HOME` dir (`~/.ppm/codex-accounts/<id>`, 0700) where the app-server writes `auth.json`; PPM spawns the app-server with the resolved home per session rather than holding tokens itself. Headless add via OpenAI API key (instant) or ChatGPT device-code (long-poll). Per-session account selection — sticky `codex_account_id` on session metadata → strategy (round-robin / fill-first / lowest-usage) → default `~/.codex`. Stored credentials are encrypted with the shared `~/.ppm/account.key` scheme. New `codex-account.service.ts`, `codex-account-login.ts`, `/api/codex-accounts` routes, and a Settings → Codex Accounts panel.
+- **Codex quota / usage** — per-account 5-hour and weekly utilization via `account/rateLimits/read` (`parseCodexUsage`), surfaced through the provider's `getUsage()`.
+- **Codex usage badge in chat toolbar** — Codex sessions now show the `5h:%·Wk:%` badge like Claude; clicking it opens a Codex accounts panel (per-account usage, add/remove, selection strategy) directly in the chat.
+
+### Changed
+- **Codex tool rendering** — exhaustive tool-call mapping so no Codex tool invocation is hidden; file edits render as Edit/Write and persist across history reloads.
 
 ## [0.14.5] - 2026-06-19
 
