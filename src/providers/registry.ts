@@ -80,4 +80,28 @@ export async function bootstrapProviders(): Promise<void> {
   } catch (e) {
     console.warn("[registry] Failed to load Cursor provider:", (e as Error).message);
   }
+
+  try {
+    const { CodexAppServerProvider } = await import("./codex-app-server/codex-provider.ts");
+    const codex = new CodexAppServerProvider();
+    if (await codex.isAvailable()) {
+      providerRegistry.register(codex);
+      const ai = configService.get("ai");
+      if (!ai.providers["codex"]) {
+        configService.set("ai", {
+          ...ai,
+          providers: {
+            ...ai.providers,
+            codex: { type: "cli", cli_command: "codex", permission_mode: "bypassPermissions" },
+          },
+        });
+        configService.save();
+      }
+      console.log("[registry] Codex provider registered (@openai/codex found)");
+    } else {
+      console.log("[registry] Codex provider skipped (@openai/codex not found)");
+    }
+  } catch (e) {
+    console.warn("[registry] Failed to load Codex provider:", (e as Error).message);
+  }
 }

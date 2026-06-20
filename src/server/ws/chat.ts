@@ -3,7 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider } from "../../services/db.service.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
@@ -14,7 +14,13 @@ function resolveSessionModel(sessionId: string): string | undefined {
   const override = getSessionModel(sessionId);
   if (override) return override;
   const ai = configService.get("ai");
-  const pid = ai.default_provider ?? "claude";
+  // Fall back to the SESSION's provider default model — not the global default
+  // provider's. Otherwise a non-default provider's chat (e.g. codex) would show
+  // the claude default model in the picker.
+  const pid = activeSessions.get(sessionId)?.providerId
+    ?? chatService.getSession(sessionId)?.providerId
+    ?? getSessionProvider(sessionId)
+    ?? ai.default_provider ?? "claude";
   return ai.providers[pid]?.model;
 }
 
@@ -253,15 +259,22 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         console.error(`[chat] session=${sessionId} SDK connection timeout after ${elapsed}s`);
         logSessionEvent(sessionId, "ERROR", `SDK connection timeout after ${elapsed}s — subprocess may have failed to start`);
         const projectPath = entry?.projectPath ?? "";
-        const isWSL = projectPath.startsWith("/home/") || projectPath.startsWith("/mnt/");
-        const wslHint = isWSL
-          ? "\n\nWSL detected — this is likely a network issue. Try from your WSL terminal:\n  curl -s https://api.anthropic.com\nIf that fails, check WSL DNS settings (/etc/resolv.conf) or proxy configuration."
-          : "";
-        const debugCmd = projectPath ? `cd ${projectPath} && claude -p "hi"` : `claude -p "hi"`;
-        bufferAndBroadcast(sessionId, {
-          type: "error",
-          message: `Claude SDK timed out after ${elapsed}s for project "${projectPath || "(no project)"}".${wslHint}\n\nDebug steps:\n1. Run: \`${debugCmd}\` — if it also hangs, the issue is your Claude CLI environment\n2. Check env vars: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause silent hang\n3. Try with env cleared: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" ${debugCmd}\`\n4. Check hooks/MCP: \`cat ${projectPath}/.claude/settings.local.json\`\n5. Refresh auth: \`claude login\``,
-        });
+        if (providerId === "claude") {
+          const isWSL = projectPath.startsWith("/home/") || projectPath.startsWith("/mnt/");
+          const wslHint = isWSL
+            ? "\n\nWSL detected — this is likely a network issue. Try from your WSL terminal:\n  curl -s https://api.anthropic.com\nIf that fails, check WSL DNS settings (/etc/resolv.conf) or proxy configuration."
+            : "";
+          const debugCmd = projectPath ? `cd ${projectPath} && claude -p "hi"` : `claude -p "hi"`;
+          bufferAndBroadcast(sessionId, {
+            type: "error",
+            message: `Claude SDK timed out after ${elapsed}s for project "${projectPath || "(no project)"}".${wslHint}\n\nDebug steps:\n1. Run: \`${debugCmd}\` — if it also hangs, the issue is your Claude CLI environment\n2. Check env vars: \`echo $ANTHROPIC_API_KEY $ANTHROPIC_BASE_URL\` — stale/invalid keys cause silent hang\n3. Try with env cleared: \`ANTHROPIC_API_KEY="" ANTHROPIC_BASE_URL="" ${debugCmd}\`\n4. Check hooks/MCP: \`cat ${projectPath}/.claude/settings.local.json\`\n5. Refresh auth: \`claude login\``,
+          });
+        } else {
+          bufferAndBroadcast(sessionId, {
+            type: "error",
+            message: `Provider "${providerId}" timed out after ${elapsed}s for project "${projectPath || "(no project)"}" — the subprocess may have failed to start. Check that the provider's CLI is installed and authenticated, then retry.`,
+          });
+        }
         return;
       }
       broadcast(sessionId, { type: "phase_changed", phase: "connecting", elapsed });
@@ -320,8 +333,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.pendingTeamCreate = ev.toolUseId;
           console.log(`[chat] session=${sessionId} TeamCreate tool_use detected, toolUseId=${ev.toolUseId}`);
         }
-        // Start output spy for real-time streaming (Bash on Linux/macOS, PowerShell on Windows)
-        if ((ev.tool === "Bash" || ev.tool === "PowerShell") && ev.toolUseId) {
+        // Start output spy for real-time streaming (Bash on Linux/macOS, PowerShell on Windows).
+        // Claude-SDK-only: it tails the SDK's per-tool output file. Other providers
+        // (codex/cursor) run commands in their own subprocess with no such file.
+        if (providerId === "claude" && (ev.tool === "Bash" || ev.tool === "PowerShell") && ev.toolUseId) {
           const command = typeof ev.input === "object" && ev.input
             ? String((ev.input as any).command ?? "")
             : "";
@@ -430,7 +445,17 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           if (oldEntry) {
             activeSessions.delete(sessionId);
             activeSessions.set(newId, oldEntry);
+            // Re-point each live socket's session key so follow-up messages over
+            // the same connection resolve to the moved entry (not auto-create a stale one).
+            for (const client of oldEntry.clients) {
+              try { (client as any).data.sessionId = newId; } catch { /* ignore */ }
+            }
           }
+          // The consumer must target the new id for every subsequent broadcast —
+          // including this session_migrated event — since the entry moved. Without
+          // this, a provider that always migrates (e.g. codex: threadId ≠ ppm id)
+          // would have all its stream events dropped.
+          sessionId = newId;
         }
       } else {
         logSessionEvent(sessionId, evType.toUpperCase(), JSON.stringify(ev).slice(0, 200));
@@ -504,7 +529,7 @@ export const chatWebSocket = {
   open(ws: ChatWsSocket) {
     const { sessionId, projectName } = ws.data;
     const session = chatService.getSession(sessionId);
-    const providerId = session?.providerId ?? providerRegistry.getDefault().id;
+    const providerId = session?.providerId ?? getSessionProvider(sessionId) ?? providerRegistry.getDefault().id;
 
     let projectPath: string | undefined;
     if (projectName) {
@@ -623,7 +648,7 @@ export const chatWebSocket = {
     if (!entry) {
       const { projectName: pn } = ws.data;
       const session = chatService.getSession(sessionId);
-      const pid = session?.providerId ?? providerRegistry.getDefault().id;
+      const pid = session?.providerId ?? getSessionProvider(sessionId) ?? providerRegistry.getDefault().id;
       let pp: string | undefined;
       if (pn) { try { pp = resolveProjectPath(pn); } catch { /* ignore */ } }
       const newEntry: SessionEntry = {

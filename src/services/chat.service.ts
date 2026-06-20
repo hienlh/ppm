@@ -17,7 +17,13 @@ class ChatService {
       ? providerRegistry.get(providerId)
       : providerRegistry.getDefault();
     if (!provider) throw new Error(`Provider "${providerId}" not found`);
-    return provider.createSession(config);
+    const session = await provider.createSession(config);
+    // Persist provider ownership so the WS routes follow-ups correctly across restarts.
+    try {
+      const { setSessionProvider } = await import("./db.service.ts");
+      setSessionProvider(session.id, provider.id);
+    } catch { /* non-fatal */ }
+    return session;
   }
 
   async resumeSession(

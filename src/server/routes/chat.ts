@@ -569,6 +569,12 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
     const jsonlPath = c.req.query("jsonlPath");
     const beforeUuid = c.req.query("before");
     if (!jsonlPath) return c.json(err("jsonlPath query param required"), 400);
+    // Codex rollouts live under ~/.codex/sessions (different format + jail than Claude JSONL).
+    const { isCodexRolloutPath, getCodexPreCompactMessages } = await import("../../providers/codex-app-server/codex-history.ts");
+    if (isCodexRolloutPath(jsonlPath)) {
+      const messages = getCodexPreCompactMessages(jsonlPath, c.get("projectPath"));
+      return c.json(ok(messages));
+    }
     const validated = validateJsonlPath(jsonlPath);
     const messages = await parseJsonlTranscript(validated, beforeUuid);
     return c.json(ok(messages));

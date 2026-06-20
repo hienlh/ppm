@@ -222,6 +222,9 @@ async function waitForServerReady(statusFile: string, port: number) {
   process.exit(0);
 }
 
+/** Set after provider bootstrap; invoked from gracefulShutdown to reap codex subprocesses. */
+let codexCleanupRef: (() => void) | null = null;
+
 export async function startServer(options: {
   port?: string;
   share?: boolean;
@@ -238,8 +241,13 @@ export async function startServer(options: {
   await setupLogFile();
 
   // Bootstrap CLI providers (checks binary availability)
-  const { bootstrapProviders } = await import("../providers/registry.ts");
+  const { bootstrapProviders, providerRegistry } = await import("../providers/registry.ts");
   await bootstrapProviders();
+  codexCleanupRef = () => {
+    try {
+      (providerRegistry.get("codex") as { cleanupAll?: () => void } | undefined)?.cleanupAll?.();
+    } catch { /* ignore */ }
+  };
 
   {
     const { resolve } = await import("node:path");
@@ -630,6 +638,22 @@ if (process.argv.includes("__serve__")) {
   configService.load();
   await setupLogFile();
 
+  // Register CLI providers (cursor, codex) for the daemon/__serve__ runtime.
+  // Synchronous SDK providers self-register on import; CLI providers need an
+  // availability probe, so they must be bootstrapped here too — not only in
+  // startServer(), which the __serve__ entry does not call.
+  try {
+    const { bootstrapProviders, providerRegistry } = await import("../providers/registry.ts");
+    await bootstrapProviders();
+    codexCleanupRef = () => {
+      try {
+        (providerRegistry.get("codex") as { cleanupAll?: () => void } | undefined)?.cleanupAll?.();
+      } catch { /* ignore */ }
+    };
+  } catch (e) {
+    console.warn("[serve] provider bootstrap failed:", (e as Error).message);
+  }
+
   // Sync externally-started tunnel URL + PID into tunnelService
   // so GET /api/tunnel reflects the correct state and Share button doesn't start a duplicate.
   // Also write server version to status.json so supervisor heartbeat reports the actual running version.
@@ -806,6 +830,7 @@ if (process.argv.includes("__serve__")) {
   // Graceful shutdown: close the listening socket so the port is released
   const gracefulShutdown = () => {
     try { schedulerStop?.(); } catch {}
+    try { codexCleanupRef?.(); } catch {}
     try { server.stop(true); } catch {}
     process.exit(0);
   };

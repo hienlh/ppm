@@ -738,6 +738,14 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 31;
     `);
   }
+
+  if (current < 32) {
+    // Persist the provider that owns each session so the WS can route follow-up
+    // messages correctly after a restart (in-memory provider maps are empty then,
+    // and non-default providers like codex would otherwise fall back to claude).
+    try { database.exec(`ALTER TABLE session_metadata ADD COLUMN provider_id TEXT`); } catch { /* exists */ }
+    database.exec(`PRAGMA user_version = 32`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -892,6 +900,18 @@ export function setSessionMetadata(sessionId: string, projectName?: string, proj
 
 export function deleteSessionMetadata(sessionId: string): void {
   getDb().query("DELETE FROM session_metadata WHERE session_id = ?").run(sessionId);
+}
+
+/** Provider that owns a session — source of truth for WS routing across restarts. */
+export function getSessionProvider(sessionId: string): string | null {
+  const row = getDb().query("SELECT provider_id FROM session_metadata WHERE session_id = ?").get(sessionId) as { provider_id: string | null } | null;
+  return row?.provider_id ?? null;
+}
+
+export function setSessionProvider(sessionId: string, providerId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, provider_id) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET provider_id = excluded.provider_id",
+  ).run(sessionId, providerId);
 }
 
 /** Per-session model override; null when session uses provider default */

@@ -81,7 +81,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 **Deferred to v0.9.5+ (Multi-Provider Phase 2):**
 - Gemini CLI (Tier 2)
-- OpenAI Codex (Tier 2)
+- OpenAI Codex (Tier 2) — ✅ implemented (codex app-server JSON-RPC provider; streaming/multi-turn/resume/models; approval bridge dormant under default Full access)
 - Tier 3 (chat-only): Any OpenAI-compatible API
 - Chinese providers (DeepSeek, Qwen) — v1.0+
 

@@ -52,6 +52,16 @@ src/
 │   ├── claude-agent-sdk.ts      # Primary provider (listModels: hardcoded 2 models)
 │   ├── cursor-cli/
 │   │   └── cursor-provider.ts   # CLI-based provider (listModels: subprocess with TTL cache)
+│   ├── codex-app-server/        # Codex (OpenAI) provider — JSON-RPC over `codex app-server` stdio
+│   │   ├── codex-provider.ts        # AIProvider impl: per-session live map, multi-turn, lifecycle
+│   │   ├── codex-jsonrpc-client.ts  # NDJSON JSON-RPC client (id-safety, env allowlist, scoped spawn)
+│   │   ├── codex-protocol.ts        # Hand-authored protocol subset (no vendored bindings)
+│   │   ├── codex-permission-map.ts  # permissionMode → {sandbox, approvalPolicy}
+│   │   ├── codex-event-mapper.ts    # notification → ChatEvent[] (usage cut)
+│   │   ├── codex-approval-decision.ts # pure per-method approval decisions (dormant in MVP)
+│   │   ├── codex-history.ts         # rollout JSONL parser + fail-closed cwd filter
+│   │   ├── codex-model-parser.ts    # model/list → ModelOption[]
+│   │   └── codex-redact.ts          # shared redact/truncate for logs + tool output
 │   ├── cli-provider-base.ts     # Abstract base for CLI providers
 │   ├── mock-provider.ts         # Test provider
 │   └── registry.ts              # Provider routing (list() vs listAll())

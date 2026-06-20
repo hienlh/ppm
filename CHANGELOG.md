@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Codex (OpenAI) chat provider** — PPM's 3rd chat provider, implementing `AIProvider` directly against `codex app-server` over newline-delimited JSON-RPC (stdio). Delivers token-by-token streaming, multi-turn in one live session (`pushMessage` → `turn/start` multiplexed over a single notification stream), subprocess lifecycle (abort SIGTERM→SIGKILL + Windows `killProcessTree`, `cleanupAll` on shutdown), resume + sidebar history (rollout JSONL parser with a fail-closed cwd filter so cross-project transcripts never leak), and a model picker (`model/list`, paginated, TTL-cached). Approval mode reuses PPM's existing `permissionMode` (mapped to codex `{sandbox, approvalPolicy}`); the inbound approval / ask-user-input bridge is protocol-correct but dormant under the default `bypassPermissions` (Full access). Registers only when the scoped `@openai/codex` binary resolves (`codex login` required); PPM never manages Codex auth. New code under `src/providers/codex-app-server/`; removed the unused `@openai/codex-sdk` devDependency.
+
 ## [0.14.5] - 2026-06-19
 
 ### Fixed
