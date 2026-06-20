@@ -1,7 +1,7 @@
 # PPM Codebase Summary
 
-**Last Updated:** 2026-04-15
-**Version:** 0.9.86
+**Last Updated:** 2026-06-21
+**Version:** 0.14.8
 **Repository:** PPM (Project & Process Manager) — Multi-provider web IDE/project manager with Claude Agent SDK
 
 **Core Statistics:**
@@ -73,6 +73,7 @@ src/
 │   ├── file.service.ts          # File operations
 │   ├── git.service.ts           # Git commands
 │   ├── terminal.service.ts      # PTY management
+│   ├── avatar-storage.service.ts # Content-addressed avatar storage (~/.ppm/avatars/<sha256>.webp)
 │   ├── account.service.ts       # Account CRUD & encryption
 │   ├── upgrade.service.ts       # Version checking, installation
 │   ├── mcp-config.service.ts    # MCP server CRUD (list, get, set, remove, import)
@@ -171,6 +172,7 @@ src/
 │       │   ├── api-client.ts        # Fetch wrapper with auth token, envelope unwrapping
 │       │   ├── api-settings.ts      # AI settings API client (GET/PUT /api/settings/ai)
 │       │   ├── api-mcp.ts           # ADDED: MCP settings API client (CRUD + import)
+│       │   ├── resize-image.ts      # Canvas center-crop to 128×128 webp 0.85 quality with type validation
 │       │   ├── ws-client.ts         # WebSocket with exponential backoff + Cloudflare handshake
 │       │   ├── file-support.ts      # File type detection (language, icons, preview)
 │       │   ├── project-avatar.ts    # Smart project initials (collision resolution)
@@ -214,7 +216,8 @@ src/
 │           ├── layout/              # Layout components (13 files)
 │           │   ├── panel-layout.tsx  # Main grid layout (react-resizable-panels)
 │           │   ├── editor-panel.tsx  # Wrapper for tab content within a panel (v0.9.85+: fallback guards)
-│           │   ├── project-bar.tsx   # 52px sidebar with project avatars, share popover
+│           │   ├── project-bar.tsx   # 52px sidebar with project avatars (color+initials, or custom image), share popover
+│           │   ├── project-avatar.tsx # Shared avatar component: renders custom image (with token+cache-bust) or fallback to color+initials
 │           │   ├── project-bottom-sheet.tsx # Mobile project switcher
 │           │   ├── sidebar.tsx       # Left sidebar (Explorer/Git/Database/Settings tabs)
 │           │   ├── tab-bar.tsx       # Tab bar with icons, connection color display (v0.9.85+: fallback guards)
@@ -475,7 +478,8 @@ All tab routing and rendering components now include fallback guards for unknown
 | `ChatEvent` | types/chat.ts | Union of streaming message types |
 | `GitStatus` | types/git.ts | Current branch, staged, unstaged, untracked files (includes conflicted field v0.9.86+) |
 | `Session` | types/chat.ts | Chat session with ID, projectName, title, createdAt |
-| `Project` | types/project.ts | Project config (name, path) |
+| `Project` | types/project.ts | Project config (name, path, color, image?) |
+| `ProjectConfig` | types/config.ts | Persisted project config (includes image?: string for avatar) |
 | `MergeState` | ext-git-graph/src/types.ts | Merge/rebase/cherry-pick state with progress tracking (v0.9.86+) |
 | `TabType` | web/stores/tab-store.ts | "editor" \| "chat" \| "terminal" \| "database" \| "git-graph" \| "conflict-editor" \| "settings" (v0.9.86+) |
 

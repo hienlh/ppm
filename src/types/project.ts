@@ -2,6 +2,8 @@ export interface Project {
   name: string;
   path: string;
   color?: string;
+  /** Filename of a custom avatar image; overrides initials+color when set. */
+  image?: string;
 }
 
 export interface ProjectInfo extends Project {

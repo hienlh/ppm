@@ -1,12 +1,12 @@
 import { useState, useRef, useCallback } from "react";
-import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft } from "lucide-react";
+import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft, Image as ImageIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { AddProjectForm } from "@/components/layout/add-project-form";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
-import { getProjectInitials } from "@/lib/project-avatar";
+import { ProjectAvatar } from "@/components/layout/project-avatar";
 import { cn } from "@/lib/utils";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 
@@ -23,20 +23,8 @@ interface ActionSheetItem {
   destructive?: boolean;
 }
 
-function ProjectAvatar({ name, color, allNames }: { name: string; color: string; allNames: string[] }) {
-  const initials = getProjectInitials(name, allNames);
-  return (
-    <div
-      className="size-10 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0"
-      style={{ background: color }}
-    >
-      {initials}
-    </div>
-  );
-}
-
 export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps) {
-  const { projects, activeProject, setActiveProject, setProjectColor, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore(useShallow((s) => ({ projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject, setProjectColor: s.setProjectColor, reorderProjects: s.reorderProjects, renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder })));
+  const { projects, activeProject, setActiveProject, setProjectColor, setProjectImage, removeProjectImage, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore(useShallow((s) => ({ projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject, setProjectColor: s.setProjectColor, setProjectImage: s.setProjectImage, removeProjectImage: s.removeProjectImage, reorderProjects: s.reorderProjects, renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder })));
 
   const openTab = useTabStore((s) => s.openTab);
   const version = useSettingsStore((s) => s.version);
@@ -56,6 +44,19 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
   // Rename inline state
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  // Avatar image upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imgTarget, setImgTarget] = useState<string | null>(null);
+
+  async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file || !imgTarget) return;
+    setActionTarget(null);
+    try { await setProjectImage(imgTarget, file); }
+    catch (err) { alert(err instanceof Error ? err.message : "Upload failed"); }
+  }
 
   const startLongPress = useCallback((name: string) => {
     longPressTimer.current = setTimeout(() => setActionTarget(name), 400);
@@ -139,6 +140,22 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
         setColorPickerOpen(true);
       },
     },
+    {
+      label: "Change Image",
+      icon: ImageIcon,
+      onClick: () => {
+        setImgTarget(actionTarget);
+        fileInputRef.current?.click();
+      },
+    },
+    ...(actionProject?.image ? [{
+      label: "Remove Image",
+      icon: Trash2,
+      onClick: () => {
+        removeProjectImage(actionTarget).catch(() => { /* ignore */ });
+        setActionTarget(null);
+      },
+    }] : []),
     ...(actionIdx > 0 ? [{
       label: "Move Up",
       icon: ChevronUp,
@@ -171,6 +188,7 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
 
   return (
     <>
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFilePicked} />
       {/* Main project sheet */}
       <BottomSheet open={isOpen} onClose={handleClose} className="bg-background">
         {/* Header */}
@@ -224,7 +242,7 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
                 onTouchEnd={cancelLongPress}
                 onTouchMove={cancelLongPress}
               >
-                <ProjectAvatar name={project.name} color={color} allNames={allNames} />
+                <ProjectAvatar name={project.name} color={color} image={project.image} size={40} allNames={allNames} />
 
                 <div className="flex-1 min-w-0">
                   {isRenaming ? (

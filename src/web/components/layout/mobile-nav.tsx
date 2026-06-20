@@ -10,7 +10,7 @@ import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
 import { resolveProjectColor } from "@/lib/project-palette";
-import { getProjectInitials } from "@/lib/project-avatar";
+import { ProjectAvatar } from "@/components/layout/project-avatar";
 import type { Tab, TabType } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
@@ -192,9 +192,6 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const activeColor = activeProject
     ? resolveProjectColor(activeProject.color, activeIdx >= 0 ? activeIdx : 0)
     : "#4f86c6";
-  const activeInitials = activeProject
-    ? getProjectInitials(activeProject.name, allNames)
-    : null;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-background border-t border-border z-40 select-none">
@@ -215,13 +212,8 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
             title="Switch project"
           >
-            {activeInitials ? (
-              <div
-                className="size-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
-                style={{ background: activeColor }}
-              >
-                {activeInitials}
-              </div>
+            {activeProject ? (
+              <ProjectAvatar name={activeProject.name} color={activeColor} image={activeProject.image} size={28} allNames={allNames} />
             ) : (
               <Layers className="size-5" />
             )}

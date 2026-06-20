@@ -2,7 +2,8 @@
 
 All notable changes to PPM are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-**Current Version:** v0.13.0
+**Current Version:** v0.14.8
+**Last Updated:** 2026-06-21
 
 ---
 
@@ -20,9 +21,20 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 
 ---
 
-## [Unreleased] — Chat Live Task Tracker, Scheduled Agents, Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements, Command Palette Filter Chips
+## [Unreleased] — Chat Live Task Tracker, Scheduled Agents, Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements, Command Palette Filter Chips, Custom Project Avatars
 
 ### Added
+- **Custom Project Avatars** — Set any project's avatar to an uploaded image
+  - Upload via desktop right-click menu on project (switcher/bar) or mobile long-press (bottom-sheet) → "Change Image"
+  - Client-side resizing: canvas center-crop to square, downscale to 128×128 webp 0.85 quality, max 10MB
+  - Storage: content-addressed at `~/.ppm/avatars/<sha256>.webp` for deduplication across projects
+  - Endpoints: `POST /api/projects/:name/image` (upload), `GET /api/projects/:name/image` (stream with immutable cache), `DELETE /api/projects/:name/image` (remove)
+  - Auth: Token in URL query param enables `<img>` loads when auth enabled; path-traversal protected
+  - Rendering: Shared `ProjectAvatar` component displays custom image or fallback to color+initials everywhere (switcher, mobile-nav, bottom-sheet)
+  - Lifecycle: Preserved across project rename, cleaned up on project delete, override initialed avatar in all UIs
+  - Tests: 9 new route tests in `tests/unit/routes/projects-routes.test.ts`; all 27 pass, typecheck clean
+  - Service: `avatar-storage.service.ts` handles SHA256 dedup + disk ops; `resize-image.ts` performs client-side crop/scale
+
 - **Chat Live Task Tracker** — Real-time monitoring of Claude's Task* tool execution within chat
   - Backend: `TaskStatusAggregatorService` (`src/services/task-status-aggregator.ts`) — rebuilds task state from session JSONL with `aggregateTasks(messages): TaskItem[]`
   - Backend: New endpoint `GET /api/project/:projectName/chat/sessions/:id/tasks` — returns current tasks (immune to FE pagination); reuses session JSONL path resolution + parsing

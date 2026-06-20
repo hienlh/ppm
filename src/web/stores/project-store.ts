@@ -1,10 +1,12 @@
 import { create } from "zustand";
-import { api } from "@/lib/api-client";
+import { api, getAuthToken } from "@/lib/api-client";
+import { resizeImageToWebp } from "@/lib/resize-image";
 
 export interface Project {
   name: string;
   path: string;
   color?: string;
+  image?: string;
 }
 
 export interface ProjectInfo extends Project {
@@ -129,10 +131,26 @@ interface ProjectStore {
   setActiveProject: (project: ProjectInfo) => void;
   addProject: (path: string, name?: string) => Promise<ProjectInfo>;
   setProjectColor: (name: string, color: string | null) => Promise<void>;
+  setProjectImage: (name: string, file: File) => Promise<void>;
+  removeProjectImage: (name: string) => Promise<void>;
   moveProject: (name: string, direction: "up" | "down") => Promise<void>;
   reorderProjects: (newOrder: string[]) => Promise<void>;
   renameProject: (name: string, newName: string) => Promise<void>;
   deleteProject: (name: string) => Promise<void>;
+}
+
+/** Refresh the active-project reference from the freshly fetched list (by name)
+ *  so avatar/color edits to the currently-active project render immediately
+ *  (fetchProjects only replaces the `projects` array, not `activeProject`). */
+function syncActiveProject(
+  get: () => ProjectStore,
+  set: (partial: Partial<ProjectStore>) => void,
+  name: string,
+): void {
+  const active = get().activeProject;
+  if (active?.name !== name) return;
+  const fresh = get().projects.find((p) => p.name === name);
+  if (fresh) set({ activeProject: fresh });
 }
 
 export const useProjectStore = create<ProjectStore>((set, get) => ({
@@ -203,6 +221,29 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setProjectColor: async (name, color) => {
     await api.patch(`/api/projects/${encodeURIComponent(name)}/color`, { color });
     await get().fetchProjects();
+  },
+
+  setProjectImage: async (name, file) => {
+    const blob = await resizeImageToWebp(file);
+    const form = new FormData();
+    form.append("file", blob, "avatar.webp");
+    const token = getAuthToken();
+    // Raw fetch: api.post forces JSON Content-Type; must let the browser set
+    // the multipart boundary itself, so we only attach Authorization.
+    const res = await fetch(`/api/projects/${encodeURIComponent(name)}/image`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form,
+    });
+    if (!res.ok) throw new Error("Upload failed");
+    await get().fetchProjects();
+    syncActiveProject(get, set, name);
+  },
+
+  removeProjectImage: async (name) => {
+    await api.del(`/api/projects/${encodeURIComponent(name)}/image`);
+    await get().fetchProjects();
+    syncActiveProject(get, set, name);
   },
 
   moveProject: async (name, direction) => {

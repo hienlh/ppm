@@ -1,12 +1,12 @@
 import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Clock, ArrowDownUp, ArrowDownAZ } from "lucide-react";
+import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Clock, ArrowDownUp, ArrowDownAZ, Image as ImageIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder, sortByRecent, loadRecentTimes, type ProjectInfo, type SortMode } from "@/stores/project-store";
 import { buildUrl } from "@/hooks/use-url-sync";
 import { formatRelativeDate } from "@/lib/format-date";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
-import { getProjectInitials } from "@/lib/project-avatar";
+import { ProjectAvatar } from "@/components/layout/project-avatar";
 import { useNotificationStore, selectProjectUrgentType, notificationColor } from "@/stores/notification-store";
 import {
   ContextMenu,
@@ -46,20 +46,14 @@ function applySort(
 // ---------------------------------------------------------------------------
 // Avatar circle (gradient + initials + urgent notification dot)
 // ---------------------------------------------------------------------------
-const Avatar = memo(function Avatar({ name, color, size, allNames }: {
-  name: string; color: string; size: number; allNames: string[];
+const Avatar = memo(function Avatar({ name, color, image, size, allNames }: {
+  name: string; color: string; image?: string; size: number; allNames: string[];
 }) {
-  const initials = getProjectInitials(name, allNames);
   const selector = useMemo(() => selectProjectUrgentType(name), [name]);
   const urgentType = useNotificationStore(selector);
   return (
     <div className="relative shrink-0">
-      <div
-        className="rounded-full flex items-center justify-center font-bold text-white select-none"
-        style={{ background: color, width: size, height: size, fontSize: size <= 24 ? 10 : 11 }}
-      >
-        {initials}
-      </div>
+      <ProjectAvatar name={name} color={color} image={image} size={size} allNames={allNames} />
       {urgentType && (
         <div className={cn("absolute -top-0.5 -right-0.5 size-2 rounded-full border-2 border-background", notificationColor(urgentType))} />
       )}
@@ -95,11 +89,13 @@ function ColorPicker({ current, onChange }: { current: string; onChange: (c: str
 export const ProjectSwitcher = memo(function ProjectSwitcher() {
   const {
     projects, activeProject, setActiveProject, setProjectColor,
+    setProjectImage, removeProjectImage,
     reorderProjects, renameProject, deleteProject, customOrder,
     sortMode, setProjectSortMode,
   } = useProjectStore(useShallow((s) => ({
     projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject,
-    setProjectColor: s.setProjectColor, reorderProjects: s.reorderProjects,
+    setProjectColor: s.setProjectColor, setProjectImage: s.setProjectImage, removeProjectImage: s.removeProjectImage,
+    reorderProjects: s.reorderProjects,
     renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder,
     sortMode: s.projectSortMode, setProjectSortMode: s.setProjectSortMode,
   })));
@@ -190,6 +186,17 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
   const [colorValue, setColorValue] = useState("");
   const [colorSaving, setColorSaving] = useState(false);
 
+  // Avatar image upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imgTarget, setImgTarget] = useState<string | null>(null);
+  const onFilePicked = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file || !imgTarget) return;
+    try { await setProjectImage(imgTarget, file); }
+    catch (err) { alert(err instanceof Error ? err.message : "Upload failed"); }
+  }, [imgTarget, setProjectImage]);
+
   const openRename = useCallback((name: string) => { setRenameTarget(name); setRenameValue(name); setRenameOpen(true); }, []);
   const openDelete = useCallback((name: string) => { setDeleteTarget(name); setDeleteOpen(true); }, []);
   const openColor = useCallback((name: string, c: string) => { setColorTarget(name); setColorValue(c); setColorOpen(true); }, []);
@@ -212,6 +219,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
 
   return (
     <>
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onFilePicked} />
       <button
         ref={btnRef}
         onClick={toggleFlyout}
@@ -222,7 +230,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
         )}
       >
         {active ? (
-          <Avatar name={active.name} color={activeColor} size={24} allNames={allNames} />
+          <Avatar name={active.name} color={activeColor} image={active.image} size={24} allNames={allNames} />
         ) : (
           <div className="size-6 rounded-full bg-surface-elevated shrink-0" />
         )}
@@ -319,7 +327,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
                           onClick={() => openProject(p)}
                           className="flex items-center gap-2.5 min-w-0 flex-1 px-2 py-1.5 text-left"
                         >
-                          <Avatar name={p.name} color={color} size={26} allNames={allNames} />
+                          <Avatar name={p.name} color={color} image={p.image} size={26} allNames={allNames} />
                           <div className="min-w-0">
                             <div className={cn(
                               "text-[13px] whitespace-nowrap overflow-hidden text-ellipsis",
@@ -359,6 +367,14 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
                       <ContextMenuItem onClick={() => openColor(p.name, color)}>
                         <Palette className="size-3.5 mr-2" /> Change Color
                       </ContextMenuItem>
+                      <ContextMenuItem onClick={() => { setImgTarget(p.name); fileInputRef.current?.click(); }}>
+                        <ImageIcon className="size-3.5 mr-2" /> Change Image
+                      </ContextMenuItem>
+                      {p.image && (
+                        <ContextMenuItem onClick={() => { removeProjectImage(p.name).catch(() => { /* ignore */ }); }}>
+                          <Trash2 className="size-3.5 mr-2" /> Remove Image
+                        </ContextMenuItem>
+                      )}
                       <ContextMenuItem onClick={() => navigator.clipboard.writeText(p.path)}>
                         <Copy className="size-3.5 mr-2" /> Copy Path
                       </ContextMenuItem>

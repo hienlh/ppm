@@ -36,6 +36,8 @@ export interface ProjectConfig {
   path: string;
   name: string;
   color?: string;
+  /** Filename (e.g. `<sha256>.webp`) of a custom avatar under getPpmDir()/avatars/. */
+  image?: string;
 }
 
 export interface AIConfig {

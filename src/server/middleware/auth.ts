@@ -29,7 +29,7 @@ export async function authMiddleware(c: Context, next: Next) {
   // Scoped to /stream and /files/raw paths to avoid leaking token on all GET routes
   if (c.req.method === "GET") {
     const p = c.req.path;
-    if (p.endsWith("/stream") || p.endsWith("/files/raw") || p === "/api/fs/raw") {
+    if (p.endsWith("/stream") || p.endsWith("/files/raw") || p === "/api/fs/raw" || p.endsWith("/image")) {
       const queryToken = c.req.query("token");
       if (queryToken && queryToken === authConfig.token) {
         return next();

@@ -1,8 +1,13 @@
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { Hono } from "hono";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { projectRoutes } from "../../../src/server/routes/projects.ts";
 import { configService } from "../../../src/services/config.service.ts";
+import { _resetPpmDir } from "../../../src/services/ppm-dir.ts";
+import { avatarPath } from "../../../src/services/avatar-storage.service.ts";
 
 function createApp() {
   return new Hono().route("/projects", projectRoutes);
@@ -339,5 +344,135 @@ describe("DELETE /projects/:name", () => {
     expect(res.status).toBe(404);
     const json = await res.json() as any;
     expect(json.ok).toBe(false);
+  });
+});
+
+describe("project image (upload / serve / delete)", () => {
+  let tmpHome: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    prevHome = process.env.PPM_HOME;
+    tmpHome = mkdtempSync(join(tmpdir(), "ppm-avatar-test-"));
+    process.env.PPM_HOME = tmpHome;
+    _resetPpmDir();
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.PPM_HOME;
+    else process.env.PPM_HOME = prevHome;
+    _resetPpmDir();
+    rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  async function addProject(app: Hono, name: string) {
+    await app.request("/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "/tmp", name }),
+    });
+  }
+
+  function uploadForm(bytes: number[]) {
+    const fd = new FormData();
+    fd.append("file", new Blob([new Uint8Array(bytes)], { type: "image/webp" }), "a.webp");
+    return fd;
+  }
+
+  it("uploads an image and persists the file on disk", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+
+    const res = await app.request("/projects/proj/image", { method: "POST", body: uploadForm([1, 2, 3, 4]) });
+    expect(res.status).toBe(200);
+    const json = await res.json() as any;
+    expect(json.ok).toBe(true);
+    expect(json.data.image).toBeDefined();
+    expect(existsSync(avatarPath(json.data.image))).toBe(true);
+  });
+
+  it("serves the image with webp + immutable cache headers", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+    await app.request("/projects/proj/image", { method: "POST", body: uploadForm([1, 2, 3, 4]) });
+
+    const res = await app.request("/projects/proj/image");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("image/webp");
+    expect(res.headers.get("Cache-Control")).toContain("immutable");
+  });
+
+  it("returns 404 when project has no image", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+    const res = await app.request("/projects/proj/image");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 404 uploading to unknown project", async () => {
+    const app = createApp();
+    const res = await app.request("/projects/ghost/image", { method: "POST", body: uploadForm([1, 2, 3]) });
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects oversized upload with 400", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+    const big = new Array(2_000_001).fill(0);
+    const res = await app.request("/projects/proj/image", { method: "POST", body: uploadForm(big) });
+    expect(res.status).toBe(400);
+  });
+
+  it("delete clears the field and removes the file", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+    const up = await (await app.request("/projects/proj/image", { method: "POST", body: uploadForm([1, 2, 3, 4]) })).json() as any;
+    const file = avatarPath(up.data.image);
+    expect(existsSync(file)).toBe(true);
+
+    const res = await app.request("/projects/proj/image", { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const json = await res.json() as any;
+    expect(json.data.image).toBeUndefined();
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("replacing an image removes the old file", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+    const first = await (await app.request("/projects/proj/image", { method: "POST", body: uploadForm([1, 1, 1]) })).json() as any;
+    const second = await (await app.request("/projects/proj/image", { method: "POST", body: uploadForm([9, 9, 9, 9]) })).json() as any;
+
+    expect(second.data.image).not.toBe(first.data.image);
+    expect(existsSync(avatarPath(first.data.image))).toBe(false);
+    expect(existsSync(avatarPath(second.data.image))).toBe(true);
+  });
+
+  it("renaming a project preserves its image and keeps the file", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+    const up = await (await app.request("/projects/proj/image", { method: "POST", body: uploadForm([1, 2, 3, 4]) })).json() as any;
+    const file = avatarPath(up.data.image);
+
+    const res = await app.request("/projects/proj", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "renamed" }),
+    });
+    const json = await res.json() as any;
+    expect(json.data.name).toBe("renamed");
+    expect(json.data.image).toBe(up.data.image);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it("deleting a project removes its avatar file", async () => {
+    const app = createApp();
+    await addProject(app, "proj");
+    const up = await (await app.request("/projects/proj/image", { method: "POST", body: uploadForm([1, 2, 3, 4]) })).json() as any;
+    const file = avatarPath(up.data.image);
+    expect(existsSync(file)).toBe(true);
+
+    await app.request("/projects/proj", { method: "DELETE" });
+    expect(existsSync(file)).toBe(false);
   });
 });

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.9] - 2026-06-21
+
+### Added
+- **Custom project avatars** — set any project's avatar to an image uploaded from the client. Right-click a project in the switcher (or long-press in the mobile bottom-sheet) → **Change Image**; the picked file is center-cropped to a square and downscaled to a 128×128 webp in the browser, then uploaded. Images are stored content-addressed at `~/.ppm/avatars/<sha256>.webp` and served via `GET /api/projects/:name/image` with an immutable cache header. A custom image overrides the initials+color circle everywhere (switcher, mobile-nav, bottom-sheet) via a new shared `ProjectAvatar` component; **Remove Image** reverts to color+initials. Avatar files are cleaned up on project delete, deduped on upload, and preserved across rename. New `avatar-storage.service.ts`, `resize-image.ts`, store actions `setProjectImage`/`removeProjectImage`, and 9 route tests.
+
+### Fixed
+- **Rename no longer wipes project color/avatar** — `projectService.update()` rebuilt the entry as `{path,name}` only, silently dropping `color` (and now `image`) on rename/path change; it now preserves all existing fields.
+
 ## [0.14.8] - 2026-06-20
 
 ### Changed

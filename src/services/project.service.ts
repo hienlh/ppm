@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { resolve, basename, join } from "node:path";
 import { configService } from "./config.service.ts";
 import { seedDefaultTags } from "./tag.service.ts";
+import { deleteAvatar } from "./avatar-storage.service.ts";
 import type { ProjectConfig } from "../types/config.ts";
 import type { ProjectInfo } from "../types/project.ts";
 
@@ -15,6 +16,7 @@ class ProjectService {
       name: p.name,
       path: p.path,
       ...(p.color ? { color: p.color } : {}),
+      ...(p.image ? { image: p.image } : {}),
     }));
   }
 
@@ -79,7 +81,8 @@ class ProjectService {
       throw new Error(`Path "${newPath}" already registered`);
     }
 
-    const updated: ProjectConfig = { path: newPath, name: newName };
+    // Preserve color/image (and any future fields) across rename/path change.
+    const updated: ProjectConfig = { ...current, path: newPath, name: newName };
     projects[idx] = updated;
     configService.set("projects", projects);
     configService.save();
@@ -90,6 +93,9 @@ class ProjectService {
   remove(nameOrPath: string): void {
     const projects = configService.get("projects");
     const abs = resolve(nameOrPath);
+    const removed = projects.find(
+      (p) => p.name === nameOrPath || resolve(p.path) === abs,
+    );
     const filtered = projects.filter(
       (p) => p.name !== nameOrPath && resolve(p.path) !== abs,
     );
@@ -100,6 +106,8 @@ class ProjectService {
 
     configService.set("projects", filtered);
     configService.save();
+    // Best-effort: drop the avatar file after the config entry is gone.
+    deleteAvatar(removed?.image);
   }
 
   /** Resolve a project by name or path */

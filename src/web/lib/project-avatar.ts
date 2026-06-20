@@ -34,12 +34,3 @@ export function getProjectInitials(name: string, allNames: string[]): string {
   const idx = allNames.indexOf(name);
   return String(idx >= 0 ? idx + 1 : "?");
 }
-
-export interface ProjectAvatar {
-  initials: string;
-  color: string;
-}
-
-export function getProjectAvatar(name: string, allNames: string[], color: string): ProjectAvatar {
-  return { initials: getProjectInitials(name, allNames), color };
-}

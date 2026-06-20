@@ -118,6 +118,9 @@ GET    /api/projects            → List projects
 DELETE /api/projects/:name      → Delete project
 PATCH  /api/projects/reorder    → Reorder projects by name order
 PATCH  /api/projects/:name/color → Set project color (hex string)
+POST   /api/projects/:name/image  → Upload project avatar (multipart, 2MB cap, center-crop to 128×128 webp)
+GET    /api/projects/:name/image  → Stream project avatar (immutable cache, path-traversal guard)
+DELETE /api/projects/:name/image  → Remove project avatar (reverts to color+initials)
 GET    /api/project/:name/chat/sessions           → List sessions
 POST   /api/project/:name/chat/sessions           → Create session
 GET    /api/project/:name/chat/sessions/:id/messages → Get history
@@ -766,18 +769,31 @@ When switching projects, workspaces are preserved instead of destroyed:
 - Smooth UX without flashing/re-rendering
 - Reduced network requests (cached UI state)
 
-### Project Color & Ordering (v2.0+)
-**Storage**: Colors stored as optional `color` field in `Project` interface (hex string or undefined)
+### Project Color, Avatar & Ordering (v2.0+)
+**Storage**: 
+- Colors stored as optional `color` field in `Project` interface (hex string or undefined)
+- Custom avatar images stored content-addressed at `~/.ppm/avatars/<sha256>.webp` via AvatarStorageService
 
 **Endpoints:**
 - `PATCH /api/projects/:name/color` — Update project color
+- `POST /api/projects/:name/image` — Upload avatar (multipart, 2MB cap, client resizes to 128×128 webp 0.85)
+- `GET /api/projects/:name/image` — Stream avatar (immutable cache headers, path-traversal safe)
+- `DELETE /api/projects/:name/image` — Remove avatar (reverts to color+initials)
 - `PATCH /api/projects/reorder` — Reorder projects array in config
 
 **UI Components:**
-- `ProjectBar` (52px sidebar) — Shows project avatars with color backgrounds, context menu for reorder/rename/delete/color-picker
-- `ProjectBottomSheet` (mobile) — Bottom sheet switcher with scrollable project list
-- `ProjectAvatar` utility — Generates smart initials with collision resolution (prefer 1-char, fallback to 2-char or index)
+- `ProjectBar` (52px sidebar) — Shows project avatars (custom image or color+initials), context menu for reorder/rename/delete/color-picker/change-image
+- `ProjectBottomSheet` (mobile) — Bottom sheet switcher with long-press menu ("Change Image"/"Remove Image")
+- `ProjectAvatar` component — Renders `<img>` with token auth + cache-bust query param, fallback to color+initials on missing/error
 - `PROJECT_PALETTE` — 12-color palette for default colors when not customized
+
+**Avatar Upload & Caching:**
+- Client: canvas center-crop to 128×128, export as webp 0.85 quality (via `resize-image.ts`)
+- Validation: MIME type (image/png, image/jpeg, image/webp, image/avif), file size ≤10MB
+- Server: SHA256 hash for deduplication (same image across projects = same file)
+- Cleanup: Deleted on project remove, preserved across rename (updated in project metadata)
+- Auth: Token in URL query param allows `<img>` to load when auth enabled
+- Cache: Immutable headers (max-age=31536000) + `?v=hash` cache-bust for updates
 
 ---
 

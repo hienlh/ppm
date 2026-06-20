@@ -6,6 +6,7 @@ import { gitService } from "../../services/git.service.ts";
 import { getConfigValue, setConfigValue } from "../../services/db.service.ts";
 import { searchGitDirs } from "../../services/git-dirs.service.ts";
 import { invalidateIndexCache } from "../../services/file-list-index.service.ts";
+import { writeAvatar, deleteAvatar, avatarPath } from "../../services/avatar-storage.service.ts";
 import { ok, err } from "../../types/api.ts";
 import type { ProjectSettings } from "../../types/project.ts";
 
@@ -125,6 +126,73 @@ projectRoutes.patch("/:name/color", async (c) => {
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
+});
+
+/** POST /api/projects/:name/image — upload a custom avatar (multipart, field `file`) */
+projectRoutes.post("/:name/image", async (c) => {
+  try {
+    const name = c.req.param("name");
+    const projects = configService.get("projects");
+    const idx = projects.findIndex((p) => p.name === name);
+    if (idx === -1) return c.json(err(`Project not found: ${name}`), 404);
+
+    const form = await c.req.formData();
+    const file = form.get("file");
+    if (!(file instanceof File)) return c.json(err("Missing file"), 400);
+    if (file.size > 2_000_000) return c.json(err("Image too large (max 2MB)"), 400);
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const filename = writeAvatar(bytes);
+
+    const old = projects[idx]!.image;
+    const updated = { ...projects[idx]!, image: filename };
+    projects[idx] = updated;
+    configService.set("projects", projects);
+    configService.save();
+    if (old && old !== filename) deleteAvatar(old);
+
+    return c.json(ok(updated));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** DELETE /api/projects/:name/image — remove a project's custom avatar */
+projectRoutes.delete("/:name/image", (c) => {
+  try {
+    const name = c.req.param("name");
+    const projects = configService.get("projects");
+    const idx = projects.findIndex((p) => p.name === name);
+    if (idx === -1) return c.json(err(`Project not found: ${name}`), 404);
+
+    const updated = { ...projects[idx]! };
+    deleteAvatar(updated.image);
+    delete updated.image;
+    projects[idx] = updated;
+    configService.set("projects", projects);
+    configService.save();
+    return c.json(ok(updated));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** GET /api/projects/:name/image — stream the project's avatar (immutable cache) */
+projectRoutes.get("/:name/image", async (c) => {
+  const name = c.req.param("name");
+  const project = configService.get("projects").find((p) => p.name === name);
+  if (!project?.image) return c.json(err("No image"), 404);
+  // Defense-in-depth: filename is only ever set server-side from a hash.
+  if (/[/\\]|\.\./.test(project.image)) return c.json(err("Invalid filename"), 400);
+
+  const f = Bun.file(avatarPath(project.image));
+  if (!(await f.exists())) return c.json(err("No image"), 404);
+  return new Response(f, {
+    headers: {
+      "Content-Type": "image/webp",
+      "Cache-Control": "public, max-age=31536000, immutable",
+    },
+  });
 });
 
 /** GET /api/projects/:name/settings — return per-project settings JSON */
