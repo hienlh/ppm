@@ -126,6 +126,13 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/projects/projects`
 - `PATCH  /api/projects/:name/color`
 - `GET    /api/projects/projects`
+- `POST   /api/projects/:name/image`
+- `GET    /api/projects/projects`
+- `GET    /api/projects/file`
+- `DELETE /api/projects/:name/image`
+- `GET    /api/projects/projects`
+- `GET    /api/projects/:name/image`
+- `GET    /api/projects/projects`
 - `GET    /api/projects/:name/settings`
 - `GET    /api/projects/projects`
 - `PATCH  /api/projects/:name/settings`
@@ -232,4 +239,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.14.7 -->
+<!-- Generated from src/server/routes/ for PPM v0.14.10 -->
