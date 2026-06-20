@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.7] - 2026-06-20
+
+### Added
+- **Codex account portability (encrypted export/import)** — back up and move Codex logins between machines (parity with Claude accounts backup). The portable unit per account is its `CODEX_HOME/auth.json` plus any stored apiKey creds, bundled and encrypted with a user password (PBKDF2 + AES, shared `encryptWithPassword` scheme). New `codex-account-portability.ts` with `exportCodexEncrypted` / `importCodexEncrypted` (import skips ids that already exist — no clobber), exposed via `POST /api/codex-accounts/export` (downloads an encrypted blob) and `POST /api/codex-accounts/import`, with export/import controls in the Codex usage panel and Settings → Codex Accounts.
+- **Project switcher sort modes** — the project dropdown can now sort by **Recent** (most-recently-opened, now tracked on selection), **Priority** (manual drag order), or **Name** (alphabetical); the choice persists across sessions. Drag-to-reorder is scoped to Priority mode.
+- **Open project in new browser tab** — each row in the project switcher has an open-in-new-tab action (also in the right-click menu) that opens `/project/{name}` in a new tab.
+- **Keyboard navigation in project search** — ↑/↓ move the highlight, Enter opens the highlighted project (defaults to the first match), Ctrl/Cmd+Enter opens it in a new tab, Esc closes.
+
 ## [0.14.6] - 2026-06-20
 
 ### Added
