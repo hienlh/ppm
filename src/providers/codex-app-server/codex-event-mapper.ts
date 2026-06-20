@@ -2,13 +2,18 @@ import type { ChatEvent } from "../provider.interface.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import { diffToOldNew, changeToToolUse } from "./codex-patch.ts";
 
-/** ThreadItem variants that map to a PPM tool_use/tool_result pair. */
-const TOOL_ITEM_TYPES = new Set([
-  "commandExecution",
-  "fileChange",
-  "mcpToolCall",
-  "dynamicToolCall",
-  "webSearch",
+/** ThreadItem variants that are NOT tool calls (text/metadata). Everything else
+ * is treated as a tool so nothing is ever silently hidden — known types get a
+ * nice mapping, unknown/future ones fall back to a generic visible card. */
+const NON_TOOL_ITEM_TYPES = new Set([
+  "userMessage",
+  "agentMessage",
+  "reasoning",
+  "plan",
+  "hookPrompt",
+  "enteredReviewMode",
+  "exitedReviewMode",
+  "contextCompaction",
 ]);
 
 interface Notif {
@@ -111,7 +116,7 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/started": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compacting" }];
-      if (item.type && TOOL_ITEM_TYPES.has(item.type)) return [itemToToolUse(item)];
+      if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) return [itemToToolUse(item)];
       return [];
     }
 
@@ -122,7 +127,7 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/completed": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compact_done" }];
-      if (item.type && TOOL_ITEM_TYPES.has(item.type)) return [itemToToolResult(item)];
+      if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) return [itemToToolResult(item)];
       return [];
     }
 

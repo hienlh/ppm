@@ -79,6 +79,14 @@ function customToolCallToToolUse(p: Record<string, unknown>): ChatEvent {
   return { type: "tool_use", tool: String(p.name ?? "tool"), input: p.input ?? {}, toolUseId: callId };
 }
 
+/** Unknown `*_call` record → generic visible tool_use (never dropped). */
+function genericCallToToolUse(p: Record<string, unknown>): ChatEvent {
+  const callId = typeof p.call_id === "string" ? p.call_id : undefined;
+  const tool = String(p.name ?? p.type ?? "tool");
+  const input = p.input ?? safeParseArgs(p.arguments);
+  return { type: "tool_use", tool, input, toolUseId: callId };
+}
+
 /** rollout `function_call_output` / `custom_tool_call_output` → PPM tool_result. */
 function fnOutputToToolResult(p: Record<string, unknown>): ChatEvent {
   const output = typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? "");
@@ -141,6 +149,9 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
       // File edits are recorded as custom_tool_call (name=apply_patch) + output.
       else if (p.type === "custom_tool_call") pendingEvents.push(customToolCallToToolUse(p));
       else if (p.type === "custom_tool_call_output") pendingEvents.push(fnOutputToToolResult(p));
+      // Exhaustive fallback: never silently drop an unknown tool call/output.
+      else if (typeof p.type === "string" && p.type.endsWith("_call_output")) pendingEvents.push(fnOutputToToolResult(p));
+      else if (typeof p.type === "string" && p.type.endsWith("_call")) pendingEvents.push(genericCallToToolUse(p));
     } else if (rec.type === "compacted") {
       // Pre-compact mode: everything accumulated so far IS the pre-compact history.
       if (opts?.preCompact) { if (pendingEvents.length) flushAssistant("", ts); break; }
