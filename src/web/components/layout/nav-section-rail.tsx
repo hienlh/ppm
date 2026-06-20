@@ -74,7 +74,7 @@ function FooterUtil({ icon: Icon, label, onClick, active }: {
   );
 }
 
-export const NavSectionRail = memo(function NavSectionRail() {
+export const NavSectionRail = memo(function NavSectionRail({ className }: { className?: string }) {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
@@ -114,7 +114,7 @@ export const NavSectionRail = memo(function NavSectionRail() {
   const handleReportBug = () => openBugReportPopup(version);
 
   return (
-    <div className="w-[52px] shrink-0 border-r border-border flex flex-col">
+    <div className={cn("w-[52px] shrink-0 border-r border-border flex flex-col", className)}>
       {/* sections */}
       <div className="flex-1 overflow-y-auto min-h-0 flex flex-col items-center gap-[3px] px-[3px] py-2 scrollbar-none">
         {TABS.map((tab) => (

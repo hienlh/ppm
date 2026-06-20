@@ -84,7 +84,7 @@ export const Sidebar = memo(function Sidebar() {
         >
           <PanelLeftOpen className="size-4 text-text-secondary" />
         </button>
-        <NavSectionRail />
+        <NavSectionRail className="flex-1 min-h-0" />
       </aside>
     );
   }
