@@ -1,12 +1,14 @@
-import { useState, useRef, useCallback } from "react";
-import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft, Image as ImageIcon } from "lucide-react";
+import { useState, useRef, useCallback, useMemo } from "react";
+import { X, Check, Plus, Settings, ChevronUp, ChevronDown, Pencil, Trash2, Palette, ArrowLeft, Image as ImageIcon, Search, ExternalLink, Copy } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useProjectStore, resolveOrder } from "@/stores/project-store";
-import { useTabStore } from "@/stores/tab-store";
+import { useProjectStore, resolveOrder, loadRecentTimes } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { AddProjectForm } from "@/components/layout/add-project-form";
+import { SORT_OPTIONS, applySort } from "@/components/layout/project-sort";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
 import { ProjectAvatar } from "@/components/layout/project-avatar";
+import { buildUrl } from "@/hooks/use-url-sync";
+import { formatRelativeDate } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 
@@ -24,9 +26,8 @@ interface ActionSheetItem {
 }
 
 export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps) {
-  const { projects, activeProject, setActiveProject, setProjectColor, setProjectImage, removeProjectImage, reorderProjects, renameProject, deleteProject, customOrder } = useProjectStore(useShallow((s) => ({ projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject, setProjectColor: s.setProjectColor, setProjectImage: s.setProjectImage, removeProjectImage: s.removeProjectImage, reorderProjects: s.reorderProjects, renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder })));
+  const { projects, activeProject, setActiveProject, setProjectColor, setProjectImage, removeProjectImage, reorderProjects, renameProject, deleteProject, customOrder, sortMode, setProjectSortMode } = useProjectStore(useShallow((s) => ({ projects: s.projects, activeProject: s.activeProject, setActiveProject: s.setActiveProject, setProjectColor: s.setProjectColor, setProjectImage: s.setProjectImage, removeProjectImage: s.removeProjectImage, reorderProjects: s.reorderProjects, renameProject: s.renameProject, deleteProject: s.deleteProject, customOrder: s.customOrder, sortMode: s.projectSortMode, setProjectSortMode: s.setProjectSortMode })));
 
-  const openTab = useTabStore((s) => s.openTab);
   const version = useSettingsStore((s) => s.version);
 
   const ordered = resolveOrder(projects, customOrder);
@@ -34,6 +35,18 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
 
   // View: "list" | "add"
   const [view, setView] = useState<"list" | "add">("list");
+
+  // Search + sort + recent-open times (mirrors the desktop switcher)
+  const [query, setQuery] = useState("");
+  const recentTimes = useMemo(() => loadRecentTimes(), [isOpen]);
+  const sorted = useMemo(() => applySort(projects, customOrder, sortMode), [projects, customOrder, sortMode]);
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? sorted.filter((p) => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q))
+    : sorted;
+  // Reorder (Move Up/Down) only makes sense in Priority mode without a query
+  const canReorder = sortMode === "priority" && !q;
+  const openInNewTab = useCallback((name: string) => { window.open(buildUrl(name, null), "_blank", "noopener"); }, []);
 
   // Long-press state for action sheet
   const [actionTarget, setActionTarget] = useState<string | null>(null);
@@ -122,6 +135,14 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
 
   const actionItems: ActionSheetItem[] = actionTarget ? [
     {
+      label: "Open in New Tab",
+      icon: ExternalLink,
+      onClick: () => {
+        openInNewTab(actionTarget);
+        setActionTarget(null);
+      },
+    },
+    {
       label: "Rename",
       icon: Pencil,
       onClick: () => {
@@ -156,7 +177,15 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
         setActionTarget(null);
       },
     }] : []),
-    ...(actionIdx > 0 ? [{
+    {
+      label: "Copy Path",
+      icon: Copy,
+      onClick: () => {
+        if (actionProject) navigator.clipboard.writeText(actionProject.path).catch(() => { /* ignore */ });
+        setActionTarget(null);
+      },
+    },
+    ...(canReorder && actionIdx > 0 ? [{
       label: "Move Up",
       icon: ChevronUp,
       onClick: () => {
@@ -167,7 +196,7 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
         setActionTarget(null);
       },
     }] : []),
-    ...(actionIdx < ordered.length - 1 ? [{
+    ...(canReorder && actionIdx < ordered.length - 1 ? [{
       label: "Move Down",
       icon: ChevronDown,
       onClick: () => {
@@ -223,12 +252,43 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
           </div>
         )}
 
+        {/* Search + sort (list view only) */}
+        {view !== "add" && (
+          <>
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+              <Search className="size-4 text-text-subtle shrink-0" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search projects…"
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-text-subtle focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-1 px-2 py-2 border-b border-border">
+              {SORT_OPTIONS.map(({ mode, label, Icon }) => (
+                <button
+                  key={mode}
+                  onClick={() => setProjectSortMode(mode)}
+                  className={cn(
+                    "flex items-center justify-center gap-1 flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
+                    sortMode === mode ? "bg-primary/[0.12] text-primary" : "text-text-subtle active:bg-surface-elevated",
+                  )}
+                >
+                  <Icon className="size-3.5" /> {label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
         {/* Project list */}
         <div className={view === "add" ? "hidden" : "max-h-[60vh] overflow-y-auto"}>
-          {ordered.map((project, idx) => {
+          {filtered.map((project) => {
+            const idx = ordered.findIndex((o) => o.name === project.name);
             const color = resolveProjectColor(project.color, idx);
             const isActive = activeProject?.name === project.name;
             const isRenaming = renameTarget === project.name;
+            const openedAt = recentTimes[project.name];
 
             return (
               <div
@@ -265,10 +325,18 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
                   <p className="text-xs text-text-subtle truncate">{project.path}</p>
                 </div>
 
+                {openedAt && !isActive && (
+                  <span className="shrink-0 text-[10px] text-text-subtle whitespace-nowrap">
+                    {formatRelativeDate(new Date(openedAt).toISOString())}
+                  </span>
+                )}
                 {isActive && <Check className="size-4 text-primary shrink-0" />}
               </div>
             );
           })}
+          {filtered.length === 0 && (
+            <div className="px-4 py-6 text-center text-sm text-text-subtle">No projects found</div>
+          )}
         </div>
 
         {/* Footer actions */}

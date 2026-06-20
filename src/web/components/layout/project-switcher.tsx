@@ -1,8 +1,9 @@
 import { useState, useCallback, useMemo, useRef, useEffect, memo } from "react";
 import { createPortal } from "react-dom";
-import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Clock, ArrowDownUp, ArrowDownAZ, Image as ImageIcon } from "lucide-react";
+import { Plus, Pencil, Trash2, Palette, Copy, Search, ChevronsUpDown, ExternalLink, Image as ImageIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useProjectStore, resolveOrder, sortByRecent, loadRecentTimes, type ProjectInfo, type SortMode } from "@/stores/project-store";
+import { useProjectStore, resolveOrder, loadRecentTimes, type ProjectInfo } from "@/stores/project-store";
+import { SORT_OPTIONS, applySort } from "@/components/layout/project-sort";
 import { buildUrl } from "@/hooks/use-url-sync";
 import { formatRelativeDate } from "@/lib/format-date";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
@@ -24,24 +25,6 @@ import {
 } from "@/components/ui/dialog";
 import { AddProjectForm } from "@/components/layout/add-project-form";
 import { cn } from "@/lib/utils";
-
-// ---------------------------------------------------------------------------
-// Sort modes for the project list (SortMode + persistence live in the store)
-// ---------------------------------------------------------------------------
-const SORT_OPTIONS: { mode: SortMode; label: string; Icon: typeof Clock }[] = [
-  { mode: "recent", label: "Recent", Icon: Clock },
-  { mode: "priority", label: "Priority", Icon: ArrowDownUp },
-  { mode: "name", label: "Name", Icon: ArrowDownAZ },
-];
-
-/** Apply the selected sort to the full project list. */
-function applySort(
-  projects: ProjectInfo[], customOrder: string[] | null, mode: SortMode,
-): ProjectInfo[] {
-  if (mode === "recent") return sortByRecent(projects);
-  if (mode === "name") return [...projects].sort((a, b) => a.name.localeCompare(b.name));
-  return resolveOrder(projects, customOrder); // priority = manual/custom order
-}
 
 // ---------------------------------------------------------------------------
 // Avatar circle (gradient + initials + urgent notification dot)

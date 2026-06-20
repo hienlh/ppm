@@ -6,6 +6,7 @@ verify-billing-signature.ts
 codex-appserver-spike.ts
 codex-cli-poc.ts
 codex-sdk-poc.ts
+codex-junction-skill-probe.ts
 .out.txt
 
 # Dev files
