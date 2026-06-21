@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.11] - 2026-06-21
+
+### Changed
+- **Upgrade tunnel diagnostics** — the supervisor now logs the tunnel hand-off and adoption decision around a self-replace upgrade, so a Windows-only case where the public `trycloudflare` URL changes after upgrade can be traced from `ppm.log` on the next occurrence. New lines: the tunnel pid/url handed to the new supervisor, whether the kept-alive tunnel was still alive pre-upgrade, the new supervisor's startup `isUpgrade`/`prevState`/preserved pid+url, and an explicit adopted (URL preserved) vs FRESH tunnel (URL will change) decision. No behavior change.
+
 ## [0.14.10] - 2026-06-21
 
 ### Changed

@@ -544,6 +544,11 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     setState("upgrading");
     updateStatus({ state: "upgrading" });
 
+    // Diagnostic: snapshot the tunnel state being handed to the new supervisor.
+    // The new supervisor can only keep the public URL if this pid/url is still
+    // alive and gets preserved in status.json (state must stay "upgrading").
+    log("INFO", `Self-replace: tunnel handoff pid=${adoptedTunnelPid ?? tunnelChild?.pid ?? null} url=${tunnelUrl}`);
+
     // Set restarting flag so server child's stopTunnel() skips killing the tunnel
     try { writeFileSync(restartingFlag(), ""); } catch {}
 
@@ -554,7 +559,10 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // if the adopted tunnel died since the last probe, clear status so the
     // new supervisor spawns fresh instead of discovering ESRCH.
     if (adoptedTunnelPid && !tunnelChild) {
-      try { process.kill(adoptedTunnelPid, 0); } catch {
+      try {
+        process.kill(adoptedTunnelPid, 0);
+        log("INFO", `Pre-upgrade: adopted tunnel ${adoptedTunnelPid} alive — preserving across upgrade`);
+      } catch {
         log("WARN", "Pre-upgrade: adopted tunnel dead, clearing for new supervisor to spawn fresh");
         adoptedTunnelPid = null;
         tunnelUrl = null;
@@ -1051,6 +1059,10 @@ export async function runSupervisor(opts: {
     tunnelPid: isUpgrade ? (prevStatus.tunnelPid ?? null) : null,
     shareUrl: isUpgrade ? (prevStatus.shareUrl ?? null) : null,
   });
+  // Diagnostic: a cold start (isUpgrade=false) always nulls the tunnel and forces
+  // a fresh URL. A genuine upgrade must arrive here with state "upgrading" AND a
+  // live tunnelPid for the public URL to survive — log both to catch which path ran.
+  log("INFO", `Startup: isUpgrade=${isUpgrade} prevState=${prevStatus.state} prevTunnelPid=${prevStatus.tunnelPid ?? null} prevShareUrl=${prevStatus.shareUrl ?? null}`);
 
   // Build __serve__ args
   const serverArgs = [
@@ -1195,7 +1207,10 @@ export async function runSupervisor(opts: {
   if (opts.share) {
     startTunnelProbe(opts.port);
     // Try adopting tunnel kept alive from previous upgrade; spawn new if dead
-    if (!adoptTunnel()) {
+    if (adoptTunnel()) {
+      log("INFO", "Tunnel adopted from previous instance — public URL preserved");
+    } else {
+      log("WARN", "Tunnel adoption failed/skipped — spawning FRESH tunnel (public URL will change)");
       killStaleTunnel(); // kill orphaned tunnel before spawning new one
       promises.push(spawnTunnel(opts.port));
     }
