@@ -49,13 +49,14 @@ accountsRoutes.get("/settings", (c) => {
   return c.json(ok({
     strategy: accountSelector.getStrategy(),
     maxRetry: accountSelector.getMaxRetry(),
+    cooldownEnabled: accountSelector.isCooldownEnabled(),
     activeCount: accountSelector.activeCount(),
   }));
 });
 
 /** PUT /api/accounts/settings */
 accountsRoutes.put("/settings", async (c) => {
-  const body = await c.req.json<{ strategy?: string; maxRetry?: number }>();
+  const body = await c.req.json<{ strategy?: string; maxRetry?: number; cooldownEnabled?: boolean }>();
   if (body.strategy !== undefined) {
     if (!["round-robin", "fill-first", "lowest-usage"].includes(body.strategy)) {
       return c.json(err("strategy must be round-robin, fill-first, or lowest-usage"), 400);
@@ -68,9 +69,16 @@ accountsRoutes.put("/settings", async (c) => {
     }
     accountSelector.setMaxRetry(body.maxRetry);
   }
+  if (body.cooldownEnabled !== undefined) {
+    if (typeof body.cooldownEnabled !== "boolean") {
+      return c.json(err("cooldownEnabled must be a boolean"), 400);
+    }
+    accountSelector.setCooldownEnabled(body.cooldownEnabled);
+  }
   return c.json(ok({
     strategy: accountSelector.getStrategy(),
     maxRetry: accountSelector.getMaxRetry(),
+    cooldownEnabled: accountSelector.isCooldownEnabled(),
     activeCount: accountSelector.activeCount(),
   }));
 });

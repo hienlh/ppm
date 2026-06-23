@@ -228,6 +228,26 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return null;
   }
 
+  /**
+   * Pick an account NOT already rate-limited this turn so a rate-limit retry moves to a
+   * genuinely different account instead of re-hammering the exhausted one.
+   * Yields an account_retry event on success. Returns the new account, or null if none.
+   */
+  private async *switchOnRateLimit(
+    sessionId: string,
+    current: AccountWithTokens | null,
+    excludeIds: Set<string>,
+  ): AsyncGenerator<ChatEvent, AccountWithTokens | null, void> {
+    const nextAcc = accountSelector.next(excludeIds);
+    if (nextAcc && nextAcc.id !== current?.id) {
+      const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
+      console.warn(`[sdk] session=${sessionId} rate limited — switching to account ${nextAcc.id} (${label})`);
+      yield { type: "account_retry" as const, reason: `Rate limited — switching account`, accountId: nextAcc.id, accountLabel: label };
+      return nextAcc;
+    }
+    return null;
+  }
+
   private buildQueryEnv(
     _projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
@@ -987,6 +1007,24 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         }
       };
 
+      // Tear down the current SDK stream and recreate one bound to `acc`'s env,
+      // resuming the same session so context is preserved. Returns the new query.
+      const rebuildQuery = (acc: AccountWithTokens | null) => {
+        const retry = buildRetryMsg();
+        closeCurrentStream();
+        const env = this.buildQueryEnv(meta.projectPath, acc);
+        const { generator, controller } = createMessageChannel();
+        controller.push(retry.msg);
+        const opts = { ...queryOptions, sessionId: undefined, resume: sessionId, env };
+        const rq = query({
+          prompt: generator,
+          options: { ...opts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
+        });
+        this.streamingSessions.set(sessionId, { meta, query: rq, controller, lastUserContent: retry.lastUserContent, lastUserImages: retry.lastUserImages });
+        this.activeQueries.set(sessionId, rq);
+        return rq;
+      };
+
       let lastPartialText = "";
       /** Number of tool_use blocks pending results (top-level tools only, not subagent children) */
       let pendingToolCount = 0;
@@ -1006,6 +1044,9 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       let hadAnyEvents = false;
       // Accounts that hit a hard usage/session limit this turn — never retried again here.
       const usageLimitedAccounts = new Set<string>();
+      // Accounts that hit a rate limit this turn — used to switch to a genuinely
+      // different account instead of futilely re-hammering the same exhausted one.
+      const rateLimitedAccounts = new Set<string>();
       retryLoop: while (true) {
       // Reset streaming state on retry — clears stale content from failed attempts
       // (e.g. "Failed to authenticate. API Error: 401..." text that was already streamed)
@@ -1334,41 +1375,46 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               break;
             }
 
-            // Rate limit — auto-retry with exponential backoff, switching account if possible
-            if ((assistantError === "rate_limit" || assistantError === "server_error") && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
+            // Server error (5xx / overloaded) — Anthropic-side & transient, not account-specific.
+            // Backoff-retry the SAME account; no point switching.
+            if (assistantError === "server_error" && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
               const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
               rateLimitRetryCount++;
-              if (account) accountSelector.onRateLimit(account.id);
-
-              // Try to switch to a different account
-              const nextAccount = accountSelector.next();
-              if (nextAccount && account && nextAccount.id !== account.id) {
-                account = nextAccount;
-                const label = nextAccount.label ?? nextAccount.email ?? "Unknown";
-                console.warn(`[sdk] session=${sessionId} rate limited — switching to account ${nextAccount.id} (${label}), retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
-                yield { type: "account_retry" as const, reason: `Rate limited — switching account`, accountId: nextAccount.id, accountLabel: label };
-              } else {
-                console.warn(`[sdk] session=${sessionId} rate limited — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
-              }
-              // Replaceable status line (not an `error` event) so repeated retries don't
-              // accumulate duplicate error blocks — only the final error (if any) is shown.
+              console.warn(`[sdk] session=${sessionId} server error — retrying same account in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
               yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
               await new Promise((r) => setTimeout(r, backoff));
-              // Close current streaming session and recreate with (potentially new) account env.
-              const retry4 = buildRetryMsg();
-              closeCurrentStream();
-              const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
-              const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
-              rlRetryCtrl.push(retry4.msg);
-              const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: rlRetryEnv };
-              const rq = query({
-                prompt: rlRetryGen,
-                options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
-              });
-              this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl, lastUserContent: retry4.lastUserContent, lastUserImages: retry4.lastUserImages });
-              this.activeQueries.set(sessionId, rq);
-              eventSource = rq;
+              eventSource = rebuildQuery(account);
               continue retryLoop;
+            }
+
+            // Rate limit — switch to a DIFFERENT account if one is available; otherwise
+            // do NOT hammer the same exhausted account with an escalating backoff loop.
+            if (assistantError === "rate_limit") {
+              if (account) {
+                accountSelector.onRateLimit(account.id);
+                rateLimitedAccounts.add(account.id);
+              }
+              // Prefer an account not already rate-limited this turn — switch & retry now (no backoff).
+              const nextAccount = yield* this.switchOnRateLimit(sessionId, account, rateLimitedAccounts);
+              if (nextAccount) {
+                account = nextAccount;
+                eventSource = rebuildQuery(account);
+                continue retryLoop;
+              }
+              // No alternate account. Only worth a backoff-retry when this is effectively the
+              // sole account (transient burst can clear); multi-account means all are limited.
+              if (rateLimitedAccounts.size <= 1 && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
+                const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
+                rateLimitRetryCount++;
+                console.warn(`[sdk] session=${sessionId} rate limited — single account, retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
+                await new Promise((r) => setTimeout(r, backoff));
+                eventSource = rebuildQuery(account);
+                continue retryLoop;
+              }
+              console.warn(`[sdk] session=${sessionId} rate limited — all ${rateLimitedAccounts.size} account(s) exhausted, stopping`);
+              yield { type: "error", message: "All accounts are rate limited right now. Add another account in Settings → Accounts, or wait for the limit to reset." };
+              break;
             }
 
             const errorHints: Record<string, string> = {
@@ -1437,41 +1483,27 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             const errCode = this.detectResultErrorCode(msg);
             if (errCode === 429) {
               accountSelector.onRateLimit(account.id);
-              // Auto-retry with backoff for result-level 429, switching account if possible
-              if (rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
-                const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
-                rateLimitRetryCount++;
-
-                // Try to switch to a different account
-                const nextAccount = accountSelector.next();
-                if (nextAccount && nextAccount.id !== account.id) {
-                  account = nextAccount;
-                  const label = nextAccount.label ?? nextAccount.email ?? "Unknown";
-                  console.warn(`[sdk] session=${sessionId} result 429 — switching to account ${nextAccount.id} (${label}), retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
-                  yield { type: "account_retry" as const, reason: `Rate limited — switching account`, accountId: nextAccount.id, accountLabel: label };
-                } else {
-                  console.warn(`[sdk] session=${sessionId} result 429 — retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
-                }
-                // Replaceable status line (not an `error` event) — avoids accumulating
-                // duplicate error blocks across retries; only a final error is shown.
-                yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
-                await new Promise((r) => setTimeout(r, backoff));
-                const retry5 = buildRetryMsg();
-                closeCurrentStream();
-                const rlRetryEnv = this.buildQueryEnv(meta.projectPath, account);
-                const { generator: rlRetryGen, controller: rlRetryCtrl } = createMessageChannel();
-                rlRetryCtrl.push(retry5.msg);
-                const retryOpts = { ...queryOptions, sessionId: undefined, resume: sessionId, env: rlRetryEnv };
-                const rq = query({
-                  prompt: rlRetryGen,
-                  options: { ...retryOpts, ...(permissionHooks && { hooks: permissionHooks }), canUseTool } as any,
-                });
-                this.streamingSessions.set(sessionId, { meta, query: rq, controller: rlRetryCtrl, lastUserContent: retry5.lastUserContent, lastUserImages: retry5.lastUserImages });
-                this.activeQueries.set(sessionId, rq);
-                eventSource = rq;
+              rateLimitedAccounts.add(account.id);
+              // Switch to a DIFFERENT account if available — retry immediately, no backoff.
+              const nextAccount = yield* this.switchOnRateLimit(sessionId, account, rateLimitedAccounts);
+              if (nextAccount) {
+                account = nextAccount;
+                eventSource = rebuildQuery(account);
                 continue retryLoop;
               }
-              yield { type: "error", message: `Rate limited. Retried ${MAX_RATE_LIMIT_RETRIES} times without success.` };
+              // No alternate account. Backoff-retry only when this is effectively the sole
+              // account (a transient burst may clear); otherwise all accounts are limited.
+              if (rateLimitedAccounts.size <= 1 && rateLimitRetryCount < MAX_RATE_LIMIT_RETRIES) {
+                const backoff = RATE_LIMIT_BACKOFF_MS[rateLimitRetryCount] ?? 60_000;
+                rateLimitRetryCount++;
+                console.warn(`[sdk] session=${sessionId} result 429 — single account, retrying in ${backoff / 1000}s (attempt ${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})`);
+                yield { type: "status_update", phase: "retrying", message: `Đang thử lại (${rateLimitRetryCount}/${MAX_RATE_LIMIT_RETRIES})...` };
+                await new Promise((r) => setTimeout(r, backoff));
+                eventSource = rebuildQuery(account);
+                continue retryLoop;
+              }
+              console.warn(`[sdk] session=${sessionId} result 429 — all ${rateLimitedAccounts.size} account(s) exhausted, stopping`);
+              yield { type: "error", message: "All accounts are rate limited right now. Add another account in Settings → Accounts, or wait for the limit to reset." };
               continue;
             } else if (errCode === 401) {
               // Refresh (or switch account) and retry — resume existing SDK session to preserve context

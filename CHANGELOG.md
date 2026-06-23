@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.12] - 2026-06-23
+
+### Fixed
+- **Account rotation on rate limit no longer hangs** — when an account hit a rate limit, the provider could keep retrying the *same* exhausted account with an escalating 15s→30s→60s backoff (≈105s of dead waiting) whenever the other account was unavailable, and ping-pong between two already-limited accounts until the shared retry budget burned out. Rate limits now **switch to a genuinely different account** (tracked per-turn so each account is tried at most once) and retry immediately with no backoff; if no alternate account is available it **fails fast** with a clear "All accounts are rate limited" message instead of looping. `server_error` (5xx) is split out to keep its same-account backoff retry. Applied to both the assistant-error and result-level 429 paths.
+
+### Added
+- **Cooldown parking is now optional (default off)** — failing accounts (rate limit / usage limit / auth error / preflight refresh fail) are no longer parked in a cooldown by default; account rotation still proactively skips accounts at ≥95% of their 5-hour limit (based on real usage), and per-turn exclusion prevents re-hammering a failing account within a request, so the artificial cooldown lockout mostly just blocked otherwise-usable accounts. A new **Cooldown** toggle in the chat "Rotation & Retry" dialog and Settings → Accounts (config key `account_cooldown_enabled`, `PUT /api/accounts/settings`) restores the parking behavior when enabled.
+
 ## [0.14.11] - 2026-06-21
 
 ### Changed

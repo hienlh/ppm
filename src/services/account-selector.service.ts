@@ -5,6 +5,7 @@ export type AccountStrategy = "round-robin" | "fill-first" | "lowest-usage";
 
 const STRATEGY_CONFIG_KEY = "account_strategy";
 const MAX_RETRY_CONFIG_KEY = "account_max_retry";
+const COOLDOWN_ENABLED_KEY = "account_cooldown_enabled";
 
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
@@ -39,6 +40,21 @@ class AccountSelectorService {
     setConfigValue(MAX_RETRY_CONFIG_KEY, String(n));
   }
 
+  /**
+   * Whether to park failing accounts in cooldown. Default OFF — account rotation already
+   * avoids maxed accounts via the 5-hour usage skip ([[FIVE_HOUR_SKIP_THRESHOLD]]), and the
+   * per-turn exclusion sets in the provider prevent re-hammering within a request, so the
+   * artificial cooldown lockout mostly just blocks otherwise-usable accounts.
+   * Set config "account_cooldown_enabled" = "true" to restore cooldown parking.
+   */
+  isCooldownEnabled(): boolean {
+    return getConfigValue(COOLDOWN_ENABLED_KEY) === "true";
+  }
+
+  setCooldownEnabled(on: boolean): void {
+    setConfigValue(COOLDOWN_ENABLED_KEY, String(on));
+  }
+
   /** Reason for the last null return from next() */
   private _lastFailReason: "none" | "no_active" | "all_decrypt_failed" | "all_excluded" = "none";
 
@@ -70,7 +86,12 @@ class AccountSelectorService {
       }
     }
 
-    const active = accountService.list().filter((a) => a.status === "active");
+    // When cooldown is disabled, treat parked (cooldown) accounts as selectable too —
+    // any leftover cooldown from before the flag flip shouldn't lock an account out.
+    const cooldownOn = this.isCooldownEnabled();
+    const active = accountService.list().filter(
+      (a) => a.status === "active" || (!cooldownOn && a.status === "cooldown"),
+    );
     // Skip accounts excluded by caller (e.g., pre-flight loop)
     const notExcluded = excludeIds?.size ? active.filter((a) => !excludeIds.has(a.id)) : active;
     if (notExcluded.length === 0) {
@@ -112,8 +133,9 @@ class AccountSelectorService {
    */
   peek(): AccountWithTokens | null {
     const now = Math.floor(Date.now() / 1000);
+    const cooldownOn = this.isCooldownEnabled();
     const active = accountService.list().filter(
-      (a) => a.status === "active" || (a.status === "cooldown" && (a.cooldownUntil ?? 0) <= now),
+      (a) => a.status === "active" || (a.status === "cooldown" && (!cooldownOn || (a.cooldownUntil ?? 0) <= now)),
     );
     if (active.length === 0) return null;
 
@@ -182,6 +204,7 @@ class AccountSelectorService {
   onRateLimit(accountId: string): void {
     const retries = (this.retryCounts.get(accountId) ?? 0) + 1;
     this.retryCounts.set(accountId, retries);
+    if (!this.isCooldownEnabled()) return;
     const backoffMs = Math.min(BACKOFF_BASE_MS * Math.pow(2, retries - 1), BACKOFF_MAX_MS);
     const cooldownUntilMs = Date.now() + backoffMs;
     accountService.setCooldown(accountId, cooldownUntilMs);
@@ -192,6 +215,7 @@ class AccountSelectorService {
    *  Cooldown until the real reset time (or ~1h fallback). Does NOT bump retryCounts —
    *  this is a quota ceiling, not a transient failure, so it carries no escalating penalty. */
   onUsageLimit(accountId: string, resetAtMs?: number): void {
+    if (!this.isCooldownEnabled()) return;
     const FALLBACK_MS = 60 * 60_000; // 1 hour
     const cooldownUntilMs =
       resetAtMs && resetAtMs > Date.now() ? resetAtMs : Date.now() + FALLBACK_MS;
@@ -204,6 +228,7 @@ class AccountSelectorService {
   onAuthError(accountId: string): void {
     const retries = (this.retryCounts.get(accountId) ?? 0) + 1;
     this.retryCounts.set(accountId, retries);
+    if (!this.isCooldownEnabled()) return;
     const backoffMs = Math.min(AUTH_BACKOFF_BASE_MS * Math.pow(2, retries - 1), BACKOFF_MAX_MS);
     accountService.setCooldown(accountId, Date.now() + backoffMs);
     console.log(`[accounts] ${accountId} auth error — cooldown ${Math.round(backoffMs / 1000)}s (retry #${retries})`);
@@ -217,6 +242,7 @@ class AccountSelectorService {
   onPreflightFail(accountId: string): void {
     const retries = (this.retryCounts.get(accountId) ?? 0) + 1;
     this.retryCounts.set(accountId, retries);
+    if (!this.isCooldownEnabled()) return;
     const backoffMs = Math.min(
       AccountSelectorService.PREFLIGHT_BACKOFF_BASE_MS * Math.pow(2, retries - 1),
       AccountSelectorService.PREFLIGHT_BACKOFF_MAX_MS,
@@ -234,8 +260,9 @@ class AccountSelectorService {
   /** How many accounts are active or have expired cooldowns right now */
   activeCount(): number {
     const now = Math.floor(Date.now() / 1000);
+    const cooldownOn = this.isCooldownEnabled();
     return accountService.list().filter(
-      (a) => a.status === "active" || (a.status === "cooldown" && (a.cooldownUntil ?? 0) <= now),
+      (a) => a.status === "active" || (a.status === "cooldown" && (!cooldownOn || (a.cooldownUntil ?? 0) <= now)),
     ).length;
   }
 

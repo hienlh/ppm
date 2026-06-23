@@ -84,6 +84,7 @@ describe("AccountSelectorService", () => {
   });
 
   it("skips accounts on active cooldown", () => {
+    accountSelector.setCooldownEnabled(true);
     const a = addAccount("a@test.com");
     addAccount("b@test.com");
     // Set cooldown far in the future
@@ -124,6 +125,7 @@ describe("AccountSelectorService", () => {
   });
 
   it("onRateLimit() sets cooldown on account", () => {
+    accountSelector.setCooldownEnabled(true);
     const a = addAccount("a@test.com");
     accountSelector.onRateLimit(a.id);
     const updated = accountService.list().find((x) => x.id === a.id)!;
@@ -132,6 +134,7 @@ describe("AccountSelectorService", () => {
   });
 
   it("onRateLimit() applies exponential backoff", () => {
+    accountSelector.setCooldownEnabled(true);
     const a = addAccount("a@test.com");
     // First rate limit: ~1s cooldown
     accountSelector.onRateLimit(a.id);
@@ -145,6 +148,7 @@ describe("AccountSelectorService", () => {
   });
 
   it("onAuthError() puts account in cooldown", () => {
+    accountSelector.setCooldownEnabled(true);
     const a = addAccount("a@test.com");
     accountSelector.onAuthError(a.id);
     expect(accountService.list()[0].status).toBe("cooldown");
@@ -157,6 +161,7 @@ describe("AccountSelectorService", () => {
   });
 
   it("activeCount() counts only truly active accounts", () => {
+    accountSelector.setCooldownEnabled(true);
     const a = addAccount("a@test.com");
     const b = addAccount("b@test.com");
     addAccount("c@test.com");
@@ -424,6 +429,7 @@ describe("next(excludeIds) — pre-flight loop support", () => {
 describe("onPreflightFail()", () => {
   beforeEach(() => {
     setDb(openTestDb());
+    accountSelector.setCooldownEnabled(true);
   });
 
   afterEach(() => {
@@ -508,5 +514,99 @@ describe("peek()", () => {
     const peeked = accountSelector.peek();
     expect(peeked).not.toBeNull();
     expect(peeked!.id).toBe(a.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rate-limit account switching (provider.switchOnRateLimit)
+// Regression: a rate-limited account must NOT be re-picked; when no alternate
+// account exists, the helper must return null (caller stops instead of looping).
+// ---------------------------------------------------------------------------
+describe("switchOnRateLimit (provider)", () => {
+  async function runSwitch(current: { id: string } | null, excludeIds: Set<string>) {
+    const { ClaudeAgentSdkProvider } = await import("../../../src/providers/claude-agent-sdk.ts");
+    const provider = new ClaudeAgentSdkProvider();
+    const gen = (provider as any).switchOnRateLimit("test-session", current, excludeIds);
+    const events: any[] = [];
+    let res = await gen.next();
+    while (!res.done) {
+      events.push(res.value);
+      res = await gen.next();
+    }
+    return { events, returned: res.value as { id: string } | null };
+  }
+
+  it("switches to a different account when one is available", async () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    const current = accountService.getWithTokens(a.id)!;
+
+    const { events, returned } = await runSwitch(current, new Set([a.id]));
+    expect(returned).not.toBeNull();
+    expect(returned!.id).toBe(b.id);
+    // Emits exactly one account_retry event for the FE
+    expect(events.filter((e) => e.type === "account_retry")).toHaveLength(1);
+  });
+
+  it("returns null when the only account is already rate-limited (no futile re-pick)", async () => {
+    const a = addAccount("a@test.com");
+    const current = accountService.getWithTokens(a.id)!;
+
+    const { events, returned } = await runSwitch(current, new Set([a.id]));
+    expect(returned).toBeNull();
+    expect(events).toHaveLength(0);
+  });
+
+  it("returns null when all accounts are rate-limited", async () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    const current = accountService.getWithTokens(a.id)!;
+
+    const { returned } = await runSwitch(current, new Set([a.id, b.id]));
+    expect(returned).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cooldown toggle (default OFF) — failing accounts must NOT be parked, and
+// next() must keep parked accounts selectable, while the 5h usage skip remains.
+// ---------------------------------------------------------------------------
+describe("cooldown disabled (default)", () => {
+  it("defaults to disabled", () => {
+    expect(accountSelector.isCooldownEnabled()).toBe(false);
+  });
+
+  it("onRateLimit() does NOT park the account when disabled", () => {
+    const a = addAccount("a@test.com");
+    accountSelector.onRateLimit(a.id);
+    expect(accountService.list().find((x) => x.id === a.id)!.status).toBe("active");
+  });
+
+  it("onUsageLimit() / onAuthError() / onPreflightFail() are no-ops when disabled", () => {
+    const a = addAccount("a@test.com");
+    accountSelector.onUsageLimit(a.id, Date.now() + 60_000);
+    accountSelector.onAuthError(a.id);
+    accountSelector.onPreflightFail(a.id);
+    expect(accountService.list().find((x) => x.id === a.id)!.status).toBe("active");
+  });
+
+  it("next() keeps a pre-parked (cooldown) account selectable when disabled", () => {
+    const a = addAccount("a@test.com");
+    // Simulate a leftover cooldown from before the flag was turned off
+    accountService.setCooldown(a.id, Date.now() + 60_000);
+    const picked = accountSelector.next();
+    expect(picked).not.toBeNull();
+    expect(picked!.id).toBe(a.id);
+  });
+
+  it("still skips accounts at ≥95% 5-hour usage even when cooldown disabled", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    insertUsage(a.id, { fiveHour: 0.99, weekly: 0.30, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.10, weekly: 0.10, weeklyResetsAt: hoursFromNow(100) });
+    // Round-robin would alternate, but a is proactively skipped → always b
+    for (let i = 0; i < 4; i++) {
+      expect(accountSelector.next()!.id).toBe(b.id);
+    }
   });
 });

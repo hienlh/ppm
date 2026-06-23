@@ -2,6 +2,7 @@ import { useState, useEffect, useSyncExternalStore } from "react";
 import { Settings, X } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
   getAccountSettings,
@@ -87,6 +88,24 @@ function SettingsContent() {
         />
         <p className="text-[10px] text-text-subtle">
           How many accounts to try on failure. 0 = try all available accounts.
+        </p>
+      </div>
+
+      {/* Cooldown toggle */}
+      <div className="space-y-1.5 border-t border-border pt-3">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium text-text-primary">Cooldown parking</label>
+          <Switch
+            checked={settings.cooldownEnabled}
+            onCheckedChange={async (v) => {
+              const updated = await updateAccountSettings({ cooldownEnabled: v });
+              setSettings(updated);
+            }}
+          />
+        </div>
+        <p className="text-[10px] text-text-subtle">
+          Park a failing account (rate limit / usage limit / auth error) until it recovers. Off:
+          accounts stay selectable — rotation still skips accounts already ≥95% on the 5-hour limit.
         </p>
       </div>
 

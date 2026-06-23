@@ -54,6 +54,7 @@ export interface VerifyResult {
 export interface AccountSettings {
   strategy: "round-robin" | "fill-first" | "lowest-usage";
   maxRetry: number;
+  cooldownEnabled: boolean;
   activeCount: number;
 }
 

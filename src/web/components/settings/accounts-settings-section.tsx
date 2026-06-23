@@ -556,6 +556,19 @@ export function AccountsSettingsSection() {
             />
             <span className="text-[11px] text-muted-foreground">(0 = try all)</span>
           </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] text-muted-foreground w-20 shrink-0">Cooldown</label>
+            <Switch
+              checked={settings.cooldownEnabled}
+              onCheckedChange={async (v) => {
+                const updated = await updateAccountSettings({ cooldownEnabled: v });
+                setSettings(updated);
+              }}
+            />
+            <span className="text-[11px] text-muted-foreground">
+              {settings.cooldownEnabled ? "park failing accounts" : "off — rotation still skips ≥95% usage"}
+            </span>
+          </div>
           <p className="text-[11px] text-muted-foreground">
             Active accounts: {settings.activeCount}
           </p>
