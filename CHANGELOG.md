@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.14.13] - 2026-06-24
+
+### Fixed
+- **Mermaid preview no longer leaks "Syntax error" bombs** — when a Mermaid code block had invalid syntax (e.g. incomplete diagrams during AI streaming), `mermaid.render()` injected an error "bomb" SVG into the DOM and threw; the swallowed error left those orphaned error graphics stacked at the bottom of the page. The renderer now validates with `mermaid.parse(..., { suppressErrors: true })` before rendering (parse never touches the DOM) and defensively removes any orphaned render node, so invalid diagrams cleanly fall back to a plain code block.
+- **Fork/edit no longer resets chat title to "Forked Chat"** — forking a chat or editing a message overrode the SDK-inherited summary and dropped any user-set title. The fork now inherits the source's title.
+
 ## [0.14.12] - 2026-06-23
 
 ### Fixed

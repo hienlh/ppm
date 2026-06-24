@@ -114,8 +114,25 @@ function MermaidDiagram({ source }: { source: string }) {
   const [svg, setSvg] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
-    getMermaid().then((m) => m.render(id, source)).then(({ svg }) => setSvg(svg)).catch(() => {});
+    getMermaid()
+      .then(async (m) => {
+        // Validate before rendering: render() injects an error "bomb" SVG into the
+        // DOM on syntax errors, which leaks orphaned nodes. parse() never touches the DOM.
+        const ok = await m.parse(source, { suppressErrors: true });
+        if (!ok) throw new Error("invalid mermaid syntax");
+        const { svg } = await m.render(id, source);
+        if (!cancelled) setSvg(svg);
+      })
+      .catch(() => {
+        // Defensively remove any orphaned mermaid render/error node left in the DOM
+        document.getElementById(id)?.remove();
+        document.getElementById(`d${id}`)?.remove();
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [source]);
 
   if (!svg) return <pre><code>{source}</code></pre>;
