@@ -141,6 +141,26 @@ describe("Session Fork — route dispatch", () => {
     expect(json.data.forkedFrom).toBe(source.id);
   });
 
+  it("fork inherits the source session's user-set title (not 'Forked Chat')", async () => {
+    const createRes = await req("/chat/sessions", {
+      method: "POST",
+      body: JSON.stringify({ providerId: "mock", title: "Source" }),
+    });
+    const { data: source } = (await createRes.json()) as any;
+    // Seed an authoritative PPM title on the source (as a rename would).
+    setSessionTitle(source.id, "My Renamed Chat");
+
+    const forkRes = await req(`/chat/sessions/${source.id}/fork?providerId=mock`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const json = (await forkRes.json()) as any;
+
+    expect(json.ok).toBe(true);
+    expect(json.data.title).toBe("My Renamed Chat");
+    expect(getSessionTitle(json.data.id)).toBe("My Renamed Chat");
+  });
+
   it("fork with messageId returns 400 for provider without forkAtMessage", async () => {
     const createRes = await req("/chat/sessions", {
       method: "POST",

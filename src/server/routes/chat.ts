@@ -12,7 +12,7 @@ import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.ser
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
-import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread } from "../../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { ok, err } from "../../types/api.ts";
@@ -433,6 +433,12 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
     const provider = providerRegistry.get(providerId);
     if (!provider) return c.json(err("Provider not found"), 404);
 
+    // Inherit the source session's title so fork/edit keeps the same title
+    // instead of resetting to "Forked Chat". A user-set PPM title overlays the
+    // SDK title (session_titles is authoritative); when absent, the SDK fork
+    // naturally inherits the source's summary/firstPrompt from the copied prefix.
+    const inheritedTitle = getSessionTitle(sourceId);
+
     if (body.messageId) {
       // Mid-fork at a specific message
       if (!provider.forkAtMessage) {
@@ -440,10 +446,13 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
       }
       try {
         const result = await provider.forkAtMessage(sourceId, body.messageId, {
-          title: "Forked Chat", dir: projectPath,
+          title: inheritedTitle ?? undefined, dir: projectPath,
         });
         // Register forked session with provider + DB so it's tracked in memory
         setSessionMetadata(result.sessionId, projectName, projectPath);
+        // Persist the inherited user-set title so the collapsed-tree head shows
+        // it regardless of the SDK-derived summary.
+        if (inheritedTitle) setSessionTitle(result.sessionId, inheritedTitle);
         await provider.resumeSession(result.sessionId);
         provider.markAsResumed?.(result.sessionId);
         // Persist the branch link (edit-message tree). Best-effort: a branch
@@ -463,7 +472,7 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
         const forkedSession = {
           id: result.sessionId,
           providerId,
-          title: "Forked Chat",
+          title: inheritedTitle ?? "Forked Chat",
           projectName,
           projectPath,
           createdAt: new Date().toISOString(),
@@ -481,8 +490,9 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
     } else {
       // No messageId (fork at first message) — create a fresh empty session
       const session = await chatService.createSession(providerId, {
-        projectName, projectPath, title: "Forked Chat",
+        projectName, projectPath, title: inheritedTitle ?? "Forked Chat",
       });
+      if (inheritedTitle) setSessionTitle(session.id, inheritedTitle);
       return c.json(ok({ ...session, forkedFrom: sourceId }), 201);
     }
   } catch (e) {
