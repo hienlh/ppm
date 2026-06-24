@@ -1,11 +1,12 @@
 import { useCallback } from "react";
-import { Check, Pin, PinOff, Pencil, Trash2, Tag } from "lucide-react";
+import { Check, Pin, PinOff, Pencil, Trash2, Tag, Circle } from "lucide-react";
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem,
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { api, projectUrl } from "@/lib/api-client";
+import { useNotificationStore } from "@/stores/notification-store";
 import type { SessionInfo, ProjectTag } from "../../../types/chat";
 
 interface SessionContextMenuProps {
@@ -23,6 +24,8 @@ export function SessionContextMenu({
   session, projectName, projectTags, children,
   onTogglePin, onStartEditing, onDeleteSession, onTagChanged,
 }: SessionContextMenuProps) {
+  const markUnread = useNotificationStore((s) => s.markUnread);
+  const isUnread = useNotificationStore((s) => s.notifications.has(session.id));
   const assignTag = useCallback(async (tagId: number | null) => {
     try {
       if (tagId) {
@@ -48,6 +51,12 @@ export function SessionContextMenu({
           {session.pinned ? <PinOff className="size-3.5 mr-2" /> : <Pin className="size-3.5 mr-2" />}
           {session.pinned ? "Unpin" : "Pin"}
         </ContextMenuItem>
+        {!isUnread && (
+          <ContextMenuItem onClick={() => markUnread(session.id, projectName, session.title)}>
+            <Circle className="size-3.5 mr-2 fill-blue-500 text-blue-500" />
+            Mark as unread
+          </ContextMenuItem>
+        )}
         {onStartEditing && (
           <ContextMenuItem
             onClick={(e) => onStartEditing(session, e as unknown as React.MouseEvent)}

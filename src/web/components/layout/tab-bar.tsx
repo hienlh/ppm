@@ -29,7 +29,7 @@ import {
   ContextMenuSub, ContextMenuSubTrigger, ContextMenuSubContent,
   ContextMenuItem, ContextMenuSeparator,
 } from "@/components/ui/context-menu";
-import { Tag, Check, Columns2 } from "lucide-react";
+import { Tag, Check, Columns2, Circle } from "lucide-react";
 import { basename } from "@/lib/utils";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
@@ -323,6 +323,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
             const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
             const entry = sessionId ? notifications.get(sessionId) : undefined;
             const notiType = entry && entry.count > 0 ? entry.type : null;
+            const notiManual = !!entry?.manual;
             const isTabStreaming = sessionId ? streamingSessions.has(sessionId) : false;
             return (
             <DraggableTab
@@ -332,6 +333,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               icon={TAB_ICONS[tab.type] || Puzzle}
               showDropBefore={dropIndex === i}
               notificationType={notiType}
+              notificationManual={notiManual}
               isStreaming={isTabStreaming}
               onSelect={() => {
                 if (wasTouchDragRecent()) return;
@@ -355,6 +357,18 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               extraMenuContent={
                 <>
                   {compareMenuItems(tab)}
+                  {sessionId && !notiType && (
+                    <>
+                      <ContextMenuItem onClick={() => {
+                        const pn = tab.metadata?.projectName as string | undefined;
+                        if (pn) useNotificationStore.getState().markUnread(sessionId, pn, tab.title);
+                      }}>
+                        <Circle className="size-3.5 mr-2 fill-blue-500 text-blue-500" />
+                        Mark as unread
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                    </>
+                  )}
                   {sessionId && projectTags.length > 0 && (
                     <>
                       <ContextMenuSub>

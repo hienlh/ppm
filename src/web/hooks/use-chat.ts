@@ -519,8 +519,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
     // Cross-tab/device unread sync — server broadcasts when unread state changes
     if ((data as any).type === "session:unread_changed") {
-      const { sessionId: sid, unreadCount, unreadType, projectName: pn, sessionTitle: sTitle } = data as any;
-      useNotificationStore.getState().handleUnreadChanged(sid, unreadCount, unreadType, pn, sTitle);
+      const { sessionId: sid, unreadCount, unreadType, projectName: pn, sessionTitle: sTitle, manual } = data as any;
+      useNotificationStore.getState().handleUnreadChanged(sid, unreadCount, unreadType, pn, sTitle, manual);
       return;
     }
 

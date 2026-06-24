@@ -140,9 +140,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       if (document.hidden) return;
       const { panels } = usePanelStore.getState();
       const isActive = Object.values(panels).some((p) => p.activeTabId === tabId);
-      if (isActive) {
-        useNotificationStore.getState().clearForSession(sessionId);
-      }
+      if (!isActive) return;
+      // Manual "mark as unread" stays sticky while the tab is active; only the explicit
+      // clear-on-(re)select path (handleSelectSession / tab onSelect) clears it.
+      if (useNotificationStore.getState().notifications.get(sessionId)?.manual) return;
+      useNotificationStore.getState().clearForSession(sessionId);
     };
     maybeClear();
     document.addEventListener("visibilitychange", maybeClear);

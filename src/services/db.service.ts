@@ -981,6 +981,20 @@ export function incrementSessionUnread(sessionId: string, type: string, title?: 
   }
 }
 
+/** Manually mark a session unread (idempotent: SETS count to 1, not increment; row-creating).
+ *  project_name is set so unread entries are clearable cross-device (clearForSession skips when empty). */
+export function setSessionUnread(sessionId: string, type: string, title?: string | null, projectName?: string | null): void {
+  getDb().query(
+    `INSERT INTO session_metadata (session_id, unread_count, unread_type, last_known_title, project_name)
+     VALUES (?, 1, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       unread_count = 1,
+       unread_type = excluded.unread_type,
+       last_known_title = COALESCE(excluded.last_known_title, session_metadata.last_known_title),
+       project_name = COALESCE(session_metadata.project_name, excluded.project_name)`,
+  ).run(sessionId, type, title ?? null, projectName ?? null);
+}
+
 /** Mark a session as read (reset unread count) */
 export function clearSessionUnread(sessionId: string): void {
   getDb().query(

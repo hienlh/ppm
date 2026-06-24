@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Circle, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -102,6 +102,7 @@ export function ChatHistoryBar({
   const notifications = useNotificationStore((s) => s.notifications);
   const hasUnread = useNotificationStore((s) => sessionId ? s.notifications.has(sessionId) : false);
   const clearForSession = useNotificationStore((s) => s.clearForSession);
+  const markUnread = useNotificationStore((s) => s.markUnread);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -390,6 +391,17 @@ export function ChatHistoryBar({
             title="Mark as read"
           >
             <BellOff className="size-3" />
+          </button>
+        )}
+
+        {/* Mark as unread */}
+        {!hasUnread && sessionId && (
+          <button
+            onClick={() => markUnread(sessionId, projectName)}
+            className="p-1 rounded text-blue-500 hover:text-blue-400 hover:bg-surface-elevated transition-colors"
+            title="Mark as unread"
+          >
+            <Circle className="size-3 fill-current" />
           </button>
         )}
 

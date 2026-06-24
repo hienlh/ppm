@@ -24,6 +24,8 @@ interface DraggableTabProps {
   showDropBefore: boolean;
   /** Notification type if unread (null = no unread). Controls badge color. */
   notificationType?: string | null;
+  /** True when unread was set by an explicit "mark as unread" — shows the dot even on the active tab. */
+  notificationManual?: boolean;
   /** True when this chat tab is actively streaming an AI response */
   isStreaming?: boolean;
   onSelect: () => void;
@@ -46,7 +48,7 @@ interface DraggableTabProps {
 }
 
 export function DraggableTab({
-  tab, isActive, icon: Icon, showDropBefore, notificationType, isStreaming, onSelect, onClose,
+  tab, isActive, icon: Icon, showDropBefore, notificationType, notificationManual, isStreaming, onSelect, onClose,
   onDragStart, onDragOver, onDragEnd, onTouchStart, onTouchMove, onTouchEnd, tabRef, onRename, onContextAction,
   tagColor, extraMenuContent,
 }: DraggableTabProps) {
@@ -110,7 +112,7 @@ export function DraggableTab({
             <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.15s" }} />
             <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.3s" }} />
           </span>
-        ) : notificationType && !isActive ? (
+        ) : notificationType && (!isActive || notificationManual) ? (
           <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notificationType))} />
         ) : null}
       </span>

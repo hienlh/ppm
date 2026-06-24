@@ -7,6 +7,9 @@ interface NotificationEntry {
   type: string;
   projectName: string;
   sessionTitle: string | null;
+  /** True when set by an explicit user "mark as unread" — suppresses the active-tab auto-clear
+   *  so it stays sticky until the user navigates away and re-opens the session. */
+  manual?: boolean;
 }
 
 /** Badge color per notification type (Tailwind bg class) */
@@ -43,12 +46,14 @@ export function notificationTint(type: string | null | undefined): string {
 interface NotificationStore {
   notifications: Map<string, NotificationEntry>;
   addNotification: (sessionId: string, type: string, projectName: string, sessionTitle?: string | null) => void;
+  /** Manually mark a session unread (count=1, blue "done" dot); persists to server */
+  markUnread: (sessionId: string, projectName: string, sessionTitle?: string | null) => void;
   clearForSession: (sessionId: string) => void;
   clearAll: () => void;
   /** Hydrate from backend on app load */
   loadFromServer: (projectName: string) => Promise<void>;
   /** Handle WS broadcast for cross-tab/device sync */
-  handleUnreadChanged: (sessionId: string, unreadCount: number, unreadType: string | null, projectName: string, sessionTitle?: string | null) => void;
+  handleUnreadChanged: (sessionId: string, unreadCount: number, unreadType: string | null, projectName: string, sessionTitle?: string | null, manual?: boolean) => void;
 }
 
 export const useNotificationStore = create<NotificationStore>()((set) => ({
@@ -66,6 +71,23 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
       });
       return { notifications: next };
     });
+  },
+
+  markUnread: (sessionId, projectName, sessionTitle) => {
+    set((state) => {
+      const next = new Map(state.notifications);
+      next.set(sessionId, {
+        count: 1,
+        type: "done",
+        projectName,
+        sessionTitle: sessionTitle ?? next.get(sessionId)?.sessionTitle ?? null,
+        manual: true,
+      });
+      return { notifications: next };
+    });
+    // Fire-and-forget: persist to server so other tabs/devices sync. Send projectName so the
+    // unread entry stays clearable (clearForSession skips the /read POST when projectName empty).
+    api.post(`/api/project/${encodeURIComponent(projectName)}/chat/sessions/${encodeURIComponent(sessionId)}/unread`, { projectName }).catch(() => {});
   },
 
   clearForSession: (sessionId) => {
@@ -103,7 +125,7 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
     } catch { /* server may not support yet — keep empty */ }
   },
 
-  handleUnreadChanged: (sessionId, unreadCount, unreadType, projectName, sessionTitle) => {
+  handleUnreadChanged: (sessionId, unreadCount, unreadType, projectName, sessionTitle, manual) => {
     set((state) => {
       const next = new Map(state.notifications);
       if (unreadCount === 0) {
@@ -116,6 +138,10 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
           type: unreadType || "done",
           projectName: projectName || existing?.projectName || "",
           sessionTitle: sessionTitle ?? existing?.sessionTitle ?? null,
+          // Preserve sticky manual flag — broadcast carries it, and the originating client
+          // already set it locally; without this the round-trip strips it and the active-tab
+          // auto-clear immediately fires /read.
+          manual: manual ?? existing?.manual,
         });
       }
       return { notifications: next };

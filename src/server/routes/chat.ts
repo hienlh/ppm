@@ -12,7 +12,7 @@ import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.ser
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
-import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread } from "../../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
 import { ok, err } from "../../types/api.ts";
@@ -377,6 +377,24 @@ chatRoutes.post("/sessions/:id/read", async (c) => {
   }
 });
 
+/** POST /chat/sessions/:id/unread — manually mark a session as unread (Gmail-style; clears on open).
+ *  Body { projectName } is persisted + broadcast so the unread is clearable cross-device. */
+chatRoutes.post("/sessions/:id/unread", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const body = await c.req.json().catch(() => ({})) as { projectName?: string };
+    const projectName = body.projectName ?? "";
+    const title = getSessionTitle(id);
+    setSessionUnread(id, "done", title, projectName || null);
+    // Broadcast to all WS clients so other tabs/devices sync
+    const { broadcastGlobalEvent } = await import("../ws/chat.ts");
+    broadcastGlobalEvent({ type: "session:unread_changed", sessionId: id, unreadCount: 1, unreadType: "done", projectName, sessionTitle: title, manual: true });
+    return c.json(ok({ id, unreadCount: 1 }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 /** PATCH /chat/sessions/bulk-tag — assign tag to multiple sessions (MUST be before /sessions/:id) */
 chatRoutes.patch("/sessions/bulk-tag", async (c) => {
   try {
@@ -465,7 +483,14 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
           const k = parentMsgs.findIndex((m) => (m.sdkUuid ?? m.id) === body.messageId);
           const userUpToFork = parentMsgs.slice(0, k + 1).filter((m) => m.role === "user").length;
           const forkOrdinal = userUpToFork + 1;
-          recordBranch(result.sessionId, sourceId, body.messageId, forkOrdinal);
+          // All edits of the same message share an identical prefix, so they must
+          // be siblings under ONE common parent — the original version at this
+          // ordinal. Editing the currently-viewed version would otherwise chain
+          // forks (A→B→C), fragmenting them into pairwise groups that resolve to
+          // partial, inconsistent version counts. Re-parent onto the group root.
+          const existingGroup = resolveVersionGroup(sourceId, forkOrdinal);
+          const versionParent = existingGroup ? existingGroup.ids[0]! : sourceId;
+          recordBranch(result.sessionId, versionParent, body.messageId, forkOrdinal);
         } catch (branchErr) {
           console.warn(`[chat] recordBranch failed: ${(branchErr as Error).message}`);
         }
