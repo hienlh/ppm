@@ -897,6 +897,12 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     })
       .then((r) => r.json())
       .then((json: any) => {
+        // A turn may have started while this fetch was in flight (e.g. edit→fork
+        // swaps the session, session_state arrives idle and triggers this refetch,
+        // then the queued edited message sends and moves phase off idle). The
+        // fetched history predates that send, so replacing now would drop the
+        // just-sent user message — leaving it missing until a manual reload.
+        if (phaseRef.current !== "idle") return;
         if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
           setMessages(json.data);
           streamingContentRef.current = "";

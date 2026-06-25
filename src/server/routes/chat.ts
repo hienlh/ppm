@@ -14,7 +14,7 @@ import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-tr
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
-import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor } from "../../services/session-branch.service.ts";
+import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -177,6 +177,20 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     const id = c.req.param("id");
     const providerId = c.req.query("providerId") ?? "claude";
     const messages = await chatService.getMessages(providerId, id);
+    // Forking re-timestamps the copied prefix (both the Claude SDK and codex
+    // stamp the fork moment), so a version's inherited history would render as
+    // "just now" and shift when switching versions. Overlay the branch root's
+    // real timestamps across the identical prefix, stopping at the divergent
+    // (edited) message beyond which the messages are genuinely new to this fork.
+    const rootId = getRootId(id);
+    if (rootId && rootId !== id) {
+      const rootMsgs = await chatService.getMessages(providerId, rootId).catch(() => [] as typeof messages);
+      for (let i = 0; i < messages.length && i < rootMsgs.length; i++) {
+        const r = rootMsgs[i], m = messages[i];
+        if (!r || !m || r.role !== m.role || r.content !== m.content) break;
+        m.timestamp = r.timestamp;
+      }
+    }
     return c.json(ok(messages));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -447,6 +461,10 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
     const providerId = c.req.query("providerId") ?? "claude";
+    // "edit" = same-tab edit-message (a version of the same conversation) — must
+    // keep the original title. Anything else is an explicit fork, which may keep
+    // the provider's own "(fork)"-suffixed name.
+    const isEdit = c.req.query("mode") === "edit";
     const body = await c.req.json<{ messageId?: string }>().catch(() => ({} as { messageId?: string }));
     const provider = providerRegistry.get(providerId);
     if (!provider) return c.json(err("Provider not found"), 404);
@@ -491,6 +509,16 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
           const existingGroup = resolveVersionGroup(sourceId, forkOrdinal);
           const versionParent = existingGroup ? existingGroup.ids[0]! : sourceId;
           recordBranch(result.sessionId, versionParent, body.messageId, forkOrdinal);
+          // Edit versions must show the group root's clean title — codex names a
+          // forked thread "<title> (fork)", so without this the suffix compounds
+          // ("Hello (fork) (fork)") across repeated edits. Pin the PPM title.
+          if (isEdit) {
+            let rootTitle = getSessionTitle(versionParent);
+            if (!rootTitle && (provider as any).getSessionInfoById) {
+              rootTitle = (await (provider as any).getSessionInfoById(versionParent, projectPath).catch(() => null))?.title ?? null;
+            }
+            if (rootTitle) setSessionTitle(result.sessionId, rootTitle);
+          }
         } catch (branchErr) {
           console.warn(`[chat] recordBranch failed: ${(branchErr as Error).message}`);
         }

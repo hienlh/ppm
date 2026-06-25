@@ -55,6 +55,10 @@ interface LiveSession {
   model?: string;
   pendingApprovals: Map<string, PendingApproval>;
   answeredCodexIds: Set<number | string>;
+  /** Rollout history snapshot at connect — lets live message ids continue the
+   *  stable `rollout-N` numbering instead of ephemeral uuids, so fork anchors
+   *  resolved against either the live view or the persisted file always match. */
+  history: ChatMessage[];
   transcript: ChatMessage[];
   currentAssistant: string;
   currentEvents: ChatEvent[];
@@ -65,6 +69,15 @@ interface EventChannel {
   push(ev: ChatEvent): void;
   done(): void;
   iterator: AsyncGenerator<ChatEvent, void, undefined>;
+}
+
+/** Next stable `rollout-N` id for a live message. Counts existing rollout-prefixed
+ *  entries (history + live transcript) so numbering continues the persisted file's
+ *  sequence and stays aligned even when a non-rollout compact-summary entry is present. */
+function nextRolloutId(live: LiveSession): string {
+  const isRollout = (m: ChatMessage) => typeof m.id === "string" && m.id.startsWith("rollout-");
+  const n = live.history.filter(isRollout).length + live.transcript.filter(isRollout).length;
+  return `rollout-${n}`;
 }
 
 /** Unbounded async channel: producers push ChatEvents, the generator drains them. */
@@ -244,7 +257,7 @@ export class CodexAppServerProvider implements AIProvider {
       });
       return;
     }
-    live.transcript.push({ id: crypto.randomUUID(), role: "user", content: message, timestamp: new Date().toISOString() });
+    live.transcript.push({ id: nextRolloutId(live), role: "user", content: message, timestamp: new Date().toISOString() });
     live.currentAssistant = "";
     live.currentEvents = [];
     const input = [{ type: "text" as const, text: message, text_elements: [] }];
@@ -269,7 +282,7 @@ export class CodexAppServerProvider implements AIProvider {
     const live: LiveSession = {
       client, threadId: null, cwd, channel, permission, model,
       pendingApprovals: new Map(), answeredCodexIds: new Set(),
-      transcript: [], currentAssistant: "", currentEvents: [],
+      history: [], transcript: [], currentAssistant: "", currentEvents: [],
     };
     this.live.set(sessionId, live);
 
@@ -310,6 +323,9 @@ export class CodexAppServerProvider implements AIProvider {
       setSessionProvider(threadId, this.id);
       if (account) setSessionCodexAccount(threadId, account.id);
     }
+    // Snapshot persisted history so live message ids continue the rollout-N
+    // numbering (empty for a brand-new thread; full prior transcript on resume).
+    live.history = getRolloutMessages(CODEX_SESSIONS_DIR, threadId, cwd);
     return live;
   }
 
@@ -330,7 +346,7 @@ export class CodexAppServerProvider implements AIProvider {
           ? [...live.currentEvents, ...(live.currentAssistant ? [{ type: "text", content: live.currentAssistant } as ChatEvent] : [])]
           : undefined;
         live.transcript.push({
-          id: crypto.randomUUID(), role: "assistant", content: live.currentAssistant,
+          id: nextRolloutId(live), role: "assistant", content: live.currentAssistant,
           ...(turnEvents ? { events: turnEvents } : {}), timestamp: new Date().toISOString(),
         });
       }
@@ -446,7 +462,7 @@ export class CodexAppServerProvider implements AIProvider {
       const inflight: ChatMessage[] = live.currentAssistant
         ? [{ id: "inflight", role: "assistant", content: live.currentAssistant, timestamp: new Date().toISOString() }]
         : [];
-      return [...live.transcript, ...inflight];
+      return [...live.history, ...live.transcript, ...inflight];
     }
     // Fail-closed: only return rollout messages attributable to this project's cwd.
     const cwd = this.sessions.get(sessionId)?.projectPath || getSessionProjectPath(sessionId);

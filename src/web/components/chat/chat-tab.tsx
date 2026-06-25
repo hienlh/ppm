@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
@@ -20,7 +20,7 @@ import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
 
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
-import type { Session, SessionInfo } from "../../../types/chat";
+import type { Session, SessionInfo, ChatMessage } from "../../../types/chat";
 
 interface ChatTabProps {
   metadata?: Record<string, unknown>;
@@ -171,6 +171,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   // in THIS tab (swap sessionId) instead of opening a new tab.
   // anchorMsgId = fork anchor (prev message); ownMsgId = the edited message itself (for highlight).
   const [editFork, setEditFork] = useState<{ anchorMsgId?: string; ownMsgId?: string } | null>(null);
+  // Local echo of a just-sent edited message. The forked session's WS connect can
+  // be slow (codex app-server cold start ~30s), and the real optimistic message is
+  // only added after `isConnected`. Show this immediately so the edit doesn't
+  // vanish while the new session spins up; cleared once the real message arrives.
+  const [optimisticEdit, setOptimisticEdit] = useState<ChatMessage | null>(null);
   // Bumped to tell MessageInput to clear its textarea when an edit is cancelled.
   const [clearInputSignal, setClearInputSignal] = useState(0);
   // True while a same-tree version swap loads: versions share an identical prefix,
@@ -198,6 +203,23 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     }
   }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Drop the local echo once the real edited message arrives (streamed/refetched
+  // from the forked session). The fork point is BEFORE the edit, so the forked
+  // history never contains this content until the send lands — content match at
+  // the tail is a safe signal.
+  const realEditArrived = !!optimisticEdit && renderedMessages.some(
+    (m) => m.role === "user" && m.content === optimisticEdit.content,
+  );
+  useEffect(() => {
+    if (realEditArrived) setOptimisticEdit(null);
+  }, [realEditArrived]);
+
+  // Append the echo until the real message shows.
+  const displayMessages = useMemo(
+    () => (optimisticEdit && !realEditArrived ? [...renderedMessages, optimisticEdit] : renderedMessages),
+    [renderedMessages, optimisticEdit, realEditArrived],
+  );
+
   const handleNewSession = useCallback(() => {
     useTabStore.getState().openTab({
       type: "chat",
@@ -209,6 +231,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   }, [projectName, providerId]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
+    setOptimisticEdit(null);
     setSessionId(session.id);
     setProviderId(session.providerId);
     if (tabId) updateTab(tabId, { title: session.title || "Chat" });
@@ -257,6 +280,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleCancelEdit = useCallback(() => {
     setEditFork(null);
     setForkDraft(undefined);
+    setOptimisticEdit(null);
     clearDraft();
     setClearInputSignal((n) => n + 1);
   }, [clearDraft]);
@@ -267,7 +291,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       if (!fullContent.trim() || !sessionId || !projectName) return;
       try {
         const forked = await api.post<{ id: string }>(
-          `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}`,
+          `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}&mode=edit`,
           { messageId: anchorMsgId },
         );
         // The tree gained a sibling — drop cached version groups so switchers
@@ -276,6 +300,14 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         // Queue the edited message — flushed by the connect effect once the WS
         // reconnects to the forked session.
         pendingSendRef.current = { content: fullContent, permissionMode };
+        // Show the edited message immediately (local echo) — the forked session's
+        // WS connect may take seconds, and the real optimistic add waits on it.
+        setOptimisticEdit({
+          id: "optimistic-edit",
+          role: "user",
+          content: fullContent,
+          timestamp: new Date().toISOString(),
+        });
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
         if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: forked.id } });
@@ -296,6 +328,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleSwitchVersion = useCallback(
     (targetSessionId: string) => {
       if (!targetSessionId || targetSessionId === sessionId) return;
+      setOptimisticEdit(null);
       setStaleSwap(true);
       if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: targetSessionId } });
       setSessionId(targetSessionId);
@@ -518,7 +551,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
 
       {/* Messages */}
       <MessageList
-        messages={renderedMessages}
+        messages={displayMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
         messagesLoading={messagesLoading}
