@@ -29,6 +29,7 @@ import { BugReportPopup } from "@/components/shared/bug-report-popup";
 import { UpgradeBanner } from "@/components/layout/upgrade-banner";
 import { ImageOverlay } from "@/components/shared/image-overlay";
 import { DiagramOverlay } from "@/components/shared/diagram-overlay";
+import { BackgroundOutputPanel } from "@/components/chat/background-output-panel";
 import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overlay";
 import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
@@ -331,6 +332,9 @@ export function App() {
 
         {/* Global diagram lightbox (mermaid) */}
         <DiagramOverlay />
+
+        {/* Global background-command output panel */}
+        <BackgroundOutputPanel />
 
         {/* Extension modals (QuickPick, InputBox) */}
         <ExtensionQuickPick />

@@ -1157,6 +1157,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             break;
           }
 
+          // Background-task lifecycle (local_bash run_in_background): forward task
+          // id + status so the host can track/clear the background-command bar.
+          if (subtype === "task_started" || subtype === "task_updated" || subtype === "task_notification") {
+            yield {
+              type: "system" as any,
+              subtype,
+              taskId: (msg as any).task_id,
+              taskToolUseId: (msg as any).tool_use_id,
+              taskStatus: (msg as any).status ?? (msg as any).patch?.status,
+              outputFile: (msg as any).output_file,
+            } as any;
+            continue;
+          }
+
           // Yield system events so streaming loop can transition phases
           // (e.g. connecting → thinking when hooks/init arrive)
           yield { type: "system" as any, subtype } as any;

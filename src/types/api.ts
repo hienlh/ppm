@@ -27,7 +27,20 @@ export type ChatWsClientMessage =
   | { type: "cancel" }
   | { type: "set_model"; model: string }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
+  | { type: "kill_background_shell"; shellId: string }
   | { type: "ready" };
+
+/** A background command (SDK Bash run_in_background) tracked for the current session. */
+export interface BackgroundShell {
+  shellId: string;
+  command: string;
+  /** Absolute path to the SDK's .output file (resolved by the spy). */
+  outputPath: string;
+  /** SDK tool_use id — used to correlate live bash_output deltas. */
+  toolUseId: string;
+  status: "running" | "stopping" | "stopped";
+  startedAt: number;
+}
 
 /** Session phase for the 5-state machine (BE-owned) */
 export type SessionPhase = "initializing" | "connecting" | "thinking" | "streaming" | "idle";
@@ -38,6 +51,7 @@ export type ChatWsServerMessage =
   | { type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string }
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { type: "bash_output"; toolUseId: string; content: string; lineCount: number }
+  | { type: "background_registry"; sessionId: string; shells: BackgroundShell[] }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "done"; sessionId: string; contextWindowPct?: number }
   | { type: "error"; message: string }

@@ -190,6 +190,7 @@ async function startSpy(
   sessionId: string,
   onOutput: OutputCallback,
   projectPath = "",
+  onResolved?: (filePath: string) => void,
 ): Promise<void> {
   // Already spying this tool
   if (activeSpies.has(toolUseId)) return;
@@ -199,8 +200,11 @@ async function startSpy(
   if (process.platform === "win32") {
     // No pgrep/proc/lsof — discover by scanning the project's task dir.
     // The .output file appears shortly after the tool_use event, so retry.
+    // Background tasks can create their file later than foreground, so allow a
+    // longer window (~3s) — extra attempts only cost time when nothing is found.
     const sinceMs = Date.now();
-    for (let attempt = 0; attempt < 5 && !filePath; attempt++) {
+    const maxAttempts = onResolved ? 30 : 5;
+    for (let attempt = 0; attempt < maxAttempts && !filePath; attempt++) {
       filePath = findWindowsOutputFile(projectPath, sinceMs);
       if (!filePath) await new Promise((r) => setTimeout(r, 100));
     }
@@ -219,6 +223,9 @@ async function startSpy(
     console.log(`[bash-spy] toolUseId=${toolUseId} output file not resolved — skipping`);
     return;
   }
+
+  // Surface the resolved absolute .output path (consumed by the background registry).
+  try { onResolved?.(filePath); } catch { /* non-fatal */ }
 
   const entry: SpyEntry = {
     sessionId,

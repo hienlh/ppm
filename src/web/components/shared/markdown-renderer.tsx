@@ -11,6 +11,7 @@ import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useImageOverlay } from "@/stores/image-overlay-store";
 import { useDiagramOverlay } from "@/stores/diagram-overlay-store";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
+import { useBackgroundOutputStore } from "@/stores/background-output-store";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { MdContext, useMdContext, FILE_EXT_RE, GLOB_CHARS_RE, LOCAL_PATH_RE } from "./markdown-context";
@@ -49,6 +50,15 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
 
   const openFileOrSearch = useCallback((filePath: string, line?: { start: number; end?: number }) => {
     if (!filePath) return;
+
+    // Background command .output reference → open the live output panel (resolves the
+    // bare basename to the tracked shell's absolute outputPath; opened via /api/fs/read).
+    if (/\.output$/.test(filePath)) {
+      const store = useBackgroundOutputStore.getState();
+      const shell = store.findByOutput(filePath);
+      if (shell) { store.openPanel(shell.shellId); return; }
+    }
+
     const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
     const isRelative = /^(\.\/|\.\.\/)/.test(filePath);
     const fileName = basename(filePath);

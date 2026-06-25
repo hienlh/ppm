@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Loader2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
@@ -11,6 +11,7 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { getAISettings } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
+import { BackgroundCommandBar } from "./background-command-bar";
 import { clearVersionsCache } from "./version-switcher";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
@@ -20,7 +21,7 @@ import { useDraft, type DraftAttachment } from "@/hooks/use-draft";
 
 import type { DragEvent } from "react";
 import type { FileNode } from "../../../types/project";
-import type { Session, SessionInfo, ChatMessage } from "../../../types/chat";
+import type { Session, SessionInfo } from "../../../types/chat";
 
 interface ChatTabProps {
   metadata?: Record<string, unknown>;
@@ -121,6 +122,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     teamMessages,
     markTeamRead,
     bashPartialOutput,
+    backgroundShells,
+    killBackgroundShell,
   } = useChat(sessionId, providerId, projectName);
 
   // Flush pending message once WS connects (replaces unreliable setTimeout)
@@ -175,7 +178,12 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   // be slow (codex app-server cold start ~30s), and the real optimistic message is
   // only added after `isConnected`. Show this immediately so the edit doesn't
   // vanish while the new session spins up; cleared once the real message arrives.
-  const [optimisticEdit, setOptimisticEdit] = useState<ChatMessage | null>(null);
+  // True from the moment an edit is submitted until the forked session starts
+  // responding. Drives a "working" indicator so the ~10s fork + codex connect
+  // doesn't leave the user staring at a frozen screen. (No optimistic message
+  // echo — appending it to the still-visible source transcript would render the
+  // edit in the wrong place; the real message appears once the fork loads.)
+  const [editForking, setEditForking] = useState(false);
   // Bumped to tell MessageInput to clear its textarea when an edit is cancelled.
   const [clearInputSignal, setClearInputSignal] = useState(0);
   // True while a same-tree version swap loads: versions share an identical prefix,
@@ -203,22 +211,17 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     }
   }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Drop the local echo once the real edited message arrives (streamed/refetched
-  // from the forked session). The fork point is BEFORE the edit, so the forked
-  // history never contains this content until the send lands — content match at
-  // the tail is a safe signal.
-  const realEditArrived = !!optimisticEdit && renderedMessages.some(
-    (m) => m.role === "user" && m.content === optimisticEdit.content,
-  );
+  // Stop the "working" indicator once the forked session begins streaming (its
+  // own activity UI takes over). Safety timeout covers a connect that never
+  // arrives so the spinner can't get stuck forever.
   useEffect(() => {
-    if (realEditArrived) setOptimisticEdit(null);
-  }, [realEditArrived]);
-
-  // Append the echo until the real message shows.
-  const displayMessages = useMemo(
-    () => (optimisticEdit && !realEditArrived ? [...renderedMessages, optimisticEdit] : renderedMessages),
-    [renderedMessages, optimisticEdit, realEditArrived],
-  );
+    if (editForking && isStreaming) setEditForking(false);
+  }, [editForking, isStreaming]);
+  useEffect(() => {
+    if (!editForking) return;
+    const t = setTimeout(() => setEditForking(false), 60_000);
+    return () => clearTimeout(t);
+  }, [editForking]);
 
   const handleNewSession = useCallback(() => {
     useTabStore.getState().openTab({
@@ -231,7 +234,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   }, [projectName, providerId]);
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
-    setOptimisticEdit(null);
+    setEditForking(false);
     setSessionId(session.id);
     setProviderId(session.providerId);
     if (tabId) updateTab(tabId, { title: session.title || "Chat" });
@@ -280,7 +283,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleCancelEdit = useCallback(() => {
     setEditFork(null);
     setForkDraft(undefined);
-    setOptimisticEdit(null);
+    setEditForking(false);
     clearDraft();
     setClearInputSignal((n) => n + 1);
   }, [clearDraft]);
@@ -289,6 +292,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleEditSend = useCallback(
     async (fullContent: string, anchorMsgId?: string) => {
       if (!fullContent.trim() || !sessionId || !projectName) return;
+      // Surface a working indicator immediately — the fork API and the forked
+      // session's codex connect can take ~10s; don't await in silence.
+      setEditForking(true);
       try {
         const forked = await api.post<{ id: string }>(
           `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}&mode=edit`,
@@ -300,19 +306,12 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         // Queue the edited message — flushed by the connect effect once the WS
         // reconnects to the forked session.
         pendingSendRef.current = { content: fullContent, permissionMode };
-        // Show the edited message immediately (local echo) — the forked session's
-        // WS connect may take seconds, and the real optimistic add waits on it.
-        setOptimisticEdit({
-          id: "optimistic-edit",
-          role: "user",
-          content: fullContent,
-          timestamp: new Date().toISOString(),
-        });
         // Swap the current tab to the forked session (no new tab).
         setStaleSwap(true);
         if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: forked.id } });
         setSessionId(forked.id);
       } catch (e) {
+        setEditForking(false);
         const msg = (e as Error)?.message || "Unknown error";
         toast.error("Cannot edit from this message", {
           description: msg.includes("not found") || msg.includes("Invalid upToMessageId")
@@ -328,7 +327,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
   const handleSwitchVersion = useCallback(
     (targetSessionId: string) => {
       if (!targetSessionId || targetSessionId === sessionId) return;
-      setOptimisticEdit(null);
+      setEditForking(false);
       setStaleSwap(true);
       if (tabId) updateTab(tabId, { metadata: { ...metadata, sessionId: targetSessionId } });
       setSessionId(targetSessionId);
@@ -549,9 +548,22 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         </div>
       )}
 
+      {/* Edit-fork overlay — covers the chat while the new version forks + connects */}
+      {editForking && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            <span>Creating edited version…</span>
+          </div>
+        </div>
+      )}
+
+      {/* Background commands running for this session */}
+      <BackgroundCommandBar shells={backgroundShells} onKill={killBackgroundShell} />
+
       {/* Messages */}
       <MessageList
-        messages={displayMessages}
+        messages={renderedMessages}
         onExpandCompact={expandCompact}
         isCompactExpanded={isCompactExpanded}
         messagesLoading={messagesLoading}

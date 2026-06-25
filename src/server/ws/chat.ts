@@ -7,6 +7,8 @@ import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSession
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
+import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
+import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
 
 /** Resolve the model shown in session_state: per-session override, else provider default. */
@@ -70,6 +72,17 @@ interface SessionEntry {
   pendingTeamCreate?: string;
   /** Compact indicator state — sticky until turn ends or boundary received, synced on reconnect */
   compactStatus?: "compacting" | null;
+  /** toolUseIds of Bash calls launched with run_in_background — spy is kept alive for these */
+  backgroundToolUseIds?: Set<string>;
+}
+
+/** Push the current background-shell registry snapshot to a session's clients. */
+function broadcastBackgroundRegistry(sessionId: string): void {
+  broadcast(sessionId, {
+    type: "background_registry",
+    sessionId,
+    shells: backgroundShellRegistry.list(sessionId),
+  });
 }
 
 /** Tracks active sessions — persists even when FE disconnects */
@@ -212,6 +225,7 @@ function startCleanupTimer(sessionId: string): void {
     for (const w of entry.teamWatchers.values()) w.cleanup();
     entry.teamWatchers.clear();
     if (entry.projectName) stopWatching(entry.projectName);
+    backgroundShellRegistry.clearSession(sessionId);
     activeSessions.delete(sessionId);
   }, CLEANUP_TIMEOUT_MS);
 }
@@ -296,6 +310,32 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.compactStatus = null;
           console.log(`[chat] session=${sessionId} compact_status=done (via compact_boundary)`);
           broadcast(sessionId, { type: "compact_status", status: "done" });
+        } else if (sub === "task_started" || sub === "task_updated" || sub === "task_notification") {
+          // Background command (local_bash) lifecycle. shellId === SDK task_id.
+          const taskId = (ev as any).taskId as string | undefined;
+          const taskStatus = (ev as any).taskStatus as string | undefined;
+          const taskToolUseId = (ev as any).taskToolUseId as string | undefined;
+          const outputFile = (ev as any).outputFile as string | undefined;
+          if (taskId) {
+            // Ensure the shell is registered even if the spy missed the file (fallback).
+            if (!backgroundShellRegistry.get(sessionId, taskId) && outputFile) {
+              backgroundShellRegistry.register(sessionId, {
+                shellId: taskId,
+                command: backgroundShellRegistry.get(sessionId, taskId)?.command ?? "",
+                outputPath: outputFile,
+                toolUseId: taskToolUseId ?? "",
+              });
+            }
+            const done = taskStatus === "completed" || taskStatus === "failed" || taskStatus === "stopped" || taskStatus === "killed";
+            if (done && backgroundShellRegistry.setStatus(sessionId, taskId, "stopped")) {
+              const sh = backgroundShellRegistry.get(sessionId, taskId);
+              if (sh?.toolUseId) { bashOutputSpy.stopSpy(sh.toolUseId); entry.backgroundToolUseIds?.delete(sh.toolUseId); }
+              console.log(`[bg-shell] session=${sessionId} task ${taskId} -> stopped (${taskStatus})`);
+              broadcastBackgroundRegistry(sessionId);
+            } else {
+              broadcastBackgroundRegistry(sessionId);
+            }
+          }
         }
         if (!firstEventReceived) {
           if (heartbeat) clearInterval(heartbeat);
@@ -340,22 +380,55 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           const command = typeof ev.input === "object" && ev.input
             ? String((ev.input as any).command ?? "")
             : "";
+          const isBackground = typeof ev.input === "object" && ev.input
+            ? (ev.input as any).run_in_background === true
+            : false;
+          const toolUseId = ev.toolUseId;
           if (command) {
-            bashOutputSpy.startSpy(ev.toolUseId, command, sessionId, (output) => {
+            if (isBackground) {
+              (entry.backgroundToolUseIds ??= new Set()).add(toolUseId);
+              console.log(`[bg-shell] session=${sessionId} background tool_use detected toolUseId=${toolUseId} cmd="${command.slice(0, 60)}"`);
+            }
+            bashOutputSpy.startSpy(toolUseId, command, sessionId, (output) => {
               broadcast(sessionId, {
                 type: "bash_output",
                 toolUseId: output.toolUseId,
                 content: output.newContent,
                 lineCount: output.totalLineCount,
               });
-            }, entry.projectPath ?? "");
+            }, entry.projectPath ?? "", isBackground ? (filePath) => {
+              // Resolved .output path → register the background shell (shellId = basename w/o ext)
+              const shellId = basename(filePath).replace(/\.output$/, "");
+              backgroundShellRegistry.register(sessionId, { shellId, command, outputPath: filePath, toolUseId });
+              console.log(`[bg-shell] session=${sessionId} registered shellId=${shellId} clients=${activeSessions.get(sessionId)?.clients.size ?? 0} file=${filePath}`);
+              broadcastBackgroundRegistry(sessionId);
+            } : undefined);
+          }
+        }
+        // Background command stopped via SDK KillShell — flip status to stopped
+        if (providerId === "claude" && ev.tool === "KillShell") {
+          const sid = typeof ev.input === "object" && ev.input
+            ? String((ev.input as any).task_id ?? (ev.input as any).shell_id ?? (ev.input as any).shellId ?? "")
+            : "";
+          if (sid) {
+            const killed = backgroundShellRegistry.get(sessionId, sid);
+            if (backgroundShellRegistry.setStatus(sessionId, sid, "stopped")) {
+              if (killed?.toolUseId) {
+                bashOutputSpy.stopSpy(killed.toolUseId);
+                entry.backgroundToolUseIds?.delete(killed.toolUseId);
+              }
+              broadcastBackgroundRegistry(sessionId);
+            }
           }
         }
       } else if (evType === "tool_result") {
         logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
         console.log(`[chat] session=${sessionId} tool_result: toolUseId=${ev.toolUseId} pendingTeamCreate=${entry.pendingTeamCreate} output=${(ev.output ?? "").slice(0, 200)}`);
-        // Stop bash output spy for this tool
-        if (ev.toolUseId) bashOutputSpy.stopSpy(ev.toolUseId);
+        // Stop bash output spy for this tool — EXCEPT background commands, whose
+        // process keeps running after tool_result; keep tailing their .output.
+        if (ev.toolUseId && !entry.backgroundToolUseIds?.has(ev.toolUseId)) {
+          bashOutputSpy.stopSpy(ev.toolUseId);
+        }
         // Detect team creation from TeamCreate tool_result
         if (entry.pendingTeamCreate && entry.pendingTeamCreate === ev.toolUseId) {
           const { extractTeamName, startTeamInboxWatcher } = await import("./team-inbox-watcher.ts");
@@ -441,6 +514,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           console.log(`[chat] session_migrated: ${sessionId} → ${newId}`);
           // Stop spies tagged with old session ID before re-keying
           bashOutputSpy.stopAllForSession(sessionId);
+          backgroundShellRegistry.clearSession(sessionId);
           const oldEntry = activeSessions.get(sessionId);
           if (oldEntry) {
             activeSessions.delete(sessionId);
@@ -504,6 +578,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     entry.pendingApprovalEvent = undefined;
     // Cleanup bash output spies
     bashOutputSpy.stopAllForSession(sessionId);
+    // SDK subprocess teardown kills its background children — reflect as stopped
+    backgroundShellRegistry.markAllStopped(sessionId);
+    broadcastBackgroundRegistry(sessionId);
     // Cleanup team watchers
     for (const w of entry.teamWatchers.values()) w.cleanup();
     entry.teamWatchers.clear();
@@ -686,6 +763,11 @@ export const chatWebSocket = {
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
       }
+      // Replay background-shell registry so a reconnecting client repopulates its bar.
+      const shells = backgroundShellRegistry.list(sessionId);
+      if (shells.length > 0) {
+        ws.send(JSON.stringify({ type: "background_registry", sessionId, shells }));
+      }
       return;
     }
 
@@ -820,6 +902,39 @@ export const chatWebSocket = {
       console.log(`[chat] session=${sessionId} WS cancel received from FE (phase=${phase})`);
       logSessionEvent(sessionId, "CANCEL", `WS cancel from FE (phase=${phase})`);
       provider?.abortQuery?.(sessionId, "ws_cancel");
+    } else if (parsed.type === "kill_background_shell") {
+      // Kill via the AI: enqueue an instruction so the model calls KillShell.
+      // Cross-platform and safe (no OS-PID guessing). Runs when the AI is idle
+      // between turns, so the UI shows a "stopping" state until then.
+      const shellId = parsed.shellId;
+      const shell = backgroundShellRegistry.get(sessionId, shellId);
+      // Ignore if unknown or already stopping/stopped (avoids duplicate KillShell turns).
+      if (!shell || shell.status !== "running") return;
+      backgroundShellRegistry.setStatus(sessionId, shellId, "stopping");
+      broadcastBackgroundRegistry(sessionId);
+      const provider = providerRegistry.get(providerId);
+      const instruction = `Call the KillShell tool with task_id "${shellId}" to stop that background command, then reply with just "Stopped.".`;
+      if (!entry.isStreamingActive) {
+        if (provider && "resumeSession" in provider) await (provider as any).resumeSession(sessionId);
+        if (entry.projectPath && provider && "ensureProjectPath" in provider) {
+          (provider as any).ensureProjectPath(sessionId, entry.projectPath);
+        }
+        entry.turnEvents = [];
+        setPhase(sessionId, "initializing");
+        const permMode = entry.permissionMode;
+        const msgModel = entry.model;
+        entry.streamPromise = new Promise<void>((resolve) => {
+          setTimeout(() => {
+            startSessionConsumer(sessionId, providerId, instruction, permMode, undefined, msgModel).then(resolve, resolve);
+          }, 0);
+        });
+      } else if (provider && "pushMessage" in provider) {
+        (provider as any).pushMessage(sessionId, instruction, { priority: "next" });
+        entry.turnEvents = [];
+        entry.pendingApprovalEvent = undefined;
+        setPhase(sessionId, "thinking");
+      }
+      logSessionEvent(sessionId, "INFO", `kill_background_shell requested shellId=${shellId}`);
     } else if (parsed.type === "approval_response") {
       const provider = providerRegistry.get(providerId);
       if (provider && typeof provider.resolveApproval === "function") {

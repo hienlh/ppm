@@ -8,7 +8,8 @@ import { usePanelStore } from "@/stores/panel-store";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
-import type { ChatWsServerMessage, SessionPhase } from "../../types/api";
+import type { ChatWsServerMessage, SessionPhase, BackgroundShell } from "../../types/api";
+import { useBackgroundOutputStore } from "../stores/background-output-store";
 
 interface ApprovalRequest {
   requestId: string;
@@ -74,6 +75,10 @@ interface UseChatReturn {
   markTeamRead: () => void;
   /** Partial bash output keyed by toolUseId (ref-backed for perf) */
   bashPartialOutput: React.RefObject<Map<string, BashPartialEntry>>;
+  /** Background commands (Bash run_in_background) tracked for this session */
+  backgroundShells: BackgroundShell[];
+  killBackgroundShell: (shellId: string) => void;
+  findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
   sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
@@ -104,6 +109,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
   const [contextWindowPct, setContextWindowPct] = useState<number | null>(null);
   const [compactStatus, setCompactStatus] = useState<"compacting" | null>(null);
+  const [backgroundShells, setBackgroundShells] = useState<BackgroundShell[]>([]);
+  const backgroundShellsRef = useRef<BackgroundShell[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -443,6 +450,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           }
           syncMessages();
         }
+        break;
+      }
+
+      case "background_registry": {
+        const shells = (ev.shells as BackgroundShell[]) ?? [];
+        backgroundShellsRef.current = shells;
+        setBackgroundShells(shells);
         break;
       }
 
@@ -881,6 +895,35 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
   }, [send]);
 
+  const killBackgroundShell = useCallback((shellId: string) => {
+    if (!shellId) return;
+    send(JSON.stringify({ type: "kill_background_shell", shellId }));
+  }, [send]);
+
+  /** Resolve a `.output` basename (e.g. "b7z9yvujn.output" or "b7z9yvujn") to a tracked shell. */
+  const findBackgroundShellByOutput = useCallback((name: string): BackgroundShell | undefined => {
+    if (!name) return undefined;
+    const stem = name.replace(/\.output$/, "");
+    return backgroundShellsRef.current.find(
+      (s) => s.shellId === stem || s.outputPath.endsWith(name) || s.outputPath.endsWith(`${stem}.output`),
+    );
+  }, []);
+
+  // Mirror background shells into the global store so the .output pill resolver
+  // (markdown-renderer) and the output panel can reach them without prop threading.
+  useEffect(() => {
+    if (!sessionId) return;
+    useBackgroundOutputStore.getState().setSessionShells(sessionId, backgroundShells);
+  }, [sessionId, backgroundShells]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    useBackgroundOutputStore.getState().retainSession(sessionId);
+    return () => {
+      useBackgroundOutputStore.getState().releaseSession(sessionId);
+    };
+  }, [sessionId]);
+
   const reconnect = useCallback(() => {
     setIsConnected(false);
     setIsReconnecting(true);
@@ -977,6 +1020,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     teamMessages,
     markTeamRead,
     bashPartialOutput: bashOutputRef,
+    backgroundShells,
+    killBackgroundShell,
+    findBackgroundShellByOutput,
     sendMessage,
     respondToApproval,
     cancelStreaming,

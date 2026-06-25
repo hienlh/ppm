@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.14.14] - 2026-06-25
+
+### Added
+- **Background command bar + viewable `.output`** — SDK background commands (Bash `run_in_background`) now surface in a bar pinned at the top of the chat showing each running command with a live indicator, a **View output** button (opens a panel that tails the command's `.output` file, polling while it runs), and a **Stop** button (asks the agent to call `KillShell`). The bar clears automatically when a command finishes (driven by the SDK `task_notification`/`task_updated` completion events) or is stopped. Clicking a command's `.output` pill in chat now opens the same panel instead of failing — `.output` is recognized as a viewable file and resolved to its absolute path served via `/api/fs/read`. Claude provider only.
+- **Manual "mark as unread" on chat sessions** — chat sessions can be flagged unread from the session list.
+
+### Fixed
+- **Edit-message versioning, timestamps, and titles** — editing a message now versions correctly, preserves timestamps, and keeps the session title.
+
+### Changed
+- **Edit shows a "Creating edited version…" overlay** — editing a message now shows a working overlay during the fork + reconnect instead of an optimistic message echo (which could render in the wrong place); the real message appears once the forked session loads.
+- **Dev tooling** — added tunnel scripts and made the Vite dev proxy target env-overridable (`PPM_DEV_API`).
+
 ## [0.14.13] - 2026-06-24
 
 ### Fixed
