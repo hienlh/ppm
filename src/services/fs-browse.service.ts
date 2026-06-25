@@ -55,6 +55,13 @@ export function isAllowedPath(resolved: string): boolean {
   const home = homedir();
   if (resolved === home || resolved.startsWith(home + "/")) return true;
 
+  // SDK background-command output lives under the OS temp dir (e.g. macOS
+  // /var/folders/.../T/claude/<session>/tasks/*.output), outside the home/posix-root
+  // whitelist. Allow reading those specific files so the chat output panel works.
+  // Matched by structure (claude/.../tasks/*.output) to be symlink-agnostic on macOS
+  // where the temp dir may resolve as /var vs /private/var.
+  if (/[\\/]claude[\\/].+[\\/]tasks[\\/][^\\/]+\.output$/.test(resolved)) return true;
+
   if (process.platform === "win32") {
     return /^[A-Z]:\\/i.test(resolved);
   }
