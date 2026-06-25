@@ -16,6 +16,8 @@
     "dev": "concurrently \"bun run dev:server\" \"bun run dev:web\"",
     "dev:server": "bun run --hot src/server/index.ts __serve__ 8081 0.0.0.0 '' dev",
     "dev:web": "bun run vite --config vite.config.ts",
+    "tunnel": "cloudflared tunnel --url http://localhost:5173",
+    "dev:tunnel": "concurrently \"bun run dev:server\" \"bun run dev:web\" \"bun run tunnel\"",
     "build:web": "bun run vite build --config vite.config.ts",
     "build": "bun run build:web && bun build src/index.ts --compile --outfile dist/ppm",
     "start": "bun run src/index.ts start",

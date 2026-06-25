@@ -69,9 +69,9 @@ export default defineConfig({
     port: 5173,
     allowedHosts: true,
     proxy: {
-      "/api": "http://localhost:8081",
+      "/api": process.env.PPM_DEV_API ?? "http://localhost:8081",
       "/ws": {
-        target: "http://localhost:8081",
+        target: process.env.PPM_DEV_API ?? "http://localhost:8081",
         ws: true,
       },
     },
