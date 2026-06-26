@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.15] - 2026-06-26
+
+### Fixed
+- **Intermittent 401 auth errors on chat** — background OAuth auto-refresh timer could revoke the token between the pre-flight freshness check and subprocess launch, causing a race where the subprocess was given an already-revoked token. Token is now re-read from DB immediately before launch, closing the race window.
+
 ## [0.14.14] - 2026-06-25
 
 ### Added
