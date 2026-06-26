@@ -88,6 +88,7 @@ export function useTerminal(
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
+  const hasConnectedBefore = useRef(false);
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [exited, setExited] = useState(false);
@@ -186,6 +187,11 @@ export function useTerminal(
     wsRef.current = ws;
 
     ws.onopen = () => {
+      // On reconnect, clear terminal before backend replays buffer to avoid duplicates
+      if (hasConnectedBefore.current && termRef.current) {
+        termRef.current.clear();
+      }
+      hasConnectedBefore.current = true;
       setConnected(true);
       setReconnecting(false);
       reconnectAttempts.current = 0;
@@ -254,6 +260,7 @@ export function useTerminal(
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 13,
+      scrollback: 50000,
       // Explicit terminal-grade stack: the WebGL renderer builds its glyph
       // atlas via ctx.font and cannot resolve CSS var() values.
       fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', 'Courier New', monospace",
@@ -300,8 +307,10 @@ export function useTerminal(
     // Connect WS
     connectWs();
 
-    // ResizeObserver for auto-fit
-    const resizeObserver = new ResizeObserver(() => {
+    // ResizeObserver for auto-fit — skip when tab is hidden (0 dimensions)
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry || entry.contentRect.width === 0 || entry.contentRect.height === 0) return;
       try {
         fitAddon.fit();
         sendResize();

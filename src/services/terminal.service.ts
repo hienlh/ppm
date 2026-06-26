@@ -1,13 +1,14 @@
 import type { Subprocess, Terminal as BunTerminal } from "bun";
 
-/** Max output buffer size per session (200KB — enough for ~4000 lines) */
-const MAX_BUFFER_SIZE = 200 * 1024;
+/** Max output buffer size per session (1MB — enough for ~20K lines) */
+const MAX_BUFFER_SIZE = 1024 * 1024;
 
-/** Idle session timeout: 1 hour */
+/** Idle session timeout: 1 hour (only counted from last PTY activity) */
 const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 
-/** Reconnect grace period after WS disconnect (2 min — covers page reload) */
-const RECONNECT_GRACE_MS = 120 * 1000;
+/** Reconnect grace period after WS disconnect (30 min — covers browser
+ *  backgrounding, tab discarding, and network interruptions) */
+const RECONNECT_GRACE_MS = 30 * 60 * 1000;
 
 const isWindows = process.platform === "win32";
 
@@ -139,6 +140,7 @@ class TerminalService {
 
     const onData = (text: string) => {
       this.appendBuffer(id, text);
+      this.resetIdleTimer(id);
       const listener = this.outputListeners.get(id);
       if (listener) listener(id, text);
     };
