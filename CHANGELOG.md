@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.16] - 2026-06-26
+
+### Fixed
+- **Terminal session persistence across browser backgrounding** — WS disconnect grace extended from 2min to 30min so PTY survives macOS tab discarding/Safari throttling; output buffer increased from 200KB to 1MB; idle timer now resets on PTY output (running processes keep session alive); xterm scrollback increased from 1K to 50K lines; reconnect clears terminal before buffer replay to prevent duplicates; resize observer skips hidden tabs to avoid PTY resize to 0×0
+
+### Added
+- **Editor manual reload** — toolbar refresh button re-fetches file content from disk when filesystem watch misses a change
+- **Codex edit session reuse** — fork/edit reuses the source session's live app-server instead of cold-spawning a new one (~10s faster)
+
 ## [0.14.15] - 2026-06-26
 
 ### Fixed
