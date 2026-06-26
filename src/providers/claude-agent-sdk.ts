@@ -859,6 +859,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // continue loop → pick next account
         }
       }
+      // Re-read from DB right before launch — a background timer may have rotated the
+      // token between ensureFreshToken and now.
+      if (account) {
+        const latest = accountService.getWithTokens(account.id);
+        if (latest) account = latest;
+      }
       const queryEnv = this.buildQueryEnv(meta.projectPath, account);
 
       // Pre-flight: warn if no credentials at all (avoids 2-minute silent timeout)
