@@ -300,6 +300,27 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [filePath, projectName, isImage, isPdf, isDocx, isExternalFile, isUntitled]);
 
+  // Manual reload: re-fetch content from disk (fallback when fs watch misses a change)
+  const [refreshing, setRefreshing] = useState(false);
+  const reloadFile = useCallback(() => {
+    if (!filePath || inlineContent != null || isUntitled) return;
+    if (!isExternalFile && !projectName) return;
+    const readUrl = isExternalFile
+      ? `/api/fs/read?path=${encodeURIComponent(filePath)}`
+      : `${projectUrl(projectName!)}/files/read?path=${encodeURIComponent(filePath)}`;
+    setRefreshing(true);
+    api.get<{ content: string; encoding?: string }>(readUrl)
+      .then((data) => {
+        setContent(data.content);
+        latestContentRef.current = data.content;
+        if (data.encoding) setEncoding(data.encoding);
+        setUnsaved(false);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to reload file"))
+      .finally(() => setRefreshing(false));
+  }, [filePath, projectName, isExternalFile, inlineContent, isUntitled]);
+
   // Real-time reload: listen for file:changed WS events, re-fetch if editor is clean
   const unsavedRef = useRef(unsaved);
   unsavedRef.current = unsaved;
@@ -686,6 +707,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             onCsvModeChange={setCsvMode}
             wordWrap={wordWrap}
             onToggleWordWrap={toggleWordWrap}
+            onRefresh={reloadFile}
+            refreshing={refreshing}
             filePath={filePath}
             projectName={projectName}
             className="shrink-0 flex items-center gap-1 px-2"

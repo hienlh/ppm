@@ -484,11 +484,20 @@ export class CodexAppServerProvider implements AIProvider {
     // turn carries tool calls + a final answer = multiple assistant messages).
     const turnsToKeep = msgs.slice(0, idx + 1).filter((m) => m.role === "user").length;
 
-    const client = new CodexJsonRpcClient();
+    // Reuse the source session's already-running app-server when it's live (the
+    // common edit case — the user was just chatting it). thread/fork copies a new
+    // thread and thread/rollback targets that copy, so the source's live thread is
+    // untouched. Avoids a ~10s cold `bun x @openai/codex app-server` spawn +
+    // initialize handshake on every edit; only spawn a throwaway client as fallback.
+    const liveSrc = this.live.get(sessionId);
+    const reuse = !!liveSrc && !liveSrc.client.isClosed;
+    const client = reuse ? liveSrc!.client : new CodexJsonRpcClient();
     try {
-      client.start({ cwd });
-      await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
-      client.notify("initialized");
+      if (!reuse) {
+        client.start({ cwd });
+        await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
+        client.notify("initialized");
+      }
       const forkRes = await client.request<{ thread?: { id?: string; turns?: unknown[] } }>("thread/fork", { threadId: sessionId, cwd });
       const forkId = extractThreadId(forkRes);
       if (!forkId) throw new Error("thread/fork returned no thread id");
@@ -499,7 +508,7 @@ export class CodexAppServerProvider implements AIProvider {
       setSessionProvider(forkId, this.id);
       return { sessionId: forkId };
     } finally {
-      client.close();
+      if (!reuse) client.close();
     }
   }
 

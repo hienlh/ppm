@@ -1,4 +1,4 @@
-import { Code, Eye, WrapText, Table, Download } from "lucide-react";
+import { Code, Eye, WrapText, Table, Download, RefreshCw } from "lucide-react";
 import { downloadFile } from "@/lib/file-download";
 
 interface EditorToolbarProps {
@@ -9,6 +9,8 @@ interface EditorToolbarProps {
   onCsvModeChange?: (mode: "table" | "raw") => void;
   wordWrap: boolean;
   onToggleWordWrap: () => void;
+  onRefresh?: () => void;
+  refreshing?: boolean;
   filePath?: string;
   projectName?: string;
   className?: string;
@@ -47,6 +49,8 @@ export function EditorToolbar({
   onCsvModeChange,
   wordWrap,
   onToggleWordWrap,
+  onRefresh,
+  refreshing,
   filePath,
   projectName,
   className,
@@ -74,6 +78,18 @@ export function EditorToolbar({
         icon={WrapText}
         label="Wrap"
       />
+      {onRefresh && (
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          title="Reload file from disk"
+          className="flex items-center gap-1 px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`size-3 ${refreshing ? "animate-spin" : ""}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
+      )}
       {filePath && projectName && (
         <ToolbarButton
           active={false}
