@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.17] - 2026-06-29
+
+### Fixed
+- **Supervisor self-heals after hibernate/resume** — on resume a previous server's orphaned child can hold the listening socket via an inherited handle Windows won't release ("zombie port"), making the server crash-loop on `EADDRINUSE` until it hit the restart cap and paused. The supervisor now resolves a bindable port before each spawn (reaping orphans, reclaiming a stale PPM holder, and falling back to a nearby free port) and re-points the tunnel at the new origin, so the backend stays up instead of pausing.
+
+### Added
+- **Resume-from-sleep detection** — the supervisor detects the wall-clock gap left by hibernate/sleep and resets the server/tunnel restart budgets, unpauses if needed, and regenerates the cloudflared quick tunnel (its QUIC link and `*.trycloudflare.com` DNS record die on resume → `ERR_NAME_NOT_RESOLVED`), self-healing to a working URL instead of staying dark.
+
 ## [0.14.16] - 2026-06-26
 
 ### Fixed
