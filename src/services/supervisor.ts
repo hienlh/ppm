@@ -22,7 +22,7 @@ import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts"
 import { sdNotify } from "./sd-notify.ts";
 import {
   killProcessTree, snapshotServerDescendants, reapTrackedDescendants,
-  findPortListenerPid,
+  findPortListenerPid, isPpmProcess,
 } from "./windows-process-tree.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
@@ -47,6 +47,7 @@ const serverShutdownFile = () => resolve(getPpmDir(), ".server-shutdown");
 let serverChild: Subprocess | null = null;
 let tunnelChild: Subprocess | null = null;
 let tunnelUrl: string | null = null;
+let tunnelPort: number | null = null; // origin port the live tunnel targets
 let adoptedTunnelPid: number | null = null; // PID of tunnel kept alive across upgrade
 let shuttingDown = false;
 
@@ -91,6 +92,69 @@ function backoffDelay(restartCount: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (restartCount - 1), BACKOFF_MAX_MS);
 }
 
+// ─── Port recovery ─────────────────────────────────────────────────────
+function isPortBindable(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const net = require("node:net") as typeof import("node:net");
+    const tester = net.createServer()
+      .once("error", () => resolve(false))
+      .once("listening", () => tester.close(() => resolve(true)))
+      .listen(port, host);
+  });
+}
+
+/**
+ * Resolve a port the next server child can actually bind. After a
+ * hibernate/resume the previous server's orphaned child can keep the
+ * listening socket open via an inherited handle that Windows will not release
+ * (a "zombie port"). Binding the same port then fails forever and the child
+ * crash-loops until max_restarts → paused. Instead: reap tracked orphans, kill
+ * a live PPM holder if any, and — if the socket is still wedged — fall back to
+ * the nearest free port so the backend stays up (the tunnel is re-pointed by
+ * the caller). Returns `preferred` unchanged on the happy path.
+ */
+async function ensureBindablePort(preferred: number, host: string): Promise<number> {
+  if (await isPortBindable(preferred, host)) return preferred;
+
+  if (process.platform === "win32") {
+    await reapTrackedDescendants((m) => log("INFO", m)).catch(() => {});
+    const holderPid = findPortListenerPid(preferred);
+    if (holderPid > 0) {
+      let alive = false;
+      try { process.kill(holderPid, 0); alive = true; } catch {}
+      if (alive && isPpmProcess(holderPid)) {
+        log("WARN", `Port ${preferred} held by stale PPM process (PID ${holderPid}) — reclaiming`);
+        killProcessTree(holderPid);
+        await Bun.sleep(800);
+      }
+    }
+    if (await isPortBindable(preferred, host)) return preferred;
+  }
+
+  // Still blocked — zombie socket the OS will not release. Pick a nearby port.
+  for (let p = preferred + 1; p <= preferred + 20; p++) {
+    if (await isPortBindable(p, host)) {
+      log("WARN", `Port ${preferred} unbindable (zombie socket) — falling back to ${p}`);
+      return p;
+    }
+  }
+  log("ERROR", `No bindable port in [${preferred}, ${preferred + 20}] — keeping ${preferred}`);
+  return preferred;
+}
+
+/**
+ * Kill the current tunnel (child or adopted) and spawn a fresh one at `port`.
+ * The trycloudflare URL will change — unavoidable, the old quick-tunnel session
+ * is dead. Fire-and-forget: spawnTunnel's own loop owns liveness afterwards.
+ */
+function restartTunnel(port: number) {
+  if (tunnelChild) { try { tunnelChild.kill(); } catch {} tunnelChild = null; }
+  if (adoptedTunnelPid) { try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {} adoptedTunnelPid = null; }
+  tunnelUrl = null;
+  updateStatus({ shareUrl: null, tunnelPid: null });
+  spawnTunnel(port).catch((e) => log("ERROR", `restartTunnel failed: ${e}`));
+}
+
 // ─── Server shutdown ───────────────────────────────────────────────────
 // On Windows the server's Claude SDK grandchildren are node-spawned (the
 // provider forces `executable: "node"`), so they live OUTSIDE Bun's job
@@ -131,6 +195,20 @@ export async function spawnServer(
   // No-op when nothing is tracked.
   if (process.platform === "win32") {
     await reapTrackedDescendants((m) => log("INFO", m)).catch(() => {});
+  }
+
+  // Guarantee a bindable port before spawning. If the preferred port is held by
+  // a zombie socket (common after hibernate/resume), fall back to a free port
+  // and re-point the tunnel at the new origin — otherwise the child would
+  // crash-loop on EADDRINUSE until max_restarts and the supervisor would pause.
+  const boundPort = await ensureBindablePort(_opts.port, _opts.host);
+  if (boundPort !== _opts.port) {
+    _opts.port = boundPort;
+    serverArgs[1] = String(boundPort); // serverArgs = ["__serve__", <port>, <host>, ...]
+    updateStatus({ port: boundPort });
+    log("WARN", `Server port moved to ${boundPort} (stale socket on previous port)`);
+    // Only re-point an already-established tunnel; a fresh start spawns it at the right port.
+    if (tunnelUrl || tunnelChild || adoptedTunnelPid) restartTunnel(boundPort);
   }
 
   const cmd = isCompiledBinary()
@@ -255,6 +333,7 @@ async function syncUrlToCloud(url: string) {
 // HTTP heartbeat removed — WS is the sole heartbeat mechanism (Phase 4)
 
 export async function spawnTunnel(port: number): Promise<void> {
+  tunnelPort = port; // remember origin port so resume/port-move can re-point
   let bin: string;
   try {
     const { ensureCloudflared } = await import("./cloudflared.service.ts");
@@ -1151,6 +1230,35 @@ export async function runSupervisor(opts: {
 
   // Start health checks
   startServerHealthCheck(opts.port);
+
+  // ── Resume-from-sleep detection ────────────────────────────────────────
+  // A setInterval that fires much later than its period means the host was
+  // suspended (hibernate/sleep). On resume the cloudflared QUIC link is usually
+  // dead — its trycloudflare hostname is withdrawn (ERR_NAME_NOT_RESOLVED) — and
+  // an orphaned socket may block the port, triggering a crash cascade that
+  // exhausts the restart budget and pauses the server. Detect the wall-clock
+  // gap, reset the budgets, unpause, and regenerate the tunnel so we self-heal
+  // to a working URL instead of staying dark.
+  const RESUME_TICK_MS = 30_000;
+  const RESUME_GAP_MS = 90_000; // fired >3× late ⇒ treat as resume-from-sleep
+  let lastResumeTick = Date.now();
+  heartbeatTimer = setInterval(() => {
+    const now = Date.now();
+    const gap = now - lastResumeTick;
+    lastResumeTick = now;
+    if (gap < RESUME_GAP_MS || shuttingDown) return;
+    log("WARN", `Wall-clock gap ${Math.round(gap / 1000)}s — likely resume from sleep; resetting restart budgets + regenerating tunnel`);
+    serverRestarts = 0;
+    tunnelRestarts = 0;
+    healthFailCount = 0;
+    tunnelFailCount = 0;
+    // If paused solely from the post-resume failure cascade, resume the server.
+    if (getState() === "paused") triggerResume();
+    // The old quick-tunnel session is almost certainly dead — force a fresh one.
+    if (getState() === "running" && (tunnelUrl || tunnelChild || adoptedTunnelPid)) {
+      restartTunnel(tunnelPort ?? opts.port);
+    }
+  }, RESUME_TICK_MS);
 
   // Start upgrade check timer (5min initial delay, then every 15min)
   upgradeDelayTimer = setTimeout(() => {

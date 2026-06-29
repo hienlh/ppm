@@ -48,9 +48,21 @@ async function waitFor(
   return false;
 }
 
-/** Kill port occupants to ensure clean test start */
+/** Kill port occupants to ensure clean test start (cross-platform) */
 function freePort(port: number) {
   try {
+    if (process.platform === "win32") {
+      // lsof is unavailable on Windows — resolve the listener PID via netstat.
+      const r = Bun.spawnSync(["netstat", "-ano"], { stdout: "pipe", stderr: "ignore" });
+      for (const line of r.stdout.toString().split("\n")) {
+        if (!line.includes("LISTENING")) continue;
+        const cols = line.trim().split(/\s+/);
+        if (!(cols[1] ?? "").endsWith(":" + port)) continue;
+        const pid = Number(cols[cols.length - 1]);
+        if (pid) { try { Bun.spawnSync(["taskkill", "/PID", String(pid), "/T", "/F"], { stdout: "ignore", stderr: "ignore" }); } catch {} }
+      }
+      return;
+    }
     const r = Bun.spawnSync(["lsof", "-t", "-i", `:${port}`], { stdout: "pipe", stderr: "ignore" });
     const pids = r.stdout.toString().trim().split("\n").filter(Boolean);
     for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
@@ -294,6 +306,84 @@ describe("Supervisor Resilience", () => {
     // Should have at least 2 restart log entries with increasing delays
     expect(backoffMatches.length).toBeGreaterThanOrEqual(2);
   }, 45_000);
+});
+
+// ─── Port recovery: zombie-socket fallback ──────────────────────────────
+
+describe("Port recovery", () => {
+  let occupier: ReturnType<typeof import("node:net").createServer> | null = null;
+
+  beforeEach(() => {
+    if (!existsSync(PPM_DIR)) mkdirSync(PPM_DIR, { recursive: true });
+    cleanup();          // kill any leftover supervisor + free the port
+    freePort(TEST_PORT);
+  });
+
+  afterEach(() => {
+    if (occupier) { try { occupier.close(); } catch {} occupier = null; }
+    cleanup();
+  });
+
+  test("supervisor falls back to a free port when the preferred port is occupied", async () => {
+    // Occupy TEST_PORT so the supervisor cannot bind it — simulates the
+    // post-hibernate zombie socket (cross-platform stand-in: a live listener).
+    const net = require("node:net") as typeof import("node:net");
+    await new Promise<void>((res, rej) => {
+      occupier = net.createServer(() => {})
+        .once("error", rej)
+        .listen(TEST_PORT, "127.0.0.1", () => res());
+    });
+
+    await spawnTestSupervisor();
+
+    // Server should come up on a nearby fallback port, not crash-loop to paused.
+    const ok = await waitFor(() => {
+      const s = readStatus();
+      const p = s?.port as number | undefined;
+      return !!p && p > TEST_PORT && p <= TEST_PORT + 20;
+    }, TEST_TIMEOUT);
+    expect(ok).toBe(true);
+
+    const fallbackPort = readStatus()!.port as number;
+    const reachable = await waitFor(async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${fallbackPort}/api/health`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        return res.ok;
+      } catch { return false; }
+    }, TEST_TIMEOUT);
+    expect(reachable).toBe(true);
+
+    // Original occupied port must NOT be paused/abandoned — state stays running.
+    expect(readStatus()!.state).toBe("running");
+  }, TEST_TIMEOUT);
+});
+
+// ─── Supervisor self-heal: source patterns ──────────────────────────────
+
+describe("Supervisor self-heal patterns", () => {
+  const supervisorCode = readFileSync(
+    resolve(import.meta.dir, "../../src/services/supervisor.ts"),
+    "utf-8",
+  );
+
+  test("ensureBindablePort exists and falls back to a nearby port", () => {
+    expect(supervisorCode).toContain("async function ensureBindablePort");
+    expect(supervisorCode).toMatch(/for \(let p = preferred \+ 1; p <= preferred \+ 20; p\+\+\)/);
+  });
+
+  test("spawnServer resolves a bindable port and re-points the tunnel on move", () => {
+    expect(supervisorCode).toContain("const boundPort = await ensureBindablePort(_opts.port, _opts.host)");
+    expect(supervisorCode).toMatch(/if \(tunnelUrl \|\| tunnelChild \|\| adoptedTunnelPid\) restartTunnel\(boundPort\)/);
+  });
+
+  test("resume-from-sleep detection resets budgets and regenerates the tunnel", () => {
+    expect(supervisorCode).toContain("Resume-from-sleep detection");
+    expect(supervisorCode).toContain("RESUME_GAP_MS");
+    expect(supervisorCode).toMatch(/serverRestarts = 0;\s*\n\s*tunnelRestarts = 0;/);
+    expect(supervisorCode).toContain("if (getState() === \"paused\") triggerResume()");
+  });
 });
 
 // ─── Autostart config tests ────────────────────────────────────────────
