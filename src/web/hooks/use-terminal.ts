@@ -78,6 +78,14 @@ interface UseTerminalReturn {
 }
 
 const RESIZE_PREFIX = "\x01RESIZE:";
+const PING_MSG = "\x01PING";
+const PONG_MSG = "\x01PONG";
+/** Send keepalive ping well below the server's 16-min WS idleTimeout */
+const HEARTBEAT_INTERVAL_MS = 15_000;
+/** No PONG/output for this long ⇒ socket is a zombie ⇒ force reconnect.
+ *  After suspend/sleep the browser keeps reporting readyState OPEN even though
+ *  the connection is dead, so input is silently dropped — this detects it. */
+const HEARTBEAT_TIMEOUT_MS = 35_000;
 
 export function useTerminal(
   options: UseTerminalOptions,
@@ -89,6 +97,8 @@ export function useTerminal(
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
   const hasConnectedBefore = useRef(false);
+  /** Timestamp of last inbound WS message (output or PONG) — drives zombie detection */
+  const lastActivityRef = useRef(Date.now());
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [exited, setExited] = useState(false);
@@ -192,6 +202,7 @@ export function useTerminal(
         termRef.current.clear();
       }
       hasConnectedBefore.current = true;
+      lastActivityRef.current = Date.now();
       setConnected(true);
       setReconnecting(false);
       reconnectAttempts.current = 0;
@@ -199,7 +210,10 @@ export function useTerminal(
     };
 
     ws.onmessage = (event) => {
+      lastActivityRef.current = Date.now();
       if (typeof event.data === "string") {
+        // Keepalive pong — confirms the socket is alive; not terminal output
+        if (event.data === PONG_MSG) return;
         // Filter JSON control messages from terminal output
         if (event.data.startsWith("{")) {
           try {
@@ -240,6 +254,23 @@ export function useTerminal(
       ws.close();
     };
   }, [sendResize]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Keepalive + zombie detection. Runs on an interval and on tab-visible.
+   *  Trusting readyState alone is unsafe: a suspended/slept connection reports
+   *  OPEN while being dead, so we probe with PING and reconnect when silent. */
+  const checkConnection = useCallback(() => {
+    if (document.visibilityState !== "visible") return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connectWs(); // not open — reconnect now (skips backoff wait)
+      return;
+    }
+    if (Date.now() - lastActivityRef.current > HEARTBEAT_TIMEOUT_MS) {
+      connectWs(); // no PONG/output for too long — zombie socket, force reconnect
+      return;
+    }
+    try { ws.send(PING_MSG); } catch { connectWs(); }
+  }, [connectWs]);
 
   function scheduleReconnect() {
     const delay = Math.min(
@@ -307,6 +338,13 @@ export function useTerminal(
     // Connect WS
     connectWs();
 
+    // Keepalive heartbeat + zombie detection (covers suspend/sleep/network drop)
+    const heartbeatInterval = setInterval(checkConnection, HEARTBEAT_INTERVAL_MS);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") checkConnection();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     // ResizeObserver for auto-fit — skip when tab is hidden (0 dimensions)
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -332,6 +370,8 @@ export function useTerminal(
     return () => {
       unsubTheme();
       resizeObserver.disconnect();
+      clearInterval(heartbeatInterval);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
       wsRef.current = null;

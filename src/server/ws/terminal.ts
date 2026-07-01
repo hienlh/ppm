@@ -3,6 +3,10 @@ import { resolveProjectPath } from "../helpers/resolve-project.ts";
 
 /** Control message prefix for resize commands */
 const RESIZE_PREFIX = "\x01RESIZE:";
+/** Client keepalive ping — kept alive to detect zombie sockets after suspend */
+const PING_MSG = "\x01PING";
+/** Server reply to PING — lets the client confirm the socket is truly alive */
+const PONG_MSG = "\x01PONG";
 
 /**
  * WebSocket handler configuration for Bun.serve().
@@ -62,11 +66,18 @@ export const terminalWebSocket = {
   },
 
   message(
-    ws: { data: { type: string; id: string } },
+    ws: { data: { type: string; id: string }; send: (data: string) => void },
     msg: string | ArrayBuffer | Uint8Array,
   ) {
     const sessionId = ws.data.id;
     const text = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
+
+    // Keepalive ping — reply with pong so the client can detect a dead socket.
+    // Never reaches the PTY.
+    if (text === PING_MSG) {
+      try { ws.send(PONG_MSG); } catch { /* ws closed */ }
+      return;
+    }
 
     // Check for resize control message
     if (text.startsWith(RESIZE_PREFIX)) {
