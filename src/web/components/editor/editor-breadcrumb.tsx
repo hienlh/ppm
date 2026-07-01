@@ -14,6 +14,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { basename } from "@/lib/utils";
+import { EditorBreadcrumbExternal } from "./editor-breadcrumb-external";
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   ts: FileCode, tsx: FileCode, js: FileCode, jsx: FileCode,
@@ -24,7 +25,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   yaml: FileType, yml: FileType,
 };
 
-function getIcon(name: string, isDir: boolean) {
+export function getIcon(name: string, isDir: boolean) {
   if (isDir) return Folder;
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   return ICON_MAP[ext] ?? File;
@@ -96,14 +97,17 @@ export function EditorBreadcrumb({ filePath, projectName, tabId, className }: Ed
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Strip project root prefix so segments align with the relative-path file tree
-  const { prefixParts, relativePath } = useMemo(() => {
+  const { prefixParts, relativePath, isExternal } = useMemo(() => {
     const norm = filePath.startsWith("/") ? filePath.slice(1) : filePath;
     const normRoot = projectPath.startsWith("/") ? projectPath.slice(1) : projectPath;
     if (normRoot && norm.startsWith(normRoot + "/")) {
       const rel = norm.slice(normRoot.length + 1);
-      return { prefixParts: normRoot.split("/"), relativePath: rel };
+      return { prefixParts: normRoot.split("/"), relativePath: rel, isExternal: false };
     }
-    return { prefixParts: [] as string[], relativePath: norm };
+    // Absolute path not under the project root → file lives outside the project.
+    // The project file store can't list it; browse the real filesystem instead.
+    const isAbs = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
+    return { prefixParts: [] as string[], relativePath: norm, isExternal: isAbs };
   }, [filePath, projectPath]);
 
   const segments = useMemo(
@@ -125,6 +129,17 @@ export function EditorBreadcrumb({ filePath, projectName, tabId, className }: Ed
     } else {
       updateTab(tabId, { title: name, metadata: { filePath: path, projectName } });
     }
+  }
+
+  if (isExternal) {
+    return (
+      <EditorBreadcrumbExternal
+        filePath={filePath}
+        projectName={projectName}
+        tabId={tabId}
+        className={className}
+      />
+    );
   }
 
   return (
