@@ -2,17 +2,21 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Terminal, MessageSquare, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
-  ChevronRight, Globe, Puzzle, Copy, Download, Pencil, Trash2,
+  ChevronRight, Globe, Puzzle, Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
+import { useCompareStore } from "@/stores/compare-store";
+import { openCompareTab } from "@/lib/open-compare-tab";
+import { useProjectTags } from "@/components/chat/tag-filter-chips";
 import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
 import { resolveProjectColor } from "@/lib/project-palette";
 import { ProjectAvatar } from "@/components/layout/project-avatar";
 import type { Tab, TabType } from "@/stores/tab-store";
-import { cn } from "@/lib/utils";
+import { cn, basename } from "@/lib/utils";
+import { toast } from "sonner";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
@@ -73,6 +77,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const prevTabCount = useRef(tabs.length);
   const notifications = useNotificationStore((s) => s.notifications);
   const streamingSessions = useStreamingStore((s) => s.sessions);
+  const compareSelection = useCompareStore((s) => s.selection);
   const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
 
   const { canScrollLeft, canScrollRight, scrollRight: doScrollRight } =
@@ -108,6 +113,18 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const canSplitDown = pos ? grid.length < MAX_ROWS : false;
   const otherPanelIds = grid.flat().filter((id) => id !== menuTabPanelId);
 
+  // Chat-session context for the long-press menu (Mark as unread / Set Tag)
+  const menuSessionId = menuTab?.type === "chat" ? (menuTab.metadata?.sessionId as string | undefined) : undefined;
+  const menuNotiType = menuSessionId ? ((notifications.get(menuSessionId)?.count ?? 0) > 0) : false;
+  // Editor "Compare with Selected" only when a different file in the same project is selected
+  const menuFilePath = menuTab?.metadata?.filePath as string | undefined;
+  const menuProjectName = menuTab?.metadata?.projectName as string | undefined;
+  const menuHasDifferentSelection =
+    compareSelection != null &&
+    !!menuProjectName &&
+    compareSelection.projectName === menuProjectName &&
+    compareSelection.filePath !== menuFilePath;
+
   function moveTabLeft(tabId: string) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
     const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
@@ -127,6 +144,53 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   function moveToPanel(tabId: string, targetPanelId: string) {
     const pid = tabPanelMap[tabId] ?? focusedPanelId;
     usePanelStore.getState().moveTab(tabId, pid, targetPanelId);
+  }
+
+  function closeOthers(tabId: string) {
+    const pid = tabPanelMap[tabId] ?? focusedPanelId;
+    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
+    for (const t of pTabs) { if (t.id !== tabId && t.closable) usePanelStore.getState().closeTab(t.id, pid); }
+    setMenuTabId(null);
+  }
+  function closeRight(tabId: string) {
+    const pid = tabPanelMap[tabId] ?? focusedPanelId;
+    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
+    const idx = pTabs.findIndex((t) => t.id === tabId);
+    for (let i = idx + 1; i < pTabs.length; i++) { if (pTabs[i]!.closable) usePanelStore.getState().closeTab(pTabs[i]!.id, pid); }
+    setMenuTabId(null);
+  }
+
+  function selectForCompare(tab: Tab) {
+    const filePath = tab.metadata?.filePath as string | undefined;
+    const projectName = tab.metadata?.projectName as string | undefined;
+    if (!filePath || !projectName) return;
+    const unsaved = tab.metadata?.unsavedContent as string | undefined;
+    useCompareStore.getState().setSelection({ filePath, projectName, dirtyContent: unsaved, label: basename(filePath) });
+    setMenuTabId(null);
+  }
+  async function compareWithSelected(tab: Tab) {
+    const filePath = tab.metadata?.filePath as string | undefined;
+    const projectName = tab.metadata?.projectName as string | undefined;
+    const sel = useCompareStore.getState().selection;
+    if (!sel || !filePath || !projectName) return;
+    const unsaved = tab.metadata?.unsavedContent as string | undefined;
+    try {
+      await openCompareTab(
+        { path: sel.filePath, dirtyContent: sel.dirtyContent },
+        { path: filePath, dirtyContent: unsaved },
+        projectName,
+      );
+      useCompareStore.getState().clearSelection();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Compare failed");
+    }
+    setMenuTabId(null);
+  }
+  function markUnread(tab: Tab) {
+    const sessionId = tab.metadata?.sessionId as string | undefined;
+    const pn = tab.metadata?.projectName as string | undefined;
+    if (sessionId && pn) useNotificationStore.getState().markUnread(sessionId, pn, tab.title);
+    setMenuTabId(null);
   }
 
   const [fileActionState, setFileActionState] = useState<{ action: string; node: FileNode; tabId: string } | null>(null);
@@ -173,6 +237,23 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
   // Active project avatar for the Projects button
   const { activeProject, projects, customOrder } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject, projects: s.projects, customOrder: s.customOrder })));
+
+  const { projectTags, loadTags } = useProjectTags(activeProject?.name);
+  const assignTagToSession = useCallback(async (sessionId: string, tagId: number | null) => {
+    if (!activeProject?.name) return;
+    try {
+      if (tagId !== null) {
+        await api.patch(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`, { tagId });
+        const tag = projectTags.find((t) => t.id === tagId);
+        if (tag) setSessionTagMap((prev) => ({ ...prev, [sessionId]: { id: tag.id, name: tag.name, color: tag.color } }));
+      } else {
+        await api.del(`${projectUrl(activeProject.name)}/chat/sessions/${sessionId}/tag`);
+        setSessionTagMap((prev) => { const n = { ...prev }; delete n[sessionId]; return n; });
+      }
+      loadTags();
+    } catch { /* silent */ }
+    setMenuTabId(null);
+  }, [activeProject?.name, projectTags, loadTags]);
 
   // Session tag map — same fetch pattern as desktop tab-bar so mobile tabs can show tag bar
   const chatSessionIds = tabs.filter((t) => t.type === "chat" && t.metadata?.sessionId).map((t) => t.metadata!.sessionId as string);
@@ -350,12 +431,63 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
               <Trash2 className="size-4" /> Delete
             </button>
             <div className="h-px bg-border mx-2" />
+            <button onClick={() => selectForCompare(menuTab)}
+              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+              <Columns2 className="size-4" /> Select for Compare
+            </button>
+            {menuHasDifferentSelection && (
+              <button onClick={() => compareWithSelected(menuTab)}
+                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+                <Columns2 className="size-4" /> Compare with Selected ({compareSelection!.label})
+              </button>
+            )}
+            <div className="h-px bg-border mx-2" />
+          </>
+        )}
+        {menuSessionId && !menuNotiType && (
+          <button onClick={() => markUnread(menuTab!)}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <Circle className="size-4 fill-blue-500 text-blue-500" /> Mark as unread
+          </button>
+        )}
+        {menuSessionId && projectTags.length > 0 && (
+          <>
+            <div className="px-3 pt-2 pb-1 text-xs text-text-secondary flex items-center gap-2">
+              <Tag className="size-3.5" /> Set Tag
+            </div>
+            {projectTags.map((pt) => (
+              <button key={pt.id} onClick={() => assignTagToSession(menuSessionId, pt.id)}
+                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+                <span className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: pt.color }} />
+                {pt.name}
+                {sessionTagMap[menuSessionId]?.id === pt.id && <Check className="size-3.5 ml-auto" />}
+              </button>
+            ))}
+            {sessionTagMap[menuSessionId] && (
+              <button onClick={() => assignTagToSession(menuSessionId, null)}
+                className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+                Remove tag
+              </button>
+            )}
+            <div className="h-px bg-border mx-2" />
           </>
         )}
         {menuTab?.closable && (
           <button onClick={() => { usePanelStore.getState().closeTab(menuTabId!); setMenuTabId(null); }}
             className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
             <X className="size-4" /> Close
+          </button>
+        )}
+        {menuTabPanelTabs.some((t) => t.id !== menuTabId && t.closable) && (
+          <button onClick={() => closeOthers(menuTabId!)}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <XSquare className="size-4" /> Close Others
+          </button>
+        )}
+        {menuTabIdx >= 0 && menuTabIdx < menuTabPanelTabs.length - 1 && (
+          <button onClick={() => closeRight(menuTabId!)}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <ChevronsRight className="size-4" /> Close to the Right
           </button>
         )}
         {menuTabIdx > 0 && (
