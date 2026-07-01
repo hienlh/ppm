@@ -4,6 +4,7 @@ import type { ChatEvent } from "../../../src/types/chat.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
+import { accountService } from "../../../src/services/account.service.ts";
 
 /**
  * Helper: create an async iterable from an array of items with optional delay.
@@ -648,6 +649,59 @@ describe("ClaudeAgentSdkProvider", () => {
 
       // abortQuery should be no-op now (query already cleaned up)
       expect(() => provider.abortQuery(session.id)).not.toThrow();
+    });
+  });
+
+  // Guards against the shared-account 401 cascade: when a concurrent session/instance
+  // has already rotated the OAuth token (Anthropic revokes the old one on refresh), a
+  // 401 recovery must ADOPT the DB's fresh token instead of forcing another refresh —
+  // a redundant refresh revokes the just-issued token and bounces the 401 back, looping
+  // "Token refreshed — retrying" endlessly across sessions.
+  describe("recoverFromAuthError token adoption", () => {
+    const nowS = () => Math.floor(Date.now() / 1000);
+
+    async function drive(gen: AsyncGenerator<any, any, void>) {
+      const events: any[] = [];
+      let res = await gen.next();
+      while (!res.done) { events.push(res.value); res = await gen.next(); }
+      return { events, ret: res.value as { account: any; newRetryCount: number } | null };
+    }
+
+    it("adopts an already-refreshed DB token without calling refreshAccessToken", async () => {
+      const account = { id: "acc-1", email: "a@x.com", label: "A", accessToken: "OLD", refreshToken: "r", expiresAt: nowS() + 7200 };
+      const getSpy = spyOn(accountService, "getWithTokens").mockReturnValue({ ...account, accessToken: "NEW" } as any);
+      const refreshSpy = spyOn(accountService, "refreshAccessToken").mockResolvedValue(undefined as any);
+
+      const { events, ret } = await drive((provider as any).recoverFromAuthError({
+        sessionId: "s1", account, authRetryCount: 0, maxRetries: 2, context: "test",
+      }));
+
+      expect(refreshSpy).not.toHaveBeenCalled();
+      expect(ret?.account.accessToken).toBe("NEW");
+      expect(ret?.newRetryCount).toBe(1);
+      expect(events.some((e) => e.type === "account_retry" && e.reason === "Token refreshed")).toBe(true);
+
+      getSpy.mockRestore();
+      refreshSpy.mockRestore();
+    });
+
+    it("forces a refresh when the DB token equals the revoked token we already tried", async () => {
+      const account = { id: "acc-1", email: "a@x.com", label: "A", accessToken: "SAME", refreshToken: "r", expiresAt: nowS() + 7200 };
+      // 1st read (adopt check) → same token; 2nd read (post-refresh) → refreshed token
+      const getSpy = spyOn(accountService, "getWithTokens")
+        .mockReturnValueOnce({ ...account } as any)
+        .mockReturnValueOnce({ ...account, accessToken: "REFRESHED" } as any);
+      const refreshSpy = spyOn(accountService, "refreshAccessToken").mockResolvedValue(undefined as any);
+
+      const { ret } = await drive((provider as any).recoverFromAuthError({
+        sessionId: "s1", account, authRetryCount: 0, maxRetries: 2, context: "test",
+      }));
+
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+      expect(ret?.account.accessToken).toBe("REFRESHED");
+
+      getSpy.mockRestore();
+      refreshSpy.mockRestore();
     });
   });
 });

@@ -194,8 +194,29 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }): AsyncGenerator<ChatEvent, { account: AccountWithTokens; newRetryCount: number } | null, void> {
     const { sessionId, account, authRetryCount, maxRetries, context } = opts;
 
-    // Attempt 1: refresh the current account's token
+    // Attempt 1: recover the current account's token.
     if (authRetryCount === 0) {
+      // Another session/instance sharing this account may have already refreshed the
+      // token since our subprocess launched. Anthropic revokes the previous access
+      // token on refresh, so a long-lived subprocess ends up holding a dead token even
+      // though its expiry timestamp is still in the future. If the DB already has a
+      // newer, unexpired token, ADOPT it instead of forcing another refresh — a
+      // redundant refresh would revoke the just-issued token and bounce the 401 back to
+      // the other sessions, cascading endless "Token refreshed" retries.
+      const nowS = Math.floor(Date.now() / 1000);
+      const current = accountService.getWithTokens(account.id);
+      if (
+        current &&
+        current.accessToken !== account.accessToken &&
+        (!current.expiresAt || current.expiresAt - nowS > 60)
+      ) {
+        const label = current.label ?? current.email ?? "Unknown";
+        console.log(`[sdk] session=${sessionId} (${context}) adopting already-refreshed token for ${account.id} (${label}) — skipping redundant refresh`);
+        yield { type: "account_retry" as const, reason: "Token refreshed", accountId: current.id, accountLabel: label };
+        return { account: current, newRetryCount: 1 };
+      }
+      // DB token matches the one we already tried (genuinely revoked despite a future
+      // expiry) — force an actual OAuth refresh.
       try {
         await accountService.refreshAccessToken(account.id, false, true);
         const refreshed = accountService.getWithTokens(account.id);

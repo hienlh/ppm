@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.19] - 2026-07-01
+
+### Fixed
+- **Repeated "Token refreshed — retrying" on shared accounts** — Anthropic revokes the previous access token on every OAuth refresh, and each chat session freezes its token into a long-lived SDK subprocess. When one account was shared across concurrent sessions/instances, each session's 401-recovery refresh revoked the token the others held, bouncing the 401 back and looping token refreshes (observed twice in 8 minutes on a token with hours of life left). 401 recovery now adopts a token already refreshed in the DB by another session instead of forcing a redundant refresh, breaking the cascade.
+
 ## [0.14.18] - 2026-07-01
 
 ### Fixed
