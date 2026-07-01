@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.18] - 2026-07-01
+
+### Fixed
+- **External-file breadcrumb browsing** — the editor breadcrumb dropdown now works for files opened outside the project root. Previously it queried the project-scoped file API with paths that live outside the project, so every request 404'd and the dropdown spun on "Loading…" forever. External files now browse the real filesystem via `/api/fs/browse` (handles POSIX and Windows paths).
+- **Terminal survives suspend/sleep** — a slept/suspended WebSocket keeps reporting `OPEN` while actually dead, silently dropping input. The terminal now runs a PING/PONG heartbeat and forces a reconnect when the socket goes silent (zombie-socket detection), also re-checking on tab focus.
+
+### Added
+- **Mobile tab long-press menu** — the mobile tab menu gains **Select for Compare** / **Compare with Selected**, **Mark as unread** and **Set Tag** (for chat sessions), and **Close Others** / **Close to the Right**, matching the desktop tab bar.
+
 ## [0.14.17] - 2026-06-29
 
 ### Fixed
