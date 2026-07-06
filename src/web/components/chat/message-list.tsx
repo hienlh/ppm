@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useMemo, useCallback, memo, lazy, Suspense } from "react";
-import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+import { useEffect, useRef, useState, useMemo, useCallback, useLayoutEffect, memo, lazy, Suspense } from "react";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { getAuthToken } from "@/lib/api-client";
 import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
@@ -111,14 +111,9 @@ export function MessageList({
   onDismissMessage,
   onClearErrors,
 }: MessageListProps) {
-  // Scroll handled by StickToBottom wrapper — no manual scroll logic needed
+  // Scroll + stick-to-bottom handled by the virtualizer (anchorTo:'end').
 
-  const PAGE_SIZE = 50;
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-
-  // Reset visible count when conversation identity changes (not on every streaming tick)
-  const conversationId = messages[0]?.id;
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [conversationId]);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => messages.filter((msg) => {
     const hasContent = msg.content && msg.content.trim().length > 0;
@@ -129,12 +124,30 @@ export function MessageList({
     return hasContent || hasEvents;
   }), [messages]);
 
-  const displayed = useMemo(() => {
-    const start = Math.max(0, filtered.length - visibleCount);
-    return filtered.slice(start);
-  }, [filtered, visibleCount]);
+  // Virtualize the whole transcript so only on-screen bubbles live in the DOM.
+  // anchorTo/followOnAppend/scrollEndThreshold need virtual-core >= 3.16 (chat
+  // scroll physics): stay pinned to the newest message, follow appends only when
+  // already at the end, and keep the visible anchor stable when history prepends.
+  const rowVirtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 120,
+    getItemKey: (index) => filtered[index]?.id ?? index,
+    overscan: 6,
+    anchorTo: "end",
+    followOnAppend: true,
+    scrollEndThreshold: 80,
+  });
 
-  const hasMoreInMemory = visibleCount < filtered.length;
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
+  // Jump to the newest message on first mount and whenever the conversation
+  // identity changes (session swap). anchorTo keeps it pinned afterwards.
+  const conversationId = filtered[0]?.id;
+  useLayoutEffect(() => {
+    rowVirtualizer.scrollToEnd();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
@@ -156,13 +169,16 @@ export function MessageList({
     [filtered],
   );
 
-  // Scroll anchor bridge published from inside StickToBottom (needs the context's scrollRef).
-  const scrollAnchorRef = useRef<ScrollAnchorHandle | null>(null);
+  // Indices of user messages — powers the up/down message navigation buttons.
+  const userIndices = useMemo(
+    () => filtered.reduce<number[]>((acc, m, i) => { if (m.role === "user") acc.push(i); return acc; }, []),
+    [filtered],
+  );
 
-  // Find the topmost displayed message that has an unexpanded compact JSONL path.
+  // Find the topmost message that has an unexpanded compact JSONL path.
   const findTopUnexpandedCompact = useCallback((): { id: string; jsonlPath: string } | null => {
     if (!onExpandCompact || !isCompactExpanded) return null;
-    for (const msg of displayed) {
+    for (const msg of filtered) {
       if (isCompactExpanded(msg.id)) continue;
       // Check user message content for JSONL path
       const path = extractJsonlPath(msg.content || "");
@@ -178,32 +194,30 @@ export function MessageList({
       }
     }
     return null;
-  }, [displayed, onExpandCompact, isCompactExpanded]);
+  }, [filtered, onExpandCompact, isCompactExpanded]);
 
   const topUnexpandedCompact = findTopUnexpandedCompact();
-  const hasMore = hasMoreInMemory || !!topUnexpandedCompact;
+  const hasMore = !!topUnexpandedCompact;
 
-  // Unified load-more: first show more in-memory messages, then auto-expand compact history
+  // Fetch pre-compact history from the server. anchorTo:'end' preserves the
+  // visible anchor across the prepend, so no manual scroll-position math.
   const [autoLoadingCompact, setAutoLoadingCompact] = useState(false);
   const loadMore = useCallback(async () => {
-    if (hasMoreInMemory) {
-      scrollAnchorRef.current?.capture();
-      setVisibleCount((c) => c + PAGE_SIZE);
-      requestAnimationFrame(() => requestAnimationFrame(() => scrollAnchorRef.current?.restore()));
-      return;
-    }
-    // All in-memory messages visible — try expanding topmost compact
     if (!topUnexpandedCompact || !onExpandCompact || autoLoadingCompact) return;
     setAutoLoadingCompact(true);
     try {
-      scrollAnchorRef.current?.capture();
-      const count = await onExpandCompact(topUnexpandedCompact.id, topUnexpandedCompact.jsonlPath);
-      setVisibleCount((c) => c + count);
-      requestAnimationFrame(() => requestAnimationFrame(() => scrollAnchorRef.current?.restore()));
+      await onExpandCompact(topUnexpandedCompact.id, topUnexpandedCompact.jsonlPath);
     } finally {
       setAutoLoadingCompact(false);
     }
-  }, [hasMoreInMemory, topUnexpandedCompact, onExpandCompact, autoLoadingCompact]);
+  }, [topUnexpandedCompact, onExpandCompact, autoLoadingCompact]);
+
+  // Auto-load older history when the first item scrolls into view.
+  useEffect(() => {
+    if (hasMore && !autoLoadingCompact && virtualItems[0] && virtualItems[0].index <= 0) {
+      loadMore();
+    }
+  }, [hasMore, autoLoadingCompact, virtualItems, loadMore]);
 
   if (messagesLoading && (!keepStaleWhileLoading || messages.length === 0)) {
     return (
@@ -226,26 +240,30 @@ export function MessageList({
   return (
     <div className="relative flex-1 overflow-hidden flex flex-col min-h-0">
       <TaskTracker projectName={projectName} sessionId={sessionId} messages={messages} />
-      <StickToBottom className="flex-1 overflow-y-auto overflow-x-hidden [contain:strict] [overflow-anchor:auto]" resize="smooth" initial="instant">
-        <StickToBottom.Content className="p-4 space-y-4 select-none [&>*]:[overflow-anchor:auto]">
-          <ScrollAnchorBridge bridgeRef={scrollAnchorRef} />
-          {errorCount > 1 && onClearErrors && (
-            <div className="sticky top-0 z-10 flex justify-center">
-              <button
-                type="button"
-                onClick={onClearErrors}
-                className="flex items-center gap-1.5 rounded-full bg-red-500/15 border border-red-500/25 px-3 py-1 text-xs text-red-400 hover:bg-red-500/25"
-              >
-                <XCircle className="size-3.5" />
-                Clear all errors ({errorCount})
-              </button>
-            </div>
-          )}
-          {hasMore && (
-            <LoadMoreSentinel onLoadMore={loadMore} loading={autoLoadingCompact} />
-          )}
-          {displayed.map((msg, idx) => {
-            const globalIdx = filtered.length - displayed.length + idx;
+      {errorCount > 1 && onClearErrors && (
+        <div className="absolute top-2 left-0 right-0 z-20 flex justify-center pointer-events-none">
+          <button
+            type="button"
+            onClick={onClearErrors}
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-red-500/15 border border-red-500/25 px-3 py-1 text-xs text-red-400 hover:bg-red-500/25 shadow-md backdrop-blur-sm"
+          >
+            <XCircle className="size-3.5" />
+            Clear all errors ({errorCount})
+          </button>
+        </div>
+      )}
+      {autoLoadingCompact && (
+        <div className="absolute top-2 left-0 right-0 z-10 flex items-center justify-center gap-1.5 text-xs text-text-secondary pointer-events-none">
+          <Loader2 className="size-3 animate-spin" />
+          Loading previous conversation...
+        </div>
+      )}
+      <div ref={parentRef} className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]">
+        <div style={{ height: rowVirtualizer.getTotalSize(), width: "100%", position: "relative" }}>
+          {virtualItems.map((vi) => {
+            const globalIdx = vi.index;
+            const msg = filtered[globalIdx];
+            if (!msg) return null;
             const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
             // User-message ordinal (1-based) — stable version-group anchor across forks.
             const versionOrdinal = msg.role === "user"
@@ -269,165 +287,123 @@ export function MessageList({
               turnCopyText = parts.join("\n\n");
             }
             return (
-              <RenderErrorBoundary key={msg.id} fallbackContent={msg.content}>
-                <MessageBubble
-                  message={msg}
-                  isStreaming={isStreaming && msg.id.startsWith("streaming-")}
-                  isLastAssistantInTurn={isLastAssistantInTurn}
-                  turnCopyText={turnCopyText}
-                  projectName={projectName}
-                  onFork={msg.role === "user" && onFork ? handleFork : undefined}
-                  onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
-                  isEditing={isEditing}
-                  onDismiss={msg.role === "system" && onDismissMessage ? handleDismiss : undefined}
-                  prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
-                  sessionId={sessionId}
-                  providerId={providerId}
-                  versionOrdinal={versionOrdinal}
-                  onNavigateVersion={onNavigateVersion}
-                  versionNavDisabled={isStreaming}
-                  bashPartialOutput={bashPartialOutput}
-                />
-              </RenderErrorBoundary>
+              <div
+                key={vi.key}
+                data-index={vi.index}
+                ref={rowVirtualizer.measureElement}
+                style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                className="px-4 pt-4 select-none"
+              >
+                <RenderErrorBoundary fallbackContent={msg.content}>
+                  <MessageBubble
+                    message={msg}
+                    isStreaming={isStreaming && msg.id.startsWith("streaming-")}
+                    isLastAssistantInTurn={isLastAssistantInTurn}
+                    turnCopyText={turnCopyText}
+                    projectName={projectName}
+                    onFork={msg.role === "user" && onFork ? handleFork : undefined}
+                    onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
+                    isEditing={isEditing}
+                    onDismiss={msg.role === "system" && onDismissMessage ? handleDismiss : undefined}
+                    prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
+                    sessionId={sessionId}
+                    providerId={providerId}
+                    versionOrdinal={versionOrdinal}
+                    onNavigateVersion={onNavigateVersion}
+                    versionNavDisabled={isStreaming}
+                    bashPartialOutput={bashPartialOutput}
+                  />
+                </RenderErrorBoundary>
+              </div>
             );
           })}
+        </div>
 
-        {pendingApproval && (
-          pendingApproval.tool === "AskUserQuestion"
-            ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
-            : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
-        )}
+        {/* Trailing (non-virtual) content pinned below the last message. */}
+        <div className="px-4 pb-4 pt-4 space-y-4 select-none">
+          {pendingApproval && (
+            pendingApproval.tool === "AskUserQuestion"
+              ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
+              : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
+          )}
 
-        {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
-      </StickToBottom.Content>
-      <ScrollNavButtons />
-    </StickToBottom>
+          {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
+        </div>
+      </div>
+      <ScrollNavButtons virtualizer={rowVirtualizer} parentRef={parentRef} userIndices={userIndices} />
     </div>
   );
 }
 
-/** Imperative handle exposed by ScrollAnchorBridge — capture & restore scroll on prepend. */
-interface ScrollAnchorHandle {
-  /** Record current scrollTop + scrollHeight before a prepend. No-op if user is at bottom. */
-  capture: () => void;
-  /** After prepend commits, adjust scrollTop by the height delta so viewport stays locked. */
-  restore: () => void;
-}
-
 /**
- * Consumes StickToBottom's scrollRef (only accessible inside its subtree) and publishes
- * capture/restore functions to a ref owned by the parent MessageList, so prepend-history
- * expansion can preserve scroll position across the re-render.
+ * Floating bottom-right navigation between the user's own messages, driven by
+ * the virtualizer (off-screen bubbles aren't in the DOM, so navigation works on
+ * message indices instead of querying elements). Up jumps to the nearest user
+ * message above the top of the viewport; Down jumps to the nearest one below, or
+ * to the very bottom when none remain.
  */
-function ScrollAnchorBridge({ bridgeRef }: { bridgeRef: React.MutableRefObject<ScrollAnchorHandle | null> }) {
-  const { scrollRef, isAtBottom } = useStickToBottomContext();
-  const state = useRef<{ top: number; height: number } | null>(null);
-  useEffect(() => {
-    bridgeRef.current = {
-      capture: () => {
-        const el = scrollRef.current;
-        if (!el || isAtBottom) { state.current = null; return; } // skip if sticking to bottom
-        state.current = { top: el.scrollTop, height: el.scrollHeight };
-      },
-      restore: () => {
-        const el = scrollRef.current;
-        const s = state.current;
-        if (!el || !s) return;
-        const delta = el.scrollHeight - s.height;
-        if (delta !== 0) el.scrollTop = s.top + delta;
-        state.current = null;
-      },
-    };
-    return () => { bridgeRef.current = null; };
-  }, [bridgeRef, scrollRef, isAtBottom]);
-  return null;
-}
-
-/**
- * Floating bottom-right navigation between the user's own messages.
- * Up jumps to the nearest user message above the viewport; Down jumps to the
- * nearest one below, or to the very bottom if none. Buttons hide when their
- * direction has no target (Up: no user message above; Down: already at bottom).
- */
-function ScrollNavButtons() {
-  const { scrollRef, isAtBottom, scrollToBottom } = useStickToBottomContext();
+function ScrollNavButtons({ virtualizer, parentRef, userIndices }: {
+  virtualizer: Virtualizer<HTMLDivElement, Element>;
+  parentRef: React.RefObject<HTMLDivElement | null>;
+  userIndices: number[];
+}) {
   const [hasAbove, setHasAbove] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
 
-  const EPSILON = 8;
-  // Where a jumped-to message lands below the container top. The "below"
-  // selection threshold must exceed this, otherwise Down keeps re-selecting the
-  // message it just landed and scrolls ~0px.
-  const SCROLL_OFFSET = 12;
-
-  const scrollMessageToTop = useCallback((el: HTMLElement) => {
-    const container = scrollRef.current;
-    if (!container) return;
-    const containerTop = container.getBoundingClientRect().top;
-    const elTop = el.getBoundingClientRect().top;
-    container.scrollTo({ top: container.scrollTop + (elTop - containerTop) - SCROLL_OFFSET, behavior: "smooth" });
-  }, [scrollRef]);
+  // Index of the message actually at the top of the viewport. getVirtualItems()[0]
+  // is skewed by `overscan` (renders items above the fold), so derive it from the
+  // real scroll offset instead — otherwise Down keeps re-selecting the same target.
+  const getTopVisibleIndex = useCallback(() => {
+    const items = virtualizer.getVirtualItems();
+    if (!items.length) return 0;
+    const offset = virtualizer.scrollOffset ?? parentRef.current?.scrollTop ?? 0;
+    return items.find((vi) => vi.end > offset + 1)?.index ?? items[0]!.index;
+  }, [virtualizer, parentRef]);
 
   useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
+    const el = parentRef.current;
+    if (!el) return;
     let raf = 0;
     const recompute = () => {
-      const containerTop = container.getBoundingClientRect().top;
-      let above = false;
-      container.querySelectorAll<HTMLElement>("[data-user-message]").forEach((el) => {
-        if (el.getBoundingClientRect().top < containerTop - EPSILON) above = true;
-      });
+      const topIndex = getTopVisibleIndex();
+      const above = userIndices.some((i) => i < topIndex);
       setHasAbove((prev) => (prev === above ? prev : above));
+      const bottom = virtualizer.isAtEnd
+        ? virtualizer.isAtEnd(8)
+        : el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+      setAtBottom((prev) => (prev === bottom ? prev : bottom));
     };
     const schedule = () => {
       if (raf) cancelAnimationFrame(raf);
       raf = requestAnimationFrame(recompute);
     };
     recompute();
-    container.addEventListener("scroll", schedule, { passive: true });
+    el.addEventListener("scroll", schedule, { passive: true });
     const ro = new ResizeObserver(schedule);
-    ro.observe(container);
+    ro.observe(el);
     return () => {
       if (raf) cancelAnimationFrame(raf);
-      container.removeEventListener("scroll", schedule);
+      el.removeEventListener("scroll", schedule);
       ro.disconnect();
     };
-  }, [scrollRef]);
+  }, [virtualizer, parentRef, userIndices, getTopVisibleIndex]);
 
   const goUp = useCallback(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    const containerTop = container.getBoundingClientRect().top;
-    let target: HTMLElement | null = null;
-    let bestTop = -Infinity;
-    container.querySelectorAll<HTMLElement>("[data-user-message]").forEach((el) => {
-      const top = el.getBoundingClientRect().top;
-      if (top < containerTop - EPSILON && top > bestTop) {
-        target = el;
-        bestTop = top;
-      }
-    });
-    if (target) scrollMessageToTop(target);
-  }, [scrollRef, scrollMessageToTop]);
+    const topIndex = getTopVisibleIndex();
+    let target: number | undefined;
+    for (const i of userIndices) {
+      if (i < topIndex) target = i; // ascending — keep the last one still above
+      else break;
+    }
+    if (target != null) virtualizer.scrollToIndex(target, { align: "start" });
+  }, [virtualizer, userIndices, getTopVisibleIndex]);
 
   const goDown = useCallback(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    const containerTop = container.getBoundingClientRect().top;
-    let target: HTMLElement | null = null;
-    let bestTop = Infinity;
-    // Must clear the landing zone so a just-jumped-to message isn't re-selected.
-    const belowLine = containerTop + SCROLL_OFFSET + EPSILON;
-    container.querySelectorAll<HTMLElement>("[data-user-message]").forEach((el) => {
-      const top = el.getBoundingClientRect().top;
-      if (top > belowLine && top < bestTop) {
-        target = el;
-        bestTop = top;
-      }
-    });
-    if (target) scrollMessageToTop(target);
-    else scrollToBottom();
-  }, [scrollRef, scrollMessageToTop, scrollToBottom]);
+    const topIndex = getTopVisibleIndex();
+    const target = userIndices.find((i) => i > topIndex);
+    if (target != null) virtualizer.scrollToIndex(target, { align: "start" });
+    else virtualizer.scrollToEnd();
+  }, [virtualizer, userIndices, getTopVisibleIndex]);
 
   const btnClass =
     "size-8 flex items-center justify-center rounded-full bg-surface-elevated/60 border border-border/60 text-text-secondary shadow-md backdrop-blur-sm transition-all hover:bg-surface-elevated hover:text-foreground disabled:opacity-30 disabled:cursor-default disabled:hover:bg-surface-elevated/60 disabled:hover:text-text-secondary";
@@ -437,40 +413,9 @@ function ScrollNavButtons() {
       <button type="button" onClick={goUp} disabled={!hasAbove} aria-label="Jump to previous message" className={btnClass}>
         <ChevronUp className="size-4" />
       </button>
-      <button type="button" onClick={goDown} disabled={isAtBottom} aria-label="Jump to next message" className={btnClass}>
+      <button type="button" onClick={goDown} disabled={atBottom} aria-label="Jump to next message" className={btnClass}>
         <ChevronDown className="size-4" />
       </button>
-    </div>
-  );
-}
-
-/** IntersectionObserver sentinel — auto-triggers loadMore when scrolled near top.
- *  Debounced to prevent cascade: after each trigger, waits 150ms before re-arming. */
-function LoadMoreSentinel({ onLoadMore, loading }: { onLoadMore: () => void; loading: boolean }) {
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const onLoadMoreRef = useRef(onLoadMore);
-  onLoadMoreRef.current = onLoadMore;
-  const cooldownRef = useRef(false);
-
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry?.isIntersecting || cooldownRef.current) return;
-        cooldownRef.current = true;
-        onLoadMoreRef.current();
-        setTimeout(() => { cooldownRef.current = false; }, 150);
-      },
-      { rootMargin: "200px 0px 0px 0px" },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div ref={sentinelRef} className="flex items-center justify-center py-2 text-xs text-text-secondary">
-      {loading && <><Loader2 className="size-3 animate-spin mr-1.5" />Loading previous conversation...</>}
     </div>
   );
 }

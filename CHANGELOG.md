@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.20] - 2026-07-07
+
+### Fixed
+- **Chat tab memory bloat on long sessions** — a busy session tab held ~17K DOM nodes and ~1GB of renderer memory. Windowing only capped the *initial* render; scrolling up or expanding compact history grew the list unbounded and every rendered bubble stayed mounted, so hundreds of markdown + syntax-highlighted code blocks kept their layout/paint trees alive (invisible to `performance.memory`, which read only ~183MB JS heap). The message list is now virtualized with `@tanstack/react-virtual` (`anchorTo: 'end'` + `followOnAppend`, upgraded to pull virtual-core 3.17), so only on-screen bubbles live in the DOM. This replaces the `use-stick-to-bottom` wrapper while preserving stick-to-bottom, streaming pin, history-prepend anchoring, and the ▲/▼ message navigation.
+
 ## [0.14.19] - 2026-07-01
 
 ### Fixed
