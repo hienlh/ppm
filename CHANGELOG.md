@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.24] - 2026-07-07
+
+### Fixed
+- **Tunnel URL rotated on every upgrade (Windows)** — tunnel adoption across upgrade worked, but daemonized chat-tool debris (agent-browser + its headless-chrome tree, msys coreutils from bash tools) inherited the server's listening-socket handle and escaped both `taskkill /T` and the tracked-descendant snapshot (their parent link broke before any snapshot ran). The port stayed in zombie LISTENING state owned by a dead PID, forcing a port fallback → tunnel restart → new random trycloudflare URL. The supervisor now: (1) hunts orphaned debris holding the zombie port — dead-parent processes matching a narrow whitelist, killed by exact PID, cloudflared always protected — before falling back to another port; (2) persists the tunnel's origin port (`tunnelPort` in status.json) and binds the server to the **adopted tunnel's port** instead of the configured one, restarting the tunnel only on a real origin mismatch; (3) adopts the tunnel before spawning the server so port selection sees adoption state.
+
 ## [0.14.23] - 2026-07-07
 
 ### Fixed
