@@ -373,9 +373,18 @@ describe("Supervisor self-heal patterns", () => {
     expect(supervisorCode).toMatch(/for \(let p = preferred \+ 1; p <= preferred \+ 20; p\+\+\)/);
   });
 
-  test("spawnServer resolves a bindable port and re-points the tunnel on move", () => {
-    expect(supervisorCode).toContain("const boundPort = await ensureBindablePort(_opts.port, _opts.host)");
-    expect(supervisorCode).toMatch(/if \(tunnelUrl \|\| tunnelChild \|\| adoptedTunnelPid\) restartTunnel\(boundPort\)/);
+  test("spawnServer resolves a bindable port and re-points the tunnel only on origin mismatch", () => {
+    // Prefers the live tunnel's origin port so an upgrade never rotates the URL
+    expect(supervisorCode).toContain("const preferred = tunnelAlive && tunnelPort !== null ? tunnelPort : _opts.port");
+    expect(supervisorCode).toContain("const boundPort = await ensureBindablePort(preferred, _opts.host)");
+    // Tunnel restarts only when its origin differs from the bound port
+    expect(supervisorCode).toMatch(/if \(tunnelAlive && tunnelPort !== null && tunnelPort !== boundPort\) \{\s*\n\s*restartTunnel\(boundPort\);/);
+  });
+
+  test("spawnServer hunts zombie-port orphans before falling back to another port", () => {
+    expect(supervisorCode).toContain("reapZombiePortOrphans");
+    // Only hunts when the LISTEN owner is dead (zombie socket), never a live app
+    expect(supervisorCode).toMatch(/else if \(!alive\) \{/);
   });
 
   test("resume-from-sleep detection resets budgets and regenerates the tunnel", () => {

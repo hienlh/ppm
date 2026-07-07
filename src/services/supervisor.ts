@@ -24,6 +24,7 @@ import {
   killProcessTree, snapshotServerDescendants, reapTrackedDescendants,
   findPortListenerPid, isPpmProcess,
 } from "./windows-process-tree.ts";
+import { reapZombiePortOrphans } from "./windows-zombie-port-reaper.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -126,6 +127,19 @@ async function ensureBindablePort(preferred: number, host: string): Promise<numb
         log("WARN", `Port ${preferred} held by stale PPM process (PID ${holderPid}) — reclaiming`);
         killProcessTree(holderPid);
         await Bun.sleep(800);
+      } else if (!alive) {
+        // Zombie socket: LISTEN entry owned by a dead PID, handle kept open by
+        // orphaned descendants that inherited it (daemonized chat-tool debris
+        // the tracked-descendant snapshot never saw). Hunt and kill them by
+        // exact PID so the port frees WITHOUT falling back to another port —
+        // a port move forces a tunnel restart and rotates the public URL.
+        const protect = new Set<number>(
+          [process.pid, serverChild?.pid, tunnelChild?.pid, adoptedTunnelPid]
+            .filter((p): p is number => typeof p === "number"),
+        );
+        const reaped = await reapZombiePortOrphans(preferred, protect, (m) => log("INFO", m))
+          .catch(() => 0);
+        if (reaped > 0) await Bun.sleep(800);
       }
     }
     if (await isPortBindable(preferred, host)) return preferred;
@@ -151,7 +165,7 @@ function restartTunnel(port: number) {
   if (tunnelChild) { try { tunnelChild.kill(); } catch {} tunnelChild = null; }
   if (adoptedTunnelPid) { try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {} adoptedTunnelPid = null; }
   tunnelUrl = null;
-  updateStatus({ shareUrl: null, tunnelPid: null });
+  updateStatus({ shareUrl: null, tunnelPid: null, tunnelPort: null });
   spawnTunnel(port).catch((e) => log("ERROR", `restartTunnel failed: ${e}`));
 }
 
@@ -201,14 +215,28 @@ export async function spawnServer(
   // a zombie socket (common after hibernate/resume), fall back to a free port
   // and re-point the tunnel at the new origin — otherwise the child would
   // crash-loop on EADDRINUSE until max_restarts and the supervisor would pause.
-  const boundPort = await ensureBindablePort(_opts.port, _opts.host);
+  // Prefer the port a LIVE tunnel already targets (may differ from the
+  // configured port after an earlier zombie-port fallback): binding anywhere
+  // else forces a tunnel restart, which rotates the public trycloudflare URL.
+  const tunnelAlive = !!(tunnelUrl || tunnelChild || adoptedTunnelPid);
+  const preferred = tunnelAlive && tunnelPort !== null ? tunnelPort : _opts.port;
+  if (preferred !== _opts.port) {
+    log("INFO", `Preferring tunnel origin port ${preferred} over configured ${_opts.port} (public URL continuity)`);
+  }
+  const boundPort = await ensureBindablePort(preferred, _opts.host);
   if (boundPort !== _opts.port) {
     _opts.port = boundPort;
     serverArgs[1] = String(boundPort); // serverArgs = ["__serve__", <port>, <host>, ...]
     updateStatus({ port: boundPort });
-    log("WARN", `Server port moved to ${boundPort} (stale socket on previous port)`);
-    // Only re-point an already-established tunnel; a fresh start spawns it at the right port.
-    if (tunnelUrl || tunnelChild || adoptedTunnelPid) restartTunnel(boundPort);
+    log("WARN", `Server port moved to ${boundPort}`);
+  }
+  // Re-point the tunnel only when its origin differs from the port we bound.
+  // (tunnelPort === null means an old-format adoption without origin info —
+  // fall back to restarting whenever the bind moved off the preferred port.)
+  if (tunnelAlive && tunnelPort !== null && tunnelPort !== boundPort) {
+    restartTunnel(boundPort);
+  } else if (tunnelAlive && tunnelPort === null && boundPort !== preferred) {
+    restartTunnel(boundPort);
   }
 
   const cmd = isCompiledBinary()
@@ -394,7 +422,7 @@ export async function spawnTunnel(port: number): Promise<void> {
     // the start: the tunnel probe (startTunnelProbe) owns liveness + respawn.
     adoptedTunnelPid = pid;
     tunnelChild = null;
-    updateStatus({ shareUrl: tunnelUrl, tunnelPid: pid });
+    updateStatus({ shareUrl: tunnelUrl, tunnelPid: pid, tunnelPort: port });
     log("INFO", `Tunnel ready: ${tunnelUrl} (PID: ${pid}, detached)`);
     await syncUrlToCloud(tunnelUrl);
     return;
@@ -445,7 +473,7 @@ export async function spawnTunnel(port: number): Promise<void> {
     return spawnTunnel(port);
   }
 
-  updateStatus({ shareUrl: tunnelUrl, tunnelPid: tunnelChild.pid });
+  updateStatus({ shareUrl: tunnelUrl, tunnelPid: tunnelChild.pid, tunnelPort: port });
   log("INFO", `Tunnel ready: ${tunnelUrl} (PID: ${tunnelChild.pid})`);
 
   // One-time sync of tunnel URL to cloud (WS handles periodic heartbeat)
@@ -590,7 +618,10 @@ function adoptTunnel(): boolean {
     process.kill(pid, 0); // throws if process is dead
     adoptedTunnelPid = pid;
     tunnelUrl = url;
-    log("INFO", `Adopted existing tunnel (PID: ${pid}, URL: ${url})`);
+    // Remember which origin port the adopted tunnel targets so spawnServer can
+    // bind THERE (not the configured port) and keep the public URL alive.
+    if (typeof status.tunnelPort === "number") tunnelPort = status.tunnelPort;
+    log("INFO", `Adopted existing tunnel (PID: ${pid}, URL: ${url}, origin port: ${tunnelPort ?? "unknown"})`);
     return true;
   } catch (e) {
     log("WARN", `adoptTunnel: tunnel PID ${(readStatus().tunnelPid)} unreachable: ${e}`);
@@ -1137,6 +1168,7 @@ export async function runSupervisor(opts: {
     pid: null,
     tunnelPid: isUpgrade ? (prevStatus.tunnelPid ?? null) : null,
     shareUrl: isUpgrade ? (prevStatus.shareUrl ?? null) : null,
+    tunnelPort: isUpgrade ? (prevStatus.tunnelPort ?? null) : null,
   });
   // Diagnostic: a cold start (isUpgrade=false) always nulls the tunnel and forces
   // a fresh URL. A genuine upgrade must arrive here with state "upgrading" AND a
@@ -1309,20 +1341,25 @@ export async function runSupervisor(opts: {
   // can race-freely promote us to MainPID and forward SIGUSR1/TERM.
   await sdNotify("READY=1");
 
-  // Spawn server + tunnel in parallel
-  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];
-
+  // Adopt tunnel BEFORE spawning the server: spawnServer prefers the adopted
+  // tunnel's origin port (public URL continuity), so adoption state must be
+  // settled first — the old order raced spawnServer's port selection.
+  let tunnelAdopted = false;
   if (opts.share) {
     startTunnelProbe(opts.port);
     // Try adopting tunnel kept alive from previous upgrade; spawn new if dead
-    if (adoptTunnel()) {
+    tunnelAdopted = adoptTunnel();
+    if (tunnelAdopted) {
       log("INFO", "Tunnel adopted from previous instance — public URL preserved");
     } else {
       log("WARN", "Tunnel adoption failed/skipped — spawning FRESH tunnel (public URL will change)");
       killStaleTunnel(); // kill orphaned tunnel before spawning new one
-      promises.push(spawnTunnel(opts.port));
     }
   }
+
+  // Spawn server + (fresh) tunnel in parallel
+  const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];
+  if (opts.share && !tunnelAdopted) promises.push(spawnTunnel(opts.port));
 
   await Promise.all(promises);
 
