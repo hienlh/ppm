@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.23] - 2026-07-07
+
+### Fixed
+- **Chat tab crash: `scrollToEnd is not a function`** — the virtualized message list called `@tanstack/react-virtual` APIs that don't exist in any published release (`scrollToEnd()`, and the `anchorTo`/`followOnAppend`/`scrollEndThreshold` options — latest published is 3.14.5, not the assumed 3.16/3.17). `scrollToEnd()` threw on render and blanked the chat tab; the options were silently ignored. Scroll-to-bottom now uses the component's own pin-to-bottom invariant (`scrollTop = scrollHeight`), which already handled sticking, streaming follow, and jump-to-newest. Removed the dead options and the guarded `isAtEnd()` dead branch.
+
 ## [0.14.22] - 2026-07-07
 
 ### Fixed
