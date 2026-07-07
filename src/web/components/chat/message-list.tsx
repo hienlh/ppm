@@ -115,8 +115,6 @@ export function MessageList({
   onDismissMessage,
   onClearErrors,
 }: MessageListProps) {
-  // Scroll + stick-to-bottom handled by the virtualizer (anchorTo:'end').
-
   const parentRef = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => messages.filter((msg) => {
@@ -129,31 +127,23 @@ export function MessageList({
   }), [messages]);
 
   // The approval card + "thinking…" indicator ride as one extra virtual row at
-  // the very end. Rendering them outside the virtualized list left them below
-  // the anchored end (scrolled to the last message, indicator off-screen), so
-  // fold them into the count instead — anchorTo:'end' then keeps them in view.
+  // the very end so the pin-to-bottom invariant keeps them in view; rendering
+  // them outside the virtualized list left them below the last message off-screen.
   const hasTrailing = !!pendingApproval || isStreaming;
-  // The trailing key embeds the message count on purpose: virtual-core fires
-  // followOnAppend only when the LAST item's key changes on a count increase
-  // (options-update check in Virtualizer.setOptions). A constant trailing key
-  // made the last key never change once streaming started, suppressing the
-  // scroll-to-end for every mid-turn append — the thinking indicator stayed
-  // just below the fold.
+  // The trailing key embeds the message count so its virtual size is remeasured
+  // as the streaming row grows, letting the ResizeObserver snap scrollTop to the
+  // new bottom on every mid-turn append.
   const trailingKey = `__ppm_trailing__:${filtered.length}`;
 
   // Virtualize the whole transcript so only on-screen bubbles live in the DOM.
-  // anchorTo/followOnAppend/scrollEndThreshold need virtual-core >= 3.16 (chat
-  // scroll physics): stay pinned to the newest message, follow appends only when
-  // already at the end, and keep the visible anchor stable when history prepends.
+  // Stick-to-bottom / append-follow physics are owned by this component (pinnedRef
+  // + ResizeObserver snapping scrollTop to scrollHeight), not the virtualizer core.
   const rowVirtualizer = useVirtualizer({
     count: filtered.length + (hasTrailing ? 1 : 0),
     getScrollElement: () => parentRef.current,
     estimateSize: () => 120,
     getItemKey: (index) => (index < filtered.length ? (filtered[index]?.id ?? index) : trailingKey),
     overscan: 6,
-    anchorTo: "end",
-    followOnAppend: true,
-    scrollEndThreshold: 80,
   });
 
   const virtualItems = rowVirtualizer.getVirtualItems();
@@ -230,7 +220,6 @@ export function MessageList({
   const conversationId = filtered[0]?.id;
   useLayoutEffect(() => {
     pinnedRef.current = true;
-    rowVirtualizer.scrollToEnd();
     if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, scrollEl]);
@@ -285,8 +274,7 @@ export function MessageList({
   const topUnexpandedCompact = findTopUnexpandedCompact();
   const hasMore = !!topUnexpandedCompact;
 
-  // Fetch pre-compact history from the server. anchorTo:'end' preserves the
-  // visible anchor across the prepend, so no manual scroll-position math.
+  // Fetch pre-compact history from the server (prepends older messages).
   const [autoLoadingCompact, setAutoLoadingCompact] = useState(false);
   const loadMore = useCallback(async () => {
     if (!topUnexpandedCompact || !onExpandCompact || autoLoadingCompact) return;
@@ -349,7 +337,7 @@ export function MessageList({
           {virtualItems.map((vi) => {
             const globalIdx = vi.index;
             // Trailing virtual row: approval card + "thinking…" indicator. Kept
-            // inside the virtual list so anchorTo:'end' scrolls it into view too.
+            // inside the virtual list so the pin-to-bottom invariant reaches it too.
             if (globalIdx >= filtered.length) {
               return (
                 <div
@@ -464,9 +452,7 @@ function ScrollNavButtons({ virtualizer, parentRef, userIndices, pinnedRef }: {
       const topIndex = getTopVisibleIndex();
       const above = userIndices.some((i) => i < topIndex);
       setHasAbove((prev) => (prev === above ? prev : above));
-      const bottom = virtualizer.isAtEnd
-        ? virtualizer.isAtEnd(8)
-        : el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+      const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
       setAtBottom((prev) => (prev === bottom ? prev : bottom));
     };
     const schedule = () => {
@@ -505,9 +491,10 @@ function ScrollNavButtons({ virtualizer, parentRef, userIndices, pinnedRef }: {
       virtualizer.scrollToIndex(target, { align: "start" });
     } else {
       pinnedRef.current = true;
-      virtualizer.scrollToEnd();
+      const el = parentRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
     }
-  }, [virtualizer, userIndices, getTopVisibleIndex, pinnedRef]);
+  }, [virtualizer, parentRef, userIndices, getTopVisibleIndex, pinnedRef]);
 
   const btnClass =
     "size-8 flex items-center justify-center rounded-full bg-surface-elevated/60 border border-border/60 text-text-secondary shadow-md backdrop-blur-sm transition-all hover:bg-surface-elevated hover:text-foreground disabled:opacity-30 disabled:cursor-default disabled:hover:bg-surface-elevated/60 disabled:hover:text-text-secondary";
