@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.21] - 2026-07-07
+
+### Fixed
+- **Virtualized chat list scroll follow-ups (0.14.20 regressions)** — three fixes to the new virtualized message list:
+  - *Thinking/processing indicator hidden during streaming* — the indicator + approval card now ride as a trailing virtual row whose key embeds the message count; virtual-core only fires `followOnAppend` when the last item's key changes, so the previous constant key suppressed scroll-to-end for every mid-turn append.
+  - *Fresh load landed short of the bottom* — Suspense skeletons for the lazy markdown renderer resolved after mount and grew each message, pushing the transcript tail out of view. The markdown chunk is now prefetched at module load, and an app-owned stick-to-bottom (ResizeObserver snap to real `scrollHeight` while pinned) absorbs any late growth. The pin releases only on user intent (wheel up / touch drag / scrollbar drag), never on the virtualizer's own programmatic adjustments.
+  - *Bottom-pin listeners never attached* — the scroll container mounts after the "Loading messages…" early return, so mount-time effects saw a null ref; a callback ref now re-attaches them when the list actually appears.
+
 ## [0.14.20] - 2026-07-07
 
 ### Fixed

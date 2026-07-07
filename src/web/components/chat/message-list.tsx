@@ -7,8 +7,12 @@ import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
 import { TaskTracker } from "./task-tracker";
 import { extractJsonlPath } from "./pre-compact-button";
+// Kick off the markdown chunk fetch at module load (not first render): Suspense
+// skeletons that resolve *after* the list mounts grow each message and shove the
+// bottom of the transcript out of view on fresh load.
+const markdownRendererImport = import("@/components/shared/markdown-renderer");
 const MarkdownRenderer = lazy(() =>
-  import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
+  markdownRendererImport.then((m) => ({ default: m.MarkdownRenderer }))
 );
 import { cn, basename } from "@/lib/utils";
 import { RenderErrorBoundary } from "@/components/shared/markdown-error-boundary";
@@ -124,15 +128,28 @@ export function MessageList({
     return hasContent || hasEvents;
   }), [messages]);
 
+  // The approval card + "thinking…" indicator ride as one extra virtual row at
+  // the very end. Rendering them outside the virtualized list left them below
+  // the anchored end (scrolled to the last message, indicator off-screen), so
+  // fold them into the count instead — anchorTo:'end' then keeps them in view.
+  const hasTrailing = !!pendingApproval || isStreaming;
+  // The trailing key embeds the message count on purpose: virtual-core fires
+  // followOnAppend only when the LAST item's key changes on a count increase
+  // (options-update check in Virtualizer.setOptions). A constant trailing key
+  // made the last key never change once streaming started, suppressing the
+  // scroll-to-end for every mid-turn append — the thinking indicator stayed
+  // just below the fold.
+  const trailingKey = `__ppm_trailing__:${filtered.length}`;
+
   // Virtualize the whole transcript so only on-screen bubbles live in the DOM.
   // anchorTo/followOnAppend/scrollEndThreshold need virtual-core >= 3.16 (chat
   // scroll physics): stay pinned to the newest message, follow appends only when
   // already at the end, and keep the visible anchor stable when history prepends.
   const rowVirtualizer = useVirtualizer({
-    count: filtered.length,
+    count: filtered.length + (hasTrailing ? 1 : 0),
     getScrollElement: () => parentRef.current,
     estimateSize: () => 120,
-    getItemKey: (index) => filtered[index]?.id ?? index,
+    getItemKey: (index) => (index < filtered.length ? (filtered[index]?.id ?? index) : trailingKey),
     overscan: 6,
     anchorTo: "end",
     followOnAppend: true,
@@ -141,13 +158,82 @@ export function MessageList({
 
   const virtualItems = rowVirtualizer.getVirtualItems();
 
-  // Jump to the newest message on first mount and whenever the conversation
-  // identity changes (session swap). anchorTo keeps it pinned afterwards.
+  // App-owned stick-to-bottom invariant: while the user is pinned (near the
+  // real DOM bottom), any content-height change snaps scrollTop to the true
+  // scrollHeight. The core's own end-anchoring adjusts by size *deltas* against
+  // estimated offsets, which can land short of the bottom on fresh load (items
+  // measure smaller than the estimate → browser clamps scrollTop → the delta
+  // compensation double-corrects). Snapping to the absolute bottom is immune.
+  const pinnedRef = useRef(true);
+  const spacerRef = useRef<HTMLDivElement>(null);
+
+  // The scroll element mounts LATE: while messagesLoading this component
+  // early-returns a loading screen, so mount-time effects saw a null ref and
+  // never attached their listeners/observers. A callback ref + state re-runs
+  // them the moment the real list appears.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback((el: HTMLDivElement | null) => {
+    parentRef.current = el;
+    setScrollEl(el);
+  }, []);
+
+  // Unpin ONLY on user intent (wheel up / touch drag / scrollbar drag). The
+  // virtualizer's own adjustments fire programmatic scroll events too — during
+  // load they can transiently leave a >threshold gap, and treating those as
+  // "user scrolled away" turned the pin off and left the list stuck short of
+  // the bottom. Reaching the bottom by any means re-pins.
+  const pointerDownRef = useRef(false);
+  useEffect(() => {
+    const el = scrollEl;
+    if (!el) return;
+    const gap = () => el.scrollHeight - el.scrollTop - el.clientHeight;
+    const onScroll = () => {
+      if (gap() <= 100) pinnedRef.current = true;
+      else if (pointerDownRef.current) pinnedRef.current = false; // scrollbar drag
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) pinnedRef.current = false;
+    };
+    const onTouchMove = () => {
+      if (gap() > 100) pinnedRef.current = false;
+    };
+    const onPointerDown = () => { pointerDownRef.current = true; };
+    const onPointerUp = () => { pointerDownRef.current = false; };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    el.addEventListener("pointerdown", onPointerDown, { passive: true });
+    window.addEventListener("pointerup", onPointerUp, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [scrollEl]);
+
+  useEffect(() => {
+    const el = scrollEl;
+    const content = spacerRef.current;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (pinnedRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content); // total virtual size changes (measure/grow/shrink/append)
+    ro.observe(el); // container resize (panel/keyboard/window)
+    return () => ro.disconnect();
+  }, [scrollEl]);
+
+  // Jump to the newest message on first mount, when the scroll element appears
+  // (it mounts late — after the loading screen), and on conversation swap.
   const conversationId = filtered[0]?.id;
   useLayoutEffect(() => {
+    pinnedRef.current = true;
     rowVirtualizer.scrollToEnd();
+    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
+  }, [conversationId, scrollEl]);
 
   // Stable fork handler — avoids new closure per message (preserves MessageBubble memo)
   const handleFork = useCallback((msgContent: string, msgId: string | undefined) => {
@@ -258,10 +344,30 @@ export function MessageList({
           Loading previous conversation...
         </div>
       )}
-      <div ref={parentRef} className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]">
-        <div style={{ height: rowVirtualizer.getTotalSize(), width: "100%", position: "relative" }}>
+      <div ref={setScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]">
+        <div ref={spacerRef} style={{ height: rowVirtualizer.getTotalSize(), width: "100%", position: "relative" }}>
           {virtualItems.map((vi) => {
             const globalIdx = vi.index;
+            // Trailing virtual row: approval card + "thinking…" indicator. Kept
+            // inside the virtual list so anchorTo:'end' scrolls it into view too.
+            if (globalIdx >= filtered.length) {
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                  className="px-4 pt-4 pb-4 space-y-4 select-none"
+                >
+                  {pendingApproval && (
+                    pendingApproval.tool === "AskUserQuestion"
+                      ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
+                      : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
+                  )}
+                  {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
+                </div>
+              );
+            }
             const msg = filtered[globalIdx];
             if (!msg) return null;
             const prevMsg = globalIdx > 0 ? filtered[globalIdx - 1] : undefined;
@@ -318,19 +424,8 @@ export function MessageList({
             );
           })}
         </div>
-
-        {/* Trailing (non-virtual) content pinned below the last message. */}
-        <div className="px-4 pb-4 pt-4 space-y-4 select-none">
-          {pendingApproval && (
-            pendingApproval.tool === "AskUserQuestion"
-              ? <AskUserQuestionCard approval={pendingApproval} onRespond={onApprovalResponse} />
-              : <ApprovalCard approval={pendingApproval} onRespond={onApprovalResponse} />
-          )}
-
-          {isStreaming && <ThinkingIndicator lastMessage={messages[messages.length - 1]} phase={phase} elapsed={connectingElapsed} statusMessage={compactStatus === "compacting" ? "Compacting messages..." : statusMessage} />}
-        </div>
       </div>
-      <ScrollNavButtons virtualizer={rowVirtualizer} parentRef={parentRef} userIndices={userIndices} />
+      <ScrollNavButtons virtualizer={rowVirtualizer} parentRef={parentRef} userIndices={userIndices} pinnedRef={pinnedRef} />
     </div>
   );
 }
@@ -342,10 +437,11 @@ export function MessageList({
  * message above the top of the viewport; Down jumps to the nearest one below, or
  * to the very bottom when none remain.
  */
-function ScrollNavButtons({ virtualizer, parentRef, userIndices }: {
+function ScrollNavButtons({ virtualizer, parentRef, userIndices, pinnedRef }: {
   virtualizer: Virtualizer<HTMLDivElement, Element>;
   parentRef: React.RefObject<HTMLDivElement | null>;
   userIndices: number[];
+  pinnedRef: React.MutableRefObject<boolean>;
 }) {
   const [hasAbove, setHasAbove] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
@@ -395,15 +491,23 @@ function ScrollNavButtons({ virtualizer, parentRef, userIndices }: {
       if (i < topIndex) target = i; // ascending — keep the last one still above
       else break;
     }
-    if (target != null) virtualizer.scrollToIndex(target, { align: "start" });
-  }, [virtualizer, userIndices, getTopVisibleIndex]);
+    if (target != null) {
+      pinnedRef.current = false; // user is navigating away from the bottom
+      virtualizer.scrollToIndex(target, { align: "start" });
+    }
+  }, [virtualizer, userIndices, getTopVisibleIndex, pinnedRef]);
 
   const goDown = useCallback(() => {
     const topIndex = getTopVisibleIndex();
     const target = userIndices.find((i) => i > topIndex);
-    if (target != null) virtualizer.scrollToIndex(target, { align: "start" });
-    else virtualizer.scrollToEnd();
-  }, [virtualizer, userIndices, getTopVisibleIndex]);
+    if (target != null) {
+      pinnedRef.current = false;
+      virtualizer.scrollToIndex(target, { align: "start" });
+    } else {
+      pinnedRef.current = true;
+      virtualizer.scrollToEnd();
+    }
+  }, [virtualizer, userIndices, getTopVisibleIndex, pinnedRef]);
 
   const btnClass =
     "size-8 flex items-center justify-center rounded-full bg-surface-elevated/60 border border-border/60 text-text-secondary shadow-md backdrop-blur-sm transition-all hover:bg-surface-elevated hover:text-foreground disabled:opacity-30 disabled:cursor-default disabled:hover:bg-surface-elevated/60 disabled:hover:text-text-secondary";
