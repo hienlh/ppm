@@ -743,7 +743,9 @@ class AccountService {
       const accounts = this.list();
       const nowS = Math.floor(Date.now() / 1000);
       for (const acc of accounts) {
-        if (acc.status === "disabled") continue;
+        // Disabled accounts are still refreshed to keep the refresh token alive.
+        // Disable only removes an account from the chat rotation; skipping refresh
+        // lets the token rotation lapse and eventually expires the account for good.
         if (!acc.expiresAt) continue;
         if (acc.expiresAt - nowS > REFRESH_BUFFER_S) continue;
         // Skip temporary accounts (no refresh token) — they can't be refreshed

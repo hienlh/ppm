@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.22] - 2026-07-07
+
+### Fixed
+- **Disabled accounts silently expired** — disabling an account stopped both its token auto-refresh and its usage-limit polling. With no refresh, the access token lapsed and the rotating OAuth refresh token eventually went stale server-side, so the account became a dead "temporary" account that could no longer be re-enabled. Disable now only removes an account from the chat rotation: background token refresh and usage polling keep running (neither consumes quota), so the account stays alive and re-enabling always works.
+
 ## [0.14.21] - 2026-07-07
 
 ### Fixed

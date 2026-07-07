@@ -181,7 +181,8 @@ async function fetchAllAccountUsages(): Promise<void> {
   const accounts = accountService.list();
   const nowS = Math.floor(Date.now() / 1000);
   for (const acc of accounts) {
-    if (acc.status === "disabled") continue;
+    // Disabled accounts still poll usage — disable only removes them from the chat
+    // rotation, it should not stop usage tracking. (GET usage doesn't consume quota.)
     // Skip expired temporary accounts (no refresh token)
     if (!accountService.hasRefreshToken(acc.id) && acc.expiresAt && acc.expiresAt < nowS) continue;
     // Ensure token is fresh before calling usage API (prevents 401 from expired tokens)

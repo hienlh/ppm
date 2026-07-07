@@ -205,7 +205,7 @@ describe("multi-account polling", () => {
     expect(tokens).toContain(OAUTH_TOKEN_2);
   });
 
-  it("skips disabled accounts", async () => {
+  it("polls disabled accounts too (disable only removes from chat rotation)", async () => {
     const id = addOAuthAccount("disabled", OAUTH_TOKEN_1);
     accountService.setDisabled(id);
     addOAuthAccount("enabled", OAUTH_TOKEN_2);
@@ -213,9 +213,11 @@ describe("multi-account polling", () => {
 
     await refreshUsageNow();
 
-    // Only the enabled account should be fetched
-    expect(fetchCalls).toHaveLength(1);
-    expect(fetchCalls[0].token).toBe(OAUTH_TOKEN_2);
+    // Both accounts fetched — usage tracking continues while disabled
+    expect(fetchCalls).toHaveLength(2);
+    const tokens = fetchCalls.map(c => c.token);
+    expect(tokens).toContain(OAUTH_TOKEN_1);
+    expect(tokens).toContain(OAUTH_TOKEN_2);
   });
 
   it("skips non-OAuth tokens (API keys)", async () => {
