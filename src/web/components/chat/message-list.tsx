@@ -155,6 +155,10 @@ export function MessageList({
   // measure smaller than the estimate → browser clamps scrollTop → the delta
   // compensation double-corrects). Snapping to the absolute bottom is immune.
   const pinnedRef = useRef(true);
+  // True while the user is actively touching / wheeling / mid-momentum. The
+  // bottom-snap must never fire during this window or it fights the gesture
+  // (jerky, sluggish scroll on mobile). Cleared 200ms after scrolling settles.
+  const interactingRef = useRef(false);
   const spacerRef = useRef<HTMLDivElement>(null);
 
   // The scroll element mounts LATE: while messagesLoading this component
@@ -167,39 +171,39 @@ export function MessageList({
     setScrollEl(el);
   }, []);
 
-  // Unpin ONLY on user intent (wheel up / touch drag / scrollbar drag). The
-  // virtualizer's own adjustments fire programmatic scroll events too — during
-  // load they can transiently leave a >threshold gap, and treating those as
-  // "user scrolled away" turned the pin off and left the list stuck short of
-  // the bottom. Reaching the bottom by any means re-pins.
-  const pointerDownRef = useRef(false);
+  // Pin state is driven purely by observed scroll position + gesture intent —
+  // never by forcing scrollTop while the user is in control. Reaching the bottom
+  // (by any means) re-pins; pulling upward during a gesture unpins. Programmatic
+  // scrolls (streaming/append) don't set `interacting`, so they can't unpin.
   useEffect(() => {
     const el = scrollEl;
     if (!el) return;
+    let idle: ReturnType<typeof setTimeout>;
+    let lastTop = el.scrollTop;
     const gap = () => el.scrollHeight - el.scrollTop - el.clientHeight;
+    const settle = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => { interactingRef.current = false; }, 200);
+    };
+    const startInteract = () => { interactingRef.current = true; clearTimeout(idle); };
     const onScroll = () => {
-      if (gap() <= 100) pinnedRef.current = true;
-      else if (pointerDownRef.current) pinnedRef.current = false; // scrollbar drag
+      const top = el.scrollTop;
+      const pulledUp = top < lastTop - 1;
+      lastTop = top;
+      if (gap() <= 8) pinnedRef.current = true;
+      else if (interactingRef.current && pulledUp) pinnedRef.current = false;
+      settle();
     };
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) pinnedRef.current = false;
-    };
-    const onTouchMove = () => {
-      if (gap() > 100) pinnedRef.current = false;
-    };
-    const onPointerDown = () => { pointerDownRef.current = true; };
-    const onPointerUp = () => { pointerDownRef.current = false; };
     el.addEventListener("scroll", onScroll, { passive: true });
-    el.addEventListener("wheel", onWheel, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: true });
-    el.addEventListener("pointerdown", onPointerDown, { passive: true });
-    window.addEventListener("pointerup", onPointerUp, { passive: true });
+    el.addEventListener("wheel", startInteract, { passive: true });
+    el.addEventListener("touchstart", startInteract, { passive: true });
+    el.addEventListener("touchend", settle, { passive: true });
     return () => {
+      clearTimeout(idle);
       el.removeEventListener("scroll", onScroll);
-      el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("wheel", startInteract);
+      el.removeEventListener("touchstart", startInteract);
+      el.removeEventListener("touchend", settle);
     };
   }, [scrollEl]);
 
@@ -208,7 +212,9 @@ export function MessageList({
     const content = spacerRef.current;
     if (!el || !content) return;
     const ro = new ResizeObserver(() => {
-      if (pinnedRef.current) el.scrollTop = el.scrollHeight;
+      // Only snap when the user is not driving the scroll — otherwise the snap
+      // yanks against their finger/momentum (the mobile jank + dead nav buttons).
+      if (pinnedRef.current && !interactingRef.current) el.scrollTop = el.scrollHeight;
     });
     ro.observe(content); // total virtual size changes (measure/grow/shrink/append)
     ro.observe(el); // container resize (panel/keyboard/window)
@@ -332,7 +338,11 @@ export function MessageList({
           Loading previous conversation...
         </div>
       )}
-      <div ref={setScrollRef} className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]">
+      <div
+        ref={setScrollRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]"
+        style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
+      >
         <div ref={spacerRef} style={{ height: rowVirtualizer.getTotalSize(), width: "100%", position: "relative" }}>
           {virtualItems.map((vi) => {
             const globalIdx = vi.index;

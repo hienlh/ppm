@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.26] - 2026-07-08
+
+### Fixed
+- **Janky mobile scroll + dead nav buttons in chat** — the app-owned stick-to-bottom snapped `scrollTop = scrollHeight` from a ResizeObserver on every content-height change, including while the user was mid-swipe (the virtualizer re-measures rows as they scroll in), so touch scrolling fought the finger — jerky, sluggish, and the ▲/▼ jump buttons got yanked back. The snap now runs only when the user is not interacting (an `interacting` flag spanning touch/wheel until scrolling settles ~200ms), pin state is derived from observed scroll position + gesture direction instead of forced, and the container gets `overscroll-behavior: contain` + momentum scrolling.
+
 ## [0.14.25] - 2026-07-08
 
 ### Added
