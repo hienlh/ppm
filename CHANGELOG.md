@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.25] - 2026-07-08
+
+### Added
+- **Terminal dock panel** — a collapsible bottom dock (toggle with `Ctrl+\``, VSCode parity) that holds terminal and system-monitor tabs separately from the editor grid. Closing a terminal from a grid panel now re-docks (parks) it instead of killing the session, and dock state + tabs persist across reloads and are kept alive by the tab pool. Stored layouts without a dock field migrate to sane defaults.
+- **Editor language picker + New DB Query** — new/open files gain a language dropdown to override the Monaco language (JavaScript, TypeScript, SQL, JSON, XML, HTML, CSS, Python, Markdown, YAML, Shell). Choosing SQL activates the existing connection picker, autocomplete, inline `▷ Run`/`Ctrl+Enter`, and results panel — no `.sql` file required. A new **New DB Query** command in the palette opens a blank SQL scratchpad.
+
+### Fixed
+- **Terminal idle timeout counted while connected** — the idle timer ran even with a live WebSocket attached, risking premature session kills. The timer now upholds a strict invariant (armed iff `ws === null`): paused on connect, re-armed on disconnect, and never re-armed by activity while connected.
+
 ## [0.14.24] - 2026-07-07
 
 ### Fixed
