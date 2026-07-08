@@ -190,6 +190,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
     const builtIn: CommandItem[] = [
       { id: "chat", label: "New AI Chat", icon: MessageSquare, action: openNewTab("chat", "AI Chat"), keywords: "ai assistant claude", group: "action", shortcut: formatShortcut(getBinding("open-chat")) },
       { id: "new-file", label: "New File", icon: FilePlus, action: () => { useTabStore.getState().openNewFile(); onClose(); }, keywords: "create untitled blank empty", group: "action", shortcut: formatShortcut(getBinding("new-file")) },
+      { id: "new-db-query", label: "New DB Query", icon: Database, action: () => { useTabStore.getState().openNewFile({ language: "sql", title: "SQL Query" }); onClose(); }, keywords: "sql database query scratchpad new", group: "action" },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
       { id: "ports", label: "Port Forwarding", icon: Globe, action: openNewTab("ports", "Ports"), keywords: "web preview localhost port forward tunnel url", group: "action" },
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },

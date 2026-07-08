@@ -11,6 +11,7 @@ import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal, ShieldCheck, ShieldOff } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
+import { EditorLanguagePicker } from "./editor-language-picker";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
 import { createSqlCompletionProvider, clearCompletionCache, getStatementAtCursor, type SchemaInfo } from "../database/sql-completion-provider";
@@ -94,15 +95,20 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const isSqlite = SQLITE_EXTS.has(ext);
   const isMarkdown = ext === "md" || ext === "mdx";
   const isCsv = ext === "csv";
-  const isSql = ext === "sql";
+  // Explicit language override (from language picker / New DB Query); falls back to file extension.
+  const langOverride = metadata?.language as string | undefined;
+  const effectiveLanguage = inlineLanguage ?? langOverride ?? getMonacoLanguage(filePath ?? "");
+  const isSql = effectiveLanguage === "sql";
   const [mdMode, setMdMode] = useState<"edit" | "preview">("preview");
   const [csvMode, setCsvMode] = useState<"table" | "raw">("table");
 
   // SQL file: connection picker + autocomplete + run in DB viewer
   const { connections, cachedTables, refreshTables, updateConnection } = useConnections();
+  // Persist selected connection per file (by path), or per tab for untitled files.
+  const sqlConnStorageKey = filePath ? `ppm:sql-conn:${filePath}` : tabId ? `ppm:sql-conn:tab:${tabId}` : null;
   const [sqlConnId, setSqlConnId] = useState<number | null>(() => {
-    if (!isSql || !filePath) return null;
-    const stored = localStorage.getItem(`ppm:sql-conn:${filePath}`);
+    if (!sqlConnStorageKey) return null;
+    const stored = localStorage.getItem(sqlConnStorageKey);
     return stored ? Number(stored) : null;
   });
   const monacoInstanceRef = useRef<typeof MonacoType | null>(null);
@@ -143,10 +149,15 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   // Persist selected connection per file
   const handleSqlConnChange = useCallback((connId: number) => {
     setSqlConnId(connId);
-    if (filePath) localStorage.setItem(`ppm:sql-conn:${filePath}`, String(connId));
+    if (sqlConnStorageKey) localStorage.setItem(sqlConnStorageKey, String(connId));
     // Refresh tables for autocomplete
     refreshTables(connId).catch(() => {});
-  }, [filePath, refreshTables]);
+  }, [sqlConnStorageKey, refreshTables]);
+
+  // Override the editor's Monaco language (persisted to tab metadata).
+  const handleLanguageChange = useCallback((language: string) => {
+    if (tabId) updateTab(tabId, { metadata: { ...metadata, language } });
+  }, [tabId, metadata, updateTab]);
 
   // Build SchemaInfo for .sql file autocomplete
   const sqlSchemaInfo = useMemo<SchemaInfo | undefined>(() => {
@@ -594,7 +605,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         codeLensDisposable.current.push(foldingProvider);
       }
     }
-  }, [sqlSchemaInfo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sqlSchemaInfo, isSql]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!inlineContent && !isUntitled && (!filePath || (!isExternalFile && !projectName))) {
     return (
@@ -698,6 +709,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             tabId={tabId}
             className="flex items-center flex-1 min-w-0 overflow-x-auto scrollbar-none px-2 gap-0.5"
           />
+          <EditorLanguagePicker value={effectiveLanguage} onChange={handleLanguageChange} />
           {sqlPickerBar}
           <EditorToolbar
             ext={ext}
@@ -716,10 +728,13 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         </div>
       )}
 
-      {/* Standalone SQL toolbar for external files (no breadcrumb available) */}
-      {isSql && (!projectName || !tabId) && (
+      {/* Language + SQL toolbar for untitled / external files (no project breadcrumb) */}
+      {inlineContent == null && tabId && (isUntitled || (filePath && !projectName)) && (
         <div className="hidden md:flex items-center h-7 border-b border-border bg-background shrink-0 px-2">
-          <span className="text-xs text-muted-foreground truncate flex-1">{filePath ? basename(filePath) : "SQL"}</span>
+          <span className="text-xs text-muted-foreground truncate flex-1">
+            {isUntitled ? `Untitled-${metadata?.untitledNumber ?? 1}` : (filePath ? basename(filePath) : "Untitled")}
+          </span>
+          <EditorLanguagePicker value={effectiveLanguage} onChange={handleLanguageChange} />
           {sqlPickerBar}
         </div>
       )}
@@ -735,7 +750,8 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
         <div className="flex-1 overflow-hidden min-h-0">
           <Editor
             height="100%"
-            language={inlineLanguage ?? getMonacoLanguage(filePath ?? "")}
+            key={effectiveLanguage}
+            language={effectiveLanguage}
             value={content ?? ""}
             onChange={inlineContent != null ? undefined : handleChange}
             onMount={handleEditorMount}

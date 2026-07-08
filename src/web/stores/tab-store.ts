@@ -42,7 +42,7 @@ interface TabStore {
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTab: (id: string, updates: Partial<Omit<Tab, "id">>) => void;
-  openNewFile: () => string;
+  openNewFile: (opts?: { language?: string; title?: string }) => string;
 }
 
 export const useTabStore = create<TabStore>()(() => ({
@@ -77,14 +77,14 @@ export const useTabStore = create<TabStore>()(() => ({
     syncFromPanelStore();
   },
 
-  openNewFile: () => {
+  openNewFile: (opts) => {
     const ps = usePanelStore.getState();
     const num = getNextUntitledNumber(ps.panels);
     const id = ps.openTab({
       type: "editor",
-      title: `Untitled-${num}`,
+      title: opts?.title ?? `Untitled-${num}`,
       projectId: null,
-      metadata: { isUntitled: true, untitledNumber: num },
+      metadata: { isUntitled: true, untitledNumber: num, ...(opts?.language ? { language: opts.language } : {}) },
       closable: true,
     });
     syncFromPanelStore();
