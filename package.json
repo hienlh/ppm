@@ -22,6 +22,7 @@
     "build": "bun run build:web && bun build src/index.ts --compile --outfile dist/ppm",
     "start": "bun run src/index.ts start",
     "typecheck": "bunx tsc --noEmit",
+    "test:docker": "docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test",
     "generate:bot": "bun scripts/generate-bot-coordinator.ts --update",
     "generate:skill": "bun scripts/generate-ppm-skill.ts",
     "prepublishOnly": "bun run generate:skill && bun run build:web"

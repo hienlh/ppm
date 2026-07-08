@@ -1,0 +1,15 @@
+# Sandboxed test runner. Usage:
+#   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+# Mounts the working tree for fast iteration; keeps the image's Linux node_modules
+# via an anonymous volume so host (Windows/macOS) node_modules never leak in.
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    environment:
+      PPM_SKIP_LIVE: "1"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: bun test tests/unit packages tests/integration

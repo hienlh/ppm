@@ -1,0 +1,34 @@
+# Sandboxed test image: Bun + git, deps installed for the Linux platform.
+# Purpose: run the suite in isolation from the host prod env (~/.ppm, real ports,
+# tunnels). Mounting host node_modules ships the wrong-platform native binaries,
+# so deps are installed inside the image instead.
+FROM oven/bun:1
+
+# git: required by the git-graph package tests and gitignore-aware file indexing.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# git-graph integration tests init throwaway repos and expect a `main` branch;
+# give git a system-wide identity + default branch so commits/checkouts work.
+RUN git config --system init.defaultBranch main \
+    && git config --system user.email "test@example.com" \
+    && git config --system user.name "PPM Test" \
+    && git config --system --add safe.directory '*'
+
+WORKDIR /app
+
+# Install deps against Linux using only the manifests (better layer caching).
+COPY package.json bun.lock ./
+COPY packages/ext-git-graph/package.json packages/ext-git-graph/
+COPY packages/vscode-compat/package.json packages/vscode-compat/
+RUN bun install --frozen-lockfile
+
+# Run as the image's non-root user so permission-sensitive tests behave correctly
+# (e.g. inaccessible /root/.ssh must yield 403/500, not a readable listing).
+USER bun
+
+# Skip live tests that need real API creds / cloudflared / systemd.
+ENV PPM_SKIP_LIVE=1
+
+CMD ["bun", "test", "tests/unit", "packages", "tests/integration"]
