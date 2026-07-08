@@ -100,7 +100,7 @@ describe("POST /postgres/schema — input validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        connectionString: "postgres://invalid",
+        connectionString: "postgres://127.0.0.1:1/db",
         table: "users",
         schema: "public",
       }),
@@ -137,7 +137,7 @@ describe("POST /postgres/data — input validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        connectionString: "postgres://invalid",
+        connectionString: "postgres://127.0.0.1:1/db",
         table: "users",
         schema: "public",
         page: 2,
@@ -266,7 +266,7 @@ describe("POST /postgres/cell — input validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        connectionString: "postgres://invalid",
+        connectionString: "postgres://127.0.0.1:1/db",
         table: "users",
         schema: "public",
         pkColumn: "id",
@@ -285,7 +285,7 @@ describe("POST /postgres/cell — input validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        connectionString: "postgres://invalid",
+        connectionString: "postgres://127.0.0.1:1/db",
         table: "users",
         pkColumn: "id",
         pkValue: 1,

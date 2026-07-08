@@ -78,7 +78,7 @@ describe("GET /files/index", () => {
     expect(paths.length).toBeGreaterThan(0);
   });
 
-  it("excludes gitignored files when useIgnoreFiles=true", async () => {
+  it("marks gitignored files as isIgnored when useIgnoreFiles=true", async () => {
     // Add .gitignore and a gitignored file
     writeFileSync(resolve(projectPath, ".gitignore"), "secret.env\n.env*");
     writeFileSync(resolve(projectPath, "secret.env"), "PASSWORD=abc");
@@ -88,10 +88,14 @@ describe("GET /files/index", () => {
     const res = await req(`/api/project/${projectName}/files/index`);
     const json = (await res.json()) as any;
 
-    const paths = json.data.map((e: any) => e.path);
-    expect(paths).toContain("config.json");
-    expect(paths).not.toContain("secret.env");
-    expect(paths).not.toContain(".env.local");
+    const entries = json.data as Array<{ path: string; isIgnored?: boolean }>;
+    const byPath = (p: string) => entries.find((e) => e.path === p);
+    expect(byPath("config.json")).toBeDefined();
+    // Gitignored files are still listed but flagged isIgnored (soft-exclude:
+    // rendered muted in the palette rather than hidden).
+    expect(byPath("secret.env")?.isIgnored).toBe(true);
+    expect(byPath(".env.local")?.isIgnored).toBe(true);
+    expect(byPath("config.json")?.isIgnored).toBeUndefined();
   });
 
   it("includes gitignored files when useIgnoreFiles=false", async () => {

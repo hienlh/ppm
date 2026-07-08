@@ -255,7 +255,7 @@ describe("ppm bot CLI integration", () => {
     const proc = Bun.spawn(
       ["bun", "run", "src/index.ts", "bot", "memory", "save", "Test CLI memory", "-c", "preference"],
       {
-        cwd: "/Users/hienlh/Projects/ppm",
+        cwd: process.cwd(),
         stdout: "pipe",
         stderr: "pipe",
         env: { ...process.env, PPM_HOME: await createTempDir() },
@@ -271,7 +271,7 @@ describe("ppm bot CLI integration", () => {
     const proc = Bun.spawn(
       ["bun", "run", "src/index.ts", "bot", "version"],
       {
-        cwd: "/Users/hienlh/Projects/ppm",
+        cwd: process.cwd(),
         stdout: "pipe",
         stderr: "pipe",
         env: { ...process.env, PPM_HOME: await createTempDir() },
@@ -286,7 +286,7 @@ describe("ppm bot CLI integration", () => {
     const proc = Bun.spawn(
       ["bun", "run", "src/index.ts", "bot", "help"],
       {
-        cwd: "/Users/hienlh/Projects/ppm",
+        cwd: process.cwd(),
         stdout: "pipe",
         stderr: "pipe",
         env: { ...process.env, PPM_HOME: await createTempDir() },
@@ -304,7 +304,7 @@ describe("ppm bot CLI integration", () => {
     const proc = Bun.spawn(
       ["bun", "run", "src/index.ts", "bot", "project", "list"],
       {
-        cwd: "/Users/hienlh/Projects/ppm",
+        cwd: process.cwd(),
         stdout: "pipe",
         stderr: "pipe",
         env: { ...process.env, PPM_HOME: await createTempDir() },
@@ -319,7 +319,7 @@ describe("ppm bot CLI integration", () => {
     const proc = Bun.spawn(
       ["bun", "run", "src/index.ts", "bot", "status", "--chat", "99999"],
       {
-        cwd: "/Users/hienlh/Projects/ppm",
+        cwd: process.cwd(),
         stdout: "pipe",
         stderr: "pipe",
         env: { ...process.env, PPM_HOME: await createTempDir() },
@@ -334,7 +334,7 @@ describe("ppm bot CLI integration", () => {
   it("should output JSON with --json flag on memory list", async () => {
     const tmpDir = await createTempDir();
     const env = { ...process.env, PPM_HOME: tmpDir };
-    const cwd = "/Users/hienlh/Projects/ppm";
+    const cwd = process.cwd();
 
     const save = Bun.spawn(
       ["bun", "run", "src/index.ts", "bot", "memory", "save", "JSON test memory"],

@@ -11,6 +11,7 @@ import { authMiddleware } from "../../src/server/middleware/auth";
 import { downloadRoutes } from "../../src/server/routes/file-download";
 import { fileRoutes } from "../../src/server/routes/files";
 import { configService } from "../../src/services/config.service";
+import { openTestDb, setDb } from "../../src/services/db.service";
 import { ok } from "../../src/types/api";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -18,6 +19,10 @@ type Env = { Variables: { projectPath: string; projectName: string } };
 let testDir: string;
 
 beforeEach(() => {
+  // Fresh in-memory DB per test — a prior test file may have closed the shared
+  // singleton (setDb closes the previous handle), leaving configService.set to
+  // hit a closed database.
+  setDb(openTestDb());
   testDir = mkdtempSync(join(tmpdir(), "ppm-download-test-"));
   // Enable auth by default
   configService.set("auth", { enabled: true, token: "test-token-123" });
@@ -161,7 +166,7 @@ describe("File Download Integration", () => {
       expect(res.status).toBe(401);
     });
 
-    it("consumes token (one-time use)", async () => {
+    it("token stays valid for repeated downloads within the TTL window", async () => {
       const token = createDownloadToken();
       const app = createTestApp();
 
@@ -172,23 +177,21 @@ describe("File Download Integration", () => {
       );
       expect(res1.status).toBe(200);
 
-      // Second request with same token — should fail
+      // Second request with same token — still valid within the 30s window
+      // (tokens are TTL-based, not single-use).
       const res2 = await app.request(
         `/files/raw?path=test.txt&download=true&dl_token=${token}`,
         { method: "GET" },
       );
-      expect(res2.status).toBe(401);
+      expect(res2.status).toBe(200);
     });
 
-    it("rejects expired token (TTL 30s)", async () => {
+    it("token is accepted repeatedly within TTL", async () => {
       const token = createDownloadToken();
-      const app = createTestApp();
 
-      // Manually expire the token by waiting past TTL
-      // Token has 30s TTL, so we can't wait in unit test
-      // Instead, test consumeDownloadToken directly
+      // Tokens are valid for multiple uses within the 30s TTL (not single-use).
       expect(consumeDownloadToken(token)).toBe(true);
-      expect(consumeDownloadToken(token)).toBe(false); // Already consumed
+      expect(consumeDownloadToken(token)).toBe(true);
     });
 
     it("sets Content-Disposition for download=true", async () => {
@@ -396,10 +399,10 @@ describe("File Download Integration", () => {
       expect(token.length).toBeGreaterThan(0);
     });
 
-    it("consumeDownloadToken validates and consumes", () => {
+    it("consumeDownloadToken validates a token (multi-use within TTL)", () => {
       const token = createDownloadToken();
       expect(consumeDownloadToken(token)).toBe(true);
-      expect(consumeDownloadToken(token)).toBe(false); // Already consumed
+      expect(consumeDownloadToken(token)).toBe(true); // still valid within window
     });
 
     it("consumeDownloadToken rejects invalid token", () => {

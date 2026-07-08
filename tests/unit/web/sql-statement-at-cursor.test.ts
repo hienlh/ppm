@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { getStatementAtCursor } from "../../../src/web/components/database/sql-query-editor";
+import { getStatementAtCursor } from "../../../src/web/components/database/sql-completion-provider";
 
 describe("getStatementAtCursor", () => {
   it("returns the only statement when no semicolons", () => {

@@ -25,7 +25,8 @@ describe("registerDbCommands", () => {
     expect(subNames).toContain("schema");
     expect(subNames).toContain("data");
     expect(subNames).toContain("query");
-    expect(subNames).toHaveLength(8);
+    expect(subNames).toContain("run");
+    expect(subNames).toHaveLength(9);
   });
 
   it("'add' command requires --name and --type options", () => {

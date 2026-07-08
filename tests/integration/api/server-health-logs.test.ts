@@ -3,10 +3,12 @@ import "../../test-setup.ts";
 import { configService } from "../../../src/services/config.service.ts";
 import { app } from "../../../src/server/index.ts";
 import { resolve } from "node:path";
-import { homedir } from "node:os";
+import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 import { writeFileSync, existsSync, unlinkSync, readFileSync } from "node:fs";
 
-const LOG_FILE = resolve(homedir(), ".ppm", "ppm.log");
+// Read from the isolated PPM_HOME (set by test-setup), matching the log path the
+// server actually reads — not the real ~/.ppm, which pollutes the host.
+const LOG_FILE = resolve(getPpmDir(), "ppm.log");
 
 async function req(path: string) {
   return app.request(new Request(`http://localhost${path}`));
@@ -33,7 +35,7 @@ describe("Health + Info endpoints", () => {
 });
 
 describe("Logs endpoint", () => {
-  const originalLog = readFileSync(LOG_FILE, "utf-8").slice(0, 200);
+  const originalLog = existsSync(LOG_FILE) ? readFileSync(LOG_FILE, "utf-8").slice(0, 200) : "";
   const testLogFile = LOG_FILE + ".bak";
 
   beforeAll(() => {
