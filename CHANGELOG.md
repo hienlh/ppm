@@ -8,6 +8,7 @@
 
 ### Fixed
 - **Terminal idle timeout counted while connected** — the idle timer ran even with a live WebSocket attached, risking premature session kills. The timer now upholds a strict invariant (armed iff `ws === null`): paused on connect, re-armed on disconnect, and never re-armed by activity while connected.
+- **Supervisor tunnel/health check used the stale startup port** — after a zombie-port fallback moved the server, tunnel respawns and the server health check still targeted the original config port, split-braining the tunnel and killing a healthy server every cycle. Both now follow the server's live port (`_opts.port`).
 
 ## [0.14.24] - 2026-07-07
 

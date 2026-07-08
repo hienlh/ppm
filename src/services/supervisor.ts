@@ -414,7 +414,9 @@ export async function spawnTunnel(port: number): Promise<void> {
       const delay = backoffDelay(tunnelRestarts) + Math.floor(Math.random() * 1000);
       log("WARN", `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
       await Bun.sleep(delay);
-      return spawnTunnel(port);
+      // Re-read the live server port: spawnServer may have moved it since this
+      // attempt started, and a retry at the stale port would split-brain the tunnel.
+      return spawnTunnel(_opts.port);
     }
 
     // The detached tunnel is independent of this supervisor, so there is no
@@ -470,7 +472,7 @@ export async function spawnTunnel(port: number): Promise<void> {
     const delay = backoffDelay(tunnelRestarts) + Math.floor(Math.random() * 1000);
     log("WARN", `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
     await Bun.sleep(delay);
-    return spawnTunnel(port);
+    return spawnTunnel(_opts.port); // live port — may have moved since this attempt
   }
 
   updateStatus({ shareUrl: tunnelUrl, tunnelPid: tunnelChild.pid, tunnelPort: port });
@@ -498,15 +500,20 @@ export async function spawnTunnel(port: number): Promise<void> {
   log("WARN", `Tunnel process exited (code=${exitCode}, signal=${tunnelChild === null ? "killed" : "self"}, url=${deadUrl}), restart in ${delay}ms (#${tunnelRestarts})`);
   await Bun.sleep(delay);
 
-  if (!shuttingDown) return spawnTunnel(port);
+  // Respawn at the server's live port, not this spawn's original target —
+  // the server may have moved (zombie-port fallback) while the tunnel was up.
+  if (!shuttingDown) return spawnTunnel(_opts.port);
 }
 
 // ─── Health checks ─────────────────────────────────────────────────────
-function startServerHealthCheck(port: number) {
+function startServerHealthCheck() {
   healthTimer = setInterval(async () => {
     if (shuttingDown || !serverChild || getState() === "stopped") return;
-    // Read actual port from status.json in case server auto-selected a different port
-    let checkPort = port;
+    // _opts.port tracks the server's real port (spawnServer updates it on
+    // zombie-port fallback). status.json can override, but never trust a
+    // startup-time closure value — a stale port here makes the health check
+    // kill a healthy server every cycle.
+    let checkPort = _opts.port;
     try {
       const status = readStatus();
       if (status.port && typeof status.port === "number") checkPort = status.port;
@@ -535,7 +542,7 @@ function startServerHealthCheck(port: number) {
   }, SERVER_HEALTH_INTERVAL_MS);
 }
 
-function startTunnelProbe(port: number) {
+function startTunnelProbe() {
   tunnelProbeTimer = setInterval(async () => {
     if (shuttingDown || !tunnelUrl) { tunnelFailCount = 0; return; }
     if (!tunnelChild && !adoptedTunnelPid) { tunnelFailCount = 0; return; }
@@ -550,7 +557,7 @@ function startTunnelProbe(port: number) {
         tunnelUrl = null;
         updateStatus({ shareUrl: null, tunnelPid: null });
         tunnelFailCount = 0;
-        spawnTunnel(port);
+        spawnTunnel(_opts.port); // live server port, not the startup config port
         return;
       }
     }
@@ -582,7 +589,7 @@ function startTunnelProbe(port: number) {
         adoptedTunnelPid = null;
         tunnelUrl = null;
         updateStatus({ shareUrl: null, tunnelPid: null });
-        spawnTunnel(port);
+        spawnTunnel(_opts.port); // live server port, not the startup config port
       }
       tunnelFailCount = 0;
     }
@@ -1049,7 +1056,7 @@ export async function softStop() {
   notifyStateChange("stopped", "running", "user_start");
   setState("running");
   updateStatus({ state: "running", stoppedAt: null });
-  startServerHealthCheck(_opts.port);
+  startServerHealthCheck();
   log("INFO", "Resuming server from stopped state");
   _softStopRunning = false;
   spawnServer(_serverArgs, _logFd);
@@ -1247,7 +1254,7 @@ export async function runSupervisor(opts: {
       log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
       spawnServer(serverArgs, logFd);
       // Tunnel was kept alive during selfReplace; only respawn if dead
-      if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(opts.port);
+      if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
     }
   });
 
@@ -1261,7 +1268,7 @@ export async function runSupervisor(opts: {
   }
 
   // Start health checks
-  startServerHealthCheck(opts.port);
+  startServerHealthCheck();
 
   // ── Resume-from-sleep detection ────────────────────────────────────────
   // A setInterval that fires much later than its period means the host was
@@ -1286,9 +1293,10 @@ export async function runSupervisor(opts: {
     tunnelFailCount = 0;
     // If paused solely from the post-resume failure cascade, resume the server.
     if (getState() === "paused") triggerResume();
-    // The old quick-tunnel session is almost certainly dead — force a fresh one.
+    // The old quick-tunnel session is almost certainly dead — force a fresh one
+    // at the server's live port (the URL rotates anyway, so follow the server).
     if (getState() === "running" && (tunnelUrl || tunnelChild || adoptedTunnelPid)) {
-      restartTunnel(tunnelPort ?? opts.port);
+      restartTunnel(_opts.port);
     }
   }, RESUME_TICK_MS);
 
@@ -1325,7 +1333,7 @@ export async function runSupervisor(opts: {
           if (!result.success) {
             log("ERROR", `Self-replace failed: ${result.error}, restarting children`);
             spawnServer(serverArgs, logFd);
-            if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(opts.port);
+            if (opts.share && !tunnelChild && !tunnelUrl) spawnTunnel(_opts.port);
           }
         });
       }
@@ -1346,7 +1354,7 @@ export async function runSupervisor(opts: {
   // settled first — the old order raced spawnServer's port selection.
   let tunnelAdopted = false;
   if (opts.share) {
-    startTunnelProbe(opts.port);
+    startTunnelProbe();
     // Try adopting tunnel kept alive from previous upgrade; spawn new if dead
     tunnelAdopted = adoptTunnel();
     if (tunnelAdopted) {
@@ -1359,7 +1367,7 @@ export async function runSupervisor(opts: {
 
   // Spawn server + (fresh) tunnel in parallel
   const promises: Promise<void>[] = [spawnServer(serverArgs, logFd)];
-  if (opts.share && !tunnelAdopted) promises.push(spawnTunnel(opts.port));
+  if (opts.share && !tunnelAdopted) promises.push(spawnTunnel(_opts.port));
 
   await Promise.all(promises);
 
