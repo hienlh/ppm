@@ -1,4 +1,6 @@
-import { describe, it, expect, afterAll, beforeAll, setDefaultTimeout } from "bun:test";
+import { describe as describeBase, it, expect, afterAll, beforeAll, setDefaultTimeout } from "bun:test";
+// Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — spawns a real cloudflared tunnel.
+const describe = process.env.PPM_SKIP_LIVE === "1" ? describeBase.skip : describeBase;
 import { Hono } from "hono";
 import { portForwardingRoutes, activeTunnels, stopAllPortTunnels } from "../../src/server/routes/port-forwarding.ts";
 

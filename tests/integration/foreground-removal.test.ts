@@ -7,7 +7,9 @@
  * - __serve__ entry point still works (daemon child)
  * - start command only has expected options
  */
-import { describe, test, expect } from "bun:test";
+import { describe as describeBase, test, expect } from "bun:test";
+// Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — spawns the CLI/supervisor.
+const describe = process.env.PPM_SKIP_LIVE === "1" ? describeBase.skip : describeBase;
 
 const CLI_PATH = require("node:path").resolve(import.meta.dir, "../../src/index.ts");
 const TEST_TIMEOUT = 15_000;

@@ -12,7 +12,9 @@
  *
  * Uses a real Bun.spawn to start the supervisor with a high port to avoid conflicts.
  */
-import { describe, test, expect, afterEach, beforeEach, afterAll } from "bun:test";
+import { describe as describeBase, test, expect, afterEach, beforeEach, afterAll } from "bun:test";
+// Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — spawns a real supervisor process.
+const describe = process.env.PPM_SKIP_LIVE === "1" ? describeBase.skip : describeBase;
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, rmSync } from "node:fs";

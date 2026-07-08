@@ -1,4 +1,6 @@
-import { describe, it, expect, afterAll, setDefaultTimeout } from "bun:test";
+import { describe as describeBase, it, expect, afterAll, setDefaultTimeout } from "bun:test";
+// Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — spawns supervisor + cloudflared tunnel.
+const describe = process.env.PPM_SKIP_LIVE === "1" ? describeBase.skip : describeBase;
 
 setDefaultTimeout(60_000); // Tunnel tests need time for cloudflared
 import { resolve } from "node:path";

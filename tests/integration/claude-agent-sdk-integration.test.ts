@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe as describeBase, it, expect, beforeAll, afterAll } from "bun:test";
+// Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — needs the native claude CLI binary + API creds.
+const describe = process.env.PPM_SKIP_LIVE === "1" ? describeBase.skip : describeBase;
 import { query, listSessions, getSessionMessages } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAgentSdkProvider } from "../../src/providers/claude-agent-sdk.ts";

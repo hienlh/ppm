@@ -9,7 +9,9 @@
  * - Command handler invoked on inbound command
  * - disconnect() cleans up timers and connection
  */
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import { describe as describeBase, test, expect, afterEach, beforeEach } from "bun:test";
+// Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — needs a live cloud WS server.
+const describe = process.env.PPM_SKIP_LIVE === "1" ? describeBase.skip : describeBase;
 
 const TEST_WS_PORT = 19878;
 const TEST_TIMEOUT = 15_000;

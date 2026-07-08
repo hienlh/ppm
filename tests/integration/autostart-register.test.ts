@@ -11,6 +11,9 @@
  * this WILL kill it. Tests are skipped when PPM service is already active.
  */
 import { describe, test, expect, afterEach } from "bun:test";
+// Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — needs systemd/launchd/schtasks.
+// Folded into the per-OS describe.if conditions below (describe.skip has no .if).
+const skipLive = process.env.PPM_SKIP_LIVE === "1";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import {
@@ -58,7 +61,7 @@ afterEach(async () => {
 
 // ─── macOS (launchd) ────────────────────────────────────────────────────
 
-describe.if(isMac && !ppmAlreadyRunning)("macOS autostart (launchd)", () => {
+describe.if(!skipLive && isMac && !ppmAlreadyRunning)("macOS autostart (launchd)", () => {
   test("enable creates plist file", async () => {
     const servicePath = await enableAutoStart(TEST_CONFIG);
     expect(servicePath).toBe(getPlistPath());
@@ -104,7 +107,7 @@ describe.if(isMac && !ppmAlreadyRunning)("macOS autostart (launchd)", () => {
 
 // ─── Linux (systemd) ───────────────────────────────────────────────────
 
-describe.if(isLinux && !ppmAlreadyRunning)("Linux autostart (systemd)", () => {
+describe.if(!skipLive && isLinux && !ppmAlreadyRunning)("Linux autostart (systemd)", () => {
   test("enable creates service file", async () => {
     const servicePath = await enableAutoStart(TEST_CONFIG);
     expect(servicePath).toBe(getServicePath());
@@ -149,7 +152,7 @@ describe.if(isLinux && !ppmAlreadyRunning)("Linux autostart (systemd)", () => {
 
 // ─── Windows (Task Scheduler) ───────────────────────────────────────────
 
-describe.if(isWindows)("Windows autostart (Task Scheduler)", () => {
+describe.if(!skipLive && isWindows)("Windows autostart (Task Scheduler)", () => {
   test("enable creates VBS wrapper", async () => {
     const servicePath = await enableAutoStart(TEST_CONFIG);
     expect(servicePath).toBe(getVbsPath());
@@ -194,7 +197,7 @@ describe.if(isWindows)("Windows autostart (Task Scheduler)", () => {
 
 // ─── Cross-platform ─────────────────────────────────────────────────────
 
-describe("cross-platform autostart", () => {
+describe.skipIf(skipLive)("cross-platform autostart", () => {
   test("getAutoStartStatus returns valid structure on any platform", () => {
     const status = getAutoStartStatus();
     expect(typeof status.enabled).toBe("boolean");
