@@ -26,6 +26,7 @@ export const KEY_ACTIONS: KeyAction[] = [
   // General
   { id: "command-palette", label: "Command Palette", category: "general", defaultKey: "F1", note: "Shift+Shift also opens (not customizable)" },
   { id: "toggle-sidebar", label: "Toggle Sidebar", category: "general", defaultKey: "Mod+B" },
+  { id: "toggle-dock", label: "Toggle Terminal Dock", category: "general", defaultKey: "Ctrl+`", note: "Fires even when a terminal is focused (VSCode parity)" },
   { id: "save-prevent", label: "Prevent Save Dialog", category: "general", defaultKey: "Mod+S", locked: true, note: "Always active — prevents browser save" },
   // Tabs
   { id: "next-tab", label: "Next Tab", category: "tabs", defaultKey: "Alt+]" },

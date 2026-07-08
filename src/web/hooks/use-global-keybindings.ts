@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useTabStore } from "@/stores/tab-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useKeybindingsStore, parseCombo, eventMatchesCombo } from "@/stores/keybindings-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useCompareStore } from "@/stores/compare-store";
@@ -74,9 +75,15 @@ export function useGlobalKeybindings() {
       const tag = (e.target as HTMLElement)?.tagName;
       const isTextInput = tag === "TEXTAREA" || tag === "INPUT" || (e.target as HTMLElement)?.isContentEditable;
       if (isTextInput) {
-        // Still need to intercept Mod+S (save-prevent) inside text fields
         const { matchesEvent: m } = useKeybindingsStore.getState();
+        // Mod+S — always prevent browser save dialog
         if (m(e, "save-prevent")) { e.preventDefault(); }
+        // Ctrl+` — toggle dock fires even when terminal textarea is focused (VSCode parity).
+        // Ctrl+` is a modifier combo, so it cannot produce a plain backtick in the shell.
+        if (m(e, "toggle-dock")) {
+          e.preventDefault();
+          usePanelStore.getState().toggleDock();
+        }
         return;
       }
 
@@ -101,6 +108,13 @@ export function useGlobalKeybindings() {
       if (match(e, "toggle-sidebar")) {
         e.preventDefault();
         useSettingsStore.getState().toggleSidebar();
+        return;
+      }
+
+      // Toggle terminal dock
+      if (match(e, "toggle-dock")) {
+        e.preventDefault();
+        usePanelStore.getState().toggleDock();
         return;
       }
 

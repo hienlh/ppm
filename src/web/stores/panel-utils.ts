@@ -11,11 +11,53 @@ export interface Panel {
   tabHistory: string[];
 }
 
+// ---------------------------------------------------------------------------
+// Dock constants and types
+// ---------------------------------------------------------------------------
+
+/**
+ * Reserved panel ID for the bottom dock.
+ * This panel lives in the `panels` map but is intentionally excluded from `grid`
+ * so all grid math (MAX_ROWS, split, column count) ignores it.
+ */
+export const DOCK_PANEL_ID = "__dock__";
+
+/**
+ * Tab types permitted inside the dock panel.
+ * Enforced at load-time to prevent a crafted persisted blob from placing
+ * arbitrary tab types in the privileged dock slot.
+ */
+export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor"]);
+
+/** Visible/height state for the dock — stored per-project via projectDock map. */
+export interface DockState {
+  visible: boolean;
+  /** Height as a percentage of the viewport, clamped to [15, 85]. */
+  height: number;
+}
+
 export interface PanelLayout {
   panels: Record<string, Panel>;
   /** grid[row][col] = panelId */
   grid: string[][];
   focusedPanelId: string;
+  /** Dock visibility + height for this project (optional for back-compat with old blobs). */
+  dock?: DockState;
+  /** The __dock__ panel's tab state for this project (optional for back-compat). */
+  dockPanel?: Panel;
+}
+
+/**
+ * Create the reserved dock panel with an empty tab list.
+ * Always uses DOCK_PANEL_ID so there is only ever one dock panel per store instance.
+ */
+export function createDockPanel(): Panel {
+  return {
+    id: DOCK_PANEL_ID,
+    tabs: [],
+    activeTabId: null,
+    tabHistory: [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +197,7 @@ function storageKey(projectName: string): string {
 
 export function savePanelLayout(projectName: string, layout: PanelLayout): void {
   try {
+    // dock and dockPanel are passed through directly — callers set them explicitly.
     const withTimestamp = { ...layout, updatedAt: new Date().toISOString() };
     localStorage.setItem(storageKey(projectName), JSON.stringify(withTimestamp));
     // Debounced server sync — skip virtual __global__ project (not a real server project)
@@ -167,12 +210,43 @@ export function loadPanelLayout(projectName: string): PanelLayout | null {
     const raw = localStorage.getItem(storageKey(projectName));
     if (raw) {
       const layout = JSON.parse(raw) as PanelLayout;
-      return migrateTabIds(layout);
+      return migrateDockDefaults(migrateTabIds(layout));
     }
   } catch { /* ignore */ }
 
   // Migrate from old tab-store format
-  return migrateOldTabStore(projectName);
+  const migrated = migrateOldTabStore(projectName);
+  return migrated ? migrateDockDefaults(migrated) : null;
+}
+
+/**
+ * Ensure dock fields are present with safe defaults for blobs written before
+ * the dock feature existed, and defensively filter dockPanel.tabs to allowed types.
+ *
+ * Migration rules:
+ *   - Missing `dock`      → { visible: false, height: 30 }
+ *   - Missing `dockPanel` → empty dock panel (createDockPanel())
+ *   - dockPanel.tabs with non-allowed types → stripped (security: prevent arbitrary
+ *     tab types from appearing in the privileged dock slot via a crafted blob)
+ */
+function migrateDockDefaults(layout: PanelLayout): PanelLayout {
+  const dock: DockState = layout.dock ?? { visible: false, height: 30 };
+
+  let dockPanel: Panel;
+  if (!layout.dockPanel) {
+    dockPanel = createDockPanel();
+  } else {
+    // Filter tabs to allowed types only
+    const allowedTabs = layout.dockPanel.tabs.filter((t) => DOCK_ALLOWED_TAB_TYPES.has(t.type));
+    const allowedIds = new Set(allowedTabs.map((t) => t.id));
+    const filteredHistory = layout.dockPanel.tabHistory.filter((id) => allowedIds.has(id));
+    const activeTabId = layout.dockPanel.activeTabId && allowedIds.has(layout.dockPanel.activeTabId)
+      ? layout.dockPanel.activeTabId
+      : (filteredHistory[filteredHistory.length - 1] ?? allowedTabs[allowedTabs.length - 1]?.id ?? null);
+    dockPanel = { ...layout.dockPanel, tabs: allowedTabs, tabHistory: filteredHistory, activeTabId };
+  }
+
+  return { ...layout, dock, dockPanel };
 }
 
 // ---------------------------------------------------------------------------

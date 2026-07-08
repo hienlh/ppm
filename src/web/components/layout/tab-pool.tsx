@@ -14,6 +14,8 @@ import { useRef, useLayoutEffect, useSyncExternalStore, Suspense, lazy } from "r
 import { Loader2 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import type { TabType } from "@/stores/tab-store";
+import { collectFromGrid, collectFromDock } from "./tab-pool-collect";
+import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 
 // ---------------------------------------------------------------------------
 // Lazy tab components (single source of truth for all tab types)
@@ -98,39 +100,28 @@ export function TabPool() {
   // Collect tabs from ALL mounted projects (not just active) to preserve
   // tab state across project switches (keep-alive). Each project's
   // PanelLayout stays mounted (CSS hidden), so slots remain registered.
-  const tabEntries: { tabId: string; panelId: string; type: TabType; metadata?: Record<string, unknown>; isActive: boolean }[] = [];
+  // Logic lives in tab-pool-collect.ts (pure helper) so it is unit-testable
+  // without a DOM. Stable key order prevents React insertBefore() reorders
+  // that would yank reparented DOM nodes back to the hidden container.
   const seenTabs = new Set<string>();
-
-  const collectFromGrid = (projectGrid: string[][], projectName: string | null, isActiveProject: boolean) => {
-    for (const panelId of projectGrid.flat()) {
-      const panel = panels[panelId];
-      if (!panel) continue;
-      for (const tab of panel.tabs) {
-        if (seenTabs.has(tab.id)) continue;
-        // Skip tabs from other projects (race condition in openTab during project switch)
-        if (tab.projectId && projectName && tab.projectId !== projectName) continue;
-        // Don't keep-alive extension tabs from non-active projects — their
-        // server-side recovery mechanism causes cross-project tab creation
-        if (!isActiveProject && (tab.type === "extension" || tab.type === "extension-webview")) continue;
-        seenTabs.add(tab.id);
-        tabEntries.push({
-          tabId: tab.id,
-          panelId,
-          type: tab.type,
-          metadata: tab.metadata,
-          isActive: tab.id === panel.activeTabId,
-        });
-      }
-    }
-  };
+  const tabEntries: { tabId: string; panelId: string; type: TabType; metadata?: Record<string, unknown>; isActive: boolean }[] = [];
 
   // Active project uses s.grid
-  collectFromGrid(grid, currentProject, true);
+  collectFromGrid(grid, currentProject, true, panels, seenTabs, tabEntries);
 
   // Non-active projects use projectGrids (keep-alive)
   for (const [projectName, projectGrid] of Object.entries(projectGrids)) {
     if (projectName === currentProject) continue;
-    collectFromGrid(projectGrid, projectName, false);
+    collectFromGrid(projectGrid, projectName, false, panels, seenTabs, tabEntries);
+  }
+
+  // Dock panel — collected last so grid tabs win dedup (a tab moved from dock
+  // to a grid panel renders in the grid slot, not back in the dock slot).
+  // When dock is hidden, no slot exists for __dock__ so dock tabs park in the
+  // hidden container — alive but invisible until the dock is shown again.
+  const dockPanel = panels[DOCK_PANEL_ID];
+  if (dockPanel) {
+    collectFromDock(dockPanel, seenTabs, tabEntries);
   }
 
   // Stable key order — prevents React from calling insertBefore() to reorder

@@ -3,6 +3,7 @@ import {
   Terminal, MessageSquare, Database,
   FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
   ChevronRight, Globe, Puzzle, Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight,
+  PanelBottom,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useShallow } from "zustand/react/shallow";
@@ -25,6 +26,8 @@ import { downloadFile } from "@/lib/file-download";
 import { FileActions } from "@/components/explorer/file-actions";
 import { api, projectUrl } from "@/lib/api-client";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { DockPanel } from "@/components/layout/dock-panel";
 
 const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
   { type: "terminal", label: "Terminal" },
@@ -49,6 +52,10 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
   const panels = usePanelStore((s) => s.panels);
   const grid = usePanelStore((s) => s.grid);
+
+  // Dock visibility — drives the toggle button active state and the bottom sheet.
+  const dock = usePanelStore((s) => s.dock);
+  const isMobile = useIsMobile();
 
   const currentProject = usePanelStore((s) => s.currentProject);
 
@@ -312,6 +319,21 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             <Plus className="size-4" />
             {tabs.length === 0 && <span className="text-xs">New Tab</span>}
           </button>
+
+          <div className="w-px self-stretch bg-border shrink-0" />
+
+          {/* Dock toggle — thumb-zone, ≥44px, reflects dock.visible state */}
+          <button
+            onClick={() => usePanelStore.getState().toggleDock()}
+            title={dock.visible ? "Hide terminal dock" : "Show terminal dock"}
+            aria-label={dock.visible ? "Hide terminal dock" : "Show terminal dock"}
+            className={cn(
+              "flex items-center justify-center size-12 shrink-0 transition-colors",
+              dock.visible ? "text-primary" : "text-text-secondary",
+            )}
+          >
+            <PanelBottom className="size-5" />
+          </button>
         </div>
 
         {/* Tab list — overlaps under curved edge so tabs slide beneath it */}
@@ -528,6 +550,26 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             }
           }}
         />
+      )}
+
+      {/* Mobile dock sheet — only rendered on mobile viewports.
+          Desktop panel-layout.tsx gates DockPanel on isDesktop, so exactly ONE
+          __dock__ slot is ever registered at a time (no double-mount). */}
+      {isMobile && (
+        <BottomSheet
+          open={dock.visible}
+          onClose={() => usePanelStore.getState().setDockVisible(false)}
+          // Higher z-index than the default nav z-40 so the sheet covers the tab bar
+          zIndex={60}
+          className="h-[60vh]"
+        >
+          {/* Fixed height so xterm fitAddon.fit() receives a non-zero container.
+              ResizeObserver in use-terminal.ts fires when this element gains dimensions,
+              triggering a refit — no extra imperative call needed. */}
+          <div className="flex flex-col h-full overflow-hidden">
+            <DockPanel variant="mobile" />
+          </div>
+        </BottomSheet>
       )}
     </nav>
   );

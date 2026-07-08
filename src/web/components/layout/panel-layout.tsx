@@ -1,10 +1,11 @@
-import { useEffect, memo } from "react";
+import { useEffect, useCallback, memo } from "react";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import { GripVertical, GripHorizontal } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { createPanel } from "@/stores/panel-utils";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { EditorPanel } from "./editor-panel";
+import { DockPanel } from "./dock-panel";
 
 interface PanelLayoutProps {
   projectName: string;
@@ -16,7 +17,15 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
     s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? [[]]),
   );
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
+  const dock = usePanelStore((s) => s.dock);
+  const currentProject = usePanelStore((s) => s.currentProject);
   const panelCount = grid.flat().length;
+
+  // One PanelLayout is mounted per open project (hidden except the active one)
+  // for keep-alive. The dock uses a single shared "__dock__" slot id, so only
+  // the ACTIVE project's layout may render it — otherwise multiple layouts would
+  // register the same slot and the terminal could reparent into a hidden layout.
+  const isActiveProject = currentProject === projectName;
 
   // Recover from empty grid (corrupt persisted state or edge-case bug)
   useEffect(() => {
@@ -30,9 +39,16 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
     }
   }, [panelCount]);
 
+  // Persist dock height when user drags the resize handle.
+  // onResize fires with the dock Panel's new size as a percentage.
+  const handleDockPanelResize = useCallback(({ asPercentage }: { asPercentage: number }) => {
+    usePanelStore.getState().setDockHeight(asPercentage);
+  }, []);
+
   if (panelCount === 0) return null;
 
-  // Mobile: render only the focused panel (tabs are merged in MobileNav)
+  // Mobile: render only the focused panel (tabs are merged in MobileNav).
+  // Dock on mobile is handled by phase 07 (bottom sheet).
   if (!isDesktop) {
     const allPanelIds = grid.flat();
     const panelId = allPanelIds.includes(focusedPanelId) ? focusedPanelId : allPanelIds[0];
@@ -40,15 +56,39 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
     return <EditorPanel panelId={panelId} projectName={projectName} />;
   }
 
-  if (panelCount === 1 && grid[0]?.[0]) {
-    return <EditorPanel panelId={grid[0][0]} projectName={projectName} />;
+  // Desktop grid area — single-panel and multi-panel branches are unchanged.
+  // Extracted into a variable so we can optionally wrap it with the dock Group.
+  const gridArea = panelCount === 1 && grid[0]?.[0]
+    ? <EditorPanel panelId={grid[0][0]} projectName={projectName} />
+    : (
+      <Group orientation="vertical" style={{ height: "100%" }}>
+        {grid.map((row, rowIdx) => (
+          <RowGroup key={`row-${rowIdx}`} row={row} rowIdx={rowIdx} totalRows={grid.length} projectName={projectName} />
+        ))}
+      </Group>
+    );
+
+  // Dock hidden, or this is a non-active project's (hidden) layout — render grid
+  // only. Only the active project hosts the shared dock slot.
+  if (!dock.visible || !isActiveProject) {
+    return <>{gridArea}</>;
   }
 
+  // Dock visible — wrap grid + dock in a parent vertical Group.
+  // The grid Panel (flex-1 remaining) sits above; DockPanel gets dock.height%.
+  // minSize 10% keeps the dock usable; maxSize 85% mirrors the clamp in setDockHeight.
+  // Sizes MUST be percentage strings — bare numbers are interpreted as PIXELS
+  // by react-resizable-panels (v4), which collapses the dock to a thin strip
+  // and can throw inside <Group>.
   return (
     <Group orientation="vertical" style={{ height: "100%" }}>
-      {grid.map((row, rowIdx) => (
-        <RowGroup key={`row-${rowIdx}`} row={row} rowIdx={rowIdx} totalRows={grid.length} projectName={projectName} />
-      ))}
+      <Panel minSize="15%">
+        {gridArea}
+      </Panel>
+      <ResizeHandle orientation="horizontal" />
+      <Panel defaultSize={`${dock.height}%`} minSize="10%" maxSize="85%" onResize={handleDockPanelResize}>
+        <DockPanel />
+      </Panel>
     </Group>
   );
 });

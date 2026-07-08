@@ -3,7 +3,9 @@ import type { Tab, TabType } from "./tab-store";
 import {
   type Panel,
   type PanelLayout,
+  type DockState,
   createPanel,
+  createDockPanel,
   gridAddColumn,
   gridAddRow,
   gridRemovePanel,
@@ -13,13 +15,41 @@ import {
   savePanelLayout,
   loadPanelLayout,
   deriveTabId,
+  DOCK_PANEL_ID,
 } from "./panel-utils";
+import {
+  makeToggleDock,
+  makeSetDockVisible,
+  makeSetDockHeight,
+  makeOpenInDock,
+  makeRedockTab,
+  persistDock,
+  snapshotDockForProject,
+  restoreDockForProject,
+} from "./dock-actions";
 
 /** Tab types that can only have 1 instance per project */
 const SINGLETON_TYPES = new Set<TabType>(["settings", "git-log"]);
 
 /** Tab types removed in a prior version — filter them out when loading persisted state */
 const OBSOLETE_TAB_TYPES = new Set(["projects", "git-status", "git-graph"]);
+
+/**
+ * The shared __dock__ panel holds tabs from all projects. When the active
+ * project changes, its rendered active tab must belong to that project —
+ * otherwise the dock slot would show another project's terminal until the user
+ * clicks a tab. Pick the most-recent dock tab (by history) for the project.
+ */
+function pickDockActiveTab(dockPanel: Panel | undefined, projectName: string): string | null {
+  if (!dockPanel) return null;
+  const projTabs = dockPanel.tabs.filter((t) => !t.projectId || t.projectId === projectName);
+  if (projTabs.length === 0) return null;
+  for (let i = dockPanel.tabHistory.length - 1; i >= 0; i--) {
+    const id = dockPanel.tabHistory[i]!;
+    if (projTabs.some((t) => t.id === id)) return id;
+  }
+  return projTabs[projTabs.length - 1]!.id;
+}
 
 function pushHistory(history: string[], id: string): string[] {
   const filtered = history.filter((h) => h !== id);
@@ -41,6 +71,11 @@ export interface PanelStore {
   projectGrids: Record<string, string[][]>;
   projectFocused: Record<string, string>;
 
+  /** Dock visibility + height for the currently active project. */
+  dock: DockState;
+  /** Per-project dock state snapshots (mirrors projectGrids pattern). */
+  projectDock: Record<string, DockState>;
+
   // Project lifecycle
   switchProject: (projectName: string) => void;
   reloadProject: (projectName: string) => void;
@@ -60,6 +95,14 @@ export interface PanelStore {
   splitPanel: (direction: "left" | "right" | "up" | "down", tabId: string, sourcePanelId: string, targetPanelId?: string) => boolean;
   closePanel: (panelId: string) => void;
 
+  // Dock actions
+  toggleDock: () => void;
+  setDockVisible: (visible: boolean) => void;
+  setDockHeight: (pct: number) => void;
+  openInDock: (tab: Omit<Tab, "id">) => string;
+  /** Park a terminal from a grid panel into __dock__ without killing the PTY session. */
+  redockTab: (tabId: string, fromPanelId: string) => void;
+
   // Helpers
   getPanelForTab: (tabId: string) => Panel | undefined;
   isMobile: () => boolean;
@@ -67,23 +110,40 @@ export interface PanelStore {
 
 function defaultLayout(): { panels: Record<string, Panel>; grid: string[][]; focusedPanelId: string } {
   const panel = createPanel();
-  return { panels: { [panel.id]: panel }, grid: [[panel.id]], focusedPanelId: panel.id };
+  // Dock panel is seeded into panels but deliberately absent from grid —
+  // grid math (MAX_ROWS, split, column count) must never see DOCK_PANEL_ID.
+  const dockPanel = createDockPanel();
+  return {
+    panels: { [panel.id]: panel, [DOCK_PANEL_ID]: dockPanel },
+    grid: [[panel.id]],
+    focusedPanelId: panel.id,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 export const usePanelStore = create<PanelStore>()((set, get) => {
-  /** Save only the active project's panels to localStorage */
+  /** Save only the active project's panels to localStorage.
+   *
+   * The dock panel lives in `panels` but NOT in `grid`, so grid.flat() would drop it.
+   * We explicitly include it via the `dockPanel` field in PanelLayout.
+   */
   function persist() {
-    const { currentProject, panels, grid, focusedPanelId } = get();
+    const { currentProject, panels, grid, focusedPanelId, dock } = get();
     if (!currentProject) return;
     const panelIds = new Set(grid.flat());
     const projectPanels: Record<string, Panel> = {};
     for (const [id, p] of Object.entries(panels)) {
       if (panelIds.has(id)) projectPanels[id] = p;
     }
-    savePanelLayout(currentProject, { panels: projectPanels, grid, focusedPanelId });
+    savePanelLayout(currentProject, {
+      panels: projectPanels,
+      grid,
+      focusedPanelId,
+      dock,
+      dockPanel: panels[DOCK_PANEL_ID],
+    });
   }
 
   function findPanel(tabId: string): Panel | undefined {
@@ -99,39 +159,69 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     currentProject: null,
     projectGrids: {},
     projectFocused: {},
+    dock: { visible: false, height: 30 },
+    projectDock: {},
+
+    // Dock actions — factories receive (set, get) matching the closure style
+    toggleDock: makeToggleDock(set, get),
+    setDockVisible: makeSetDockVisible(set, get),
+    setDockHeight: makeSetDockHeight(set, get),
+    openInDock: makeOpenInDock(set, get),
+    redockTab: makeRedockTab(set, get),
 
     switchProject: (projectName) => {
-      const { currentProject, panels, grid, focusedPanelId, projectGrids, projectFocused } = get();
+      const { currentProject, panels, grid, focusedPanelId, projectGrids, projectFocused, dock, projectDock } = get();
 
       // No-op if same project
       if (currentProject === projectName) return;
 
-      // Snapshot current project's state
+      // Snapshot current project's state (grid + dock)
       const newProjectGrids = { ...projectGrids };
       const newProjectFocused = { ...projectFocused };
+      // Snapshot dock into projectDock; __dock__ panel stays alive in panels map across switches
+      const newProjectDock = currentProject
+        ? snapshotDockForProject(currentProject, dock, projectDock)
+        : { ...projectDock };
 
       if (currentProject) {
         newProjectGrids[currentProject] = grid;
         newProjectFocused[currentProject] = focusedPanelId;
-        // Persist to localStorage
+        // Persist to localStorage (include dock + dockPanel for current project)
         const panelIds = new Set(grid.flat());
         const currentPanels: Record<string, Panel> = {};
         for (const [id, p] of Object.entries(panels)) {
           if (panelIds.has(id)) currentPanels[id] = p;
         }
-        savePanelLayout(currentProject, { panels: currentPanels, grid, focusedPanelId });
+        savePanelLayout(currentProject, {
+          panels: currentPanels,
+          grid,
+          focusedPanelId,
+          dock,
+          dockPanel: panels[DOCK_PANEL_ID],
+        });
       }
 
       // Already in memory → restore from snapshot (no localStorage read)
       if (newProjectGrids[projectName]) {
         const restoredGrid = newProjectGrids[projectName]!;
         const restoredFocused = newProjectFocused[projectName] ?? restoredGrid[0]?.[0] ?? "";
+        // Restore dock state for target project; __dock__ panel stays in panels (keep-alive).
+        // Point the shared dock panel's active tab at THIS project's tab so the slot
+        // doesn't render another project's terminal after the switch.
+        const restoredDock = restoreDockForProject(projectName, newProjectDock);
+        const existingDockPanel = panels[DOCK_PANEL_ID];
+        const nextPanels = existingDockPanel
+          ? { ...panels, [DOCK_PANEL_ID]: { ...existingDockPanel, activeTabId: pickDockActiveTab(existingDockPanel, projectName) } }
+          : panels;
         set({
           currentProject: projectName,
+          panels: nextPanels,
           grid: restoredGrid,
           focusedPanelId: restoredFocused,
           projectGrids: newProjectGrids,
           projectFocused: newProjectFocused,
+          dock: restoredDock,
+          projectDock: newProjectDock,
         });
         return;
       }
@@ -139,7 +229,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       // Load from localStorage
       const loaded = loadPanelLayout(projectName);
       if (loaded && Object.keys(loaded.panels).length > 0) {
-        // Migrate: remove obsolete tab types
+        // Migrate: remove obsolete tab types from grid panels
         const migratedPanels: typeof loaded.panels = {};
         for (const [pid, panel] of Object.entries(loaded.panels)) {
           const filteredTabs = panel.tabs.filter((t) => !OBSOLETE_TAB_TYPES.has(t.type));
@@ -152,10 +242,31 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           migratedPanels[pid] = { ...panel, tabs: filteredTabs, tabHistory: filteredHistory, activeTabId };
         }
 
-        // Merge into flat panels map (keep-alive: old panels stay)
-        const mergedPanels = { ...panels, ...migratedPanels };
+        // Merge into flat panels map (keep-alive: old panels stay).
+        // The shared __dock__ panel holds live tabs from ALL projects — union the
+        // loaded project's persisted dock tabs into it rather than replacing, so a
+        // different project's live terminal (its xterm/PTY) is never dropped on the
+        // first switch to a not-yet-loaded project.
+        const existingDock = panels[DOCK_PANEL_ID] ?? createDockPanel();
+        const incomingDock = loaded.dockPanel ?? createDockPanel();
+        const mergedDockTabs = [...existingDock.tabs];
+        for (const t of incomingDock.tabs) {
+          if (!mergedDockTabs.some((x) => x.id === t.id)) mergedDockTabs.push(t);
+        }
+        const mergedDockPanel = {
+          ...existingDock,
+          tabs: mergedDockTabs,
+          tabHistory: [...new Set([...existingDock.tabHistory, ...incomingDock.tabHistory])].filter(
+            (id) => mergedDockTabs.some((t) => t.id === id),
+          ),
+          activeTabId: null as string | null,
+        };
+        // Focus the switched-to project's own dock tab (not another project's).
+        mergedDockPanel.activeTabId = pickDockActiveTab(mergedDockPanel, projectName);
+        const mergedPanels = { ...panels, ...migratedPanels, [DOCK_PANEL_ID]: mergedDockPanel };
         newProjectGrids[projectName] = loaded.grid;
         newProjectFocused[projectName] = loaded.focusedPanelId;
+        const restoredDock = loaded.dock ?? restoreDockForProject(projectName, newProjectDock);
         set({
           currentProject: projectName,
           panels: mergedPanels,
@@ -163,17 +274,26 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           focusedPanelId: loaded.focusedPanelId,
           projectGrids: newProjectGrids,
           projectFocused: newProjectFocused,
+          dock: restoredDock,
+          projectDock: newProjectDock,
         });
       } else {
         // Create empty layout — EmptyPanel will show quick-open buttons
         const p = createPanel();
         const newGrid = [[p.id]];
 
-        // Merge into flat panels map
+        // Merge into flat panels map; preserve existing __dock__ (keep-alive)
         const mergedPanels = { ...panels, [p.id]: p };
         newProjectGrids[projectName] = newGrid;
         newProjectFocused[projectName] = p.id;
-        savePanelLayout(projectName, { panels: { [p.id]: p }, grid: newGrid, focusedPanelId: p.id });
+        const restoredDock = restoreDockForProject(projectName, newProjectDock);
+        savePanelLayout(projectName, {
+          panels: { [p.id]: p },
+          grid: newGrid,
+          focusedPanelId: p.id,
+          dock: restoredDock,
+          dockPanel: panels[DOCK_PANEL_ID],
+        });
         set({
           currentProject: projectName,
           panels: mergedPanels,
@@ -181,25 +301,57 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           focusedPanelId: p.id,
           projectGrids: newProjectGrids,
           projectFocused: newProjectFocused,
+          dock: restoredDock,
+          projectDock: newProjectDock,
         });
       }
     },
 
     reloadProject: (projectName) => {
-      const { projectGrids, projectFocused, panels } = get();
+      const { projectGrids, projectFocused, projectDock, panels } = get();
       // Clear in-memory cache so switchProject re-reads from localStorage
       const newGrids = { ...projectGrids };
       const newFocused = { ...projectFocused };
+      const newProjectDock = { ...projectDock };
       delete newGrids[projectName];
       delete newFocused[projectName];
+      // Clear per-project dock snapshot so it reloads from localStorage
+      delete newProjectDock[projectName];
 
-      // Remove old panels belonging to this project from flat map
+      // Remove old grid panels belonging to this project from flat map.
+      // IMPORTANT: __dock__ is a shared panel — never delete it on reload,
+      // because terminals from OTHER projects would lose their xterm buffer.
+      // Instead, filter out only this project's dock tabs by projectId.
       const oldGrid = projectGrids[projectName];
       const oldPanelIds = oldGrid ? new Set(oldGrid.flat()) : new Set<string>();
       const cleanedPanels = { ...panels };
-      for (const id of oldPanelIds) delete cleanedPanels[id];
+      for (const id of oldPanelIds) {
+        // Never remove the shared dock panel during project reload
+        if (id !== DOCK_PANEL_ID) delete cleanedPanels[id];
+      }
 
-      set({ projectGrids: newGrids, projectFocused: newFocused, panels: cleanedPanels, currentProject: null });
+      // Clear this project's dock tabs from __dock__ (filter by projectId)
+      const dockPanel = cleanedPanels[DOCK_PANEL_ID];
+      if (dockPanel) {
+        const remainingTabs = dockPanel.tabs.filter((t) => t.projectId !== projectName);
+        const remainingIds = new Set(remainingTabs.map((t) => t.id));
+        cleanedPanels[DOCK_PANEL_ID] = {
+          ...dockPanel,
+          tabs: remainingTabs,
+          tabHistory: dockPanel.tabHistory.filter((id) => remainingIds.has(id)),
+          activeTabId: dockPanel.activeTabId && remainingIds.has(dockPanel.activeTabId)
+            ? dockPanel.activeTabId
+            : remainingTabs[remainingTabs.length - 1]?.id ?? null,
+        };
+      }
+
+      set({
+        projectGrids: newGrids,
+        projectFocused: newFocused,
+        projectDock: newProjectDock,
+        panels: cleanedPanels,
+        currentProject: null,
+      });
       // Re-trigger full load from localStorage
       get().switchProject(projectName);
     },
@@ -323,7 +475,20 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (!panel) return;
       const pid = panel.id;
 
-      // Clear persisted terminal session so reopening creates a fresh PTY
+      // Location-based re-dock: closing a terminal from ANY grid panel parks it in the
+      // dock instead of killing it. Real kill only when closed from WITHIN the dock,
+      // on shell exit (onExit handler), or after idle/grace expiry.
+      // Decision is purely location-based — no Tab.home flag needed.
+      if (tabId.startsWith("terminal:") && pid !== DOCK_PANEL_ID) {
+        // Park in dock — redockTab moves the tab object and shows the dock.
+        // Does NOT strip the localStorage session key (PTY stays alive).
+        // redockTab calls moveTab, never closeTab → no recursion.
+        get().redockTab(tabId, pid);
+        return;
+      }
+
+      // Real-close path: terminal closed from dock, or non-terminal tab.
+      // Clear persisted terminal session so reopening creates a fresh PTY.
       if (tabId.startsWith("terminal:")) {
         try { localStorage.removeItem(`ppm:terminal-session:${tabId}`); } catch { /* */ }
       }
@@ -419,8 +584,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
 
       set((s) => {
         const gridPanelCount = s.grid.flat().length;
-        // Auto-close empty source panel if not last in current grid
-        if (fromTabs.length === 0 && gridPanelCount > 1) {
+        // Auto-close empty source panel if not last in current grid.
+        // Guard: never attempt to remove __dock__ from the grid — it is intentionally
+        // absent from grid and gridRemovePanel would be a no-op, but the panels-map
+        // delete would destroy the dock panel entirely.
+        if (fromTabs.length === 0 && gridPanelCount > 1 && fromPanelId !== DOCK_PANEL_ID) {
           const { [fromPanelId]: _, ...rest } = s.panels;
           return {
             panels: {

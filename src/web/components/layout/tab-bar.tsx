@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
+import { DOCK_PANEL_ID } from "@/stores/panel-utils";
+import { PanelBottom, Grid2x2 } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useCompareStore } from "@/stores/compare-store";
@@ -218,6 +220,25 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
     );
   }
 
+  /**
+   * Terminal-only "Move to Dock" / "Move to Editor" item.
+   * The action moves the same live session; closing later re-docks it.
+   */
+  function dockMoveMenuItems(tab: Tab): React.ReactNode {
+    if (tab.type !== "terminal") return null;
+    const inDock = effectivePanelId === DOCK_PANEL_ID;
+    return (
+      <>
+        <ContextMenuItem onClick={() => handleTabContextAction(tab, inDock ? "move-to-editor" : "move-to-dock")}>
+          {inDock
+            ? <><Grid2x2 className="size-3.5 mr-2" />Move to Editor</>
+            : <><PanelBottom className="size-3.5 mr-2" />Move to Dock</>}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+      </>
+    );
+  }
+
   /** Handle context menu actions on a tab */
   const handleTabContextAction = useCallback((tab: Tab, action: string) => {
     const panelState = usePanelStore.getState();
@@ -227,6 +248,20 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
       case "close":
         panelState.closeTab(tab.id, effectivePanelId);
         break;
+      case "move-to-dock":
+        // Park the terminal in the dock (same live session — reparented, no restart).
+        panelState.moveTab(tab.id, effectivePanelId, DOCK_PANEL_ID);
+        panelState.setDockVisible(true);
+        break;
+      case "move-to-editor": {
+        // Send a dock terminal back to a grid panel: prefer the focused grid
+        // panel, else the first panel in the grid (dock is never in the grid).
+        const target = panelState.focusedPanelId !== DOCK_PANEL_ID
+          ? panelState.focusedPanelId
+          : panelState.grid.flat()[0];
+        if (target) panelState.moveTab(tab.id, DOCK_PANEL_ID, target);
+        break;
+      }
       case "close-others":
         for (const t of pTabs) {
           if (t.id !== tab.id && t.closable) panelState.closeTab(t.id, effectivePanelId);
@@ -356,6 +391,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               tagColor={sessionId ? sessionTagMap[sessionId]?.color : undefined}
               extraMenuContent={
                 <>
+                  {dockMoveMenuItems(tab)}
                   {compareMenuItems(tab)}
                   {sessionId && !notiType && (
                     <>
@@ -407,10 +443,24 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
             <div className="w-0.5 h-6 bg-primary rounded-full" />
           )}
 
-          {/* + button — inside flow, sticky when overflowing */}
+          {/* + button — opens a terminal when in the dock, command palette otherwise */}
           <button
-            onClick={() => openCommandPalette()}
-            title="Open command palette (Shift+Shift)"
+            onClick={() => {
+              if (effectivePanelId === DOCK_PANEL_ID) {
+                // Dock-specific: open a new terminal directly in the dock
+                const project = useProjectStore.getState().activeProject;
+                usePanelStore.getState().openInDock({
+                  type: "terminal",
+                  title: "Terminal",
+                  projectId: project?.name ?? null,
+                  closable: true,
+                  metadata: project ? { projectName: project.name } : undefined,
+                });
+              } else {
+                openCommandPalette();
+              }
+            }}
+            title={effectivePanelId === DOCK_PANEL_ID ? "New terminal in dock" : "Open command palette (Shift+Shift)"}
             className={tabAddButtonClass(editorTabStyle)}
           >
             <Plus className="size-4" />
