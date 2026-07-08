@@ -15,7 +15,7 @@ const isWindows = process.platform === "win32";
 // ── Unified PTY handle ──
 // Abstracts Bun native PTY (macOS/Linux) and bun-pty (Windows) behind one interface.
 
-interface PtyHandle {
+export interface PtyHandle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;
@@ -115,8 +115,11 @@ export interface TerminalSession {
   ws: unknown | null;
   /** Timeout to kill session after WS disconnect */
   disconnectTimer: ReturnType<typeof setTimeout> | null;
-  /** Idle timeout timer */
-  idleTimer: ReturnType<typeof setTimeout>;
+  /**
+   * Idle timeout timer — null while a WebSocket is connected (paused).
+   * Invariant: idleTimer is armed iff session.ws === null.
+   */
+  idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface TerminalSessionInfo {
@@ -128,7 +131,7 @@ export interface TerminalSessionInfo {
 
 type OutputCallback = (sessionId: string, data: string) => void;
 
-class TerminalService {
+export class TerminalService {
   private sessions = new Map<string, TerminalSession>();
   private outputBuffers = new Map<string, string>();
   private outputListeners = new Map<string, OutputCallback>();
@@ -171,6 +174,30 @@ class TerminalService {
     return id;
   }
 
+  /**
+   * Test-only seam: register a pre-built session with a caller-supplied
+   * PtyHandle. This avoids spawning a real shell in unit tests while still
+   * exercising all timer / state logic. Not part of the public API —
+   * prefixed with underscore to signal internal use.
+   *
+   * Returns the sessionId so tests can call setConnected / setDisconnected.
+   */
+  _createWithPty(pty: PtyHandle, projectPath = "/test"): string {
+    const id = crypto.randomUUID();
+    const session: TerminalSession = {
+      id,
+      pty,
+      projectPath,
+      createdAt: new Date(),
+      ws: null,
+      disconnectTimer: null,
+      idleTimer: this.createIdleTimer(id),
+    };
+    this.sessions.set(id, session);
+    this.outputBuffers.set(id, "");
+    return id;
+  }
+
   /** Write data to terminal via PTY */
   write(id: string, data: string): void {
     const session = this.sessions.get(id);
@@ -192,7 +219,7 @@ class TerminalService {
     if (!session) return;
 
     if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
-    clearTimeout(session.idleTimer);
+    if (session.idleTimer) clearTimeout(session.idleTimer);
     session.pty.kill();
 
     this.sessions.delete(id);
@@ -240,17 +267,26 @@ class TerminalService {
     if (!session) return;
     session.ws = ws;
 
+    // Pause idle timer — it only counts while disconnected (ws === null)
+    if (session.idleTimer) clearTimeout(session.idleTimer);
+    session.idleTimer = null;
+
     if (session.disconnectTimer) {
       clearTimeout(session.disconnectTimer);
       session.disconnectTimer = null;
     }
   }
 
-  /** Mark session as disconnected — start grace period */
+  /** Mark session as disconnected — start grace period and re-arm idle timer */
   setDisconnected(id: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
     session.ws = null;
+
+    // Re-arm idle timer now that ws is gone (grace is shorter and fires first,
+    // but idle keeps the invariant consistent for any reconnect-then-disconnect cycle)
+    if (session.idleTimer) clearTimeout(session.idleTimer);
+    session.idleTimer = this.createIdleTimer(id);
 
     session.disconnectTimer = setTimeout(() => {
       this.kill(id);
@@ -274,11 +310,18 @@ class TerminalService {
     }, IDLE_TIMEOUT_MS);
   }
 
-  /** Reset idle timer on activity */
+  /** Reset idle timer on activity — only re-arms when disconnected (ws === null) */
   private resetIdleTimer(id: string): void {
     const session = this.sessions.get(id);
     if (!session) return;
-    clearTimeout(session.idleTimer);
+    if (session.ws !== null) {
+      // Connected: keep idle paused — do not re-arm
+      if (session.idleTimer) clearTimeout(session.idleTimer);
+      session.idleTimer = null;
+      return;
+    }
+    // Disconnected: reset the countdown from now
+    if (session.idleTimer) clearTimeout(session.idleTimer);
     session.idleTimer = this.createIdleTimer(id);
   }
 }
