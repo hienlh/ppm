@@ -48,12 +48,42 @@ function pushHistory(history: string[], id: string): string[] {
 type Set = StoreApi<PanelStore>["setState"];
 type Get = StoreApi<PanelStore>["getState"];
 
-/** Flip dock visible without touching height or tabs. */
+/**
+ * Count the dock tabs belonging to the active project (the shared __dock__ panel
+ * holds tabs from all projects; the UI only shows the active project's).
+ * Drives "auto-open a terminal when the dock is opened empty" and "auto-close the
+ * dock when its last terminal is gone" — the dock never shows an empty state.
+ */
+export function activeProjectDockTabCount(get: Get): number {
+  const dockPanel = get().panels[DOCK_PANEL_ID];
+  if (!dockPanel) return 0;
+  // panel-store `currentProject` mirrors the active project name (set on switchProject).
+  const pj = get().currentProject;
+  return dockPanel.tabs.filter((t) => !t.projectId || !pj || t.projectId === pj).length;
+}
+
+/** Open a fresh terminal in the dock for the active project (used by auto-open). */
+export function openTerminalInDock(get: Get): void {
+  const projectName = get().currentProject;
+  get().openInDock({
+    type: "terminal",
+    title: "Terminal",
+    projectId: projectName ?? null,
+    closable: true,
+    metadata: projectName ? { projectName } : undefined,
+  });
+}
+
+/** Flip dock visible. Opening an empty dock auto-opens a terminal (no empty state). */
 export function makeToggleDock(set: Set, get: Get) {
   return function toggleDock(): void {
     const { dock } = get();
-    set({ dock: { ...dock, visible: !dock.visible } });
+    const nextVisible = !dock.visible;
+    set({ dock: { ...dock, visible: nextVisible } });
     persistDock(get);
+    if (nextVisible && activeProjectDockTabCount(get) === 0) {
+      openTerminalInDock(get);
+    }
   };
 }
 

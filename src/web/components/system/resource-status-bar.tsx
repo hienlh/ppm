@@ -11,7 +11,8 @@ function cpuColor(cpu: number) {
   return "text-green-500";
 }
 
-export const ResourceStatusBar = memo(function ResourceStatusBar() {
+/** `compact` renders inline for the 22px status bar (no full-width button, CPU+MEM only). */
+export const ResourceStatusBar = memo(function ResourceStatusBar({ compact = false }: { compact?: boolean }) {
   const { latest, isConnected } = useResourceMonitor();
   const openTab = useTabStore((s) => s.openTab);
   const isMobile = useIsMobile();
@@ -26,6 +27,7 @@ export const ResourceStatusBar = memo(function ResourceStatusBar() {
   };
 
   if (!isConnected || !latest) {
+    if (compact) return null; // stay silent in the status bar until connected
     return (
       <button
         onClick={handleClick}
@@ -38,6 +40,21 @@ export const ResourceStatusBar = memo(function ResourceStatusBar() {
   }
 
   const { cpu, ramMB, processCount } = latest.total;
+  const mem = ramMB < 1024 ? `${ramMB.toFixed(0)}M` : `${(ramMB / 1024).toFixed(1)}G`;
+
+  if (compact) {
+    // Inline segment for the 22px status bar: CPU % · MEM (handoff B2 right cluster).
+    return (
+      <button
+        onClick={handleClick}
+        className="flex items-center gap-2 px-1 rounded-sm hover:bg-accent/15 transition-colors cursor-pointer"
+        title="Open System Monitor"
+      >
+        <span className={cpuColor(cpu)}>CPU {cpu.toFixed(0)}%</span>
+        <span className="text-text-secondary">MEM {mem}</span>
+      </button>
+    );
+  }
 
   return (
     <button

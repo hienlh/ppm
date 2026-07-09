@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import {
-  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Cloud, PanelBottom,
+  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Cloud,
 } from "lucide-react";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
-import { usePanelStore } from "@/stores/panel-store";
 import { useShallow } from "zustand/react/shallow";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
@@ -86,10 +85,6 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
     activeProject?.name ? (s.counts.get(activeProject.name) ?? 0) : 0,
   );
   const jiraUnreadCount = useJiraStore((s) => s.unreadCount);
-  // Dock visible state — drives the active tint on the terminal panel toggle button.
-  // NavSectionRail is only rendered on desktop (hidden on mobile via the layout shell),
-  // so no useIsMobile guard is needed here; mobile dock toggle lives in phase 07.
-  const dockVisible = usePanelStore((s) => s.dock.visible);
 
   const TABS = useMemo(() => {
     const tabs: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [...BUILTIN_TABS];
@@ -136,13 +131,6 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
 
       {/* footer utilities */}
       <div className="shrink-0 flex flex-col items-center gap-0.5 px-[3px] py-2 border-t border-border">
-        {/* Terminal dock toggle — first footer item; active tint reflects dock.visible */}
-        <FooterUtil
-          icon={PanelBottom}
-          label="Terminal Panel"
-          active={dockVisible}
-          onClick={() => usePanelStore.getState().toggleDock()}
-        />
         <NotificationBellPopover expanded={false} />
         <button
           ref={cloudBtnRef}

@@ -6,6 +6,8 @@ import hljsLightUrl from "highlight.js/styles/github.min.css?url";
 export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
+/** Where the panel dock sits relative to the main content (VS Code-style). Per-user pref. */
+export type DockPosition = "left" | "bottom" | "right";
 export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
@@ -20,6 +22,7 @@ interface SettingsState {
   editorTabStyle: EditorTabStyle;
   sidebarActiveTab: SidebarActiveTab;
   jiraEnabled: boolean;
+  dockPosition: DockPosition;
   deviceName: string | null;
   version: string | null;
   setTheme: (theme: Theme) => void;
@@ -32,6 +35,7 @@ interface SettingsState {
   toggleTabWrap: () => void;
   setEditorTabStyle: (style: EditorTabStyle) => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
+  setDockPosition: (position: DockPosition) => void;
   fetchServerInfo: () => Promise<void>;
 }
 
@@ -45,6 +49,7 @@ interface PersistedSettings {
   editorTabStyle?: EditorTabStyle;
   sidebarActiveTab?: SidebarActiveTab;
   jiraEnabled?: boolean;
+  dockPosition?: DockPosition;
 }
 
 function loadPersistedSettings(): PersistedSettings {
@@ -115,6 +120,9 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   }
   if (isValidSidebarTab(data.sidebarActiveTab)) patch.sidebarActiveTab = data.sidebarActiveTab;
   if (typeof data.jiraEnabled === "boolean") patch.jiraEnabled = data.jiraEnabled;
+  if (data.dockPosition === "left" || data.dockPosition === "bottom" || data.dockPosition === "right") {
+    patch.dockPosition = data.dockPosition;
+  }
   if (Object.keys(patch).length === 0) return;
   persistSettings(patch);
   useSettingsStore.setState(patch as Partial<SettingsState>);
@@ -172,6 +180,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "explorer",
   jiraEnabled: _initial.jiraEnabled ?? false,
+  dockPosition: (_initial.dockPosition === "left" || _initial.dockPosition === "right") ? _initial.dockPosition : "bottom",
   deviceName: null,
   version: null,
 
@@ -250,6 +259,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setSidebarActiveTab: (tab) => {
     persistUiPref({ sidebarActiveTab: tab });
     set({ sidebarActiveTab: tab });
+  },
+
+  setDockPosition: (position) => {
+    persistUiPref({ dockPosition: position });
+    set({ dockPosition: position });
   },
 
   fetchServerInfo: async () => {

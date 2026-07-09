@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.0] - 2026-07-10
+
+### Added
+- **Mobile bottom nav v2** — the horizontal scrolling tab strip is replaced by a single **current-tab button** that opens a searchable **tab-switcher bottom sheet** grouped by split panel (per-row activate/close, long-press for the full tab action menu). The `+` opens the command palette; a dedicated **Terminal button** (green dot when sessions are running) toggles the dock sheet with expand/collapse (60%↔92%).
+- **Generalized panel dock** — the former "terminal dock" is now a position-configurable panel that can sit **left / bottom / right** (VS Code style) via a header dropdown (persisted per user). New header: pill strip (icon per tab type, `+N` overflow on vertical layouts), position dropdown, maximize/restore, hide, and per-pill close. The dock **never shows an empty state**: opening an empty dock auto-opens a terminal, and closing the last terminal auto-hides the dock.
+- **Desktop status bar** — a 22px bottom bar (previously defined but never mounted) now hosts the **only** panel toggle (`PanelBottom` + open-tab count, primary tint when open), plus CPU/MEM (moved from the sidebar) and the app version.
+
+### Changed
+- Sidebar drops the version line under the wordmark and the CPU/MEM resource strip; the nav rail and tab bar drop their terminal-dock toggles — the status bar owns the sole toggle.
+
+### Fixed
+- **Re-dock into an empty dock got stuck** — closing the last terminal *from the dock* deleted the reserved `__dock__` panel (the empty-panel auto-close was missing a `!== DOCK_PANEL_ID` guard). A later grid-terminal close then re-docked into a missing panel: the terminal stayed stuck in the editor while an empty dock opened. The dock panel is now never deleted.
+- **Dock position change could remount/kill the terminal** — desktop dock maximize/position changes now re-apply size via a keyed group remount (react-resizable-panels `defaultSize` is mount-only); the live xterm lives in the tab pool and is reparented, so the PTY survives.
+
 ## [0.14.26] - 2026-07-08
 
 ### Fixed

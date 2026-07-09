@@ -20,6 +20,7 @@ const MOBILE_KEYS = [
   { label: "\u2193", value: "\x1b[B" },
   { label: "\u2190", value: "\x1b[D" },
   { label: "\u2192", value: "\x1b[C" },
+  { label: "^C", value: "\x03" },
 ] as const;
 
 export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: TerminalTabProps) {

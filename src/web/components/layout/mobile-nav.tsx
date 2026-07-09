@@ -1,9 +1,7 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  Terminal, MessageSquare, Database,
-  FileDiff, FileCode, Settings, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
-  ChevronRight, Globe, Puzzle, Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight,
-  PanelBottom,
+  Terminal, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
+  Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useShallow } from "zustand/react/shallow";
@@ -15,36 +13,21 @@ import { useProjectTags } from "@/components/chat/tag-filter-chips";
 import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
 import { resolveProjectColor } from "@/lib/project-palette";
 import { ProjectAvatar } from "@/components/layout/project-avatar";
-import type { Tab, TabType } from "@/stores/tab-store";
+import type { Tab } from "@/stores/tab-store";
 import { cn, basename } from "@/lib/utils";
 import { toast } from "sonner";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
-import { useNotificationStore, notificationColor } from "@/stores/notification-store";
-import { useStreamingStore } from "@/stores/streaming-store";
-import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overflow";
+import { useNotificationStore } from "@/stores/notification-store";
 import { downloadFile } from "@/lib/file-download";
 import { FileActions } from "@/components/explorer/file-actions";
 import { api, projectUrl } from "@/lib/api-client";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { DockPanel } from "@/components/layout/dock-panel";
-
-const NEW_TAB_OPTIONS: { type: TabType; label: string }[] = [
-  { type: "terminal", label: "Terminal" },
-  { type: "chat", label: "AI Chat" },
-  { type: "settings", label: "Settings" },
-];
-const NEW_TAB_LABELS: Partial<Record<TabType, string>> = Object.fromEntries(NEW_TAB_OPTIONS.map((o) => [o.type, o.label]));
-
-const TAB_ICONS: Record<TabType, React.ElementType> = {
-  terminal: Terminal, chat: MessageSquare, editor: FileCode, database: Database, sqlite: Database, postgres: Database,
-  "git-diff": FileDiff, settings: Settings, ports: Globe,
-  extension: Puzzle,
-  "extension-webview": Puzzle,
-  "conflict-editor": FileDiff,
-  "system-monitor": Settings,
-  "git-log": FileCode,
-};
+import { MobileTabSwitcherSheet } from "@/components/layout/mobile-tab-switcher-sheet";
+import { getTabTypeIcon } from "@/lib/tab-type-icons";
+import { countDockTabs } from "@/components/layout/dock-tabs";
+import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 
 interface MobileNavProps { onMenuPress: () => void; onProjectsPress: () => void; }
 
@@ -55,6 +38,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
   // Dock visibility — drives the toggle button active state and the bottom sheet.
   const dock = usePanelStore((s) => s.dock);
+  const dockExpanded = usePanelStore((s) => s.dockExpanded);
   const isMobile = useIsMobile();
 
   const currentProject = usePanelStore((s) => s.currentProject);
@@ -79,36 +63,17 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   }, [panels, grid, currentProject]);
 
   const activeTabId = panels[focusedPanelId]?.activeTabId ?? null;
-  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const mobileScrollRef = useRef<HTMLDivElement>(null);
-  const prevTabCount = useRef(tabs.length);
   const notifications = useNotificationStore((s) => s.notifications);
-  const streamingSessions = useStreamingStore((s) => s.sessions);
   const compareSelection = useCompareStore((s) => s.selection);
   const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
 
-  const { canScrollLeft, canScrollRight, scrollRight: doScrollRight } =
-    useTabOverflow(mobileScrollRef);
-  const hiddenUnread = getHiddenUnreadDirection(mobileScrollRef.current, tabRefs.current as Map<string, HTMLElement>, tabs, notifications);
-
   const [menuTabId, setMenuTabId] = useState<string | null>(null);
-  const [newTabSheetOpen, setNewTabSheetOpen] = useState(false);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tabSheetOpen, setTabSheetOpen] = useState(false);
 
-  useEffect(() => {
-    if (tabs.length > prevTabCount.current && activeTabId) {
-      tabRefs.current.get(activeTabId)?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-    }
-    prevTabCount.current = tabs.length;
-  }, [tabs.length, activeTabId]);
-
-  const startLongPress = useCallback((tabId: string) => {
-    longPressTimer.current = setTimeout(() => setMenuTabId(tabId), 400);
-  }, []);
-
-  const cancelLongPress = useCallback(() => {
-    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
-  }, []);
+  // Active tab (for the current-tab button) + running-terminal indicator.
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const dockPanel = panels[DOCK_PANEL_ID];
+  const dockTabCount = countDockTabs(dockPanel, currentProject);
 
   // Context menu actions — use the tab's actual panel (not always focused)
   const menuTab = menuTabId ? tabs.find((t) => t.id === menuTabId) : null;
@@ -230,17 +195,6 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   }
 
   const { activeProject: activeProjectForTab } = useProjectStore.getState();
-  function handleNewTab(type: TabType) {
-    const state = usePanelStore.getState();
-    const firstPanelId = state.grid[0]?.[0] ?? state.focusedPanelId;
-    const needsProject = type === "git-diff" || type === "terminal" || type === "chat";
-    const metadata = needsProject ? { projectName: activeProjectForTab?.name } : undefined;
-    state.openTab(
-      { type, title: NEW_TAB_LABELS[type] ?? type, metadata, projectId: activeProjectForTab?.name ?? null, closable: true },
-      firstPanelId,
-    );
-    setNewTabSheetOpen(false);
-  }
 
   // Active project avatar for the Projects button
   const { activeProject, projects, customOrder } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject, projects: s.projects, customOrder: s.customOrder })));
@@ -281,14 +235,13 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     ? resolveProjectColor(activeProject.color, activeIdx >= 0 ? activeIdx : 0)
     : "#4f86c6";
 
+  const ActiveTabIcon = activeTab ? getTabTypeIcon(activeTab.type) : null;
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-background border-t border-border z-40 select-none">
       <div className="flex items-center h-12">
-        {/* Fixed section: Menu + Project + Add — curved right edge */}
-        <div className={cn(
-          "flex items-center shrink-0 bg-background relative z-10 transition-all duration-200",
-          canScrollLeft ? "rounded-r-2xl shadow-[6px_0_12px_-4px_rgba(0,0,0,0.12)]" : "border-r border-border",
-        )}>
+        {/* Fixed cluster: Menu | Project | Terminal | + */}
+        <div className="flex items-center shrink-0 border-r border-border">
           <button onClick={onMenuPress} className="flex items-center justify-center size-12 shrink-0 text-text-secondary">
             <Menu className="size-5" />
           </button>
@@ -309,121 +262,74 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
           <div className="w-px self-stretch bg-border shrink-0" />
 
+          {/* Terminal / panel button — green dot = running dock sessions; active tint when dock open */}
           <button
-            onClick={() => openCommandPalette()}
+            onClick={() => usePanelStore.getState().toggleDock()}
+            title={dock.visible ? "Hide panel" : "Show panel"}
+            aria-label={dock.visible ? "Hide panel" : "Show panel"}
             className={cn(
-              "flex items-center justify-center shrink-0 text-text-secondary gap-1.5 h-12",
-              tabs.length === 0 ? "px-4" : "w-12",
+              "relative flex items-center justify-center size-12 shrink-0 transition-colors",
+              dock.visible ? "text-primary bg-primary/10" : "text-text-secondary",
             )}
           >
-            <Plus className="size-4" />
-            {tabs.length === 0 && <span className="text-xs">New Tab</span>}
+            <Terminal className="size-5" />
+            {dockTabCount > 0 && (
+              <span
+                aria-hidden
+                className="absolute top-1.5 right-1.5 size-[7px] rounded-full ring-[1.5px] ring-background"
+                style={{ backgroundColor: "var(--color-success)" }}
+              />
+            )}
           </button>
 
           <div className="w-px self-stretch bg-border shrink-0" />
 
-          {/* Dock toggle — thumb-zone, ≥44px, reflects dock.visible state */}
+          {/* New tab — opens the command palette */}
           <button
-            onClick={() => usePanelStore.getState().toggleDock()}
-            title={dock.visible ? "Hide terminal dock" : "Show terminal dock"}
-            aria-label={dock.visible ? "Hide terminal dock" : "Show terminal dock"}
-            className={cn(
-              "flex items-center justify-center size-12 shrink-0 transition-colors",
-              dock.visible ? "text-primary" : "text-text-secondary",
-            )}
+            onClick={() => openCommandPalette()}
+            title="New tab"
+            aria-label="New tab"
+            className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
           >
-            <PanelBottom className="size-5" />
+            <Plus className="size-5" />
           </button>
         </div>
 
-        {/* Tab list — overlaps under curved edge so tabs slide beneath it */}
-        <div className="flex-1 min-w-0 relative flex items-center h-12 -ml-4">
-          <div ref={mobileScrollRef} className="flex-1 min-w-0 flex items-center h-12 overflow-x-auto scrollbar-none pl-4">
-          {tabs.map((tab) => {
-            const Icon = TAB_ICONS[tab.type] || Puzzle;
-            const isActive = tab.id === activeTabId;
-            const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string) : undefined;
-            const entry = sessionId ? notifications.get(sessionId) : undefined;
-            const notiType = entry && entry.count > 0 ? entry.type : null;
-            const tagColor = sessionId ? sessionTagMap[sessionId]?.color : undefined;
-            const isStreaming = sessionId ? streamingSessions.has(sessionId) : false;
-            return (
-              <button
-                key={tab.id}
-                ref={(el) => { if (el) tabRefs.current.set(tab.id, el); else tabRefs.current.delete(tab.id); }}
-                onClick={() => {
-                  usePanelStore.getState().setActiveTab(tab.id);
-                  if (sessionId) useNotificationStore.getState().clearForSession(sessionId);
-                }}
-                onTouchStart={() => startLongPress(tab.id)}
-                onTouchEnd={cancelLongPress}
-                onTouchMove={cancelLongPress}
-                onContextMenu={(e) => e.preventDefault()}
-                className={cn(
-                  "relative flex items-center gap-1 px-3 h-12 whitespace-nowrap text-xs shrink-0 border-t-2 transition-colors",
-                  isActive ? "border-primary bg-surface text-primary" : "border-transparent text-text-secondary",
-                )}
-              >
-                {tagColor && (
-                  // Tag identity marker — VS Code-style vertical bar on left edge, matches desktop tab
-                  <span
-                    aria-hidden
-                    className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full pointer-events-none"
-                    style={{ backgroundColor: tagColor }}
-                  />
-                )}
-                <span className={cn("relative", isStreaming && "text-amber-500")}>
-                  <Icon className="size-4" />
-                  {isStreaming ? (
-                    // Messenger-style typing dots inside chat bubble — inherits amber via bg-current
-                    <span aria-hidden className="absolute inset-0 flex items-center justify-center gap-[1.5px]">
-                      <span className="tab-typing-dot size-[2px] rounded-full bg-current" />
-                      <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.15s" }} />
-                      <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.3s" }} />
-                    </span>
-                  ) : notiType && !isActive ? (
-                    <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notiType))} />
-                  ) : null}
-                </span>
-                <span className="max-w-[80px] truncate">{tab.title}</span>
-                {tab.closable && (
-                  <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); usePanelStore.getState().closeTab(tab.id); }}
-                    className="ml-0.5 p-0.5 rounded hover:bg-surface-elevated">
-                    <X className="size-3" />
-                  </span>
-                )}
-              </button>
-            );
-          })}
-          </div>
-          {/* Right scroll arrow */}
-          {canScrollRight && (
-            <button onClick={doScrollRight} className="absolute right-0 z-10 flex items-center justify-center size-8 bg-gradient-to-l from-background via-background to-transparent">
-              <span className="relative">
-                <ChevronRight className="size-3.5 text-text-secondary" />
-                {hiddenUnread.right && <span className={cn("absolute -top-1 -left-0.5 size-1.5 rounded-full", notificationColor(hiddenUnread.right))} />}
-              </span>
-            </button>
-          )}
-        </div>
+        {/* Current tab button (flex-1) — opens the tab switcher sheet */}
+        {activeTab && ActiveTabIcon ? (
+          <button
+            onClick={() => setTabSheetOpen(true)}
+            className="flex-1 min-w-0 flex items-center gap-2 h-12 px-3 border-t-2 border-primary bg-surface"
+          >
+            <ActiveTabIcon className="size-4 text-primary shrink-0" />
+            <span className="flex-1 min-w-0 truncate text-left text-xs font-medium text-primary">{activeTab.title}</span>
+            <span className="px-1.5 h-[18px] inline-flex items-center rounded-md border border-border bg-surface-elevated text-[10px] font-mono text-text-secondary shrink-0">
+              {tabs.length}
+            </span>
+            <ChevronUp className="size-3.5 text-text-subtle shrink-0" />
+          </button>
+        ) : (
+          <button
+            onClick={() => openCommandPalette()}
+            className="flex-1 flex items-center gap-1.5 h-12 px-3 text-text-secondary text-xs"
+          >
+            <Plus className="size-4" /> New Tab
+          </button>
+        )}
       </div>
 
-      {/* New tab action sheet */}
-      <BottomSheet open={newTabSheetOpen} onClose={() => setNewTabSheetOpen(false)}>
-        <div className="px-3 py-2 text-xs text-text-secondary border-b border-border">New Tab</div>
-        {NEW_TAB_OPTIONS.map((opt) => {
-          const Icon = TAB_ICONS[opt.type];
-          return (
-            <button
-              key={opt.type}
-              onClick={() => handleNewTab(opt.type)}
-              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated"
-            >
-              <Icon className="size-4" /> {opt.label}
-            </button>
-          );
-        })}
-      </BottomSheet>
+      {/* Tab switcher sheet — replaces the old scrolling strip */}
+      <MobileTabSwitcherSheet
+        open={tabSheetOpen}
+        onClose={() => setTabSheetOpen(false)}
+        onOpenPalette={() => openCommandPalette()}
+        tabs={tabs}
+        tabPanelMap={tabPanelMap}
+        panelOrder={grid.flat()}
+        activeTabId={activeTabId}
+        projectColor={activeProject ? activeColor : null}
+        onTabLongPress={(tabId) => setMenuTabId(tabId)}
+      />
 
       {/* Long-press tab action sheet */}
       <BottomSheet open={!!menuTab} onClose={() => setMenuTabId(null)}>
@@ -561,7 +467,8 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           onClose={() => usePanelStore.getState().setDockVisible(false)}
           // Higher z-index than the default nav z-40 so the sheet covers the tab bar
           zIndex={60}
-          className="h-[60vh]"
+          // Expand/collapse toggles 60% ↔ 92% (dockExpanded, session-only); animate height.
+          className={cn("transition-[height] duration-200", dockExpanded ? "h-[92vh]" : "h-[60vh]")}
         >
           {/* Fixed height so xterm fitAddon.fit() receives a non-zero container.
               ResizeObserver in use-terminal.ts fires when this element gains dimensions,

@@ -2,10 +2,12 @@ import { useEffect, useCallback, memo } from "react";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import { GripVertical, GripHorizontal } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
+import { useSettingsStore } from "@/stores/settings-store";
 import { createPanel } from "@/stores/panel-utils";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { EditorPanel } from "./editor-panel";
 import { DockPanel } from "./dock-panel";
+import { resolveDockLayout } from "./dock-layout";
 
 interface PanelLayoutProps {
   projectName: string;
@@ -18,6 +20,8 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
   );
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
   const dock = usePanelStore((s) => s.dock);
+  const dockExpanded = usePanelStore((s) => s.dockExpanded);
+  const dockPosition = useSettingsStore((s) => s.dockPosition);
   const currentProject = usePanelStore((s) => s.currentProject);
   const panelCount = grid.flat().length;
 
@@ -42,6 +46,9 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
   // Persist dock height when user drags the resize handle.
   // onResize fires with the dock Panel's new size as a percentage.
   const handleDockPanelResize = useCallback(({ asPercentage }: { asPercentage: number }) => {
+    // While maximized, the group remounts at the expanded size and fires onResize —
+    // don't let that clobber the user's saved height, or "restore" can't return to it.
+    if (usePanelStore.getState().dockExpanded) return;
     usePanelStore.getState().setDockHeight(asPercentage);
   }, []);
 
@@ -74,21 +81,40 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
     return <>{gridArea}</>;
   }
 
-  // Dock visible — wrap grid + dock in a parent vertical Group.
-  // The grid Panel (flex-1 remaining) sits above; DockPanel gets dock.height%.
-  // minSize 10% keeps the dock usable; maxSize 85% mirrors the clamp in setDockHeight.
+  // Dock visible — wrap grid + dock in a parent Group whose orientation +
+  // child order depend on dock position (left/bottom/right, VS Code-style).
+  // The dock is a single reserved slot; its live xterm nodes live in TabPool's
+  // hidden container, so re-rendering this Group on position change reparents
+  // (never remounts) the terminal — the PTY survives.
   // Sizes MUST be percentage strings — bare numbers are interpreted as PIXELS
   // by react-resizable-panels (v4), which collapses the dock to a thin strip
-  // and can throw inside <Group>.
+  // and can throw inside <Group>. resolveDockLayout guarantees % strings.
+  const layout = resolveDockLayout(dockPosition, dock.height, dockExpanded);
+  // Handle orientation is perpendicular to the Group: vertical group → horizontal
+  // drag handle; horizontal group → vertical drag handle.
+  const handleOrientation = layout.orientation === "vertical" ? "horizontal" : "vertical";
+  const dockPanelEl = (
+    <Panel defaultSize={layout.dockSize} minSize="10%" maxSize="85%" onResize={handleDockPanelResize}>
+      <DockPanel borderEdge={layout.borderEdge} />
+    </Panel>
+  );
+  const gridPanelEl = (
+    <Panel minSize="15%">
+      {gridArea}
+    </Panel>
+  );
+
+  // Key the Group on position + expanded so maximize/restore and position changes
+  // REMOUNT the group, re-applying `defaultSize` (which is otherwise mount-only in
+  // react-resizable-panels v4). A fresh mount always builds a valid layout — the
+  // imperative resize() API instead throws "Layout not found" mid-commit. Panels host
+  // only empty slots; live xterm/editor nodes live in TabPool and are reparented (PTY
+  // survives). No per-Panel keys — those desync the panel registry on toggle.
   return (
-    <Group orientation="vertical" style={{ height: "100%" }}>
-      <Panel minSize="15%">
-        {gridArea}
-      </Panel>
-      <ResizeHandle orientation="horizontal" />
-      <Panel defaultSize={`${dock.height}%`} minSize="10%" maxSize="85%" onResize={handleDockPanelResize}>
-        <DockPanel />
-      </Panel>
+    <Group key={`${dockPosition}-${dockExpanded}`} orientation={layout.orientation} style={{ height: "100%" }}>
+      {layout.dockFirst ? dockPanelEl : gridPanelEl}
+      <ResizeHandle orientation={handleOrientation} />
+      {layout.dockFirst ? gridPanelEl : dockPanelEl}
     </Group>
   );
 });

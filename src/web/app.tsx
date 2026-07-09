@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { PanelLayout } from "@/components/layout/panel-layout";
 import { TabPool } from "@/components/layout/tab-pool";
 import { Sidebar } from "@/components/layout/sidebar";
+import { StatusBar } from "@/components/layout/status-bar";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileDrawer } from "@/components/layout/mobile-drawer";
 import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
@@ -295,9 +296,12 @@ export function App() {
             {/* TabPool renders all tab components persistently and portals them into panel slots.
                 Placed after PanelLayout so slot refs are registered before portals render. */}
             <TabPool />
-
           </div>
         </div>
+
+        {/* Desktop status bar — full-width bottom of the window (VS Code style: spans under
+            sidebar + content). Self-gated to desktop via `hidden md:flex`. */}
+        <StatusBar />
 
         {/* Mobile bottom nav */}
         <MobileNav

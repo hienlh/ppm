@@ -11,7 +11,6 @@ import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { useGitChangesPoller } from "@/stores/git-status-store";
-import { ResourceStatusBar } from "@/components/system/resource-status-bar";
 import { ProjectSwitcher } from "./project-switcher";
 import { NavSectionRail } from "./nav-section-rail";
 
@@ -51,15 +50,14 @@ function ResizeHandle({ onResize }: { onResize: (width: number) => void }) {
   );
 }
 
-function Wordmark({ version, onToggle }: { version: string | null; onToggle: () => void }) {
+function Wordmark({ onToggle }: { onToggle: () => void }) {
   return (
     <button
       onClick={onToggle}
       title="Toggle sidebar (⌘B)"
-      className="w-[52px] shrink-0 flex flex-col items-center justify-center gap-px border-r border-border hover:bg-surface-elevated transition-colors"
+      className="w-[52px] shrink-0 flex items-center justify-center border-r border-border hover:bg-surface-elevated transition-colors"
     >
       <span className="text-[11px] font-bold text-primary leading-none">PPM</span>
-      {version && <span className="text-[8px] text-text-subtle leading-none">v{version}</span>}
     </button>
   );
 }
@@ -71,7 +69,6 @@ export const Sidebar = memo(function Sidebar() {
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const setSidebarWidth = useSettingsStore((s) => s.setSidebarWidth);
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
-  const version = useSettingsStore((s) => s.version);
   useGitChangesPoller(activeProject?.name, sidebarActiveTab === "git");
 
   if (sidebarCollapsed) {
@@ -96,7 +93,7 @@ export const Sidebar = memo(function Sidebar() {
     >
       {/* Top bar: wordmark + project switcher */}
       <div className="flex h-[41px] border-b border-border shrink-0">
-        <Wordmark version={version} onToggle={toggleSidebar} />
+        <Wordmark onToggle={toggleSidebar} />
         <div className="flex-1 min-w-0 flex items-center px-1.5">
           <ProjectSwitcher />
         </div>
@@ -128,11 +125,6 @@ export const Sidebar = memo(function Sidebar() {
             {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (
               <ExtensionTreeView viewId={sidebarActiveTab.slice(4)} className="h-full" />
             )}
-          </div>
-
-          {/* Resource monitor status bar */}
-          <div className="shrink-0 border-t border-border">
-            <ResourceStatusBar />
           </div>
         </div>
       </div>

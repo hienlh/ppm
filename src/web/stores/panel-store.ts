@@ -26,6 +26,7 @@ import {
   persistDock,
   snapshotDockForProject,
   restoreDockForProject,
+  activeProjectDockTabCount,
 } from "./dock-actions";
 
 /** Tab types that can only have 1 instance per project */
@@ -75,6 +76,8 @@ export interface PanelStore {
   dock: DockState;
   /** Per-project dock state snapshots (mirrors projectGrids pattern). */
   projectDock: Record<string, DockState>;
+  /** Dock maximized (session-only — never persisted, resets on reload). */
+  dockExpanded: boolean;
 
   // Project lifecycle
   switchProject: (projectName: string) => void;
@@ -99,6 +102,8 @@ export interface PanelStore {
   toggleDock: () => void;
   setDockVisible: (visible: boolean) => void;
   setDockHeight: (pct: number) => void;
+  /** Toggle dock maximize (session-only). */
+  toggleDockExpanded: () => void;
   openInDock: (tab: Omit<Tab, "id">) => string;
   /** Park a terminal from a grid panel into __dock__ without killing the PTY session. */
   redockTab: (tabId: string, fromPanelId: string) => void;
@@ -161,11 +166,14 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     projectFocused: {},
     dock: { visible: false, height: 30 },
     projectDock: {},
+    dockExpanded: false,
 
     // Dock actions — factories receive (set, get) matching the closure style
     toggleDock: makeToggleDock(set, get),
     setDockVisible: makeSetDockVisible(set, get),
     setDockHeight: makeSetDockHeight(set, get),
+    // Session-only maximize — no persist (mirrors dockExpanded field doc).
+    toggleDockExpanded: () => set((s) => ({ dockExpanded: !s.dockExpanded })),
     openInDock: makeOpenInDock(set, get),
     redockTab: makeRedockTab(set, get),
 
@@ -505,9 +513,13 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
             : newTabs[newTabs.length - 1]?.id ?? null;
         }
 
-        // Auto-close panel if empty and not the last one in current grid
+        // Auto-close panel if empty and not the last one in current grid.
+        // Guard: never delete __dock__ — it lives outside `grid` (gridRemovePanel is a
+        // no-op for it) so the map-delete would destroy the reserved dock panel, and a
+        // later redock (moveTab → __dock__) would silently no-op (to === undefined),
+        // leaving the terminal stuck in the grid while an empty dock opens.
         const gridPanelCount = s.grid.flat().length;
-        if (newTabs.length === 0 && gridPanelCount > 1) {
+        if (newTabs.length === 0 && gridPanelCount > 1 && pid !== DOCK_PANEL_ID) {
           const { [pid]: _, ...rest } = s.panels;
           const newGrid = gridRemovePanel(s.grid, pid);
           // Focus must land on a panel still in the grid — Object.keys(rest)
@@ -523,6 +535,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         };
       });
       persist();
+
+      // Auto-close the dock when its last terminal is closed (no empty state).
+      if (pid === DOCK_PANEL_ID && activeProjectDockTabCount(get) === 0) {
+        get().setDockVisible(false);
+      }
     },
 
     setActiveTab: (tabId, panelId?) => {
