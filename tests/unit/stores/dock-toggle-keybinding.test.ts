@@ -2,7 +2,7 @@
  * dock-toggle-keybinding — Phase 04 store-level assertions.
  *
  * Validates:
- *   - KEY_ACTIONS contains a "toggle-dock" entry with defaultKey "Ctrl+`"
+ *   - KEY_ACTIONS contains a "toggle-dock" entry with defaultKey "Mod+'"
  *   - The entry is categorized as "general"
  *   - toggleDock() flips dock.visible (happy path + reverse)
  *
@@ -48,9 +48,9 @@ describe("toggle-dock KEY_ACTIONS entry", () => {
     expect(action).toBeDefined();
   });
 
-  it("toggle-dock defaultKey is Ctrl+`", () => {
+  it("toggle-dock defaultKey is Mod+' (opens the terminal panel)", () => {
     const action = KEY_ACTIONS.find((a) => a.id === "toggle-dock");
-    expect(action?.defaultKey).toBe("Ctrl+`");
+    expect(action?.defaultKey).toBe("Mod+'");
   });
 
   it("toggle-dock category is general", () => {
@@ -58,11 +58,12 @@ describe("toggle-dock KEY_ACTIONS entry", () => {
     expect(action?.category).toBe("general");
   });
 
-  it("toggle-dock does not collide with open-terminal (Mod+') — different key", () => {
+  it("open-terminal no longer binds Mod+' (repurposed to toggle the panel)", () => {
     const openTerminal = KEY_ACTIONS.find((a) => a.id === "open-terminal");
     const toggleDock = KEY_ACTIONS.find((a) => a.id === "toggle-dock");
-    // Mod+' (apostrophe) vs Ctrl+` (backtick) — distinct keys
-    expect(openTerminal?.defaultKey).not.toBe(toggleDock?.defaultKey);
+    // open-terminal has no default shortcut now; toggle-dock owns Mod+'.
+    expect(openTerminal?.defaultKey).toBe("");
+    expect(toggleDock?.defaultKey).toBe("Mod+'");
   });
 });
 

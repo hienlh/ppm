@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.15.1] - 2026-07-10
+
+### Changed
+- **`Mod+'` now toggles the terminal panel** (opens/closes the dock, auto-opening a terminal when empty) instead of creating a terminal tab. "Open Terminal Tab" keeps no default shortcut and remains available via the command palette.
+
+### Fixed
+- **Dock resize lost its grip on the first drag** — `onResize` fed the live dock height into the Panel's mount-only `defaultSize`, so react-resizable-panels re-baselined the panel mid-drag (2nd drag worked). `defaultSize` is now frozen per layout key and refreshes only on maximize/restore/position change.
+- **Toggling the terminal panel jumped scrolled chat tabs to the top** — the toggle switched the whole layout between a bare grid and a wrapped group, remounting the grid and reparenting its tabs via TabPool. The Group is now always rendered with the grid Panel at a fixed child slot; only the dock Panel + handle are added/removed, so the grid never remounts.
+- **Mobile tab-switcher sheet couldn't scroll** — the tab list is a flex child; without `min-h-0` it wouldn't shrink below its content, so `overflow-y-auto` never engaged. Added `min-h-0` (+ `overscroll-contain`).
+
 ## [0.15.0] - 2026-07-10
 
 ### Added

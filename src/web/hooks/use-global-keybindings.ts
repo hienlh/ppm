@@ -78,8 +78,8 @@ export function useGlobalKeybindings() {
         const { matchesEvent: m } = useKeybindingsStore.getState();
         // Mod+S — always prevent browser save dialog
         if (m(e, "save-prevent")) { e.preventDefault(); }
-        // Ctrl+` — toggle dock fires even when terminal textarea is focused (VSCode parity).
-        // Ctrl+` is a modifier combo, so it cannot produce a plain backtick in the shell.
+        // toggle-dock (Mod+') fires even when the terminal textarea is focused (VSCode parity).
+        // It's a modifier combo, so it can't produce a plain quote in the shell.
         if (m(e, "toggle-dock")) {
           e.preventDefault();
           usePanelStore.getState().toggleDock();

@@ -26,14 +26,14 @@ export const KEY_ACTIONS: KeyAction[] = [
   // General
   { id: "command-palette", label: "Command Palette", category: "general", defaultKey: "F1", note: "Shift+Shift also opens (not customizable)" },
   { id: "toggle-sidebar", label: "Toggle Sidebar", category: "general", defaultKey: "Mod+B" },
-  { id: "toggle-dock", label: "Toggle Terminal Dock", category: "general", defaultKey: "Ctrl+`", note: "Fires even when a terminal is focused (VSCode parity)" },
+  { id: "toggle-dock", label: "Toggle Terminal Panel", category: "general", defaultKey: "Mod+'", note: "Opens/closes the terminal panel; auto-opens a terminal when empty. Fires even when a terminal is focused." },
   { id: "save-prevent", label: "Prevent Save Dialog", category: "general", defaultKey: "Mod+S", locked: true, note: "Always active — prevents browser save" },
   // Tabs
   { id: "next-tab", label: "Next Tab", category: "tabs", defaultKey: "Alt+]" },
   { id: "prev-tab", label: "Previous Tab", category: "tabs", defaultKey: "Alt+[" },
   { id: "new-file", label: "New File", category: "tabs", defaultKey: "Mod+N" },
   { id: "open-chat", label: "Open Chat", category: "tabs", defaultKey: "Mod+L" },
-  { id: "open-terminal", label: "Open Terminal", category: "tabs", defaultKey: "Mod+'" },
+  { id: "open-terminal", label: "Open Terminal Tab", category: "tabs", defaultKey: "", note: "No default shortcut — Mod+' now toggles the terminal panel; still available via the command palette" },
   { id: "open-settings", label: "Open Settings", category: "tabs", defaultKey: "Mod+," },
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
   { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
