@@ -3,11 +3,34 @@ import { api } from "@/lib/api-client";
 import { toast } from "sonner";
 import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
+import { fetchChangelogSince, compareSemver, type ChangelogSection } from "@/lib/changelog";
 import { cn } from "@/lib/utils";
 
 const POLL_INTERVAL_MS = 60_000;
 const DISMISS_KEY_PREFIX = "ppm-upgrade-dismissed-";
 const RELEASES_URL = "https://github.com/hienlh/ppm/releases";
+
+// QA test hook. `?ppm_upgrade_test[=<ver|off>]` forces the update state on dev.
+// The flag is latched into sessionStorage at module load — BEFORE useUrlSync
+// rewrites the URL and drops the param — so it survives tab/project navigation
+// and reloads. Clear it with `?ppm_upgrade_test=off`.
+const TEST_KEY = "ppm-upgrade-test";
+(function latchTestMode() {
+  if (typeof window === "undefined") return;
+  const p = new URLSearchParams(window.location.search);
+  if (!p.has("ppm_upgrade_test")) return;
+  const v = p.get("ppm_upgrade_test");
+  if (v === "off" || v === "0" || v === "false") sessionStorage.removeItem(TEST_KEY);
+  else sessionStorage.setItem(TEST_KEY, v || "1");
+})();
+
+/** Latched test target: null = off, "" = auto (next minor), else a version string. */
+function getTestTarget(): string | null {
+  if (typeof window === "undefined") return null;
+  const v = sessionStorage.getItem(TEST_KEY);
+  if (v === null) return null;
+  return v === "1" ? "" : v;
+}
 
 interface UpgradeStatus {
   currentVersion: string;
@@ -20,6 +43,12 @@ interface UpgradeResult {
   newVersion?: string;
   restart: boolean;
   message?: string;
+}
+
+/** Bump the minor version (for the QA test hook's synthetic target). */
+function nextMinor(v: string): string {
+  const [maj = 0, min = 0] = v.split(".").map((n) => parseInt(n, 10) || 0);
+  return `${maj}.${min + 1}.0`;
 }
 
 /** Clear browser/SW caches and reload the page */
@@ -44,6 +73,8 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
   const [upgrading, setUpgrading] = useState(false);
   const [complete, setComplete] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [notes, setNotes] = useState<ChangelogSection[] | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval>;
@@ -65,6 +96,18 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
     timer = setInterval(check, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, []);
+
+  // Load release notes (current → latest) the first time the popover opens.
+  useEffect(() => {
+    // Test hook: show the full changelog when forcing the update state on dev.
+    const since = getTestTarget() !== null ? "0.0.0" : (currentVersion ?? version);
+    if (!open || notes !== null || notesLoading || !since) return;
+    setNotesLoading(true);
+    fetchChangelogSince(since)
+      .then(setNotes)
+      .catch(() => setNotes([]))
+      .finally(() => setNotesLoading(false));
+  }, [open, currentVersion, version, notes, notesLoading]);
 
   const handleUpgrade = useCallback(async () => {
     setUpgrading(true);
@@ -101,7 +144,18 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
   }, [availableVersion]);
 
   const current = currentVersion ?? version;
-  const hasUpdate = !!availableVersion && !dismissed;
+  // QA hook (latched in sessionStorage — see getTestTarget). Forces the update
+  // state on dev; `Update now` becomes a no-op. Off in normal use.
+  const latchedTarget = getTestTarget();
+  const isTest = latchedTarget !== null;
+  const testTarget = latchedTarget || (current ? nextMinor(current) : "9.9.9");
+  // Only a strictly-newer version counts as an update (guards against the
+  // upgrade check reporting an equal/older version — e.g. a stale registry).
+  const realUpdate = !!availableVersion && !!current && compareSemver(availableVersion, current) > 0
+    ? availableVersion
+    : null;
+  const effectiveAvailable = realUpdate ?? (isTest ? testTarget : null);
+  const hasUpdate = !!effectiveAvailable && !dismissed;
 
   if (!current && !hasUpdate) return null;
 
@@ -130,14 +184,14 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
     <div className="relative shrink-0">
       <button
         onClick={() => hasUpdate && setOpen((v) => !v)}
-        title={hasUpdate ? `Update available: v${availableVersion}` : `PPM v${current}`}
+        title={hasUpdate ? `Update available: v${effectiveAvailable}` : `PPM v${current}`}
         className={cn(
           "flex items-center gap-1 px-1 rounded-sm transition-colors",
           hasUpdate ? "text-success hover:brightness-110" : "cursor-default",
         )}
       >
         {hasUpdate && <ArrowUpCircle className="size-3" />}
-        {current && <span>v{current}</span>}
+        <span>{hasUpdate ? `New version · v${effectiveAvailable}` : `v${current}`}</span>
       </button>
 
       {open && hasUpdate && (
@@ -153,15 +207,31 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
               </span>
               <div className="min-w-0 flex-1">
                 <div className="text-[13px] font-semibold text-text leading-tight">Update available</div>
-                <div className="text-[11px] text-text-3 font-mono mt-0.5">v{current} → v{availableVersion}</div>
+                <div className="text-[11px] text-text-3 font-mono mt-0.5">v{current} → v{effectiveAvailable}</div>
               </div>
             </div>
-            <p className="px-3 py-2.5 text-[12.5px] text-text-2 leading-relaxed">
-              A new version of PPM is available. Update now, or review the release notes first.
-            </p>
+            <div className="max-h-56 overflow-y-auto px-3 py-2.5 text-[12px] text-text-2 leading-relaxed">
+              {notesLoading ? (
+                <span className="flex items-center gap-2 text-text-3">
+                  <Loader2 className="size-3.5 animate-spin" /> Loading release notes…
+                </span>
+              ) : notes && notes.length > 0 ? (
+                <div className="space-y-2.5">
+                  {notes.map((s) => (
+                    <ChangelogEntry key={s.version} version={s.version} body={s.body} />
+                  ))}
+                </div>
+              ) : (
+                <span className="text-text-3">
+                  A new version of PPM is available. Open the release notes for details.
+                </span>
+              )}
+            </div>
             <div className="flex flex-col gap-1.5 px-3 pb-3">
               <button
-                onClick={handleUpgrade}
+                onClick={isTest && !realUpdate
+                  ? () => { toast.info("Test mode — no real update to install"); setOpen(false); }
+                  : handleUpgrade}
                 className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg bg-success text-[12.5px] font-bold text-[#04130c] hover:brightness-105 transition-[filter]"
               >
                 <Download className="size-3.5" /> Update now
@@ -186,6 +256,43 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Strip inline markdown emphasis/code so the changelog reads cleanly in the popover. */
+function stripInline(s: string): string {
+  return s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
+}
+
+/** Render one CHANGELOG version section: version heading + category headings + bullets. */
+function ChangelogEntry({ version, body }: { version: string; body: string }) {
+  const lines = body.split("\n");
+  return (
+    <div>
+      <div className="text-[11px] font-mono font-semibold text-text mb-1">v{version}</div>
+      <div className="space-y-1">
+        {lines.map((line, i) => {
+          const t = line.trim();
+          if (!t) return null;
+          if (t.startsWith("### ")) {
+            return (
+              <div key={i} className="text-[10px] font-semibold uppercase tracking-wide text-text-3 pt-1">
+                {t.slice(4)}
+              </div>
+            );
+          }
+          if (t.startsWith("- ")) {
+            return (
+              <div key={i} className="flex gap-1.5 text-text-2">
+                <span className="text-text-3">•</span>
+                <span className="min-w-0">{stripInline(t.slice(2))}</span>
+              </div>
+            );
+          }
+          return <div key={i} className="text-text-2">{stripInline(t)}</div>;
+        })}
+      </div>
     </div>
   );
 }
