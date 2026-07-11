@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.16.2] - 2026-07-12
+
+### Fixed
+- **AskUserQuestion rendered as two cards per question** — the interactive `approval_request` card and the SDK's real `tool_use`/`tool_result` both rendered. The SDK pair is now suppressed on the client; the approval card (which carries the selected answers) is the single representation.
+- **Answering a question on one device didn't dismiss it on others** — the server now broadcasts `approval_resolved` on every approval response; all connected clients clear the live prompt and converge to the answered card (previously only the answering client cleared, and late answers were silent no-ops).
+- **Reloading a session mid-turn duplicated the active turn** — REST history (JSONL persists the turn incrementally) and the `turn_events` replay both delivered the unfinished turn. The replay is now authoritative: it strips the history copy of the active turn, and the initial history merge trims it when a replay already owns it.
+- **Duplicate events from overlapping reconnect replays** (same session in two tabs / reconnect churn) — a new `turn_events` replay cancels the previous replay's rAF chunking, and id-bearing events (`approval_request` by requestId, `tool_use`/`tool_result` by toolUseId) upsert in place instead of appending duplicates.
+
+### Changed
+- **Mobile drawer footer** now hosts the upgrade/version button (same popover as desktop status bar, left-aligned) instead of a static version label.
+
 ## [0.16.1] - 2026-07-11
 
 ### Changed
