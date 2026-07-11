@@ -79,7 +79,7 @@ export function TeamActivityPopover({ teamNames, messages, open, onOpenChange }:
   return (
     <div
       ref={panelRef}
-      className="absolute bottom-full left-0 mb-2 w-80 md:w-96 bg-surface border border-border rounded-lg shadow-lg z-50 overflow-hidden"
+      className="absolute bottom-full left-0 mb-2 w-80 md:w-96 popover-solid border border-border rounded-lg shadow-[var(--shadow-panel)] z-50 overflow-hidden"
     >
       {/* Header with tabs */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-surface-elevated">

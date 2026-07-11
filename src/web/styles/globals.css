@@ -107,18 +107,20 @@ html {
 }
 
 /*
- * Frost all floating popovers/menus. The popover token (--panel-2) is
- * translucent on glass themes (Aurora), which reads as see-through over
- * content; a strong backdrop blur makes them opaque/frosted (solid on flat
- * themes where panel-2 is already opaque hex).
+ * Opaque popover surface. The popover token (--panel-2) is translucent on glass
+ * themes (Aurora), so menus read as see-through. Compositing the panel-2 tint
+ * over a solid --bg-solid base makes them fully opaque while keeping the
+ * elevated look (already solid on flat themes). Applied to shadcn menus by slot
+ * and to custom popovers via `.popover-solid`.
  */
 [data-slot="dropdown-menu-content"],
 [data-slot="dropdown-menu-sub-content"],
 [data-slot="context-menu-content"],
 [data-slot="context-menu-sub-content"],
-[data-slot="select-content"] {
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+[data-slot="select-content"],
+.popover-solid {
+  background-color: var(--bg-solid);
+  background-image: linear-gradient(var(--panel-2), var(--panel-2));
 }
 
 /*

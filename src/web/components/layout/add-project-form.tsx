@@ -186,7 +186,7 @@ export function AddProjectForm({ onSuccess, onCancel, footerClassName }: AddProj
 
             {/* Suggestions dropdown */}
             {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 z-10 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
+              <div className="absolute top-full left-0 right-0 mt-1 z-10 popover-solid border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
                 {suggestions.map((dir) => (
                   <button
                     key={dir.path}

@@ -198,7 +198,7 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className={cn(
-            "absolute bottom-full mb-2 w-72 z-50 rounded-[var(--rad-sm)] border border-border bg-panel-2 backdrop-blur-xl shadow-[var(--shadow-panel)] overflow-hidden font-sans",
+            "absolute bottom-full mb-2 w-72 z-50 rounded-[var(--rad-sm)] border border-border popover-solid shadow-[var(--shadow-panel)] overflow-hidden font-sans",
             align === "left" ? "left-0" : "right-0",
           )}>
             <div className="flex items-center gap-2.5 px-3 py-3 border-b border-border-soft">

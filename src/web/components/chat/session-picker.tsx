@@ -160,7 +160,7 @@ export function SessionPicker({
           {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
 
-          <div className="absolute bottom-full left-0 mb-1 z-50 w-64 rounded-lg border border-border bg-surface shadow-lg overflow-hidden">
+          <div className="absolute bottom-full left-0 mb-1 z-50 w-64 rounded-lg border border-border popover-solid shadow-[var(--shadow-panel)] overflow-hidden">
             {/* New chat button */}
             <button
               onClick={() => {

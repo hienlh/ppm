@@ -107,7 +107,7 @@ export function ModelSelector({ value, onChange, projectName, providerId, disabl
           onKeyDown={handleKeyDown}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border bg-panel-2 backdrop-blur-2xl shadow-[var(--shadow-panel)]"
+          className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border popover-solid shadow-[var(--shadow-panel)]"
         >
           <div className="px-3 py-2 border-b border-border">
             <span className="text-xs font-medium text-text-secondary">Model</span>

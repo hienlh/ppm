@@ -235,7 +235,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
           {/* backdrop click-catcher */}
           <div className="fixed inset-0 z-40" onClick={closeFlyout} />
           <div
-            className="fixed z-50 w-[340px] max-h-[680px] flex flex-col rounded-xl border border-border bg-popover shadow-[0_12px_32px_rgba(0,0,0,.5)] overflow-hidden"
+            className="fixed z-50 w-[340px] max-h-[680px] flex flex-col rounded-xl border border-border popover-solid shadow-[var(--shadow-panel)] overflow-hidden"
             style={{ left: flyoutPos.left, top: flyoutPos.top }}
           >
             {/* search header */}

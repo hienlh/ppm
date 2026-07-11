@@ -130,7 +130,7 @@ export function DirSuggest({ value, onChange, onSelect, placeholder, autoFocus }
         />
       </div>
       {showSuggestions && filtered.length > 0 && (
-        <div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded-md border border-border bg-surface shadow-lg">
+        <div className="absolute z-50 left-0 right-0 top-full mt-1 max-h-48 overflow-y-auto rounded-md border border-border popover-solid shadow-lg">
           <div ref={listRef} className="py-1">
             {filtered.map((item, i) => (
               <button

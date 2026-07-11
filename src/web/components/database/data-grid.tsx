@@ -728,7 +728,7 @@ function ColumnSearchDropdown({ columns, onSelect, onClose }: {
   useEffect(() => { activeRef.current?.scrollIntoView({ block: "nearest" }); }, [idx]);
 
   return (
-    <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 bg-popover border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
+    <div className="absolute top-full right-0 mt-1 z-50 w-52 max-h-56 popover-solid border border-border rounded-md shadow-lg overflow-hidden flex flex-col">
       <input autoFocus type="text" value={query}
         onChange={(e) => { setQuery(e.target.value); setIdx(0); }}
         onKeyDown={(e) => {
