@@ -225,6 +225,13 @@ function ReparentingTab({ tabId, panelId, type, metadata, isActive, hiddenContai
       className="absolute inset-0"
       style={isActive ? undefined : { display: "none" }}
       data-tab-pool-id={tabId}
+      onMouseDownCapture={() => {
+        // Tab content is DOM-reparented out of EditorPanel's fiber subtree, so
+        // EditorPanel's onMouseDown never sees clicks on the content body. Set
+        // focus here where panelId is known — keeps focusedPanelId correct for
+        // every tab type. Dock content is excluded so new tabs open in the grid.
+        if (panelId !== DOCK_PANEL_ID) usePanelStore.getState().setFocusedPanel(panelId);
+      }}
     >
       <Suspense
         fallback={
