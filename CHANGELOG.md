@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0] - 2026-07-11
+
+### Added
+- **VSCode-style theme engine** — themes are data objects applied as CSS variables at runtime, so switching is instant with no reload. Ships 6 built-ins (Aurora / Slate / Precision × dark/light) selectable via a status-bar palette picker and a 2-column theme grid in Settings; `system` mode follows the OS. Aurora is a glass/gradient default.
+- **Surface adapters** — Monaco, xterm, and the Glide data grid recolor from the active theme; chat code blocks now use **Shiki** (streaming-safe, theme-aware) in place of highlight.js.
+- **Import VSCode themes** — paste JSON, a raw URL, or a Marketplace `.vsix` and it converts to a PPM theme that lights up chrome + editor + terminal + code blocks. Server-side import is hardened against SSRF, zip-slip, zip-bombs, and CSS-injection; imported themes are managed (apply/rename/delete) in Settings.
+- **Status-bar git** — branch · ahead/behind · synced indicators for the active project.
+
+### Changed
+- **Full desktop restyle** to the new design language: gradient app backdrop, glass sidebar/rail, 41px chrome rhythm (tab bar aligns with the sidebar header), top-accent active tabs with dividers, redesigned chat composer (chip row + inline input), token-driven Explorer tree, and a 26px mono status bar scoped to the working area.
+- **Theme persistence** moved to a `{style, mode}` model; legacy `light|dark|system` values migrate automatically on load.
+- **Upgrade prompt** moved from the top banner into a status-bar button with an update popover (Update now / Release notes / Later).
+
 ## [0.15.1] - 2026-07-10
 
 ### Changed
