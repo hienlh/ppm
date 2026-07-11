@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.16.3] - 2026-07-12
+
+### Added
+- **Upgrade button in the status bar** shows the latest version ("New version · vX.Y.Z") and opens a popover that loads the actual release notes (CHANGELOG entries between the installed and latest version). Also mirrored in the mobile drawer footer.
+
+### Fixed
+- **Upgrade prompt no longer shows a reversed/downgrade** — the button only appears when the reported version is strictly newer than the installed one.
+- **Release notes wrap long tokens** and no longer produce a horizontal scrollbar.
+- **All floating dropdowns/popovers are now fully opaque** on glass themes (Aurora) — the translucent popover surface is composited over a solid base instead of reading as see-through (project switcher, model/provider/mode selectors, session picker, team activity, DB column menu, path suggestions, and shadcn menus).
+
 ## [0.16.2] - 2026-07-12
 
 ### Fixed
