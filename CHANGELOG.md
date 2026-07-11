@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.16.1] - 2026-07-11
+
+### Changed
+- **Edit/MultiEdit diff preview** now shows a Monaco-style inline diff: unchanged context lines render neutral, changed lines are interleaved (removed above added), and only the exact changed words/characters are highlighted on top of syntax colors — instead of tinting the whole old and new blocks. Uses jsdiff line/word diffing merged with highlight.js output.
+
 ## [0.16.0] - 2026-07-11
 
 ### Added
