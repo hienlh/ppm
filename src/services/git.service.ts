@@ -82,6 +82,9 @@ class GitService {
 
     return {
       current: s.current,
+      ahead: s.ahead ?? 0,
+      behind: s.behind ?? 0,
+      tracking: s.tracking ?? null,
       staged: stagedFiles.length > 0 ? stagedFiles : staged,
       unstaged,
       untracked,

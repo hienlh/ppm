@@ -23,6 +23,12 @@ export interface GitBranch {
 
 export interface GitStatus {
   current: string | null;
+  /** Commits ahead of the upstream branch. */
+  ahead: number;
+  /** Commits behind the upstream branch. */
+  behind: number;
+  /** Upstream tracking ref (e.g. "origin/main"), or null when untracked. */
+  tracking: string | null;
   staged: GitFileChange[];
   unstaged: GitFileChange[];
   untracked: string[];

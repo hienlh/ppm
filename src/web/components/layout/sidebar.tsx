@@ -57,7 +57,7 @@ function Wordmark({ onToggle }: { onToggle: () => void }) {
       title="Toggle sidebar (⌘B)"
       className="w-[52px] shrink-0 flex items-center justify-center border-r border-border hover:bg-surface-elevated transition-colors"
     >
-      <span className="text-xs font-extrabold text-primary leading-none tracking-tight">PPM</span>
+      <span className="text-sm font-extrabold text-primary leading-none tracking-tight">PPM</span>
     </button>
   );
 }

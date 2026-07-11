@@ -29,14 +29,14 @@ import { cn } from "@/lib/utils";
 // ---------------------------------------------------------------------------
 // Avatar circle (gradient + initials + urgent notification dot)
 // ---------------------------------------------------------------------------
-const Avatar = memo(function Avatar({ name, color, image, size, allNames }: {
-  name: string; color: string; image?: string; size: number; allNames: string[];
+const Avatar = memo(function Avatar({ name, color, image, size, allNames, shape }: {
+  name: string; color: string; image?: string; size: number; allNames: string[]; shape?: "circle" | "square";
 }) {
   const selector = useMemo(() => selectProjectUrgentType(name), [name]);
   const urgentType = useNotificationStore(selector);
   return (
     <div className="relative shrink-0">
-      <ProjectAvatar name={name} color={color} image={image} size={size} allNames={allNames} />
+      <ProjectAvatar name={name} color={color} image={image} size={size} allNames={allNames} shape={shape} />
       {urgentType && (
         <div className={cn("absolute -top-0.5 -right-0.5 size-2 rounded-full border-2 border-background", notificationColor(urgentType))} />
       )}
@@ -208,12 +208,12 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
         onClick={toggleFlyout}
         title="Switch project"
         className={cn(
-          "flex items-center gap-[9px] w-full h-[31px] px-2 rounded-lg transition-colors border",
+          "flex items-center gap-[9px] w-full h-8 px-2 rounded-lg transition-colors border",
           open ? "bg-surface-elevated border-border" : "border-transparent hover:bg-surface-elevated",
         )}
       >
         {active ? (
-          <Avatar name={active.name} color={activeColor} image={active.image} size={24} allNames={allNames} />
+          <Avatar name={active.name} color={activeColor} image={active.image} size={24} allNames={allNames} shape="square" />
         ) : (
           <div className="size-6 rounded-full bg-surface-elevated shrink-0" />
         )}

@@ -147,6 +147,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
         projectName,
         data.staged.length + data.unstaged.length + data.untracked.length,
       );
+      useGitStatusStore.getState().setMeta(projectName, data);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch status");

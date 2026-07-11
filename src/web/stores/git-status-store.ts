@@ -19,6 +19,14 @@ export const GIT_STATUS_COLORS: Record<GitFileStatus, string> = {
 /** Per-project file status map: filePath → status letter */
 type FileStatusMap = Map<string, GitFileStatus>;
 
+/** Branch/upstream summary shown in the status bar. */
+export interface GitMeta {
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  tracking: string | null;
+}
+
 interface GitStatusStore {
   /** Total changed files count per project (staged + unstaged + untracked) */
   counts: Map<string, number>;
@@ -26,9 +34,12 @@ interface GitStatusStore {
   fileStatuses: Map<string, FileStatusMap>;
   /** Per-folder aggregate status: projectName → (folderPath → status) */
   folderStatuses: Map<string, Map<string, GitFileStatus>>;
+  /** Branch/ahead/behind per project (status bar). */
+  meta: Map<string, GitMeta>;
 
   setCount: (projectName: string, count: number) => void;
   setFileStatuses: (projectName: string, data: GitStatus) => void;
+  setMeta: (projectName: string, data: GitStatus) => void;
 }
 
 /**
@@ -81,6 +92,7 @@ export const useGitStatusStore = create<GitStatusStore>()((set) => ({
   counts: new Map(),
   fileStatuses: new Map(),
   folderStatuses: new Map(),
+  meta: new Map(),
 
   setCount: (projectName, count) => {
     set((state) => {
@@ -102,6 +114,24 @@ export const useGitStatusStore = create<GitStatusStore>()((set) => ({
       return { fileStatuses: nextFile, folderStatuses: nextFolder };
     });
   },
+
+  setMeta: (projectName, data) => {
+    set((state) => {
+      const prev = state.meta.get(projectName);
+      if (prev && prev.branch === data.current && prev.ahead === data.ahead &&
+          prev.behind === data.behind && prev.tracking === data.tracking) {
+        return state;
+      }
+      const next = new Map(state.meta);
+      next.set(projectName, {
+        branch: data.current,
+        ahead: data.ahead,
+        behind: data.behind,
+        tracking: data.tracking,
+      });
+      return { meta: next };
+    });
+  },
 }));
 
 /**
@@ -114,6 +144,7 @@ export function useGitChangesPoller(
 ) {
   const setCount = useGitStatusStore((s) => s.setCount);
   const setFileStatuses = useGitStatusStore((s) => s.setFileStatuses);
+  const setMeta = useGitStatusStore((s) => s.setMeta);
 
   const poll = useCallback(async () => {
     if (!projectName) return;
@@ -126,6 +157,7 @@ export function useGitChangesPoller(
         data.staged.length + data.unstaged.length + data.untracked.length,
       );
       setFileStatuses(projectName, data);
+      setMeta(projectName, data);
     } catch {
       // Silently ignore — badge just keeps last-known value
     }

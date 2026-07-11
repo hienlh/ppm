@@ -1,12 +1,13 @@
 import { memo } from "react";
-import { PanelBottom } from "lucide-react";
+import { PanelBottom, GitBranch, ArrowUp, ArrowDown, Check } from "lucide-react";
 import { useExtensionStore, type StatusBarItemUI } from "@/stores/extension-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useGitStatusStore } from "@/stores/git-status-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ResourceStatusBar } from "@/components/system/resource-status-bar";
 import { ThemePicker } from "@/components/settings/theme-picker";
+import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { countDockTabs } from "@/components/layout/dock-tabs";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { cn } from "@/lib/utils";
@@ -14,7 +15,6 @@ import { cn } from "@/lib/utils";
 /** Fixed status bar at the bottom of the editor area (hidden on mobile) */
 export const StatusBar = memo(function StatusBar() {
   const items = useExtensionStore((s) => s.statusBarItems);
-  const version = useSettingsStore((s) => s.version);
 
   const left = items
     .filter((i) => i.alignment === "left")
@@ -25,15 +25,17 @@ export const StatusBar = memo(function StatusBar() {
     .sort((a, b) => b.priority - a.priority);
 
   return (
-    <div className="hidden md:flex items-center justify-between h-[22px] px-2 bg-surface border-t border-border text-[11px] text-text-subtle select-none shrink-0">
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="hidden md:flex items-center justify-between h-[26px] px-3.5 bg-panel border-t border-border-soft text-[11px] font-mono text-text-3 select-none shrink-0">
+      <div className="flex items-center gap-3 min-w-0">
+        {/* Git: branch · ahead/behind · synced (design status bar). */}
+        <GitStatus />
         {left.map((item) => (
           <StatusBarEntry key={item.id} item={item} />
         ))}
         {/* Native panel toggle — the sole dock toggle (sidebar/tab-bar toggles removed). */}
         <DockToggle />
       </div>
-      <div className="flex items-center gap-2 min-w-0">
+      <div className="flex items-center gap-3 min-w-0">
         {/* CPU/MEM moved here from the sidebar resource strip. */}
         <ResourceStatusBar compact />
         {right.map((item) => (
@@ -41,10 +43,40 @@ export const StatusBar = memo(function StatusBar() {
         ))}
         {/* Theme picker — palette button opens the theme dropdown. */}
         <ThemePicker />
-        {/* Version — moved here from the sidebar wordmark (handoff B2). */}
-        {version && <span className="px-1 shrink-0">v{version}</span>}
+        {/* Version + update button (replaces the old top upgrade banner). */}
+        <UpgradeButton />
       </div>
     </div>
+  );
+});
+
+/** Git branch + ahead/behind + synced indicator for the active project. */
+const GitStatus = memo(function GitStatus() {
+  const activeProjectName = useProjectStore((s) => s.activeProject?.name ?? null);
+  const meta = useGitStatusStore((s) => (activeProjectName ? s.meta.get(activeProjectName) : undefined));
+
+  if (!meta?.branch) return null;
+  const { branch, ahead, behind, tracking } = meta;
+  const synced = !!tracking && ahead === 0 && behind === 0;
+
+  return (
+    <span className="flex items-center gap-2 min-w-0 shrink-0">
+      <span className="flex items-center gap-1 text-primary min-w-0" title={tracking ? `Tracking ${tracking}` : "No upstream"}>
+        <GitBranch className="size-3 shrink-0" />
+        <span className="truncate max-w-[140px]">{branch}</span>
+      </span>
+      {(ahead > 0 || behind > 0) && (
+        <span className="flex items-center gap-1.5 shrink-0">
+          {ahead > 0 && <span className="flex items-center gap-0.5"><ArrowUp className="size-3" />{ahead}</span>}
+          {behind > 0 && <span className="flex items-center gap-0.5"><ArrowDown className="size-3" />{behind}</span>}
+        </span>
+      )}
+      {synced && (
+        <span className="flex items-center gap-1 text-success shrink-0">
+          <Check className="size-3" />synced
+        </span>
+      )}
+    </span>
   );
 });
 

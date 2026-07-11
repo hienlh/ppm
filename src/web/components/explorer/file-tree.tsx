@@ -350,7 +350,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     return a.name.localeCompare(b.name);
   });
 
-  const toolbarBtnClass = "p-1 rounded-sm text-text-secondary hover:text-foreground hover:bg-surface-elevated transition-colors";
+  const toolbarBtnClass = "p-1 rounded-sm text-text-3 hover:text-foreground hover:bg-surface-elevated transition-colors";
 
   return (
     <div
@@ -363,24 +363,26 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       onDragOver={handleRootDragOver}
       onDrop={handleRootDrop}
     >
-      {/* Toolbar */}
-      <div className="flex items-center gap-0.5 px-2 h-8 border-b border-border shrink-0 sticky top-0 z-10 bg-surface">
-        <button onClick={() => handleAction("new-file", ROOT_NODE)} title="New File" className={toolbarBtnClass}>
-          <FilePlus className="size-3.5" />
-        </button>
-        <button onClick={() => handleAction("new-folder", ROOT_NODE)} title="New Folder" className={toolbarBtnClass}>
-          <FolderPlus className="size-3.5" />
-        </button>
-        <div className="flex-1" />
-        <button onClick={revealActiveFile} title="Reveal Active File" className={toolbarBtnClass}>
-          <Crosshair className="size-3.5" />
-        </button>
-        <button onClick={collapseAll} title="Collapse All" className={toolbarBtnClass}>
-          <ChevronsDownUp className="size-3.5" />
-        </button>
-        <button onClick={reloadTree} title="Refresh" className={toolbarBtnClass}>
-          <RefreshCw className="size-3.5" />
-        </button>
+      {/* Header — uppercase section label + actions (design spec) */}
+      <div className="flex items-center justify-between pl-3 pr-2 pt-3 pb-2 shrink-0 sticky top-0 z-10 bg-panel-2 backdrop-blur-xl">
+        <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-text-3 select-none">Explorer</span>
+        <div className="flex items-center gap-0.5">
+          <button onClick={() => handleAction("new-file", ROOT_NODE)} title="New File" className={toolbarBtnClass}>
+            <FilePlus className="size-3.5" />
+          </button>
+          <button onClick={() => handleAction("new-folder", ROOT_NODE)} title="New Folder" className={toolbarBtnClass}>
+            <FolderPlus className="size-3.5" />
+          </button>
+          <button onClick={revealActiveFile} title="Reveal Active File" className={toolbarBtnClass}>
+            <Crosshair className="size-3.5" />
+          </button>
+          <button onClick={collapseAll} title="Collapse All" className={toolbarBtnClass}>
+            <ChevronsDownUp className="size-3.5" />
+          </button>
+          <button onClick={reloadTree} title="Refresh" className={toolbarBtnClass}>
+            <RefreshCw className="size-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* File tree with blank-area context menu */}

@@ -1,11 +1,13 @@
 import { memo, useState, useEffect } from "react";
 import { getProjectInitials } from "@/lib/project-avatar";
 import { getAuthToken } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 
 /**
  * Single source of truth for a project's avatar visual.
  * Renders the uploaded image when `image` is set (falling back to the
- * color+initials circle on load error or when absent).
+ * color+initials chip on load error or when absent).
+ * `shape="square"` = 7px squircle (design language of tabs/rail/mobile chips).
  */
 export const ProjectAvatar = memo(function ProjectAvatar({
   name,
@@ -13,15 +15,19 @@ export const ProjectAvatar = memo(function ProjectAvatar({
   image,
   size,
   allNames,
+  shape = "circle",
 }: {
   name: string;
   color: string;
   image?: string;
   size: number;
   allNames: string[];
+  shape?: "circle" | "square";
 }) {
   const [errored, setErrored] = useState(false);
   useEffect(() => { setErrored(false); }, [image]);
+
+  const radiusClass = shape === "square" ? "rounded-[7px]" : "rounded-full";
 
   if (image && !errored) {
     const token = getAuthToken();
@@ -32,7 +38,7 @@ export const ProjectAvatar = memo(function ProjectAvatar({
         src={`/api/projects/${encodeURIComponent(name)}/image?${params.toString()}`}
         alt={name}
         onError={() => setErrored(true)}
-        className="rounded-full object-cover shrink-0 select-none"
+        className={cn("object-cover shrink-0 select-none", radiusClass)}
         style={{ width: size, height: size }}
       />
     );
@@ -40,7 +46,7 @@ export const ProjectAvatar = memo(function ProjectAvatar({
 
   return (
     <div
-      className="rounded-full flex items-center justify-center font-bold text-white select-none shrink-0"
+      className={cn("flex items-center justify-center font-bold text-white select-none shrink-0", radiusClass)}
       style={{ background: color, width: size, height: size, fontSize: size <= 24 ? 10 : 11 }}
     >
       {getProjectInitials(name, allNames)}

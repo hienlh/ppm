@@ -27,7 +27,6 @@ import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { ComparePicker } from "@/components/editor/compare-picker";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
-import { UpgradeBanner } from "@/components/layout/upgrade-banner";
 import { ImageOverlay } from "@/components/shared/image-overlay";
 import { DiagramOverlay } from "@/components/shared/diagram-overlay";
 import { BackgroundOutputPanel } from "@/components/chat/background-output-panel";
@@ -41,7 +40,6 @@ type AuthState = "checking" | "authenticated" | "unauthenticated";
 
 export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
-  const [upgradeBannerVisible, setUpgradeBannerVisible] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "settings" | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
@@ -252,9 +250,6 @@ export function App() {
   return (
     <TooltipProvider>
       <div className="app-backdrop h-dvh flex flex-col text-foreground overflow-hidden relative">
-        {/* Upgrade banner — shown when new version available */}
-        <UpgradeBanner onVisibilityChange={setUpgradeBannerVisible} />
-
         {/* Beta ribbon — top-left on desktop, top-right on mobile */}
         <div className="fixed z-50 overflow-hidden pointer-events-none max-md:right-0 max-md:top-0 md:left-0 md:top-0 w-10 h-10">
           <div className="absolute flex items-center justify-center max-md:rotate-45 max-md:right-[-18px] max-md:top-[4px] md:-rotate-45 md:left-[-18px] md:top-[4px] w-[60px] bg-warning text-white text-[6px] font-bold leading-none py-[2.5px] shadow-sm">
@@ -264,7 +259,7 @@ export function App() {
 
         {/* Mobile device name badge — floating top-left */}
         {deviceName && (
-          <div className={cn("md:hidden fixed left-0 z-50 px-2 py-0.5 bg-primary/80 text-primary-foreground text-[10px] font-medium rounded-br transition-[top]", upgradeBannerVisible ? "top-7" : "top-0")}>
+          <div className="md:hidden fixed left-0 top-0 z-50 px-2 py-0.5 bg-primary/80 text-primary-foreground text-[10px] font-medium rounded-br">
             {deviceName}
           </div>
         )}
@@ -290,12 +285,11 @@ export function App() {
             {/* TabPool renders all tab components persistently and portals them into panel slots.
                 Placed after PanelLayout so slot refs are registered before portals render. */}
             <TabPool />
+            {/* Desktop status bar — spans the working area only (not under the sidebar).
+                Self-gated to desktop via `hidden md:flex`. */}
+            <StatusBar />
           </div>
         </div>
-
-        {/* Desktop status bar — full-width bottom of the window (VS Code style: spans under
-            sidebar + content). Self-gated to desktop via `hidden md:flex`. */}
-        <StatusBar />
 
         {/* Mobile bottom nav */}
         <MobileNav

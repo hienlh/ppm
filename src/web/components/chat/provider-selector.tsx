@@ -84,7 +84,7 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors border border-transparent hover:border-border"
+        className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors"
         aria-label={`AI Provider: ${current?.name ?? value}`}
       >
         <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded text-[9px] font-bold bg-surface-elevated shrink-0">
@@ -102,7 +102,7 @@ export function ProviderSelector({ value, onChange, projectName }: ProviderSelec
           onKeyDown={handleKeyDown}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border bg-surface shadow-lg"
+          className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border bg-panel-2 backdrop-blur-2xl shadow-[var(--shadow-panel)]"
         >
           <div className="px-3 py-2 border-b border-border">
             <span className="text-xs font-medium text-text-secondary">Provider</span>

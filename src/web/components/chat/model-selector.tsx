@@ -90,7 +90,7 @@ export function ModelSelector({ value, onChange, projectName, providerId, disabl
         type="button"
         disabled={disabled}
         onClick={(e) => { e.stopPropagation(); if (!disabled) setOpen((v) => !v); }}
-        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors border border-transparent hover:border-border disabled:opacity-50 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:border-transparent disabled:hover:text-text-subtle"
+        className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-primary bg-accent-wash border border-accent-wash-border hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-default"
         aria-label={`Model: ${current?.label ?? value ?? "default"}`}
         title={disabled ? "Model can't change while running" : current?.label ?? undefined}
       >
@@ -107,7 +107,7 @@ export function ModelSelector({ value, onChange, projectName, providerId, disabl
           onKeyDown={handleKeyDown}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
-          className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border bg-surface shadow-lg"
+          className="absolute bottom-full left-0 mb-1 z-50 w-56 rounded-lg border border-border bg-panel-2 backdrop-blur-2xl shadow-[var(--shadow-panel)]"
         >
           <div className="px-3 py-2 border-b border-border">
             <span className="text-xs font-medium text-text-secondary">Model</span>

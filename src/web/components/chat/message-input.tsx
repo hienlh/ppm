@@ -629,7 +629,7 @@ export const MessageInput = memo(function MessageInput({
     <div className="p-2 md:p-3">
       {/* Rounded input container */}
       <div
-        className="border border-border rounded-[var(--rad)] bg-panel-2 shadow-[var(--shadow-float)] cursor-text"
+        className="border border-border rounded-[var(--rad)] bg-panel shadow-[var(--shadow-float)] cursor-text"
         onClick={(e) => {
           if (disabled) return;
           // Only focus when clicking outside the textarea (e.g. padding area)
@@ -675,7 +675,7 @@ export const MessageInput = memo(function MessageInput({
             type="button"
             onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
             disabled={disabled}
-            className="flex items-center justify-center size-7 shrink-0 rounded-full text-text-subtle hover:text-text-primary transition-colors disabled:opacity-50"
+            className="flex items-center justify-center size-8 shrink-0 rounded-[10px] text-text-3 hover:text-text-primary transition-colors disabled:opacity-50"
             aria-label="Attach file"
           >
             <Paperclip className="size-4" />
@@ -698,10 +698,10 @@ export const MessageInput = memo(function MessageInput({
               type="button"
               onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
               disabled={disabled}
-              className={`flex items-center justify-center size-7 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+              className={`flex items-center justify-center size-8 shrink-0 rounded-[10px] transition-colors disabled:opacity-50 ${
                 voice.isListening
                   ? "bg-error text-white animate-pulse"
-                  : "text-text-subtle hover:text-text-primary"
+                  : "text-text-3 hover:text-text-primary"
               }`}
               aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
             >
@@ -711,116 +711,115 @@ export const MessageInput = memo(function MessageInput({
           {showCancel ? (
             <button
               onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
-              className="flex items-center justify-center size-7 shrink-0 rounded-full bg-error text-white hover:bg-error/80 transition-colors"
+              className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-error text-white hover:bg-error/80 shadow-[var(--shadow-float)] transition-colors"
               aria-label="Stop"
             >
-              <Square className="size-3" />
+              <Square className="size-3.5" />
             </button>
           ) : (
             <button
               onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
               disabled={disabled || !hasContent}
-              className="flex items-center justify-center size-7 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 transition-colors"
+              className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-float)] disabled:opacity-30 disabled:shadow-none transition-colors"
               aria-label={pendingSend ? "Cancel queued send" : "Send"}
             >
-              {pendingSend ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowUp className="size-3.5" />}
+              {pendingSend ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
             </button>
           )}
         </div>
 
-        {/* Desktop: textarea + action bar below */}
+        {/* Desktop: chips row (permission + model) then a single input row
+            (paperclip | textarea | mic | send) — design PPMWorkspace composer. */}
         <div className="hidden md:block">
-          <textarea
-            ref={textareaRef}
-            defaultValue={initialValue ?? ""}
-            onChange={handleTextareaChange}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
-            disabled={disabled}
-            rows={1}
-            className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-40 [field-sizing:content]"
-          />
-          <div className="flex items-center justify-between px-3 pb-2">
-            <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5 px-2.5 pt-2.5">
+            {/* Mode indicator chip */}
+            <div className="relative">
+              <ModeChip
+                mode={permissionMode ?? "bypassPermissions"}
+                onClick={() => setModeSelectorOpen((v) => !v)}
+              />
+              <ModeSelector
+                value={permissionMode ?? "bypassPermissions"}
+                onChange={(m) => onModeChange?.(m)}
+                open={modeSelectorOpen}
+                onOpenChange={setModeSelectorOpen}
+              />
+            </div>
+            {/* Provider selector — only when no active session */}
+            {onProviderChange && projectName && (
+              <ProviderSelector
+                value={providerId ?? "claude"}
+                onChange={onProviderChange}
+                projectName={projectName}
+              />
+            )}
+            {onModelChange && projectName && (
+              <ModelSelector
+                value={model ?? null}
+                onChange={onModelChange}
+                projectName={projectName}
+                providerId={providerId ?? "claude"}
+                disabled={isStreaming}
+              />
+            )}
+            {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
+          </div>
+          <div className="flex items-end gap-2 px-2.5 py-2">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
+              disabled={disabled}
+              className="flex items-center justify-center size-[34px] shrink-0 rounded-[10px] text-text-3 hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
+              aria-label="Attach file"
+            >
+              <Paperclip className="size-[17px]" />
+            </button>
+            <textarea
+              ref={textareaRef}
+              defaultValue={initialValue ?? ""}
+              onChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              placeholder={isStreaming ? "Follow-up or Stop..." : "Ask anything..."}
+              disabled={disabled}
+              rows={1}
+              className="flex-1 resize-none bg-transparent py-2 text-sm text-foreground placeholder:text-text-subtle focus:outline-none disabled:opacity-50 max-h-[90px] leading-relaxed [field-sizing:content]"
+            />
+            {voice.supported && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); handleAttachClick(); }}
+                onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
                 disabled={disabled}
-                className="flex items-center justify-center size-8 rounded-full text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors disabled:opacity-50"
-                aria-label="Attach file"
+                className={`flex items-center justify-center size-[34px] shrink-0 rounded-[10px] transition-colors disabled:opacity-50 ${
+                  voice.isListening
+                    ? "bg-error text-white animate-pulse"
+                    : "text-text-3 hover:text-text-primary hover:bg-surface-elevated"
+                }`}
+                aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
               >
-                <Paperclip className="size-4" />
+                {voice.isListening ? <MicOff className="size-[17px]" /> : <Mic className="size-[17px]" />}
               </button>
-              {/* Mode indicator chip */}
-              <div className="relative">
-                <ModeChip
-                  mode={permissionMode ?? "bypassPermissions"}
-                  onClick={() => setModeSelectorOpen((v) => !v)}
-                />
-                <ModeSelector
-                  value={permissionMode ?? "bypassPermissions"}
-                  onChange={(m) => onModeChange?.(m)}
-                  open={modeSelectorOpen}
-                  onOpenChange={setModeSelectorOpen}
-                />
-              </div>
-              {/* Provider selector — only when no active session */}
-              {onProviderChange && projectName && (
-                <ProviderSelector
-                  value={providerId ?? "claude"}
-                  onChange={onProviderChange}
-                  projectName={projectName}
-                />
-              )}
-              {onModelChange && projectName && (
-                <ModelSelector
-                  value={model ?? null}
-                  onChange={onModelChange}
-                  projectName={projectName}
-                  providerId={providerId ?? "claude"}
-                  disabled={isStreaming}
-                />
-              )}
-              {isStreaming && <PriorityToggle value={priority} onChange={setPriority} />}
-            </div>
-            <div className="flex items-center gap-1">
-              {voice.supported && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); handleVoiceToggle(); }}
-                  disabled={disabled}
-                  className={`flex items-center justify-center size-8 rounded-full transition-colors disabled:opacity-50 ${
-                    voice.isListening
-                      ? "bg-error text-white animate-pulse"
-                      : "text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
-                  }`}
-                  aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
-                >
-                  {voice.isListening ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-                </button>
-              )}
-              {showCancel ? (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
-                  className="flex items-center justify-center size-8 rounded-full bg-error text-white hover:bg-error/80 transition-colors"
-                  aria-label="Stop response"
-                >
-                  <Square className="size-3.5" />
-                </button>
-              ) : (
-                <button
-                  onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
-                  disabled={disabled || !hasContent}
-                  className="flex items-center justify-center size-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                  aria-label={pendingSend ? "Cancel queued send" : "Send message"}
-                >
-                  {pendingSend ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-                </button>
-              )}
-            </div>
+            )}
+            {showCancel ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
+                className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-error text-white hover:bg-error/80 shadow-[var(--shadow-float)] transition-colors"
+                aria-label="Stop response"
+              >
+                <Square className="size-4" />
+              </button>
+            ) : (
+              <button
+                onClick={(e) => { e.stopPropagation(); pendingSend ? setPendingSend(false) : handleSend(); }}
+                disabled={disabled || !hasContent}
+                className="flex items-center justify-center size-9 shrink-0 rounded-[11px] bg-primary text-primary-foreground hover:bg-primary/90 shadow-[var(--shadow-float)] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none transition-colors"
+                aria-label={pendingSend ? "Cancel queued send" : "Send message"}
+              >
+                {pendingSend ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-[17px]" />}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -838,7 +837,7 @@ function ModeChip({ mode, onClick }: { mode: string; onClick: () => void }) {
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors border border-transparent hover:border-border"
+      className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors"
       aria-label={`Permission mode: ${label}`}
     >
       <Icon className="size-3" />
@@ -868,7 +867,7 @@ function PriorityToggle({ value, onChange }: { value: MessagePriority; onChange:
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); cycle(); }}
-      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-text-subtle hover:text-text-primary hover:bg-surface-elevated transition-colors border border-transparent hover:border-border"
+      className="inline-flex items-center gap-1.5 px-[9px] py-1 rounded-full text-[11.5px] text-text-2 bg-panel-2 border border-border-soft hover:text-text-primary hover:border-border transition-colors"
       aria-label={`Message priority: ${current.label}`}
       title={`Priority: ${current.label} (click to cycle)`}
     >

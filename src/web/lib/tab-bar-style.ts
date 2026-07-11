@@ -23,13 +23,15 @@ const TAB_STYLES: Record<EditorTabStyle, TabStyleConfig> = {
   // The default tab uses `border-b-2 -mb-px` to borrow the bar's 1px border so
   // the active underline sits exactly on the divider line.
   default: {
-    // border-r = hairline divider between tabs (design: --border-soft). The
-    // underline color must be per-side (border-b-*) so it doesn't tint the divider.
-    base: "group flex items-center gap-1 px-3 h-[41px] whitespace-nowrap text-xs transition-colors border-b-2 -mb-px border-r border-r-border-soft cursor-grab active:cursor-grabbing",
-    active: "border-b-primary bg-panel-2 text-primary",
-    inactive: "border-b-transparent text-text-secondary hover:text-foreground hover:bg-panel/60",
+    // Active accent bar sits on TOP (design: border-top 2px --accent) + elevated
+    // --panel-2 fill. Vertical hairline between tabs via --border-soft (arbitrary
+    // property so tailwind-merge can't drop it and it stays independent of the
+    // top accent). Clean 41px pitch (no -mb-px) so the wrap horizontal rule lines up.
+    base: "group flex items-center gap-1 px-3 h-[41px] whitespace-nowrap text-xs transition-colors border-t-2 [border-right:1px_solid_var(--border-soft)] cursor-grab active:cursor-grabbing",
+    active: "border-t-primary bg-panel-2 text-primary",
+    inactive: "border-t-transparent text-text-secondary hover:text-foreground hover:bg-panel/60",
     row: "flex items-center",
-    add: "flex items-center justify-center h-[41px] w-10 shrink-0 sticky right-0 border-b-2 border-transparent text-text-secondary hover:text-foreground transition-colors",
+    add: "flex items-center justify-center h-[41px] w-10 shrink-0 sticky right-0 border-t-2 border-transparent text-text-secondary hover:text-foreground transition-colors",
   },
   boxed: {
     base: "group flex items-center gap-1.5 px-2.5 h-8 rounded-md whitespace-nowrap text-xs transition-colors border cursor-grab active:cursor-grabbing",
@@ -49,11 +51,22 @@ const TAB_STYLES: Record<EditorTabStyle, TabStyleConfig> = {
 
 export function tabButtonClass(style: EditorTabStyle, isActive: boolean, hasColorStyle: boolean): string {
   const cfg = TAB_STYLES[style];
-  return cn(cfg.base, hasColorStyle ? "border-b-transparent" : isActive ? cfg.active : cfg.inactive);
+  return cn(cfg.base, hasColorStyle ? "border-t-transparent" : isActive ? cfg.active : cfg.inactive);
 }
 
 export function tabRowClass(style: EditorTabStyle, tabWrap: boolean): string {
-  return cn(TAB_STYLES[style].row, tabWrap ? "flex-wrap min-h-[41px]" : "h-[41px]");
+  // Default style only: in wrap mode draw a full-width horizontal rule at the
+  // bottom of every 41px row via a repeating gradient on the row background
+  // (spans the whole bar, not just under the tabs). Boxed/pill are floating
+  // chips — no row rule. Single-row mode: fixed 41px, no rule.
+  const wrapRule =
+    style === "default"
+      ? " [background:repeating-linear-gradient(to_bottom,transparent_0,transparent_40px,var(--border-soft)_40px,var(--border-soft)_41px)]"
+      : "";
+  return cn(
+    TAB_STYLES[style].row,
+    tabWrap ? "flex-wrap min-h-[41px]" + wrapRule : "h-[41px]",
+  );
 }
 
 export function tabAddButtonClass(style: EditorTabStyle): string {
