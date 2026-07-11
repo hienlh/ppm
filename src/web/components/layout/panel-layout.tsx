@@ -165,7 +165,7 @@ function ResizeHandle({ orientation }: { orientation: "horizontal" | "vertical" 
     <Separator
       className={`
         group/handle relative flex items-center justify-center
-        ${isVertical ? "w-1 cursor-col-resize" : "h-1 cursor-row-resize"}
+        ${isVertical ? "w-px cursor-col-resize" : "h-px cursor-row-resize"}
         bg-border/30 hover:bg-primary/30 active:bg-primary/50
         transition-colors duration-150
       `}
