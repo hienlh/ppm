@@ -200,6 +200,13 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PUT    /api/settings/mcp/:name`
 - `DELETE /api/settings/mcp/:name`
 
+## /api/settings/themes
+
+- `GET    /api/settings/themes`
+- `POST   /api/settings/themes`
+- `DELETE /api/settings/themes/:id`
+- `PATCH  /api/settings/themes/:id`
+
 ## /api/system
 
 - `GET    /api/system/resources`
@@ -239,4 +246,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.15.1 -->
+<!-- Generated from src/server/routes/ for PPM v0.16.1 -->
