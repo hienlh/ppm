@@ -11,6 +11,7 @@ import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { openBugReportPopup } from "@/lib/report-bug";
+import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { cn } from "@/lib/utils";
 
 type DrawerTab = "explorer" | "git" | "settings" | "database" | "jira";
@@ -132,9 +133,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
             })}
           </div>
 
-          {/* Report Bug + Version */}
-          <div className="flex items-center justify-between px-4 py-2 border-t border-border">
-            {version && <span className="text-[10px] text-text-subtle">v{version}</span>}
+          {/* Report Bug + Version / Upgrade */}
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border text-[11px]">
+            <UpgradeButton align="left" />
             <button
               onClick={handleReportBug}
               className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"

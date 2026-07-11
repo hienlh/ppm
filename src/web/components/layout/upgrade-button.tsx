@@ -36,7 +36,7 @@ async function clearCachesAndReload() {
  * release is available it turns into an accent "update" button that opens a
  * popover (Update now / Release notes / Later) — replaces the old top banner.
  */
-export function UpgradeButton() {
+export function UpgradeButton({ align = "right" }: { align?: "left" | "right" }) {
   const version = useSettingsStore((s) => s.version);
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
   const [availableVersion, setAvailableVersion] = useState<string | null>(null);
@@ -143,7 +143,10 @@ export function UpgradeButton() {
       {open && hasUpdate && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 mb-2 w-72 z-50 rounded-[var(--rad-sm)] border border-border bg-panel-2 backdrop-blur-xl shadow-[var(--shadow-panel)] overflow-hidden font-sans">
+          <div className={cn(
+            "absolute bottom-full mb-2 w-72 z-50 rounded-[var(--rad-sm)] border border-border bg-panel-2 backdrop-blur-xl shadow-[var(--shadow-panel)] overflow-hidden font-sans",
+            align === "left" ? "left-0" : "right-0",
+          )}>
             <div className="flex items-center gap-2.5 px-3 py-3 border-b border-border-soft">
               <span className="flex items-center justify-center size-[26px] shrink-0 rounded-lg bg-success/20">
                 <ArrowUpCircle className="size-[15px] text-success" />
