@@ -210,7 +210,7 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
                 <div className="text-[11px] text-text-3 font-mono mt-0.5">v{current} → v{effectiveAvailable}</div>
               </div>
             </div>
-            <div className="max-h-56 overflow-y-auto px-3 py-2.5 text-[12px] text-text-2 leading-relaxed">
+            <div className="max-h-56 overflow-y-auto overflow-x-hidden px-3 py-2.5 text-[12px] text-text-2 leading-relaxed break-words">
               {notesLoading ? (
                 <span className="flex items-center gap-2 text-text-3">
                   <Loader2 className="size-3.5 animate-spin" /> Loading release notes…
@@ -285,12 +285,12 @@ function ChangelogEntry({ version, body }: { version: string; body: string }) {
           if (t.startsWith("- ")) {
             return (
               <div key={i} className="flex gap-1.5 text-text-2">
-                <span className="text-text-3">•</span>
-                <span className="min-w-0">{stripInline(t.slice(2))}</span>
+                <span className="text-text-3 shrink-0">•</span>
+                <span className="min-w-0 break-words">{stripInline(t.slice(2))}</span>
               </div>
             );
           }
-          return <div key={i} className="text-text-2">{stripInline(t)}</div>;
+          return <div key={i} className="text-text-2 break-words">{stripInline(t)}</div>;
         })}
       </div>
     </div>
