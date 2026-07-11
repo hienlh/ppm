@@ -54,6 +54,9 @@
   --color-ring: var(--accent);
   --color-diff-added: color-mix(in srgb, var(--success) 16%, transparent);
   --color-diff-removed: color-mix(in srgb, var(--error) 16%, transparent);
+  /* Stronger shade for the exact chars that changed within a line (Monaco-style) */
+  --color-diff-added-word: color-mix(in srgb, var(--success) 40%, transparent);
+  --color-diff-removed-word: color-mix(in srgb, var(--error) 40%, transparent);
   --color-text-primary: var(--text);
   --color-text-secondary: var(--text-2);
   --color-text-subtle: var(--text-3);

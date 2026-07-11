@@ -1,95 +1,66 @@
 /**
  * Compact inline diff for Edit/MultiEdit tool cards.
- * Old lines on red tint, new lines on green tint, syntax-highlighted via
- * highlight.js — same engine + theme stylesheet as markdown code blocks,
- * so colors follow the app light/dark theme automatically.
- * Loaded lazily (see tool-cards.tsx) to keep hljs out of the main chunk.
+ * Interleaved unified diff (removed lines then added lines per hunk) with
+ * char-level highlight on the exact changed spans, layered on highlight.js
+ * syntax colors — same look as Monaco's inline diff. Unchanged context lines
+ * render neutral (shown once). Loaded lazily (see tool-cards.tsx) to keep
+ * highlight.js + jsdiff out of the main chunk.
  */
 import { useMemo } from "react";
-import hljs from "highlight.js/lib/common";
+import { buildRows, hljsLanguage, renderLine, type DiffRow } from "./edit-diff-compute";
 
-/** Map file extension to a highlight.js language id; undefined = plain text */
-function hljsLanguage(filePath?: string): string | undefined {
-  const ext = filePath?.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
-    ts: "typescript", tsx: "typescript",
-    py: "python", rb: "ruby", go: "go", rs: "rust", java: "java",
-    c: "c", h: "c", cpp: "cpp", hpp: "cpp", cs: "csharp",
-    json: "json", css: "css", scss: "scss", less: "less",
-    html: "xml", xml: "xml", svg: "xml",
-    md: "markdown", mdx: "markdown",
-    yaml: "yaml", yml: "yaml", toml: "ini", ini: "ini",
-    sh: "bash", bash: "bash", zsh: "bash", ps1: "powershell",
-    sql: "sql", php: "php", kt: "kotlin", swift: "swift",
-  };
-  const lang = map[ext];
-  return lang && hljs.getLanguage(lang) ? lang : undefined;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/** Highlight one line — hljs escapes its input, so the output HTML is injection-safe */
-function highlightLine(line: string, language?: string): string {
-  if (!language) return escapeHtml(line);
-  try {
-    return hljs.highlight(line, { language }).value;
-  } catch {
-    return escapeHtml(line);
-  }
-}
-
-function useHighlightedLines(text: string, language: string | undefined, maxLines: number) {
-  return useMemo(() => {
-    if (!text) return null;
-    const lines = text.split("\n");
-    const shown = lines.slice(0, maxLines);
-    return {
-      html: shown.map((l) => highlightLine(l, language)),
-      extra: lines.length - shown.length,
-    };
-  }, [text, language, maxLines]);
-}
-
-export default function EditDiffPreview({ oldStr, newStr, filePath, maxLines = 8 }: {
+export default function EditDiffPreview({ oldStr, newStr, filePath, maxLines = 12 }: {
   oldStr: string;
   newStr: string;
   filePath?: string;
   maxLines?: number;
 }) {
   const language = useMemo(() => hljsLanguage(filePath), [filePath]);
-  const oldLines = useHighlightedLines(oldStr, language, maxLines);
-  const newLines = useHighlightedLines(newStr, language, maxLines);
 
-  const block = (data: { html: string[]; extra: number } | null, kind: "old" | "new") => {
-    if (!data) return null;
-    const prefix = kind === "old" ? "-" : "+";
-    const tint = kind === "old" ? "bg-diff-removed" : "bg-diff-added";
-    const gutter = kind === "old" ? "text-error" : "text-success";
-    return (
-      <div className={`font-mono text-[11px] overflow-x-auto rounded px-1.5 py-1 ${tint}`}>
-        {data.html.map((html, i) => (
-          <div key={i} className="flex">
-            <span className={`select-none shrink-0 w-3 ${gutter}`}>{prefix}</span>
-            <code
-              className="whitespace-pre-wrap break-all text-text-primary"
-              dangerouslySetInnerHTML={{ __html: html }}
-            />
-          </div>
-        ))}
-        {data.extra > 0 && (
-          <p className="text-text-subtle select-none">… +{data.extra} more line{data.extra !== 1 ? "s" : ""}</p>
-        )}
-      </div>
-    );
+  const { rows, extra } = useMemo(
+    () => buildRows(oldStr, newStr, maxLines),
+    [oldStr, newStr, maxLines],
+  );
+
+  const lines = useMemo(
+    () =>
+      rows.map((row) => ({
+        row,
+        html: renderLine(
+          row.text,
+          language,
+          row.kind === "equal" ? [] : row.ranges,
+          row.kind === "del" ? "bg-diff-removed-word" : "bg-diff-added-word",
+        ),
+      })),
+    [rows, language],
+  );
+
+  const style = (kind: DiffRow["kind"]) => {
+    if (kind === "del") return { tint: "bg-diff-removed", gutter: "text-error", prefix: "-" };
+    if (kind === "ins") return { tint: "bg-diff-added", gutter: "text-success", prefix: "+" };
+    return { tint: "", gutter: "text-text-subtle", prefix: " " };
   };
 
   return (
-    <div className="space-y-0.5">
-      {block(oldLines, "old")}
-      {block(newLines, "new")}
+    <div className="font-mono text-[11px] overflow-x-auto rounded py-1">
+      {lines.map(({ row, html }, i) => {
+        const s = style(row.kind);
+        return (
+          <div key={i} className={`flex ${s.tint}`}>
+            <span className={`select-none shrink-0 w-3 pl-1.5 ${s.gutter}`}>{s.prefix}</span>
+            <code
+              className="whitespace-pre-wrap break-all text-text-primary pr-1.5"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          </div>
+        );
+      })}
+      {extra > 0 && (
+        <p className="text-text-subtle select-none pl-1.5">
+          … +{extra} more line{extra !== 1 ? "s" : ""}
+        </p>
+      )}
     </div>
   );
 }
