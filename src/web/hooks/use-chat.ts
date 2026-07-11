@@ -137,6 +137,17 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const refetchRef = useRef<(() => void) | null>(null);
   /** True while replaying turn_events — suppresses setPendingApproval */
   const isReplayingRef = useRef(false);
+  /** toolUseIds of AskUserQuestion tool_use events. The approval_request event
+   *  already renders the question card, so the SDK's real tool_use/tool_result
+   *  for AskUserQuestion are suppressed to avoid a duplicate card. */
+  const askQuestionToolUseIdsRef = useRef<Set<string>>(new Set());
+  /** rAF handle for the in-flight turn_events replay — cancelled if a new replay
+   *  starts, so two reconnects can't run overlapping replays that double events. */
+  const replayRafRef = useRef(0);
+  /** userMessage of the active turn currently owned by turn_events replay. Set on
+   *  replay, cleared on turn done. On reload of an unfinished turn the REST history
+   *  ALSO contains this turn, so the REST merge trims it to avoid a double render. */
+  const replayTurnUserMsgRef = useRef<string | null>(null);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   // Mirror of `messages` for synchronous reads (e.g. snapshotting the previous
@@ -248,6 +259,17 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     const evType = ev?.type;
     if (!evType) return;
 
+    // Idempotent upsert for id-bearing events. When the same session is open in
+    // two tabs, a reconnecting/second tab receives a turn_events replay whose
+    // buffered events overlap the live-streamed ones — without this an event
+    // (e.g. an AskUserQuestion approval_request) renders twice in one turn.
+    const upsertStreamingEvent = (matches: (e: ChatEvent) => boolean): void => {
+      const arr = streamingEventsRef.current;
+      const idx = arr.findIndex(matches);
+      if (idx !== -1) arr[idx] = ev as ChatEvent;
+      else arr.push(ev as ChatEvent);
+    };
+
     switch (evType) {
       case "account_info": {
         streamingAccountRef.current = { accountId: ev.accountId, accountLabel: ev.accountLabel };
@@ -297,12 +319,19 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       }
 
       case "tool_use": {
+        // AskUserQuestion is already represented by its approval_request card.
+        // Track its toolUseId and drop this (and its tool_result) to avoid a duplicate.
+        if (ev.tool === "AskUserQuestion") {
+          if (ev.toolUseId) askQuestionToolUseIdsRef.current.add(ev.toolUseId as string);
+          break;
+        }
         const pid = ev.parentToolUseId as string | undefined;
         if (pid && routeToParent(ev as ChatEvent, pid)) {
           syncMessages();
           break;
         }
-        streamingEventsRef.current.push(ev as ChatEvent);
+        const tuId = ev.toolUseId as string | undefined;
+        upsertStreamingEvent((e) => !!tuId && e.type === "tool_use" && (e as any).toolUseId === tuId);
         syncMessages();
         break;
       }
@@ -312,18 +341,44 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         const trId = ev.toolUseId as string;
         if (trId) bashOutputRef.current.delete(trId);
 
+        // Drop the tool_result for a suppressed AskUserQuestion tool_use, else the
+        // unmatched-result fallback would attach it to an unrelated tool card.
+        if (trId && askQuestionToolUseIdsRef.current.has(trId)) break;
+
         const pid = ev.parentToolUseId as string | undefined;
         if (pid && routeToParent(ev as ChatEvent, pid)) {
           syncMessages();
           break;
         }
-        streamingEventsRef.current.push(ev as ChatEvent);
+        upsertStreamingEvent((e) => !!trId && e.type === "tool_result" && (e as any).toolUseId === trId);
         syncMessages();
         break;
       }
 
+      case "approval_resolved": {
+        // Another device (or this one) answered — converge every client:
+        // clear the live prompt for this requestId and merge answers into the card.
+        const reqId = ev.requestId as string;
+        if (ev.approved && ev.answers) {
+          const askEvt = streamingEventsRef.current.find(
+            (e: ChatEvent) =>
+              e.type === "approval_request" &&
+              (e as any).requestId === reqId &&
+              (e as any).tool === "AskUserQuestion",
+          );
+          const inp = askEvt && (askEvt as any).input;
+          if (inp && typeof inp === "object") {
+            (inp as Record<string, unknown>).answers = ev.answers;
+            setMessages((prev) => [...prev]);
+          }
+        }
+        setPendingApproval((cur) => (cur && cur.requestId === reqId ? null : cur));
+        if (approvalToastRef.current != null) { toast.dismiss(approvalToastRef.current); approvalToastRef.current = null; }
+        break;
+      }
+
       case "approval_request": {
-        streamingEventsRef.current.push(ev as ChatEvent);
+        upsertStreamingEvent((e) => e.type === "approval_request" && (e as any).requestId === ev.requestId);
         // During turn_events replay, session_state already set the correct
         // pendingApproval — skip re-setting it for historical (already-answered) events
         if (isReplayingRef.current) break;
@@ -506,6 +561,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         streamingContentRef.current = "";
         streamingEventsRef.current = [];
         streamingAccountRef.current = null;
+        replayTurnUserMsgRef.current = null;
         bashOutputRef.current.clear();
         setStatusMessage(null);
         // Phase transition to idle comes from BE via phase_changed
@@ -626,15 +682,33 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       const userMessage = (data as any).userMessage as string | null;
       if (!events?.length && !userMessage) { setIsReconnecting(false); return; }
 
-      // Remove stale streaming assistant message + inject current turn's user message
+      // Cancel any replay still chunking from a prior turn_events — otherwise its
+      // remaining rAF chunks keep appending onto the array this one resets below.
+      if (replayRafRef.current) { cancelAnimationFrame(replayRafRef.current); replayRafRef.current = 0; }
+
+      // Replay owns the active turn — record it so the REST merge can trim its
+      // duplicate copy (see session-change effect).
+      replayTurnUserMsgRef.current = userMessage;
+
+      // Rebuild the active turn from scratch. Strip any existing copy of THIS turn
+      // before replay re-adds it:
+      //  - a REST-history/finalized copy: trailing assistant message(s) preceded by
+      //    the matching user message (fixes the double render on reload);
+      //  - otherwise just an in-progress "streaming-" assistant (original behavior).
+      // A completed prior turn (different user message) is left untouched.
       setMessages(prev => {
-        let updated = prev;
-        // Only remove in-progress streaming assistant (not finalized or REST-loaded)
-        const last = updated[updated.length - 1];
-        if (last?.role === "assistant" && last.id.startsWith("streaming-")) {
-          updated = updated.slice(0, -1);
+        let updated = [...prev];
+        let k = updated.length;
+        while (k > 0 && updated[k - 1]!.role === "assistant") k--;
+        if (userMessage != null && k > 0 && updated[k - 1]!.role === "user"
+          && updated[k - 1]!.content === userMessage) {
+          updated = updated.slice(0, k - 1);
+        } else {
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant" && last.id.startsWith("streaming-")) {
+            updated = updated.slice(0, -1);
+          }
         }
-        // Add the current turn's user message if not already present
         if (userMessage) {
           const lastAfter = updated[updated.length - 1];
           if (lastAfter?.role !== "user" || lastAfter.content !== userMessage) {
@@ -665,13 +739,14 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         }
         offset = end;
         if (offset < events.length) {
-          requestAnimationFrame(processChunk);
+          replayRafRef.current = requestAnimationFrame(processChunk);
         } else {
+          replayRafRef.current = 0;
           isReplayingRef.current = false;
           setIsReconnecting(false);
         }
       };
-      requestAnimationFrame(processChunk);
+      replayRafRef.current = requestAnimationFrame(processChunk);
       return;
     }
 
@@ -712,6 +787,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setExpansions(new Map());
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
+    replayTurnUserMsgRef.current = null;
     bashOutputRef.current.clear();
     if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
     setIsConnected(false);
@@ -738,7 +814,19 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         .then((r) => r.json())
         .then((json: any) => {
           if (cancelled) return;
-          const history: ChatMessage[] = json.ok && Array.isArray(json.data) ? json.data : [];
+          let history: ChatMessage[] = json.ok && Array.isArray(json.data) ? json.data : [];
+          // If a live turn_events replay already owns the active (unfinished) turn,
+          // the REST history still contains that same turn — trim it (from its last
+          // user message onward) so it isn't rendered twice.
+          const activeUserMsg = replayTurnUserMsgRef.current;
+          if (activeUserMsg != null) {
+            for (let i = history.length - 1; i >= 0; i--) {
+              if (history[i]!.role === "user" && history[i]!.content === activeUserMsg) {
+                history = history.slice(0, i);
+                break;
+              }
+            }
+          }
           setMessages((prev) => {
             const pending = prev.filter((m) => !staleIds.has(m.id));
             return [...history, ...pending];

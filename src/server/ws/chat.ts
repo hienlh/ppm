@@ -955,6 +955,15 @@ export const chatWebSocket = {
             break;
           }
         }
+        // Tell every connected device this approval was resolved so their live
+        // prompt clears — even the device that didn't answer. Without this a
+        // second device keeps showing the (now dead) question card.
+        broadcast(sessionId, {
+          type: "approval_resolved",
+          requestId: parsed.requestId,
+          approved: parsed.approved,
+          answers: (parsed as any).data ?? null,
+        });
         // Broadcast approval cleared to all clients
         broadcast(sessionId, { type: "phase_changed", phase: entry.phase });
       }
