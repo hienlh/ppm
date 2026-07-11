@@ -57,7 +57,7 @@ function Wordmark({ onToggle }: { onToggle: () => void }) {
       title="Toggle sidebar (⌘B)"
       className="w-[52px] shrink-0 flex items-center justify-center border-r border-border hover:bg-surface-elevated transition-colors"
     >
-      <span className="text-[11px] font-bold text-primary leading-none">PPM</span>
+      <span className="text-xs font-extrabold text-primary leading-none tracking-tight">PPM</span>
     </button>
   );
 }
@@ -73,7 +73,7 @@ export const Sidebar = memo(function Sidebar() {
 
   if (sidebarCollapsed) {
     return (
-      <aside className="hidden md:flex flex-col w-[52px] min-w-[52px] bg-background border-r border-border">
+      <aside className="hidden md:flex flex-col w-[52px] min-w-[52px] bg-rail border-r border-border">
         <button
           onClick={toggleSidebar}
           title="Expand sidebar (⌘B)"
@@ -88,7 +88,7 @@ export const Sidebar = memo(function Sidebar() {
 
   return (
     <aside
-      className="hidden md:flex flex-col bg-background border-r border-border overflow-hidden relative"
+      className="hidden md:flex flex-col bg-panel border-r border-border overflow-hidden relative"
       style={{ width: sidebarWidth, minWidth: 200, maxWidth: 600 }}
     >
       {/* Top bar: wordmark + project switcher */}

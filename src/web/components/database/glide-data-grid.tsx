@@ -19,7 +19,7 @@ import { GlideDataPreviewPanel } from "./glide-data-preview-panel";
 const HEADER_ICONS: Record<string, (p: { fgColor: string }) => string> = {
   sortAsc: (p) => `<svg viewBox="0 0 16 16" fill="${p.fgColor}"><path d="M8 4l4 6H4z"/></svg>`,
   sortDesc: (p) => `<svg viewBox="0 0 16 16" fill="${p.fgColor}"><path d="M8 12l4-6H4z"/></svg>`,
-  headerFk: () => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round"><path d="M6 4.5H4.5a2.5 2.5 0 000 5H6M10 4.5h1.5a2.5 2.5 0 010 5H10M5 7h6"/></svg>`,
+  headerFk: () => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"><path d="M6 4.5H4.5a2.5 2.5 0 000 5H6M10 4.5h1.5a2.5 2.5 0 010 5H10M5 7h6"/></svg>`,
 };
 
 /**

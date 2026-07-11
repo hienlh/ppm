@@ -82,7 +82,7 @@ export function BackgroundOutputPanel() {
               <Loader2 className="size-3 animate-spin" /> live
             </span>
           )}
-          {status === "stopping" && <span className="text-[11px] text-amber-500">stopping…</span>}
+          {status === "stopping" && <span className="text-[11px] text-warning">stopping…</span>}
           {status === "stopped" && <span className="text-[11px] text-text-subtle">stopped</span>}
           <button
             type="button"

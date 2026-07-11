@@ -53,7 +53,7 @@ export function SessionContextMenu({
         </ContextMenuItem>
         {!isUnread && (
           <ContextMenuItem onClick={() => markUnread(session.id, projectName, session.title)}>
-            <Circle className="size-3.5 mr-2 fill-blue-500 text-blue-500" />
+            <Circle className="size-3.5 mr-2 fill-primary text-primary" />
             Mark as unread
           </ContextMenuItem>
         )}
@@ -96,7 +96,7 @@ export function SessionContextMenu({
           <>
             <ContextMenuSeparator />
             <ContextMenuItem
-              className="text-red-500 focus:text-red-500"
+              className="text-error focus:text-error"
               onClick={(e) => onDeleteSession(e as unknown as React.MouseEvent, session)}
             >
               <Trash2 className="size-3.5 mr-2" />

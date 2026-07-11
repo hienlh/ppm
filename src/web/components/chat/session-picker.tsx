@@ -132,7 +132,7 @@ export function SessionPicker({
           </button>
           <button
             onClick={(e) => handleDelete(e, session)}
-            className="p-1 rounded hover:bg-red-500/20 text-text-subtle hover:text-red-400 transition-colors can-hover:opacity-0 can-hover:group-hover:opacity-100"
+            className="p-1 rounded hover:bg-error/20 text-text-subtle hover:text-error transition-colors can-hover:opacity-0 can-hover:group-hover:opacity-100"
             aria-label="Delete session"
           >
             <Trash2 className="size-3" />

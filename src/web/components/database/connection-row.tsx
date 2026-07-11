@@ -55,7 +55,7 @@ export function ConnectionRow({
           <button onClick={() => onEdit(conn)} className="p-0.5 text-text-subtle hover:text-foreground transition-colors" title="Edit">
             <Pencil className="size-3" />
           </button>
-          <button onClick={() => onDelete(conn.id)} className="p-0.5 text-text-subtle hover:text-red-500 transition-colors" title="Delete">
+          <button onClick={() => onDelete(conn.id)} className="p-0.5 text-text-subtle hover:text-error transition-colors" title="Delete">
             <Trash2 className="size-3" />
           </button>
         </div>
@@ -66,7 +66,7 @@ export function ConnectionRow({
           {isRefreshing && tables.length === 0 && <p className="text-[10px] text-text-subtle px-2 py-1">Loading…</p>}
           {!isRefreshing && tables.length === 0 && (
             refreshError
-              ? <p className="text-[10px] text-red-500 px-2 py-1 break-all">{refreshError}</p>
+              ? <p className="text-[10px] text-error px-2 py-1 break-all">{refreshError}</p>
               : <p className="text-[10px] text-text-subtle px-2 py-1">No tables cached</p>
           )}
           {tables.length > 0 && (

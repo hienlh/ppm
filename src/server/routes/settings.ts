@@ -77,18 +77,24 @@ settingsRoutes.put("/device-name", async (c) => {
 
 // ── Theme ─────────────────────────────────────────────────────────────
 
-/** GET /settings/theme */
+/** GET /settings/theme — returns the {style, mode, customThemeId?} object */
 settingsRoutes.get("/theme", (c) => {
-  return c.json(ok({ theme: configService.get("theme") ?? "system" }));
+  const theme = configService.get("theme") ?? { style: "aurora", mode: "dark" };
+  return c.json(ok({ theme }));
 });
 
-/** PUT /settings/theme */
+/** PUT /settings/theme — accepts {style, mode, customThemeId?} (legacy string body removed) */
 settingsRoutes.put("/theme", async (c) => {
   try {
-    const { theme } = await c.req.json<{ theme: ThemeConfig }>();
-    if (!["light", "dark", "system"].includes(theme)) {
-      return c.json(err("theme must be light, dark, or system"), 400);
+    const body = await c.req.json<Partial<ThemeConfig>>();
+    if (typeof body.style !== "string" || !body.style.trim()) {
+      return c.json(err("style must be a non-empty string"), 400);
     }
+    if (!["light", "dark", "system"].includes(body.mode as string)) {
+      return c.json(err("mode must be light, dark, or system"), 400);
+    }
+    const theme: ThemeConfig = { style: body.style, mode: body.mode as ThemeConfig["mode"] };
+    if (typeof body.customThemeId === "string") theme.customThemeId = body.customThemeId;
     configService.set("theme", theme);
     configService.save();
     return c.json(ok({ theme }));

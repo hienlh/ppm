@@ -79,12 +79,20 @@ describe("sanitizeConfig — multi-provider", () => {
     }
   });
 
-  it("fixes invalid theme to system", () => {
+  it("migrates a legacy string theme to the {style, mode} object", () => {
     const config = makeConfig();
-    (config as any).theme = "neon";
+    (config as any).theme = "neon"; // invalid legacy string
     const dirty = sanitizeConfig(config);
     expect(dirty).toBe(true);
-    expect(config.theme).toBe("system");
+    expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
+  });
+
+  it("migrates legacy 'dark' string to {aurora, dark}", () => {
+    const config = makeConfig();
+    (config as any).theme = "dark";
+    const dirty = sanitizeConfig(config);
+    expect(dirty).toBe(true);
+    expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
   });
 
   it("handles config with multiple providers (cursor + claude)", () => {

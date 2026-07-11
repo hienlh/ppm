@@ -110,7 +110,7 @@ export function PortForwardingTab() {
             {loading ? <Loader2 className="size-4 animate-spin" /> : "Forward"}
           </button>
         </form>
-        {error && <p className="text-sm text-red-400 mt-2">{error}</p>}
+        {error && <p className="text-sm text-error mt-2">{error}</p>}
         {loading && (
           <div className="flex items-center gap-2 text-sm text-text-secondary mt-2">
             <Loader2 className="size-3.5 animate-spin" />
@@ -160,15 +160,15 @@ export function PortForwardingTab() {
                     title="Copy URL"
                   >
                     {copiedPort === t.port
-                      ? <Check className="size-4 text-green-400" />
+                      ? <Check className="size-4 text-success" />
                       : <Copy className="size-4 text-text-secondary" />}
                   </button>
                   <button
                     onClick={() => stopTunnel(t.port)}
-                    className="p-2.5 rounded-md hover:bg-red-500/10 transition-colors"
+                    className="p-2.5 rounded-md hover:bg-error/10 transition-colors"
                     title="Stop tunnel"
                   >
-                    <Square className="size-4 text-red-400" />
+                    <Square className="size-4 text-error" />
                   </button>
                 </div>
               </div>

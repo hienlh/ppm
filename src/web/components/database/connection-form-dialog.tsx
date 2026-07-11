@@ -228,13 +228,13 @@ export function ConnectionFormDialog({
 
           {/* Test result */}
           {testResult && (
-            <p className={`text-xs ${testResult.ok ? "text-green-500" : "text-red-500"}`}>
+            <p className={`text-xs ${testResult.ok ? "text-success" : "text-error"}`}>
               {testResult.ok ? "✓ Connection successful" : `✗ ${testResult.error}`}
             </p>
           )}
 
           {/* Error */}
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && <p className="text-xs text-error">{error}</p>}
         </div>
 
         <DialogFooter>

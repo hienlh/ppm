@@ -144,7 +144,7 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess }: AddAccountDi
             <Input id="add-label" placeholder="e.g. Personal, Work" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} className="text-xs h-8" />
           </div>
         </div>
-        {addError && <div className="text-[11px] p-2 rounded bg-red-500/10 text-red-600">{addError}</div>}
+        {addError && <div className="text-[11px] p-2 rounded bg-error/10 text-error">{addError}</div>}
         <DialogFooter>
           <Button size="sm" variant="outline" className="text-xs h-7" onClick={handleClose}>Cancel</Button>
           <Button size="sm" className="text-xs h-7" onClick={handleAddToken} disabled={!newToken.trim() || adding}>
@@ -272,17 +272,17 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
           </div>
           {/* Warning */}
           {fullTransfer ? (
-            <div className="rounded-md border border-red-500/30 bg-red-500/5 p-2.5">
-              <p className="text-[10px] font-medium text-red-600">Full transfer — source accounts will expire</p>
+            <div className="rounded-md border border-error/30 bg-error/5 p-2.5">
+              <p className="text-[10px] font-medium text-error">Full transfer — source accounts will expire</p>
               <p className="text-[10px] text-muted-foreground">Refresh tokens included. Source machine expires in ~1h after target refreshes.</p>
             </div>
           ) : refreshBefore ? (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5">
-              <p className="text-[10px] font-medium text-amber-600">Refresh before export — invalidates previous shares</p>
+            <div className="rounded-md border border-warning/30 bg-warning/5 p-2.5">
+              <p className="text-[10px] font-medium text-warning">Refresh before export — invalidates previous shares</p>
             </div>
           ) : (
-            <div className="rounded-md border border-green-500/30 bg-green-500/5 p-2.5">
-              <p className="text-[10px] font-medium text-green-600">Share current token (safe)</p>
+            <div className="rounded-md border border-success/30 bg-success/5 p-2.5">
+              <p className="text-[10px] font-medium text-success">Share current token (safe)</p>
             </div>
           )}
           <p className="text-[10px] text-muted-foreground">Encrypted with AES-256-GCM + scrypt.</p>
@@ -353,7 +353,7 @@ export function ImportAccountsDialog({ open, onOpenChange, onSuccess }: ImportAc
             <Input type="password" placeholder="Leave empty for default" value={password} onChange={(e) => setPassword(e.target.value)} className="text-xs h-8" autoComplete="current-password" />
           </div>
         </div>
-        {error && <div className="text-[11px] p-2 rounded bg-red-500/10 text-red-600">{error}</div>}
+        {error && <div className="text-[11px] p-2 rounded bg-error/10 text-error">{error}</div>}
         <DialogFooter>
           <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={handleClose}>Cancel</Button>
           <Button size="sm" className="text-xs h-7 cursor-pointer" disabled={!data.trim() || importing} onClick={doImport}>

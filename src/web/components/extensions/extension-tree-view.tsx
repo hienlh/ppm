@@ -230,7 +230,7 @@ function ActionButton({ action }: { action: TreeItemAction }) {
       onClick={handleClick}
       className={cn(
         "p-0.5 text-text-subtle transition-colors",
-        isTrash ? "hover:text-red-500" : "hover:text-foreground",
+        isTrash ? "hover:text-error" : "hover:text-foreground",
       )}
       title={action.tooltip}
     >

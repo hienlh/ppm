@@ -74,7 +74,7 @@ export function GitRefBadge({ name, syncState, isHead, isTag, className }: GitRe
       style={{
         borderColor: color,
         backgroundColor: color + "1A", // ~10% opacity
-        color: "#1a1a1a",
+        color: "var(--text)",
         // HEAD ring color
         ...(isHead ? { ["--tw-ring-color" as string]: color } : {}),
       }}

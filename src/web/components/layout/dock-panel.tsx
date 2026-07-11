@@ -53,7 +53,7 @@ export function DockPanel({ variant = "desktop", borderEdge = "top" }: DockPanel
   }, []);
 
   return (
-    <div className={cn("flex flex-col h-full overflow-hidden border-border bg-background", BORDER_EDGE_CLASS[borderEdge])}>
+    <div className={cn("flex flex-col h-full overflow-hidden border-border bg-panel", BORDER_EDGE_CLASS[borderEdge])}>
       {/* Header row */}
       <div className="flex items-center shrink-0">
         {variant === "mobile" ? (

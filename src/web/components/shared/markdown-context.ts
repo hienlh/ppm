@@ -11,6 +11,8 @@ export const LOCAL_PATH_RE = /^(\/|[A-Za-z]:[/\\])/;
 export interface MdContextValue {
   projectName?: string;
   codeActions: boolean;
+  /** True while the message is still streaming — defer async Shiki highlight until done. */
+  isStreaming: boolean;
   openFileOrSearch: (path: string, line?: { start: number; end?: number }) => void;
   openImageOverlay: (url: string, alt: string) => void;
   openDiagramOverlay: (svg: string) => void;

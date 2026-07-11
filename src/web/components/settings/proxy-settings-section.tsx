@@ -231,7 +231,7 @@ OPENAI_API_KEY=${settings.authKey}`}
       )}
 
       {saving && <p className="text-[11px] text-text-subtle">Saving...</p>}
-      {error && <p className="text-[11px] text-red-500">{error}</p>}
+      {error && <p className="text-[11px] text-error">{error}</p>}
     </div>
   );
 }

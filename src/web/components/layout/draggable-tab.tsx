@@ -102,7 +102,7 @@ export function DraggableTab({
         // Streaming: force amber (matches favicon streaming bg) so typing state is unmistakable
         // regardless of tab active state. Otherwise inherits parent button's color (primary/text-secondary).
         // Tag identity is now shown as a separate left-edge bar (see wrapper div below), not icon color.
-        className={cn("relative", isStreaming && "text-amber-500")}
+        className={cn("relative", isStreaming && "text-warning")}
       >
         <Icon className="size-4" />
         {isStreaming ? (

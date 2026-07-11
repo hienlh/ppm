@@ -38,15 +38,15 @@ function detectTokenType(token: string): string {
 }
 
 function miniBarColor(pct: number): string {
-  if (pct >= 90) return "bg-red-500";
-  if (pct >= 70) return "bg-amber-500";
-  return "bg-green-500";
+  if (pct >= 90) return "bg-error";
+  if (pct >= 70) return "bg-warning";
+  return "bg-success";
 }
 
 function miniPctColor(pct: number): string {
-  if (pct >= 90) return "text-red-500";
-  if (pct >= 70) return "text-amber-500";
-  return "text-green-500";
+  if (pct >= 90) return "text-error";
+  if (pct >= 70) return "text-warning";
+  return "text-success";
 }
 
 function MiniBar({ label, value }: { label: string; value: number }) {
@@ -442,7 +442,7 @@ export function AccountsSettingsSection() {
         </p>
 
         {message && (
-          <div className={`text-[11px] mb-3 p-2 rounded ${message.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
+          <div className={`text-[11px] mb-3 p-2 rounded ${message.type === "success" ? "bg-success/10 text-success" : "bg-error/10 text-error"}`}>
             {message.text}
           </div>
         )}
@@ -689,7 +689,7 @@ export function AccountsSettingsSection() {
             </div>
           </div>
           {addError && (
-            <div className="text-[11px] p-2 rounded bg-red-500/10 text-red-600">
+            <div className="text-[11px] p-2 rounded bg-error/10 text-error">
               {addError}
             </div>
           )}
@@ -774,7 +774,7 @@ export function AccountsSettingsSection() {
                 autoComplete="new-password"
               />
               {exportConfirm && exportPassword !== exportConfirm && (
-                <p className="text-[10px] text-red-500">Passwords do not match</p>
+                <p className="text-[10px] text-error">Passwords do not match</p>
               )}
             </div>
             {/* Full transfer toggle */}
@@ -804,22 +804,22 @@ export function AccountsSettingsSection() {
               </label>
             </div>
             {exportFullTransfer ? (
-              <div className="rounded-md border border-red-500/30 bg-red-500/5 p-2.5 space-y-1">
-                <p className="text-[10px] font-medium text-red-600">Full transfer — source accounts will expire</p>
+              <div className="rounded-md border border-error/30 bg-error/5 p-2.5 space-y-1">
+                <p className="text-[10px] font-medium text-error">Full transfer — source accounts will expire</p>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                   Refresh tokens are included. Once the target machine refreshes, <strong>accounts on this machine will only work for ~1h</strong> then become temporary. Use this only to move accounts to another machine.
                 </p>
               </div>
             ) : exportRefreshBefore ? (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 space-y-1">
-                <p className="text-[10px] font-medium text-amber-600">Refresh before export — invalidates previous shares</p>
+              <div className="rounded-md border border-warning/30 bg-warning/5 p-2.5 space-y-1">
+                <p className="text-[10px] font-medium text-warning">Refresh before export — invalidates previous shares</p>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                   Tokens will be refreshed to maximize validity (~1h). But <strong>any previously shared tokens will be invalidated</strong> because Anthropic only allows 1 active access token per account.
                 </p>
               </div>
             ) : (
-              <div className="rounded-md border border-green-500/30 bg-green-500/5 p-2.5 space-y-1">
-                <p className="text-[10px] font-medium text-green-600">Share current token (default, safe)</p>
+              <div className="rounded-md border border-success/30 bg-success/5 p-2.5 space-y-1">
+                <p className="text-[10px] font-medium text-success">Share current token (default, safe)</p>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                   Exports the current access token as-is. Host and target share the same token. No invalidation. Token validity = remaining time until next auto-refresh.
                 </p>
@@ -909,9 +909,9 @@ export function AccountsSettingsSection() {
                       </div>
                       {entry && !entry.loading && (
                         <div className="text-[10px] pl-1 border-l-2 border-muted ml-1">
-                          {entry.error && <p className="text-red-500">{entry.error}</p>}
+                          {entry.error && <p className="text-error">{entry.error}</p>}
                           {entry.result && (
-                            <span className={entry.result.accessToken.status.startsWith("valid") ? "text-green-600" : "text-red-500"}>
+                            <span className={entry.result.accessToken.status.startsWith("valid") ? "text-success" : "text-error"}>
                               {entry.result.accessToken.status} {entry.result.accessToken.code && `(${entry.result.accessToken.code})`}
                             </span>
                           )}
@@ -1015,7 +1015,7 @@ export function AccountsSettingsSection() {
                                   </Button>
                                 ) : <span className="text-[9px] text-muted-foreground">-</span>}
                                 {test && !test.loading && (
-                                  <span className={`text-[9px] font-medium shrink-0 ${test.status?.startsWith("valid") ? "text-green-600" : "text-red-500"}`}>
+                                  <span className={`text-[9px] font-medium shrink-0 ${test.status?.startsWith("valid") ? "text-success" : "text-error"}`}>
                                     {test.status}
                                   </span>
                                 )}
@@ -1069,7 +1069,7 @@ export function AccountsSettingsSection() {
             </div>
           </div>
           {importError && (
-            <div className="text-[11px] p-2 rounded bg-red-500/10 text-red-600">{importError}</div>
+            <div className="text-[11px] p-2 rounded bg-error/10 text-error">{importError}</div>
           )}
           <DialogFooter>
             <Button size="sm" variant="outline" className="text-xs h-7 cursor-pointer" onClick={() => setShowImportDialog(false)}>

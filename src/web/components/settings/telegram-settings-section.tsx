@@ -104,7 +104,7 @@ export function TelegramSettingsSection() {
         </Button>
       </div>
       {status && (
-        <p className={`text-[11px] ${status.type === "ok" ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
+        <p className={`text-[11px] ${status.type === "ok" ? "text-success" : "text-destructive"}`}>
           {status.msg}
         </p>
       )}

@@ -108,8 +108,8 @@ export const SystemMonitorTab = memo(function SystemMonitorTab() {
         <h2 className="text-sm font-medium">System Monitor</h2>
         <div className="flex items-center gap-1.5 text-[10px] text-text-subtle">
           {isConnected
-            ? <Wifi className="size-3 text-green-500" />
-            : <WifiOff className="size-3 text-red-500" />}
+            ? <Wifi className="size-3 text-success" />
+            : <WifiOff className="size-3 text-error" />}
           <span>{isConnected ? `Updated ${elapsed}s ago` : "Disconnected"}</span>
         </div>
       </div>

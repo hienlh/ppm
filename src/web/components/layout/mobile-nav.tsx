@@ -375,7 +375,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
         {menuSessionId && !menuNotiType && (
           <button onClick={() => markUnread(menuTab!)}
             className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-            <Circle className="size-4 fill-blue-500 text-blue-500" /> Mark as unread
+            <Circle className="size-4 fill-primary text-primary" /> Mark as unread
           </button>
         )}
         {menuSessionId && projectTags.length > 0 && (

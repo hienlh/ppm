@@ -257,7 +257,7 @@ function PgQueryEditor({ onExecute, result, error, loading }: {
       </div>
       <div className="flex-1 overflow-auto text-xs">
         {error && <div className="px-3 py-2 text-destructive bg-destructive/5">{error}</div>}
-        {result?.changeType === "modify" && <div className="px-3 py-2 text-green-500">Query executed. {result.rowsAffected} row(s) affected.</div>}
+        {result?.changeType === "modify" && <div className="px-3 py-2 text-success">Query executed. {result.rowsAffected} row(s) affected.</div>}
         {result?.changeType === "select" && result.rows.length > 0 && (
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-muted">

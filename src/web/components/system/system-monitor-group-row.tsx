@@ -8,9 +8,9 @@ export type SortKey = "cpu" | "ram" | null;
 export type SortDir = "asc" | "desc";
 
 function cpuColor(cpu: number) {
-  if (cpu > 80) return "text-red-500";
-  if (cpu > 50) return "text-yellow-500";
-  return "text-green-500";
+  if (cpu > 80) return "text-error";
+  if (cpu > 50) return "text-warning";
+  return "text-success";
 }
 
 function formatRam(mb: number) {
@@ -106,7 +106,7 @@ export const GroupRow = memo(function GroupRow({
                 </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); onKill(proc.pid); }}
-                  className="opacity-0 group-hover/proc:opacity-100 p-0.5 rounded hover:bg-red-500/20 hover:text-red-500 transition-all"
+                  className="opacity-0 group-hover/proc:opacity-100 p-0.5 rounded hover:bg-error/20 hover:text-error transition-all"
                   title={`End process ${proc.pid}`}
                 >
                   <X className="size-3" />

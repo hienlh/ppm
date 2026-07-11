@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { App } from "./app.tsx";
 import "./styles/globals.css";
 import "katex/dist/katex.min.css";
-// Highlight.js themes are loaded dynamically by applyThemeClass() to match light/dark mode
 
 // Patch DOM methods to swallow NotFoundError from browser extensions or rehype-raw
 // that desync React's virtual DOM. Catch-based approach preserves normal DOM behavior

@@ -54,9 +54,9 @@ function relativeTime(iso: string): string {
 }
 
 function pctColor(pct: number): string {
-  if (pct >= 90) return "text-red-500";
-  if (pct >= 70) return "text-amber-500";
-  return "text-green-500";
+  if (pct >= 90) return "text-error";
+  if (pct >= 70) return "text-warning";
+  return "text-success";
 }
 
 function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projectName: string }) {
@@ -83,7 +83,7 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
           });
         } catch { /* silent */ }
       }}
-      className={`p-1 rounded transition-colors ${copied ? "text-green-500 bg-green-500/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
+      className={`p-1 rounded transition-colors ${copied ? "text-success bg-success/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
       title={copied ? "Copied!" : "Copy session debug info"}
     >
       {copied ? <ClipboardCheck className="size-3" /> : <Bug className="size-3" />}
@@ -387,7 +387,7 @@ export function ChatHistoryBar({
         {hasUnread && sessionId && (
           <button
             onClick={() => clearForSession(sessionId)}
-            className="p-1 rounded text-amber-500 hover:text-amber-400 hover:bg-surface-elevated transition-colors"
+            className="p-1 rounded text-warning hover:text-warning/80 hover:bg-surface-elevated transition-colors"
             title="Mark as read"
           >
             <BellOff className="size-3" />
@@ -398,7 +398,7 @@ export function ChatHistoryBar({
         {!hasUnread && sessionId && (
           <button
             onClick={() => markUnread(sessionId, projectName)}
-            className="p-1 rounded text-blue-500 hover:text-blue-400 hover:bg-surface-elevated transition-colors"
+            className="p-1 rounded text-primary hover:text-primary/80 hover:bg-surface-elevated transition-colors"
             title="Mark as unread"
           >
             <Circle className="size-3 fill-current" />
@@ -424,8 +424,8 @@ export function ChatHistoryBar({
             className="relative size-4 flex items-center justify-center"
             title={isConnected ? "Reload messages" : "Disconnected — click to reload"}
           >
-            <RefreshCw className={`size-3 ${isConnected ? "text-muted-foreground/60" : "text-red-400"}`} strokeWidth={2.5} />
-            <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500 animate-pulse"}`} />
+            <RefreshCw className={`size-3 ${isConnected ? "text-muted-foreground/60" : "text-error"}`} strokeWidth={2.5} />
+            <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ${isConnected ? "bg-success" : "bg-error animate-pulse"}`} />
           </button>
         )}
       </div>
@@ -447,7 +447,7 @@ export function ChatHistoryBar({
             />
             <button
               onClick={bulkDelete}
-              className="p-0.5 rounded text-text-subtle hover:text-red-400 transition-colors"
+              className="p-0.5 rounded text-text-subtle hover:text-error transition-colors"
               title="Delete old sessions..."
             >
               <CalendarX2 className="size-3" />
@@ -552,7 +552,7 @@ export function ChatHistoryBar({
                           className="flex-1 min-w-0 bg-surface-elevated text-[11px] text-text-primary px-1 py-0.5 rounded border border-border outline-none focus:border-primary"
                           autoFocus
                         />
-                        <button type="submit" className="p-0.5 text-green-500 hover:text-green-400" onClick={(e) => e.stopPropagation()}>
+                        <button type="submit" className="p-0.5 text-success hover:text-success/80" onClick={(e) => e.stopPropagation()}>
                           <Check className="size-3" />
                         </button>
                         <button type="button" className="p-0.5 text-text-subtle hover:text-text-secondary" onClick={(e) => { e.stopPropagation(); cancelEditing(); }}>
@@ -592,7 +592,7 @@ export function ChatHistoryBar({
                         </button>
                         <button
                           onClick={(e) => deleteSession(e, session)}
-                          className="p-0.5 rounded text-text-subtle hover:text-red-400 hover:bg-red-500/20 can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
+                          className="p-0.5 rounded text-text-subtle hover:text-error hover:bg-error/20 can-hover:opacity-0 can-hover:group-hover:opacity-100 transition-opacity"
                           title="Delete session"
                         >
                           <Trash2 className="size-3" />

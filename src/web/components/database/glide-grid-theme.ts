@@ -28,7 +28,8 @@ function buildTheme(): Partial<Theme> {
   const primary = cssVar("--color-primary");
   const primaryFg = cssVar("--color-primary-foreground");
   const border = cssVar("--color-border");
-  const accent = cssVar("--color-accent");
+  // Brand accent for focus/hover highlights (shadcn `--color-accent` is a hover surface).
+  const accent = cssVar("--color-primary");
   const textSecondary = cssVar("--color-text-secondary");
   const textSubtle = cssVar("--color-text-subtle");
   const fontSans = cssVar("--font-sans") || "Geist, system-ui, sans-serif";
@@ -73,9 +74,16 @@ export function useGlideTheme(): Partial<Theme> {
   const [rev, setRev] = useState(0);
 
   useEffect(() => {
-    const observer = new MutationObserver(() => setRev((r) => r + 1));
+    const bump = () => setRev((r) => r + 1);
+    // Class toggles cover dark↔light; the theme-change event covers same-mode
+    // style swaps (e.g. aurora-dark → slate-dark) where the class doesn't change.
+    const observer = new MutationObserver(bump);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
+    window.addEventListener("ppm:theme-change", bump);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("ppm:theme-change", bump);
+    };
   }, []);
 
   return useMemo(() => buildTheme(), [rev]); // eslint-disable-line react-hooks/exhaustive-deps

@@ -67,7 +67,7 @@ export default function EditDiffPreview({ oldStr, newStr, filePath, maxLines = 8
     if (!data) return null;
     const prefix = kind === "old" ? "-" : "+";
     const tint = kind === "old" ? "bg-diff-removed" : "bg-diff-added";
-    const gutter = kind === "old" ? "text-red-400" : "text-green-400";
+    const gutter = kind === "old" ? "text-error" : "text-success";
     return (
       <div className={`font-mono text-[11px] overflow-x-auto rounded px-1.5 py-1 ${tint}`}>
         {data.html.map((html, i) => (

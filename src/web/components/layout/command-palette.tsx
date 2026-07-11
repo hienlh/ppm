@@ -539,7 +539,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
             <span className="text-[11px] text-text-subtle">Failed to build file index —</span>
             <button
               onClick={() => activeProject && loadIndex(activeProject.name)}
-              className="text-[11px] text-accent hover:underline"
+              className="text-[11px] text-primary hover:underline"
             >
               retry
             </button>
@@ -568,7 +568,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
                 onClick={askAi}
                 className="flex items-center gap-3 w-full px-3 py-3 text-sm text-left text-text-secondary hover:bg-accent/15 hover:text-text-primary transition-colors"
               >
-                <MessageSquare className="size-4 shrink-0 text-accent" />
+                <MessageSquare className="size-4 shrink-0 text-primary" />
                 <span>Ask AI: <span className="text-text-primary font-medium">{query.trim().slice(0, 60)}</span></span>
               </button>
             ) : (

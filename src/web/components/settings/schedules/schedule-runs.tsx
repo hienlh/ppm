@@ -5,9 +5,9 @@ import { useScheduleRuns } from "@/hooks/use-schedules";
 import type { ScheduleRun } from "../../../../types/scheduler";
 
 const STATUS_STYLES: Record<string, string> = {
-  done: "bg-green-500/10 text-green-500",
-  error: "bg-red-500/10 text-red-500",
-  running: "bg-amber-500/10 text-amber-500",
+  done: "bg-success/10 text-success",
+  error: "bg-error/10 text-error",
+  running: "bg-warning/10 text-warning",
   skipped: "bg-muted text-muted-foreground",
 };
 
@@ -60,7 +60,7 @@ function RunRow({ run }: { run: ScheduleRun }) {
       </button>
       {expanded && (
         <div className="px-2 pb-2 space-y-1">
-          {run.error && <p className="text-red-400 break-all">{run.error}</p>}
+          {run.error && <p className="text-error break-all">{run.error}</p>}
           {run.output_truncated && (
             <pre className="overflow-auto max-h-96 whitespace-pre-wrap break-all text-muted-foreground font-mono text-[10px]">
               {run.output_truncated}

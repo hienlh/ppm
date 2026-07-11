@@ -7,11 +7,11 @@ import type { JiraWatchResult, JiraResultStatus } from "../../../../src/types/ji
 
 /** Status dot color */
 const DOT_COLORS: Record<JiraResultStatus, string> = {
-  pending: "bg-yellow-500",
-  queued: "bg-orange-500",
-  running: "bg-blue-500 animate-pulse",
-  done: "bg-green-500",
-  failed: "bg-red-500",
+  pending: "bg-warning",
+  queued: "bg-warning/80",
+  running: "bg-primary animate-pulse",
+  done: "bg-success",
+  failed: "bg-error",
 };
 
 /** Relative time helper */

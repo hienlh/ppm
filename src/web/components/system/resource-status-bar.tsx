@@ -6,9 +6,9 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 
 function cpuColor(cpu: number) {
-  if (cpu > 80) return "text-red-500";
-  if (cpu > 50) return "text-yellow-500";
-  return "text-green-500";
+  if (cpu > 80) return "text-error";
+  if (cpu > 50) return "text-warning";
+  return "text-success";
 }
 
 /** `compact` renders inline for the 22px status bar (no full-width button, CPU+MEM only). */

@@ -288,17 +288,17 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
       const styleEl = doc.createElement("style");
       styleEl.id = "conflict-editor-styles";
       styleEl.textContent = `
-        .conflict-current-content { background: rgba(34, 197, 94, 0.1) !important; }
-        .conflict-incoming-content { background: rgba(59, 130, 246, 0.1) !important; }
+        .conflict-current-content { background: color-mix(in srgb, var(--color-success) 10%, transparent) !important; }
+        .conflict-incoming-content { background: color-mix(in srgb, var(--color-primary) 10%, transparent) !important; }
         .conflict-marker-line { background: rgba(100, 100, 100, 0.15) !important; font-style: italic; }
-        .conflict-glyph-current { background: #22c55e !important; }
-        .conflict-glyph-incoming { background: #3b82f6 !important; }
+        .conflict-glyph-current { background: var(--color-success) !important; }
+        .conflict-glyph-incoming { background: var(--color-primary) !important; }
         .conflict-actions { display: flex; gap: 8px; align-items: center; padding: 2px 0; font-size: 12px; font-family: system-ui; }
-        .conflict-label { color: #22c55e; font-weight: 600; margin-right: 8px; }
+        .conflict-label { color: var(--color-success); font-weight: 600; margin-right: 8px; }
         .conflict-btn { padding: 1px 8px; border-radius: 3px; border: none; cursor: pointer; font-size: 11px; opacity: 0.9; }
         .conflict-btn:hover { opacity: 1; }
-        .conflict-btn-current { color: #22c55e; background: rgba(34, 197, 94, 0.15); }
-        .conflict-btn-incoming { color: #3b82f6; background: rgba(59, 130, 246, 0.15); }
+        .conflict-btn-current { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 15%, transparent); }
+        .conflict-btn-incoming { color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 15%, transparent); }
         .conflict-btn-both { color: #a855f7; background: rgba(168, 85, 247, 0.15); }
       `;
       doc.head?.appendChild(styleEl);
@@ -336,7 +336,7 @@ export function ConflictEditor({ metadata }: ConflictEditorProps) {
             {conflictCount} conflict{conflictCount !== 1 ? "s" : ""} remaining
           </span>
         ) : (
-          <span className="text-green-500 font-medium">All conflicts resolved</span>
+          <span className="text-success font-medium">All conflicts resolved</span>
         )}
       </div>
       <div ref={containerRef} className="flex-1 min-h-0">

@@ -6,6 +6,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ResourceStatusBar } from "@/components/system/resource-status-bar";
+import { ThemePicker } from "@/components/settings/theme-picker";
 import { countDockTabs } from "@/components/layout/dock-tabs";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,8 @@ export const StatusBar = memo(function StatusBar() {
         {right.map((item) => (
           <StatusBarEntry key={item.id} item={item} />
         ))}
+        {/* Theme picker — palette button opens the theme dropdown. */}
+        <ThemePicker />
         {/* Version — moved here from the sidebar wordmark (handoff B2). */}
         {version && <span className="px-1 shrink-0">v{version}</span>}
       </div>

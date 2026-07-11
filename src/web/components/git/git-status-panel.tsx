@@ -54,12 +54,12 @@ interface GitStatusPanelProps {
 type ViewMode = "flat" | "tree";
 
 const STATUS_COLORS: Record<string, string> = {
-  M: "text-yellow-500",
-  A: "text-green-500",
-  D: "text-red-500",
-  R: "text-blue-500",
-  C: "text-purple-500",
-  "?": "text-gray-400",
+  M: "text-warning",
+  A: "text-success",
+  D: "text-error",
+  R: "text-primary",
+  C: "text-accent-2",
+  "?": "text-text-3",
 };
 
 /** Build a tree structure from flat file paths */

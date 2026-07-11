@@ -266,7 +266,7 @@ function WorktreeRow({
             {label}
           </span>
           {isActive && (
-            <Check className="size-3 text-green-500 shrink-0" />
+            <Check className="size-3 text-success shrink-0" />
           )}
           {worktree.isMain && (
             <span className="text-[10px] bg-muted text-muted-foreground rounded px-1 shrink-0">
@@ -275,7 +275,7 @@ function WorktreeRow({
           )}
           {worktree.locked && (
             <span title={worktree.lockReason ?? "locked"}>
-              <Lock className="size-3 text-yellow-500 shrink-0" />
+              <Lock className="size-3 text-warning shrink-0" />
             </span>
           )}
           {worktree.prunable && (

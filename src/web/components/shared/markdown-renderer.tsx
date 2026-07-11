@@ -5,7 +5,6 @@ import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
 import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
-import rehypeHighlight from "rehype-highlight";
 import { useTabStore } from "@/stores/tab-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useImageOverlay } from "@/stores/image-overlay-store";
@@ -27,7 +26,7 @@ interface MarkdownRendererProps {
 
 /** Plugin arrays — stable references to avoid re-creating on each render */
 const remarkPlugins = [[remarkGfm, { singleTilde: false }], [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any;
-const rehypePlugins = [rehypeRaw, rehypeKatex, rehypeHighlight] as any;
+const rehypePlugins = [rehypeRaw, rehypeKatex] as any;
 
 /** Component map — stable references; dynamic state flows through MdContext */
 const mdComponents = { a: MdLink, img: MdImage, pre: MdPre, code: MdCode, table: MdTable };
@@ -102,10 +101,10 @@ export function MarkdownRenderer({ content, projectName, className = "", codeAct
   }, [openTab, updateTab, fileTree, projectName]);
 
   const ctx = useMemo(() => ({
-    projectName, codeActions, openFileOrSearch,
+    projectName, codeActions, isStreaming, openFileOrSearch,
     openImageOverlay: openImageOverlayFn,
     openDiagramOverlay: openDiagramOverlayFn,
-  }), [projectName, codeActions, openFileOrSearch, openImageOverlayFn, openDiagramOverlayFn]);
+  }), [projectName, codeActions, isStreaming, openFileOrSearch, openImageOverlayFn, openDiagramOverlayFn]);
 
   return (
     <MdContext.Provider value={ctx}>

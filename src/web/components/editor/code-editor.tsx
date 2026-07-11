@@ -866,7 +866,7 @@ function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab
         )}
         {error && <div className="px-3 py-2 text-xs text-destructive bg-destructive/5">{error}</div>}
         {result?.changeType === "modify" && (
-          <div className="px-3 py-2 text-xs text-green-500">
+          <div className="px-3 py-2 text-xs text-success">
             {result.rowsAffected} row(s) affected
           </div>
         )}

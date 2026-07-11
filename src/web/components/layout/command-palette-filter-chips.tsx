@@ -46,7 +46,7 @@ export function CommandPaletteFilterChips({
             onClick={() => onToggle(group)}
             className={`inline-flex items-center gap-1 shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
               isActive
-                ? "bg-accent/15 border-accent text-accent"
+                ? "bg-primary/15 border-primary text-primary"
                 : "bg-surface border-border text-text-subtle hover:bg-surface-elevated"
             } ${count === 0 ? "opacity-50" : ""}`}
           >

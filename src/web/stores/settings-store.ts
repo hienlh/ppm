@@ -1,9 +1,7 @@
 import { create } from "zustand";
 import { getAuthToken } from "@/lib/api-client";
-import hljsDarkUrl from "highlight.js/styles/github-dark-dimmed.min.css?url";
-import hljsLightUrl from "highlight.js/styles/github.min.css?url";
+import type { PpmTheme, PpmThemeMode, PpmThemeStyle } from "@/theme/types";
 
-export type Theme = "light" | "dark" | "system";
 export type GitStatusViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
 /** Where the panel dock sits relative to the main content (VS Code-style). Per-user pref. */
@@ -13,7 +11,12 @@ export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "s
 const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
-  theme: Theme;
+  themeStyle: PpmThemeStyle;
+  themeMode: PpmThemeMode;
+  /** Id of the selected imported theme when themeStyle === "custom". */
+  customThemeId?: string;
+  /** Imported themes (populated in Phase 3). */
+  customThemes: PpmTheme[];
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   gitStatusViewMode: GitStatusViewMode;
@@ -25,7 +28,14 @@ interface SettingsState {
   dockPosition: DockPosition;
   deviceName: string | null;
   version: string | null;
-  setTheme: (theme: Theme) => void;
+  setThemeStyle: (style: PpmThemeStyle) => void;
+  setThemeMode: (mode: PpmThemeMode) => void;
+  setCustomTheme: (id: string) => void;
+  setThemeFromPayload: (payload: { style: string; mode: PpmThemeMode; customThemeId?: string }) => void;
+  setCustomThemes: (themes: PpmTheme[]) => void;
+  fetchThemes: () => Promise<void>;
+  importThemeFrom: (req: { source: "json" | "url" | "vsix" | "upload"; value: string; name?: string }) => Promise<PpmTheme[]>;
+  deleteCustomTheme: (id: string) => Promise<void>;
   setJiraEnabled: (enabled: boolean) => void;
   setDeviceName: (name: string) => Promise<void>;
   toggleSidebar: () => void;
@@ -40,7 +50,11 @@ interface SettingsState {
 }
 
 interface PersistedSettings {
-  theme?: Theme;
+  /** Legacy single-axis theme — migrated to themeStyle/themeMode on load. */
+  theme?: string;
+  themeStyle?: PpmThemeStyle;
+  themeMode?: PpmThemeMode;
+  customThemeId?: string;
   sidebarCollapsed?: boolean;
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
@@ -52,6 +66,9 @@ interface PersistedSettings {
   dockPosition?: DockPosition;
 }
 
+const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
+const VALID_MODES: PpmThemeMode[] = ["dark", "light", "system"];
+
 function loadPersistedSettings(): PersistedSettings {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -60,6 +77,18 @@ function loadPersistedSettings(): PersistedSettings {
     // ignore
   }
   return {};
+}
+
+/** Resolve the initial {style, mode} from persisted settings, migrating the legacy `theme` string. */
+function initialTheme(p: PersistedSettings): { style: PpmThemeStyle; mode: PpmThemeMode; customThemeId?: string } {
+  if (p.themeStyle && VALID_STYLES.includes(p.themeStyle) && p.themeMode && VALID_MODES.includes(p.themeMode)) {
+    return { style: p.themeStyle, mode: p.themeMode, customThemeId: p.customThemeId };
+  }
+  // Legacy: "light" | "dark" | "system" → Aurora + that mode
+  if (p.theme && VALID_MODES.includes(p.theme as PpmThemeMode)) {
+    return { style: "aurora", mode: p.theme as PpmThemeMode };
+  }
+  return { style: "aurora", mode: "dark" };
 }
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
@@ -74,12 +103,12 @@ function persistSettings(update: Partial<PersistedSettings>) {
 
 // UI prefs are also pushed to the server so they survive origin changes
 // (localStorage is origin-scoped — switching tunnel URL gives an empty store).
-// `theme` has its own dedicated endpoint, so it's excluded here.
+// Theme has its own dedicated endpoint, so theme keys are excluded here.
 let _serverPushTimer: ReturnType<typeof setTimeout> | null = null;
 let _pendingServerPatch: Partial<PersistedSettings> = {};
 
 function pushUiPrefsToServer(update: Partial<PersistedSettings>) {
-  const { theme: _theme, ...rest } = update;
+  const { theme: _t, themeStyle: _ts, themeMode: _tm, customThemeId: _tc, ...rest } = update;
   if (Object.keys(rest).length === 0) return;
   Object.assign(_pendingServerPatch, rest);
   if (_serverPushTimer) clearTimeout(_serverPushTimer);
@@ -101,6 +130,16 @@ function pushUiPrefsToServer(update: Partial<PersistedSettings>) {
 function persistUiPref(update: Partial<PersistedSettings>) {
   persistSettings(update);
   pushUiPrefsToServer(update);
+}
+
+/** Push the current theme selection to the dedicated server endpoint (fire-and-forget). */
+function pushThemeToServer(style: PpmThemeStyle, mode: PpmThemeMode, customThemeId?: string) {
+  const token = getAuthToken();
+  fetch("/api/settings/theme", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ style, mode, ...(customThemeId ? { customThemeId } : {}) }),
+  }).catch(() => {});
 }
 
 /** Apply server-stored UI prefs to the store + localStorage (no re-push). */
@@ -128,50 +167,14 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   useSettingsStore.setState(patch as Partial<SettingsState>);
 }
 
-/** Apply the resolved theme class to <html> */
-export function applyThemeClass(theme: Theme) {
-  const resolved =
-    theme === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : theme;
-
-  document.documentElement.classList.toggle("dark", resolved === "dark");
-  document.documentElement.classList.toggle("light", resolved === "light");
-
-  // Swap highlight.js syntax theme to match light/dark mode
-  applyHighlightTheme(resolved);
-
-  // Update theme-color meta tag
-  const metaThemeColor = document.querySelector('meta[name="theme-color"]');
-  if (metaThemeColor) {
-    metaThemeColor.setAttribute(
-      "content",
-      resolved === "dark" ? "#0f1419" : "#ffffff",
-    );
-  }
-}
-
-/** Load the matching highlight.js stylesheet for the current theme */
-function applyHighlightTheme(resolved: "light" | "dark") {
-  const href = resolved === "dark" ? hljsDarkUrl : hljsLightUrl;
-  let link = document.getElementById("hljs-theme") as HTMLLinkElement | null;
-  if (!link) {
-    link = document.createElement("link");
-    link.id = "hljs-theme";
-    link.rel = "stylesheet";
-    document.head.appendChild(link);
-  }
-  if (link.href !== new URL(href, document.baseURI).href) {
-    link.href = href;
-  }
-}
-
 const _initial = loadPersistedSettings();
+const _initialTheme = initialTheme(_initial);
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  theme: (_initial.theme === "light" || _initial.theme === "dark" || _initial.theme === "system") ? _initial.theme : "system",
+  themeStyle: _initialTheme.style,
+  themeMode: _initialTheme.mode,
+  customThemeId: _initialTheme.customThemeId,
+  customThemes: [],
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
@@ -184,17 +187,59 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   deviceName: null,
   version: null,
 
-  setTheme: (theme) => {
-    persistSettings({ theme });
-    applyThemeClass(theme);
-    set({ theme });
-    // Save to server (fire-and-forget)
-    const token = getAuthToken();
-    fetch("/api/settings/theme", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ theme }),
-    }).catch(() => {});
+  setThemeStyle: (style) => {
+    const mode = get().themeMode;
+    const customThemeId = style === "custom" ? get().customThemeId : undefined;
+    persistSettings({ themeStyle: style, customThemeId });
+    set({ themeStyle: style, customThemeId });
+    pushThemeToServer(style, mode, customThemeId);
+  },
+
+  setThemeMode: (mode) => {
+    persistSettings({ themeMode: mode });
+    set({ themeMode: mode });
+    pushThemeToServer(get().themeStyle, mode, get().customThemeId);
+  },
+
+  setCustomTheme: (id) => {
+    persistSettings({ themeStyle: "custom", customThemeId: id });
+    set({ themeStyle: "custom", customThemeId: id });
+    pushThemeToServer("custom", get().themeMode, id);
+  },
+
+  setThemeFromPayload: ({ style, mode, customThemeId }) => {
+    const resolvedStyle = VALID_STYLES.includes(style as PpmThemeStyle) ? (style as PpmThemeStyle) : "aurora";
+    const resolvedMode = VALID_MODES.includes(mode) ? mode : "dark";
+    persistSettings({ themeStyle: resolvedStyle, themeMode: resolvedMode, customThemeId });
+    set({ themeStyle: resolvedStyle, themeMode: resolvedMode, customThemeId });
+  },
+
+  setCustomThemes: (themes) => set({ customThemes: themes }),
+
+  fetchThemes: async () => {
+    try {
+      const { fetchImportedThemes } = await import("@/lib/api-themes");
+      set({ customThemes: await fetchImportedThemes() });
+    } catch {}
+  },
+
+  importThemeFrom: async (req) => {
+    const { importTheme } = await import("@/lib/api-themes");
+    const created = await importTheme(req);
+    await get().fetchThemes();
+    return created;
+  },
+
+  deleteCustomTheme: async (id) => {
+    const { deleteImportedTheme } = await import("@/lib/api-themes");
+    await deleteImportedTheme(id);
+    await get().fetchThemes();
+    // If the deleted theme was active, fall back to Aurora Dark.
+    if (get().themeStyle === "custom" && get().customThemeId === id) {
+      persistSettings({ themeStyle: "aurora", themeMode: get().themeMode, customThemeId: undefined });
+      set({ themeStyle: "aurora", customThemeId: undefined });
+      pushThemeToServer("aurora", get().themeMode);
+    }
   },
 
   setDeviceName: async (name) => {
@@ -284,17 +329,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         }
       }
       const themeJson = await themeRes.json();
-      if (themeJson.ok && themeJson.data?.theme) {
-        const serverTheme = themeJson.data.theme as Theme;
-        // Server theme takes precedence — sync to local
-        persistSettings({ theme: serverTheme });
-        applyThemeClass(serverTheme);
-        set({ theme: serverTheme });
+      const serverTheme = themeJson.ok ? themeJson.data?.theme : null;
+      if (serverTheme && typeof serverTheme === "object" && typeof serverTheme.style === "string") {
+        // Server theme takes precedence — sync to local without re-pushing.
+        get().setThemeFromPayload({
+          style: serverTheme.style,
+          mode: serverTheme.mode,
+          customThemeId: serverTheme.customThemeId,
+        });
       }
       const uiPrefsJson = await uiPrefsRes.json();
       if (uiPrefsJson.ok && uiPrefsJson.data) {
         applyServerUiPrefs(uiPrefsJson.data as Record<string, unknown>);
       }
+      // Load imported themes (auth-gated; safe to call when authenticated).
+      void get().fetchThemes();
     } catch {}
   },
 }));

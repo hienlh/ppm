@@ -127,8 +127,8 @@ export function KeyboardShortcutsSection() {
       </div>
 
       {/* Browser warning */}
-      <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
-        <AlertTriangle className="size-3.5 text-amber-500 shrink-0 mt-0.5" />
+      <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/5 px-2.5 py-2">
+        <AlertTriangle className="size-3.5 text-warning shrink-0 mt-0.5" />
         <p className="text-[10px] text-muted-foreground leading-relaxed">
           Some shortcuts ({BROWSER_RESERVED.slice(0, 4).join(", ")}...) are reserved by the browser and cannot be overridden.
         </p>

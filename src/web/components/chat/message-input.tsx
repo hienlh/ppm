@@ -626,10 +626,10 @@ export const MessageInput = memo(function MessageInput({
   const showCancel = isStreaming && !hasContent;
 
   return (
-    <div className="p-2 md:p-3 bg-background">
+    <div className="p-2 md:p-3">
       {/* Rounded input container */}
       <div
-        className="border border-border rounded-xl md:rounded-2xl bg-surface shadow-sm cursor-text"
+        className="border border-border rounded-[var(--rad)] bg-panel-2 shadow-[var(--shadow-float)] cursor-text"
         onClick={(e) => {
           if (disabled) return;
           // Only focus when clicking outside the textarea (e.g. padding area)
@@ -700,7 +700,7 @@ export const MessageInput = memo(function MessageInput({
               disabled={disabled}
               className={`flex items-center justify-center size-7 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
                 voice.isListening
-                  ? "bg-red-600 text-white animate-pulse"
+                  ? "bg-error text-white animate-pulse"
                   : "text-text-subtle hover:text-text-primary"
               }`}
               aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
@@ -711,7 +711,7 @@ export const MessageInput = memo(function MessageInput({
           {showCancel ? (
             <button
               onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
-              className="flex items-center justify-center size-7 shrink-0 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
+              className="flex items-center justify-center size-7 shrink-0 rounded-full bg-error text-white hover:bg-error/80 transition-colors"
               aria-label="Stop"
             >
               <Square className="size-3" />
@@ -794,7 +794,7 @@ export const MessageInput = memo(function MessageInput({
                   disabled={disabled}
                   className={`flex items-center justify-center size-8 rounded-full transition-colors disabled:opacity-50 ${
                     voice.isListening
-                      ? "bg-red-600 text-white animate-pulse"
+                      ? "bg-error text-white animate-pulse"
                       : "text-text-subtle hover:text-text-primary hover:bg-surface-elevated"
                   }`}
                   aria-label={voice.isListening ? "Stop voice input" : "Start voice input"}
@@ -805,7 +805,7 @@ export const MessageInput = memo(function MessageInput({
               {showCancel ? (
                 <button
                   onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
-                  className="flex items-center justify-center size-8 rounded-full bg-red-600 text-white hover:bg-red-500 transition-colors"
+                  className="flex items-center justify-center size-8 rounded-full bg-error text-white hover:bg-error/80 transition-colors"
                   aria-label="Stop response"
                 >
                   <Square className="size-3.5" />

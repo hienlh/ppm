@@ -117,7 +117,7 @@ export function ScheduleForm({
           </SelectContent>
         </Select>
         {form.permission_mode === "bypassPermissions" && (
-          <p className="text-[11px] text-amber-500">⚠ Unattended writes — agent can modify code and run commands</p>
+          <p className="text-[11px] text-warning">⚠ Unattended writes — agent can modify code and run commands</p>
         )}
       </Field>
       <div className="grid grid-cols-2 gap-2">
@@ -132,7 +132,7 @@ export function ScheduleForm({
         <span className="text-xs font-medium">Enabled</span>
         <Switch checked={form.enabled} onCheckedChange={(v) => set("enabled", v)} />
       </div>
-      {error && <p className="text-[11px] text-red-400">{error}</p>}
+      {error && <p className="text-[11px] text-error">{error}</p>}
       <Button onClick={submit} disabled={saving} className="w-full min-h-11 cursor-pointer">
         {saving ? "Saving…" : schedule ? "Save changes" : "Create schedule"}
       </Button>

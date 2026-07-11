@@ -11,7 +11,7 @@ export const SparklineCanvas = memo(function SparklineCanvas({
   data,
   width = 120,
   height = 24,
-  color = "#3b82f6",
+  color = "var(--color-primary)",
 }: SparklineCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastDrawRef = useRef(0);

@@ -62,17 +62,17 @@ function buildHourAvg(grid: AggregatedCell[][]): number[] {
 
 function cellColor(val: number): string {
   if (val === 0) return "bg-surface-elevated";
-  if (val < 0.3) return "bg-green-500/30";
-  if (val < 0.5) return "bg-green-500/60";
-  if (val < 0.7) return "bg-amber-500/50";
-  if (val < 0.9) return "bg-amber-500/80";
-  return "bg-red-500/80";
+  if (val < 0.3) return "bg-success/30";
+  if (val < 0.5) return "bg-success/60";
+  if (val < 0.7) return "bg-warning/50";
+  if (val < 0.9) return "bg-warning/80";
+  return "bg-error/80";
 }
 
 function barColor(val: number): string {
-  if (val < 0.3) return "bg-green-500";
-  if (val < 0.7) return "bg-amber-500";
-  return "bg-red-500";
+  if (val < 0.3) return "bg-success";
+  if (val < 0.7) return "bg-warning";
+  return "bg-error";
 }
 
 export function UsagePatternChart({ accountId }: { accountId: string }) {
@@ -222,11 +222,11 @@ export function UsagePatternChart({ accountId }: { accountId: string }) {
       <div className="flex items-center gap-1.5 text-[8px] text-text-subtle">
         <span>Low</span>
         <div className="flex gap-[2px]">
-          <div className="size-2 rounded-[1px] bg-green-500/30" />
-          <div className="size-2 rounded-[1px] bg-green-500/60" />
-          <div className="size-2 rounded-[1px] bg-amber-500/50" />
-          <div className="size-2 rounded-[1px] bg-amber-500/80" />
-          <div className="size-2 rounded-[1px] bg-red-500/80" />
+          <div className="size-2 rounded-[1px] bg-success/30" />
+          <div className="size-2 rounded-[1px] bg-success/60" />
+          <div className="size-2 rounded-[1px] bg-warning/50" />
+          <div className="size-2 rounded-[1px] bg-warning/80" />
+          <div className="size-2 rounded-[1px] bg-error/80" />
         </div>
         <span>High</span>
         <span className="ml-1">|</span>

@@ -2,11 +2,11 @@ import { Badge } from "@/components/ui/badge";
 import type { JiraResultStatus } from "../../../../src/types/jira";
 
 const STATUS_STYLES: Record<JiraResultStatus, string> = {
-  pending: "bg-yellow-500/15 text-yellow-600 border-yellow-500/30",
-  queued: "bg-orange-500/15 text-orange-600 border-orange-500/30",
-  running: "bg-blue-500/15 text-blue-600 border-blue-500/30",
-  done: "bg-green-500/15 text-green-600 border-green-500/30",
-  failed: "bg-red-500/15 text-red-600 border-red-500/30",
+  pending: "bg-warning/15 text-warning border-warning/30",
+  queued: "bg-warning/10 text-warning/80 border-warning/20",
+  running: "bg-primary/15 text-primary border-primary/30",
+  done: "bg-success/15 text-success border-success/30",
+  failed: "bg-error/15 text-error border-error/30",
 };
 
 export function JiraStatusBadge({ status }: { status: JiraResultStatus }) {

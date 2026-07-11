@@ -226,7 +226,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
         key={resolvedPanelId}
         srcDoc={html}
         sandbox="allow-scripts"
-        className="w-full h-full border-0 bg-white dark:bg-zinc-900"
+        className="w-full h-full border-0 bg-white dark:bg-bg"
         title={panel.title}
       />
     </div>

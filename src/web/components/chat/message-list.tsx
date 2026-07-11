@@ -325,7 +325,7 @@ export function MessageList({
           <button
             type="button"
             onClick={onClearErrors}
-            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-red-500/15 border border-red-500/25 px-3 py-1 text-xs text-red-400 hover:bg-red-500/25 shadow-md backdrop-blur-sm"
+            className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-error/15 border border-error/25 px-3 py-1 text-xs text-error hover:bg-error/25 shadow-md backdrop-blur-sm"
           >
             <XCircle className="size-3.5" />
             Clear all errors ({errorCount})
@@ -566,7 +566,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
 
   if (message.role === "system") {
     return (
-      <div className="group flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2 text-sm text-red-400">
+      <div className="group flex items-center gap-2 rounded-lg bg-error/10 border border-error/20 px-3 py-2 text-sm text-error">
         <AlertCircle className="size-4 shrink-0" />
         <p className="flex-1">{message.content}</p>
         {onDismiss && (
@@ -575,7 +575,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
             onClick={() => onDismiss(message.id)}
             aria-label="Dismiss"
             title="Dismiss"
-            className="shrink-0 rounded p-1 text-red-400/70 hover:text-red-400 hover:bg-red-500/15 md:opacity-0 md:group-hover:opacity-100"
+            className="shrink-0 rounded p-1 text-error/70 hover:text-error hover:bg-error/15 md:opacity-0 md:group-hover:opacity-100"
           >
             <XCircle className="size-4" />
           </button>
@@ -775,15 +775,18 @@ function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit
   }, [text]);
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className={cn("flex flex-col gap-1", !isSystemContext && "items-end")}>
+    {/* Own-content bubble: accent-wash fill + custom radius (sharp bottom-right
+        corner anchors it to the sender on the right). */}
     <div
       data-user-message={!isSystemContext ? "true" : undefined}
+      style={!isSystemContext ? { borderRadius: "var(--rad) var(--rad) 4px var(--rad)" } : undefined}
       className={cn(
-        "group/user relative rounded-lg px-3 py-2 text-sm border shadow-sm transition-all",
+        "group/user relative px-3 py-2 text-sm border shadow-sm transition-all",
       isSystemContext
-        ? "bg-surface/40 border-border/40 text-text-secondary"
-        : "bg-primary/10 border-primary/15 text-text-primary",
-      isEditing && "ring-2 ring-primary/60 border-primary/40 bg-primary/20",
+        ? "rounded-lg bg-surface/40 border-border/40 text-text-secondary"
+        : "max-w-[80%] bg-accent-wash border-accent-wash-border text-text",
+      isEditing && "ring-2 ring-primary/60 border-primary/40",
     )}>
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
@@ -982,7 +985,7 @@ function TaskNotificationBadge({ content }: { content: string }) {
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 rounded-full border border-border/60 bg-surface/50 px-2 py-0.5 text-text-subtle hover:text-text-secondary hover:bg-surface transition-colors"
       >
-        {isOk ? <CheckCircle2 className="size-2.5 text-green-500" /> : <XCircle className="size-2.5 text-yellow-500" />}
+        {isOk ? <CheckCircle2 className="size-2.5 text-success" /> : <XCircle className="size-2.5 text-warning" />}
         <span className="truncate max-w-80">{summary ?? "Task notification"}</span>
         <ChevronRight className={cn("size-2.5 transition-transform shrink-0", open && "rotate-90")} />
       </button>
@@ -1166,7 +1169,7 @@ function AuthFileLink({ src, filename, mimeType }: { src: string; filename: stri
       disabled={loading}
       className="flex items-center gap-1.5 rounded-md border border-border bg-background/50 px-2 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text-primary transition-colors cursor-pointer disabled:opacity-50"
     >
-      <FileText className="size-3.5 shrink-0 text-red-400" />
+      <FileText className="size-3.5 shrink-0 text-error" />
       <span className="truncate max-w-40">{filename}</span>
       {loading && <span className="animate-spin text-[10px]">...</span>}
     </button>
@@ -1410,7 +1413,7 @@ function ThinkingIndicator({ lastMessage, phase, elapsed, statusMessage }: { las
         </span>
       </div>
       {isLong && (
-        <p className="text-xs text-yellow-500/80 ml-5">
+        <p className="text-xs text-warning/80 ml-5">
           Taking longer than usual — may be rate-limited or API slow. Try sending a new message to retry.
         </p>
       )}
@@ -1447,8 +1450,8 @@ function ApprovalCard({
   onRespond: (requestId: string, approved: boolean, data?: unknown) => void;
 }) {
   return (
-    <div className="rounded-lg border-2 border-yellow-500/40 bg-yellow-500/10 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-yellow-400 text-sm font-medium">
+    <div className="rounded-lg border-2 border-warning/40 bg-warning/10 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-warning text-sm font-medium">
         <ShieldAlert className="size-4" />
         <span>Tool Approval Required</span>
       </div>
@@ -1461,13 +1464,13 @@ function ApprovalCard({
       <div className="flex gap-2">
         <button
           onClick={() => onRespond(approval.requestId, true)}
-          className="px-4 py-1.5 rounded bg-green-600 text-white text-xs font-medium hover:bg-green-500 transition-colors"
+          className="px-4 py-1.5 rounded bg-success text-white text-xs font-medium hover:bg-success/80 transition-colors"
         >
           Allow
         </button>
         <button
           onClick={() => onRespond(approval.requestId, false)}
-          className="px-4 py-1.5 rounded bg-red-600 text-white text-xs font-medium hover:bg-red-500 transition-colors"
+          className="px-4 py-1.5 rounded bg-error text-white text-xs font-medium hover:bg-error/80 transition-colors"
         >
           Deny
         </button>

@@ -12,7 +12,14 @@ export interface PPMBotConfig {
   debounce_ms: number;
 }
 
-export type ThemeConfig = "light" | "dark" | "system";
+export type ThemeMode = "light" | "dark" | "system";
+
+/** Persisted theme selection: a visual style + mode, plus optional imported-theme id. */
+export interface ThemeConfig {
+  style: string;
+  mode: ThemeMode;
+  customThemeId?: string;
+}
 
 export interface PpmConfig {
   device_name: string;
@@ -81,7 +88,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   device_name: "",
   port: 8080,
   host: "0.0.0.0",
-  theme: "system",
+  theme: { style: "aurora", mode: "dark" },
   auth: { enabled: true, token: "" },
   projects: [],
   ai: {
@@ -119,7 +126,30 @@ const VALID_MODELS = ["claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "c
 const VALID_CLI_COMMANDS = ["cursor-agent", "codex", "gemini"] as const;
 /** Only these values are allowed for default_provider in config */
 export const VALID_PROVIDERS = ["claude", "cursor"] as const;
-const VALID_THEMES: ThemeConfig[] = ["light", "dark", "system"];
+const VALID_THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
+
+/**
+ * Coerce a persisted theme value into the `{style, mode}` object shape.
+ * Migrates the legacy string form (`"dark"` → `{style:"aurora", mode:"dark"}`).
+ * Returns null if the input is already a valid object (no change needed).
+ */
+function migrateThemeValue(theme: unknown): ThemeConfig | null {
+  if (typeof theme === "string") {
+    const mode = (VALID_THEME_MODES as string[]).includes(theme) ? (theme as ThemeMode) : "dark";
+    return { style: "aurora", mode };
+  }
+  if (theme && typeof theme === "object") {
+    const t = theme as Partial<ThemeConfig>;
+    const style = typeof t.style === "string" && t.style ? t.style : "aurora";
+    const mode = (VALID_THEME_MODES as string[]).includes(t.mode as string) ? (t.mode as ThemeMode) : "dark";
+    const next: ThemeConfig = { style, mode };
+    if (typeof t.customThemeId === "string") next.customThemeId = t.customThemeId;
+    // Signal change only when the incoming object was malformed.
+    if (t.style === style && t.mode === mode && t.customThemeId === next.customThemeId) return null;
+    return next;
+  }
+  return { style: "aurora", mode: "dark" };
+}
 
 /** Validate AI provider config fields. Returns array of error messages (empty = valid). */
 export function validateAIProviderConfig(config: Partial<AIProviderConfig>): string[] {
@@ -190,9 +220,10 @@ export function validateDefaultProvider(defaultProvider: string, providers: Reco
 export function sanitizeConfig(config: PpmConfig): boolean {
   let dirty = false;
 
-  // Fix invalid theme
-  if (!VALID_THEMES.includes(config.theme)) {
-    config.theme = DEFAULT_CONFIG.theme;
+  // Migrate/repair theme (legacy string → {style, mode})
+  const migrated = migrateThemeValue(config.theme);
+  if (migrated) {
+    config.theme = migrated;
     dirty = true;
   }
 

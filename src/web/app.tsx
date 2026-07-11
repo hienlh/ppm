@@ -15,10 +15,10 @@ import {
   fetchWorkspaceFromServer,
   resolveWorkspaceConflict,
 } from "@/stores/panel-utils";
-import {
-  useSettingsStore,
-  applyThemeClass,
-} from "@/stores/settings-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { useTheme } from "@/theme/use-theme";
+import { initShikiThemeSync, warmShiki } from "@/theme/adapters/shiki-adapter";
+import { initMonacoThemeSync } from "@/theme/adapters/monaco-adapter";
 import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
@@ -55,7 +55,14 @@ export function App() {
   const [mountedProjects, setMountedProjects] = useState<Set<string>>(
     () => new Set(["__global__"]),
   );
-  const theme = useSettingsStore((s) => s.theme);
+  // Resolves the active theme from the store and applies CSS vars to <html>.
+  useTheme();
+  // Sync Shiki syntax highlighting to the active theme + warm the highlighter.
+  useEffect(() => {
+    initShikiThemeSync();
+    warmShiki();
+    initMonacoThemeSync();
+  }, []);
   const deviceName = useSettingsStore((s) => s.deviceName);
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
   const fetchServerInfo = useSettingsStore((s) => s.fetchServerInfo);
@@ -63,19 +70,6 @@ export function App() {
 
   // Capture URL state on mount — before any effect can overwrite it
   const initialUrlRef = useRef(parseUrlState());
-
-  // Apply theme on mount and when it changes
-  useEffect(() => {
-    applyThemeClass(theme);
-
-    // Listen for OS theme changes when set to "system"
-    if (theme === "system") {
-      const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      const handler = () => applyThemeClass("system");
-      mq.addEventListener("change", handler);
-      return () => mq.removeEventListener("change", handler);
-    }
-  }, [theme]);
 
   // Fetch server info on mount (before auth — shown on login screen) and
   // again once authenticated: the pre-auth call has no token on a fresh
@@ -241,7 +235,7 @@ export function App() {
 
   if (authState === "checking") {
     return (
-      <div className="min-h-dvh flex items-center justify-center bg-background">
+      <div className="app-backdrop min-h-dvh flex items-center justify-center">
         <div className="animate-pulse text-text-secondary text-sm">
           Loading...
         </div>
@@ -257,13 +251,13 @@ export function App() {
 
   return (
     <TooltipProvider>
-      <div className="h-dvh flex flex-col bg-background text-foreground overflow-hidden relative">
+      <div className="app-backdrop h-dvh flex flex-col text-foreground overflow-hidden relative">
         {/* Upgrade banner — shown when new version available */}
         <UpgradeBanner onVisibilityChange={setUpgradeBannerVisible} />
 
         {/* Beta ribbon — top-left on desktop, top-right on mobile */}
         <div className="fixed z-50 overflow-hidden pointer-events-none max-md:right-0 max-md:top-0 md:left-0 md:top-0 w-10 h-10">
-          <div className="absolute flex items-center justify-center max-md:rotate-45 max-md:right-[-18px] max-md:top-[4px] md:-rotate-45 md:left-[-18px] md:top-[4px] w-[60px] bg-amber-500 text-white text-[6px] font-bold leading-none py-[2.5px] shadow-sm">
+          <div className="absolute flex items-center justify-center max-md:rotate-45 max-md:right-[-18px] max-md:top-[4px] md:-rotate-45 md:left-[-18px] md:top-[4px] w-[60px] bg-warning text-white text-[6px] font-bold leading-none py-[2.5px] shadow-sm">
             BETA
           </div>
         </div>

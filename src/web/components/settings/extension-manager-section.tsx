@@ -171,7 +171,7 @@ export function ExtensionManagerSection() {
                   <p className="text-xs font-medium truncate">{ext.displayName || ext.id}</p>
                   <p className="text-[11px] text-muted-foreground truncate">
                     {ext.id} v{ext.version}
-                    {ext.activated && <span className="ml-1 text-green-500">active</span>}
+                    {ext.activated && <span className="ml-1 text-success">active</span>}
                   </p>
                 </div>
                 <Button
@@ -185,7 +185,7 @@ export function ExtensionManagerSection() {
                   {togglingId === ext.id ? (
                     <Loader2 className="size-3.5 animate-spin" />
                   ) : ext.enabled ? (
-                    <Power className="size-3.5 text-green-500" />
+                    <Power className="size-3.5 text-success" />
                   ) : (
                     <PowerOff className="size-3.5 text-muted-foreground" />
                   )}

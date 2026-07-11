@@ -1,6 +1,40 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
 import { useTabStore } from "@/stores/tab-store";
+import { highlightToHtml, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
+
+/**
+ * Shiki-highlighted HTML for a code block. Returns null while streaming or
+ * before the async highlight resolves (caller renders raw code meanwhile).
+ * Re-highlights on theme change (listens to the adapter's re-emit event).
+ */
+function useShikiHtml(code: string, lang: string | undefined, enabled: boolean): string | null {
+  const [html, setHtml] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setHtml(null);
+      return;
+    }
+    let cancelled = false;
+    let themeAtRequest = getActiveShikiTheme();
+    const run = () => {
+      themeAtRequest = getActiveShikiTheme();
+      highlightToHtml(code, lang)
+        .then((h) => { if (!cancelled) setHtml(h); })
+        .catch(() => { if (!cancelled) setHtml(null); });
+    };
+    run();
+    const onThemeChange = () => { void themeAtRequest; run(); };
+    window.addEventListener("ppm:shiki-theme-change", onThemeChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("ppm:shiki-theme-change", onThemeChange);
+    };
+  }, [code, lang, enabled]);
+
+  return html;
+}
 
 const MERMAID_KEYWORDS = /^(sequenceDiagram|flowchart|graph\s|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|quadrantChart|requirementDiagram|gitGraph|mindmap|timeline|sankey|xychart|block-beta|packet-beta|architecture-beta|kanban)\b/;
 
@@ -23,9 +57,9 @@ function hastToText(node: any): string {
   return "";
 }
 
-/** Pre — code block wrapper with mermaid detection and action buttons */
+/** Pre — code block wrapper with mermaid detection, Shiki highlighting, action buttons */
 export function MdPre({ children, node, ...rest }: any) {
-  const { codeActions, projectName, openDiagramOverlay } = useMdContext();
+  const { codeActions, projectName, isStreaming } = useMdContext();
   const openTab = useTabStore((s) => s.openTab);
 
   const codeNode = node?.children?.[0];
@@ -40,11 +74,15 @@ export function MdPre({ children, node, ...rest }: any) {
 
   const isBash = /^(bash|sh|shell|zsh)$/.test(lang || "") || (!lang && text.startsWith("$"));
 
+  // Highlight once the block is done streaming; render raw code until then to
+  // avoid re-highlighting on every token (and Shiki being async).
+  const shikiHtml = useShikiHtml(text, lang, !isStreaming);
+
   return (
     <div className="relative group">
-      <pre {...rest}>
-        {children}
-      </pre>
+      {shikiHtml
+        ? <div className="shiki-block" dangerouslySetInnerHTML={{ __html: shikiHtml }} />
+        : <pre {...rest}>{children}</pre>}
       {codeActions && (
         <div className="code-actions absolute top-1 right-1 flex gap-1">
           <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => navigator.clipboard.writeText(text)} />
@@ -76,7 +114,8 @@ function isClickableFilePath(s: string): boolean {
 export function MdCode({ className, children, node, ...rest }: any) {
   const { openFileOrSearch } = useMdContext();
 
-  // Block code (has language/hljs class from rehype-highlight) — render as-is
+  // Block code (fenced — carries a `language-*` class): MdPre owns rendering
+  // (Shiki), so just pass through here.
   if (className) return <code className={className} {...rest}>{children}</code>;
 
   // Inline code — resolve a clickable file target: `path`, `path:line`, or `path:start-end`
@@ -139,7 +178,7 @@ function MermaidDiagram({ source }: { source: string }) {
 
   return (
     <div
-      className="mermaid-diagram group relative cursor-pointer rounded-lg border border-border bg-white dark:bg-zinc-50 p-3 overflow-x-auto my-2"
+      className="mermaid-diagram group relative cursor-pointer rounded-lg border border-border bg-white dark:bg-panel-2 p-3 overflow-x-auto my-2"
       onClick={() => openDiagramOverlay(svg)}
     >
       <div dangerouslySetInnerHTML={{ __html: svg }} />

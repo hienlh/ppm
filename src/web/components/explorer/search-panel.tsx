@@ -38,7 +38,7 @@ function HighlightMatch({ text, re }: { text: string; re: RegExp | null }) {
       <span>
         {parts.map((p, i) => {
           re.lastIndex = 0;
-          return re.test(p) ? <mark key={i} className="bg-yellow-300/40 text-foreground rounded-sm">{p}</mark> : p;
+          return re.test(p) ? <mark key={i} className="bg-warning/40 text-foreground rounded-sm">{p}</mark> : p;
         })}
       </span>
     );
@@ -262,7 +262,7 @@ export function SearchPanel() {
             </span>
           )}
           {!loading && !replacing && replaceCount !== null && (
-            <span className="text-green-500">{replaceCount} replacement{replaceCount !== 1 ? "s" : ""} made</span>
+            <span className="text-success">{replaceCount} replacement{replaceCount !== 1 ? "s" : ""} made</span>
           )}
           {!loading && !replacing && replaceCount === null && !regexError && query.length >= 2 && results.length === 0 && <span>No results</span>}
           {!loading && !replacing && replaceCount === null && total > 0 && (

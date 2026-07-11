@@ -8,12 +8,12 @@ export type GitFileStatus = "M" | "A" | "D" | "R" | "C" | "U";
 
 /** Colors matching git-status-panel.tsx STATUS_COLORS */
 export const GIT_STATUS_COLORS: Record<GitFileStatus, string> = {
-  M: "text-yellow-500",
-  A: "text-green-500",
-  D: "text-red-500",
-  R: "text-blue-500",
-  C: "text-purple-500",
-  U: "text-gray-400",
+  M: "text-warning",
+  A: "text-success",
+  D: "text-error",
+  R: "text-primary",
+  C: "text-accent-2",
+  U: "text-text-3",
 };
 
 /** Per-project file status map: filePath → status letter */

@@ -358,7 +358,7 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       </div>
 
       {saving && <p className="text-xs text-text-subtle">Saving...</p>}
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-error">{error}</p>}
     </div>
   );
 }
@@ -414,13 +414,13 @@ function TeamListSection({ compact }: { compact?: boolean }) {
             <div className="flex gap-1 shrink-0 ml-2">
               <button
                 onClick={() => handleDelete(team.name)}
-                className="px-2 py-1 bg-red-600 text-white rounded text-[10px]"
+                className="px-2 py-1 bg-error text-white rounded text-[10px]"
               >
                 Delete
               </button>
               <button
                 onClick={() => setDeleteConfirm(null)}
-                className="px-2 py-1 bg-zinc-600 text-white rounded text-[10px]"
+                className="px-2 py-1 bg-panel-2 text-text rounded text-[10px]"
               >
                 Cancel
               </button>
@@ -428,7 +428,7 @@ function TeamListSection({ compact }: { compact?: boolean }) {
           ) : (
             <button
               onClick={() => setDeleteConfirm(team.name)}
-              className="shrink-0 text-text-subtle hover:text-red-500 p-1 ml-2"
+              className="shrink-0 text-text-subtle hover:text-error p-1 ml-2"
               aria-label={`Delete team ${team.name}`}
             >
               <Trash2 className="size-3.5" />

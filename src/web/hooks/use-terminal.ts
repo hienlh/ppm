@@ -3,59 +3,19 @@ import { Terminal, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { useSettingsStore, type Theme } from "@/stores/settings-store";
+import { useSettingsStore } from "@/stores/settings-store";
+import { buildXtermTheme } from "@/theme/adapters/xterm-adapter";
+import { resolveTheme as resolvePpmTheme } from "@/theme/resolve-theme";
+import { getCurrentAppliedTheme, THEME_CHANGE_EVENT } from "@/theme/apply-theme";
+import type { PpmTheme } from "@/theme/types";
 
-const DARK_THEME: ITheme = {
-  background: "#0f1419",
-  foreground: "#e5e7eb",
-  cursor: "#e5e7eb",
-  selectionBackground: "#3b82f640",
-  black: "#1a1f2e",
-  red: "#ef4444",
-  green: "#10b981",
-  yellow: "#f59e0b",
-  blue: "#3b82f6",
-  magenta: "#a855f7",
-  cyan: "#06b6d4",
-  white: "#e5e7eb",
-  brightBlack: "#6b7280",
-  brightRed: "#f87171",
-  brightGreen: "#34d399",
-  brightYellow: "#fbbf24",
-  brightBlue: "#60a5fa",
-  brightMagenta: "#c084fc",
-  brightCyan: "#22d3ee",
-  brightWhite: "#f9fafb",
-};
-
-const LIGHT_THEME: ITheme = {
-  background: "#ffffff",
-  foreground: "#1a1f2e",
-  cursor: "#1a1f2e",
-  selectionBackground: "#2563eb30",
-  black: "#1a1f2e",
-  red: "#dc2626",
-  green: "#059669",
-  yellow: "#d97706",
-  blue: "#2563eb",
-  magenta: "#9333ea",
-  cyan: "#0891b2",
-  white: "#f8fafc",
-  brightBlack: "#64748b",
-  brightRed: "#ef4444",
-  brightGreen: "#10b981",
-  brightYellow: "#f59e0b",
-  brightBlue: "#3b82f6",
-  brightMagenta: "#a855f7",
-  brightCyan: "#06b6d4",
-  brightWhite: "#ffffff",
-};
-
-function resolveTheme(theme: Theme): ITheme {
-  if (theme === "system") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? DARK_THEME : LIGHT_THEME;
-  }
-  return theme === "light" ? LIGHT_THEME : DARK_THEME;
+/** Current active PpmTheme → xterm ITheme (prefers the live applied theme). */
+function currentXtermTheme(): ITheme {
+  const s = useSettingsStore.getState();
+  const theme: PpmTheme =
+    getCurrentAppliedTheme() ??
+    resolvePpmTheme(s.themeStyle, s.themeMode, s.customThemes, s.customThemeId);
+  return buildXtermTheme(theme);
 }
 
 interface UseTerminalOptions {
@@ -295,7 +255,7 @@ export function useTerminal(
       // Explicit terminal-grade stack: the WebGL renderer builds its glyph
       // atlas via ctx.font and cannot resolve CSS var() values.
       fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', 'Courier New', monospace",
-      theme: resolveTheme(useSettingsStore.getState().theme),
+      theme: currentXtermTheme(),
     });
 
     const fitAddon = new FitAddon();
@@ -358,14 +318,11 @@ export function useTerminal(
     });
     resizeObserver.observe(container);
 
-    // React to theme changes
-    let prevTheme = useSettingsStore.getState().theme;
-    const unsubTheme = useSettingsStore.subscribe((state) => {
-      if (state.theme !== prevTheme) {
-        prevTheme = state.theme;
-        term.options.theme = resolveTheme(state.theme);
-      }
-    });
+    // React to theme changes — the theme-change event fires after CSS vars are
+    // applied, covering style, mode, system-OS, and imported-theme swaps.
+    const onThemeChange = () => { term.options.theme = currentXtermTheme(); };
+    window.addEventListener(THEME_CHANGE_EVENT, onThemeChange);
+    const unsubTheme = () => window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
 
     return () => {
       unsubTheme();

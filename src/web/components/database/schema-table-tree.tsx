@@ -71,11 +71,11 @@ export function SchemaTableTree({
                   {isTableExpanded && (
                     <div className="ml-[18px] border-l border-dotted border-border pl-2">
                       {isLoadingCols && <p className="text-[9px] text-text-subtle px-1 py-0.5">Loading…</p>}
-                      {hasError && <p className="text-[9px] text-red-500 px-1 py-0.5">Failed to load columns</p>}
+                      {hasError && <p className="text-[9px] text-error px-1 py-0.5">Failed to load columns</p>}
                       {columns && columns.map((col) => (
                         <div key={col.name} className="flex items-center gap-1 px-1 py-px text-[10px] text-text-subtle" title={col.fk ? `FK → ${col.fk.table}.${col.fk.column}` : undefined}>
-                          {col.pk && <Key className="size-2.5 text-amber-500 shrink-0" />}
-                          {col.fk && <Link2 className="size-2.5 text-blue-400 shrink-0" />}
+                          {col.pk && <Key className="size-2.5 text-warning shrink-0" />}
+                          {col.fk && <Link2 className="size-2.5 text-primary shrink-0" />}
                           {!col.pk && !col.fk && <span className="size-2.5 shrink-0" />}
                           <span className="truncate">{col.name}{col.nullable ? "?" : ""}</span>
                           <span className="ml-auto text-[9px] text-text-subtle/60 shrink-0">{col.type}</span>

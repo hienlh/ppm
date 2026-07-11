@@ -12,17 +12,17 @@ interface TeamActivityPopoverProps {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  active: "bg-green-500",
-  idle: "bg-yellow-500",
-  shutdown: "bg-zinc-400",
+  active: "bg-success",
+  idle: "bg-warning",
+  shutdown: "bg-text-3",
 };
 
 const TYPE_BADGES: Record<string, { label: string; className: string }> = {
-  task_assignment: { label: "task", className: "bg-blue-500/20 text-blue-400" },
-  idle_notification: { label: "idle", className: "bg-yellow-500/20 text-yellow-400" },
-  completion: { label: "done", className: "bg-green-500/20 text-green-400" },
-  shutdown_request: { label: "shutdown", className: "bg-red-500/20 text-red-400" },
-  shutdown_approved: { label: "shutdown ✓", className: "bg-zinc-500/20 text-zinc-400" },
+  task_assignment: { label: "task", className: "bg-primary/20 text-primary" },
+  idle_notification: { label: "idle", className: "bg-warning/20 text-warning" },
+  completion: { label: "done", className: "bg-success/20 text-success" },
+  shutdown_request: { label: "shutdown", className: "bg-error/20 text-error" },
+  shutdown_approved: { label: "shutdown ✓", className: "bg-text-3/20 text-text-3" },
 };
 
 export function TeamActivityPopover({ teamNames, messages, open, onOpenChange }: TeamActivityPopoverProps) {
@@ -124,7 +124,7 @@ export function TeamActivityPopover({ teamNames, messages, open, onOpenChange }:
           <div className="space-y-1">
             {members.map((m: any) => (
               <div key={m.name} className="flex items-center gap-2 text-xs">
-                <span className={cn("size-1.5 rounded-full shrink-0", STATUS_COLORS[m.status] ?? "bg-zinc-400")} />
+                <span className={cn("size-1.5 rounded-full shrink-0", STATUS_COLORS[m.status] ?? "bg-text-3")} />
                 <span className="font-medium truncate">{m.name}</span>
                 {m.model && m.model !== "unknown" && (
                   <span className="text-text-subtle text-[10px]">({m.model})</span>

@@ -22,8 +22,8 @@ export function countTaskEvents(messages: ChatMessage[]): number {
 }
 
 const GLYPH: Record<TaskStatus, { icon: string; cls: string }> = {
-  completed: { icon: "✓", cls: "text-green-400" },
-  in_progress: { icon: "▶", cls: "text-yellow-400" },
+  completed: { icon: "✓", cls: "text-success" },
+  in_progress: { icon: "▶", cls: "text-warning" },
   stopped: { icon: "■", cls: "text-text-subtle" },
   pending: { icon: "○", cls: "text-text-subtle" },
 };
@@ -62,7 +62,7 @@ export function TaskTracker({
         <span className="text-text-primary font-medium">Tasks</span>
         <span className="text-text-subtle">{completed}/{total} done</span>
         <span className="ml-auto h-1 w-16 rounded-full bg-border overflow-hidden shrink-0">
-          <span className="block h-full bg-green-400/70" style={{ width: `${pct}%` }} />
+          <span className="block h-full bg-success/70" style={{ width: `${pct}%` }} />
         </span>
       </button>
       {!collapsed && (
@@ -80,7 +80,7 @@ function TaskRow({ task }: { task: TaskItem }) {
   const g = GLYPH[task.status] ?? GLYPH.pending;
   const isActive = task.status === "in_progress";
   return (
-    <li className={`flex items-start gap-1.5 text-xs rounded px-1 ${isActive ? "bg-yellow-500/10" : ""}`}>
+    <li className={`flex items-start gap-1.5 text-xs rounded px-1 ${isActive ? "bg-warning/10" : ""}`}>
       <span className={`shrink-0 mt-0.5 ${g.cls}`}>{g.icon}</span>
       <span
         className={

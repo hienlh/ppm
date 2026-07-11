@@ -74,7 +74,7 @@ export function JiraConfigForm({ projectId, existing }: Props) {
       </div>
       <div>
         <label className="text-xs text-muted-foreground">
-          API Token {existing?.hasToken && <span className="text-green-500">(saved)</span>}
+          API Token {existing?.hasToken && <span className="text-success">(saved)</span>}
         </label>
         <Input
           type="password"
@@ -98,11 +98,11 @@ export function JiraConfigForm({ projectId, existing }: Props) {
             </Button>
           </>
         )}
-        {testResult === "ok" && <CheckCircle className="size-4 text-green-500" />}
-        {testResult === "fail" && <AlertCircle className="size-4 text-red-500" />}
+        {testResult === "ok" && <CheckCircle className="size-4 text-success" />}
+        {testResult === "fail" && <AlertCircle className="size-4 text-error" />}
       </div>
       {testError && (
-        <p className="text-xs text-red-500 break-all">{testError}</p>
+        <p className="text-xs text-error break-all">{testError}</p>
       )}
     </form>
   );

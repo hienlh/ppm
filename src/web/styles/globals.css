@@ -3,50 +3,60 @@
 /* Only apply hover-dependent styles when device has real pointer (mouse/trackpad) */
 @custom-variant can-hover (@media (hover: hover) and (pointer: fine));
 
-@theme {
-  /* Dark theme colors (default) */
-  --color-background: #0f1419;
-  --color-foreground: #e5e7eb;
-  --color-surface: #1a1f2e;
-  --color-surface-elevated: #252d3d;
+/*
+ * Theme engine (Phase 0). Utilities map to runtime CSS vars set by
+ * src/web/theme/apply-theme.ts, so switching themes needs no rebuild.
+ * `@theme inline` keeps the var reference (not the value) in each utility.
+ *
+ * Brand blue lives in `primary` (--color-primary → --accent). shadcn's
+ * `accent` is intentionally a hover *surface* (→ --panel-2), not the brand
+ * color, so shadcn New York components keep their subtle hover states.
+ */
+@theme inline {
+  /* semantic tokens (new contract) */
+  --color-bg: var(--bg-solid);
+  --color-rail: var(--rail);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-accent-2: var(--accent-2);
+  --color-accent-wash: var(--accent-wash);
+  --color-accent-wash-border: var(--accent-wash-border);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-info: var(--info);
 
-  --color-card: #1a1f2e;
-  --color-card-foreground: #e5e7eb;
-
-  --color-popover: #1a1f2e;
-  --color-popover-foreground: #e5e7eb;
-
-  --color-primary: #3b82f6;
-  --color-primary-foreground: #ffffff;
-
-  --color-secondary: #252d3d;
-  --color-secondary-foreground: #e5e7eb;
-
-  --color-muted: #1a1f2e;
-  --color-muted-foreground: #9ca3af;
-
-  --color-accent: #252d3d;
-  --color-accent-foreground: #e5e7eb;
-
-  --color-destructive: #ef4444;
-  --color-destructive-foreground: #ffffff;
-
-  --color-border: #404854;
-  --color-input: #404854;
-  --color-ring: #3b82f6;
-
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-error: #ef4444;
-  --color-info: #06b6d4;
-
-  /* Diff line tints — match Monaco vs-dark diff editor */
-  --color-diff-added: rgba(63, 185, 80, 0.16);
-  --color-diff-removed: rgba(248, 81, 73, 0.16);
-
-  --color-text-primary: #e5e7eb;
-  --color-text-secondary: #9ca3af;
-  --color-text-subtle: #6b7280;
+  /* shadcn + legacy aliases (kept; Phase 1 migrates PPM callers off these) */
+  --color-background: var(--bg-solid);
+  --color-foreground: var(--text);
+  --color-surface: var(--panel);
+  --color-surface-elevated: var(--panel-2);
+  --color-card: var(--panel);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--panel-2);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-secondary: var(--panel-2);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--panel);
+  --color-muted-foreground: var(--text-2);
+  --color-accent: var(--panel-2);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--error);
+  --color-destructive-foreground: var(--accent-fg);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
+  --color-diff-added: color-mix(in srgb, var(--success) 16%, transparent);
+  --color-diff-removed: color-mix(in srgb, var(--error) 16%, transparent);
+  --color-text-primary: var(--text);
+  --color-text-secondary: var(--text-2);
+  --color-text-subtle: var(--text-3);
 
   --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Helvetica Neue", sans-serif;
@@ -55,6 +65,53 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+}
+
+/*
+ * Default token values (Aurora Dark). Present before JS runs so the first
+ * paint is correct; apply-theme overrides these on <html> at runtime.
+ */
+:root {
+  --bg: radial-gradient(120% 120% at 0% 0%, #0e1626 0%, #0a0e17 55%, #080b12 100%);
+  --bg-solid: #0a0e17;
+  --rail: rgba(255, 255, 255, 0.04);
+  --panel: rgba(255, 255, 255, 0.04);
+  --panel-2: rgba(20, 28, 46, 0.85);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --text: #eaeefb;
+  --text-2: #9aa6c2;
+  --text-3: #64708c;
+  --accent: #5b8cff;
+  --accent-fg: #ffffff;
+  --accent-2: #a06bff;
+  --accent-wash: rgba(91, 140, 255, 0.14);
+  --accent-wash-border: rgba(91, 140, 255, 0.30);
+  --success: #34d399;
+  --warning: #fbbf24;
+  --error: #f87171;
+  --info: #38bdf8;
+  --shadow-panel: 0 30px 70px -24px rgba(0, 0, 0, 0.65);
+  --shadow-float: 0 8px 24px -10px rgba(0, 0, 0, 0.5);
+  --rad: 18px;
+  --rad-sm: 12px;
+  --blur: 16px;
+}
+
+/* Smooth theme transitions (~250ms) */
+html {
+  transition: background-color 0.25s ease-out, color 0.25s ease-out;
+}
+
+/*
+ * App backdrop. `--bg` is a gradient on glass themes (Aurora) and a solid on
+ * flat themes (Slate/Precision, where --bg == --bg-solid). Panels render as
+ * translucent glass on top, so this gradient shows through. Used on the root
+ * app + login containers instead of the opaque `bg-background` utility.
+ */
+.app-backdrop {
+  background: var(--bg);
+  transition: background 0.25s ease-out;
 }
 
 /* Geist Mono ligatures join operators (===, --, =>) into bar glyphs that
@@ -66,52 +123,6 @@ samp,
 .font-mono {
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
-}
-
-/* Light theme overrides */
-.light {
-  --color-background: #ffffff;
-  --color-foreground: #1a1f2e;
-  --color-surface: #f8fafc;
-  --color-surface-elevated: #f1f5f9;
-
-  --color-card: #f8fafc;
-  --color-card-foreground: #1a1f2e;
-
-  --color-popover: #ffffff;
-  --color-popover-foreground: #1a1f2e;
-
-  --color-primary: #2563eb;
-  --color-primary-foreground: #ffffff;
-
-  --color-secondary: #f1f5f9;
-  --color-secondary-foreground: #1a1f2e;
-
-  --color-muted: #f8fafc;
-  --color-muted-foreground: #64748b;
-
-  --color-accent: #f1f5f9;
-  --color-accent-foreground: #1a1f2e;
-
-  --color-destructive: #dc2626;
-  --color-destructive-foreground: #ffffff;
-
-  --color-border: #e2e8f0;
-  --color-input: #e2e8f0;
-  --color-ring: #2563eb;
-
-  --color-success: #059669;
-  --color-warning: #d97706;
-  --color-error: #dc2626;
-  --color-info: #0891b2;
-
-  /* Diff line tints — match Monaco light diff editor */
-  --color-diff-added: rgba(46, 160, 67, 0.18);
-  --color-diff-removed: rgba(255, 129, 130, 0.28);
-
-  --color-text-primary: #1a1f2e;
-  --color-text-secondary: #64748b;
-  --color-text-subtle: #94a3b8;
 }
 
 /* Scrollbar styling — thin & unobtrusive */
@@ -218,6 +229,25 @@ html, body {
 .markdown-content code {
   font-family: var(--font-mono);
   font-size: 0.75rem;
+}
+
+/* Shiki-highlighted code block (background comes from Shiki's inline style) */
+.shiki-block pre.shiki {
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: 6px;
+  padding: 0.5rem 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  border: 1px solid var(--color-border);
+  margin: 0.5rem 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.shiki-block pre.shiki code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background: transparent;
 }
 
 /* Override highlight.js background so pre's background takes precedence */

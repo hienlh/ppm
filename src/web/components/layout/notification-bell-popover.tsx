@@ -71,7 +71,7 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
         {expanded && <span className="text-xs whitespace-nowrap">Notifications</span>}
         {totalUnread > 0 && (
           <span className={cn(
-            "absolute flex items-center justify-center text-[9px] font-bold text-white bg-red-500 rounded-full min-w-[16px] h-4 px-1",
+            "absolute flex items-center justify-center text-[9px] font-bold text-white bg-error rounded-full min-w-[16px] h-4 px-1",
             expanded ? "right-1.5" : "-top-1 -right-1",
           )}>
             {totalUnread}

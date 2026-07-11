@@ -66,7 +66,7 @@ export function GlideContextMenu({
       )}
       {onOpenFkTable && (
         <button type="button" onClick={() => { onOpenFkTable(); onClose(); }}
-          className="w-full text-left px-3 py-1.5 hover:bg-muted flex items-center gap-2 text-blue-400">
+          className="w-full text-left px-3 py-1.5 hover:bg-muted flex items-center gap-2 text-primary">
           <ExternalLink className="size-3" /> {fkLabel ?? "Open Referenced Table"}
         </button>
       )}

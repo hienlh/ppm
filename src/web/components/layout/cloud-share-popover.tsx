@@ -210,7 +210,7 @@ export function CloudSharePopover({ onClose }: Props) {
             {cloud?.logged_in ? (
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <div className="size-2 rounded-full bg-green-500 shrink-0" />
+                  <div className="size-2 rounded-full bg-success shrink-0" />
                   <span className="text-xs text-foreground truncate">{cloud.email}</span>
                 </div>
                 <button

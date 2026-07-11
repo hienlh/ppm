@@ -106,8 +106,8 @@ export function CodexAccountsSection() {
         <p className="text-xs text-text-subtle mt-0.5">Each account uses its own login (CODEX_HOME). One is selected per chat by the strategy below.</p>
       </div>
 
-      {err && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-md p-2">{err}</div>}
-      {msg && <div className="text-xs text-green-500 bg-green-500/10 border border-green-500/30 rounded-md p-2">{msg}</div>}
+      {err && <div className="text-xs text-error bg-error/10 border border-error/30 rounded-md p-2">{err}</div>}
+      {msg && <div className="text-xs text-success bg-success/10 border border-success/30 rounded-md p-2">{msg}</div>}
 
       {/* Strategy */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -137,7 +137,7 @@ export function CodexAccountsSection() {
                 <div className="text-[11px] text-text-subtle mt-0.5">5h {pct(u.fiveHour)} · weekly {pct(u.sevenDay)}</div>
               </div>
               <button type="button" onClick={() => remove(a.id)} title="Remove account"
-                className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-text-subtle hover:text-red-400 transition-colors">
+                className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-text-subtle hover:text-error transition-colors">
                 <Trash2 className="size-4" />
               </button>
             </div>

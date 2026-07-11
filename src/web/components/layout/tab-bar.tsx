@@ -323,8 +323,8 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
       <BarContextMenuTrigger asChild>
     <div
       className={cn(
-        "hidden md:flex items-center border-b border-border bg-background relative",
-        tabWrap ? "min-h-10 flex-wrap" : "h-10",
+        "hidden md:flex items-center border-b border-border relative shrink-0",
+        tabWrap ? "min-h-[41px] flex-wrap" : "h-[41px]",
       )}
       onDragOver={handleDragOverBar}
       onDrop={handleDrop}
@@ -399,7 +399,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
                         const pn = tab.metadata?.projectName as string | undefined;
                         if (pn) useNotificationStore.getState().markUnread(sessionId, pn, tab.title);
                       }}>
-                        <Circle className="size-3.5 mr-2 fill-blue-500 text-blue-500" />
+                        <Circle className="size-3.5 mr-2 fill-primary text-primary" />
                         Mark as unread
                       </ContextMenuItem>
                       <ContextMenuSeparator />

@@ -71,7 +71,7 @@ export function DocxPreview({ filePath, projectName }: DocxPreviewProps) {
   }
 
   return (
-    <div className="h-full overflow-auto bg-white dark:bg-zinc-900">
+    <div className="h-full overflow-auto bg-white dark:bg-bg">
       <div
         className="docx-preview max-w-3xl mx-auto px-6 py-8 text-sm text-foreground leading-relaxed
           [&_table]:border-collapse [&_table]:w-full [&_table]:my-3

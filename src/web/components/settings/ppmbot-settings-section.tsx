@@ -209,7 +209,7 @@ export function PPMBotSettingsSection() {
     pending: "⏳", running: "🔄", completed: "✅", failed: "❌", timeout: "⏱",
   };
   const statusColor: Record<string, string> = {
-    running: "text-blue-500", completed: "text-green-500", failed: "text-destructive", timeout: "text-yellow-500",
+    running: "text-primary", completed: "text-success", failed: "text-destructive", timeout: "text-warning",
   };
 
   return (
@@ -289,9 +289,9 @@ export function PPMBotSettingsSection() {
               >
                 <div className="flex items-center gap-2 min-w-0">
                   {chat.status === "approved" ? (
-                    <CheckCircle className="size-3.5 text-green-500 shrink-0" />
+                    <CheckCircle className="size-3.5 text-success shrink-0" />
                   ) : (
-                    <Clock className="size-3.5 text-yellow-500 shrink-0" />
+                    <Clock className="size-3.5 text-warning shrink-0" />
                   )}
                   <div className="min-w-0">
                     <p className="text-xs truncate">
@@ -489,7 +489,7 @@ export function PPMBotSettingsSection() {
       </Button>
 
       {status && (
-        <p className={`text-[11px] ${status.type === "ok" ? "text-green-600 dark:text-green-400" : "text-destructive"}`}>
+        <p className={`text-[11px] ${status.type === "ok" ? "text-success" : "text-destructive"}`}>
           {status.msg}
         </p>
       )}

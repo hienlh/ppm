@@ -589,7 +589,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       />
 
       {/* Bottom toolbar */}
-      <div className="border-t border-border bg-background shrink-0">
+      <div className="border-t border-border bg-panel shrink-0">
         {/* Unified toolbar: History, Config, Usage, Bug report, Connection */}
         <ChatHistoryBar
           projectName={projectName}

@@ -1,29 +1,30 @@
 import { useEffect, useState } from "react";
 import { useSettingsStore } from "@/stores/settings-store";
+import { resolveTheme } from "@/theme/resolve-theme";
+import { getCurrentAppliedTheme, THEME_CHANGE_EVENT } from "@/theme/apply-theme";
+import { monacoThemeName } from "@/theme/adapters/monaco-adapter";
 
-/** Resolves the current app theme to a Monaco editor theme name. */
+/** Resolves the current app theme to its registered Monaco theme name. */
 export function useMonacoTheme(): string {
-  const theme = useSettingsStore((s) => s.theme);
+  const themeStyle = useSettingsStore((s) => s.themeStyle);
+  const themeMode = useSettingsStore((s) => s.themeMode);
+  const customThemeId = useSettingsStore((s) => s.customThemeId);
+  const customThemes = useSettingsStore((s) => s.customThemes);
 
   const resolve = () => {
-    if (theme === "dark") return "vs-dark";
-    if (theme === "light") return "light";
-    // system
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "vs-dark" : "light";
+    const theme = getCurrentAppliedTheme() ?? resolveTheme(themeStyle, themeMode, customThemes, customThemeId);
+    return monacoThemeName(theme);
   };
 
-  const [monacoTheme, setMonacoTheme] = useState(resolve);
+  const [name, setName] = useState(resolve);
 
   useEffect(() => {
-    setMonacoTheme(resolve());
+    setName(resolve());
+    const onChange = () => setName(resolve());
+    window.addEventListener(THEME_CHANGE_EVENT, onChange);
+    return () => window.removeEventListener(THEME_CHANGE_EVENT, onChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeStyle, themeMode, customThemeId, customThemes]);
 
-    if (theme === "system") {
-      const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      const handler = () => setMonacoTheme(mq.matches ? "vs-dark" : "light");
-      mq.addEventListener("change", handler);
-      return () => mq.removeEventListener("change", handler);
-    }
-  }, [theme]);
-
-  return monacoTheme;
+  return name;
 }

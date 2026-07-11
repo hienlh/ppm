@@ -177,9 +177,9 @@ export function SlashCommandPicker({
                   {item.type === "builtin" ? (
                     <Zap className="size-4 text-emerald-500" />
                   ) : item.type === "skill" ? (
-                    <Sparkles className="size-4 text-amber-500" />
+                    <Sparkles className="size-4 text-warning" />
                   ) : (
-                    <Terminal className="size-4 text-blue-500" />
+                    <Terminal className="size-4 text-primary" />
                   )}
                 </span>
                 <div className="min-w-0 flex-1">

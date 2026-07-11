@@ -14,9 +14,9 @@ interface NotificationEntry {
 
 /** Badge color per notification type (Tailwind bg class) */
 const TYPE_COLORS: Record<string, string> = {
-  approval_request: "bg-red-500",
-  question: "bg-amber-500",
-  done: "bg-blue-500",
+  approval_request: "bg-error",
+  question: "bg-warning",
+  done: "bg-primary",
 };
 
 /** Priority: higher = more urgent (used to pick "worst" badge color) */
@@ -28,19 +28,19 @@ const TYPE_PRIORITY: Record<string, number> = {
 
 /** Get badge color class for a notification type */
 export function notificationColor(type: string | null | undefined): string {
-  return (type && TYPE_COLORS[type]) || "bg-red-500";
+  return (type && TYPE_COLORS[type]) || "bg-error";
 }
 
 /** Subtle bg tint per notification type (for unread row highlights) */
 const TYPE_TINTS: Record<string, string> = {
-  approval_request: "bg-red-500/10",
-  question: "bg-amber-500/10",
-  done: "bg-blue-500/10",
+  approval_request: "bg-error/10",
+  question: "bg-warning/10",
+  done: "bg-primary/10",
 };
 
 /** Get subtle background tint class for a notification type */
 export function notificationTint(type: string | null | undefined): string {
-  return (type && TYPE_TINTS[type]) || "bg-red-500/10";
+  return (type && TYPE_TINTS[type]) || "bg-error/10";
 }
 
 interface NotificationStore {

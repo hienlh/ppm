@@ -5,6 +5,7 @@ import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
+import { settingsThemesRoutes } from "./routes/settings-themes.ts";
 import { tunnelRoutes } from "./routes/tunnel.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
@@ -145,6 +146,7 @@ app.route("/api/system", resourceRoutes);
 // API routes
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
+app.route("/api/settings/themes", settingsThemesRoutes);
 app.route("/api/tunnel", tunnelRoutes);
 app.route("/api/projects", projectRoutes);
 app.route("/api/project/:projectName", projectScopedRouter);

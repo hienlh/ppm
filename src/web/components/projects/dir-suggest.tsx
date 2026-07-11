@@ -147,7 +147,7 @@ export function DirSuggest({ value, onChange, onSelect, placeholder, autoFocus }
                   handleSelect(item);
                 }}
               >
-                <FolderGit2 className="size-4 text-green-500 shrink-0" />
+                <FolderGit2 className="size-4 text-success shrink-0" />
                 <div className="min-w-0 flex-1 flex items-baseline gap-2">
                   <span className="font-medium">{item.name}</span>
                   <span className="text-xs text-text-subtle truncate">{item.path}</span>

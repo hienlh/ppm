@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useShallow } from "zustand/react/shallow";
-import { useSettingsStore, type Theme, type EditorTabStyle } from "@/stores/settings-store";
+import { useSettingsStore, type EditorTabStyle } from "@/stores/settings-store";
+import type { PpmThemeMode } from "@/theme/types";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
@@ -20,7 +21,9 @@ import { PPMBotSettingsSection } from "./ppmbot-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
 import { FilesSettingsSection } from "./files-settings-section";
 import { SchedulesSettingsSection } from "./schedules/schedules-settings-section";
-const THEME_OPTIONS: { value: Theme; label: string; icon: React.ElementType }[] = [
+import { ThemeManagerSection } from "./theme-manager-section";
+import { ThemeGrid } from "./theme-grid";
+const THEME_OPTIONS: { value: PpmThemeMode; label: string; icon: React.ElementType }[] = [
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
   { value: "system", label: "System", icon: Monitor },
@@ -48,7 +51,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
 ];
 
 export function SettingsTab() {
-  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled, tabWrap, toggleTabWrap, editorTabStyle, setEditorTabStyle } = useSettingsStore(useShallow((s) => ({ theme: s.theme, setTheme: s.setTheme, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled, tabWrap: s.tabWrap, toggleTabWrap: s.toggleTabWrap, editorTabStyle: s.editorTabStyle, setEditorTabStyle: s.setEditorTabStyle })));
+  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled, tabWrap, toggleTabWrap, editorTabStyle, setEditorTabStyle } = useSettingsStore(useShallow((s) => ({ theme: s.themeMode, setTheme: s.setThemeMode, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled, tabWrap: s.tabWrap, toggleTabWrap: s.toggleTabWrap, editorTabStyle: s.editorTabStyle, setEditorTabStyle: s.setEditorTabStyle })));
   const [activeCategory, setActiveCategory] = useState<SettingsCategory | null>(null);
   const [nameInput, setNameInput] = useState(deviceName ?? "");
   const [nameSaving, setNameSaving] = useState(false);
@@ -146,10 +149,12 @@ export function SettingsTab() {
           {/* Security: Change Password */}
           <ChangePasswordSection />
 
-          {/* Quick: Theme */}
+          {/* Theme — visual grid of the 6 built-in styles */}
           <section className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground">Theme</h3>
-            <div className="flex gap-1.5">
+            <ThemeGrid />
+            {/* Mode override (applies within the selected style; System follows OS) */}
+            <div className="flex gap-1.5 pt-1">
               {THEME_OPTIONS.map((opt) => {
                 const Icon = opt.icon;
                 return (
@@ -170,6 +175,9 @@ export function SettingsTab() {
               })}
             </div>
           </section>
+
+          {/* Imported themes (VSCode import) */}
+          <ThemeManagerSection />
 
           {/* Jira toggle */}
           <section className="space-y-1">

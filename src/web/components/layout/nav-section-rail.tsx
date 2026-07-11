@@ -38,9 +38,9 @@ function NavItem({ icon: Icon, label, active, badge, onClick }: {
     <button
       onClick={onClick}
       className={cn(
-        "group relative flex items-center justify-center size-[38px] rounded-lg transition-colors shrink-0",
+        "group relative flex items-center justify-center size-[38px] rounded-[9px] transition-colors shrink-0",
         active
-          ? "bg-primary/[0.12] text-primary shadow-[inset_2px_0_0_var(--color-primary)]"
+          ? "bg-accent-wash text-primary shadow-[inset_2px_0_0_var(--accent)]"
           : "text-text-subtle hover:bg-surface-elevated hover:text-foreground",
       )}
     >
@@ -63,7 +63,7 @@ function FooterUtil({ icon: Icon, label, onClick, active }: {
       onClick={onClick}
       className={cn(
         "group relative flex items-center justify-center size-8 rounded-[7px] transition-colors shrink-0",
-        active ? "text-primary bg-primary/10" : "text-text-subtle hover:bg-surface-elevated hover:text-foreground",
+        active ? "text-primary bg-accent-wash" : "text-text-subtle hover:bg-surface-elevated hover:text-foreground",
       )}
     >
       <Icon className="size-4" />

@@ -99,9 +99,9 @@ export function FilePicker({
           >
             <span className="shrink-0">
               {item.type === "directory" ? (
-                <Folder className="size-4 text-amber-500" />
+                <Folder className="size-4 text-warning" />
               ) : (
-                <File className="size-4 text-blue-400" />
+                <File className="size-4 text-primary" />
               )}
             </span>
             <span className="text-sm truncate">{item.path}</span>

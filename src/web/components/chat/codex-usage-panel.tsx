@@ -7,14 +7,14 @@ interface CodexAccount { id: string; label: string; type: string; planType?: str
 interface Usage { fiveHour?: number; sevenDay?: number }
 
 function pctColor(p: number): string {
-  if (p >= 90) return "text-red-500";
-  if (p >= 70) return "text-amber-500";
-  return "text-green-500";
+  if (p >= 90) return "text-error";
+  if (p >= 70) return "text-warning";
+  return "text-success";
 }
 function barColor(p: number): string {
-  if (p >= 90) return "bg-red-500";
-  if (p >= 70) return "bg-amber-500";
-  return "bg-green-500";
+  if (p >= 90) return "bg-error";
+  if (p >= 70) return "bg-warning";
+  return "bg-success";
 }
 
 function UsageBar({ label, frac }: { label: string; frac?: number }) {

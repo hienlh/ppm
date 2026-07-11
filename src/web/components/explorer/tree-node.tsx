@@ -189,7 +189,7 @@ export const TreeNode = memo(function TreeNode({ node, depth, projectName, onAct
   }
 
   const { icon: FileIcon, color: fileIconColor } = isDir
-    ? { icon: isExpanded ? FolderOpen : Folder, color: "text-primary" }
+    ? { icon: isExpanded ? FolderOpen : Folder, color: isExpanded ? "text-primary" : "text-text-3" }
     : getFileIcon(node.name);
 
   // Compact folders: collapse single-child dir chains into "a/b/c" display
@@ -259,12 +259,12 @@ export const TreeNode = memo(function TreeNode({ node, depth, projectName, onAct
               onDragStart={handleDragStart}
               onClick={handleClick}
               className={cn(
-                "flex items-center w-full gap-1.5 px-2 py-1 rounded-sm text-sm",
-                "min-h-[32px] hover:bg-surface-elevated transition-colors text-left",
+                "flex items-center w-full gap-1.5 px-2 py-1 rounded-[var(--rad-sm)] text-[13px]",
+                "min-h-[32px] md:min-h-[26px] hover:bg-surface-elevated transition-colors text-left",
                 "select-none",
                 (isIgnored || isCut) && "opacity-40",
                 isFocused && "bg-surface-elevated",
-              isSelected && "bg-primary/15 ring-1 ring-primary/40",
+                isSelected && "bg-accent-wash",
                 isDragOver && "ring-1 ring-dashed ring-primary bg-primary/10",
               )}
               style={{ paddingLeft: `${depth * 16 + 8}px` }}
@@ -286,7 +286,14 @@ export const TreeNode = memo(function TreeNode({ node, depth, projectName, onAct
                   fileIconColor ?? "text-text-secondary",
                 )}
               />
-              <span className={cn("truncate", gitColor)}>{displayName}</span>
+              <span
+                className={cn(
+                  "truncate",
+                  gitColor ?? (isSelected ? "text-text" : isDir && isExpanded ? "text-text font-medium" : "text-text-2"),
+                )}
+              >
+                {displayName}
+              </span>
               {gitStatus && !isDir && (
                 <span className={cn("text-[10px] ml-auto shrink-0 font-mono", gitColor)}>
                   {gitStatus}

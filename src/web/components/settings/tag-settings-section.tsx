@@ -105,7 +105,7 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
             className="flex-1 min-w-0 bg-surface-elevated text-[11px] text-text-primary px-2 py-1 rounded border border-border outline-none focus:border-primary"
             autoFocus
           />
-          <button onClick={handleCreate} className="p-1 text-green-500 hover:text-green-400"><Check className="size-3.5" /></button>
+          <button onClick={handleCreate} className="p-1 text-success hover:text-success/80"><Check className="size-3.5" /></button>
           <button onClick={() => setShowAdd(false)} className="p-1 text-text-subtle hover:text-text-secondary"><X className="size-3.5" /></button>
         </div>
       )}
@@ -124,7 +124,7 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
                   className="flex-1 min-w-0 bg-surface-elevated text-[11px] px-1.5 py-0.5 rounded border border-border outline-none focus:border-primary"
                   autoFocus
                 />
-                <button onClick={() => handleUpdate(tag.id)} className="p-0.5 text-green-500"><Check className="size-3" /></button>
+                <button onClick={() => handleUpdate(tag.id)} className="p-0.5 text-success"><Check className="size-3" /></button>
                 <button onClick={() => setEditingId(null)} className="p-0.5 text-text-subtle"><X className="size-3" /></button>
               </>
             ) : (
@@ -150,7 +150,7 @@ export function TagSettingsSection({ projectName, onTagsChanged }: TagSettingsSe
                 </button>
                 <button
                   onClick={() => handleDelete(tag.id, tag.name)}
-                  className="p-0.5 rounded text-text-subtle hover:text-red-400 can-hover:opacity-0 can-hover:group-hover:opacity-100"
+                  className="p-0.5 rounded text-text-subtle hover:text-error can-hover:opacity-0 can-hover:group-hover:opacity-100"
                 >
                   <Trash2 className="size-3" />
                 </button>

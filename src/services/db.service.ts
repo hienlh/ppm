@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 33;
+export const CURRENT_SCHEMA_VERSION = 34;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -763,6 +763,22 @@ function runMigrations(database: Database): void {
     // Per-session codex account binding (sticky across restarts).
     try { database.exec(`ALTER TABLE session_metadata ADD COLUMN codex_account_id TEXT`); } catch { /* exists */ }
     database.exec(`PRAGMA user_version = 33`);
+  }
+
+  if (current < 34) {
+    // Imported VSCode themes (converted to PpmTheme JSON). No filesystem writes.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS themes (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        mode       TEXT NOT NULL,
+        source     TEXT,
+        data_json  TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    database.exec(`PRAGMA user_version = 34`);
   }
 }
 

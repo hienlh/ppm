@@ -79,9 +79,9 @@ function formatRelativeTime(iso: string): string {
 }
 
 function fileIcon(entry: BrowseEntry): React.ReactNode {
-  if (entry.type === "directory") return <Folder className="size-4 text-blue-500" />;
+  if (entry.type === "directory") return <Folder className="size-4 text-primary" />;
   const ext = entry.name.split(".").pop()?.toLowerCase();
-  if (ext && ["db", "sqlite", "sqlite3"].includes(ext)) return <Database className="size-4 text-amber-500" />;
+  if (ext && ["db", "sqlite", "sqlite3"].includes(ext)) return <Database className="size-4 text-warning" />;
   return <File className="size-4 text-text-subtle" />;
 }
 
@@ -314,7 +314,7 @@ export function FileBrowserPicker({
               <Loader2 className="size-5 animate-spin text-text-subtle" />
             </div>
           ) : error ? (
-            <div className="text-center py-8 text-xs text-red-500">{error}</div>
+            <div className="text-center py-8 text-xs text-error">{error}</div>
           ) : visible.length === 0 ? (
             <div className="text-center py-8 text-xs text-text-subtle">
               {search ? "No matching entries" : "Empty directory"}

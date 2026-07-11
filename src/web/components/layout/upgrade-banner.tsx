@@ -116,7 +116,7 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
 
   return (
     <div className={`w-full text-white px-3 py-1 flex items-center justify-between gap-2 z-50 text-sm shrink-0 ${
-      upgradeComplete ? "bg-green-600 dark:bg-green-700" : "bg-blue-600 dark:bg-blue-700"
+      upgradeComplete ? "bg-success" : "bg-primary"
     }`}>
       {upgradeComplete ? (
         <>
@@ -128,7 +128,7 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
           </div>
           <button
             onClick={clearCachesAndReload}
-            className="bg-white text-green-600 font-medium rounded-full px-3 py-0.5 text-xs min-h-[28px] min-w-[28px] flex items-center gap-1.5 justify-center hover:bg-green-50 active:bg-green-100 transition-colors shrink-0"
+            className="bg-white text-success font-medium rounded-full px-3 py-0.5 text-xs min-h-[28px] min-w-[28px] flex items-center gap-1.5 justify-center hover:bg-white/90 active:bg-white/80 transition-colors shrink-0"
           >
             <RefreshCw className="size-3" />
             Reload
@@ -152,13 +152,13 @@ export function UpgradeBanner({ onVisibilityChange }: UpgradeBannerProps) {
           <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={handleUpgrade}
-              className="bg-white text-blue-600 font-medium rounded-full px-3 py-0.5 text-xs min-h-[28px] min-w-[28px] flex items-center justify-center hover:bg-blue-50 active:bg-blue-100 transition-colors"
+              className="bg-white text-primary font-medium rounded-full px-3 py-0.5 text-xs min-h-[28px] min-w-[28px] flex items-center justify-center hover:bg-white/90 active:bg-white/80 transition-colors"
             >
               Upgrade
             </button>
             <button
               onClick={handleDismiss}
-              className="min-h-[28px] min-w-[28px] flex items-center justify-center rounded-full hover:bg-blue-500 active:bg-blue-800 transition-colors"
+              className="min-h-[28px] min-w-[28px] flex items-center justify-center rounded-full hover:bg-white/20 active:bg-white/30 transition-colors"
               aria-label="Dismiss upgrade notification"
             >
               <X className="size-4" />

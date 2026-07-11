@@ -28,7 +28,7 @@ describe("ConfigService (SQLite-backed)", () => {
       const config = configService.load();
       expect(config.port).toBe(8080);
       expect(config.host).toBe("0.0.0.0");
-      expect(config.theme).toBe("system");
+      expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
       expect(config.auth.enabled).toBe(true);
       expect(config.auth.token).toBeTruthy(); // auto-generated
       expect(config.projects).toEqual([]);
@@ -39,12 +39,13 @@ describe("ConfigService (SQLite-backed)", () => {
       const { setConfigValue } = require("../../../src/services/db.service.ts");
       setConfigValue("port", JSON.stringify(9999));
       setConfigValue("device_name", JSON.stringify("test-machine"));
-      setConfigValue("theme", JSON.stringify("dark"));
+      setConfigValue("theme", JSON.stringify("dark")); // legacy string form
 
       const config = configService.load();
       expect(config.port).toBe(9999);
       expect(config.device_name).toBe("test-machine");
-      expect(config.theme).toBe("dark");
+      // Legacy string is migrated to the {style, mode} object on load.
+      expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
     });
 
     it("auto-generates auth token if enabled but empty", () => {
@@ -56,12 +57,12 @@ describe("ConfigService (SQLite-backed)", () => {
       expect(config.auth.token.length).toBeGreaterThan(0);
     });
 
-    it("sanitizes invalid theme to default", () => {
+    it("migrates an invalid theme to the default object", () => {
       const { setConfigValue } = require("../../../src/services/db.service.ts");
       setConfigValue("theme", JSON.stringify("invalid-theme"));
 
       const config = configService.load();
-      expect(config.theme).toBe("system");
+      expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
     });
   });
 
@@ -78,9 +79,10 @@ describe("ConfigService (SQLite-backed)", () => {
     });
 
     it("get/set theme", () => {
-      configService.set("theme", "dark");
-      expect(configService.get("theme")).toBe("dark");
-      expect(JSON.parse(getConfigValue("theme")!)).toBe("dark");
+      const theme = { style: "slate", mode: "light" as const };
+      configService.set("theme", theme);
+      expect(configService.get("theme")).toEqual(theme);
+      expect(JSON.parse(getConfigValue("theme")!)).toEqual(theme);
     });
 
     it("get/set auth object", () => {

@@ -14,8 +14,8 @@ export function GlideSaveBar({ pendingCount, onSave, onDiscard }: SaveBarProps) 
   if (pendingCount === 0) return null;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 border-t border-amber-400/50 bg-amber-50 dark:bg-amber-950/30 shrink-0 text-xs">
-      <span className="text-amber-700 dark:text-amber-300 font-medium">
+    <div className="flex items-center gap-2 px-3 py-1.5 border-t border-warning/50 bg-warning/5 shrink-0 text-xs">
+      <span className="text-warning font-medium">
         {pendingCount} pending edit{pendingCount > 1 ? "s" : ""}
       </span>
       <div className="flex-1" />

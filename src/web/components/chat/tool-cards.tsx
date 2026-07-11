@@ -16,13 +16,53 @@ import {
   XCircle,
   ExternalLink,
   ListTodo,
+  ListChecks,
   Search,
+  FileSearch,
+  FilePen,
+  FilePlus2,
+  Terminal,
+  Sparkles,
+  CircleHelp,
+  ClipboardList,
   Bot,
   Globe,
   Code,
   Columns2,
   Clock,
 } from "lucide-react";
+
+/** Per-tool-family icon chip: 24×24 rounded-7 tinted per the design spec. */
+function toolChip(name: string, isError: boolean): { Icon: React.ElementType; cls: string } {
+  if (isError && (name === "Bash" || name === "PowerShell"))
+    return { Icon: Terminal, cls: "bg-error/15 text-error" };
+  switch (name) {
+    case "Read": case "Glob": case "LS":
+      return { Icon: FileSearch, cls: "bg-accent-wash text-primary" };
+    case "Grep": case "Search": case "WebSearch": case "ToolSearch":
+      return { Icon: Search, cls: "bg-accent-wash text-primary" };
+    case "WebFetch": case "Fetch":
+      return { Icon: Globe, cls: "bg-info/15 text-info" };
+    case "Edit": case "MultiEdit": case "NotebookEdit":
+      return { Icon: FilePen, cls: "bg-accent-2/15 text-accent-2" };
+    case "Write":
+      return { Icon: FilePlus2, cls: "bg-success/15 text-success" };
+    case "Bash": case "PowerShell":
+      return { Icon: Terminal, cls: "bg-panel-2 text-text-2" };
+    case "TodoWrite":
+      return { Icon: ListChecks, cls: "bg-warning/15 text-warning" };
+    case "Task": case "Agent":
+      return { Icon: Bot, cls: "bg-accent-wash text-primary" };
+    case "AskUserQuestion":
+      return { Icon: CircleHelp, cls: "bg-accent-wash text-primary" };
+    case "ExitPlanMode":
+      return { Icon: ClipboardList, cls: "bg-accent-wash text-primary" };
+    case "Skill":
+      return { Icon: Sparkles, cls: "bg-accent-2/15 text-accent-2" };
+    default:
+      return { Icon: Code, cls: "bg-panel-2 text-text-2" };
+  }
+}
 import type { ChatEvent } from "../../../types/chat";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
@@ -68,7 +108,7 @@ export function ToolCard({
 
   if (tool.type === "error") {
     return (
-      <div className="flex items-center gap-2 rounded bg-red-500/10 border border-red-500/20 px-2 py-1.5 text-xs text-red-400">
+      <div className="flex items-center gap-2 rounded bg-error/10 border border-error/20 px-2 py-1.5 text-xs text-error">
         <AlertCircle className="size-3" />
         <span>{tool.message}</span>
       </div>
@@ -110,27 +150,35 @@ export function ToolCard({
     }
   }, [isError, toolName]);
 
+  const { Icon: ChipIcon, cls: chipCls } = toolChip(toolName, isError);
+  const isInteractive = toolName === "AskUserQuestion" || toolName === "ExitPlanMode" || isSubagent;
+
   return (
-    <div className={`rounded border text-xs ${isSubagent ? "border-accent/30 bg-accent/5" : "border-border bg-background"}`}>
+    <div className={`rounded-[11px] border overflow-hidden text-xs bg-panel ${isInteractive ? "border-accent-wash-border" : "border-border"}`}>
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 px-2 py-1.5 w-full text-left hover:bg-surface transition-colors min-w-0"
+        className="flex items-center gap-2.5 px-2.5 py-2 w-full text-left hover:bg-panel-2/40 transition-colors min-w-0"
       >
-        {expanded ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
-        {isError
-          ? <XCircle className="size-3 text-red-400 shrink-0" />
-          : isDone
-            ? <CheckCircle2 className="size-3 text-green-400 shrink-0" />
-            : <Loader2 className="size-3 text-yellow-400 shrink-0 animate-spin" />}
-        <span className="truncate text-text-primary">
+        <span className={`inline-flex items-center justify-center size-6 rounded-[7px] shrink-0 ${chipCls}`}>
+          <ChipIcon className="size-3.5" />
+        </span>
+        <span className="truncate text-text font-medium">
           <ToolSummary name={toolName} input={input} />
         </span>
-        {isStreamingBash && (
-          <span className="ml-auto text-[10px] text-yellow-400 shrink-0">{partial!.lineCount} line{partial!.lineCount !== 1 ? "s" : ""} streaming...</span>
-        )}
-        {hasChildren && !isStreamingBash && (
-          <span className="ml-auto text-[10px] text-text-subtle shrink-0">{children!.length} steps</span>
-        )}
+        <span className="ml-auto flex items-center gap-2 shrink-0">
+          {isStreamingBash && (
+            <span className="text-[10px] text-warning">{partial!.lineCount} line{partial!.lineCount !== 1 ? "s" : ""} streaming…</span>
+          )}
+          {hasChildren && !isStreamingBash && (
+            <span className="text-[10px] text-text-3 font-mono">{children!.length} steps</span>
+          )}
+          {isError
+            ? <XCircle className="size-3.5 text-error" />
+            : isDone
+              ? <CheckCircle2 className="size-3.5 text-success" />
+              : <Loader2 className="size-3.5 text-primary animate-spin" />}
+          {expanded ? <ChevronDown className="size-3 text-text-3" /> : <ChevronRight className="size-3 text-text-3" />}
+        </span>
       </button>
       {expanded && (
         <div className="px-2 pb-2 space-y-1.5 select-text">
@@ -349,7 +397,7 @@ function ToolDetails({
                   const isSelected = answer.split(", ").includes(opt.label);
                   return (
                     <span key={oi} className={`inline-block rounded px-1.5 py-0.5 text-xs border ${
-                      isSelected ? "border-accent bg-accent/20 text-text-primary" : "border-border text-text-subtle"
+                      isSelected ? "border-primary bg-primary/20 text-text-primary" : "border-border text-text-subtle"
                     }`}>
                       {opt.label}
                     </span>
@@ -417,9 +465,9 @@ function ToolDetails({
 /** Small status pill for Task* cards — mirrors TodoDetails colors (stopped = neutral). */
 function TaskStatusBadge({ status }: { status: string }) {
   const cls = status === "completed"
-    ? "text-green-400 border-green-400/30 bg-green-400/10"
+    ? "text-success border-success/30 bg-success/10"
     : status === "in_progress"
-      ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10"
+      ? "text-warning border-warning/30 bg-warning/10"
       : "text-text-subtle border-border bg-surface";
   return <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] border ${cls}`}>{status}</span>;
 }
@@ -432,9 +480,9 @@ function TodoDetails({ todos }: { todos: Array<{ content: string; status: string
         <div key={i} className="flex items-start gap-1.5">
           <span className={`shrink-0 mt-0.5 ${
             todo.status === "completed"
-              ? "text-green-400"
+              ? "text-success"
               : todo.status === "in_progress"
-                ? "text-yellow-400"
+                ? "text-warning"
                 : "text-text-subtle"
           }`}>
             {todo.status === "completed" ? "✓" : todo.status === "in_progress" ? "▶" : "○"}
@@ -612,7 +660,7 @@ function StreamingBashOutput({ content, lineCount }: { content: string; lineCoun
 
   return (
     <div className="border-t border-border pt-1.5">
-      <div className="flex items-center gap-1 text-[10px] text-yellow-400 mb-1">
+      <div className="flex items-center gap-1 text-[10px] text-warning mb-1">
         <Loader2 className="size-3 animate-spin" />
         <span>Output ({lineCount} line{lineCount !== 1 ? "s" : ""}, streaming...)</span>
       </div>

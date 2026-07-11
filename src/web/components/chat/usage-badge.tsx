@@ -23,15 +23,15 @@ interface UsageBadgeProps {
 }
 
 function pctColor(pct: number): string {
-  if (pct >= 90) return "text-red-500";
-  if (pct >= 70) return "text-amber-500";
-  return "text-green-500";
+  if (pct >= 90) return "text-error";
+  if (pct >= 70) return "text-warning";
+  return "text-success";
 }
 
 function barColor(pct: number): string {
-  if (pct >= 90) return "bg-red-500";
-  if (pct >= 70) return "bg-amber-500";
-  return "bg-green-500";
+  if (pct >= 90) return "bg-error";
+  if (pct >= 70) return "bg-warning";
+  return "bg-success";
 }
 
 export function UsageBadge({ usage, loading, onClick }: UsageBadgeProps) {
@@ -134,10 +134,10 @@ function tokenStatus(info?: AccountInfo): { label: string; tip: string; color: s
   if (!info) return { label: "unknown", tip: "No account info available", color: "text-text-subtle" };
   if (!info.expiresAt) return { label: "key", tip: "API key (no expiry)", color: "text-text-subtle" };
   const expired = info.expiresAt * 1000 < Date.now(); // expiresAt is seconds
-  if (expired && info.hasRefreshToken) return { label: "expired", tip: "Token expired but has refresh token — will auto-renew", color: "text-amber-500" };
-  if (expired) return { label: "expired", tip: "Token expired, no refresh token", color: "text-red-500" };
-  if (info.hasRefreshToken) return { label: "long-lived", tip: "OAuth token with refresh — long-lived", color: "text-green-500" };
-  return { label: "temp", tip: "Temporary token without refresh — will expire", color: "text-amber-500" };
+  if (expired && info.hasRefreshToken) return { label: "expired", tip: "Token expired but has refresh token — will auto-renew", color: "text-warning" };
+  if (expired) return { label: "expired", tip: "Token expired, no refresh token", color: "text-error" };
+  if (info.hasRefreshToken) return { label: "long-lived", tip: "OAuth token with refresh — long-lived", color: "text-success" };
+  return { label: "temp", tip: "Temporary token without refresh — will expire", color: "text-warning" };
 }
 
 function formatLastUpdated(ts: number | null | undefined): string | null {
@@ -178,7 +178,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
           {entry.accountLabel ?? entry.accountId.slice(0, 8)}
         </span>
         {isExpired && (
-          <span className="text-[9px] text-red-500 shrink-0 font-medium">Expired</span>
+          <span className="text-[9px] text-error shrink-0 font-medium">Expired</span>
         )}
         {!entry.isOAuth && !isExpired && (
           <span className="text-[9px] text-text-subtle shrink-0">API key</span>
@@ -196,7 +196,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
           )}
           {!isExpired && onExport && entry.isOAuth && (
             <button
-              className="p-1 rounded cursor-pointer text-text-subtle hover:text-blue-500 hover:bg-surface-elevated transition-colors"
+              className="p-1 rounded cursor-pointer text-text-subtle hover:text-primary hover:bg-surface-elevated transition-colors"
               onClick={() => onExport(entry.accountId)}
               title="Export this account"
             >
@@ -213,7 +213,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
           )}
           {onDelete && (
             <button
-              className="p-1 rounded cursor-pointer text-text-subtle hover:text-red-500 hover:bg-surface-elevated transition-colors"
+              className="p-1 rounded cursor-pointer text-text-subtle hover:text-error hover:bg-surface-elevated transition-colors"
               onClick={() => onDelete(entry.accountId, entry.accountLabel ?? entry.accountId.slice(0, 8))}
               title="Remove account"
             >
@@ -414,7 +414,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       </div>
 
       {message && (
-        <div className="text-[11px] p-1.5 rounded bg-green-500/10 text-green-600 text-center animate-in fade-in duration-200">
+        <div className="text-[11px] p-1.5 rounded bg-success/10 text-success text-center animate-in fade-in duration-200">
           {message}
         </div>
       )}
@@ -530,7 +530,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
               <button onClick={() => setDeleteTarget(null)} className="flex-1 px-3 py-1.5 rounded-md text-xs border border-border text-text-secondary hover:bg-surface-hover cursor-pointer transition-colors">
                 Cancel
               </button>
-              <button onClick={confirmDeleteAccount} className="flex-1 px-3 py-1.5 rounded-md text-xs bg-red-500 text-white hover:bg-red-600 cursor-pointer transition-colors">
+              <button onClick={confirmDeleteAccount} className="flex-1 px-3 py-1.5 rounded-md text-xs bg-error text-white hover:bg-error/80 cursor-pointer transition-colors">
                 Remove
               </button>
             </div>

@@ -51,7 +51,7 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
             {att.status === "uploading" ? (
               <Loader2 className="size-3 shrink-0 animate-spin text-text-subtle" />
             ) : att.status === "error" ? (
-              <span className="text-red-500 shrink-0" title="Upload failed">!</span>
+              <span className="text-error shrink-0" title="Upload failed">!</span>
             ) : null}
 
             {/* Remove button */}

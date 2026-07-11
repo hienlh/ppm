@@ -79,7 +79,7 @@ export function ScheduleRow({
             <span
               className={cn(
                 "rounded px-1.5 py-0.5 text-[10px] font-medium shrink-0",
-                schedule.enabled ? "bg-green-500/10 text-green-500" : "bg-muted text-muted-foreground",
+                schedule.enabled ? "bg-success/10 text-success" : "bg-muted text-muted-foreground",
               )}
             >
               {schedule.enabled ? "Enabled" : "Disabled"}

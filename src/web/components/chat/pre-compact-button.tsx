@@ -43,7 +43,7 @@ export function PreCompactButton({ status, onLoad, count }: PreCompactButtonProp
       disabled={isBusy || isLoaded}
       className="mt-2 inline-flex items-center justify-center gap-2 rounded-md border border-border bg-surface/50 px-4 py-2.5 text-sm text-text-primary hover:bg-surface transition-colors disabled:opacity-70 disabled:cursor-default w-full md:w-auto min-h-[44px]"
     >
-      <Icon className={`size-4 shrink-0 ${isBusy ? "animate-spin" : ""} ${isError ? "text-red-400" : ""}`} />
+      <Icon className={`size-4 shrink-0 ${isBusy ? "animate-spin" : ""} ${isError ? "text-error" : ""}`} />
       <span>{label}</span>
     </button>
   );

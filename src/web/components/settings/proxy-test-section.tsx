@@ -222,7 +222,7 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
             )}
           </div>
           {error ? (
-            <pre className="text-[9px] font-mono bg-red-500/10 text-red-500 p-2 rounded overflow-auto max-h-52 whitespace-pre-wrap break-all">
+            <pre className="text-[9px] font-mono bg-error/10 text-error p-2 rounded overflow-auto max-h-52 whitespace-pre-wrap break-all">
               {error}
             </pre>
           ) : (

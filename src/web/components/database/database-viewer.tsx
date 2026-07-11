@@ -273,7 +273,7 @@ function QueryResultPanel({ result, error, loading, schema, connectionName }: {
       {error && <div className="px-3 py-2 text-destructive bg-destructive/5 shrink-0">{error}</div>}
 
       {result?.changeType === "modify" && (
-        <div className="px-3 py-2 text-green-500 shrink-0">
+        <div className="px-3 py-2 text-success shrink-0">
           {result.rowsAffected} row(s) affected
           {result.executionTimeMs != null && <span className="text-muted-foreground ml-2">{result.executionTimeMs}ms</span>}
         </div>

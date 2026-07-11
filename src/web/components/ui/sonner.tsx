@@ -11,10 +11,10 @@ import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { useSettingsStore } from "@/stores/settings-store"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const theme = useSettingsStore((s) => s.theme)
-  const resolved = theme === "system"
+  const mode = useSettingsStore((s) => s.themeMode)
+  const resolved = mode === "system"
     ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : theme
+    : mode
 
   return (
     <Sonner
