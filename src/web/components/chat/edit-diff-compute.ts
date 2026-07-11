@@ -71,12 +71,14 @@ export function buildRows(oldStr: string, newStr: string, maxLines: number): {
   const flush = () => {
     const paired = Math.min(delBuf.length, insBuf.length);
     for (let k = 0; k < delBuf.length; k++) {
-      const ranges = k < paired ? wordRanges(delBuf[k], insBuf[k]).del : [];
-      rows.push({ kind: "del", text: delBuf[k], ranges });
+      const del = delBuf[k]!;
+      const ranges = k < paired ? wordRanges(del, insBuf[k]!).del : [];
+      rows.push({ kind: "del", text: del, ranges });
     }
     for (let k = 0; k < insBuf.length; k++) {
-      const ranges = k < paired ? wordRanges(delBuf[k], insBuf[k]).ins : [];
-      rows.push({ kind: "ins", text: insBuf[k], ranges });
+      const ins = insBuf[k]!;
+      const ranges = k < paired ? wordRanges(delBuf[k]!, ins).ins : [];
+      rows.push({ kind: "ins", text: ins, ranges });
     }
     delBuf = [];
     insBuf = [];
