@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.16.4] - 2026-07-13
+
+### Fixed
+- **Streaming no longer stops following the bottom after a wheel/touch at the end of the transcript** — a gesture made while already scrolled to the bottom produces no scroll event, so the "interacting" guard never cleared and the pin-to-bottom snap stayed suppressed (new streamed content grew below the fold). The guard now self-clears once the gesture goes quiet.
+
 ## [0.16.3] - 2026-07-12
 
 ### Added
