@@ -4,6 +4,8 @@
 
 ### Fixed
 - **Streaming no longer stops following the bottom after a wheel/touch at the end of the transcript** — a gesture made while already scrolled to the bottom produces no scroll event, so the "interacting" guard never cleared and the pin-to-bottom snap stayed suppressed (new streamed content grew below the fold). The guard now self-clears once the gesture goes quiet.
+- **Sending a message while a question/approval was pending no longer hangs the turn** — the pending AskUserQuestion/approval is now auto-resolved as skipped first, unblocking the tool generator so the follow-up message flows through and persists instead of being lost.
+- **Switching to a project whose workspace lived only in the DB no longer restores an empty tab list** — project switch read localStorage only; it now fetches and merges the server workspace before switching when no local copy exists (projects opened on another device/tunnel, or after a cache wipe).
 
 ## [0.16.3] - 2026-07-12
 
