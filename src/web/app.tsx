@@ -11,10 +11,7 @@ import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
-import {
-  fetchWorkspaceFromServer,
-  resolveWorkspaceConflict,
-} from "@/stores/panel-utils";
+import { hydrateWorkspaceFromServer } from "@/stores/panel-utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useTheme } from "@/theme/use-theme";
 import { initShikiThemeSync, warmShiki } from "@/theme/adapters/shiki-adapter";
@@ -158,23 +155,10 @@ export function App() {
       }
       if (!target) return;
 
-      // Fetch server workspace BEFORE activating project.
+      // Hydrate server workspace into localStorage BEFORE activating project.
       // setActiveProject triggers switchProject which creates an empty layout
       // with a new timestamp if localStorage is empty (new tunnel/device).
-      // By pre-populating localStorage, switchProject picks up the server data.
-      const serverLayout = await fetchWorkspaceFromServer(target.name);
-      if (serverLayout) {
-        const localRaw = localStorage.getItem(`ppm-panels-${target.name}`);
-        const localLayout = localRaw ? JSON.parse(localRaw) : null;
-        const resolved = resolveWorkspaceConflict(localLayout, serverLayout);
-        if (resolved && resolved === serverLayout) {
-          // Server wins — write directly to localStorage (no server sync needed)
-          localStorage.setItem(
-            `ppm-panels-${target.name}`,
-            JSON.stringify(serverLayout),
-          );
-        }
-      }
+      await hydrateWorkspaceFromServer(target.name);
 
       useProjectStore.getState().setActiveProject(target);
 
@@ -197,10 +181,29 @@ export function App() {
     });
   }, [authState, fetchProjects]);
 
-  // Switch project tabs when active project changes
+  // Switch project tabs when active project changes.
+  // If this browser has no local copy of the project's layout (opened on
+  // another device/tunnel, or cache wiped), pull it from the DB first so
+  // switchProject — which reads localStorage only — restores the cached tabs
+  // instead of an empty workspace. Projects already present locally (incl. the
+  // startup project) skip the fetch, avoiding a reload that would clobber
+  // freshly URL-opened tabs.
   useEffect(() => {
     const projectName = activeProject?.name ?? "__global__";
-    useTabStore.getState().switchProject(projectName);
+    let cancelled = false;
+    (async () => {
+      const missingLocally =
+        projectName !== "__global__" &&
+        !localStorage.getItem(`ppm-panels-${projectName}`);
+      if (missingLocally) {
+        await hydrateWorkspaceFromServer(projectName);
+        if (cancelled) return;
+      }
+      useTabStore.getState().switchProject(projectName);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [activeProject?.name]);
 
   // Hydrate unread notification state from server (persisted across refresh / tabs)

@@ -326,6 +326,34 @@ export function resolveWorkspaceConflict(
   return serverTime >= localTime ? server : local;
 }
 
+/**
+ * Fetch a project's workspace from the server and, if it wins the conflict,
+ * write it into localStorage so a subsequent load/switch picks it up.
+ *
+ * switchProject reads localStorage only. Projects whose layout lives solely in
+ * the DB (opened on another device/tunnel, or after a local cache wipe) would
+ * otherwise restore as an empty workspace. Returns true if localStorage was
+ * overwritten with server data.
+ */
+export async function hydrateWorkspaceFromServer(projectName: string): Promise<boolean> {
+  if (projectName === "__global__") return false;
+  const server = await fetchWorkspaceFromServer(projectName);
+  if (!server) return false;
+  const key = `${STORAGE_PREFIX}${projectName}`;
+  let local: PanelLayoutWithTimestamp | null = null;
+  try {
+    const raw = localStorage.getItem(key);
+    local = raw ? (JSON.parse(raw) as PanelLayoutWithTimestamp) : null;
+  } catch { /* corrupt blob → treat as absent */ }
+  if (resolveWorkspaceConflict(local, server) !== server) return false;
+  try {
+    localStorage.setItem(key, JSON.stringify(server));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Old format migration
 // ---------------------------------------------------------------------------
