@@ -823,6 +823,25 @@ export const chatWebSocket = {
 
       const provider = providerRegistry.get(providerId);
 
+      // User sent a message instead of answering a pending question/approval.
+      // The SDK generator is blocked inside canUseTool awaiting that approval, so
+      // it can't consume the pushed message — resolve the approval as skipped to
+      // unblock it, then the follow-up message flows through normally.
+      if (entry.pendingApprovalEvent) {
+        const pendingReqId = entry.pendingApprovalEvent.requestId;
+        if (provider && typeof provider.resolveApproval === "function") {
+          provider.resolveApproval(pendingReqId, false);
+        }
+        entry.pendingApprovalEvent = undefined;
+        broadcast(sessionId, {
+          type: "approval_resolved",
+          requestId: pendingReqId,
+          approved: false,
+          answers: null,
+        });
+        logSessionEvent(sessionId, "INFO", `Pending approval ${pendingReqId} auto-skipped (user sent a message)`);
+      }
+
       // Store user message for reconnect replay (turn_events includes only assistant events)
       entry.currentUserMessage = parsed.content;
 

@@ -597,6 +597,30 @@ describe("Chat WebSocket — New Protocol", () => {
     c2.close();
   });
 
+  // ─── message sent instead of answering a pending approval ───
+
+  it("sending a message while an approval is pending auto-skips it", async () => {
+    const session = await chatService.createSession("mock", {});
+
+    const c1 = await connectWs(session.id);
+    await c1.waitForType("session_state");
+
+    // Trigger an approval_request
+    c1.ws.send(JSON.stringify({ type: "message", content: "delete temp files" }));
+    const approval = await c1.waitForType("approval_request");
+    expect(approval.requestId).toBeDefined();
+
+    // Instead of answering, send a new message — server must auto-skip the
+    // pending approval so the (real-SDK) blocked generator gets unblocked.
+    c1.ws.send(JSON.stringify({ type: "message", content: "actually do this instead" }));
+
+    const resolved = await c1.waitForType("approval_resolved");
+    expect(resolved.requestId).toBe(approval.requestId);
+    expect(resolved.approved).toBe(false);
+
+    c1.close();
+  });
+
   // ─── race condition: stream finishes between REST and WS connect ───
 
   it("client connecting right after stream ends gets idle state without stale turn_events", async () => {
