@@ -116,6 +116,11 @@ export function MessageList({
   onClearErrors,
 }: MessageListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  // Measured row heights keyed by message id. Feeds estimateSize so a row's slot
+  // matches its real height — shrinking the estimate→actual delta the virtualizer
+  // must compensate on first measurement, which is what jerks scrollTop backward
+  // during upward scroll. Keyed by id (not index) so it survives load-more prepend.
+  const sizeCacheRef = useRef<Map<string | number, number>>(new Map());
 
   const filtered = useMemo(() => messages.filter((msg) => {
     const hasContent = msg.content && msg.content.trim().length > 0;
@@ -141,12 +146,18 @@ export function MessageList({
   const rowVirtualizer = useVirtualizer({
     count: filtered.length + (hasTrailing ? 1 : 0),
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 120,
+    estimateSize: (index) => {
+      const id = index < filtered.length ? filtered[index]?.id : trailingKey;
+      // 240 base ≈ median bubble height (far closer than 120) for never-seen rows.
+      return (id != null ? sizeCacheRef.current.get(id) : undefined) ?? 240;
+    },
     getItemKey: (index) => (index < filtered.length ? (filtered[index]?.id ?? index) : trailingKey),
     overscan: 6,
   });
 
   const virtualItems = rowVirtualizer.getVirtualItems();
+  // Remember each rendered row's measured height by id for future estimateSize calls.
+  for (const vi of virtualItems) sizeCacheRef.current.set(vi.key, vi.size);
 
   // App-owned stick-to-bottom invariant: while the user is pinned (near the
   // real DOM bottom), any content-height change snaps scrollTop to the true
@@ -185,7 +196,12 @@ export function MessageList({
       clearTimeout(idle);
       idle = setTimeout(() => { interactingRef.current = false; }, 200);
     };
-    const startInteract = () => { interactingRef.current = true; clearTimeout(idle); };
+    // Arm the settle timer on every gesture start: a wheel/touch while already at
+    // the bottom produces no scroll event, so without this safety net `interacting`
+    // would never clear and the bottom-snap stays suppressed forever (streaming
+    // stops following). Active scrolling re-arms it via onScroll, so it only fires
+    // once the gesture truly goes quiet.
+    const startInteract = () => { interactingRef.current = true; settle(); };
     const onScroll = () => {
       const top = el.scrollTop;
       const pulledUp = top < lastTop - 1;
