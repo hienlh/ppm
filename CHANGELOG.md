@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.6] - 2026-07-13
+
+### Fixed
+- **Reloading after an upgrade no longer locks you out** — the "Reload" button fired an immediate page reload while the supervisor was still restarting the server, so the browser landed on a dead server and its native error page (no JS left to auto-recover), leaving you stuck until a manual reload once the server finished booting. The button now polls `/api/health` until the upgraded server responds (60s cap) and shows a "Waiting for server…" spinner before reloading.
+
+### Changed
+- **Default cloud domain updated to `ppm.sh`.**
+
 ## [0.16.5] - 2026-07-13
 
 ### Added
