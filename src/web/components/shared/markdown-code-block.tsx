@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
 import { useTabStore } from "@/stores/tab-store";
-import { highlightToHtml, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
+import { highlightToHtml, highlightSync, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
 
 /**
  * Shiki-highlighted HTML for a code block. Returns null while streaming or
@@ -9,7 +9,10 @@ import { highlightToHtml, getActiveShikiTheme } from "@/theme/adapters/shiki-ada
  * Re-highlights on theme change (listens to the adapter's re-emit event).
  */
 function useShikiHtml(code: string, lang: string | undefined, enabled: boolean): string | null {
-  const [html, setHtml] = useState<string | null>(null);
+  // Seed from the synchronous warm path so an already-highlightable block renders
+  // at its final height on the FIRST paint — no null→async→grow reflow that jerks
+  // the virtualized transcript on scroll. Falls back to the async effect when cold.
+  const [html, setHtml] = useState<string | null>(() => (enabled ? highlightSync(code, lang) : null));
 
   useEffect(() => {
     if (!enabled) {

@@ -30,18 +30,63 @@ const LANG_ALIASES: Record<string, string> = {
 };
 
 let highlighterPromise: Promise<Highlighter> | null = null;
+// Sync handle to the resolved highlighter — lets warm code blocks highlight on
+// their very first render instead of null→async→grow, which reflows the row and
+// jerks the virtualized transcript while scrolling up. Null until the async
+// createHighlighter settles (kicked off early via warmShiki).
+let readyHighlighter: Highlighter | null = null;
 let activeThemeName = "github-dark-dimmed";
 const loadedLangs = new Set(PRELOAD_LANGS);
 const loadedThemes = new Set(BUILTIN_SHIKI_THEMES);
+
+// Bounded cache of rendered HTML keyed by theme|lang|code so a code block that
+// remounts (scroll virtualization) gets its final markup synchronously.
+const htmlCache = new Map<string, string>();
+const HTML_CACHE_MAX = 600;
+function cacheKey(code: string, lang: string): string {
+  return `${activeThemeName}::${lang}::${code}`;
+}
+function cacheSet(key: string, html: string): void {
+  if (htmlCache.size >= HTML_CACHE_MAX) {
+    const oldest = htmlCache.keys().next().value;
+    if (oldest !== undefined) htmlCache.delete(oldest);
+  }
+  htmlCache.set(key, html);
+}
 
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = createHighlighter({
       themes: BUILTIN_SHIKI_THEMES,
       langs: PRELOAD_LANGS,
+    }).then((hl) => {
+      readyHighlighter = hl;
+      return hl;
     });
   }
   return highlighterPromise;
+}
+
+/**
+ * Synchronous highlight for the common warm path: the highlighter is already
+ * loaded and the language is preloaded (or cached). Returns null when it can't
+ * highlight synchronously (cold highlighter, unloaded language) — the caller then
+ * falls back to the async path. Never throws.
+ */
+export function highlightSync(code: string, lang?: string): string | null {
+  const resolvedLang = normalizeLang(lang) || "text";
+  const key = cacheKey(code, resolvedLang);
+  const cached = htmlCache.get(key);
+  if (cached !== undefined) return cached;
+  if (!readyHighlighter) return null;
+  if (resolvedLang !== "text" && !loadedLangs.has(resolvedLang)) return null;
+  try {
+    const html = readyHighlighter.codeToHtml(code, { lang: resolvedLang, theme: activeThemeName });
+    cacheSet(key, html);
+    return html;
+  } catch {
+    return null;
+  }
 }
 
 /** Kick off highlighter creation early (idle) so first render isn't cold. */
@@ -72,7 +117,9 @@ export async function highlightToHtml(code: string, lang?: string): Promise<stri
   }
   if (!resolvedLang) resolvedLang = "text";
 
-  return hl.codeToHtml(code, { lang: resolvedLang, theme: activeThemeName });
+  const html = hl.codeToHtml(code, { lang: resolvedLang, theme: activeThemeName });
+  cacheSet(cacheKey(code, resolvedLang), html);
+  return html;
 }
 
 export function getActiveShikiTheme(): string {

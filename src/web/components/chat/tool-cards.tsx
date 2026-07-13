@@ -679,7 +679,11 @@ function StreamingBashOutput({ content, lineCount }: { content: string; lineCoun
 }
 
 /** Lazy wrapper — keeps highlight.js out of the main chunk until an Edit card renders */
-const LazyEditDiffPreview = lazy(() => import("./edit-diff-preview"));
+// Kick off the diff-preview chunk at module load (not first Edit card): the async
+// Suspense resolve otherwise grows the card from its skeleton to the full diff on
+// first paint, reflowing the row and jerking the virtualized transcript on scroll.
+const editDiffImport = import("./edit-diff-preview");
+const LazyEditDiffPreview = lazy(() => editDiffImport);
 function EditDiffPreview(props: { oldStr: string; newStr: string; filePath?: string }) {
   return (
     <Suspense fallback={<div className="animate-pulse h-8 bg-muted rounded" />}>

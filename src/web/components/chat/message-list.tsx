@@ -17,6 +17,26 @@ const MarkdownRenderer = lazy(() =>
 import { cn, basename } from "@/lib/utils";
 import { RenderErrorBoundary } from "@/components/shared/markdown-error-boundary";
 
+// Content-aware first-guess row height (px), used only until a row is measured.
+// The closer this is to the real height, the smaller the estimate→actual delta the
+// virtualizer must compensate on first measurement — which is what flashes scrollTop
+// during upward scroll. Text/markdown grows with length (uncapped); tool cards are
+// height-capped (max-h scroll areas) so they contribute a roughly fixed amount.
+const CHARS_PER_LINE = 80;
+const PX_PER_LINE = 22;
+const textPx = (s?: string) => Math.ceil((s?.length ?? 0) / CHARS_PER_LINE) * PX_PER_LINE;
+function estimateMessageHeight(msg: ChatMessage): number {
+  let h = 40; // bubble padding + margins
+  h += textPx(msg.content);
+  for (const ev of msg.events ?? []) {
+    if (ev.type === "text" || ev.type === "thinking") h += textPx(ev.content);
+    else if (ev.type === "tool_use") h += 56;
+    else if (ev.type === "tool_result") h += 72;
+    else h += 20;
+  }
+  return Math.min(Math.max(h, 64), 2400);
+}
+
 import {
   AlertCircle,
   ShieldAlert,
@@ -140,6 +160,12 @@ export function MessageList({
   // new bottom on every mid-turn append.
   const trailingKey = `__ppm_trailing__:${filtered.length}`;
 
+  // pinnedRef: user is near the real DOM bottom (stick-to-bottom eligible).
+  const pinnedRef = useRef(true);
+  // interactingRef: user is actively touching / wheeling / mid-momentum. Cleared
+  // 200ms after scrolling settles. Gates scroll writes that must not fight a gesture.
+  const interactingRef = useRef(false);
+
   // Virtualize the whole transcript so only on-screen bubbles live in the DOM.
   // Stick-to-bottom / append-follow physics are owned by this component (pinnedRef
   // + ResizeObserver snapping scrollTop to scrollHeight), not the virtualizer core.
@@ -148,28 +174,47 @@ export function MessageList({
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => {
       const id = index < filtered.length ? filtered[index]?.id : trailingKey;
-      // 240 base ≈ median bubble height (far closer than 120) for never-seen rows.
-      return (id != null ? sizeCacheRef.current.get(id) : undefined) ?? 240;
+      const cached = id != null ? sizeCacheRef.current.get(id) : undefined;
+      if (cached != null) return cached;
+      // Never measured yet → guess from content so tall messages don't flash on first view.
+      const msg = index < filtered.length ? filtered[index] : undefined;
+      return msg ? estimateMessageHeight(msg) : 240;
     },
     getItemKey: (index) => (index < filtered.length ? (filtered[index]?.id ?? index) : trailingKey),
     overscan: 6,
   });
 
+  // When a row ABOVE the viewport changes size, the core immediately scrollTo()s to
+  // keep content anchored — but React commits the rows' new translateY offsets on a
+  // LATER render, so the two halves of the correction paint in different frames:
+  // content shoves down, then snaps back (the flash seen while scrolling up).
+  // Fix: suppress the core's immediate scroll, bank the delta, and apply it in a
+  // layout effect below — which runs right after React commits the new offsets and
+  // before paint, making the correction atomic (no flash, no drift).
+  //
+  // Note: assigned on the instance because virtual-core 3.17.3 reads this option as
+  // a bare instance property while setOptions only stores it in this.options — the
+  // option is dead when passed through useVirtualizer.
+  const pendingAdjustRef = useRef(0);
+  (rowVirtualizer as unknown as {
+    shouldAdjustScrollPositionOnItemSizeChange?: (
+      item: { start: number }, delta: number,
+      instance: { getScrollOffset: () => number; scrollAdjustments: number },
+    ) => boolean;
+  }).shouldAdjustScrollPositionOnItemSizeChange = (item, delta, instance) => {
+    if (item.start < instance.getScrollOffset() + instance.scrollAdjustments) {
+      pendingAdjustRef.current += delta;
+    }
+    return false;
+  };
+
   const virtualItems = rowVirtualizer.getVirtualItems();
   // Remember each rendered row's measured height by id for future estimateSize calls.
   for (const vi of virtualItems) sizeCacheRef.current.set(vi.key, vi.size);
 
-  // App-owned stick-to-bottom invariant: while the user is pinned (near the
-  // real DOM bottom), any content-height change snaps scrollTop to the true
-  // scrollHeight. The core's own end-anchoring adjusts by size *deltas* against
-  // estimated offsets, which can land short of the bottom on fresh load (items
-  // measure smaller than the estimate → browser clamps scrollTop → the delta
-  // compensation double-corrects). Snapping to the absolute bottom is immune.
-  const pinnedRef = useRef(true);
-  // True while the user is actively touching / wheeling / mid-momentum. The
-  // bottom-snap must never fire during this window or it fights the gesture
-  // (jerky, sluggish scroll on mobile). Cleared 200ms after scrolling settles.
-  const interactingRef = useRef(false);
+  // App-owned stick-to-bottom invariant: while the user is pinned (near the real
+  // DOM bottom), any content-height change snaps scrollTop to the true scrollHeight.
+  // Snapping to the absolute bottom is immune to the core's delta double-correction.
   const spacerRef = useRef<HTMLDivElement>(null);
 
   // The scroll element mounts LATE: while messagesLoading this component
@@ -222,6 +267,18 @@ export function MessageList({
       el.removeEventListener("touchend", settle);
     };
   }, [scrollEl]);
+
+  // Second half of the banked scroll correction (see the instance-assigned
+  // shouldAdjustScrollPositionOnItemSizeChange above): runs after React commits the
+  // rows' new translateY offsets and before paint, so the offset shift and the
+  // scrollTop compensation land in the same frame.
+  useLayoutEffect(() => {
+    const d = pendingAdjustRef.current;
+    if (d === 0) return;
+    pendingAdjustRef.current = 0;
+    const el = parentRef.current;
+    if (el) el.scrollTop += d;
+  });
 
   useEffect(() => {
     const el = scrollEl;
@@ -1078,24 +1135,35 @@ function TextWithFilePaths({ text, projectName }: { text: string; projectName?: 
   );
 }
 
-/** Hook: fetch an image via auth header, return blob URL */
+/**
+ * Session-scoped image cache: blob URL + rendered box per src. Virtualized rows
+ * unmount/remount constantly while scrolling; refetching the image and re-growing
+ * from the placeholder on EVERY remount changed the row height after paint — the
+ * repeatable downward jerk when scrolling up through image-bearing messages.
+ * URLs are intentionally never revoked (bounded by unique images per session).
+ */
+const imageBlobCache = new Map<string, { url: string; w?: number; h?: number }>();
+
+/** Hook: fetch an image via auth header, return blob URL (cached across mounts) */
 function useAuthBlob(src: string): { blobUrl: string | null; error: boolean } {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [blobUrl, setBlobUrl] = useState<string | null>(() => imageBlobCache.get(src)?.url ?? null);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    let revoked = false;
-    let url: string | undefined;
+    const cached = imageBlobCache.get(src);
+    if (cached) { setBlobUrl(cached.url); return; }
+    let stale = false;
     const token = getAuthToken();
     fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then((r) => { if (!r.ok) throw new Error("Failed"); return r.blob(); })
       .then((blob) => {
-        if (revoked) return;
-        url = URL.createObjectURL(blob);
+        if (stale) return;
+        const url = URL.createObjectURL(blob);
+        imageBlobCache.set(src, { url });
         setBlobUrl(url);
       })
-      .catch(() => { if (!revoked) setError(true); });
-    return () => { revoked = true; if (url) URL.revokeObjectURL(url); };
+      .catch(() => { if (!stale) setError(true); });
+    return () => { stale = true; }; // cache owns the URL — no revoke
   }, [src]);
 
   return { blobUrl, error };
@@ -1105,6 +1173,10 @@ function useAuthBlob(src: string): { blobUrl: string | null; error: boolean } {
 function AuthImage({ src, alt }: { src: string; alt: string }) {
   const { blobUrl, error } = useAuthBlob(src);
   const openOverlay = useImageOverlay((s) => s.open);
+  // Rendered box captured after the first load — pins the layout on remounts so
+  // the row never grows after paint (see imageBlobCache).
+  const cached = imageBlobCache.get(src);
+  const box = cached?.w && cached?.h ? { width: cached.w, height: cached.h } : undefined;
 
   if (error) {
     return (
@@ -1116,7 +1188,7 @@ function AuthImage({ src, alt }: { src: string; alt: string }) {
   }
 
   if (!blobUrl) {
-    return <div className="rounded-md bg-surface border border-border h-24 w-32 animate-pulse" />;
+    return <div className="rounded-md bg-surface border border-border h-24 w-32 animate-pulse" style={box} />;
   }
 
   return (
@@ -1124,6 +1196,12 @@ function AuthImage({ src, alt }: { src: string; alt: string }) {
       <img
         src={blobUrl}
         alt={alt}
+        style={box}
+        onLoad={(e) => {
+          const el = e.currentTarget;
+          const c = imageBlobCache.get(src);
+          if (c && (!c.w || !c.h)) { c.w = el.offsetWidth; c.h = el.offsetHeight; }
+        }}
         className="rounded-md max-h-48 max-w-full object-contain border border-border cursor-pointer hover:opacity-90 transition-opacity"
       />
     </button>
