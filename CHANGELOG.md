@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.10] - 2026-07-14
+
+### Changed
+- **The status-bar version chip now always opens the release-notes popover** — previously it only reacted when an update was available. Clicking it with no update pending shows your recent releases (via a new "recent changelog" fetch); when an update is available it behaves as before (upgrade action + "Later").
+
+### Fixed
+- **Newest release notes no longer go missing right after a release** — the CHANGELOG fetch is now cache-busted with a timestamp query, so GitHub's raw CDN can't serve a stale copy that lags the npm version signal.
+
 ## [0.16.9] - 2026-07-14
 
 ### Changed
