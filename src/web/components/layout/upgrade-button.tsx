@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
-import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink } from "lucide-react";
+import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink, History } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
-import { fetchChangelogSince, compareSemver, type ChangelogSection } from "@/lib/changelog";
+import { fetchChangelogSince, fetchRecentChangelog, compareSemver, type ChangelogSection } from "@/lib/changelog";
 import { cn } from "@/lib/utils";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -119,17 +119,36 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
     return () => clearInterval(timer);
   }, []);
 
-  // Load release notes (current → latest) the first time the popover opens.
+  const current = currentVersion ?? version;
+  // QA hook (latched in sessionStorage — see getTestTarget). Forces the update
+  // state on dev; `Update now` becomes a no-op. Off in normal use.
+  const latchedTarget = getTestTarget();
+  const isTest = latchedTarget !== null;
+  const testTarget = latchedTarget || (current ? nextMinor(current) : "9.9.9");
+  // Only a strictly-newer version counts as an update (guards against the
+  // upgrade check reporting an equal/older version — e.g. a stale registry).
+  const realUpdate = !!availableVersion && !!current && compareSemver(availableVersion, current) > 0
+    ? availableVersion
+    : null;
+  const effectiveAvailable = realUpdate ?? (isTest ? testTarget : null);
+  const hasUpdate = !!effectiveAvailable && !dismissed;
+
+  // Load release notes each time the popover opens. Refetching (not caching for
+  // the session) avoids latching a stale/empty result from a transient fetch:
+  // the changelog source can briefly lag the version signal after a release.
   useEffect(() => {
-    // Test hook: show the full changelog when forcing the update state on dev.
-    const since = getTestTarget() !== null ? "0.0.0" : (currentVersion ?? version);
-    if (!open || notes !== null || notesLoading || !since) return;
+    if (!open || !current) return;
     setNotesLoading(true);
-    fetchChangelogSince(since)
+    // Update mode → sections newer than installed (test hook shows all).
+    // No update → recent releases so clicking the version chip still shows notes.
+    const load = hasUpdate
+      ? fetchChangelogSince(isTest ? "0.0.0" : current)
+      : fetchRecentChangelog();
+    load
       .then(setNotes)
       .catch(() => setNotes([]))
       .finally(() => setNotesLoading(false));
-  }, [open, currentVersion, version, notes, notesLoading]);
+  }, [open, current, hasUpdate, isTest]);
 
   const handleUpgrade = useCallback(async () => {
     setUpgrading(true);
@@ -165,20 +184,6 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
     setOpen(false);
   }, [availableVersion]);
 
-  const current = currentVersion ?? version;
-  // QA hook (latched in sessionStorage — see getTestTarget). Forces the update
-  // state on dev; `Update now` becomes a no-op. Off in normal use.
-  const latchedTarget = getTestTarget();
-  const isTest = latchedTarget !== null;
-  const testTarget = latchedTarget || (current ? nextMinor(current) : "9.9.9");
-  // Only a strictly-newer version counts as an update (guards against the
-  // upgrade check reporting an equal/older version — e.g. a stale registry).
-  const realUpdate = !!availableVersion && !!current && compareSemver(availableVersion, current) > 0
-    ? availableVersion
-    : null;
-  const effectiveAvailable = realUpdate ?? (isTest ? testTarget : null);
-  const hasUpdate = !!effectiveAvailable && !dismissed;
-
   if (!current && !hasUpdate) return null;
 
   // Upgrade finished — prompt reload. Wait for the server to finish restarting
@@ -209,18 +214,18 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
   return (
     <div className="relative shrink-0">
       <button
-        onClick={() => hasUpdate && setOpen((v) => !v)}
-        title={hasUpdate ? `Update available: v${effectiveAvailable}` : `PPM v${current}`}
+        onClick={() => current && setOpen((v) => !v)}
+        title={hasUpdate ? `Update available: v${effectiveAvailable}` : `PPM v${current} — release notes`}
         className={cn(
           "flex items-center gap-1 px-1 rounded-sm transition-colors",
-          hasUpdate ? "text-success hover:brightness-110" : "cursor-default",
+          hasUpdate ? "text-success hover:brightness-110" : "hover:text-text",
         )}
       >
         {hasUpdate && <ArrowUpCircle className="size-3" />}
         <span>{hasUpdate ? `New version · v${effectiveAvailable}` : `v${current}`}</span>
       </button>
 
-      {open && hasUpdate && (
+      {open && current && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className={cn(
@@ -228,12 +233,21 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
             align === "left" ? "left-0" : "right-0",
           )}>
             <div className="flex items-center gap-2.5 px-3 py-3 border-b border-border-soft">
-              <span className="flex items-center justify-center size-[26px] shrink-0 rounded-lg bg-success/20">
-                <ArrowUpCircle className="size-[15px] text-success" />
+              <span className={cn(
+                "flex items-center justify-center size-[26px] shrink-0 rounded-lg",
+                hasUpdate ? "bg-success/20" : "bg-accent/15",
+              )}>
+                {hasUpdate
+                  ? <ArrowUpCircle className="size-[15px] text-success" />
+                  : <History className="size-[15px] text-accent" />}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-semibold text-text leading-tight">Update available</div>
-                <div className="text-[11px] text-text-3 font-mono mt-0.5">v{current} → v{effectiveAvailable}</div>
+                <div className="text-[13px] font-semibold text-text leading-tight">
+                  {hasUpdate ? "Update available" : "Release notes"}
+                </div>
+                <div className="text-[11px] text-text-3 font-mono mt-0.5">
+                  {hasUpdate ? `v${current} → v${effectiveAvailable}` : `PPM v${current}`}
+                </div>
               </div>
             </div>
             <div className="max-h-56 overflow-y-auto overflow-x-hidden px-3 py-2.5 text-[12px] text-text-2 leading-relaxed break-words">
@@ -249,19 +263,23 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
                 </div>
               ) : (
                 <span className="text-text-3">
-                  A new version of PPM is available. Open the release notes for details.
+                  {hasUpdate
+                    ? "A new version of PPM is available. Open the release notes for details."
+                    : "No release notes available right now."}
                 </span>
               )}
             </div>
             <div className="flex flex-col gap-1.5 px-3 pb-3">
-              <button
-                onClick={isTest && !realUpdate
-                  ? () => { toast.info("Test mode — no real update to install"); setOpen(false); }
-                  : handleUpgrade}
-                className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg bg-success text-[12.5px] font-bold text-[#04130c] hover:brightness-105 transition-[filter]"
-              >
-                <Download className="size-3.5" /> Update now
-              </button>
+              {hasUpdate && (
+                <button
+                  onClick={isTest && !realUpdate
+                    ? () => { toast.info("Test mode — no real update to install"); setOpen(false); }
+                    : handleUpgrade}
+                  className="flex items-center justify-center gap-1.5 w-full py-2 rounded-lg bg-success text-[12.5px] font-bold text-[#04130c] hover:brightness-105 transition-[filter]"
+                >
+                  <Download className="size-3.5" /> Update now
+                </button>
+              )}
               <div className="flex gap-1.5">
                 <a
                   href={RELEASES_URL}
@@ -271,12 +289,14 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
                 >
                   <ExternalLink className="size-3" /> Release notes
                 </a>
-                <button
-                  onClick={handleDismiss}
-                  className="px-3 py-2 rounded-lg border border-border text-xs text-text-3 hover:text-text-2 transition-colors"
-                >
-                  Later
-                </button>
+                {hasUpdate && (
+                  <button
+                    onClick={handleDismiss}
+                    className="px-3 py-2 rounded-lg border border-border text-xs text-text-3 hover:text-text-2 transition-colors"
+                  >
+                    Later
+                  </button>
+                )}
               </div>
             </div>
           </div>

@@ -22,8 +22,8 @@ export function compareSemver(a: string, b: string): number {
 
 const HEADING_RE = /^##\s*\[(\d+\.\d+\.\d+)\]\s*(?:-\s*(.+))?\s*$/;
 
-/** Parse CHANGELOG markdown into version sections strictly newer than `since`. */
-export function parseChangelogSince(md: string, since: string): ChangelogSection[] {
+/** Parse CHANGELOG markdown into all version sections (newest first, as authored). */
+export function parseChangelog(md: string): ChangelogSection[] {
   const lines = md.split(/\r?\n/);
   const sections: ChangelogSection[] = [];
   let current: ChangelogSection | null = null;
@@ -48,13 +48,32 @@ export function parseChangelogSince(md: string, since: string): ChangelogSection
   }
   flush();
 
-  return sections.filter((s) => compareSemver(s.version, since) > 0);
+  return sections;
+}
+
+/** Parse CHANGELOG markdown into version sections strictly newer than `since`. */
+export function parseChangelogSince(md: string, since: string): ChangelogSection[] {
+  return parseChangelog(md).filter((s) => compareSemver(s.version, since) > 0);
+}
+
+/**
+ * Fetch the published CHANGELOG markdown.
+ * A timestamp query busts GitHub's raw CDN cache (~5min TTL) — otherwise the
+ * changelog can lag the npm-registry version signal right after a release,
+ * so the newest section(s) go missing from the upgrade popover.
+ */
+async function fetchChangelogMd(): Promise<string> {
+  const res = await fetch(`${CHANGELOG_URL}?t=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`CHANGELOG fetch failed (${res.status})`);
+  return res.text();
 }
 
 /** Fetch the published CHANGELOG and return sections newer than the installed version. */
 export async function fetchChangelogSince(since: string): Promise<ChangelogSection[]> {
-  const res = await fetch(CHANGELOG_URL, { cache: "no-store" });
-  if (!res.ok) throw new Error(`CHANGELOG fetch failed (${res.status})`);
-  const md = await res.text();
-  return parseChangelogSince(md, since);
+  return parseChangelogSince(await fetchChangelogMd(), since);
+}
+
+/** Fetch the published CHANGELOG and return the most recent `limit` sections. */
+export async function fetchRecentChangelog(limit = 10): Promise<ChangelogSection[]> {
+  return parseChangelog(await fetchChangelogMd()).slice(0, limit);
 }
