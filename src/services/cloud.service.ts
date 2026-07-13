@@ -10,7 +10,7 @@ const authFile = () => resolve(getPpmDir(), "cloud-auth.json");
 const deviceFile = () => resolve(getPpmDir(), "cloud-device.json");
 const machineIdFile = () => resolve(getPpmDir(), "machine-id");
 
-const DEFAULT_CLOUD_URL = "https://ppm.sh";
+const DEFAULT_CLOUD_URL = "https://cloud.ppm.sh";
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ export async function startLoginServer(cloudUrl: string): Promise<CloudAuth> {
 /**
  * Device code login flow (RFC 8628).
  * Works from PPM terminal, SSH, or any remote session.
- * User enters a short code on ppm.sh/verify from any browser.
+ * User enters a short code on cloud.ppm.sh/verify from any browser.
  */
 export async function startDeviceCodeLogin(cloudUrl: string): Promise<CloudAuth> {
   // 1. Request device code
