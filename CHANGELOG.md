@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.9] - 2026-07-14
+
+### Changed
+- **Chat transcript is no longer virtualized** — replaced the TanStack virtualizer and its hand-rolled scroll physics (size estimates, banked scroll corrections, pin/interact guards) with plain DOM rendering plus `use-stick-to-bottom`. Content growing below the viewport now physically cannot move your scroll position (native browser behavior), which root-causes both long-standing scroll bugs. Measured on a 200-message session: p95 frame time 31ms → 19ms, 6× fewer layout passes, scroll CPU unchanged, at the cost of ~50MB extra heap.
+
+### Fixed
+- **Scrolling up to read during streaming no longer keeps yanking you back down** — follow-to-bottom now releases on any upward scroll and only re-engages when you return to the bottom yourself.
+- **Returning to a chat tab mid-stream no longer jumps to the bottom** — hidden tabs are 0-height (display:none), which made the stick-to-bottom lock silently re-engage while you were away; the follow intent is now captured only while the panel is visible and re-asserted on reshow, so the spot you were reading is kept.
+
+### Added
+- **Session debug popup with weight metrics** — the bug icon in the chat toolbar now opens a dialog (bottom sheet on mobile) instead of copying immediately, with a Copy button. Besides session IDs and the JSONL path it now reports how heavy the session is: JSONL size + record count, rendered message count, transcript DOM nodes, transcript height, and JS heap.
+
 ## [0.16.8] - 2026-07-14
 
 ### Fixed
