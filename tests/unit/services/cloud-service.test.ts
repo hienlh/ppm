@@ -71,7 +71,7 @@ describe("cloud.service", () => {
         access_token: "test-access-token",
         refresh_token: "test-refresh-token",
         email: "user@example.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: new Date().toISOString(),
       };
 
@@ -82,7 +82,7 @@ describe("cloud.service", () => {
 
       expect(parsed.access_token).toBe("test-access-token");
       expect(parsed.email).toBe("user@example.com");
-      expect(parsed.cloud_url).toBe("https://ppm.hienle.tech");
+      expect(parsed.cloud_url).toBe("https://ppm.sh");
     });
 
     test("saveCloudAuth with null refresh_token", () => {
@@ -90,7 +90,7 @@ describe("cloud.service", () => {
         access_token: "token123",
         refresh_token: "",
         email: "test@test.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: "2026-03-23T12:00:00Z",
       };
 
@@ -129,7 +129,7 @@ describe("cloud.service", () => {
         access_token: "at123",
         refresh_token: "rt456",
         email: "me@test.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: "2026-03-23T00:00:00Z",
       };
       writeFileSync(authFile, JSON.stringify(auth));
@@ -158,7 +158,7 @@ describe("cloud.service", () => {
         secret_key: "secret-456",
         name: "my-laptop",
         machine_id: "machine-789",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: new Date().toISOString(),
       };
 
@@ -199,7 +199,7 @@ describe("cloud.service", () => {
         secret_key: "key1",
         name: "pc-1",
         machine_id: "mid-1",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: "2026-03-23T10:00:00Z",
       };
       writeFileSync(deviceFile, JSON.stringify(device));
@@ -225,13 +225,13 @@ describe("cloud.service", () => {
 
   describe("Constants", () => {
     test("DEFAULT_CLOUD_URL is correct", () => {
-      expect(DEFAULT_CLOUD_URL).toBe("https://ppm.hienle.tech");
+      expect(DEFAULT_CLOUD_URL).toBe("https://ppm.sh");
     });
 
     test("DEFAULT_CLOUD_URL is a valid URL", () => {
       const url = new URL(DEFAULT_CLOUD_URL);
       expect(url.protocol).toBe("https:");
-      expect(url.hostname).toBe("ppm.hienle.tech");
+      expect(url.hostname).toBe("ppm.sh");
     });
 
     test("HEARTBEAT_INTERVAL_MS is 5 minutes", () => {
@@ -253,7 +253,7 @@ describe("cloud.service", () => {
         access_token: "at",
         refresh_token: "rt",
         email: "test@test.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: "2026-03-23T00:00:00Z",
       };
 
@@ -277,7 +277,7 @@ describe("cloud.service", () => {
         access_token: "at",
         refresh_token: "rt",
         email: "test@test.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: new Date().toISOString(),
       };
 
@@ -295,7 +295,7 @@ describe("cloud.service", () => {
         secret_key: "key",
         name: "name",
         machine_id: "mid",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: "2026-03-23T00:00:00Z",
       };
 
@@ -321,7 +321,7 @@ describe("cloud.service", () => {
         secret_key: "key",
         name: "name",
         machine_id: "mid",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: new Date().toISOString(),
       };
 
@@ -349,7 +349,7 @@ describe("cloud.service", () => {
         secret_key: "secret1",
         name: "test",
         machine_id: "mid1",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: new Date().toISOString(),
       };
       writeFileSync(deviceFile, JSON.stringify(device));
@@ -370,7 +370,7 @@ describe("cloud.service", () => {
         secret_key: "secret1",
         name: "test",
         machine_id: "mid1",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: new Date().toISOString(),
       };
 
@@ -396,7 +396,7 @@ describe("cloud.service", () => {
         access_token: "test-access",
         refresh_token: "test-refresh",
         email: "round@trip.test",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: "2026-03-23T10:30:00Z",
       };
 
@@ -417,7 +417,7 @@ describe("cloud.service", () => {
         secret_key: "round-trip-secret",
         name: "round-trip-device",
         machine_id: "round-trip-machine",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: "2026-03-23T11:00:00Z",
       };
 
@@ -434,7 +434,7 @@ describe("cloud.service", () => {
         access_token: "token1",
         refresh_token: "refresh1",
         email: "multi@save.test",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: new Date().toISOString(),
       };
 
@@ -454,7 +454,7 @@ describe("cloud.service", () => {
         access_token: "",
         refresh_token: "",
         email: "test@test.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: new Date().toISOString(),
       };
 
@@ -469,7 +469,7 @@ describe("cloud.service", () => {
         access_token: "at",
         refresh_token: "rt",
         email: "user+tag@sub.example.co.uk",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: new Date().toISOString(),
       };
 
@@ -484,7 +484,7 @@ describe("cloud.service", () => {
         secret_key: "key1",
         name: "Máy tính của tôi",
         machine_id: "mid1",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         linked_at: new Date().toISOString(),
       };
 
@@ -499,7 +499,7 @@ describe("cloud.service", () => {
         access_token: longToken,
         refresh_token: longToken,
         email: "test@test.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: new Date().toISOString(),
       };
 
@@ -515,7 +515,7 @@ describe("cloud.service", () => {
         access_token: "at",
         refresh_token: "rt",
         email: "test@test.com",
-        cloud_url: "https://ppm.hienle.tech",
+        cloud_url: "https://ppm.sh",
         saved_at: "2026-03-23T00:00:00Z",
       };
 

@@ -2,7 +2,7 @@ import { WifiOff, ServerOff, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useConnectionStore } from "@/stores/connection-store";
 
-const CLOUD_URL = "https://ppm.hienle.tech";
+const CLOUD_URL = "https://ppm.sh";
 
 function isTunnelDomain(): boolean {
   return window.location.hostname.endsWith(".trycloudflare.com");
