@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.7] - 2026-07-14
+
+### Fixed
+- **Git graph no longer hijacks another project's panel across browser tabs** — opening the git graph for a second project in a new tab disposed and took over the first project's panel. The extension host now keeps one panel per project (keyed by project path), `webview:create` carries the project path/name, and clients only rebind tabs on a project match (ignoring broadcast creates they didn't request).
+
+### Changed
+- **Default cloud domain moved to the `cloud.ppm.sh` subdomain** (root `ppm.sh` reserved for marketing).
+
 ## [0.16.6] - 2026-07-13
 
 ### Fixed
