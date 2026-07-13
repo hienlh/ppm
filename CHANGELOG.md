@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.5] - 2026-07-13
+
+### Added
+- **Redesigned login screen** — accent glow backdrop, password visibility toggle, live tunnel status chip (via a new read-only `tunnel_active` field on `/api/info`), and footer links: GitHub repo, bug report, and a "Buy me a coffee" support dialog (VietQR bank transfer + Wise international link; bottom sheet on mobile).
+
+### Fixed
+- **Scrolling up through a long conversation no longer flashes/jerks** — rows measured above the viewport made the virtualizer compensate `scrollTop` one frame before their new offsets committed, so content visibly shoved down and snapped back on every row entry. The compensation is now banked and applied in the same pre-paint frame as the new offsets (atomic, invisible). Also removed the repeatable reflow sources that triggered it constantly: message images are cached (blob + rendered size) across virtualization remounts instead of refetching and regrowing every time, code blocks highlight synchronously from a warm Shiki cache so they render at final height on first paint, and the Edit-diff chunk preloads at startup instead of on the first Edit card.
+
 ## [0.16.4] - 2026-07-13
 
 ### Fixed
