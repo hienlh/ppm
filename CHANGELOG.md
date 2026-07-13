@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.16.8] - 2026-07-14
+
+### Fixed
+- **"Buy me a coffee" dialog now points to a working payment destination** — the Wise link used a placeholder Wisetag and the VietQR image was a placeholder. The dialog now links to the real Wise payment link and shows the actual Techcombank VietQR with the account holder name (LE HONG HIEN) below it so supporters can confirm the recipient.
+
 ## [0.16.7] - 2026-07-14
 
 ### Fixed
