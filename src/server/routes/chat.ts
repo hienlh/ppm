@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
-import { mkdirSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { chatService } from "../../services/chat.service.ts";
 import { draftService } from "../../services/draft.service.ts";
@@ -601,6 +601,23 @@ function resolveSessionJsonlPath(sessionId: string): { jsonlPath: string; jsonlD
 chatRoutes.get("/sessions/:id/debug", (c) => {
   const sessionId = c.req.param("id");
   const { jsonlPath, jsonlDir, projectPath, exists } = resolveSessionJsonlPath(sessionId);
+  // Transcript weight: file size + record count (1 JSONL line = 1 event record).
+  // Line count skipped above 64MB so the debug button stays snappy on huge files.
+  let jsonlSizeBytes: number | null = null;
+  let jsonlLines: number | null = null;
+  if (exists && jsonlPath) {
+    try {
+      const st = statSync(jsonlPath);
+      jsonlSizeBytes = st.size;
+      if (st.size <= 64 * 1024 * 1024) {
+        const text = readFileSync(jsonlPath, "utf8");
+        let n = 0;
+        for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
+        if (text.length > 0 && text.charCodeAt(text.length - 1) !== 10) n++;
+        jsonlLines = n;
+      }
+    } catch { /* stat/read failure — omit weight fields */ }
+  }
   // PPM session ID == SDK session ID (canonical — see claude-agent-sdk.ts:728).
   // Return both fields so FE debug UI shows them clearly; they are the same value.
   return c.json(ok({
@@ -610,6 +627,8 @@ chatRoutes.get("/sessions/:id/debug", (c) => {
     jsonlPath: exists ? jsonlPath : null,
     jsonlDir,
     projectPath,
+    jsonlSizeBytes,
+    jsonlLines,
   }));
 });
 

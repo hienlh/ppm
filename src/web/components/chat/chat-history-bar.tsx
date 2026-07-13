@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Circle, Bug, ClipboardCheck, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Circle, Bug, ClipboardCheck, Copy, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useTabStore } from "@/stores/tab-store";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
@@ -59,35 +63,99 @@ function pctColor(pct: number): string {
   return "text-success";
 }
 
+/** Live render weight of the currently open transcript (this button sits in the
+ *  active session's toolbar, so the visible chat scroller IS this session). */
+function gatherRenderStats(): string[] {
+  let scroller: HTMLElement | null = null;
+  for (const el of document.querySelectorAll<HTMLElement>(".overflow-y-auto")) {
+    if (el.clientHeight < 100 || !el.querySelector("[data-msg-index]")) continue;
+    if (!scroller || el.scrollHeight > scroller.scrollHeight) scroller = el;
+  }
+  const lines: string[] = [];
+  if (scroller) {
+    lines.push(`Rendered messages: ${scroller.querySelectorAll("[data-msg-index]").length}`);
+    lines.push(`Transcript DOM nodes: ${scroller.querySelectorAll("*").length}`);
+    lines.push(`Transcript height: ${Math.round(scroller.scrollHeight)}px`);
+  }
+  // Chrome-only; page-wide (not just the transcript) but the best in-app proxy.
+  const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+  if (mem) lines.push(`JS heap (page): ${(mem.usedJSHeapSize / 1048576).toFixed(1)} MB`);
+  return lines;
+}
+
+const fmtMB = (bytes: number) => `${(bytes / 1048576).toFixed(2)} MB`;
+
 function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projectName: string }) {
+  const [open, setOpen] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const isMobile = useIsMobile();
+
+  const openPopup = () => {
+    setOpen(true);
+    setCopied(false);
+    setInfo(null);
+    api.get<{ ppmSessionId: string; sdkSessionId: string; jsonlPath: string | null; projectPath: string; jsonlSizeBytes: number | null; jsonlLines: number | null }>(
+      `${projectUrl(projectName)}/chat/sessions/${sessionId}/debug?project=${encodeURIComponent(projectName)}`,
+    ).then((data) => {
+      const weight = data.jsonlSizeBytes != null
+        ? ` (${fmtMB(data.jsonlSizeBytes)}${data.jsonlLines != null ? `, ${data.jsonlLines} records` : ""})`
+        : "";
+      setInfo([
+        `PPM Session: ${data.ppmSessionId}`,
+        `SDK Session: ${data.sdkSessionId}`,
+        data.jsonlPath ? `JSONL: ${data.jsonlPath}${weight}` : `JSONL: not found`,
+        data.projectPath ? `Project: ${data.projectPath}` : null,
+        ...gatherRenderStats(),
+      ].filter(Boolean).join("\n"));
+    }).catch(() => setInfo("Failed to load debug info"));
+  };
+
+  const copy = () => {
+    if (!info) return;
+    navigator.clipboard.writeText(info).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch(() => { /* silent */ });
+  };
+
+  const body = (
+    <div className="flex flex-col gap-3">
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Bug className="size-4 text-primary" />
+        Session debug info
+      </h2>
+      <pre className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-border bg-surface p-2.5 font-mono text-[11px] leading-relaxed text-text-secondary select-text">
+        {info ?? "Loading..."}
+      </pre>
+      <Button size="sm" onClick={copy} disabled={!info} className="w-full">
+        {copied ? <><ClipboardCheck className="size-3.5" /> Copied!</> : <><Copy className="size-3.5" /> Copy</>}
+      </Button>
+    </div>
+  );
+
   return (
-    <button
-      onClick={() => {
-        try {
-          // Use ClipboardItem with pending promise so Safari doesn't lose user gesture
-          const textPromise = api.get<{ ppmSessionId: string; sdkSessionId: string; jsonlPath: string | null; projectPath: string }>(
-            `${projectUrl(projectName)}/chat/sessions/${sessionId}/debug?project=${encodeURIComponent(projectName)}`,
-          ).then((data) => {
-            const info = [
-              `PPM Session: ${data.ppmSessionId}`,
-              `SDK Session: ${data.sdkSessionId}`,
-              data.jsonlPath ? `JSONL: ${data.jsonlPath}` : `JSONL: not found`,
-              data.projectPath ? `Project: ${data.projectPath}` : null,
-            ].filter(Boolean).join("\n");
-            return new Blob([info], { type: "text/plain" });
-          });
-          navigator.clipboard.write([new ClipboardItem({ "text/plain": textPromise })]).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        } catch { /* silent */ }
-      }}
-      className={`p-1 rounded transition-colors ${copied ? "text-success bg-success/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"}`}
-      title={copied ? "Copied!" : "Copy session debug info"}
-    >
-      {copied ? <ClipboardCheck className="size-3" /> : <Bug className="size-3" />}
-    </button>
+    <>
+      <button
+        onClick={openPopup}
+        className="p-1 rounded text-text-subtle hover:text-text-secondary hover:bg-surface-elevated transition-colors"
+        title="Session debug info"
+      >
+        <Bug className="size-3" />
+      </button>
+      {isMobile ? (
+        <BottomSheet open={open} onClose={() => setOpen(false)} className="popover-solid">
+          <div className="px-4 pb-4 pt-1">{body}</div>
+        </BottomSheet>
+      ) : (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogTitle className="sr-only">Session debug info</DialogTitle>
+            {body}
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
 
