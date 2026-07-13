@@ -37,15 +37,20 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // Track whether extensions are activated (contributions received from WS)
   const extensionsReady = useExtensionStore((s) => s.contributions !== null);
 
-  // Match panel: prefer panelId (exact), fallback to viewType match (reload recovery)
+  // Match panel: prefer panelId (exact), fallback to viewType match (reload recovery).
+  // Fallback is project-scoped — never adopt another project's panel.
   const panel = useExtensionStore((s) => {
     if (panelId && s.webviewPanels[panelId]) return s.webviewPanels[panelId];
     if (viewType) {
       // Find panel whose viewType matches (with or without .view suffix)
       const fullViewType = viewType.includes(".") ? viewType : `${viewType}.view`;
-      return Object.values(s.webviewPanels).find(
+      const candidates = Object.values(s.webviewPanels).filter(
         (p) => p.viewType === viewType || p.viewType === fullViewType,
       );
+      // Exact project match first; panels/tabs without project info fall back
+      // to legacy any-match; reject candidates bound to a different project
+      return candidates.find((p) => p.projectName && p.projectName === projectName)
+        ?? candidates.find((p) => !p.projectName || !projectName);
     }
     return undefined;
   });
@@ -126,6 +131,7 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
   // On unmount: notify server to dispose the panel so extension clears activePanel state
   const panelIdForCleanup = useRef<string | null>(null);
   const viewTypeForCleanup = useRef<string | undefined>(viewType);
+  const projectNameForCleanup = useRef<string | undefined>(projectName);
   useEffect(() => {
     panelIdForCleanup.current = resolvedPanelId ?? null;
   }, [resolvedPanelId]);
@@ -133,12 +139,17 @@ export function ExtensionWebview({ metadata }: ExtensionWebviewProps) {
     viewTypeForCleanup.current = viewType;
   }, [viewType]);
   useEffect(() => {
+    projectNameForCleanup.current = projectName;
+  }, [projectName]);
+  useEffect(() => {
     return () => {
       const id = panelIdForCleanup.current;
       if (id) {
         const vt = viewTypeForCleanup.current;
         useExtensionStore.getState().removeWebviewPanel(id);
-        window.dispatchEvent(new CustomEvent("ext:webview:close", { detail: { panelId: id, viewType: vt } }));
+        window.dispatchEvent(new CustomEvent("ext:webview:close", {
+          detail: { panelId: id, viewType: vt, projectName: projectNameForCleanup.current },
+        }));
       }
     };
   }, []);

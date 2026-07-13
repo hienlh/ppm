@@ -42,6 +42,8 @@ export interface WebviewPanelUI {
   viewType: string;
   title: string;
   html: string;
+  /** PPM project this panel belongs to — used to scope panel/tab matching */
+  projectName?: string;
 }
 
 export interface QuickPickState {

@@ -45,7 +45,7 @@ export type ExtServerMsg =
   | { type: "notification"; id: string; level: "info" | "warn" | "error"; message: string; actions?: string[] }
   | { type: "quickpick:show"; requestId: string; items: QuickPickItemMsg[]; options?: { placeholder?: string; canPickMany?: boolean } }
   | { type: "inputbox:show"; requestId: string; options: { prompt?: string; value?: string; placeholder?: string; password?: boolean } }
-  | { type: "webview:create"; panelId: string; extensionId: string; viewType: string; title: string }
+  | { type: "webview:create"; panelId: string; extensionId: string; viewType: string; title: string; projectPath?: string; projectName?: string }
   | { type: "webview:html"; panelId: string; html: string }
   | { type: "webview:dispose"; panelId: string }
   | { type: "webview:postMessage"; panelId: string; message: unknown }

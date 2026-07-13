@@ -208,11 +208,11 @@ export class WindowService {
 
   // --- Webview Panel ---
 
-  createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn): unknown {
+  createWebviewPanel(viewType: string, title: string, showOptions: ViewColumn, options?: { projectPath?: string }): unknown {
     const panelId = `${this.extId}-wv-${++this._idCounter}`;
     const rpc = this.rpc;
     const extId = this.extId;
-    rpc.request("window:webview:create", panelId, extId, viewType, title);
+    rpc.request("window:webview:create", panelId, extId, viewType, title, options?.projectPath);
 
     const onDidDispose = new EventEmitter<void>();
     const onDidReceiveMessage = new EventEmitter<unknown>();

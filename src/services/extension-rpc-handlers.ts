@@ -3,9 +3,11 @@
  * Each handler runs in the main process, accessing PPM services directly.
  * UI-facing calls are forwarded to browser clients via the WS bridge.
  */
+import { resolve } from "node:path";
 import type { RpcChannel } from "./extension-rpc.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import { broadcastExtMsg, requestFromBrowser } from "../server/ws/extensions.ts";
+import { getProjects } from "./db.service.ts";
 
 let requestIdCounter = 0;
 function nextRequestId(): string {
@@ -89,8 +91,15 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
 
   // --- webview panels (forwarded to browser via WS bridge) ---
   rpc.onRequest("window:webview:create", async (params) => {
-    const [panelId, extensionId, viewType, title] = params as [string, string, string, string];
-    broadcastExtMsg({ type: "webview:create", panelId, extensionId, viewType, title });
+    const [panelId, extensionId, viewType, title, projectPath] = params as [string, string, string, string, string | undefined];
+    // Resolve project name so browser clients can scope the panel to the right project
+    let projectName: string | undefined;
+    if (projectPath) {
+      const normalize = (p: string) => process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p);
+      const target = normalize(projectPath);
+      projectName = getProjects().find((p) => normalize(p.path) === target)?.name;
+    }
+    broadcastExtMsg({ type: "webview:create", panelId, extensionId, viewType, title, projectPath, projectName });
     return { ok: true };
   });
 

@@ -8,13 +8,53 @@ import type { ExtServerMsg, ExtClientMsg } from "../../types/extension-messages.
 import { toast } from "sonner";
 
 /**
- * Track recently closed extension viewTypes to prevent auto-reopen.
- * When user closes an extension tab, the viewType is added here.
- * If a `webview:create` arrives for a recently closed viewType, we skip
+ * Track recently closed extension views to prevent auto-reopen.
+ * Keyed by `${viewTypeSlug}:${projectName ?? ""}` so closing a view in one
+ * project doesn't block opening the same view for another project.
+ * If a `webview:create` arrives for a recently closed view, we skip
  * creating a new tab (the close was intentional).
  * Cleared when user explicitly dispatches a command for the same viewType.
  */
 const recentlyClosedViews = new Set<string>();
+
+function closedViewKey(slug: string, projectName?: string): string {
+  return `${slug}:${projectName ?? ""}`;
+}
+
+/**
+ * Track views whose command THIS browser tab dispatched. `webview:create`
+ * is broadcast to every connected client — only the client that asked for the
+ * view may create a new tab; others must at most rebind an existing tab.
+ * Keyed by `${slug}:${projectPath ?? ""}` so concurrent opens of the same
+ * extension for different projects (or another client's broadcast) can't
+ * consume each other's entry. Entries expire after 15s in case the command
+ * fails silently.
+ */
+const locallyDispatchedViews = new Map<string, number>();
+const LOCAL_DISPATCH_TTL_MS = 15_000;
+
+/** Consume a pending local dispatch matching this create event. */
+function takeLocalDispatch(slug: string, projectPath?: string): boolean {
+  const now = Date.now();
+  for (const [k, t] of locallyDispatchedViews) {
+    if (now - t > LOCAL_DISPATCH_TTL_MS) locallyDispatchedViews.delete(k);
+  }
+  if (locallyDispatchedViews.delete(`${slug}:${projectPath ?? ""}`)) return true;
+  // Path-less dispatch (extension resolved the project itself) matched by a
+  // path-carrying create — consume the bare entry
+  if (projectPath && locallyDispatchedViews.delete(`${slug}:`)) return true;
+  // Legacy: extension created its panel without projectPath — consume any
+  // pending dispatch for this slug (dispatch args may still have carried one)
+  if (!projectPath) {
+    for (const k of locallyDispatchedViews.keys()) {
+      if (k.startsWith(`${slug}:`)) {
+        locallyDispatchedViews.delete(k);
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * Track viewTypes whose command dispatch was auto-recovery (not user-initiated).
@@ -138,66 +178,62 @@ export function useExtensionWs(enabled = true) {
 
         case "webview:create": {
           const viewTypeSlug = msg.viewType.replace(/\.view$/, "");
+          const locallyRequested = takeLocalDispatch(viewTypeSlug, msg.projectPath);
           store.addWebviewPanel({
             id: msg.panelId,
             extensionId: msg.extensionId,
             viewType: msg.viewType,
             title: msg.title,
             html: "",
+            projectName: msg.projectName,
           });
-          // Check if a tab for this viewType already exists in current grid
-          // (prevents infinite tab creation on project switch / panel recreate)
+          // Find an existing tab for this viewType AND project. Panels for
+          // non-active project grids stay in the store, so search all panels —
+          // a panel recreate must rebind that project's tab wherever it lives.
           const baseTabId = `extension:${viewTypeSlug}`;
           const ps = usePanelStore.getState();
-          const gridPanelIds = new Set(ps.grid.flat());
-          let existingTabId: string | null = null;
-          for (const pid of gridPanelIds) {
-            const p = ps.panels[pid];
-            if (!p) continue;
-            const t = p.tabs.find(tab => tab.id === baseTabId || tab.id.startsWith(`${baseTabId}@`));
-            if (t) { existingTabId = t.id; break; }
-          }
-          if (existingTabId) {
-            // Tab already exists — update metadata with new panelId (panel was recreated).
-            // Preserve existing metadata (e.g. projectName) since updateTab replaces metadata entirely.
-            const existingTab = ps.grid.flat().reduce<Record<string, unknown> | undefined>((acc, pid) => {
-              if (acc) return acc;
-              return ps.panels[pid]?.tabs.find(tab => tab.id === existingTabId)?.metadata;
-            }, undefined);
-            useTabStore.getState().updateTab(existingTabId, {
+          const candidates = Object.values(ps.panels)
+            .flatMap((p) => p.tabs)
+            .filter((tab) => tab.id === baseTabId || tab.id.startsWith(`${baseTabId}@`));
+          const tabProject = (tab: { metadata?: Record<string, unknown> }) =>
+            tab.metadata?.projectName as string | undefined;
+          // Exact project match first; legacy tabs (no projectName) fall back;
+          // never adopt a tab bound to a DIFFERENT project
+          const existingTab = msg.projectName
+            ? candidates.find((t) => tabProject(t) === msg.projectName)
+              ?? candidates.find((t) => !tabProject(t))
+            : candidates[0];
+          if (existingTab) {
+            // Panel was recreated for this project — rebind tab to new panelId.
+            // Preserve existing metadata since updateTab replaces metadata entirely.
+            useTabStore.getState().updateTab(existingTab.id, {
               title: msg.title,
-              metadata: { ...existingTab, viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId },
+              metadata: {
+                ...existingTab.metadata,
+                viewType: viewTypeSlug,
+                panelId: msg.panelId,
+                extensionId: msg.extensionId,
+                ...(msg.projectName && { projectName: msg.projectName }),
+              },
             });
-            // Focus the existing tab only if user explicitly opened it (not auto-recovery)
-            if (!recoveryViews.has(viewTypeSlug)) {
-              useTabStore.getState().setActiveTab(existingTabId);
+            // Focus only if THIS browser tab explicitly opened it (not
+            // auto-recovery, not another browser tab's broadcast)
+            if (locallyRequested && !recoveryViews.has(viewTypeSlug)) {
+              useTabStore.getState().setActiveTab(existingTab.id);
             }
             recoveryViews.delete(viewTypeSlug);
-          } else if (!recentlyClosedViews.has(viewTypeSlug)) {
-            // Check non-active project grids — don't create a duplicate tab
-            // if this extension already exists in another project's layout
-            let existsInOtherProject = false;
-            for (const projectGrid of Object.values(ps.projectGrids || {})) {
-              for (const pid of projectGrid.flat()) {
-                const p = ps.panels[pid];
-                if (!p) continue;
-                if (p.tabs.some(tab => tab.id === baseTabId || tab.id.startsWith(`${baseTabId}@`))) {
-                  existsInOtherProject = true;
-                  break;
-                }
-              }
-              if (existsInOtherProject) break;
-            }
-            if (!existsInOtherProject) {
-              const currentProject = useTabStore.getState().currentProject;
-              useTabStore.getState().openTab({
-                type: "extension",
-                title: msg.title,
-                projectId: null,
-                closable: true,
-                metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(currentProject && { projectName: currentProject }) },
-              });
-            }
+          } else if (locallyRequested && !recentlyClosedViews.has(closedViewKey(viewTypeSlug, msg.projectName))) {
+            // Only the client that dispatched the command creates a new tab —
+            // broadcasts triggered by other browser tabs are ignored here
+            const currentProject = useTabStore.getState().currentProject;
+            const projectName = msg.projectName ?? currentProject ?? undefined;
+            useTabStore.getState().openTab({
+              type: "extension",
+              title: msg.title,
+              projectId: null,
+              closable: true,
+              metadata: { viewType: viewTypeSlug, panelId: msg.panelId, extensionId: msg.extensionId, ...(projectName && { projectName }) },
+            });
           }
           break;
         }
@@ -249,9 +285,17 @@ export function useExtensionWs(enabled = true) {
     // Listen for command:execute requests (dispatched by StatusBar / TreeView)
     const commandHandler = (e: Event) => {
       const { command, args, recovery } = (e as CustomEvent).detail;
-      // User explicitly opened an extension — clear "recently closed" so tab can be created
+      // User explicitly opened an extension — clear "recently closed" (all
+      // projects for this slug; dispatch args carry a path, not a project name)
       const slug = (command as string).replace(/\.view$/, "");
-      recentlyClosedViews.delete(slug);
+      for (const key of recentlyClosedViews) {
+        if (key.startsWith(`${slug}:`)) recentlyClosedViews.delete(key);
+      }
+      // This client asked for the view — allow it to create/focus the tab
+      // when the broadcast `webview:create` arrives (TTL-expired on read).
+      // args[0] is the projectPath for view commands that carry one.
+      const dispatchPath = Array.isArray(args) && typeof args[0] === "string" ? args[0] : "";
+      locallyDispatchedViews.set(`${slug}:${dispatchPath}`, Date.now());
       // Track recovery dispatches to avoid stealing focus on webview:create
       if (recovery) recoveryViews.add(slug);
       else recoveryViews.delete(slug);
@@ -261,15 +305,16 @@ export function useExtensionWs(enabled = true) {
 
     // Listen for webview close requests (dispatched by ExtensionWebview on unmount)
     const webviewCloseHandler = (e: Event) => {
-      const { panelId, viewType } = (e as CustomEvent).detail;
+      const { panelId, viewType, projectName } = (e as CustomEvent).detail;
       client.send(JSON.stringify({ type: "webview:close", panelId }));
-      // Track that user intentionally closed this extension tab
+      // Track that user intentionally closed this extension tab (per project)
       if (viewType) {
         const slug = (viewType as string).replace(/\.view$/, "");
-        recentlyClosedViews.add(slug);
+        const key = closedViewKey(slug, projectName as string | undefined);
+        recentlyClosedViews.add(key);
         // Auto-clear after 5s — stale entries are harmless but could block
         // legitimate reopens if user waits too long
-        setTimeout(() => recentlyClosedViews.delete(slug), 5_000);
+        setTimeout(() => recentlyClosedViews.delete(key), 5_000);
       }
     };
     window.addEventListener("ext:webview:close", webviewCloseHandler);

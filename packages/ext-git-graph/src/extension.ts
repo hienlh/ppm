@@ -17,7 +17,7 @@ interface VscodeApi {
     showInformationMessage(message: string, ...items: string[]): Promise<string | undefined>;
     openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>): Promise<void>;
     switchProject(projectName: string): Promise<void>;
-    createWebviewPanel(viewType: string, title: string, showOptions: unknown): {
+    createWebviewPanel(viewType: string, title: string, showOptions: unknown, options?: { projectPath?: string }): {
       webview: {
         html: string;
         onDidReceiveMessage: (listener: (msg: unknown) => void) => { dispose(): void };
@@ -36,9 +36,10 @@ interface VscodeApi {
 let baseUrl = "";
 let authToken = "";
 
-// Track active panel state for reuse across project switches
-let activePanel: ReturnType<VscodeApi["window"]["createWebviewPanel"]> | null = null;
-let activeProjectPath = "";
+// One live panel per project. Opening git graph for another project must not
+// dispose or hijack an existing project's panel (multi-tab, multi-project usage).
+type WebviewPanel = ReturnType<VscodeApi["window"]["createWebviewPanel"]>;
+const panelsByProject = new Map<string, WebviewPanel>();
 
 function getSettings(context: ExtensionContext): GitGraphSettings {
   return { ...DEFAULT_SETTINGS, ...(context.globalState.get<Partial<GitGraphSettings>>("settings") || {}) };
@@ -140,28 +141,28 @@ function openGitGraph(
   context: ExtensionContext,
   projectPath: string,
 ): void {
-  // Always dispose stale panel to avoid browser/server desync.
-  // On page reload the browser's WS close message can be lost, leaving
-  // activePanel referencing a panel the browser no longer knows about.
-  if (activePanel) {
-    activePanel.dispose(); // fires onDidDispose → clears activePanel & timers
-  }
+  // Dispose stale panel for THIS project only, to avoid browser/server desync.
+  // On page reload the browser's WS close message can be lost, leaving the map
+  // referencing a panel the browser no longer knows about. Other projects'
+  // panels stay alive.
+  panelsByProject.get(projectPath)?.dispose(); // fires onDidDispose → clears map entry & timers
 
-  activeProjectPath = projectPath;
   const dirName = projectPath.split(/[\\/]/).filter(Boolean).pop() || "Git Graph";
   const panel = vscode.window.createWebviewPanel(
     "git-graph.view",
     `Git Graph: ${dirName}`,
     vscode.ViewColumn.Active,
+    { projectPath },
   );
-  activePanel = panel;
+  panelsByProject.set(projectPath, panel);
 
   panel.webview.html = getWebviewHtml();
 
   const msgDisposable = panel.webview.onDidReceiveMessage(async (raw: unknown) => {
     const msg = raw as WebviewToExt;
-    // Always use activeProjectPath (not closure) so project switches take effect
-    const pp = activeProjectPath;
+    // Panel is bound to its project for life — reopening a project recreates
+    // the panel, so the closure path is always current.
+    const pp = projectPath;
     try {
       switch (msg.command) {
         case "ready":
@@ -376,13 +377,14 @@ function openGitGraph(
   // Poll uncommitted changes every 5 seconds
   let disposed = false;
   const uncommittedPollTimer = setInterval(() => {
-    if (!disposed) handleUncommittedStatus(vscode, panel, activeProjectPath);
+    if (!disposed) handleUncommittedStatus(vscode, panel, projectPath);
   }, 5_000);
 
   panel.onDidDispose(() => {
     disposed = true;
-    activePanel = null;
-    activeProjectPath = "";
+    // Only clear the map entry if it still points at this panel — a recreate
+    // for the same project may have already replaced it
+    if (panelsByProject.get(projectPath) === panel) panelsByProject.delete(projectPath);
     clearInterval(uncommittedPollTimer);
     msgDisposable.dispose();
   });
