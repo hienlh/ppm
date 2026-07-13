@@ -61,6 +61,27 @@ async function clearCachesAndReload() {
 }
 
 /**
+ * Wait until the upgraded server is listening again before reloading.
+ * The upgrade signals the supervisor to kill + reboot the server, so an
+ * immediate reload would navigate the SPA away onto a dead server and land on
+ * the browser's error page — with no JS left to auto-recover. Poll /api/health
+ * until it responds (or we give up), THEN clear caches and reload.
+ */
+async function reloadWhenServerReady() {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch("/api/health", { cache: "no-store" });
+      if (res.ok) break;
+    } catch {
+      // server still restarting
+    }
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  await clearCachesAndReload();
+}
+
+/**
  * Status-bar version chip. Shows the current version normally; when a new
  * release is available it turns into an accent "update" button that opens a
  * popover (Update now / Release notes / Later) — replaces the old top banner.
@@ -72,6 +93,7 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
   const [open, setOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [complete, setComplete] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [notes, setNotes] = useState<ChangelogSection[] | null>(null);
   const [notesLoading, setNotesLoading] = useState(false);
@@ -159,15 +181,19 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
 
   if (!current && !hasUpdate) return null;
 
-  // Upgrade finished — prompt reload.
+  // Upgrade finished — prompt reload. Wait for the server to finish restarting
+  // before navigating, so we don't reload onto a dead server.
   if (complete) {
     return (
       <button
-        onClick={clearCachesAndReload}
-        className="flex items-center gap-1 px-1 rounded-sm text-success hover:brightness-110 transition-[filter]"
-        title="Reload to apply the update"
+        onClick={() => { setReloading(true); reloadWhenServerReady(); }}
+        disabled={reloading}
+        className="flex items-center gap-1 px-1 rounded-sm text-success hover:brightness-110 transition-[filter] disabled:opacity-70"
+        title={reloading ? "Waiting for the server to restart…" : "Reload to apply the update"}
       >
-        <RefreshCw className="size-3" /> Reload
+        {reloading
+          ? <><Loader2 className="size-3 animate-spin" /> Waiting for server…</>
+          : <><RefreshCw className="size-3" /> Reload</>}
       </button>
     );
   }
