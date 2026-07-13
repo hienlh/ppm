@@ -11,10 +11,10 @@ import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 
-// TODO: replace with your real Wise payment link (Wisetag).
-const WISE_URL = "https://wise.com/pay/me/hienlh";
-// Drop the real QR image at src/web/public/donate-qr.png to replace the placeholder.
+const WISE_URL = "https://wise.com/pay/me/lehongh";
 const VIETQR_IMAGE = "/donate-qr.png";
+const VIETQR_ACCOUNT = "LE HONG HIEN";
+const VIETQR_BANK = "Techcombank";
 
 function SectionLabel({ children }: { children: string }) {
   return (
@@ -54,6 +54,10 @@ function SupportBody() {
               className="size-40 rounded-xl border border-border bg-white object-contain p-2"
             />
           )}
+          <div className="text-center">
+            <p className="text-sm font-medium text-foreground">{VIETQR_ACCOUNT}</p>
+            <p className="text-xs text-text-subtle">{VIETQR_BANK}</p>
+          </div>
           <p className="text-center text-xs text-text-secondary">
             Quét mã QR bằng ứng dụng ngân hàng để chuyển khoản.
           </p>
