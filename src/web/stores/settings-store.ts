@@ -28,6 +28,7 @@ interface SettingsState {
   dockPosition: DockPosition;
   deviceName: string | null;
   version: string | null;
+  tunnelActive: boolean;
   setThemeStyle: (style: PpmThemeStyle) => void;
   setThemeMode: (mode: PpmThemeMode) => void;
   setCustomTheme: (id: string) => void;
@@ -186,6 +187,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   dockPosition: (_initial.dockPosition === "left" || _initial.dockPosition === "right") ? _initial.dockPosition : "bottom",
   deviceName: null,
   version: null,
+  tunnelActive: false,
 
   setThemeStyle: (style) => {
     const mode = get().themeMode;
@@ -322,8 +324,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ]);
       const infoJson = await infoRes.json();
       if (infoJson.ok) {
-        const { device_name, version } = infoJson.data;
-        set({ deviceName: device_name || null, version: version || null });
+        const { device_name, version, tunnel_active } = infoJson.data;
+        set({ deviceName: device_name || null, version: version || null, tunnelActive: !!tunnel_active });
         if (device_name) {
           document.title = `PPM — ${device_name}`;
         }

@@ -7,6 +7,7 @@ import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { settingsThemesRoutes } from "./routes/settings-themes.ts";
 import { tunnelRoutes } from "./routes/tunnel.ts";
+import { tunnelService } from "../services/tunnel.service.ts";
 import { staticRoutes } from "./routes/static.ts";
 import { projectScopedRouter } from "./routes/project-scoped.ts";
 import { postgresRoutes } from "./routes/postgres.ts";
@@ -99,6 +100,9 @@ app.get("/api/health", (c) => c.json(ok({ status: "running" })));
 app.get("/api/info", (c) => c.json(ok({
   version: VERSION,
   device_name: configService.get("device_name") || null,
+  // Read-only status so the login screen can show a live tunnel chip pre-auth.
+  // The mutating tunnel routes (/start, /stop) stay behind authMiddleware.
+  tunnel_active: !!tunnelService.getTunnelUrl(),
 })));
 
 // Public: recent logs for bug reports (last 30 lines)

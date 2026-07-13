@@ -35,3 +35,6 @@ dist/ppm-*
 src/web/Users/
 
 # Keep dist/web/ for pre-built frontend
+
+# Local design/reference assets
+.support-intl.png
