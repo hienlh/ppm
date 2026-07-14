@@ -149,9 +149,21 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
   },
 }));
 
-/** Derived: number of sessions with unread notifications */
+/** Derived: number of sessions with unread notifications (all projects) */
 export function selectTotalUnread(state: { notifications: Map<string, NotificationEntry> }): number {
   return state.notifications.size;
+}
+
+/** Derived: number of unread sessions for a single project */
+export function selectProjectUnread(projectName: string | undefined) {
+  return (state: { notifications: Map<string, NotificationEntry> }): number => {
+    if (!projectName) return 0;
+    let n = 0;
+    for (const [, entry] of state.notifications) {
+      if (entry.projectName === projectName) n++;
+    }
+    return n;
+  };
 }
 
 /** Derived: most urgent notification type for a project (null = no unread) */

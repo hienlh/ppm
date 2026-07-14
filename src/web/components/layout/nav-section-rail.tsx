@@ -9,7 +9,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
 import { useJiraStore } from "@/stores/jira-store";
-import { useNotificationStore, selectTotalUnread } from "@/stores/notification-store";
+import { useNotificationStore, selectProjectUnread } from "@/stores/notification-store";
 import { NotificationBellPopover } from "./notification-bell-popover";
 import { CloudSharePopover } from "./cloud-share-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
@@ -81,6 +81,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
+  const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
+  const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
   const version = useSettingsStore((s) => s.version);
   const contributions = useExtensionStore((s) => s.contributions);
@@ -88,7 +90,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
     activeProject?.name ? (s.counts.get(activeProject.name) ?? 0) : 0,
   );
   const jiraUnreadCount = useJiraStore((s) => s.unreadCount);
-  const historyUnreadCount = useNotificationStore(selectTotalUnread);
+  const historyUnreadCount = useNotificationStore(selectProjectUnread(activeProject?.name));
 
   const TABS = useMemo(() => {
     const tabs: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [...BUILTIN_TABS];
@@ -117,6 +119,18 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
 
   const handleReportBug = () => openBugReportPopup(version);
 
+  // Rail tab click: collapsed → open on any tab; open → clicking the active tab closes it.
+  const handleTabClick = (tabId: SidebarActiveTab) => {
+    if (sidebarCollapsed) {
+      setSidebarActiveTab(tabId);
+      toggleSidebar();
+    } else if (sidebarActiveTab === tabId) {
+      toggleSidebar();
+    } else {
+      setSidebarActiveTab(tabId);
+    }
+  };
+
   return (
     <div className={cn("w-[52px] shrink-0 border-r border-border flex flex-col", className)}>
       {/* sections */}
@@ -128,7 +142,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
             label={tab.label}
             active={sidebarActiveTab === tab.id}
             badge={tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : tab.id === "history" ? historyUnreadCount : undefined}
-            onClick={() => setSidebarActiveTab(tab.id)}
+            onClick={() => handleTabClick(tab.id)}
           />
         ))}
       </div>
@@ -159,7 +173,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           document.body,
         )}
         <FooterUtil icon={Bug} label="Report Bug" onClick={handleReportBug} />
-        <FooterUtil icon={Settings} label="Settings" active={sidebarActiveTab === "settings"} onClick={() => setSidebarActiveTab("settings")} />
+        <FooterUtil icon={Settings} label="Settings" active={sidebarActiveTab === "settings"} onClick={() => handleTabClick("settings")} />
       </div>
     </div>
   );
