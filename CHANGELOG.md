@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.17.0] - 2026-07-14
+## [0.17.1] - 2026-07-14
 
 ### Added
 - **AI Resources sidebar panel** — a new ✨ section (rail + mobile drawer) to browse and manage your skills, agents, and commands in one place, across Project, User, and bundled scopes. Each row shows its scope and flags override/shadow relationships (which same-named resource wins and which is inactive), so the multi-root precedence is finally visible. Search, type filters (Skills / Agents / Commands / MCP), and a context menu (Open, Duplicate, Delete — long-press on mobile) round it out.
