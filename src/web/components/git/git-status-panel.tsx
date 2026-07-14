@@ -16,6 +16,7 @@ import {
   GitBranch,
   Check,
 } from "lucide-react";
+import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { api, projectUrl } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
 import { useShallow } from "zustand/react/shallow";
@@ -438,67 +439,59 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-        <span className="text-sm font-medium">
-          {status?.current ? `On: ${status.current}` : "Git Status"}
-        </span>
-        <div className="flex items-center gap-1">
-          <Button
-            variant={viewMode === "flat" ? "secondary" : "ghost"}
-            size="icon-xs"
-            onClick={() => setViewMode("flat")}
-            title="Flat view"
-          >
-            <List className="size-3.5" />
-          </Button>
-          <Button
-            variant={viewMode === "tree" ? "secondary" : "ghost"}
-            size="icon-xs"
-            onClick={() => setViewMode("tree")}
-            title="Tree view"
-          >
-            <FolderTree className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => {
-              if (gitGraphAvailable) {
-                // Open the Git Graph extension webview (command: git-graph.view, ⌘G)
-                const args: unknown[] = [];
-                if (activeProjectPath) args.push(activeProjectPath);
-                window.dispatchEvent(
-                  new CustomEvent("ext:command:execute", {
-                    detail: { command: "git-graph.view", args },
-                  }),
-                );
-              } else {
-                // Fallback when the extension is disabled: open the built-in Git Log tab.
-                openTab({
-                  type: "git-log",
-                  title: "Git Log",
-                  projectId: projectName ?? null,
-                  closable: true,
-                  metadata: { projectName },
-                });
-              }
-              onNavigate?.();
-            }}
-            title={gitGraphAvailable ? "Open Git Graph (⌘G)" : "View Git Log"}
-          >
-            <GitBranch className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={fetchStatus}
-            disabled={acting}
-          >
-            <RefreshCw className={loading ? "animate-spin" : ""} />
-          </Button>
-        </div>
-      </div>
+      <SidebarHeader icon={GitBranch} title={status?.current ? `On: ${status.current}` : "Source Control"}>
+        <Button
+          variant={viewMode === "flat" ? "secondary" : "ghost"}
+          size="icon-xs"
+          onClick={() => setViewMode("flat")}
+          title="Flat view"
+        >
+          <List className="size-3.5" />
+        </Button>
+        <Button
+          variant={viewMode === "tree" ? "secondary" : "ghost"}
+          size="icon-xs"
+          onClick={() => setViewMode("tree")}
+          title="Tree view"
+        >
+          <FolderTree className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => {
+            if (gitGraphAvailable) {
+              const args: unknown[] = [];
+              if (activeProjectPath) args.push(activeProjectPath);
+              window.dispatchEvent(
+                new CustomEvent("ext:command:execute", {
+                  detail: { command: "git-graph.view", args },
+                }),
+              );
+            } else {
+              openTab({
+                type: "git-log",
+                title: "Git Log",
+                projectId: projectName ?? null,
+                closable: true,
+                metadata: { projectName },
+              });
+            }
+            onNavigate?.();
+          }}
+          title={gitGraphAvailable ? "Open Git Graph (⌘G)" : "View Git Log"}
+        >
+          <GitBranch className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={fetchStatus}
+          disabled={acting}
+        >
+          <RefreshCw className={loading ? "animate-spin" : ""} />
+        </Button>
+      </SidebarHeader>
 
       {error && (
         <div className="px-3 py-1.5 text-xs text-destructive bg-destructive/10 shrink-0">

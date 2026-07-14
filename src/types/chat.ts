@@ -90,6 +90,25 @@ export interface SessionListResponse {
   hasMore: boolean;
 }
 
+export interface ChatSearchResult {
+  sessionId: string;
+  providerId?: string;
+  title: string | null;
+  /** Highlighted excerpt (may contain <mark>…</mark>); equals title for title-only matches. */
+  snippet: string;
+  /** Stable ChatMessage id to scroll to; empty for title-only matches. */
+  messageId: string;
+  matchedIn: "title" | "content";
+  ts: string;
+  pinned?: boolean;
+  tag?: { id: number; name: string; color: string } | null;
+}
+
+export interface ChatSearchResponse {
+  results: ChatSearchResult[];
+  indexing: { total: number; indexed: number; running: boolean };
+}
+
 export interface LimitBucket {
   utilization: number;
   resetsAt: string;

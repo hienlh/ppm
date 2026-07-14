@@ -15,6 +15,12 @@ import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
+import {
+  search as chatSearchQuery,
+  startBackfill as chatSearchStartBackfill,
+  getIndexStatus as chatSearchGetIndexStatus,
+} from "../../services/chat-search.service.ts";
+import type { ChatSearchResult, ChatSearchResponse } from "../../types/chat.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -166,6 +172,82 @@ chatRoutes.get("/sessions", async (c) => {
     if (filterTagId !== null) filtered = filtered.filter((s) => s.tag?.id === filterTagId);
     const hasMore = sessions.length >= limit;
     return c.json(ok({ sessions: filtered, hasMore }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /chat/search — unified title + full-text content search for a project */
+chatRoutes.get("/search", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const rawQuery = c.req.query("q")?.trim() || "";
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "30", 10) || 30, 100);
+
+    // Enumerate sessions once (also drives title matches + metadata for content hits).
+    const sessions = await chatService.listSessions(undefined, projectPath);
+    const total = sessions.length;
+    const indexing = { total, ...chatSearchGetIndexStatus(projectPath) };
+
+    if (!rawQuery) return c.json(ok({ results: [], indexing } satisfies ChatSearchResponse));
+
+    // Lazy self-refresh; UI shows an indexing indicator while this runs.
+    chatSearchStartBackfill(projectPath);
+
+    const pinnedIds = getPinnedSessionIds();
+    const tagMap = getSessionTags(sessions.map((s) => s.id));
+    const byId = new Map(sessions.map((s) => [s.id, s]));
+
+    const results: ChatSearchResult[] = [];
+    const seen = new Set<string>();
+
+    // Content matches first (best bm25 rank), one row per session.
+    for (const hit of chatSearchQuery(projectPath, rawQuery, limit * 3)) {
+      if (seen.has(hit.sessionId)) continue;
+      seen.add(hit.sessionId);
+      const s = byId.get(hit.sessionId);
+      results.push({
+        sessionId: hit.sessionId,
+        providerId: s?.providerId,
+        title: s?.title ?? null,
+        snippet: hit.snippet,
+        messageId: hit.messageId,
+        matchedIn: "content",
+        ts: s?.updatedAt || s?.createdAt || hit.ts || "",
+        pinned: pinnedIds.has(hit.sessionId),
+        tag: tagMap[hit.sessionId] ?? null,
+      });
+      if (results.length >= limit) break;
+    }
+
+    // Title matches for sessions not already surfaced by content.
+    const q = rawQuery.toLowerCase();
+    for (const s of sessions) {
+      if (results.length >= limit) break;
+      if (seen.has(s.id)) continue;
+      if (!(s.title || "").toLowerCase().includes(q)) continue;
+      seen.add(s.id);
+      results.push({
+        sessionId: s.id,
+        providerId: s.providerId,
+        title: s.title ?? null,
+        snippet: s.title ?? "",
+        messageId: "",
+        matchedIn: "title",
+        ts: s.updatedAt || s.createdAt || "",
+        pinned: pinnedIds.has(s.id),
+        tag: tagMap[s.id] ?? null,
+      });
+    }
+
+    // Pinned first, then most-recent.
+    results.sort((a, b) => {
+      if (a.pinned && !b.pinned) return -1;
+      if (!a.pinned && b.pinned) return 1;
+      return new Date(b.ts).getTime() - new Date(a.ts).getTime();
+    });
+
+    return c.json(ok({ results, indexing } satisfies ChatSearchResponse));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

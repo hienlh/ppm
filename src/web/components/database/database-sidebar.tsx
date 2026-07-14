@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Database, Plus } from "lucide-react";
+import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { useTabStore } from "@/stores/tab-store";
 import { ConnectionList } from "./connection-list";
 import { ConnectionFormDialog } from "./connection-form-dialog";
@@ -39,20 +40,16 @@ export function DatabaseSidebar() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
-        <span className="text-[10px] font-semibold text-text-subtle uppercase tracking-wider">Database</span>
-        <div className="flex items-center gap-0.5">
-          <ConnectionImportExport onExport={exportConnections} onImport={importConnections} />
-          <button
-            onClick={() => setAddOpen(true)}
-            className="flex items-center justify-center size-5 rounded hover:bg-surface-elevated transition-colors text-text-subtle hover:text-foreground"
-            title="Add connection"
-          >
-            <Plus className="size-3.5" />
-          </button>
-        </div>
-      </div>
+      <SidebarHeader icon={Database} title="Database">
+        <ConnectionImportExport onExport={exportConnections} onImport={importConnections} />
+        <button
+          onClick={() => setAddOpen(true)}
+          className="flex size-6 items-center justify-center rounded text-text-subtle hover:bg-surface-elevated hover:text-foreground"
+          title="Add connection"
+        >
+          <Plus className="size-3.5" />
+        </button>
+      </SidebarHeader>
 
       {/* Connection list */}
       <div className="flex-1 overflow-y-auto min-h-0">

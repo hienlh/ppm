@@ -8,7 +8,8 @@ import { JiraTicketCard } from "./jira-ticket-card";
 import { JiraWatcherList } from "./jira-watcher-list";
 import { JiraConfigForm } from "./jira-config-form";
 import { JiraDebugPromptDialog } from "./jira-debug-prompt-dialog";
-import { ArrowLeft, Settings2, Plus, ListFilter, RefreshCw, Loader2 } from "lucide-react";
+import { ArrowLeft, Bug, Settings2, Plus, ListFilter, RefreshCw, Loader2 } from "lucide-react";
+import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { toast } from "sonner";
 import type { JiraWatchResult } from "../../../../src/types/jira";
 
@@ -129,24 +130,25 @@ export function JiraPanel() {
   // Default: ticket list
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="shrink-0 px-3 py-2 flex items-center gap-1.5 border-b border-border/50">
-        <h2 className="text-sm font-semibold flex-1 truncate">Jira</h2>
+      <SidebarHeader icon={Bug} title="Jira">
         {unreadCount > 0 && (
           <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
             {unreadCount}
           </span>
         )}
-        <Button size="icon" variant="ghost" className="size-7" onClick={refresh} disabled={loading} title="Refresh">
+        <button onClick={refresh} disabled={loading} title="Refresh"
+          className="flex size-6 items-center justify-center rounded text-text-subtle hover:bg-surface-elevated hover:text-foreground disabled:opacity-50">
           {loading ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-        </Button>
-        <Button size="icon" variant="ghost" className="size-7" onClick={() => setSubView("watchers")} title="Watchers">
+        </button>
+        <button onClick={() => setSubView("watchers")} title="Watchers"
+          className="flex size-6 items-center justify-center rounded text-text-subtle hover:bg-surface-elevated hover:text-foreground">
           <ListFilter className="size-3.5" />
-        </Button>
-        <Button size="icon" variant="ghost" className="size-7" onClick={() => setSubView("credentials")} title="Credentials">
+        </button>
+        <button onClick={() => setSubView("credentials")} title="Credentials"
+          className="flex size-6 items-center justify-center rounded text-text-subtle hover:bg-surface-elevated hover:text-foreground">
           <Settings2 className="size-3.5" />
-        </Button>
-      </div>
+        </button>
+      </SidebarHeader>
 
       {/* Ticket list */}
       <ScrollArea className="flex-1 min-h-0">
