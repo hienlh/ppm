@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.0] - 2026-07-14
+
+### Added
+- **AI Resources sidebar panel** — a new ✨ section (rail + mobile drawer) to browse and manage your skills, agents, and commands in one place, across Project, User, and bundled scopes. Each row shows its scope and flags override/shadow relationships (which same-named resource wins and which is inactive), so the multi-root precedence is finally visible. Search, type filters (Skills / Agents / Commands / MCP), and a context menu (Open, Duplicate, Delete — long-press on mobile) round it out.
+- **AI resource editor** — opening a resource launches an editor tab with raw markdown editing, Save/Revert, and Ctrl/⌘+S. Bundled resources are read-only with a "duplicate to edit" path; a banner warns when the resource is shadowed by a higher-priority one. Create new skills/agents/commands from templates into a chosen scope, or duplicate an existing one under a new name.
+- **Agent discovery** — subagents under `agents/` (`.claude`, `.ppm`, …) are now discovered and parsed (model + tools). They surface in the AI Resources panel but are intentionally kept out of the slash-command picker (agents are not slash-invokable).
+- **Session history sidebar with full-text chat search** — a new Chat History panel lists prior sessions and searches across transcripts, backed by a dedicated search index.
+
+### Changed
+- **MCP servers moved from Settings into the AI Resources panel** — manage (add / edit / delete / import from Claude Code) MCP servers from the same place as your other AI resources instead of the Settings tab. The MCP server dialog is unchanged.
+- **Shared sidebar panel header** — explorer, git, database, and jira panels now use a common header component for consistency.
+
 ## [0.16.10] - 2026-07-14
 
 ### Changed
