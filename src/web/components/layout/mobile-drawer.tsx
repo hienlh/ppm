@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import {
-  X, Bug as BugIcon, FolderOpen, GitBranch, Settings, Database,
+  X, Bug as BugIcon, FolderOpen, GitBranch, Settings, Database, Sparkles,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
@@ -10,16 +10,18 @@ import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
+import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { cn } from "@/lib/utils";
 
-type DrawerTab = "explorer" | "git" | "settings" | "database" | "jira";
+type DrawerTab = "explorer" | "git" | "settings" | "database" | "jira" | "ai-resources";
 
 const BASE_TABS: { id: DrawerTab; label: string; icon: React.ElementType }[] = [
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "database", label: "Database", icon: Database },
+  { id: "ai-resources", label: "AI", icon: Sparkles },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -105,6 +107,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           )}
           {activeTab === "jira" && (
             <JiraPanel />
+          )}
+          {activeTab === "ai-resources" && (
+            <AiResourcesPanel />
           )}
           {activeTab === "settings" && (
             <SettingsTab />

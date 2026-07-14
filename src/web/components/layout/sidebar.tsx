@@ -10,6 +10,8 @@ import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { JiraPanel } from "@/components/jira/jira-panel";
+import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
+import { SessionHistoryList } from "@/components/chat/session-history-list";
 import { useGitChangesPoller } from "@/stores/git-status-store";
 import { ProjectSwitcher } from "./project-switcher";
 import { NavSectionRail } from "./nav-section-rail";
@@ -119,8 +121,18 @@ export const Sidebar = memo(function Sidebar() {
               <GitStatusPanel metadata={{ projectName: activeProject?.name }} />
             )}
             {sidebarActiveTab === "search" && <SearchPanel />}
+            {sidebarActiveTab === "history" && (
+              activeProject ? (
+                <SessionHistoryList variant="sidebar" projectName={activeProject.name} />
+              ) : (
+                <div className="flex items-center justify-center h-24 p-4">
+                  <p className="text-xs text-text-subtle text-center">Select a project to view chat history</p>
+                </div>
+              )
+            )}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
             {sidebarActiveTab === "jira" && <JiraPanel />}
+            {sidebarActiveTab === "ai-resources" && <AiResourcesPanel />}
             {sidebarActiveTab === "settings" && <SettingsTab />}
             {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (
               <ExtensionTreeView viewId={sidebarActiveTab.slice(4)} className="h-full" />

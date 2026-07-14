@@ -11,6 +11,16 @@ function str(val: unknown): string | undefined {
   return undefined;
 }
 
+/** Coerce a frontmatter tools value (comma-separated string or YAML list) to string[] */
+function toolList(val: unknown): string[] | undefined {
+  if (Array.isArray(val)) return val.map((v) => str(v)).filter((v): v is string => !!v);
+  if (typeof val === "string") {
+    const parts = val.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts.length ? parts : undefined;
+  }
+  return undefined;
+}
+
 /** Parse YAML frontmatter from a Markdown file */
 function parseFrontmatter(content: string): { meta: Record<string, unknown>; body: string } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
@@ -145,9 +155,41 @@ function loadSkills(root: SkillRoot): SlashItemWithSource[] {
   return items;
 }
 
+/** Collect agents (subagents) from a root with origin "agents". Flat/nested .md files. */
+function loadAgents(root: SkillRoot): SlashItemWithSource[] {
+  const items: SlashItemWithSource[] = [];
+  if (!existsSync(root.path)) return items;
+  const scope = sourceToScope(root.source);
+  const boundary = resolve(root.path);
+
+  walkDir(root.path, (filePath) => {
+    if (!filePath.endsWith(".md")) return;
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      const { meta } = parseFrontmatter(content);
+      const rel = relative(root.path, filePath);
+      const name = str(meta.name) ?? rel.replace(/\.md$/, "").split(sep).join("/");
+      items.push({
+        type: "agent",
+        name,
+        description: str(meta.description) ?? "",
+        model: str(meta.model),
+        tools: toolList(meta.tools),
+        scope,
+        source: root.source,
+        rootPath: root.path,
+        filePath,
+      });
+    } catch { /* skip */ }
+  }, new Set(), boundary);
+  return items;
+}
+
 /** Load all slash items from a single root */
 export function loadItemsFromRoot(root: SkillRoot): SlashItemWithSource[] {
-  return root.origin === "commands" ? loadCommands(root) : loadSkills(root);
+  if (root.origin === "commands") return loadCommands(root);
+  if (root.origin === "agents") return loadAgents(root);
+  return loadSkills(root);
 }
 
 /** Load items from all roots */

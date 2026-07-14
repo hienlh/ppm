@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe, Plug, Puzzle, Bug, FolderSearch, WrapText, CalendarClock,
+  Bot, BellRing, Keyboard, Globe, Puzzle, Bug, FolderSearch, WrapText, CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,6 @@ import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
 import { ProxySettingsSection } from "./proxy-settings-section";
-import { McpSettingsSection } from "./mcp-settings-section";
 import { ExtensionManagerSection } from "./extension-manager-section";
 import { PPMBotSettingsSection } from "./ppmbot-settings-section";
 import { ChangePasswordSection } from "./change-password-section";
@@ -35,7 +34,7 @@ const TAB_STYLE_OPTIONS: { value: EditorTabStyle; label: string }[] = [
   { value: "pill", label: "Pill" },
 ];
 
-type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "mcp" | "extensions" | "files";
+type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "extensions" | "files";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
@@ -45,7 +44,6 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
   // Jira is now a toggle, not a full settings category
   { value: "proxy", label: "API Proxy", subtitle: "Expose accounts as Anthropic API", icon: Globe },
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
-  { value: "mcp", label: "MCP Servers", subtitle: "Model Context Protocol tools", icon: Plug },
   { value: "extensions", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
   { value: "files", label: "File Filters", subtitle: "Exclude patterns, ignore files", icon: FolderSearch },
 ];
@@ -102,7 +100,6 @@ export function SettingsTab() {
             {/* Jira is now a sidebar tab with a toggle below */}
             {activeCategory === "proxy" && <ProxySettingsSection />}
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
-            {activeCategory === "mcp" && <McpSettingsSection />}
             {activeCategory === "extensions" && <ExtensionManagerSection />}
             {activeCategory === "files" && <FilesSettingsSection />}
           </div>

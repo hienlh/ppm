@@ -20,7 +20,7 @@ const USER_ECOSYSTEMS: Array<{ dir: string; source: DefinitionSource }> = [
   { dir: ".claude", source: "user-claude" },
 ];
 
-const ORIGINS: ItemOrigin[] = ["skills", "commands"];
+const ORIGINS: ItemOrigin[] = ["skills", "commands", "agents"];
 
 /** Resolve PPM package root for bundled skills */
 const PKG_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");

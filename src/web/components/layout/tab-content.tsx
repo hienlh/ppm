@@ -74,6 +74,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.GitLogPanel,
     })),
   ),
+  "ai-resource": lazy(() =>
+    import("@/components/ai-resources/ai-resource-editor").then((m) => ({
+      default: m.AiResourceEditor,
+    })),
+  ),
 };
 
 function LoadingFallback() {

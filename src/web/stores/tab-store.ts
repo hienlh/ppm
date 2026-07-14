@@ -16,7 +16,8 @@ export type TabType =
   | "extension-webview"
   | "conflict-editor"
   | "system-monitor"
-  | "git-log";
+  | "git-log"
+  | "ai-resource";
 
 export interface Tab {
   id: string;

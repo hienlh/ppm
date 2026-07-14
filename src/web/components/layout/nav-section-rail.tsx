@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import {
-  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Cloud,
+  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Cloud, Sparkles, BotMessageSquare,
 } from "lucide-react";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -9,16 +9,19 @@ import { useShallow } from "zustand/react/shallow";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
 import { useJiraStore } from "@/stores/jira-store";
+import { useNotificationStore, selectTotalUnread } from "@/stores/notification-store";
 import { NotificationBellPopover } from "./notification-bell-popover";
 import { CloudSharePopover } from "./cloud-share-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { cn } from "@/lib/utils";
 
 const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
+  { id: "history", label: "Chat History", icon: BotMessageSquare },
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "database", label: "Database", icon: Database },
+  { id: "ai-resources", label: "AI Resources", icon: Sparkles },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -85,6 +88,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
     activeProject?.name ? (s.counts.get(activeProject.name) ?? 0) : 0,
   );
   const jiraUnreadCount = useJiraStore((s) => s.unreadCount);
+  const historyUnreadCount = useNotificationStore(selectTotalUnread);
 
   const TABS = useMemo(() => {
     const tabs: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [...BUILTIN_TABS];
@@ -123,7 +127,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
             icon={tab.icon}
             label={tab.label}
             active={sidebarActiveTab === tab.id}
-            badge={tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : undefined}
+            badge={tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : tab.id === "history" ? historyUnreadCount : undefined}
             onClick={() => setSidebarActiveTab(tab.id)}
           />
         ))}

@@ -11,9 +11,9 @@ export type DefinitionSource =
   | "user-claude"      // 8 — ~/.claude/
   | "bundled";         // 9 — shipped with PPM package
 
-export type SlashItemType = "skill" | "command" | "builtin";
+export type SlashItemType = "skill" | "command" | "builtin" | "agent";
 export type SlashItemScope = "project" | "user" | "bundled";
-export type ItemOrigin = "skills" | "commands";
+export type ItemOrigin = "skills" | "commands" | "agents";
 
 export interface SlashItem {
   type: SlashItemType;
@@ -25,6 +25,10 @@ export interface SlashItem {
   scope: SlashItemScope;
   category?: string;
   aliases?: string[];
+  /** Agent-only: model the subagent runs on (e.g. "sonnet", "opus", "inherit") */
+  model?: string;
+  /** Agent-only: allowed tools (parsed from comma-separated string or YAML list) */
+  tools?: string[];
 }
 
 export interface SkillRoot {

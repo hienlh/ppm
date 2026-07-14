@@ -168,6 +168,10 @@ app.route("/api/jira", jiraRoutes);
 import { schedulesRoutes } from "./routes/schedules.ts";
 app.route("/api/schedules", schedulesRoutes);
 
+// AI resources (skills / agents / commands) management
+import { aiResourcesRoutes } from "./routes/ai-resources.ts";
+app.route("/api/ai-resources", aiResourcesRoutes);
+
 // Agent Teams management
 import { teamRoutes } from "./routes/teams.ts";
 app.route("/api/teams", teamRoutes);

@@ -35,6 +35,7 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   "conflict-editor": lazy(() => import("@/components/editor/conflict-editor").then((m) => ({ default: m.ConflictEditor }))),
   "system-monitor": lazy(() => import("@/components/system/system-monitor-tab").then((m) => ({ default: m.SystemMonitorTab }))),
   "git-log": lazy(() => import("@/components/git/git-log-panel").then((m) => ({ default: m.GitLogPanel }))),
+  "ai-resource": lazy(() => import("@/components/ai-resources/ai-resource-editor").then((m) => ({ default: m.AiResourceEditor }))),
 };
 
 // ---------------------------------------------------------------------------

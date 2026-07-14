@@ -12,6 +12,7 @@ import {
   Globe,
   Puzzle,
   GitCommitHorizontal,
+  Sparkles,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
@@ -66,6 +67,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   "conflict-editor": FileDiff,
   "system-monitor": Settings,
   "git-log": GitCommitHorizontal,
+  "ai-resource": Sparkles,
 };
 
 interface TabBarProps {

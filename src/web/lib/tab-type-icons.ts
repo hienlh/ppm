@@ -6,7 +6,7 @@
  * per-component change (extensibility invariant for the generalized dock).
  */
 import {
-  Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Globe, Puzzle,
+  Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Globe, Puzzle, Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type { TabType } from "@/stores/tab-store";
@@ -26,6 +26,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   "conflict-editor": FileDiff,
   "system-monitor": Settings,
   "git-log": FileCode,
+  "ai-resource": Sparkles,
 };
 
 /** Resolve the icon for a tab type, falling back to a generic glyph. */
