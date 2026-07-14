@@ -43,4 +43,4 @@ Or open an issue on [GitHub](https://github.com/hienlh/ppm/issues).
 
 ## License
 
-By contributing, you agree your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree your contributions will be licensed under the [Elastic License 2.0](LICENSE).

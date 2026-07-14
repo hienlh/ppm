@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "files": ["src/", "dist/"],
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "peerDependencies": {
     "typescript": "^5.0.0"
   }
