@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.3] - 2026-07-15
+
+### Changed
+- **Sidebar rail tabs now toggle collapse** — clicking the active section's rail icon collapses the sidebar, and clicking any icon while collapsed re-opens it, so the rail behaves as a proper toggle.
+
+### Fixed
+- **Chat History unread badge is now per-project** — the rail badge counts unread sessions for the currently open project only, instead of across all projects (the bottom notification bell keeps the global count).
+
 ## [0.17.2] - 2026-07-14
 
 ### Changed
