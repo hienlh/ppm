@@ -32,6 +32,15 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `DELETE /api/accounts/:id`
 - `PATCH  /api/accounts/:id`
 
+## /api/ai-resources
+
+- `GET    /api/ai-resources`
+- `GET    /api/ai-resources/content`
+- `PUT    /api/ai-resources/content`
+- `POST   /api/ai-resources`
+- `POST   /api/ai-resources/duplicate`
+- `DELETE /api/ai-resources`
+
 ## /api/cloud
 
 - `GET    /api/cloud/status`
@@ -246,4 +255,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.16.6 -->
+<!-- Generated from src/server/routes/ for PPM v0.17.3 -->
