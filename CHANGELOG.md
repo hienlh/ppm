@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.2] - 2026-07-14
+
+### Changed
+- **License changed from MIT to Elastic License 2.0** — PPM is now source-available under ELv2. You may use, copy, modify, and self-host it, but may not offer it to third parties as a hosted or managed service. Versions published earlier under MIT keep their original terms.
+
+### Fixed
+- **Zombie-port reaper handles Git bash path indirection** — the Windows supervisor now resolves indirect bash paths when reaping stale ports.
+
 ## [0.17.1] - 2026-07-14
 
 ### Added
