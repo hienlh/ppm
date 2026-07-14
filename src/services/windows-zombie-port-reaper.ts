@@ -35,7 +35,10 @@ interface ProcInfo {
  */
 export function isDebrisOrphan(name: string, cmd: string): boolean {
   const n = name.toLowerCase();
-  const c = cmd.toLowerCase();
+  // Collapse `\bin\..\` indirection: Git-for-Windows bash is often invoked as
+  // `Git\bin\..\usr\bin\bash.exe`, which would slip past the `\git\usr\bin\`
+  // rule below while holding an inherited listening-socket handle.
+  const c = cmd.toLowerCase().replace(/\\bin\\\.\.\\/g, "\\");
   if (c.includes("cloudflared") || n.includes("cloudflared")) return false;
   // agent-browser daemon + its browsers (exe path or temp user-data-dir)
   if (c.includes("agent-browser")) return true;
@@ -43,6 +46,9 @@ export function isDebrisOrphan(name: string, cmd: string): boolean {
   if (n === "chrome.exe" && c.includes("--headless")) return true;
   // MSYS coreutils leaked by bash tool sessions (tail/cat/sleep …)
   if (c.includes("\\git\\usr\\bin\\")) return true;
+  // Claude Code bash tool sessions source a shell snapshot — catches bash
+  // regardless of which Git path variant spawned it
+  if (c.includes("shell-snapshots")) return true;
   // Claude SDK node/bun children (chat tool subprocesses)
   if ((n === "node.exe" || n === "bun.exe") && c.includes("claude")) return true;
   return false;

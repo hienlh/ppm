@@ -27,6 +27,20 @@ describe("isDebrisOrphan", () => {
     expect(isDebrisOrphan("tail.exe", '"C:\\Program Files\\Git\\usr\\bin\\tail.exe" -2')).toBe(true);
   });
 
+  test("matches bash spawned via Git\\bin\\..\\usr\\bin indirection", () => {
+    expect(isDebrisOrphan(
+      "bash.exe",
+      '"C:\\Program Files\\Git\\bin\\..\\usr\\bin\\bash.exe" -c "some command"',
+    )).toBe(true);
+  });
+
+  test("matches claude bash tool session via shell-snapshots signature", () => {
+    expect(isDebrisOrphan(
+      "bash.exe",
+      'bash.exe -c "source /c/Users/PC/.claude/shell-snapshots/snapshot-bash-1783973181352-6ucrg8.sh 2>/dev/null || true && export CK_SESSION_ID=x"',
+    )).toBe(true);
+  });
+
   test("matches claude SDK node child", () => {
     expect(isDebrisOrphan(
       "node.exe",
