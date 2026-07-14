@@ -177,8 +177,8 @@ Server runs in foreground. Press `Ctrl+C` to stop.
 # Start as background daemon (default)
 ppm start
 
-# Start with public URL via Cloudflare Quick Tunnel (v2+)
-ppm start --share
+# Tunnel and public URL are enabled automatically on start
+ppm start
 
 # Start in foreground (debugging, shows logs)
 ppm start --foreground
@@ -207,17 +207,17 @@ ppm stop
 
 **Backward Compatibility:** If `~/.ppm/status.json` doesn't exist, `ppm stop` falls back to reading `~/.ppm/ppm.pid`.
 
-### Public URL Sharing via Cloudflare Tunnel (v2+)
+### Public URL Sharing via Cloudflare Tunnel
 
-**Feature:** `ppm start --share` creates a temporary public URL for your local PPM instance via Cloudflare Quick Tunnel.
+**Feature:** `ppm start` automatically enables a public URL via Cloudflare Quick Tunnel.
 
 **How It Works:**
-1. `ppm start --share` (or `-s`) spawns a background daemon
-2. Parent process downloads cloudflared binary to `~/.ppm/bin/` if missing (shows download progress)
-3. Daemon spawns cloudflared tunnel process
+1. `ppm start` spawns a background daemon
+2. Daemon downloads cloudflared binary to `~/.ppm/bin/` if missing (shows download progress)
+3. Tunnel spawns as a child process
 4. Tunnel URL extracted from stderr (e.g., `https://abc-123.trycloudflare.com`)
 5. URL saved to `~/.ppm/status.json` for easy access
-6. Parent displays: "Share: https://abc-123.trycloudflare.com"
+6. Parent displays public URL in terminal output
 
 **Requirements:**
 - Internet connectivity (tunnel uses Cloudflare's infrastructure)
@@ -227,20 +227,20 @@ ppm stop
 If `auth.enabled` is false, PPM displays warning:
 ```
 ⚠ Warning: auth is disabled — your IDE is publicly accessible!
-  Enable auth: run 'ppm config set auth.enabled true' or restart without --share.
+  Enable auth: run 'ppm config set auth.enabled true' before using tunnel.
 ```
 
-Recommended: Always enable auth before using `--share`.
+Recommended: Always enable auth before sharing your URL.
 
 **Example:**
 ```bash
-# Share with auth enabled
-ppm start --share          # Safe: public URL, but auth required
+# Start with auto-enabled tunnel and auth
+ppm start                  # Safe: public URL + auth required
 
-# Share without auth (not recommended)
-ppm start --share          # Warning: anyone can access your IDE
+# Start without auth (not recommended)
+ppm start                  # Warning: anyone can access your IDE (no password)
 
-# Disable sharing
+# Stop the server (tunnel also stopped)
 ppm stop                   # Tunnel process stopped automatically
 ```
 

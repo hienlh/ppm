@@ -67,7 +67,7 @@ After setup, open the URL shown in terminal and enter your access password.
 - **Git** — Status, diff, commit, push/pull, branching, merge, rebase, commit graph
 - **Database** — SQLite + PostgreSQL viewer with query editor, data grid, cell editing
 - **Notifications** — Web Push + Telegram bot integration
-- **Remote Access** — Cloudflare tunnel for public URL sharing (`--share` flag)
+- **Remote Access** — Cloudflare tunnel for public URL sharing (always enabled)
 - **Command Palette** — Fuzzy search for commands, files, tables (Shift+Shift or F1)
 - **PWA** — Installable as a progressive web app
 - **Mobile-First** — Responsive UI with bottom sheets and touch optimization
@@ -76,9 +76,8 @@ After setup, open the URL shown in terminal and enter your access password.
 
 ```bash
 # Server
-ppm start                  # Start (background daemon, default port 3210)
+ppm start                  # Start (background daemon, port 3210, tunnel auto-enabled)
 ppm start -f               # Foreground mode (for debugging)
-ppm start --share          # Start + Cloudflare tunnel for public URL
 ppm start -p 4000          # Custom port
 ppm stop                   # Stop daemon
 ppm restart                # Restart
@@ -122,7 +121,7 @@ For scripts, CI environments, or AI agents that cannot interact with prompts:
 bunx @hienlh/ppm init -y
 
 # Step 2: Start with Cloudflare tunnel in foreground
-bunx @hienlh/ppm start -f --share
+bunx @hienlh/ppm start -f
 ```
 
 The `-y` flag skips all prompts and applies these defaults:
@@ -137,8 +136,7 @@ Override any default with flags:
 bunx @hienlh/ppm init -y \
   --port 3210 \
   --password "your-password" \
-  --scan /path/to/projects \
-  --share
+  --scan /path/to/projects
 ```
 
 Once running, the Cloudflare public URL is printed to stdout — parse it to share with users.

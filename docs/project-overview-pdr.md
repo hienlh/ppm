@@ -103,7 +103,7 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 ## CLI Commands (v2+)
 
 ### ppm start
-Start the server in **background daemon mode** (default) or foreground. Supports optional public URL sharing via Cloudflare Quick Tunnel.
+Start the server in **background daemon mode** (default) or foreground. Includes automatic public URL sharing via Cloudflare Quick Tunnel.
 
 **Syntax:**
 ```bash
@@ -114,18 +114,18 @@ ppm start [options]
 - `-p, --port <port>` — Port to listen on (default: from SQLite config)
 - `-f, --foreground` — Run in foreground (blocking, shows logs). Default: background daemon.
 - `-d, --daemon` — Explicit daemon flag (kept for compatibility, no-op since daemon is default)
-- `-s, --share` — Enable public URL sharing via Cloudflare tunnel
+- `-s, --share` — (deprecated) Tunnel is now always enabled
 - `-c, --config <path>` — Path to legacy YAML config to import (migrates to SQLite on load)
 
 **Behavior:**
 - **Background (default):** Process exits immediately. Daemon runs with output to null. Status saved to `~/.ppm/status.json`. Parent polls for status (up to 30s).
 - **Foreground:** Blocks with logs displayed. All WebSocket and tunnel features work normally.
-- **--share flag:** Downloads cloudflared binary to `~/.ppm/bin/` if missing (shows progress). Spawns tunnel in separate child. URL extracted from stderr and saved to status.json.
-- **Auth warning:** If `--share` is used without auth enabled, warns user that IDE is publicly accessible.
+- **Tunnel (always enabled):** Downloads cloudflared binary to `~/.ppm/bin/` if missing (shows progress). Spawns tunnel in separate child. URL extracted from stderr and saved to status.json.
+- **Auth warning:** If tunnel is enabled without auth, warns user that IDE is publicly accessible.
 
 **Example:**
 ```bash
-ppm start --share              # Daemon + tunnel
+ppm start                      # Daemon + tunnel (both automatic)
 ppm start --foreground         # Foreground for debugging
 ppm start -p 3000 -f           # Custom port + foreground
 ```
@@ -154,11 +154,11 @@ ppm stop                       # Stop daemon
 ```
 ┌─────────────────────────────────────┐
 │         CLI (Commander.js)          │  Start/stop daemon, manage projects
-│  ├─ ppm start [--foreground --share]│
+│  ├─ ppm start [--foreground]        │
 │  └─ ppm stop                        │
 ├─────────────────────────────────────┤
 │  Hono Server (Bun.serve + WebSocket)│  REST API, WS for terminal/chat
-│  ├─ Tunnel Service (Cloudflare)     │  Optional public URL
+│  ├─ Tunnel Service (Cloudflare)     │  Always-on public URL sharing
 │  └─ Daemon Mode (background process)│
 ├────────────────────┬────────────────┤
 │  Services Layer    │  Providers      │  Business logic, AI adapters
@@ -190,12 +190,12 @@ ppm stop                       # Stop daemon
 | Version | Status | Focus | Date |
 |---------|--------|-------|------|
 | **v1** | Complete | Initial prototype (single project, basic chat, terminal) | Feb 2025 |
-| **v2** | Complete (v0.5.21) | Multi-project, Monaco Editor, auto-title sessions, daemon mode, --share flag, SQLite migration | Mar 2026 |
+| **v2** | Complete (v0.5.21) | Multi-project, Monaco Editor, auto-title sessions, daemon mode, Cloudflare tunnel, SQLite migration | Mar 2026 |
 | **v3** | Planned | Collaborative editing, plugin architecture | Q2 2026 |
 
 ### v2 Changes (Mar 2026)
 - **Daemon Mode as Default:** `ppm start` runs background daemon by default. `--foreground/-f` flag for debugging.
-- **Public URL Sharing:** `ppm start --share` creates Cloudflare Quick Tunnel public URL. Auto-downloads cloudflared binary.
+- **Public URL Sharing:** Cloudflare Quick Tunnel always enabled (public URL auto-generated). Cloudflared binary auto-downloaded on first start.
 - **Monaco Editor:** Migrated from CodeMirror 6 to Monaco Editor with IntelliSense and diff viewer.
 - **Auto-Title Sessions:** Chat sessions auto-generate titles from SDK summary after first message.
 - **SQLite Persistence:** Migrating from YAML to SQLite for config, sessions, usage, push subscriptions.

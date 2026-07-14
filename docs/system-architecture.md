@@ -2015,14 +2015,15 @@ $ ppm start
 $ ppm start --foreground
   → Runs in foreground (debugging, CI/CD)
   → WebSocket and all features fully functional
-  → Tunnel (--share) works in foreground mode
+  → Tunnel always active (public URL works in foreground)
 
-$ ppm start --share
-  → Daemon mode + Cloudflare Quick Tunnel
+$ ppm start
+  → Daemon mode + Cloudflare Quick Tunnel (always enabled)
   → Downloads cloudflared to ~/.ppm/bin/ (if missing, shows progress)
   → Spawns tunnel process, extracts public URL from stderr
   → URL saved to status.json for parent process
   → Auth warning if auth.enabled is false
+  → Note: --share flag is deprecated but accepted for backward compat (does nothing)
 
 $ ppm upgrade
   → CLI command to check and install updates
@@ -2057,7 +2058,7 @@ Supervisor Process (parent)
   │   ├── Auto-restart on crash (exponential backoff, max 10 restarts)
   │   └── If in "stopped" state, serves minimal 503 page instead of restarting
   │
-  ├── Tunnel Child (Cloudflare Quick Tunnel, if --share)
+  ├── Tunnel Child (Cloudflare Quick Tunnel, always enabled)
   │   ├── URL probe every 2min
   │   ├── Auto-reconnect on failure
   │   └── URL persisted to status.json

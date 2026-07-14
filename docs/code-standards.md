@@ -729,9 +729,10 @@ docs/deployment-guide
 When adding new options to CLI commands (e.g., `ppm start`):
 
 **Option Naming:**
-- Use long form: `--foreground`, `--share` (not short-only)
-- Add short form if common: `-f`, `-s` (optional)
+- Use long form: `--foreground` (not short-only)
+- Add short form if common: `-f` (optional)
 - Keep defaults sensible (e.g., daemon mode is default)
+- **Note:** In PPM, `--share` is now deprecated; tunnel is always enabled (see actual implementation in `src/index.ts:27`)
 
 **Implementation Pattern:**
 ```typescript
@@ -739,9 +740,9 @@ program
   .command("start")
   .option("-p, --port <port>", "Port to listen on")
   .option("-f, --foreground", "Run in foreground")
-  .option("-s, --share", "Enable public URL via tunnel")
   .action(async (options) => {
-    // options.port, options.foreground, options.share as booleans
+    // options.port, options.foreground as booleans
+    // (tunnel is enabled by default in modern PPM)
   });
 ```
 
@@ -750,7 +751,6 @@ program
 export async function startServer(options: {
   port?: string;
   foreground?: boolean;
-  share?: boolean;
   config?: string;
 }) {
   const isDaemon = !options.foreground; // Explicit: daemon is default
@@ -764,9 +764,8 @@ export async function startServer(options: {
     const server = Bun.serve(/* ... */);
   }
 
-  if (options.share) {
-    // Start tunnel (works in both daemon + foreground)
-  }
+  // Tunnel is always started (no conditional needed)
+  // Cloudflared binary auto-downloaded on first start
 }
 ```
 
@@ -788,10 +787,10 @@ Daemon process communicates back via JSON file at `~/.ppm/status.json`:
 Services that require external dependencies (e.g., cloudflared) should be lazy-imported:
 
 ```typescript
-if (options.share) {
-  // Only download cloudflared if --share was used
+// Example: lazy-import for optional features
+{
   const { ensureCloudflared } = await import("../services/cloudflared.service.ts");
-  await ensureCloudflared();
+  await ensureCloudflared(); // Always runs in modern PPM (tunnel always enabled)
 }
 ```
 

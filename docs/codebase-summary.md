@@ -289,7 +289,7 @@ src/
 ### CLI Layer (src/cli/)
 - **Responsibility:** Command-line interface for managing PPM
 - **Key Functions:**
-  - `start` — Start Hono server (background by default, --foreground/-f for foreground, --share/-s for tunnel)
+  - `start` — Start Hono server (background by default, tunnel always enabled; --foreground/-f for foreground)
   - `stop` — Stop daemon (reads status.json first, falls back to ppm.pid)
   - `open` — Launch browser to active server
   - `init` — Scan filesystem for git repos, create ppm.yaml
