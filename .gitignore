@@ -15,3 +15,4 @@ repomix-output.xml
 test-claude-oauth*.mjs
 test-verify-oat.mjs
 plans/
+marketing/
