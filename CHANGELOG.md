@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.4] - 2026-07-15
+
+### Added
+- **Agents in the slash picker** — typing `/` now lists your subagents (with a Bot icon) next to skills and commands, reversing the earlier decision to hide them. Selecting an agent adds a removable chip to the composer instead of raw text; when you send, the message is composed as "Use the *agent* agent to …" so the model delegates through the Task tool, and your message bubble shows the agent back as a chip.
+
+### Fixed
+- **Slash picker no longer overflows horizontally** — long agent descriptions and command names are now clamped/wrapped so the dropdown stays within the composer width.
+
 ## [0.17.3] - 2026-07-15
 
 ### Changed
