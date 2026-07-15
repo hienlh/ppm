@@ -51,6 +51,11 @@ let tunnelUrl: string | null = null;
 let tunnelPort: number | null = null; // origin port the live tunnel targets
 let adoptedTunnelPid: number | null = null; // PID of tunnel kept alive across upgrade
 let shuttingDown = false;
+// Monotonic token for the authoritative tunnel loop. Every EXTERNAL (re)start
+// bumps it; a loop whose captured generation is stale must exit instead of
+// respawning, so restarts never leave two concurrent spawnTunnel loops racing
+// (the old leak that spawned dozens of orphaned cloudflared processes).
+let tunnelGeneration = 0;
 
 // Module-level refs for softStop (needs access to respawn args)
 let _serverArgs: string[] = [];
@@ -360,7 +365,7 @@ async function syncUrlToCloud(url: string) {
 
 // HTTP heartbeat removed — WS is the sole heartbeat mechanism (Phase 4)
 
-export async function spawnTunnel(port: number): Promise<void> {
+export async function spawnTunnel(port: number, generation: number = ++tunnelGeneration): Promise<void> {
   tunnelPort = port; // remember origin port so resume/port-move can re-point
   let bin: string;
   try {
@@ -414,9 +419,17 @@ export async function spawnTunnel(port: number): Promise<void> {
       const delay = backoffDelay(tunnelRestarts) + Math.floor(Math.random() * 1000);
       log("WARN", `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
       await Bun.sleep(delay);
+      if (generation !== tunnelGeneration) return; // superseded during backoff
       // Re-read the live server port: spawnServer may have moved it since this
       // attempt started, and a retry at the stale port would split-brain the tunnel.
-      return spawnTunnel(_opts.port);
+      return spawnTunnel(_opts.port, generation);
+    }
+
+    // A newer authoritative (re)start superseded us while we extracted the URL —
+    // don't register as the live tunnel; kill our now-orphan child and bail.
+    if (generation !== tunnelGeneration) {
+      try { if (pid) process.kill(pid, "SIGKILL"); } catch {}
+      return;
     }
 
     // The detached tunnel is independent of this supervisor, so there is no
@@ -472,7 +485,16 @@ export async function spawnTunnel(port: number): Promise<void> {
     const delay = backoffDelay(tunnelRestarts) + Math.floor(Math.random() * 1000);
     log("WARN", `Tunnel failed, retry in ${delay}ms (#${tunnelRestarts})`);
     await Bun.sleep(delay);
-    return spawnTunnel(_opts.port); // live port — may have moved since this attempt
+    if (generation !== tunnelGeneration) return; // superseded during backoff
+    return spawnTunnel(_opts.port, generation); // live port — may have moved since this attempt
+  }
+
+  // A newer authoritative (re)start superseded us while we extracted the URL —
+  // kill our child so it can't linger as an orphan, and bail.
+  if (generation !== tunnelGeneration) {
+    try { tunnelChild.kill(); } catch {}
+    tunnelChild = null;
+    return;
   }
 
   updateStatus({ shareUrl: tunnelUrl, tunnelPid: tunnelChild.pid, tunnelPort: port });
@@ -488,6 +510,14 @@ export async function spawnTunnel(port: number): Promise<void> {
 
   if (shuttingDown) return;
 
+  // A newer authoritative (re)start (restartTunnel / probe regen) superseded us
+  // while our child was alive — do NOT respawn, or two concurrent loops would
+  // run and leak orphaned cloudflared processes.
+  if (generation !== tunnelGeneration) {
+    log("INFO", `Tunnel loop gen ${generation} superseded by gen ${tunnelGeneration}, exiting without respawn`);
+    return;
+  }
+
   // Crash — apply backoff
   const now = Date.now();
   if (now - lastTunnelCrash > STABLE_WINDOW_MS) tunnelRestarts = 0;
@@ -500,9 +530,10 @@ export async function spawnTunnel(port: number): Promise<void> {
   log("WARN", `Tunnel process exited (code=${exitCode}, signal=${tunnelChild === null ? "killed" : "self"}, url=${deadUrl}), restart in ${delay}ms (#${tunnelRestarts})`);
   await Bun.sleep(delay);
 
+  if (generation !== tunnelGeneration) return; // superseded during backoff
   // Respawn at the server's live port, not this spawn's original target —
   // the server may have moved (zombie-port fallback) while the tunnel was up.
-  if (!shuttingDown) return spawnTunnel(_opts.port);
+  if (!shuttingDown) return spawnTunnel(_opts.port, generation);
 }
 
 // ─── Health checks ─────────────────────────────────────────────────────
@@ -646,6 +677,35 @@ function killStaleTunnel() {
     log("INFO", `Killed stale tunnel (PID: ${pid})`);
   } catch {}
   updateStatus({ tunnelPid: null, shareUrl: null });
+}
+
+/** Reap orphaned cloudflared processes left by crashed supervisors or stale
+ *  spawn loops. Matches PPM's own cloudflared bin path and SIGTERMs every match
+ *  except `keepPid`. POSIX only — on win32 the tunnel is tied to the job object
+ *  and torn down with the supervisor. status.json tracks only the newest PID,
+ *  so untracked orphans accumulate and saturate the network, false-triggering
+ *  zombie regeneration; this sweeps them on startup. */
+async function reapOrphanedTunnels(keepPid: number | null): Promise<void> {
+  if (process.platform === "win32") return;
+  try {
+    const { getCloudflaredPath } = await import("./cloudflared.service.ts");
+    const bin = getCloudflaredPath();
+    const res = Bun.spawnSync(["pgrep", "-f", `${bin} tunnel --url`]);
+    // pgrep exits 1 when nothing matches — not an error.
+    const pids = new TextDecoder().decode(res.stdout)
+      .split("\n")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((p) => Number.isInteger(p) && p !== keepPid && p !== process.pid);
+    let killed = 0;
+    for (const pid of pids) {
+      try { process.kill(pid, "SIGTERM"); killed++; } catch {}
+    }
+    if (killed > 0) {
+      log("INFO", `Reaped ${killed} orphaned cloudflared process(es) (kept ${keepPid ?? "none"})`);
+    }
+  } catch (e) {
+    log("WARN", `reapOrphanedTunnels failed: ${e}`);
+  }
 }
 
 /** Spawn new supervisor from updated code, wait for it to be healthy, then exit */
@@ -1363,6 +1423,9 @@ export async function runSupervisor(opts: {
       log("WARN", "Tunnel adoption failed/skipped — spawning FRESH tunnel (public URL will change)");
       killStaleTunnel(); // kill orphaned tunnel before spawning new one
     }
+    // Sweep leftover cloudflared orphans (crashed supervisors / pre-fix stale
+    // loops) so they don't saturate the network and false-trigger regeneration.
+    await reapOrphanedTunnels(tunnelAdopted ? adoptedTunnelPid : null);
   }
 
   // Spawn server + (fresh) tunnel in parallel

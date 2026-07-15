@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.5] - 2026-07-16
+
+### Fixed
+- **Tunnel no longer resets repeatedly / leaks cloudflared processes** — the supervisor's `spawnTunnel` loop could run multiple times concurrently (a restart or zombie-regeneration started a new loop while the old one respawned itself after its child was killed), spawning duplicate `cloudflared` processes that were never reaped. Over time dozens of orphans accumulated, saturating the network and false-triggering zombie regeneration, which rotated the public trycloudflare URL. A monotonic generation token now guarantees only the newest tunnel loop survives, and a startup sweep reaps orphaned `cloudflared` processes (POSIX).
+
 ## [0.17.4] - 2026-07-15
 
 ### Added
