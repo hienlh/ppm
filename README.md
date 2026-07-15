@@ -25,6 +25,11 @@ A mobile-first web IDE with AI chat, terminal, git, database tools, and file exp
 
 ## Quick Start
 
+Two ways to install:
+
+- **Binary** — no dependencies, bundles its own runtime. Best for new users.
+- **Via Bun** — requires the [Bun](https://bun.sh) runtime installed first (`bunx` / `bun add -g` / non-interactive setup all need it).
+
 ### Binary (no dependencies)
 
 **macOS / Linux:**
@@ -115,6 +120,8 @@ ppm report                 # File bug report on GitHub
 ## Non-Interactive / AI Agent Setup
 
 For scripts, CI environments, or AI agents that cannot interact with prompts:
+
+> **Prerequisite:** This method uses `bunx`, so [Bun](https://bun.sh) must be installed first (`curl -fsSL https://bun.sh/install | bash`). If you can't install Bun, use the dependency-free [Binary](#binary-no-dependencies) install instead.
 
 ```bash
 # Step 1: Init without any prompts (uses defaults, auto-generates password)
