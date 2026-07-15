@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
-import { Sparkles, Terminal, Zap, RefreshCw, Clock } from "lucide-react";
+import { Sparkles, Terminal, Zap, Bot, RefreshCw, Clock } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { searchFuzzy } from "../../../shared/fuzzy-search";
 
 export interface SlashItem {
-  type: "skill" | "command" | "builtin";
+  type: "skill" | "command" | "builtin" | "agent";
   name: string;
   description: string;
   argumentHint?: string;
   scope?: "project" | "user" | "bundled";
   category?: string;
   aliases?: string[];
+  /** Agent-only: model the subagent runs on */
+  model?: string;
 }
 
 interface SlashCommandPickerProps {
@@ -131,7 +133,7 @@ export function SlashCommandPicker({
   if (!visible || filtered.length === 0) return null;
 
   return (
-    <div className="max-h-52 overflow-y-auto border-b border-border bg-surface">
+    <div className="max-h-52 overflow-y-auto overflow-x-hidden border-b border-border bg-surface">
       <div ref={listRef} className="py-1">
         {filtered.map((item, i) => {
           // Show "Recent" separator before first item, "All" before first non-recent
@@ -178,22 +180,24 @@ export function SlashCommandPicker({
                     <Zap className="size-4 text-emerald-500" />
                   ) : item.type === "skill" ? (
                     <Sparkles className="size-4 text-warning" />
+                  ) : item.type === "agent" ? (
+                    <Bot className="size-4 text-sky-500" />
                   ) : (
                     <Terminal className="size-4 text-primary" />
                   )}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline gap-2">
-                    <span className="font-medium text-sm">/{item.name}</span>
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span className="font-medium text-sm truncate">/{item.name}</span>
                     {item.argumentHint && (
-                      <span className="text-xs text-text-subtle">{item.argumentHint}</span>
+                      <span className="text-xs text-text-subtle truncate">{item.argumentHint}</span>
                     )}
-                    <span className="text-xs text-text-subtle capitalize ml-auto">
+                    <span className="text-xs text-text-subtle capitalize ml-auto shrink-0 whitespace-nowrap">
                       {item.scope === "bundled" ? "PPM" : item.scope === "user" ? "global" : item.type}
                     </span>
                   </div>
                   {item.description && (
-                    <p className="text-xs text-text-subtle mt-0.5 line-clamp-2">
+                    <p className="text-xs text-text-subtle mt-0.5 line-clamp-2 break-words">
                       {item.description}
                     </p>
                   )}

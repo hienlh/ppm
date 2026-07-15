@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from "react";
-import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock } from "lucide-react";
+import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "lucide-react";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
@@ -103,6 +103,9 @@ export const MessageInput = memo(function MessageInput({
   const valueRef = useRef(initialValue ?? "");
   const [hasText, setHasText] = useState(() => (initialValue ?? "").trim().length > 0);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  // Selected subagent — rendered as a removable chip, prepended as natural
+  // language on send so the model delegates via the Task tool.
+  const [agentTag, setAgentTag] = useState<string | null>(null);
   const [modeSelectorOpen, setModeSelectorOpen] = useState(false);
   const [pendingSend, setPendingSend] = useState(false);
   const [priority, setPriority] = useState<MessagePriority>('next');
@@ -284,9 +287,25 @@ export const MessageInput = memo(function MessageInput({
     const cursorPos = el.selectionStart;
     const textBefore = text.slice(0, cursorPos);
     const textAfter = text.slice(cursorPos);
-    // Find the /query pattern before cursor and replace it
+    // Strip the /query trigger before the cursor, preserving leading whitespace.
+    const stripTrigger = (match: string) => (match.startsWith("/") ? "" : match[0]!);
+
+    // Agents render as a removable chip (not inline text) so the composed
+    // "Use the X agent to …" prompt is only assembled at send time.
+    if (slashSelected.type === "agent") {
+      const stripped = textBefore.replace(/(?:^|\s)\/\S*$/, stripTrigger);
+      setAgentTag(slashSelected.name);
+      writeTextareas(stripped + textAfter);
+      onSlashStateChange?.(false, "");
+      slashPickerOpenRef.current = false;
+      el.focus();
+      setTimeout(() => { el.selectionStart = el.selectionEnd = stripped.length; }, 0);
+      return;
+    }
+
+    // Find the /query pattern before cursor and replace it with the command name
     const replaced = textBefore.replace(/(?:^|\s)\/\S*$/, (match) => {
-      const prefix = match.startsWith("/") ? "" : match[0]; // preserve whitespace
+      const prefix = stripTrigger(match);
       return `${prefix}/${slashSelected.name} `;
     });
     writeTextareas(replaced + textAfter);
@@ -425,30 +444,35 @@ export const MessageInput = memo(function MessageInput({
   const executeSend = useCallback(() => {
     const trimmed = valueRef.current.trim();
     const readyAttachments = attachments.filter((a) => a.status === "ready");
-    if (!trimmed && readyAttachments.length === 0) {
+    if (!trimmed && readyAttachments.length === 0 && !agentTag) {
       setPendingSend(false);
       return;
     }
+
+    // Prepend the agent-delegation prompt; UserBubble re-parses this prefix back
+    // into a chip for display.
+    const content = agentTag ? `Use the ${agentTag} agent to ${trimmed}`.trimEnd() : trimmed;
 
     onSlashStateChange?.(false, "");
     slashPickerOpenRef.current = false;
     onFileStateChange?.(false, "");
     filePickerOpenRef.current = false;
     if (voice.isListening) voice.stop();
-    onSend(trimmed, readyAttachments, isStreaming ? priority : undefined);
+    onSend(content, readyAttachments, isStreaming ? priority : undefined);
     writeTextareas("");
     // Revoke preview URLs
     for (const att of attachments) {
       if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
     }
     setAttachments([]);
+    setAgentTag(null);
     setPendingSend(false);
     setPriority('next');
     if (needsJsResize.current) {
       if (textareaRef.current) textareaRef.current.style.height = "auto";
       if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
     }
-  }, [attachments, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas]);
+  }, [attachments, agentTag, onSend, onSlashStateChange, onFileStateChange, isStreaming, priority, writeTextareas]);
 
   const handleSend = useCallback(() => {
     if (disabled) return;
@@ -622,7 +646,7 @@ export const MessageInput = memo(function MessageInput({
     [processFiles],
   );
 
-  const hasContent = hasText || attachments.some((a) => a.status !== "error");
+  const hasContent = hasText || attachments.some((a) => a.status !== "error") || !!agentTag;
   const showCancel = isStreaming && !hasContent;
 
   return (
@@ -637,6 +661,23 @@ export const MessageInput = memo(function MessageInput({
           getVisibleTextarea()?.focus();
         }}
       >
+        {/* Selected agent chip — composed into a delegation prompt on send */}
+        {agentTag && (
+          <div className="px-2 md:px-4 pt-2">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-xs font-medium text-sky-600 dark:text-sky-400">
+              <Bot className="size-3.5 shrink-0" />
+              {agentTag}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setAgentTag(null); getVisibleTextarea()?.focus(); }}
+                className="shrink-0 rounded-sm p-0.5 hover:bg-sky-500/20 transition-colors"
+                aria-label={`Remove ${agentTag} agent`}
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          </div>
+        )}
         {/* Attachment chips (inside container, aligned with input) */}
         <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
         {/* Mobile: mode chip + provider selector row */}

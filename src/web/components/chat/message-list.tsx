@@ -615,6 +615,13 @@ function parseCommandTags(text: string): { command: SlashCommand | null; cleanTe
   return { command: { name, args }, cleanText };
 }
 
+/** Detect the leading "Use the <agent> agent to" delegation prompt, split off as a chip */
+function parseAgentTag(text: string): { agent: string | null; cleanText: string } {
+  const m = text.match(/^Use the (\S+) agent to\s?/);
+  if (!m) return { agent: null, cleanText: text };
+  return { agent: m[1]!, cleanText: text.slice(m[0].length) };
+}
+
 /** Extract the IDE-injected <ide_opened_file> context tag — returns the open file path + cleaned text */
 function parseIdeOpenedFile(text: string): { idePath: string | null; cleanText: string } {
   const tagRe = /<ide_opened_file>([\s\S]*?)<\/ide_opened_file>/g;
@@ -693,7 +700,7 @@ function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
 }) {
-  const { files, text, tags, command, terminalBlocks, idePath } = useMemo(() => {
+  const { files, text, tags, command, terminalBlocks, idePath, agent } = useMemo(() => {
     const { idePath, cleanText: afterIde } = parseIdeOpenedFile(content);
     const { blocks, remainingText: afterBlocks } = extractTerminalBlocks(afterIde);
     const parsed = parseUserAttachments(afterBlocks);
@@ -702,10 +709,11 @@ function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit
       .replace(/<local-command-(?:stdout|stderr)>([\s\S]*?)<\/local-command-(?:stdout|stderr)>/g, "$1");
     const { cleanText: noSysTags, tags } = extractSystemTags(withoutCmdOutput);
     const { command, cleanText } = parseCommandTags(noSysTags);
+    const { agent, cleanText: afterAgent } = parseAgentTag(cleanText);
     const bodyText = command?.args
-      ? (cleanText ? `${command.args}\n\n${cleanText}` : command.args)
-      : cleanText;
-    return { files: parsed.files, text: bodyText, tags, command, terminalBlocks: blocks, idePath };
+      ? (afterAgent ? `${command.args}\n\n${afterAgent}` : command.args)
+      : afterAgent;
+    return { files: parsed.files, text: bodyText, tags, command, terminalBlocks: blocks, idePath, agent };
   }, [content]);
 
   const isSystemContext = tags.some((t) => SYSTEM_TAG_NAMES.has(t.name));
@@ -740,6 +748,16 @@ function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit
     )}>
       {/* System tags as badges */}
       {tags.length > 0 && <SystemTagBadges tags={tags} />}
+
+      {/* Agent delegation chip — parsed back from the "Use the X agent to" prefix */}
+      {agent && (
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/15 border border-sky-500/25 px-2 py-0.5 text-xs font-medium text-sky-600 dark:text-sky-400">
+            <Bot className="size-3 shrink-0" />
+            {agent}
+          </span>
+        </div>
+      )}
 
       {/* Slash command chip — args rendered in body for expand/collapse support */}
       {command && (

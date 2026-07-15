@@ -43,10 +43,7 @@ export function listSlashItems(projectPath: string): SlashItem[] {
   if (cached) return cached;
 
   const { active } = listSlashItemsDetailed(projectPath);
-  // Agents are not slash-invokable — exclude them from the slash picker.
-  const items = active
-    .filter((item) => item.type !== "agent")
-    .map(({ source, rootPath, filePath, ...item }) => item);
+  const items = active.map(({ source, rootPath, filePath, ...item }) => item);
   setCache(projectPath, items);
   return items;
 }
