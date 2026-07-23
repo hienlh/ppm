@@ -13,10 +13,16 @@ interface PanelLayoutProps {
   projectName: string;
 }
 
+// Stable empty-grid reference. Returning a fresh `[[]]` from the store selector
+// makes useSyncExternalStore see a new snapshot every read → infinite re-render
+// (React #185) while a not-yet-loaded project's layout is mounted during the
+// async switchProject/hydrate gap.
+const EMPTY_GRID: string[][] = [[]];
+
 export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayoutProps) {
   const isDesktop = useMediaQuery("(min-width: 768px)");
   const grid = usePanelStore((s) =>
-    s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? [[]]),
+    s.currentProject === projectName ? s.grid : (s.projectGrids[projectName] ?? EMPTY_GRID),
   );
   const focusedPanelId = usePanelStore((s) => s.focusedPanelId);
   const dock = usePanelStore((s) => s.dock);
@@ -31,9 +37,13 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
   // register the same slot and the terminal could reparent into a hidden layout.
   const isActiveProject = currentProject === projectName;
 
-  // Recover from empty grid (corrupt persisted state or edge-case bug)
+  // Recover from empty grid (corrupt persisted state or edge-case bug).
+  // Only the active project may touch the shared grid/focusedPanelId — a hidden
+  // keep-alive layout for a not-yet-loaded project has an empty grid too, and
+  // recovering it here would clobber the current project's grid before its own
+  // switchProject completes.
   useEffect(() => {
-    if (panelCount === 0) {
+    if (isActiveProject && panelCount === 0) {
       const p = createPanel();
       usePanelStore.setState((s) => ({
         panels: { ...s.panels, [p.id]: p },
@@ -41,7 +51,7 @@ export const PanelLayout = memo(function PanelLayout({ projectName }: PanelLayou
         focusedPanelId: p.id,
       }));
     }
-  }, [panelCount]);
+  }, [isActiveProject, panelCount]);
 
   // Persist dock height when user drags the resize handle.
   // onResize fires with the dock Panel's new size as a percentage.
