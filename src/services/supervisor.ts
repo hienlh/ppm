@@ -56,6 +56,13 @@ let shuttingDown = false;
 // respawning, so restarts never leave two concurrent spawnTunnel loops racing
 // (the old leak that spawned dozens of orphaned cloudflared processes).
 let tunnelGeneration = 0;
+// Throttle tunnel regeneration. A quick-tunnel URL rotation spawns a NEW
+// cloudflared → trycloudflare rate-limits quick tunnels per source IP, so a
+// sleep/wake storm that regenerates hundreds of times gets the whole IP
+// throttled and NO new tunnel can register ("control stream encountered a
+// failure while serving"). Never rotate more than once per this window.
+let lastTunnelRegenAt = 0;
+const TUNNEL_REGEN_MIN_INTERVAL_MS = 300_000; // 5min
 
 // Module-level refs for softStop (needs access to respawn args)
 let _serverArgs: string[] = [];
@@ -167,6 +174,7 @@ async function ensureBindablePort(preferred: number, host: string): Promise<numb
  * is dead. Fire-and-forget: spawnTunnel's own loop owns liveness afterwards.
  */
 function restartTunnel(port: number) {
+  lastTunnelRegenAt = Date.now();
   if (tunnelChild) { try { tunnelChild.kill(); } catch {} tunnelChild = null; }
   if (adoptedTunnelPid) { try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {} adoptedTunnelPid = null; }
   tunnelUrl = null;
@@ -457,8 +465,16 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
       ]
     : [bin, "tunnel", "--url", `http://127.0.0.1:${port}`];
 
+  // Own this cloudflared via a LOCAL ref for the whole loop. `tunnelChild` is a
+  // mutable global that a concurrent restartTunnel() nulls/reassigns; awaiting
+  // `tunnelChild.exited` on it would throw `TypeError: null is not an object`
+  // mid-flight, killing this loop WITHOUT reaping the child we spawned →
+  // orphaned cloudflared (PID 1). The local ref keeps our lifecycle
+  // self-contained; we only touch the global when it still points at us.
+  let child: Subprocess;
   try {
-    tunnelChild = Bun.spawn(tunnelCmd, { stderr: tunnelLogFd, stdout: "ignore", stdin: "ignore" });
+    child = Bun.spawn(tunnelCmd, { stderr: tunnelLogFd, stdout: "ignore", stdin: "ignore" });
+    tunnelChild = child; // publish so restartTunnel/killStaleTunnel can reach the live child
   } finally {
     // Close our handle; cloudflared keeps its own via dup2
     try { closeSync(tunnelLogFd); } catch {}
@@ -466,12 +482,12 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   if (underSystemd) log("INFO", "Tunnel spawned inside transient systemd-run scope (escapes ppm.service cgroup)");
 
   try {
-    tunnelUrl = await extractUrlFromLogFile(() => tunnelChild?.exitCode ?? null);
+    tunnelUrl = await extractUrlFromLogFile(() => child.exitCode);
   } catch (err) {
     log("ERROR", `Tunnel URL extraction failed: ${err}`);
     tunnelUrl = null;
-    try { tunnelChild.kill(); } catch {}
-    tunnelChild = null;
+    try { child.kill(); } catch {}
+    if (tunnelChild === child) tunnelChild = null;
 
     if (shuttingDown) return;
 
@@ -492,19 +508,19 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   // A newer authoritative (re)start superseded us while we extracted the URL —
   // kill our child so it can't linger as an orphan, and bail.
   if (generation !== tunnelGeneration) {
-    try { tunnelChild.kill(); } catch {}
-    tunnelChild = null;
+    try { child.kill(); } catch {}
+    if (tunnelChild === child) tunnelChild = null;
     return;
   }
 
-  updateStatus({ shareUrl: tunnelUrl, tunnelPid: tunnelChild.pid, tunnelPort: port });
-  log("INFO", `Tunnel ready: ${tunnelUrl} (PID: ${tunnelChild.pid})`);
+  updateStatus({ shareUrl: tunnelUrl, tunnelPid: child.pid, tunnelPort: port });
+  log("INFO", `Tunnel ready: ${tunnelUrl} (PID: ${child.pid})`);
 
   // One-time sync of tunnel URL to cloud (WS handles periodic heartbeat)
   await syncUrlToCloud(tunnelUrl);
 
-  const exitCode = await tunnelChild.exited;
-  tunnelChild = null;
+  const exitCode = await child.exited;
+  if (tunnelChild === child) tunnelChild = null;
   const deadUrl = tunnelUrl;
   tunnelUrl = null;
 
@@ -527,7 +543,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   // Never give up: cap the counter so backoff plateaus at BACKOFF_MAX_MS (no 10-min dark window).
   if (tunnelRestarts > MAX_RESTARTS) tunnelRestarts = MAX_RESTARTS;
   const delay = backoffDelay(tunnelRestarts) + Math.floor(Math.random() * 1000);
-  log("WARN", `Tunnel process exited (code=${exitCode}, signal=${tunnelChild === null ? "killed" : "self"}, url=${deadUrl}), restart in ${delay}ms (#${tunnelRestarts})`);
+  log("WARN", `Tunnel process exited (code=${exitCode}, url=${deadUrl}), restart in ${delay}ms (#${tunnelRestarts})`);
   await Bun.sleep(delay);
 
   if (generation !== tunnelGeneration) return; // superseded during backoff
@@ -1353,10 +1369,19 @@ export async function runSupervisor(opts: {
     tunnelFailCount = 0;
     // If paused solely from the post-resume failure cascade, resume the server.
     if (getState() === "paused") triggerResume();
-    // The old quick-tunnel session is almost certainly dead — force a fresh one
-    // at the server's live port (the URL rotates anyway, so follow the server).
+    // The old quick-tunnel session MAY be dead after resume, but cloudflared
+    // self-heals transient QUIC drops on its own. Only force a fresh tunnel if
+    // we haven't just rotated — otherwise a laptop that sleeps/wakes constantly
+    // regenerates hundreds of quick tunnels/day, tripping trycloudflare's
+    // per-IP rate limit so NO tunnel can register. The tunnel probe still
+    // regenerates a genuinely-zombied URL (edge dropped) within ~5min.
     if (getState() === "running" && (tunnelUrl || tunnelChild || adoptedTunnelPid)) {
-      restartTunnel(_opts.port);
+      const sinceRegen = now - lastTunnelRegenAt;
+      if (sinceRegen >= TUNNEL_REGEN_MIN_INTERVAL_MS) {
+        restartTunnel(_opts.port);
+      } else {
+        log("INFO", `Resume: tunnel regen skipped (last regen ${Math.round(sinceRegen / 1000)}s ago); probe will heal if truly dead`);
+      }
     }
   }, RESUME_TICK_MS);
 
