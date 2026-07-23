@@ -255,4 +255,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.17.6 -->
+<!-- Generated from src/server/routes/ for PPM v0.17.7 -->
