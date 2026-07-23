@@ -402,6 +402,70 @@ du -sh dist/web/assets/
 
 ---
 
+## Releasing (Maintainers)
+
+Releases publish to **npm** (`@hienlh/ppm`) and attach **platform binaries** to a matching **GitHub Release**. GitHub Actions release is disabled (billing), so binaries are built and uploaded **locally** by `scripts/release.sh`. The npm version and the GitHub binary tag always share the same version, so `bunx @hienlh/ppm` and the `curl … | sh` installers stay in sync.
+
+### Prerequisites (one-time)
+
+- `bun`, `git`, `gh`, `zip`, `tar` on PATH (Git Bash provides these on Windows).
+- `gh auth login` (repo write access) and `npm login` (publish access to `@hienlh`).
+
+### Step 1 — commit your changes (manual)
+
+The release script does **not** commit source. Do this yourself first:
+
+```bash
+# 1. Commit your feature/fix work
+git add <files> && git commit -m "fix: …"
+
+# 2. Update CHANGELOG.md — read every commit since the last version bump
+#    and document ALL user-facing changes, not just this session's.
+git log --oneline <last-version-tag>..HEAD
+
+# 3. Bump package.json version (PATCH by default: 0.17.7 → 0.17.8;
+#    minor/major only when explicitly warranted)
+
+# 4. Commit the bump and push — the script refuses to run if local is
+#    ahead of or behind origin/main.
+git add CHANGELOG.md package.json && git commit -m "chore: bump version to X.Y.Z"
+git push origin main
+```
+
+> **Multi-device note:** PPM is released from multiple machines. Another device may have already bumped/published while you worked. Always `git fetch origin` and rebase before bumping so you don't reuse a version. The release script's preflight enforces this (aborts if not on `main`, tree dirty, or out of sync with `origin/main`).
+
+### Step 2 — run the release script
+
+```bash
+bash scripts/release.sh            # version from package.json
+bash scripts/release.sh 0.17.8     # or explicit (must match package.json)
+```
+
+It performs, in order:
+
+1. **Preflight** — on `main`, clean tracked tree, in sync with `origin/main`, package.json version matches.
+2. **Regenerate skill assets + build frontend** (`generate:skill` + `build:web`). If `assets/skills/**` changed, it commits `chore: regenerate skill assets for vX` and pushes.
+3. **npm publish** — idempotent; skipped if that version is already on npm.
+4. **Compile binaries** for all targets.
+5. **Package** each binary with `dist/web` (`.tar.gz` for Unix, `.zip` for Windows). Names match the installers.
+6. **Tag + push** `vX`, then **create/update the GitHub Release** and upload the archives.
+
+Every step is idempotent — safe to re-run if it fails partway (e.g. npm already published but binaries not yet uploaded).
+
+### Binary targets & artifact names
+
+| bun `--target` | Artifact | Installer archive |
+|---|---|---|
+| `bun-darwin-arm64` | `ppm-darwin-arm64` | `ppm-darwin-arm64.tar.gz` |
+| `bun-darwin-x64-baseline` | `ppm-darwin-x64` | `ppm-darwin-x64.tar.gz` |
+| `bun-linux-x64-baseline` | `ppm-linux-x64` | `ppm-linux-x64.tar.gz` |
+| `bun-linux-arm64` | `ppm-linux-arm64` | `ppm-linux-arm64.tar.gz` |
+| `bun-windows-x64-baseline` | `ppm-windows-x64.exe` | `ppm-windows-x64.zip` |
+
+`scripts/install.sh` downloads `ppm-{os}-{arch}.tar.gz`; `scripts/install.ps1` downloads `ppm-windows-x64.zip`. If you change target/artifact names, update both installers.
+
+---
+
 ## First-Time Setup Checklist
 
 ```bash
