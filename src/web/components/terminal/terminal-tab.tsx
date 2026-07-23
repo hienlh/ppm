@@ -163,8 +163,10 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
         <span className="text-text-subtle font-mono">{sessionId}</span>
       </div>
 
-      {/* Terminal container */}
-      <div ref={containerRef} className="flex-1 min-h-0 bg-background p-1" />
+      {/* Terminal container. onClick focuses xterm's hidden textarea — on mobile
+          the soft keyboard only opens when focus() runs inside a recognized tap
+          gesture, which xterm's internal mousedown handling doesn't reliably do. */}
+      <div ref={containerRef} onClick={focusTerminal} className="flex-1 min-h-0 bg-background p-1" />
 
       {/* Mobile toolbar */}
       {isMobile && (

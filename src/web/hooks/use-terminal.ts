@@ -269,12 +269,18 @@ export function useTerminal(
     // so QR codes render seamlessly like a native terminal. The DOM renderer
     // leaves sub-pixel gaps between rows. Fall back to DOM if WebGL is
     // unavailable or its context is lost.
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => webglAddon.dispose());
-      term.loadAddon(webglAddon);
-    } catch {
-      // WebGL unsupported — xterm keeps the DOM renderer.
+    // Skip WebGL on touch devices: iOS Safari throttles the WebGL context in a
+    // small canvas, producing visible per-keystroke input lag. The DOM renderer
+    // types smoothly there; QR seamlessness is a desktop-only nicety.
+    const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    if (!isTouch) {
+      try {
+        const webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => webglAddon.dispose());
+        term.loadAddon(webglAddon);
+      } catch {
+        // WebGL unsupported — xterm keeps the DOM renderer.
+      }
     }
 
     fitAddon.fit();
