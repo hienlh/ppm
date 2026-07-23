@@ -237,6 +237,12 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/tunnel/port`
 - `POST   /api/tunnel/stop`
 
+## /api/tunnels
+
+- `GET    /api/tunnels`
+- `POST   /api/tunnels`
+- `DELETE /api/tunnels/:pid{[0-9]+}`
+
 ## /api/upgrade
 
 - `GET    /api/upgrade`
