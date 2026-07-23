@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.7] - 2026-07-23
+
+### Fixed
+- **First project switch no longer crashes** — switching to a project for the first time could blank the screen with a React "maximum update depth" error, caused by an unstable store snapshot in the panel layout while the project's workspace was still loading. The layout now returns a stable value during that window, and only the active project's layout recovers a genuinely empty grid.
+- **Smoother terminal typing on iOS** — the terminal skips the WebGL renderer on touch devices (it throttled a small canvas and caused per-keystroke lag) and tapping the terminal now reliably opens the on-screen keyboard.
+- **Database filter clearing** — clearing column filters resets the grid back to the base table view, and the reload button re-runs whatever view is showing (custom query, filtered, or base table).
+
+### Added
+- **Close button on mobile dock tabs** — dock tabs can be closed directly from the mobile dock header.
+
 ## [0.17.6] - 2026-07-23
 
 ### Fixed
