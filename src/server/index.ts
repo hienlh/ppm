@@ -140,6 +140,10 @@ app.get("/api/auth/check", (c) => c.json(ok(true)));
 // Port forwarding — starts per-port Cloudflare tunnels
 app.route("/api/preview", portForwardingRoutes);
 
+// Tunnel registry — manage ALL cloudflared processes on the machine
+import { tunnelRegistryRoutes } from "./routes/tunnels.ts";
+app.route("/api/tunnels", tunnelRegistryRoutes);
+
 // Filesystem operations (browse, list, read, write) — consolidated in fs-browse route
 app.route("/api/fs", fsBrowseRoutes);
 

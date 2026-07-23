@@ -27,7 +27,7 @@ export const DOCK_PANEL_ID = "__dock__";
  * Enforced at load-time to prevent a crafted persisted blob from placing
  * arbitrary tab types in the privileged dock slot.
  */
-export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor"]);
+export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor", "tunnels"]);
 
 /** Visible/height state for the dock — stored per-project via projectDock map. */
 export interface DockState {
@@ -156,11 +156,40 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":
       return "settings";
-    case "ports":
-      return "ports";
+    case "tunnels":
+      return "tunnels";
     default:
       return `${type}:${randomId()}`;
   }
+}
+
+/**
+ * Legacy migration: the old grid-only "ports" tab type was renamed to "tunnels"
+ * and relocated to the dock. Strip any persisted "ports" tab from ALL panels
+ * (grid panels + dock) so no stale type reaches deriveTabId/TAB_COMPONENTS,
+ * which would otherwise mint a random id and crash on render. The user re-opens
+ * "Cloudflare Tunnels" from the command palette (dock). Idempotent.
+ */
+function scrubLegacyPortsTabs(panel: Panel): Panel {
+  const LEGACY = "ports";
+  if (!panel.tabs.some((t) => (t.type as string) === LEGACY)) return panel;
+  const removed = new Set(
+    panel.tabs.filter((t) => (t.type as string) === LEGACY).map((t) => t.id),
+  );
+  const tabs = panel.tabs.filter((t) => !removed.has(t.id));
+  const tabHistory = panel.tabHistory.filter((id) => !removed.has(id));
+  const activeTabId =
+    panel.activeTabId && !removed.has(panel.activeTabId)
+      ? panel.activeTabId
+      : (tabHistory[tabHistory.length - 1] ?? tabs[tabs.length - 1]?.id ?? null);
+  return { ...panel, tabs, tabHistory, activeTabId };
+}
+
+export function migratePortsToTunnels(layout: PanelLayout): PanelLayout {
+  const panels: Record<string, Panel> = {};
+  for (const [id, p] of Object.entries(layout.panels)) panels[id] = scrubLegacyPortsTabs(p);
+  const dockPanel = layout.dockPanel ? scrubLegacyPortsTabs(layout.dockPanel) : layout.dockPanel;
+  return { ...layout, panels, dockPanel };
 }
 
 /** Migrate old random tab IDs to deterministic IDs */
@@ -210,13 +239,15 @@ export function loadPanelLayout(projectName: string): PanelLayout | null {
     const raw = localStorage.getItem(storageKey(projectName));
     if (raw) {
       const layout = JSON.parse(raw) as PanelLayout;
-      return migrateDockDefaults(migrateTabIds(layout));
+      // migratePortsToTunnels MUST run before migrateTabIds so no legacy "ports"
+      // tab reaches deriveTabId's default branch (random id → render crash).
+      return migrateDockDefaults(migrateTabIds(migratePortsToTunnels(layout)));
     }
   } catch { /* ignore */ }
 
   // Migrate from old tab-store format
   const migrated = migrateOldTabStore(projectName);
-  return migrated ? migrateDockDefaults(migrated) : null;
+  return migrated ? migrateDockDefaults(migratePortsToTunnels(migrated)) : null;
 }
 
 /**
@@ -347,7 +378,11 @@ export async function hydrateWorkspaceFromServer(projectName: string): Promise<b
   } catch { /* corrupt blob → treat as absent */ }
   if (resolveWorkspaceConflict(local, server) !== server) return false;
   try {
-    localStorage.setItem(key, JSON.stringify(server));
+    // Migrate the server blob BEFORE writing to localStorage — otherwise a
+    // legacy "ports" tab from another device survives the hydrate and crashes
+    // on the next loadPanelLayout render.
+    const migrated = { ...migratePortsToTunnels(server), updatedAt: server.updatedAt };
+    localStorage.setItem(key, JSON.stringify(migrated));
     return true;
   } catch {
     return false;

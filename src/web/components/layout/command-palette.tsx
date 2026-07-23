@@ -19,6 +19,7 @@ import {
   Columns2,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
+import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useKeybindingsStore } from "@/stores/keybindings-store";
@@ -192,7 +193,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "new-file", label: "New File", icon: FilePlus, action: () => { useTabStore.getState().openNewFile(); onClose(); }, keywords: "create untitled blank empty", group: "action", shortcut: formatShortcut(getBinding("new-file")) },
       { id: "new-db-query", label: "New DB Query", icon: Database, action: () => { useTabStore.getState().openNewFile({ language: "sql", title: "SQL Query" }); onClose(); }, keywords: "sql database query scratchpad new", group: "action" },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
-      { id: "ports", label: "Port Forwarding", icon: Globe, action: openNewTab("ports", "Ports"), keywords: "web preview localhost port forward tunnel url", group: "action" },
+      { id: "tunnels", label: "Cloudflare Tunnels", icon: Globe, action: () => { usePanelStore.getState().openInDock({ type: "tunnels", title: "Cloudflare Tunnels", projectId: null, closable: true }); onClose(); }, keywords: "web preview localhost port forward tunnel cloudflare url", group: "action" },
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },

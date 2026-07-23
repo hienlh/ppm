@@ -14,7 +14,7 @@ export interface UrlState {
 
 const VALID_TAB_TYPES: TabType[] = [
   "terminal", "chat", "editor", "database", "sqlite",
-  "postgres", "git-diff", "settings", "ports",
+  "postgres", "git-diff", "settings", "tunnels",
   "extension",
 ];
 
@@ -120,7 +120,7 @@ function buildMetadataFromUrl(
       const [connId, tableName] = (identifier ?? "").split(":");
       return connId ? { connectionId: connId, tableName: tableName ?? "" } : null;
     }
-    case "ports": return null;
+    case "tunnels": return {};
     case "extension": return identifier ? { viewType: identifier, projectName } : null;
     default: return null;
   }
@@ -136,7 +136,7 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
     case "database": return identifier ?? "Database";
     case "sqlite": return identifier?.split("/").pop() ?? "SQLite";
     case "postgres": return identifier ?? "PostgreSQL";
-    case "ports": return "Ports";
+    case "tunnels": return "Cloudflare Tunnels";
     case "extension": {
       if (!identifier) return "Extension";
       // "git-graph" → "Git Graph"

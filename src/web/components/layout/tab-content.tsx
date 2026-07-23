@@ -44,9 +44,9 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.SettingsTab,
     })),
   ),
-  ports: lazy(() =>
-    import("@/components/ports/port-forwarding-tab").then((m) => ({
-      default: m.PortForwardingTab,
+  tunnels: lazy(() =>
+    import("@/components/tunnels/tunnel-manager-tab").then((m) => ({
+      default: m.TunnelManagerTab,
     })),
   ),
   extension: lazy(() =>

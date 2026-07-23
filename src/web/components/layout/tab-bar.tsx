@@ -61,7 +61,7 @@ const TAB_ICONS: Record<TabType, React.ElementType> = {
   postgres: Database,
   "git-diff": FileDiff,
   settings: Settings,
-  ports: Globe,
+  tunnels: Globe,
   extension: Puzzle,
   "extension-webview": Puzzle,
   "conflict-editor": FileDiff,

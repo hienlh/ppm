@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
-import { ensureCloudflared } from "../../services/cloudflared.service.ts";
+import {
+  activeTunnels,
+  spawnTunnelProcess,
+  registerTunnel,
+  MAX_PROBE_FAILURES,
+} from "./tunnel-spawn.ts";
 
 /**
  * Port forwarding API — starts per-port Cloudflare Quick Tunnels so the
@@ -9,76 +14,20 @@ import { ensureCloudflared } from "../../services/cloudflared.service.ts";
  * POST /api/preview/tunnel { port: 3000 } → { url: "https://xxx.trycloudflare.com" }
  * DELETE /api/preview/tunnel/:port → stops tunnel for that port
  * GET /api/preview/tunnels → list active tunnels
+ *
+ * Spawn logic + the shared `activeTunnels` map live in ./tunnel-spawn.ts so the
+ * new /api/tunnels registry routes reuse the same implementation and state.
+ *
+ * DEPRECATED (superseded by /api/tunnels): the HTTP handlers below are no longer
+ * called by the frontend — the dock "Cloudflare Tunnels" panel uses /api/tunnels.
+ * They are retained (behind authMiddleware) for backward compatibility, and this
+ * module also owns the 30s ghost-cleanup timer that keeps `activeTunnels` healthy
+ * for the registry. Both route modules mutate the SAME shared map (no split-brain).
  */
 export const portForwardingRoutes = new Hono();
 
-const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
-
-interface ActiveTunnel {
-  port: number;
-  url: string;
-  process: import("bun").Subprocess;
-  startedAt: number;
-  probeFailures: number;
-}
-
-const MAX_PROBE_FAILURES = 2;
-
-/** Active tunnels keyed by port — exported for testing */
-export const activeTunnels = new Map<number, ActiveTunnel>();
-
-/** Spawn cloudflared tunnel for a port, extract URL from stderr */
-async function spawnTunnelProcess(port: number): Promise<{ process: import("bun").Subprocess; url: string }> {
-  const bin = await ensureCloudflared();
-  const proc = Bun.spawn(
-    [bin, "tunnel", "--url", `http://127.0.0.1:${port}`],
-    { stderr: "pipe", stdout: "ignore", stdin: "ignore" },
-  );
-
-  const reader = proc.stderr.getReader();
-  const decoder = new TextDecoder();
-  const url = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      try { proc.kill(); } catch {}
-      reject(new Error("Tunnel timed out after 30s"));
-    }, 30_000);
-
-    let buffer = "";
-    let found = false;
-    const read = async () => {
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (found) continue;
-          buffer += decoder.decode(value, { stream: true });
-          const match = buffer.match(TUNNEL_URL_REGEX);
-          if (match) {
-            found = true;
-            buffer = "";
-            clearTimeout(timeout);
-            resolve(match[0]);
-          }
-        }
-        if (!found) {
-          clearTimeout(timeout);
-          reject(new Error("cloudflared exited without tunnel URL"));
-        }
-      } catch (e) {
-        if (!found) { clearTimeout(timeout); reject(e); }
-      }
-    };
-    read();
-  });
-
-  return { process: proc, url };
-}
-
-/** Register tunnel in map with auto-cleanup on exit */
-function registerTunnel(port: number, proc: import("bun").Subprocess, url: string) {
-  activeTunnels.set(port, { port, url, process: proc, startedAt: Date.now(), probeFailures: 0 });
-  proc.exited.then(() => activeTunnels.delete(port)).catch(() => activeTunnels.delete(port));
-}
+// Re-export for existing importers (tests, index) that reference the map here.
+export { activeTunnels } from "./tunnel-spawn.ts";
 
 /** Start a tunnel for a localhost port */
 portForwardingRoutes.post("/tunnel", async (c) => {

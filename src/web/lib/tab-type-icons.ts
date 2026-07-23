@@ -20,7 +20,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   postgres: Database,
   "git-diff": FileDiff,
   settings: Settings,
-  ports: Globe,
+  tunnels: Globe,
   extension: Puzzle,
   "extension-webview": Puzzle,
   "conflict-editor": FileDiff,
