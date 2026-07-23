@@ -6,7 +6,7 @@
  * Also exports context-menu-specific sub-components (BottomSheetItem, etc.)
  * used by adaptive-context-menu.tsx.
  */
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { useSwipeToDismiss } from "@/hooks/use-swipe-to-dismiss";
@@ -33,10 +33,34 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
   const { dragY, swipeHandlers, dragStyle, backdropOpacity, isDragging } =
     useSwipeToDismiss(onClose);
 
+  // Follow the visual viewport so the panel rides above the on-screen keyboard.
+  // A `fixed inset-0` container is anchored to the layout viewport, which does
+  // not shrink when the keyboard opens — so `bottom-0` would sit behind it.
+  // Constraining the container to the visual viewport keeps the panel visible.
+  const [vv, setVv] = useState<{ top: number; height: number } | null>(null);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!open || !viewport) return;
+    const update = () => setVv({ top: viewport.offsetTop, height: viewport.height });
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, [open]);
+
   if (!open) return null;
 
+  // When tracking the visual viewport, pin the container to it (top + height,
+  // bottom auto) instead of the full-page inset-0 default.
+  const containerStyle = vv
+    ? { zIndex, top: `${vv.top}px`, height: `${vv.height}px`, bottom: "auto" as const }
+    : { zIndex };
+
   return createPortal(
-    <div className="fixed inset-0" style={{ zIndex }} onClick={onClose}>
+    <div className="fixed inset-0" style={containerStyle} onClick={onClose}>
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/40 animate-in fade-in-0 duration-200"
