@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.6] - 2026-07-23
+
+### Fixed
+- **Tunnel no longer leaks orphaned cloudflared processes on regeneration** — `restartTunnel()` nulls the mutable global `tunnelChild` before spawning a fresh loop, but a concurrent `spawnTunnel` loop still awaited `tunnelChild.exited` on that global. When it was nulled mid-await the loop threw `TypeError: null is not an object (evaluating 'tunnelChild.exited')` and died **without reaping the cloudflared child it spawned** — leaving an orphaned process (PID 1) that retried forever. Over weeks dozens accumulated (observed 62 such crashes in one deployment). `spawnTunnel` now owns its child via a local reference for the whole loop and only touches the global while it still points at that child, so a regeneration can never crash the previous loop or orphan its process.
+- **Tunnel regeneration no longer trips Cloudflare's per-IP rate limit** — the resume-from-sleep detector regenerated the quick tunnel on *every* wall-clock gap >90s. A laptop that sleeps/wakes frequently rotated the tunnel hundreds of times/day (observed ~325 in 3 weeks), each spawning a new `cloudflared` → trycloudflare rate-limited the source IP and **no new tunnel could register** (`control stream encountered a failure while serving`, retrying forever). Regeneration is now throttled to at most once per 5 minutes; the existing tunnel probe still heals a genuinely-zombied URL, and cloudflared self-heals transient QUIC drops on its own.
+
 ## [0.17.5] - 2026-07-16
 
 ### Fixed
