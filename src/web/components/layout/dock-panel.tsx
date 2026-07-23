@@ -132,19 +132,32 @@ function MobileDockHeader() {
           const Icon = getTabTypeIcon(tab.type);
           const isActive = tab.id === activeTabId;
           return (
-            <button
+            <div
               key={tab.id}
-              onClick={() => handleTabPress(tab.id)}
               className={cn(
-                "flex items-center gap-1.5 h-8 px-3 rounded-full border shrink-0 transition-colors",
+                "flex items-center h-8 pl-3 pr-1 gap-1 rounded-full border shrink-0 transition-colors",
                 isActive
                   ? "border-primary text-primary bg-primary/10"
                   : "border-border text-text-secondary",
               )}
             >
-              <Icon className="size-[13px]" />
-              <span className="max-w-[96px] truncate text-xs font-medium">{tab.title}</span>
-            </button>
+              <button
+                onClick={() => handleTabPress(tab.id)}
+                className="flex items-center gap-1.5 min-w-0"
+              >
+                <Icon className="size-[13px] shrink-0" />
+                <span className="max-w-[96px] truncate text-xs font-medium">{tab.title}</span>
+              </button>
+              {tab.closable && (
+                <button
+                  onClick={() => usePanelStore.getState().closeTab(tab.id, DOCK_PANEL_ID)}
+                  aria-label={`Close ${tab.title}`}
+                  className="shrink-0 flex items-center justify-center size-6 rounded-full text-text-subtle active:bg-surface-elevated active:text-foreground"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
           );
         })}
         {/* New panel tab — dashed circle */}
