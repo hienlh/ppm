@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.8] - 2026-07-23
+
+### Added
+- **Cloudflare Tunnels panel** — a new dock panel (Ctrl/Cmd+K → "Cloudflare Tunnels") lists every `cloudflared` tunnel running on the machine: PPM-started tunnels, the app share tunnel, and external ones started elsewhere — each with live status and its public `trycloudflare.com` URL (recovered best-effort via cloudflared's metrics endpoint, shown as "unknown" when unavailable). Forward any localhost port to a public URL, and stop tunnels from the panel — external ones ask for confirmation, and the app/supervisor share tunnel is shown locked and can't be stopped from here. Replaces the old per-port "Port Forwarding" tab.
+
+### Fixed
+- **Tunnels panel no longer flickers to empty** — a transient Windows process-enumeration timeout previously blanked the whole list; it now serves the last known tunnels on such a hiccup and caches each tunnel's recovered URL per process, removing the repeated system calls that triggered the stall.
+
 ## [0.17.7] - 2026-07-23
 
 ### Fixed
