@@ -73,12 +73,19 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
     setColumnFilters(filters);
   }, []);
   const filterTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const hadFiltersRef = useRef(false);
   useEffect(() => {
-    if (!db.selectedTable || Object.keys(columnFilters).length === 0) return;
+    if (!db.selectedTable) return;
+    const hasFilters = Object.values(columnFilters).some((v) => v.trim());
+    // Nothing to do on mount when no filter was ever applied
+    if (!hasFilters && !hadFiltersRef.current) return;
+    hadFiltersRef.current = hasFilters;
     clearTimeout(filterTimerRef.current);
     filterTimerRef.current = setTimeout(() => {
-      // Execute filter query into tableData — stays in table grid mode
-      db.queryAsTable(defaultQuery);
+      // Apply filters, or reset to base table view when filters are cleared.
+      // Both stay in table grid mode.
+      if (hasFilters) db.queryAsTable(defaultQuery);
+      else db.refreshData();
     }, 500);
     return () => clearTimeout(filterTimerRef.current);
   }, [columnFilters]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -167,6 +174,9 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
   const qr = db.queryResult;
   const showQueryResults = showingQueryResult && !!(qr || db.queryError);
   const showTableGrid = db.selectedTable && !showQueryResults;
+  const hasGrid = showTableGrid && db.tableData;
+  // First fetch before any data/result exists — show a spinner instead of blank.
+  const showInitialLoading = !hasGrid && !showQueryResults && (db.loading || db.queryLoading);
 
   return (
     <div ref={containerRef} className="flex h-full w-full overflow-hidden">
@@ -199,9 +209,9 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
                 {conn.readonly ? <ShieldCheck className="size-3" /> : <><ShieldOff className="size-3" /><span className="font-medium">WRITE</span></>}
               </button>
             )}
-            <button type="button" onClick={() => db.refreshData()} title="Reload data"
+            <button type="button" onClick={() => db.reload()} title="Reload data"
               className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors">
-              <RefreshCw className={`size-3 ${db.loading ? "animate-spin" : ""}`} />
+              <RefreshCw className={`size-3 ${db.loading || db.queryLoading ? "animate-spin" : ""}`} />
             </button>
           </div>
         </div>
@@ -237,6 +247,12 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
 
           {showQueryResults && (
             <QueryResultPanel result={qr} error={db.queryError} loading={db.queryLoading} schema={db.schema} connectionName={connectionName} />
+          )}
+
+          {showInitialLoading && (
+            <div className="flex items-center justify-center h-full text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+            </div>
           )}
         </div>
       </div>

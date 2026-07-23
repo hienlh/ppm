@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api-client";
 
 export interface DbTableInfo { name: string; schema: string; rowCount: number }
@@ -42,12 +42,16 @@ export function useDatabase(connectionId: number) {
   // Sort state
   const [orderBy, setOrderBy] = useState<string | null>(null);
   const [orderDir, setOrderDir] = useState<"ASC" | "DESC">("ASC");
+  // Tracks the query currently populating the view so reload/mutations re-run it
+  // instead of the base table fetch. null = plain table view (use fetchTableData).
+  const activeQueryRef = useRef<{ sql: string; mode: "table" | "query" } | null>(null);
 
   // Fetch table data + schema for current selection
   const fetchTableData = useCallback(async (table?: string, tableSchema?: string, p?: number, sortCol?: string | null, sortDir?: "ASC" | "DESC") => {
     const t = table ?? selectedTable;
     const s = tableSchema ?? selectedSchema;
     if (!t) return;
+    activeQueryRef.current = null;
     setLoading(true);
     const ob = sortCol !== undefined ? sortCol : orderBy;
     const od = sortDir ?? orderDir;
@@ -90,19 +94,48 @@ export function useDatabase(connectionId: number) {
     fetchTableData(undefined, undefined, p);
   }, [fetchTableData]);
 
+  /** Execute SQL but put results into tableData (for column filters) */
+  const queryAsTable = useCallback(async (sqlText: string) => {
+    activeQueryRef.current = { sql: sqlText, mode: "table" };
+    setLoading(true);
+    try {
+      const result = await api.post<DbQueryResult>(`${base}/query`, { sql: sqlText });
+      if (result.changeType === "select") {
+        setTableData({ columns: result.columns, rows: result.rows, total: result.rows.length, page: 1, limit: result.rows.length });
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [base]);
+
   const executeQuery = useCallback(async (sqlText: string) => {
     setQueryLoading(true);
     setQueryError(null);
     try {
       const result = await api.post<DbQueryResult>(`${base}/query`, { sql: sqlText });
       setQueryResult(result);
-      if (result.changeType === "modify") fetchTableData(selectedTable ?? undefined, selectedSchema);
+      if (result.changeType === "modify") {
+        activeQueryRef.current = null;
+        fetchTableData(selectedTable ?? undefined, selectedSchema);
+      } else {
+        activeQueryRef.current = { sql: sqlText, mode: "query" };
+      }
     } catch (e) {
       setQueryError((e as Error).message);
     } finally {
       setQueryLoading(false);
     }
   }, [base, selectedTable, selectedSchema, fetchTableData]);
+
+  // Re-fetch the current grid view after a mutation: re-run the active filtered
+  // query if one is set, otherwise the base table fetch. Keeps filters intact.
+  const refetchTable = useCallback((t?: string, s?: string) => {
+    const active = activeQueryRef.current;
+    if (active?.mode === "table") { queryAsTable(active.sql); return; }
+    fetchTableData(t, s);
+  }, [queryAsTable, fetchTableData]);
 
   const updateCell = useCallback(async (pkColumn: string, pkValue: unknown, column: string, value: unknown) => {
     if (!selectedTable) return;
@@ -111,11 +144,11 @@ export function useDatabase(connectionId: number) {
     try {
       await api.put(`${base}/cell`, { table: t, schema: s, pkColumn, pkValue, column, value });
       // Re-fetch with explicit args to avoid stale closure
-      fetchTableData(t, s);
+      refetchTable(t, s);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [base, selectedTable, selectedSchema, fetchTableData]);
+  }, [base, selectedTable, selectedSchema, refetchTable]);
 
   const deleteRow = useCallback(async (pkColumn: string, pkValue: unknown) => {
     if (!selectedTable) return;
@@ -123,11 +156,11 @@ export function useDatabase(connectionId: number) {
     const s = selectedSchema;
     try {
       await api.del(`${base}/row`, { table: t, schema: s, pkColumn, pkValue });
-      fetchTableData(t, s);
+      refetchTable(t, s);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [base, selectedTable, selectedSchema, fetchTableData]);
+  }, [base, selectedTable, selectedSchema, refetchTable]);
 
   /** Toggle sort: none → ASC → DESC → none */
   const toggleSort = useCallback((column: string) => {
@@ -161,11 +194,11 @@ export function useDatabase(connectionId: number) {
     const s = selectedSchema;
     try {
       await api.post(`${base}/rows/delete`, { table: t, schema: s, pkColumn, pkValues });
-      fetchTableData(t, s);
+      refetchTable(t, s);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [base, selectedTable, selectedSchema, fetchTableData]);
+  }, [base, selectedTable, selectedSchema, refetchTable]);
 
   /** Insert a new row */
   const insertRow = useCallback(async (values: Record<string, unknown>) => {
@@ -174,27 +207,20 @@ export function useDatabase(connectionId: number) {
     const s = selectedSchema;
     try {
       await api.post(`${base}/row`, { table: t, schema: s, values });
-      fetchTableData(t, s);
+      refetchTable(t, s);
     } catch (e) {
       setError((e as Error).message);
       throw e;
     }
-  }, [base, selectedTable, selectedSchema, fetchTableData]);
+  }, [base, selectedTable, selectedSchema, refetchTable]);
 
-  /** Execute SQL but put results into tableData (for column filters) */
-  const queryAsTable = useCallback(async (sqlText: string) => {
-    setLoading(true);
-    try {
-      const result = await api.post<DbQueryResult>(`${base}/query`, { sql: sqlText });
-      if (result.changeType === "select") {
-        setTableData({ columns: result.columns, rows: result.rows, total: result.rows.length, page: 1, limit: result.rows.length });
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [base]);
+  /** Reload the currently displayed view (custom query, filtered table, or base table). */
+  const reload = useCallback(() => {
+    const active = activeQueryRef.current;
+    if (active?.mode === "query") { executeQuery(active.sql); return; }
+    if (active?.mode === "table") { queryAsTable(active.sql); return; }
+    fetchTableData();
+  }, [executeQuery, queryAsTable, fetchTableData]);
 
   return {
     selectedTable, selectedSchema, selectTable, tableData, schema,
@@ -202,6 +228,6 @@ export function useDatabase(connectionId: number) {
     orderBy, orderDir, toggleSort, clearSort,
     queryResult, queryError, queryLoading, executeQuery,
     updateCell, deleteRow, bulkDelete, insertRow,
-    refreshData: fetchTableData, queryAsTable,
+    refreshData: fetchTableData, queryAsTable, reload,
   };
 }
