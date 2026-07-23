@@ -62,7 +62,14 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     return { tabs: allTabs, tabPanelMap: map };
   }, [panels, grid, currentProject]);
 
-  const activeTabId = panels[focusedPanelId]?.activeTabId ?? null;
+  // The current-tab button mirrors the main content, which renders the focused
+  // GRID panel (falling back to the first grid panel when focus is elsewhere —
+  // e.g. on the dock). Reading focusedPanelId directly would pick up the dock's
+  // terminal, which isn't in the merged grid `tabs`, leaving activeTab null and
+  // showing "New Tab" while a grid tab is actually on screen.
+  const gridPanelIds = grid.flat();
+  const activeGridPanelId = gridPanelIds.includes(focusedPanelId) ? focusedPanelId : gridPanelIds[0];
+  const activeTabId = (activeGridPanelId ? panels[activeGridPanelId]?.activeTabId : null) ?? null;
   const notifications = useNotificationStore((s) => s.notifications);
   const compareSelection = useCompareStore((s) => s.selection);
   const [sessionTagMap, setSessionTagMap] = useState<Record<string, { id: number; name: string; color: string }>>({});
