@@ -53,6 +53,19 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
     termElement?.focus();
   }, []);
 
+  // On touch devices xterm swallows the synthesized `click`, so an onClick
+  // handler never fires and the soft keyboard never opens. Bind `touchend` in
+  // the capture phase (runs before xterm's own handlers) and focus the hidden
+  // textarea there — this happens inside a real user gesture, so mobile
+  // browsers reliably raise the on-screen keyboard.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onTouchEnd = () => focusTerminal();
+    container.addEventListener("touchend", onTouchEnd, { capture: true });
+    return () => container.removeEventListener("touchend", onTouchEnd, { capture: true });
+  }, [focusTerminal]);
+
   const sendKey = useCallback(
     (value: string) => {
       focusTerminal();
