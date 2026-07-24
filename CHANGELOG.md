@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.11] - 2026-07-24
+
+### Fixed
+- **Binary installs can start again** — `ppm start` from a GitHub-release binary exited immediately with `error: unknown command '__supervise__'`. The compiled binary re-invokes itself to launch its supervisor and server daemons, but the entry point routed those internal commands to the CLI parser instead of the daemons. They're now dispatched correctly. (Source installs via bun/npm were unaffected.)
+
 ## [0.17.10] - 2026-07-24
 
 ### Added
