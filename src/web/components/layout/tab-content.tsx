@@ -44,11 +44,6 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.SettingsTab,
     })),
   ),
-  tunnels: lazy(() =>
-    import("@/components/tunnels/tunnel-manager-tab").then((m) => ({
-      default: m.TunnelManagerTab,
-    })),
-  ),
   extension: lazy(() =>
     import("@/components/extensions/extension-webview").then((m) => ({
       default: m.ExtensionWebview,

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import {
-  X, Bug as BugIcon, FolderOpen, GitBranch, Settings, Database, Sparkles,
+  X, Bug as BugIcon, FolderOpen, GitBranch, Settings, Database, Sparkles, Globe,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
@@ -11,16 +11,18 @@ import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
+import { TunnelManagerTab } from "@/components/tunnels/tunnel-manager-tab";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { cn } from "@/lib/utils";
 
-type DrawerTab = "explorer" | "git" | "settings" | "database" | "jira" | "ai-resources";
+type DrawerTab = "explorer" | "git" | "settings" | "database" | "jira" | "ai-resources" | "tunnels";
 
 const BASE_TABS: { id: DrawerTab; label: string; icon: React.ElementType }[] = [
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "database", label: "Database", icon: Database },
+  { id: "tunnels", label: "Tunnels", icon: Globe },
   { id: "ai-resources", label: "AI", icon: Sparkles },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -104,6 +106,9 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           )}
           {activeTab === "database" && (
             <DatabaseSidebar />
+          )}
+          {activeTab === "tunnels" && (
+            <TunnelManagerTab />
           )}
           {activeTab === "jira" && (
             <JiraPanel />

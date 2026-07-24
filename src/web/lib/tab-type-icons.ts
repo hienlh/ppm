@@ -6,7 +6,7 @@
  * per-component change (extensibility invariant for the generalized dock).
  */
 import {
-  Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Globe, Puzzle, Sparkles,
+  Terminal, MessageSquare, FileCode, Database, FileDiff, Settings, Puzzle, Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import type { TabType } from "@/stores/tab-store";
@@ -20,7 +20,6 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   postgres: Database,
   "git-diff": FileDiff,
   settings: Settings,
-  tunnels: Globe,
   extension: Puzzle,
   "extension-webview": Puzzle,
   "conflict-editor": FileDiff,

@@ -11,6 +11,7 @@ import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
+import { TunnelManagerTab } from "@/components/tunnels/tunnel-manager-tab";
 import { SessionHistoryList } from "@/components/chat/session-history-list";
 import { useGitChangesPoller } from "@/stores/git-status-store";
 import { ProjectSwitcher } from "./project-switcher";
@@ -131,6 +132,7 @@ export const Sidebar = memo(function Sidebar() {
               )
             )}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
+            {sidebarActiveTab === "tunnels" && <TunnelManagerTab />}
             {sidebarActiveTab === "jira" && <JiraPanel />}
             {sidebarActiveTab === "ai-resources" && <AiResourcesPanel />}
             {sidebarActiveTab === "settings" && <SettingsTab />}

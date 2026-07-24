@@ -36,7 +36,9 @@ function ppmSnapshot(): PpmTunnelInput[] {
 
 /** GET /api/tunnels — unified tunnel list */
 tunnelRegistryRoutes.get("/", async (c) => {
-  const list = await listTunnels(ppmSnapshot());
+  // ?force=1 bypasses the 2s TTL cache (manual refresh from the panel).
+  const force = c.req.query("force") === "1";
+  const list = await listTunnels(ppmSnapshot(), { force });
   return c.json(ok(list));
 });
 

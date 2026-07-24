@@ -27,7 +27,7 @@ export const DOCK_PANEL_ID = "__dock__";
  * Enforced at load-time to prevent a crafted persisted blob from placing
  * arbitrary tab types in the privileged dock slot.
  */
-export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor", "tunnels"]);
+export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor"]);
 
 /** Visible/height state for the dock — stored per-project via projectDock map. */
 export interface DockState {
@@ -156,25 +156,26 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":
       return "settings";
-    case "tunnels":
-      return "tunnels";
     default:
       return `${type}:${randomId()}`;
   }
 }
 
 /**
- * Legacy migration: the old grid-only "ports" tab type was renamed to "tunnels"
- * and relocated to the dock. Strip any persisted "ports" tab from ALL panels
- * (grid panels + dock) so no stale type reaches deriveTabId/TAB_COMPONENTS,
- * which would otherwise mint a random id and crash on render. The user re-opens
- * "Cloudflare Tunnels" from the command palette (dock). Idempotent.
+ * Legacy migration for the tunnels panel's moves:
+ *   - "ports" (grid tab, ≤0.17.7) → renamed to "tunnels" (dock tab, 0.17.8)
+ *   - "tunnels" (dock tab, 0.17.8) → relocated to a sidebar section (no tab type)
+ * Neither type exists as a `TabType` anymore, so strip any persisted "ports" or
+ * "tunnels" tab from ALL panels (grid + dock) — otherwise the stale type reaches
+ * deriveTabId/TAB_COMPONENTS and crashes on render. The panel now lives in the
+ * sidebar; users open it from the rail/drawer or command palette. Idempotent.
  */
+const LEGACY_TUNNEL_TAB_TYPES = new Set(["ports", "tunnels"]);
+
 function scrubLegacyPortsTabs(panel: Panel): Panel {
-  const LEGACY = "ports";
-  if (!panel.tabs.some((t) => (t.type as string) === LEGACY)) return panel;
+  if (!panel.tabs.some((t) => LEGACY_TUNNEL_TAB_TYPES.has(t.type as string))) return panel;
   const removed = new Set(
-    panel.tabs.filter((t) => (t.type as string) === LEGACY).map((t) => t.id),
+    panel.tabs.filter((t) => LEGACY_TUNNEL_TAB_TYPES.has(t.type as string)).map((t) => t.id),
   );
   const tabs = panel.tabs.filter((t) => !removed.has(t.id));
   const tabHistory = panel.tabHistory.filter((id) => !removed.has(id));

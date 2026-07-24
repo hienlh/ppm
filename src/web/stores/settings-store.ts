@@ -6,7 +6,7 @@ export type GitStatusViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
 /** Where the panel dock sits relative to the main content (VS Code-style). Per-user pref. */
 export type DockPosition = "left" | "bottom" | "right";
-export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | "ai-resources" | "history" | `ext:${string}`;
+export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -94,7 +94,7 @@ function initialTheme(p: PersistedSettings): { style: PpmThemeStyle; mode: PpmTh
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
   if (typeof tab !== "string") return false;
-  return ["explorer", "git", "settings", "database", "search", "jira", "ai-resources", "history"].includes(tab) || tab.startsWith("ext:");
+  return ["explorer", "git", "settings", "database", "search", "jira", "ai-resources", "history", "tunnels"].includes(tab) || tab.startsWith("ext:");
 }
 
 function persistSettings(update: Partial<PersistedSettings>) {

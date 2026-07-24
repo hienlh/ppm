@@ -11,7 +11,6 @@ export type TabType =
   | "postgres"
   | "git-diff"
   | "settings"
-  | "tunnels"
   | "extension"
   | "extension-webview"
   | "conflict-editor"

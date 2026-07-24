@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Check, Copy, ExternalLink, Globe, Loader2, Lock, Square, Wifi } from "lucide-react";
+import { Check, Copy, ExternalLink, Globe, Loader2, Lock, RefreshCw, Square } from "lucide-react";
 import { tunnelsApi, type TunnelEntry } from "@/lib/api-tunnels";
 import { toast } from "sonner";
 
@@ -17,19 +17,27 @@ export function TunnelManagerTab() {
   const [error, setError] = useState<string | null>(null);
   const [copiedPid, setCopiedPid] = useState<number | null>(null);
   const [confirmPid, setConfirmPid] = useState<number | null>(null);
+  const [hasFetched, setHasFetched] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchTunnels = useCallback(async () => {
+  // force=true bypasses the server's 2s cache (manual refresh); background
+  // polls stay non-force and keep the existing list visible (no flicker).
+  const fetchTunnels = useCallback(async (force = false) => {
+    if (force) setRefreshing(true);
     try {
-      setTunnels(await tunnelsApi.list());
+      setTunnels(await tunnelsApi.list(force));
     } catch (e) {
       console.warn("[tunnels] failed to fetch", e);
+    } finally {
+      setHasFetched(true);
+      if (force) setRefreshing(false);
     }
   }, []);
 
   // Fetch on mount + poll every 10s (server-side cache keeps this cheap).
   useEffect(() => {
     fetchTunnels();
-    const interval = setInterval(fetchTunnels, 10_000);
+    const interval = setInterval(() => fetchTunnels(), 10_000);
     return () => clearInterval(interval);
   }, [fetchTunnels]);
 
@@ -81,15 +89,11 @@ export function TunnelManagerTab() {
 
   return (
     <div className="flex flex-col h-full w-full bg-background">
-      {/* Header + start form */}
-      <div className="p-4 md:p-6 border-b border-border bg-surface">
-        <div className="flex items-center gap-2 mb-3">
-          <Wifi className="size-5 text-primary" />
-          <h2 className="text-base font-medium text-text-primary">Cloudflare Tunnels</h2>
-        </div>
+      {/* Compact start form (sidebar section is already labelled in the rail) */}
+      <div className="p-3 border-b border-border bg-surface">
         <form onSubmit={handleSubmit} className="flex items-center gap-2">
-          <div className="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg bg-background border border-border focus-within:border-primary/50 transition-colors">
-            <span className="text-sm text-text-subtle shrink-0">localhost:</span>
+          <div className="flex-1 min-w-0 flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-background border border-border focus-within:border-primary/50 transition-colors">
+            <span className="text-xs text-text-subtle shrink-0">localhost:</span>
             <input
               type="number"
               value={portInput}
@@ -97,80 +101,92 @@ export function TunnelManagerTab() {
               placeholder="3000"
               min={1}
               max={65535}
-              className="flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-subtle min-w-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-subtle [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
           </div>
           <button
             type="submit"
             disabled={loading || !portInput}
-            className="px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0 min-w-[72px] flex items-center justify-center"
+            className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors shrink-0 flex items-center justify-center"
           >
             {loading ? <Loader2 className="size-4 animate-spin" /> : "Forward"}
           </button>
+          <button
+            type="button"
+            onClick={() => fetchTunnels(true)}
+            disabled={refreshing}
+            title="Refresh"
+            aria-label="Refresh tunnels"
+            className="shrink-0 p-2 rounded-lg hover:bg-surface-elevated transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`size-4 text-text-secondary ${refreshing ? "animate-spin" : ""}`} />
+          </button>
         </form>
-        {error && <p className="text-sm text-error mt-2">{error}</p>}
+        {error && <p className="text-xs text-error mt-2">{error}</p>}
       </div>
 
       {/* Tunnel list */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-6">
-        {tunnels.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-            <Globe className="size-10 text-text-subtle" />
-            <p className="text-sm text-text-secondary max-w-xs">
+      <div className="flex-1 overflow-y-auto p-3">
+        {!hasFetched ? (
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="size-6 animate-spin text-primary" />
+          </div>
+        ) : tunnels.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-2">
+            <Globe className="size-8 text-text-subtle" />
+            <p className="text-xs text-text-secondary">
               No cloudflared tunnels running. Forward a port, or start one elsewhere and it will appear here.
             </p>
           </div>
         ) : (
           <div className="space-y-2">
             {tunnels.map((t) => (
-              <div key={t.pid} className="flex items-center gap-3 p-3 rounded-lg bg-surface border border-border">
-                {/* Source badge */}
-                <span className={`shrink-0 px-2 py-1 rounded text-[10px] font-medium uppercase tracking-wide ${SOURCE_META[t.source].cls}`}>
-                  {SOURCE_META[t.source].label}
-                </span>
-
-                {/* PID + port + url */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 text-xs font-mono text-text-secondary">
-                    <span>pid {t.pid}</span>
-                    {t.port != null && <span className="text-text-subtle">·</span>}
-                    {t.port != null && <span>:{t.port}</span>}
-                  </div>
-                  <div className="text-xs truncate min-w-0 mt-0.5">
-                    {t.url
-                      ? <span className="text-text-secondary">{t.url}</span>
-                      : <span className="text-text-subtle italic">unknown</span>}
-                  </div>
-                </div>
-
-                {/* Actions — 44px touch targets */}
-                <div className="flex items-center shrink-0">
-                  {t.url && (
-                    <>
-                      <button onClick={() => window.open(t.url!, "_blank")} className="p-2.5 rounded-md hover:bg-surface-elevated transition-colors" title="Open in browser">
-                        <ExternalLink className="size-4 text-text-secondary" />
-                      </button>
-                      <button onClick={() => copyUrl(t.pid, t.url!)} className="p-2.5 rounded-md hover:bg-surface-elevated transition-colors" title="Copy URL">
-                        {copiedPid === t.pid ? <Check className="size-4 text-success" /> : <Copy className="size-4 text-text-secondary" />}
-                      </button>
-                    </>
-                  )}
+              <div key={t.pid} className="p-2.5 rounded-lg bg-surface border border-border">
+                {/* Line 1: port + source chip · stop/lock */}
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 font-mono text-sm font-medium text-text-primary">
+                    {t.port != null ? `:${t.port}` : "—"}
+                  </span>
+                  <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide ${SOURCE_META[t.source].cls}`}>
+                    {SOURCE_META[t.source].label}
+                  </span>
+                  <div className="flex-1" />
                   {t.protected ? (
-                    <div className="p-2.5" title="App tunnel — managed by PPM, not stoppable here">
+                    <div className="shrink-0 p-1.5" title="App tunnel — managed by PPM, not stoppable here">
                       <Lock className="size-4 text-text-subtle" />
                     </div>
                   ) : (
                     <button
                       onClick={() => stopTunnel(t)}
-                      className={`p-2.5 rounded-md transition-colors ${confirmPid === t.pid ? "bg-error/15" : "hover:bg-error/10"}`}
+                      className={`shrink-0 h-8 min-w-8 px-1.5 flex items-center justify-center rounded-md transition-colors ${confirmPid === t.pid ? "bg-error/15" : "hover:bg-error/10"}`}
                       title={confirmPid === t.pid ? "Click again to confirm stop" : "Stop tunnel"}
                     >
                       {confirmPid === t.pid
-                        ? <span className="text-[10px] font-medium text-error px-0.5">Sure?</span>
+                        ? <span className="text-[10px] font-medium text-error">Sure?</span>
                         : <Square className="size-4 text-error" />}
                     </button>
                   )}
                 </div>
+
+                {/* Line 2: URL (full-width truncate) + open/copy */}
+                <div className="flex items-center gap-1 mt-1">
+                  <span className={`flex-1 min-w-0 truncate text-xs ${t.url ? "text-text-secondary" : "text-text-subtle italic"}`}>
+                    {t.url ?? "unknown"}
+                  </span>
+                  {t.url && (
+                    <>
+                      <button onClick={() => window.open(t.url!, "_blank")} className="shrink-0 p-1.5 rounded-md hover:bg-surface-elevated transition-colors" title="Open in browser">
+                        <ExternalLink className="size-3.5 text-text-secondary" />
+                      </button>
+                      <button onClick={() => copyUrl(t.pid, t.url!)} className="shrink-0 p-1.5 rounded-md hover:bg-surface-elevated transition-colors" title="Copy URL">
+                        {copiedPid === t.pid ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5 text-text-secondary" />}
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Line 3: pid */}
+                <div className="mt-1 text-[10px] font-mono text-text-subtle">pid {t.pid}</div>
               </div>
             ))}
           </div>

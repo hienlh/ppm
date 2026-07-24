@@ -15,7 +15,7 @@ export interface TunnelEntry {
 
 /** Typed client for the tunnel registry API (/api/tunnels). */
 export const tunnelsApi = {
-  list: (signal?: AbortSignal) => api.get<TunnelEntry[]>("/api/tunnels", { signal }),
+  list: (force = false) => api.get<TunnelEntry[]>(`/api/tunnels${force ? "?force=1" : ""}`),
   start: (port: number) => api.post<{ port: number; url: string }>("/api/tunnels", { port }),
   stop: (pid: number) => api.del(`/api/tunnels/${pid}`),
 };

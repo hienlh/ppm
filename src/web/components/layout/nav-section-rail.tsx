@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import {
-  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Cloud, Sparkles, BotMessageSquare,
+  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Cloud, Sparkles, BotMessageSquare, Globe,
 } from "lucide-react";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -21,6 +21,7 @@ const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementTy
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },
   { id: "database", label: "Database", icon: Database },
+  { id: "tunnels", label: "Cloudflare Tunnels", icon: Globe },
   { id: "ai-resources", label: "AI Resources", icon: Sparkles },
   { id: "settings", label: "Settings", icon: Settings },
 ];
