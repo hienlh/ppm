@@ -118,6 +118,7 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   gitStatusViewMode: (v) => v === "flat" || v === "tree",
   editorTabStyle: (v) => v === "default" || v === "boxed" || v === "pill",
   sidebarActiveTab: (v) => typeof v === "string",
+  sidebarTabOrder: (v) => Array.isArray(v) && v.length <= 50 && v.every((t) => typeof t === "string"),
   jiraEnabled: (v) => typeof v === "boolean",
   // Project switcher prefs
   projectSortMode: (v) => v === "recent" || v === "priority" || v === "name",

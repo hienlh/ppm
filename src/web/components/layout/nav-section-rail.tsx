@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import {
-  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Cloud, Sparkles, BotMessageSquare, Globe,
-} from "lucide-react";
+import { Settings, Bug, Cloud } from "lucide-react";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
+import { getAvailableTabs } from "@/lib/sidebar-tabs/tab-registry";
+import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
 import { useProjectStore } from "@/stores/project-store";
 import { useShallow } from "zustand/react/shallow";
 import { useExtensionStore } from "@/stores/extension-store";
@@ -15,17 +15,6 @@ import { CloudSharePopover } from "./cloud-share-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { cn } from "@/lib/utils";
 
-const BUILTIN_TABS: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [
-  { id: "history", label: "Chat History", icon: BotMessageSquare },
-  { id: "explorer", label: "Explorer", icon: FolderOpen },
-  { id: "search", label: "Search", icon: Search },
-  { id: "git", label: "Git", icon: GitBranch },
-  { id: "database", label: "Database", icon: Database },
-  { id: "tunnels", label: "Cloudflare Tunnels", icon: Globe },
-  { id: "ai-resources", label: "AI Resources", icon: Sparkles },
-  { id: "settings", label: "Settings", icon: Settings },
-];
-
 function Badge({ count }: { count: number }) {
   return (
     <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] font-medium leading-none">
@@ -35,17 +24,29 @@ function Badge({ count }: { count: number }) {
 }
 
 // Section nav item: 38×38, active = tinted bg + inset accent bar + bolder icon.
-function NavItem({ icon: Icon, label, active, badge, onClick }: {
+function NavItem({ icon: Icon, label, active, badge, onClick, dragging, dropBefore, onDragStart, onDragOver, onDrop, onDragEnd }: {
   icon: React.ElementType; label: string; active: boolean; badge?: number; onClick: () => void;
+  dragging?: boolean; dropBefore?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  onDragEnd?: () => void;
 }) {
   return (
     <button
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       onClick={onClick}
       className={cn(
         "group relative flex items-center justify-center size-[38px] rounded-[9px] transition-colors shrink-0",
         active
           ? "bg-accent-wash text-primary shadow-[inset_2px_0_0_var(--accent)]"
           : "text-text-subtle hover:bg-surface-elevated hover:text-foreground",
+        dragging && "opacity-40",
+        dropBefore && "shadow-[inset_0_2px_0_var(--accent)]",
       )}
     >
       <Icon className="size-[18px]" strokeWidth={active ? 2.4 : 2} />
@@ -82,6 +83,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const sidebarActiveTab = useSettingsStore((s) => s.sidebarActiveTab);
   const setSidebarActiveTab = useSettingsStore((s) => s.setSidebarActiveTab);
+  const sidebarTabOrder = useSettingsStore((s) => s.sidebarTabOrder);
+  const setSidebarTabOrder = useSettingsStore((s) => s.setSidebarTabOrder);
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
   const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
@@ -93,20 +96,29 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
   const jiraUnreadCount = useJiraStore((s) => s.unreadCount);
   const historyUnreadCount = useNotificationStore(selectProjectUnread(activeProject?.name));
 
-  const TABS = useMemo(() => {
-    const tabs: { id: SidebarActiveTab; label: string; icon: React.ElementType }[] = [...BUILTIN_TABS];
-    if (jiraEnabled) {
-      const settingsIdx = tabs.findIndex((t) => t.id === "settings");
-      tabs.splice(settingsIdx, 0, { id: "jira", label: "Jira", icon: Bug });
-    }
-    if (contributions?.views) {
-      const sidebarViews = contributions.views["sidebar"] ?? contributions.views["explorer"] ?? [];
-      for (const view of sidebarViews) {
-        tabs.push({ id: `ext:${view.id}` as SidebarActiveTab, label: view.name, icon: Puzzle });
+  const TABS = useMemo(
+    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder),
+    [contributions, jiraEnabled, sidebarTabOrder],
+  );
+
+  // Drag-to-reorder — writes the full resolved id list so mobile/desktop stay in sync.
+  const [dragId, setDragId] = useState<SidebarActiveTab | null>(null);
+  const [dropId, setDropId] = useState<SidebarActiveTab | null>(null);
+
+  const commitReorder = (targetId: SidebarActiveTab) => {
+    if (dragId && dragId !== targetId) {
+      const ids = TABS.map((t) => t.id);
+      const from = ids.indexOf(dragId);
+      if (from >= 0) {
+        ids.splice(from, 1);
+        const insertAt = ids.indexOf(targetId); // insert before target's post-removal position
+        ids.splice(insertAt < 0 ? ids.length : insertAt, 0, dragId);
+        setSidebarTabOrder(ids);
       }
     }
-    return tabs;
-  }, [contributions, jiraEnabled]);
+    setDragId(null);
+    setDropId(null);
+  };
 
   // Cloud & Share popover
   const [cloudOpen, setCloudOpen] = useState(false);
@@ -144,6 +156,12 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
             active={sidebarActiveTab === tab.id}
             badge={tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : tab.id === "history" ? historyUnreadCount : undefined}
             onClick={() => handleTabClick(tab.id)}
+            dragging={dragId === tab.id}
+            dropBefore={dropId === tab.id && dragId !== tab.id}
+            onDragStart={(e) => { setDragId(tab.id); e.dataTransfer.effectAllowed = "move"; }}
+            onDragOver={(e) => { e.preventDefault(); setDropId(tab.id); }}
+            onDrop={(e) => { e.preventDefault(); commitReorder(tab.id); }}
+            onDragEnd={() => { setDragId(null); setDropId(null); }}
           />
         ))}
       </div>

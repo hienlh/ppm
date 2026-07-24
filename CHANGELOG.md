@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Customizable sidebar tabs** — sidebar/drawer tab order is now user-arranged via drag-and-drop and syncs across devices (desktop rail: mouse drag; mobile drawer: long-press drag). One shared order drives both platforms.
+- **Mobile drawer tab overflow** — the mobile bottom tab bar now uses fixed-width slots with a responsive visible count and a "More" sheet for the rest, so it never overflows regardless of how many tabs (built-in + Jira + extensions) exist. Selecting an overflow tab surfaces it in the last slot without shifting the row.
+- **Extension views on mobile** — extension-contributed sidebar views now appear in the mobile drawer (previously desktop-only).
+
 ## [0.17.12] - 2026-07-25
 
 ### Fixed

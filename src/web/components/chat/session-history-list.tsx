@@ -55,6 +55,8 @@ interface SessionHistoryListProps {
   variant: "bar" | "sidebar";
   sessionId?: string | null;
   onSelectSession?: (session: SessionInfo) => void;
+  /** Fired after a session opens — lets the mobile drawer dismiss itself. */
+  onNavigate?: () => void;
   className?: string;
 }
 
@@ -63,7 +65,7 @@ interface SessionHistoryListProps {
  * sidebar History tab. Behavior lives in `useSessionHistory`; `variant` only
  * changes container sizing/density — rows + handlers are identical.
  */
-export function SessionHistoryList({ projectName, variant, sessionId, onSelectSession, className }: SessionHistoryListProps) {
+export function SessionHistoryList({ projectName, variant, sessionId, onSelectSession, onNavigate, className }: SessionHistoryListProps) {
   const h = useSessionHistory({
     projectName,
     sessionId,
@@ -87,6 +89,12 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
       metadata: { projectName, sessionId: r.sessionId, providerId: r.providerId },
       closable: true,
     });
+    onNavigate?.();
+  }
+
+  function openSession(session: SessionInfo) {
+    h.openSession(session);
+    onNavigate?.();
   }
 
   return (
@@ -237,7 +245,7 @@ export function SessionHistoryList({ projectName, variant, sessionId, onSelectSe
                       <>
                         <span className="min-w-0 flex-1">
                           <button
-                            onClick={() => h.openSession(session)}
+                            onClick={() => openSession(session)}
                             className="w-full min-w-0 text-left"
                           >
                             <span className="flex items-center gap-1">
