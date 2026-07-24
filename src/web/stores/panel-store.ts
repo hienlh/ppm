@@ -392,6 +392,29 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
 
       const baseId = deriveTabId(tabDef.type, tabDef.metadata);
 
+      // Chat: focus an already-open session across ALL panels. A chat started as
+      // "New Chat" keeps its random-minted id even after it acquires a sessionId
+      // (chat-tab only rewrites metadata, not the tab id), so deriveTabId's
+      // chat:{provider}/{sessionId} never matches the live tab. Match on the real
+      // sessionId instead so re-opening from history focuses the tab, not a dupe.
+      if (tabDef.type === "chat" && tabDef.metadata?.sessionId) {
+        const sid = tabDef.metadata.sessionId;
+        for (const p of Object.values(get().panels)) {
+          const existing = p.tabs.find((t) => t.type === "chat" && t.metadata?.sessionId === sid);
+          if (existing) {
+            set((s) => ({
+              focusedPanelId: p.id,
+              panels: {
+                ...s.panels,
+                [p.id]: { ...p, activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
+              },
+            }));
+            persist();
+            return existing.id;
+          }
+        }
+      }
+
       // Singleton check — focus existing across ALL panels
       if (SINGLETON_TYPES.has(tabDef.type)) {
         for (const p of Object.values(get().panels)) {
