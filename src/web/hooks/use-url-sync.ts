@@ -15,7 +15,7 @@ export interface UrlState {
 const VALID_TAB_TYPES: TabType[] = [
   "terminal", "chat", "editor", "database", "sqlite",
   "postgres", "git-diff", "settings",
-  "extension",
+  "extension", "group",
 ];
 
 // ---------------------------------------------------------------------------
@@ -121,6 +121,7 @@ function buildMetadataFromUrl(
       return connId ? { connectionId: connId, tableName: tableName ?? "" } : null;
     }
     case "extension": return identifier ? { viewType: identifier, projectName } : null;
+    case "group": return identifier ? { groupId: identifier, projectName } : null;
     default: return null;
   }
 }
@@ -140,6 +141,7 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
       // "git-graph" → "Git Graph"
       return identifier.split("-").map(w => (w[0]?.toUpperCase() ?? "") + w.slice(1)).join(" ");
     }
+    case "group": return "Group";
     default: return type;
   }
 }

@@ -156,6 +156,8 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":
       return "settings";
+    case "group":
+      return `group:${metadata?.groupId ?? "unknown"}`;
     default:
       return `${type}:${randomId()}`;
   }

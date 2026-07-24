@@ -13,6 +13,7 @@ import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
 import { TunnelManagerTab } from "@/components/tunnels/tunnel-manager-tab";
 import { SessionHistoryList } from "@/components/chat/session-history-list";
+import { GroupList } from "@/components/group-chat/group-list";
 import { useGitChangesPoller } from "@/stores/git-status-store";
 import { ProjectSwitcher } from "./project-switcher";
 import { NavSectionRail } from "./nav-section-rail";
@@ -131,6 +132,7 @@ export const Sidebar = memo(function Sidebar() {
                 </div>
               )
             )}
+            {sidebarActiveTab === "teams" && <GroupList />}
             {sidebarActiveTab === "database" && <DatabaseSidebar />}
             {sidebarActiveTab === "tunnels" && <TunnelManagerTab />}
             {sidebarActiveTab === "jira" && <JiraPanel />}

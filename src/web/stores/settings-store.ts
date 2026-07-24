@@ -6,7 +6,7 @@ export type GitStatusViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
 /** Where the panel dock sits relative to the main content (VS Code-style). Per-user pref. */
 export type DockPosition = "left" | "bottom" | "right";
-export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | `ext:${string}`;
+export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | `ext:${string}`;
 
 const STORAGE_KEY = "ppm-settings";
 
@@ -24,6 +24,8 @@ interface SettingsState {
   tabWrap: boolean;
   editorTabStyle: EditorTabStyle;
   sidebarActiveTab: SidebarActiveTab;
+  /** User-customized sidebar tab order (shared mobile↔desktop). Empty = default order. */
+  sidebarTabOrder: SidebarActiveTab[];
   jiraEnabled: boolean;
   dockPosition: DockPosition;
   deviceName: string | null;
@@ -46,6 +48,7 @@ interface SettingsState {
   toggleTabWrap: () => void;
   setEditorTabStyle: (style: EditorTabStyle) => void;
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
+  setSidebarTabOrder: (order: SidebarActiveTab[]) => void;
   setDockPosition: (position: DockPosition) => void;
   fetchServerInfo: () => Promise<void>;
 }
@@ -63,6 +66,7 @@ interface PersistedSettings {
   tabWrap?: boolean;
   editorTabStyle?: EditorTabStyle;
   sidebarActiveTab?: SidebarActiveTab;
+  sidebarTabOrder?: SidebarActiveTab[];
   jiraEnabled?: boolean;
   dockPosition?: DockPosition;
 }
@@ -94,7 +98,21 @@ function initialTheme(p: PersistedSettings): { style: PpmThemeStyle; mode: PpmTh
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
   if (typeof tab !== "string") return false;
-  return ["explorer", "git", "settings", "database", "search", "jira", "ai-resources", "history", "tunnels"].includes(tab) || tab.startsWith("ext:");
+  return ["explorer", "git", "settings", "database", "search", "jira", "ai-resources", "history", "tunnels", "teams"].includes(tab) || tab.startsWith("ext:");
+}
+
+/** Keep only valid, de-duplicated tab ids — guards against garbage in persisted/server data. */
+function sanitizeTabOrder(value: unknown): SidebarActiveTab[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: SidebarActiveTab[] = [];
+  for (const item of value) {
+    if (isValidSidebarTab(item) && !seen.has(item)) {
+      seen.add(item);
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 function persistSettings(update: Partial<PersistedSettings>) {
@@ -159,6 +177,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
     patch.editorTabStyle = data.editorTabStyle;
   }
   if (isValidSidebarTab(data.sidebarActiveTab)) patch.sidebarActiveTab = data.sidebarActiveTab;
+  if (Array.isArray(data.sidebarTabOrder)) patch.sidebarTabOrder = sanitizeTabOrder(data.sidebarTabOrder);
   if (typeof data.jiraEnabled === "boolean") patch.jiraEnabled = data.jiraEnabled;
   if (data.dockPosition === "left" || data.dockPosition === "bottom" || data.dockPosition === "right") {
     patch.dockPosition = data.dockPosition;
@@ -183,6 +202,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   tabWrap: _initial.tabWrap ?? false,
   editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
   sidebarActiveTab: isValidSidebarTab(_initial.sidebarActiveTab) ? _initial.sidebarActiveTab : "history",
+  sidebarTabOrder: sanitizeTabOrder(_initial.sidebarTabOrder),
   jiraEnabled: _initial.jiraEnabled ?? false,
   dockPosition: (_initial.dockPosition === "left" || _initial.dockPosition === "right") ? _initial.dockPosition : "bottom",
   deviceName: null,
@@ -306,6 +326,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setSidebarActiveTab: (tab) => {
     persistUiPref({ sidebarActiveTab: tab });
     set({ sidebarActiveTab: tab });
+  },
+
+  setSidebarTabOrder: (order) => {
+    const clean = sanitizeTabOrder(order);
+    persistUiPref({ sidebarTabOrder: clean });
+    set({ sidebarTabOrder: clean });
   },
 
   setDockPosition: (position) => {

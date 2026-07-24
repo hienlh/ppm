@@ -1,10 +1,9 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import {
-  X, Bug as BugIcon, FolderOpen, GitBranch, Settings, Database, Sparkles, Globe,
-} from "lucide-react";
+import { X, Bug as BugIcon } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
-import { useSettingsStore } from "@/stores/settings-store";
+import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
+import { useExtensionStore } from "@/stores/extension-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
 import { SettingsTab } from "@/components/settings/settings-tab";
@@ -12,48 +11,61 @@ import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
 import { TunnelManagerTab } from "@/components/tunnels/tunnel-manager-tab";
+import { SessionHistoryList } from "@/components/chat/session-history-list";
+import { GroupList } from "@/components/group-chat/group-list";
+import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
+import { getAvailableTabs } from "@/lib/sidebar-tabs/tab-registry";
+import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
+import { MobileDrawerTabBar } from "@/components/layout/mobile-drawer-tab-bar";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { cn } from "@/lib/utils";
 
-type DrawerTab = "explorer" | "git" | "settings" | "database" | "jira" | "ai-resources" | "tunnels";
-
-const BASE_TABS: { id: DrawerTab; label: string; icon: React.ElementType }[] = [
-  { id: "explorer", label: "Explorer", icon: FolderOpen },
-  { id: "git", label: "Git", icon: GitBranch },
-  { id: "database", label: "Database", icon: Database },
-  { id: "tunnels", label: "Tunnels", icon: Globe },
-  { id: "ai-resources", label: "AI", icon: Sparkles },
-  { id: "settings", label: "Settings", icon: Settings },
-];
+// Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
+// ext views are supported via the `ext:` prefix.
+const MOBILE_SUPPORTED = new Set<string>([
+  "history", "teams", "explorer", "git", "database", "tunnels", "ai-resources", "settings", "jira",
+]);
+const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
 
 interface MobileDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   /** Open directly to a specific tab */
-  initialTab?: DrawerTab;
+  initialTab?: SidebarActiveTab;
 }
 
 export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps) {
   const { activeProject } = useProjectStore(useShallow((s) => ({ activeProject: s.activeProject })));
   const version = useSettingsStore((s) => s.version);
   const jiraEnabled = useSettingsStore((s) => s.jiraEnabled);
-  const [activeTab, setActiveTab] = useState<DrawerTab>(initialTab ?? "explorer");
+  const sidebarTabOrder = useSettingsStore((s) => s.sidebarTabOrder);
+  const setSidebarTabOrder = useSettingsStore((s) => s.setSidebarTabOrder);
+  const contributions = useExtensionStore((s) => s.contributions);
+  const [activeTab, setActiveTab] = useState<SidebarActiveTab>(initialTab ?? "explorer");
 
-  const TABS = useMemo(() => {
-    if (!jiraEnabled) return BASE_TABS;
-    const tabs = [...BASE_TABS];
-    const settingsIdx = tabs.findIndex((t) => t.id === "settings");
-    tabs.splice(settingsIdx, 0, { id: "jira", label: "Jira", icon: BugIcon });
-    return tabs;
-  }, [jiraEnabled]);
+  const tabs = useMemo(
+    () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder).filter((t) => isMobileSupported(t.id)),
+    [jiraEnabled, contributions, sidebarTabOrder],
+  );
 
   // Sync when initialTab changes (e.g. settings button opens drawer)
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab);
   }, [initialTab]);
 
+  // If the active tab disappears (Jira disabled, ext uninstalled), fall back to the first tab.
+  useEffect(() => {
+    if (tabs.length > 0 && !tabs.some((t) => t.id === activeTab)) setActiveTab(tabs[0]!.id);
+  }, [tabs, activeTab]);
+
   const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
+
+  const noProject = (
+    <p className="px-4 py-6 text-xs text-text-secondary text-center">
+      Select a project from the bottom nav bar
+    </p>
+  );
 
   return (
     <div
@@ -63,11 +75,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
       )}
     >
       {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50"
-        onClick={onClose}
-        aria-label="Close drawer"
-      />
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-label="Close drawer" />
 
       {/* Drawer panel */}
       <div
@@ -92,56 +100,28 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
 
         {/* Tab content — scrollable */}
         <div className="flex-1 overflow-y-auto min-h-0">
-          {activeTab === "explorer" && (
-            activeProject ? (
-              <FileTree onFileOpen={onClose} />
-            ) : (
-              <p className="px-4 py-6 text-xs text-text-secondary text-center">
-                Select a project from the bottom nav bar
-              </p>
-            )
-          )}
-          {activeTab === "git" && (
-            <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />
-          )}
-          {activeTab === "database" && (
-            <DatabaseSidebar />
-          )}
-          {activeTab === "tunnels" && (
-            <TunnelManagerTab />
-          )}
-          {activeTab === "jira" && (
-            <JiraPanel />
-          )}
-          {activeTab === "ai-resources" && (
-            <AiResourcesPanel />
-          )}
-          {activeTab === "settings" && (
-            <SettingsTab />
-          )}
+          {activeTab === "history" && (activeProject
+            ? <SessionHistoryList variant="sidebar" projectName={activeProject.name} onNavigate={onClose} />
+            : noProject)}
+          {activeTab === "teams" && (activeProject ? <GroupList /> : noProject)}
+          {activeTab === "explorer" && (activeProject ? <FileTree onFileOpen={onClose} /> : noProject)}
+          {activeTab === "git" && <GitStatusPanel metadata={{ projectName: activeProject?.name }} onNavigate={onClose} />}
+          {activeTab === "database" && <DatabaseSidebar />}
+          {activeTab === "tunnels" && <TunnelManagerTab />}
+          {activeTab === "jira" && <JiraPanel />}
+          {activeTab === "ai-resources" && <AiResourcesPanel />}
+          {activeTab === "settings" && <SettingsTab />}
+          {activeTab.startsWith("ext:") && <ExtensionTreeView viewId={activeTab.slice(4)} className="h-full" />}
         </div>
 
-        {/* Bottom tab bar — thumb-friendly */}
+        {/* Bottom tab bar — fixed slots + overflow "More" + drag reorder */}
         <div className="shrink-0 border-t border-border">
-          <div className="flex items-center">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={cn(
-                    "flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] transition-colors",
-                    isActive ? "text-primary" : "text-text-secondary",
-                  )}
-                >
-                  <Icon className="size-4" />
-                  <span>{tab.label}</span>
-                </button>
-              );
-            })}
-          </div>
+          <MobileDrawerTabBar
+            tabs={tabs}
+            activeId={activeTab}
+            onSelect={setActiveTab}
+            onReorder={setSidebarTabOrder}
+          />
 
           {/* Report Bug + Version / Upgrade */}
           <div className="flex items-center justify-between px-4 py-2 border-t border-border text-[11px]">

@@ -74,6 +74,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.AiResourceEditor,
     })),
   ),
+  group: lazy(() =>
+    import("@/components/group-chat/group-chat-tab").then((m) => ({
+      default: m.GroupChatTab,
+    })),
+  ),
 };
 
 function LoadingFallback() {
