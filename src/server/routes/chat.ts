@@ -201,30 +201,12 @@ chatRoutes.get("/search", async (c) => {
     const results: ChatSearchResult[] = [];
     const seen = new Set<string>();
 
-    // Content matches first (best bm25 rank), one row per session.
-    for (const hit of chatSearchQuery(projectPath, rawQuery, limit * 3)) {
-      if (seen.has(hit.sessionId)) continue;
-      seen.add(hit.sessionId);
-      const s = byId.get(hit.sessionId);
-      results.push({
-        sessionId: hit.sessionId,
-        providerId: s?.providerId,
-        title: s?.title ?? null,
-        snippet: hit.snippet,
-        messageId: hit.messageId,
-        matchedIn: "content",
-        ts: s?.updatedAt || s?.createdAt || hit.ts || "",
-        pinned: pinnedIds.has(hit.sessionId),
-        tag: tagMap[hit.sessionId] ?? null,
-      });
-      if (results.length >= limit) break;
-    }
-
-    // Title matches for sessions not already surfaced by content.
+    // Title matches first — a title hit is a stronger relevance signal than a
+    // body hit, so collect these ahead of content to guarantee they survive the
+    // limit (a flood of content hits must never starve out a title match).
     const q = rawQuery.toLowerCase();
     for (const s of sessions) {
       if (results.length >= limit) break;
-      if (seen.has(s.id)) continue;
       if (!(s.title || "").toLowerCase().includes(q)) continue;
       seen.add(s.id);
       results.push({
@@ -240,10 +222,29 @@ chatRoutes.get("/search", async (c) => {
       });
     }
 
-    // Pinned first, then most-recent.
+    // Content matches (best bm25 rank) for sessions not already surfaced by title.
+    for (const hit of chatSearchQuery(projectPath, rawQuery, limit * 3)) {
+      if (results.length >= limit) break;
+      if (seen.has(hit.sessionId)) continue;
+      seen.add(hit.sessionId);
+      const s = byId.get(hit.sessionId);
+      results.push({
+        sessionId: hit.sessionId,
+        providerId: s?.providerId,
+        title: s?.title ?? null,
+        snippet: hit.snippet,
+        messageId: hit.messageId,
+        matchedIn: "content",
+        ts: s?.updatedAt || s?.createdAt || hit.ts || "",
+        pinned: pinnedIds.has(hit.sessionId),
+        tag: tagMap[hit.sessionId] ?? null,
+      });
+    }
+
+    // Pinned first, then title matches above content, then most-recent within group.
     results.sort((a, b) => {
-      if (a.pinned && !b.pinned) return -1;
-      if (!a.pinned && b.pinned) return 1;
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (a.matchedIn !== b.matchedIn) return a.matchedIn === "title" ? -1 : 1;
       return new Date(b.ts).getTime() - new Date(a.ts).getTime();
     });
 
