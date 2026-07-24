@@ -81,3 +81,34 @@ export interface ReadMessagesOptions {
   limit?: number;
   sinceTurn?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Turn engine
+// ---------------------------------------------------------------------------
+
+export interface AgentTurnResult {
+  text: string;
+  usage?: { costUsd?: number };
+}
+
+/** Injected dependencies — engine never imports a provider directly (testable). */
+export interface TurnEngineDeps {
+  /** Run one turn for a member's session with a prompt; returns full text + usage. */
+  runAgent: (member: GroupMember, prompt: string) => Promise<AgentTurnResult>;
+  /** Persist a turn to the bus. */
+  appendMessage: (input: AppendMessageInput) => GroupMessage;
+  /** Read prior bus messages (for windowed context). */
+  readMessages: (groupId: string, opts?: ReadMessagesOptions) => GroupMessage[];
+  /** Emit a turn to live listeners (WS broadcast). Optional. */
+  onMessage?: (message: GroupMessage) => void;
+  /** External stop signal (user Stop / abort). Checked before each turn. */
+  shouldStop?: () => boolean;
+}
+
+export type TerminationReason = "leader_done" | "max_turns" | "budget" | "stopped";
+
+export interface TurnLoopResult {
+  reason: TerminationReason;
+  turns: number;
+  costUsd: number;
+}
