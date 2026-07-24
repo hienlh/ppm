@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.9] - 2026-07-24
+
+### Added
+- **Cloudflare Tunnels moved to a sidebar tab** — the Tunnels panel now lives as a sidebar tool tab (desktop rail + mobile drawer) instead of the bottom dock, redesigned for the narrow column with an initial-load spinner and a manual refresh button that bypasses the 2s server cache. Saved 0.17.8 layouts migrate automatically.
+- **Richer mobile tab switcher** — chat rows now show the session tag color as a left accent bar, typing dots while the session is streaming, and an unread dot when a background chat has activity. Added a Default/Recent sort toggle (persisted) and a Rename action for chat tabs.
+
+### Fixed
+- **Chat history no longer opens duplicate tabs** — clicking a session in the sidebar (or history bar) now focuses the already-open tab for that session instead of spawning a second copy, including sessions that began as "New Chat".
+- **Chat search prioritizes titles** — sidebar search now surfaces title matches first (they're no longer starved out by a flood of message-content matches) and ranks them above content matches.
+- **Mobile bottom sheet scrolling** — scrolling back up from the bottom of a sheet's list no longer dismisses it; the swipe-to-dismiss gesture only engages when the list is already at the top.
+- **Mobile bottom sheet stays above the keyboard** — sheets now track the visual viewport so they ride above the on-screen keyboard instead of hiding behind it.
+- **Mobile current-tab button** — the switcher button shows the active grid tab even when the dock is focused, instead of falling back to "New Tab".
+- **Terminal keyboard on tap (mobile)** — tapping the terminal reliably opens the on-screen keyboard (focus now fires on a real touch gesture that xterm doesn't swallow).
+
 ## [0.17.8] - 2026-07-23
 
 ### Added
