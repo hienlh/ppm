@@ -71,7 +71,7 @@ export const GroupMessageItem = memo(function GroupMessageItem({
           <button
             type="button"
             onClick={() => onViewFull(message)}
-            className="mt-1 inline-flex min-h-[32px] items-center text-xs font-medium text-primary hover:underline"
+            className="mt-1 inline-flex min-h-[44px] items-center text-xs font-medium text-primary hover:underline md:min-h-[32px]"
           >
             View full transcript
           </button>

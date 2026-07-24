@@ -9,8 +9,19 @@ function claudeProjectsDir(): string {
   return process.env.CLAUDE_PROJECTS_DIR || resolve(homedir(), ".claude", "projects");
 }
 
+/** Reduce a user-supplied group name to a single safe path segment so it can
+ *  never escape the archive root (strip separators / `..` / control chars). */
+function safeSegment(name: string): string {
+  const cleaned = name
+    .replace(/[/\\]/g, "_")
+    .replace(/\.\./g, "_")
+    .replace(/[\x00-\x1f]/g, "")
+    .trim();
+  return cleaned.length > 0 ? cleaned : "group";
+}
+
 function archiveDir(groupName: string): string {
-  return join(getPpmDir(), "teams", groupName, "transcripts");
+  return join(getPpmDir(), "teams", safeSegment(groupName), "transcripts");
 }
 
 export interface ArchiveResult {

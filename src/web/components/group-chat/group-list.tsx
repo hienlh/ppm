@@ -70,7 +70,7 @@ export function GroupList() {
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
-          className="flex size-7 items-center justify-center rounded-md text-text-subtle hover:bg-surface-elevated hover:text-foreground"
+          className="flex size-11 items-center justify-center rounded-md text-text-subtle hover:bg-surface-elevated hover:text-foreground md:size-7"
           aria-label="New group"
         >
           <Plus className="size-4" />

@@ -45,6 +45,11 @@ groupChatRoutes.post("/", async (c) => {
   if (!projectName || !projectPath || !name) {
     return c.json(err("projectName, projectPath and name are required"), 400);
   }
+  // Group name becomes a filesystem path segment for the transcript archive;
+  // reject path separators / traversal / control chars to prevent escape.
+  if (/[/\\]|\.\.|[\x00-\x1f]/.test(name)) {
+    return c.json(err("group name must not contain path separators or control characters"), 400);
+  }
   const members = body.members ?? [];
   if (!members.some((m) => m.role === "leader")) {
     return c.json(err("group must include exactly one leader"), 400);
