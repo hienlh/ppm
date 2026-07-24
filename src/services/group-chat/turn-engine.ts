@@ -10,23 +10,33 @@ import { buildContextWindow, renderWindow, DEFAULT_WINDOW } from "./context-wind
 
 const DONE_RE = /^\s*DONE:/i;
 const MENTION_RE = /@(\w+)/;
+/** Feed summary cap — the bus stores a short summary; full text is retrievable
+ *  via the member session (fullSessionRef → archived transcript). */
+const SUMMARY_CAP = 600;
+
+/** Cap a turn's text for the feed: first paragraph, bounded to SUMMARY_CAP. */
+function feedSummary(text: string): string {
+  const firstPara = text.split(/\n{2,}/)[0]?.trim() ?? text.trim();
+  const base = firstPara.length > 0 ? firstPara : text.trim();
+  return base.length > SUMMARY_CAP ? base.slice(0, SUMMARY_CAP).trimEnd() + "…" : base;
+}
 
 function findMember(members: GroupMember[], name: string): GroupMember | undefined {
   return members.find((m) => m.name === name);
 }
 
 function leaderOf(members: GroupMember[]): GroupMember {
-  return members.find((m) => m.role === "leader") ?? members[0];
+  const leader = members.find((m) => m.role === "leader") ?? members[0];
+  if (!leader) throw new Error("group has no members");
+  return leader;
 }
 
 /** Pick the next speaker from an @mention in `text`; else fall back:
  *  leader → first non-leader member; member → leader (keeps discussion moving). */
 export function selectNextSpeaker(text: string, current: string, members: GroupMember[]): string {
   const m = text.toLowerCase().match(MENTION_RE);
-  if (m) {
-    const target = m[1];
-    if (target !== current && findMember(members, target)) return target;
-  }
+  const target = m?.[1];
+  if (target && target !== current && findMember(members, target)) return target;
   const leader = leaderOf(members);
   if (current === leader.name) {
     const other = members.find((x) => x.role !== "leader");
@@ -105,7 +115,7 @@ export async function runGroupTurnLoop(
       fromMember: member.name,
       toMember: isDone ? "all" : mention,
       kind: isDone ? "final" : "chat",
-      summary: text,
+      summary: feedSummary(text),
       fullSessionRef: member.sessionId,
       turnIndex,
     });

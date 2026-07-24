@@ -162,4 +162,16 @@ describe("runGroupTurnLoop", () => {
     expect(emitted.length).toBe(bus.length);
     expect(emitted.length).toBeGreaterThan(0);
   });
+
+  it("caps the feed summary — bus never stores unbounded full turn text", async () => {
+    const huge = "word ".repeat(4000); // ~20k chars, one paragraph
+    const { deps, bus } = makeDeps({
+      lead: [`${huge} @alice`, "DONE: decided"],
+      alice: [`${huge} @lead`],
+    });
+    await runGroupTurnLoop(makeGroup(), MEMBERS, deps, "task");
+    for (const m of bus) {
+      expect((m.summary ?? "").length).toBeLessThanOrEqual(601); // cap + ellipsis
+    }
+  });
 });

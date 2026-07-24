@@ -82,8 +82,9 @@ export async function dispatchParallel<T>(
   async function worker(): Promise<void> {
     while (true) {
       const i = next++;
-      if (i >= tasks.length) return;
-      results[i] = await tasks[i]();
+      const task = tasks[i];
+      if (!task) return;
+      results[i] = await task();
     }
   }
 
