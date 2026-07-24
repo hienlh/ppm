@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { VERSION } from "../version.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
 import { getPpmDir } from "./ppm-dir.ts";
+import { applyBinaryUpgrade } from "./binary-upgrade-apply.ts";
 
 const NPM_REGISTRY_URL = "https://registry.npmjs.org/@hienlh/ppm/latest";
 const FETCH_TIMEOUT_MS = 10_000;
@@ -66,8 +67,22 @@ function resolveNpmBin(): string {
 
 let upgradeInProgress = false;
 
-/** Install the latest version via bun/npm. Returns result with success/error. */
-export async function applyUpgrade(): Promise<{
+/** Build the global-install command. Absolute runtime path (not a bare
+ *  "bun"/"npm") because autostart (launchd/systemd) may not have the runtime's
+ *  bin dir on $PATH, where a bare name fails with "Executable not found". */
+export function buildUpgradeCommand(method: "bun" | "npm", pkg: string): string[] {
+  return method === "bun"
+    ? [process.execPath, "install", "-g", pkg]
+    : [resolveNpmBin(), "install", "-g", pkg];
+}
+
+/** Install the latest version. bun/npm reinstall globally; binary installs
+ *  swap the on-disk file + web dir (see applyBinaryUpgrade). Deps are
+ *  injectable for tests; production calls pass none. */
+export async function applyUpgrade(deps?: {
+  checkFn?: typeof checkForUpdate;
+  spawnFn?: typeof Bun.spawn;
+}): Promise<{
   success: boolean;
   error?: string;
   newVersion?: string;
@@ -76,28 +91,30 @@ export async function applyUpgrade(): Promise<{
     return { success: false, error: "Upgrade already in progress" };
   }
 
+  const checkFn = deps?.checkFn ?? checkForUpdate;
+  const spawnFn = deps?.spawnFn ?? Bun.spawn;
   const method = getInstallMethod();
+
   if (method === "binary") {
-    return { success: false, error: "Compiled binary — upgrade via GitHub releases" };
+    upgradeInProgress = true;
+    try {
+      return await applyBinaryUpgrade({ checkFn });
+    } finally {
+      upgradeInProgress = false;
+    }
   }
 
-  const update = await checkForUpdate();
+  const update = await checkFn();
   if (!update.available || !update.latest) {
     return { success: false, error: "Already on latest version" };
   }
 
   upgradeInProgress = true;
   const pkg = `@hienlh/ppm@${update.latest}`;
-  // Use the absolute path of the running runtime (process.execPath) instead of a
-  // bare "bun"/"npm" name. When PPM is launched via autostart (launchd/systemd),
-  // $PATH may not include the runtime's bin dir, so a bare name fails with
-  // "Executable not found in $PATH".
-  const cmd = method === "bun"
-    ? [process.execPath, "install", "-g", pkg]
-    : [resolveNpmBin(), "install", "-g", pkg];
+  const cmd = buildUpgradeCommand(method, pkg);
 
   try {
-    const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    const proc = spawnFn({ cmd, stdout: "pipe", stderr: "pipe" });
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
       const stderr = await new Response(proc.stderr).text();

@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Binary installs now self-upgrade in-app** — PPM installed from a GitHub release binary (not just bun/npm) can upgrade from the UI Upgrade button and `ppm upgrade`, on Linux, macOS, and Windows. It downloads the matching release archive, verifies its SHA-256 against a published `SHA256SUMS` manifest before touching anything, then atomically swaps the binary and its `web/` assets and restarts. A mismatched or missing checksum aborts the upgrade and leaves the running install untouched. Windows renames the locked `.exe` aside and cleans up the leftover on the next start.
+
+### Changed
+- **Release now publishes `SHA256SUMS`** — `scripts/release.sh` generates a checksum manifest covering every archive and uploads it to the GitHub release, required by the binary self-upgrade integrity check. Note: upgrading *from* a pre-checksum binary release requires a one-time manual reinstall.
+
 ## [0.17.9] - 2026-07-24
 
 ### Added

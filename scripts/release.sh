@@ -10,9 +10,9 @@ set -uo pipefail
 #   1. regenerate skill assets + build frontend
 #   2. publish the npm package (skipped if the version is already on npm)
 #   3. compile binaries for every platform
-#   4. package each binary with the web assets
+#   4. package each binary with the web assets + generate SHA256SUMS
 #   5. create + push the git tag
-#   6. create/update the GitHub release and upload the archives
+#   6. create/update the GitHub release and upload the archives + SHA256SUMS
 #
 # The npm version and the GitHub binary release always share the same version,
 # so `curl … | sh` installs stay in sync with `bunx @hienlh/ppm`.
@@ -138,6 +138,20 @@ for entry in "${TARGETS[@]}"; do
   fi
 done
 
+# SHA256SUMS — bare filenames (hash from inside dist/) so the upgrade client can
+# match on "<artifact>.<ext>". Standard sha256sum 2-space format. macOS lacks
+# sha256sum but has shasum; prefer it, fall back to sha256sum.
+if command -v shasum >/dev/null 2>&1; then
+  HASH_CMD="shasum -a 256"
+elif command -v sha256sum >/dev/null 2>&1; then
+  HASH_CMD="sha256sum"
+else
+  fail "neither shasum nor sha256sum found — cannot generate SHA256SUMS."
+fi
+( cd dist && $HASH_CMD ppm-*.tar.gz ppm-*.zip > SHA256SUMS ) || fail "SHA256SUMS generation failed."
+[ -s dist/SHA256SUMS ] || fail "SHA256SUMS empty — no archives to hash."
+echo "  -> SHA256SUMS"
+
 # ---------------------------------------------------------------------------
 # 5. Tag
 # ---------------------------------------------------------------------------
@@ -153,7 +167,7 @@ git push origin "$TAG" || fail "pushing tag failed."
 # 6. GitHub release + upload archives
 # ---------------------------------------------------------------------------
 echo "[6/6] Uploading binaries to GitHub release..."
-ARCHIVES=(dist/ppm-*.tar.gz dist/ppm-*.zip)
+ARCHIVES=(dist/ppm-*.tar.gz dist/ppm-*.zip dist/SHA256SUMS)
 if gh release view "$TAG" >/dev/null 2>&1; then
   gh release upload "$TAG" "${ARCHIVES[@]}" --clobber || fail "gh release upload failed."
 else

@@ -2,18 +2,10 @@ import { VERSION } from "../../version.ts";
 import {
   checkForUpdate,
   applyUpgrade,
-  getInstallMethod,
   signalSupervisorUpgrade,
 } from "../../services/upgrade.service.ts";
 
 export async function upgradeCmd(options: { check?: boolean }) {
-  const method = getInstallMethod();
-
-  if (method === "binary") {
-    console.log("  Compiled binary detected — download new version from GitHub releases.");
-    process.exit(0);
-  }
-
   const update = await checkForUpdate();
 
   if (options.check) {

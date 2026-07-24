@@ -19,6 +19,8 @@ import {
   compareSemver,
   getInstallMethod,
   checkForUpdate,
+  applyUpgrade,
+  buildUpgradeCommand,
 } from "../../src/services/upgrade.service.ts";
 import { app } from "../../src/server/index.ts";
 
@@ -95,6 +97,69 @@ describe("checkForUpdate", () => {
       expect(result.latest).toMatch(/^\d+\.\d+\.\d+/);
     }
     expect(typeof result.available).toBe("boolean");
+  });
+});
+
+// ─── buildUpgradeCommand (pure) ─────────────────────────────────────────
+
+describe("buildUpgradeCommand", () => {
+  it("bun uses the running runtime path", () => {
+    const cmd = buildUpgradeCommand("bun", "@hienlh/ppm@9.9.9");
+    expect(cmd).toEqual([process.execPath, "install", "-g", "@hienlh/ppm@9.9.9"]);
+  });
+  it("npm resolves an npm bin and installs globally", () => {
+    const cmd = buildUpgradeCommand("npm", "@hienlh/ppm@9.9.9");
+    expect(cmd.slice(1)).toEqual(["install", "-g", "@hienlh/ppm@9.9.9"]);
+    expect(cmd[0]).toMatch(/npm/);
+  });
+});
+
+// ─── applyUpgrade regression (bun/npm path — spawn mocked via DI) ────────
+// Locks the existing global-install behavior so the binary-dispatch refactor
+// can't silently regress it. getInstallMethod() returns "bun" under `bun test`.
+
+describe("applyUpgrade regression (bun/npm)", () => {
+  const okSpawn = (() => ({ exited: Promise.resolve(0), stderr: null })) as unknown as typeof Bun.spawn;
+
+  it("happy path returns success + new version, does not spawn a real install", async () => {
+    let spawnedCmd: string[] | undefined;
+    const spy = ((args: { cmd: string[] }) => {
+      spawnedCmd = args.cmd;
+      return { exited: Promise.resolve(0), stderr: null };
+    }) as unknown as typeof Bun.spawn;
+    const res = await applyUpgrade({
+      checkFn: async () => ({ available: true, current: "1.0.0", latest: "9.9.9" }),
+      spawnFn: spy,
+    });
+    expect(res).toEqual({ success: true, newVersion: "9.9.9" });
+    expect(spawnedCmd).toEqual([process.execPath, "install", "-g", "@hienlh/ppm@9.9.9"]);
+  });
+
+  it("returns 'already on latest' when no update available", async () => {
+    const res = await applyUpgrade({
+      checkFn: async () => ({ available: false, current: "9.9.9", latest: "9.9.9" }),
+      spawnFn: okSpawn,
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toMatch(/latest/);
+  });
+
+  it("second concurrent call is rejected while one is in progress", async () => {
+    let release!: (n: number) => void;
+    const slow = (() => ({ exited: new Promise<number>((r) => { release = r; }), stderr: null })) as unknown as typeof Bun.spawn;
+    const p1 = applyUpgrade({
+      checkFn: async () => ({ available: true, current: "1.0.0", latest: "9.9.9" }),
+      spawnFn: slow,
+    });
+    await new Promise((r) => setTimeout(r, 20)); // let p1 set the in-progress flag + start the slow spawn
+    const r2 = await applyUpgrade({
+      checkFn: async () => ({ available: true, current: "1.0.0", latest: "9.9.9" }),
+      spawnFn: okSpawn,
+    });
+    expect(r2.success).toBe(false);
+    expect(r2.error).toMatch(/in progress/);
+    release(0);
+    expect((await p1).success).toBe(true);
   });
 });
 

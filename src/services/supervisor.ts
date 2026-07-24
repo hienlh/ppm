@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
 import { isCompiledBinary } from "./autostart-generator.ts";
+import { cleanupStaleBinaryUpgradeArtifacts } from "./binary-upgrade-swap.ts";
 import {
   type SupervisorState,
   getState, setState, waitForResume, triggerResume,
@@ -1193,6 +1194,12 @@ export async function runSupervisor(opts: {
   // Clean up flags from previous upgrade/restart
   try { unlinkSync(restartingFlag()); } catch {}
   try { unlinkSync(serverShutdownFile()); } catch {}
+
+  // A Windows binary upgrade can't delete the running .exe, so it renames the
+  // old one aside; this fresh process (old one now gone) removes the leftover.
+  if (isCompiledBinary()) {
+    cleanupStaleBinaryUpgradeArtifacts(resolve(process.execPath, ".."), process.platform);
+  }
 
   // Save original argv for self-replace
   originalArgv = [...process.argv];
