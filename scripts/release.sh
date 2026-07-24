@@ -10,7 +10,7 @@ set -uo pipefail
 #   1. regenerate skill assets + build frontend
 #   2. publish the npm package (skipped if the version is already on npm)
 #   3. compile binaries for every platform
-#   4. package each binary with the web assets + generate SHA256SUMS
+#   4. package each binary with web assets + the matching Claude CLI + SHA256SUMS
 #   5. create + push the git tag
 #   6. create/update the GitHub release and upload the archives + SHA256SUMS
 #
@@ -114,24 +114,60 @@ for entry in "${TARGETS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 4. Package binaries with web assets
+# 3b. Fetch each platform's Claude CLI (version-matched to the SDK dep).
+# The SDK spawns a native `claude`; a compiled binary has no node_modules, so we
+# ship the matching CLI in each archive as a fallback (runtime prefers a system
+# claude). `npm pack` downloads a platform package regardless of the host's
+# os/cpu, so all 5 can be fetched on one machine.
+# ---------------------------------------------------------------------------
+echo "[3b] Fetching per-platform Claude CLI..."
+SDK_VER=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']" | tr -d '^~')
+[ -n "$SDK_VER" ] || fail "could not read claude-agent-sdk version from package.json."
+CLI_CACHE="dist/.cli-cache"
+rm -rf "$CLI_CACHE"; mkdir -p "$CLI_CACHE"
+for plat in darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64; do
+  pkg="@anthropic-ai/claude-agent-sdk-$plat"
+  tgz=$( cd "$CLI_CACHE" && npm pack "$pkg@$SDK_VER" 2>/dev/null | tail -1 )
+  [ -n "$tgz" ] || fail "npm pack $pkg@$SDK_VER produced no tarball."
+  mkdir -p "$CLI_CACHE/$plat"
+  tar xzf "$CLI_CACHE/$tgz" -C "$CLI_CACHE/$plat" || fail "extract $pkg failed."
+  if [ "$plat" = "win32-x64" ]; then
+    [ -f "$CLI_CACHE/$plat/package/claude.exe" ] || fail "$pkg missing package/claude.exe."
+  else
+    [ -f "$CLI_CACHE/$plat/package/claude" ] || fail "$pkg missing package/claude."
+  fi
+  echo "  -> $pkg@$SDK_VER"
+done
+
+# Map a packaged artifact name (ppm-<os>-<arch>[.exe]) → SDK platform pkg dir.
+cli_plat_for() {
+  local p="${1#ppm-}"; p="${p%.exe}"
+  case "$p" in windows-x64) echo "win32-x64";; *) echo "$p";; esac
+}
+
+# ---------------------------------------------------------------------------
+# 4. Package binaries with web assets + Claude CLI
 # ---------------------------------------------------------------------------
 echo "[4/6] Packaging..."
 rm -f dist/ppm-*.tar.gz dist/ppm-*.zip
 for entry in "${TARGETS[@]}"; do
   artifact="${entry##*:}"
+  plat=$(cli_plat_for "$artifact")
   if [[ "$artifact" == *.exe ]]; then
     name="${artifact%.exe}"
-    mkdir -p "dist/$name"
+    mkdir -p "dist/$name/cli"
     cp "dist/$artifact" "dist/$name/ppm.exe"
     cp -r dist/web "dist/$name/web"
+    cp "$CLI_CACHE/$plat/package/claude.exe" "dist/$name/cli/claude.exe" || fail "cli copy failed for $name."
     (cd dist && zip -qr "${name}.zip" "$name") || fail "zip failed for $name."
     rm -rf "dist/$name"
     echo "  -> ${name}.zip"
   else
-    mkdir -p "dist/$artifact-pkg"
+    mkdir -p "dist/$artifact-pkg/cli"
     cp "dist/$artifact" "dist/$artifact-pkg/ppm"
     cp -r dist/web "dist/$artifact-pkg/web"
+    cp "$CLI_CACHE/$plat/package/claude" "dist/$artifact-pkg/cli/claude" || fail "cli copy failed for $artifact."
+    chmod +x "dist/$artifact-pkg/cli/claude"
     tar -czf "dist/${artifact}.tar.gz" -C "dist/$artifact-pkg" . || fail "tar failed for $artifact."
     rm -rf "dist/$artifact-pkg"
     echo "  -> ${artifact}.tar.gz"

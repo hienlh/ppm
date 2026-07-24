@@ -59,6 +59,9 @@ curl -fSL# -o "$TMPFILE" "$URL"
 tar -xzf "$TMPFILE" -C "$INSTALL_DIR"
 rm -f "$TMPFILE"
 chmod +x "${INSTALL_DIR}/ppm"
+# The bundled Claude CLI (fallback when no system claude); exec bit may not
+# survive a tar built on a Windows release host.
+[ -f "${INSTALL_DIR}/cli/claude" ] && chmod +x "${INSTALL_DIR}/cli/claude"
 
 # Show changelog
 echo ""

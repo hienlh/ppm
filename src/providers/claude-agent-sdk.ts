@@ -21,11 +21,61 @@ import { getSessionProjectPath, setSessionMetadata, getSessionTitles } from "../
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { parseSessionMessage, nestChildEvents } from "../services/jsonl-transcript-parser.ts";
-import { resolve } from "node:path";
+import { isCompiledBinary } from "../services/autostart-generator.ts";
+import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
+import { resolve, dirname } from "node:path";
 import { existsSync, readdirSync, unlinkSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 
 const CLAUDE_PROJECTS_DIR = resolve(homedir(), ".claude/projects");
+
+/**
+ * Resolve the Claude CLI the SDK should spawn.
+ *
+ * Source (bun/npm) installs: return undefined — the SDK finds its own CLI in
+ * node_modules (leaving behavior untouched). Compiled binaries have no
+ * node_modules, so we point the SDK at a resolved CLI (system claude, or the
+ * `cli/` shipped beside the binary). Returns undefined + logs a clear error when
+ * nothing is found, so the user sees an actionable message rather than the raw
+ * SDK "native CLI not found".
+ */
+export function resolveCliExecutablePath(
+  cliCommandOverride?: string,
+  compiled: boolean = isCompiledBinary(),
+): string | undefined {
+  if (!compiled) return undefined;
+
+  const override = process.env.PPM_CLAUDE_CLI || cliCommandOverride || undefined;
+  const cliPath = resolveClaudeCliPath({
+    platform: process.platform,
+    execDir: dirname(process.execPath),
+    pathEnv: process.env.PATH,
+    homeDir: homedir(),
+    overridePath: override,
+    fsExists: (p) => {
+      try { return existsSync(p) && statSync(p).isFile(); } catch { return false; }
+    },
+  });
+
+  if (!cliPath) {
+    console.error(
+      "[sdk] No Claude CLI found. This PPM binary needs a 'claude' executable. " +
+        "Install Claude Code (https://claude.ai/code), set PPM_CLAUDE_CLI=/path/to/claude, " +
+        "or reinstall the PPM release archive (should contain cli/claude). " +
+        "Searched: PATH, ~/.claude/local, ~/.local/bin, /usr/local/bin, /opt/homebrew/bin, <binary>/cli.",
+    );
+    return undefined;
+  }
+  return cliPath;
+}
+
+/** Whether the SDK must run the CLI under `node` (a .js entry) vs spawn it
+ *  directly (a native exe / cmd shim). Preserves the prior win32 default when
+ *  no explicit CLI path is resolved (source mode). */
+export function needsNodeInterpreter(platform: string, cliPath: string | undefined): boolean {
+  if (platform !== "win32") return false;
+  return cliPath == null || /\.(c|m)?js$/i.test(cliPath);
+}
 
 // ── Streaming Input: message channel for persistent query ──
 
@@ -928,9 +978,18 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           ? `${baseModel}[1m]`
           : baseModel;
 
+      // Compiled binaries have no node_modules → resolve a Claude CLI explicitly
+      // (system claude or the one shipped in cli/). Source installs → undefined
+      // (SDK self-resolves from node_modules, unchanged).
+      const cliExecutablePath = resolveCliExecutablePath(
+        (providerConfig as { cli_command?: string }).cli_command,
+      );
+
       const queryOptions: Record<string, any> = {
-        // On Windows, child_process.spawn("bun") fails with ENOENT — force node
-        ...(process.platform === "win32" && { executable: "node" }),
+        // Run the CLI under node only for a .js entry (or the win32 source-mode
+        // default). A native claude(.exe) must be spawned directly.
+        ...(needsNodeInterpreter(process.platform, cliExecutablePath) && { executable: "node" }),
+        ...(cliExecutablePath && { pathToClaudeCodeExecutable: cliExecutablePath }),
         // First message: create session with this ID. Subsequent: resume by same ID.
         sessionId: isFirstMessage && !shouldFork ? sessionId : undefined,
         resume: (isFirstMessage && !shouldFork) ? undefined : (shouldFork ? forkSourceId : sessionId),
