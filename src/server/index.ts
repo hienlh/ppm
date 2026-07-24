@@ -21,6 +21,7 @@ import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
 import { extensionWebSocket } from "./ws/extensions.ts";
+import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { ok, err } from "../types/api.ts";
 
 /** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
@@ -179,6 +180,10 @@ app.route("/api/ai-resources", aiResourcesRoutes);
 // Agent Teams management
 import { teamRoutes } from "./routes/teams.ts";
 app.route("/api/teams", teamRoutes);
+
+// Native group-chat engine
+import { groupChatRoutes } from "./routes/group-chat.ts";
+app.route("/api/group-chat", groupChatRoutes);
 
 // Extensions management
 import { extensionRoutes } from "./routes/extensions.ts";
@@ -775,6 +780,14 @@ if (process.argv.includes("__serve__")) {
           if (upgraded) return undefined;
           return new Response("WebSocket upgrade failed", { status: 400 });
         }
+
+        if (wsType === "group") {
+          const upgraded = server.upgrade(req, {
+            data: { type: "group", groupId: id, projectName },
+          });
+          if (upgraded) return undefined;
+          return new Response("WebSocket upgrade failed", { status: 400 });
+        }
       }
 
       return app.fetch(req, server);
@@ -785,16 +798,19 @@ if (process.argv.includes("__serve__")) {
       perMessageDeflate: false,
       open(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.open(ws);
+        else if (ws.data?.type === "group") groupChatWebSocket.open(ws);
         else if (ws.data?.type === "extensions") extensionWebSocket.open(ws);
         else terminalWebSocket.open(ws);
       },
       message(ws: any, msg: any) {
         if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
+        else if (ws.data?.type === "group") groupChatWebSocket.message(ws, msg);
         else if (ws.data?.type === "extensions") extensionWebSocket.message(ws, msg);
         else terminalWebSocket.message(ws, msg);
       },
       close(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.close(ws);
+        else if (ws.data?.type === "group") groupChatWebSocket.close(ws);
         else if (ws.data?.type === "extensions") extensionWebSocket.close(ws);
         else terminalWebSocket.close(ws);
       },
