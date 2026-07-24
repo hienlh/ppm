@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
-  Terminal, Menu, X, ArrowLeft, ArrowRight, SplitSquareVertical, MoveVertical, Layers, Plus,
+  Terminal, Menu, X, Layers, Plus,
   Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp,
 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
@@ -10,7 +10,6 @@ import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { openCompareTab } from "@/lib/open-compare-tab";
 import { useProjectTags } from "@/components/chat/tag-filter-chips";
-import { findPanelPosition, MAX_ROWS } from "@/stores/panel-utils";
 import { resolveProjectColor } from "@/lib/project-palette";
 import { ProjectAvatar } from "@/components/layout/project-avatar";
 import type { Tab } from "@/stores/tab-store";
@@ -62,6 +61,22 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     return { tabs: allTabs, tabPanelMap: map };
   }, [panels, grid, currentProject]);
 
+  // Recency rank for the tab-switcher "Recent" sort: 0 = most recent. Each panel's
+  // tabHistory is MRU with the newest id last, so we walk it in reverse. Grid panels
+  // are concatenated in order (a mobile-simplifying tiebreak — one panel is the norm).
+  const recency = useMemo(() => {
+    const m = new Map<string, number>();
+    let rank = 0;
+    for (const pid of grid.flat()) {
+      const history = panels[pid]?.tabHistory ?? [];
+      for (let i = history.length - 1; i >= 0; i--) {
+        const id = history[i]!;
+        if (!m.has(id)) m.set(id, rank++);
+      }
+    }
+    return m;
+  }, [panels, grid]);
+
   // The current-tab button mirrors the main content, which renders the focused
   // GRID panel (falling back to the first grid panel when focus is elsewhere —
   // e.g. on the dock). Reading focusedPanelId directly would pick up the dock's
@@ -76,6 +91,8 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
 
   const [menuTabId, setMenuTabId] = useState<string | null>(null);
   const [tabSheetOpen, setTabSheetOpen] = useState(false);
+  const [renameTabId, setRenameTabId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   // Active tab (for the current-tab button) + running-terminal indicator.
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
@@ -87,10 +104,6 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   const menuTabPanelId = menuTabId ? tabPanelMap[menuTabId] ?? focusedPanelId : focusedPanelId;
   const menuTabPanelTabs = panels[menuTabPanelId]?.tabs ?? [];
   const menuTabIdx = menuTabId ? menuTabPanelTabs.findIndex((t) => t.id === menuTabId) : -1;
-
-  const pos = findPanelPosition(grid, menuTabPanelId);
-  const canSplitDown = pos ? grid.length < MAX_ROWS : false;
-  const otherPanelIds = grid.flat().filter((id) => id !== menuTabPanelId);
 
   // Chat-session context for the long-press menu (Mark as unread / Set Tag)
   const menuSessionId = menuTab?.type === "chat" ? (menuTab.metadata?.sessionId as string | undefined) : undefined;
@@ -104,25 +117,21 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     compareSelection.projectName === menuProjectName &&
     compareSelection.filePath !== menuFilePath;
 
-  function moveTabLeft(tabId: string) {
-    const pid = tabPanelMap[tabId] ?? focusedPanelId;
-    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
-    const idx = pTabs.findIndex((t) => t.id === tabId);
-    if (idx > 0) usePanelStore.getState().reorderTab(tabId, pid, idx - 1);
+  function startRename(tab: Tab) {
+    setMenuTabId(null);
+    setRenameTabId(tab.id);
+    setRenameValue(tab.title);
   }
-  function moveTabRight(tabId: string) {
-    const pid = tabPanelMap[tabId] ?? focusedPanelId;
-    const pTabs = usePanelStore.getState().panels[pid]?.tabs ?? [];
-    const idx = pTabs.findIndex((t) => t.id === tabId);
-    if (idx < pTabs.length - 1) usePanelStore.getState().reorderTab(tabId, pid, idx + 1);
-  }
-  function splitDown(tabId: string) {
-    const pid = tabPanelMap[tabId] ?? focusedPanelId;
-    usePanelStore.getState().splitPanel("down", tabId, pid);
-  }
-  function moveToPanel(tabId: string, targetPanelId: string) {
-    const pid = tabPanelMap[tabId] ?? focusedPanelId;
-    usePanelStore.getState().moveTab(tabId, pid, targetPanelId);
+  async function saveRename() {
+    const tab = tabs.find((t) => t.id === renameTabId);
+    const sid = tab?.metadata?.sessionId as string | undefined;
+    const title = renameValue.trim();
+    if (!tab || !sid || !title || !currentProject) { setRenameTabId(null); return; }
+    try {
+      await api.patch(`${projectUrl(currentProject)}/chat/sessions/${sid}`, { title });
+      usePanelStore.getState().updateTab(tab.id, { title });
+    } catch { /* silent */ }
+    setRenameTabId(null);
   }
 
   function closeOthers(tabId: string) {
@@ -336,13 +345,21 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
         activeTabId={activeTabId}
         projectColor={activeProject ? activeColor : null}
         onTabLongPress={(tabId) => setMenuTabId(tabId)}
+        recency={recency}
       />
 
-      {/* Long-press tab action sheet */}
-      <BottomSheet open={!!menuTab} onClose={() => setMenuTabId(null)}>
+      {/* Long-press tab action sheet. select-none stops the long-press gesture
+          from highlighting the menu text as it opens under the finger. */}
+      <BottomSheet open={!!menuTab} onClose={() => setMenuTabId(null)} className="select-none">
         <div className="px-3 py-2 text-xs text-text-secondary border-b border-border truncate">
           {menuTab?.title}
         </div>
+        {menuSessionId && (
+          <button onClick={() => startRename(menuTab!)}
+            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
+            <Pencil className="size-4" /> Rename
+          </button>
+        )}
         {menuTab?.type === "editor" && (
           <>
             <button onClick={() => handleFileAction(menuTab, "copy-path")}
@@ -425,30 +442,32 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
             <ChevronsRight className="size-4" /> Close to the Right
           </button>
         )}
-        {menuTabIdx > 0 && (
-          <button onClick={() => { moveTabLeft(menuTabId!); setMenuTabId(null); }}
-            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-            <ArrowLeft className="size-4" /> Move Left
-          </button>
-        )}
-        {menuTabIdx < menuTabPanelTabs.length - 1 && (
-          <button onClick={() => { moveTabRight(menuTabId!); setMenuTabId(null); }}
-            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-            <ArrowRight className="size-4" /> Move Right
-          </button>
-        )}
-        {canSplitDown && menuTabPanelTabs.length > 1 && (
-          <button onClick={() => { splitDown(menuTabId!); setMenuTabId(null); }}
-            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-            <SplitSquareVertical className="size-4" /> Split to Bottom
-          </button>
-        )}
-        {otherPanelIds.map((pid, i) => (
-          <button key={pid} onClick={() => { moveToPanel(menuTabId!, pid); setMenuTabId(null); }}
-            className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-foreground active:bg-surface-elevated">
-            <MoveVertical className="size-4" /> Move to Panel {i + 1 === 1 ? "Top" : "Bottom"}
-          </button>
-        ))}
+      </BottomSheet>
+
+      {/* Rename chat session sheet */}
+      <BottomSheet open={!!renameTabId} onClose={() => setRenameTabId(null)}>
+        <div className="px-4 pt-1 pb-3">
+          <div className="text-[13px] font-semibold text-text-primary mb-2">Rename chat</div>
+          <input
+            autoFocus
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") saveRename(); }}
+            placeholder="Session title"
+            className="w-full h-11 px-3 rounded-xl bg-background border border-border text-text-primary outline-none focus:border-primary"
+            style={{ fontSize: 16 }} // 16px prevents iOS zoom-on-focus
+          />
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => setRenameTabId(null)}
+              className="flex-1 h-11 rounded-xl border border-border text-sm text-text-secondary active:bg-surface-elevated">
+              Cancel
+            </button>
+            <button onClick={saveRename}
+              className="flex-1 h-11 rounded-xl bg-primary text-primary-foreground text-sm font-medium active:opacity-90">
+              Save
+            </button>
+          </div>
+        </div>
       </BottomSheet>
 
       {fileActionState && (

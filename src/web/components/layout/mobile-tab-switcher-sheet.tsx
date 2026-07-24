@@ -10,9 +10,15 @@ import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore } from "@/stores/notification-store";
 import { getTabTypeIcon } from "@/lib/tab-type-icons";
-import { buildTabSwitcherGroups } from "./tab-switcher-groups";
+import { buildTabSwitcherGroups, type TabSortMode } from "./tab-switcher-groups";
 import type { Tab } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
+
+const SORT_STORAGE_KEY = "ppm:tab-sort-mode";
+
+function loadSortMode(): TabSortMode {
+  try { return localStorage.getItem(SORT_STORAGE_KEY) === "recent" ? "recent" : "default"; } catch { return "default"; }
+}
 
 interface MobileTabSwitcherSheetProps {
   open: boolean;
@@ -27,13 +33,20 @@ interface MobileTabSwitcherSheetProps {
   projectColor: string | null;
   /** Long-press a row → open the per-tab action menu (owned by MobileNav). */
   onTabLongPress?: (tabId: string) => void;
+  /** tabId → recency rank (0 = most recent); drives the "Recent" sort mode. */
+  recency: Map<string, number>;
 }
 
 export function MobileTabSwitcherSheet({
-  open, onClose, onOpenPalette, tabs, tabPanelMap, panelOrder, activeTabId, projectColor, onTabLongPress,
+  open, onClose, onOpenPalette, tabs, tabPanelMap, panelOrder, activeTabId, projectColor, onTabLongPress, recency,
 }: MobileTabSwitcherSheetProps) {
   const [query, setQuery] = useState("");
-  const { groups, total } = buildTabSwitcherGroups(tabs, tabPanelMap, panelOrder, query);
+  const [sortMode, setSortMode] = useState<TabSortMode>(loadSortMode);
+  const changeSort = useCallback((mode: TabSortMode) => {
+    setSortMode(mode);
+    try { localStorage.setItem(SORT_STORAGE_KEY, mode); } catch { /* ignore */ }
+  }, []);
+  const { groups, total } = buildTabSwitcherGroups(tabs, tabPanelMap, panelOrder, query, { sortMode, recency });
 
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startLongPress = useCallback((tabId: string) => {
@@ -65,13 +78,31 @@ export function MobileTabSwitcherSheet({
 
   return (
     <BottomSheet open={open} onClose={onClose} className="max-h-[72vh] flex flex-col">
-      {/* Header */}
+      {/* Header — title, count, sort toggle, and new-tab button on one row */}
       <div className="shrink-0 flex items-center gap-2 pl-4 pr-3 pt-1 pb-2.5">
         <span className="text-[13px] font-semibold text-text-primary">Open Tabs</span>
         <span className="px-1.5 h-[18px] inline-flex items-center rounded-md border border-border bg-surface-elevated text-[10px] font-mono text-text-secondary">
           {tabs.length}
         </span>
         <div className="flex-1" />
+        {/* Sort segmented control */}
+        <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-background border border-border">
+          {([["default", "Default"], ["recent", "Recent"]] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              onClick={() => changeSort(mode)}
+              aria-pressed={sortMode === mode}
+              className={cn(
+                "h-7 px-2.5 rounded-md text-[11px] font-medium transition-colors select-none",
+                sortMode === mode
+                  ? "bg-primary/10 text-primary"
+                  : "text-text-secondary active:bg-surface-elevated",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <button
           onClick={openPalette}
           title="New tab"
@@ -104,11 +135,13 @@ export function MobileTabSwitcherSheet({
         ) : (
           groups.map((group) => (
             <div key={group.panelId} className="mb-1">
-              <div className="flex items-center gap-1.5 px-2 pt-2 pb-1">
-                <Columns2 className="size-3 text-text-subtle" />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-subtle">{group.label}</span>
-                <span className="text-[10px] font-mono text-text-subtle">{group.tabs.length}</span>
-              </div>
+              {group.label && (
+                <div className="flex items-center gap-1.5 px-2 pt-2 pb-1">
+                  <Columns2 className="size-3 text-text-subtle" />
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-text-subtle">{group.label}</span>
+                  <span className="text-[10px] font-mono text-text-subtle">{group.tabs.length}</span>
+                </div>
+              )}
               {group.tabs.map((tab) => {
                 const Icon = getTabTypeIcon(tab.type);
                 const isActive = tab.id === activeTabId;

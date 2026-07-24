@@ -46,4 +46,28 @@ describe("buildTabSwitcherGroups", () => {
     const { groups } = buildTabSwitcherGroups(tabs, map, order, "gamma");
     expect(groups[0]!.label).toBe("Panel 2");
   });
+
+  describe("recent sort mode", () => {
+    const recency = new Map([["c", 0], ["a", 1], ["b", 2]]);
+
+    it("returns one flat, header-less group ordered by recency (0 = most recent)", () => {
+      const { groups, total } = buildTabSwitcherGroups(tabs, map, order, "", { sortMode: "recent", recency });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]!.label).toBe("");
+      expect(groups[0]!.tabs.map((t) => t.id)).toEqual(["c", "a", "b"]);
+      expect(total).toBe(3);
+    });
+
+    it("tabs missing a recency rank sink to the end, keeping insertion order", () => {
+      const partial = new Map([["b", 0]]);
+      const { groups } = buildTabSwitcherGroups(tabs, map, order, "", { sortMode: "recent", recency: partial });
+      expect(groups[0]!.tabs.map((t) => t.id)).toEqual(["b", "a", "c"]);
+    });
+
+    it("still applies the query filter in recent mode", () => {
+      const { groups, total } = buildTabSwitcherGroups(tabs, map, order, "gam", { sortMode: "recent", recency });
+      expect(total).toBe(1);
+      expect(groups[0]!.tabs[0]!.id).toBe("c");
+    });
+  });
 });
