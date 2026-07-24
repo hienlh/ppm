@@ -24,6 +24,12 @@ All notable changes to PPM are documented here. Format follows [Keep a Changelog
 ## [Unreleased] — Chat Live Task Tracker, Scheduled Agents, Resource Monitor, Lazy-Load File Tree + Palette Index, Session Tagging, File Compare, Draft Messages, Jira Debug Session Redesign, Frontend Memory Optimization, Git-Graph Enhancements, Command Palette Filter Chips, Custom Project Avatars
 
 ### Added
+- **Native Group-Chat Engine** — Multi-agent shared-channel group chat. A leader agent + members split work, discuss over a shared message bus (sequential @mention-driven turns), and converge to a single final answer, rendered as a team chat.
+  - Data model (schema v35): `chat_groups`, `chat_group_members`, `chat_group_messages` (single-table bus keyed by `kind` + JSON `data`, monotonic `seq` for stable ordering).
+  - Provider-agnostic turn engine with windowed context + PPM-side naive rolling summary; four termination conditions (leader `DONE:`, max-turns=40, budget cap=$5.0, external Stop) — always emits exactly one `final`.
+  - Option A+ transcript archive: member session JSONLs are copied to `~/.ppm/teams/<group>/transcripts/` and the raw files deleted (copy verified before delete) to keep `~/.claude/projects` clean; "view full" reads from the archive.
+  - REST `/api/group-chat` (CRUD, feed, message, stop/resume, transcript) + WS `/ws/project/:name/group/:groupId` (live bus stream + reconnect buffer, detached loop).
+  - Stop pauses the group mid-turn (cooperative cancel); Resume re-spawns fresh member sessions and re-enters the loop seeded from the durable bus (works even after archive).
 - **Custom Project Avatars** — Set any project's avatar to an uploaded image
   - Upload via desktop right-click menu on project (switcher/bar) or mobile long-press (bottom-sheet) → "Change Image"
   - Client-side resizing: canvas center-crop to square, downscale to 128×128 webp 0.85 quality, max 10MB

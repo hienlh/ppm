@@ -101,6 +101,13 @@ src/
 │   │   ├── ppmbot-delegation.ts # Task execution (creates isolated session per project)
 │   │   ├── ppmbot-formatter.ts  # Markdown → Telegram HTML, chunking
 │   │   └── ppmbot-streamer.ts   # ChatEvent → progressive message edits
+│   ├── group-chat/              # Native multi-agent group-chat engine
+│   │   ├── group-chat.store.ts  # CRUD + windowed message-bus reads (schema v35)
+│   │   ├── turn-engine.ts       # Provider-agnostic shared-channel turn loop (DI)
+│   │   ├── context-window.ts    # Windowing + naive rolling summary (no API)
+│   │   ├── agent-runner.ts      # Member turn (summary from full text) + parallel dispatch
+│   │   ├── transcript-archive.ts# Option A+ archive-and-delete of member JSONLs
+│   │   └── group-chat.service.ts# Live runtime: detached loop, abort, WS broadcast, stop/resume
 │   ├── clawbot/                 # Legacy: Telegram bot service layer (deprecated v0.9.11)
 │   │   ├── clawbot.service.ts   # (Original direct-chat model, replaced by coordinator)
 │   │   └── ... (other files)

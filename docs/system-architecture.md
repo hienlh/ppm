@@ -232,6 +232,26 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **ClawBotFormatterService** | LEGACY formatter | (deprecated v0.9.11) |
 | **ClawBotStreamerService** | LEGACY streamer | (deprecated v0.9.11) |
 | **BashOutputSpy** | Monitor bash tool output in real-time via /proc/PID/fd (Linux/WSL2) or lsof (macOS) | startSpy, stopSpy, stopAllForSession |
+| **GroupChatStore** | Group-chat CRUD + windowed message-bus reads (`src/services/group-chat/group-chat.store.ts`) | createGroup, listGroups, addMember, appendMessage, readMessages |
+| **GroupChatService** | Live per-group runtime: detached turn loop, abort handle, WS broadcast + reconnect buffer, Option A+ archive on completion | start, stop, resume, addClient, removeClient |
+| **TurnEngine** | Provider-agnostic shared-channel loop (DI deps): windowed context + rolling summary, @mention speaker selection, 4 terminations, single final | runGroupTurnLoop, selectNextSpeaker, buildTurnContext |
+| **AgentRunner** | Provider-backed member turn (summary from full text, not last chunk), bounded-concurrency parallel dispatch | runAgentTurn, dispatchParallel, makeEngineRunAgent |
+| **TranscriptArchive** | Option A+ archive-and-delete of member JSONLs to `~/.ppm/teams/<group>/transcripts/` (copy-verified before delete) | archiveAndDelete, readArchivedTranscript |
+
+### Group-Chat Data Model (schema v35)
+
+Three tables back the native group-chat engine; the message bus is a single
+table keyed by `kind` + JSON `data` (spike-validated) with a monotonic `seq`
+PK for stable ordering, and is the durable source of truth across Stop/Resume:
+
+- `chat_groups(id, project_name, project_path, name, leader_session_id, status[active|paused|idle], max_turns=40, max_cost_usd=5.0, created_at)`
+- `chat_group_members(id, group_id→chat_groups, role[leader|member], persona, agent_type, model, session_id, name, color, status, joined_at)`
+- `chat_group_messages(seq PK, id, group_id→chat_groups, from_member, to_member, kind[task|chat|status|completion|final], summary, full_session_ref, data JSON, turn_index, created_at)`
+
+Flow: user message → engine runs sequential @mention-driven turns over the bus →
+converges to one `final` → member transcripts archived (Option A+). Stop aborts
+mid-turn (cooperative) and pauses; Resume re-spawns fresh sessions and re-enters
+the loop seeded from the bus (windowed + rolling summary).
 | **TagService** | Session tagging CRUD, bulk operations, tag-session enrichment | seedDefaultTags, getTagsByProject, createTag, updateTag, deleteTag, setSessionTag, bulkSetSessionTag, getSessionTags, getTagSessionCounts |
 | **DraftService** | Chat draft auto-save per session, 50KB cap | get, upsert, delete, deleteOrphaned |
 | **FileFilterService** | Glob pattern matching + precedence-enforced filtering (hardcoded ⊂ global ⊂ project) | mergeFilters, isPathIgnored, matchesPattern |

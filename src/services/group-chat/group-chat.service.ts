@@ -50,67 +50,100 @@ class GroupChatService {
 
   // --- lifecycle -----------------------------------------------------------
 
-  /** Start (or ignore if already running) the turn loop for a group. Detached. */
+  /** Start (or ignore if already running) the turn loop for a group. Detached.
+   *  Persists the user's task as the first bus message, then runs the loop. */
   async start(groupId: string, userMessage: string, providerId = "claude"): Promise<void> {
     if (this.runtimes.has(groupId)) return;
-    const group = getGroup(groupId);
-    if (!group) throw new Error("group not found");
-    const members = listMembers(groupId);
-    if (members.length === 0) throw new Error("group has no members");
+    const { group, members } = this.loadGroup(groupId);
 
-    const backend = this.spawnStub ? null : await this.getBackend();
-    if (backend) await this.spawnSessions(group, members, backend);
-
-    setGroupStatus(groupId, "active");
-    const abort = new AbortController();
-
-    const runAgent = this.stubbedRunAgent
-      ? this.stubbedRunAgent()
-      : makeEngineRunAgent(backend!, providerId, abort.signal);
-
-    // Persist the user's task as the first bus message.
     const taskMsg = appendMessage({
       groupId, fromMember: "user", kind: "task", summary: userMessage, turnIndex: -1,
     });
     this.emit(groupId, { type: "group_message", message: taskMsg });
 
-    const deps = {
-      runAgent,
-      appendMessage,
-      readMessages,
-      onMessage: (message: GroupMessage) => this.emit(groupId, { type: "group_message", message }),
-      shouldStop: () => abort.signal.aborted,
-    };
-
-    const loop = runGroupTurnLoop(group, members, deps, userMessage)
-      .then((res) => {
-        this.emit(groupId, { type: "group_done", reason: res.reason, turns: res.turns, costUsd: res.costUsd });
-        setGroupStatus(groupId, "idle");
-        return res;
-      })
-      .catch((e) => {
-        this.emit(groupId, { type: "error", message: (e as Error).message });
-        setGroupStatus(groupId, "idle");
-        return { reason: "stopped", turns: 0, costUsd: 0 } as TurnLoopResult;
-      })
-      .finally(() => {
-        if (!this.spawnStub) void this.archiveMembers(group, members);
-        this.runtimes.delete(groupId);
-      });
-
-    this.runtimes.set(groupId, { abort, clients: new Set(), buffer: [], loop });
+    await this.runLoop(group, members, userMessage, providerId);
   }
 
-  /** Stop a running group and mark it paused (resume re-spawns from the bus). */
+  /** Stop a running group: abort the in-flight turn + mark paused. Cooperative
+   *  cancellation halts the loop within one turn (engine checks shouldStop). */
   stop(groupId: string): void {
     const rt = this.runtimes.get(groupId);
     rt?.abort.abort();
     setGroupStatus(groupId, "paused");
   }
 
-  /** Resume: mark active. Re-running is triggered by the next user message. */
-  resume(groupId: string): void {
-    setGroupStatus(groupId, "active");
+  /** Resume: re-spawn fresh member sessions and re-enter the loop, seeding
+   *  context from the durable bus (windowed + rolling summary). The bus is the
+   *  source of truth — works even after transcripts were archived/deleted.
+   *  Resuming a converged group starts a new round appended to the same bus. */
+  async resume(groupId: string, providerId = "claude"): Promise<void> {
+    if (this.runtimes.has(groupId)) return;
+    const { group, members } = this.loadGroup(groupId);
+    // The original task is the durable anchor for every resumed round.
+    const task = this.originalTask(groupId) ?? group.name;
+    await this.runLoop(group, members, task, providerId);
+  }
+
+  // --- shared loop core ----------------------------------------------------
+
+  private loadGroup(groupId: string): { group: Group; members: GroupMember[] } {
+    const group = getGroup(groupId);
+    if (!group) throw new Error("group not found");
+    const members = listMembers(groupId);
+    if (members.length === 0) throw new Error("group has no members");
+    return { group, members };
+  }
+
+  /** Original user task from the durable bus (turn_index = -1). */
+  private originalTask(groupId: string): string | null {
+    const first = readMessages(groupId).find((m) => m.kind === "task" && m.fromMember === "user");
+    return first?.summary ?? null;
+  }
+
+  /** Spawn fresh sessions (unless stubbed), run the detached turn loop, and
+   *  register the runtime. Shared by both start() and resume(). */
+  private async runLoop(
+    group: Group, members: GroupMember[], task: string, providerId: string,
+  ): Promise<void> {
+    const backend = this.spawnStub ? null : await this.getBackend();
+    if (backend) await this.spawnSessions(group, members, backend);
+
+    setGroupStatus(group.id, "active");
+    const abort = new AbortController();
+
+    const runAgent = this.stubbedRunAgent
+      ? this.stubbedRunAgent()
+      : makeEngineRunAgent(backend!, providerId, abort.signal);
+
+    const deps = {
+      runAgent,
+      appendMessage,
+      readMessages,
+      onMessage: (message: GroupMessage) => this.emit(group.id, { type: "group_message", message }),
+      shouldStop: () => abort.signal.aborted,
+    };
+
+    const loop = runGroupTurnLoop(group, members, deps, task)
+      .then((res) => {
+        this.emit(group.id, { type: "group_done", reason: res.reason, turns: res.turns, costUsd: res.costUsd });
+        // A user-requested stop keeps the group paused for a later resume;
+        // any natural termination returns the group to idle.
+        setGroupStatus(group.id, res.reason === "stopped" ? "paused" : "idle");
+        return res;
+      })
+      .catch((e) => {
+        this.emit(group.id, { type: "error", message: (e as Error).message });
+        setGroupStatus(group.id, "idle");
+        return { reason: "stopped", turns: 0, costUsd: 0 } as TurnLoopResult;
+      })
+      .finally(() => {
+        if (!this.spawnStub) void this.archiveMembers(group, members);
+        this.runtimes.delete(group.id);
+      });
+
+    this.runtimes.set(group.id, { abort, clients: new Set(), buffer: [], loop });
+    // Surface spawn/immediate errors to the caller; loop errors are emitted.
+    await Promise.resolve();
   }
 
   // --- WS wiring -----------------------------------------------------------
@@ -174,7 +207,11 @@ class GroupChatService {
     const { chatService } = await import("../chat.service.ts");
     this.backendCache = {
       createSession: (config) => chatService.createSession(undefined, config),
-      sendMessage: (pid, sid, prompt, opts) => chatService.sendMessage(pid, sid, prompt, opts as never),
+      // The provider cancels via abortQuery, not opts.signal — the runner's
+      // consumer-side signal guard halts the turn, so only permissionMode is
+      // forwarded here.
+      sendMessage: (pid, sid, prompt, opts) =>
+        chatService.sendMessage(pid, sid, prompt, { permissionMode: opts?.permissionMode }),
     };
     return this.backendCache;
   }

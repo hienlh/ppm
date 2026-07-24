@@ -10,10 +10,13 @@ import {
   readMessages,
 } from "../../services/group-chat/group-chat.store.ts";
 import { groupChatService } from "../../services/group-chat/group-chat.service.ts";
+import { readArchivedTranscript } from "../../services/group-chat/transcript-archive.ts";
 import type { AddMemberInput } from "../../types/group-chat.ts";
 
 /** Allowlist: group ids are UUIDs — alphanumeric + hyphens only. */
 const VALID_GROUP_ID = /^[a-zA-Z0-9-]+$/;
+/** Session refs are Claude session UUIDs. */
+const VALID_SESSION_REF = /^[a-zA-Z0-9-]+$/;
 
 export const groupChatRoutes = new Hono();
 
@@ -85,6 +88,22 @@ groupChatRoutes.get("/:id/feed", (c) => {
   return c.json(ok({ messages }));
 });
 
+// Archived transcript for a member session (powers "view full") -----------
+groupChatRoutes.get("/:id/transcript", (c) => {
+  const id = c.req.param("id");
+  if (!VALID_GROUP_ID.test(id)) return c.json(err("Invalid group id"), 400);
+  const group = getGroup(id);
+  if (!group) return c.json(err("Group not found"), 404);
+
+  const sessionRef = c.req.query("sessionRef");
+  if (!sessionRef || !VALID_SESSION_REF.test(sessionRef)) {
+    return c.json(err("Invalid sessionRef"), 400);
+  }
+  const content = readArchivedTranscript(sessionRef, group.name);
+  if (content === null) return c.json(err("Transcript not found"), 404);
+  return c.json(ok({ content }));
+});
+
 // Send a message → starts / feeds the engine ------------------------------
 groupChatRoutes.post("/:id/message", async (c) => {
   const id = c.req.param("id");
@@ -113,11 +132,15 @@ groupChatRoutes.post("/:id/stop", (c) => {
   return c.json(ok({ status: "paused" }));
 });
 
-groupChatRoutes.post("/:id/resume", (c) => {
+groupChatRoutes.post("/:id/resume", async (c) => {
   const id = c.req.param("id");
   if (!VALID_GROUP_ID.test(id)) return c.json(err("Invalid group id"), 400);
   if (!getGroup(id)) return c.json(err("Group not found"), 404);
-  groupChatService.resume(id);
+  try {
+    await groupChatService.resume(id);
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
   return c.json(ok({ status: "active" }));
 });
 

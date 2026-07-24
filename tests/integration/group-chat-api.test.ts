@@ -73,27 +73,48 @@ describe("group-chat REST + engine integration", () => {
     expect(finals[0].fromMember).toBe("lead");
   });
 
-  it("stop then resume toggles group status", async () => {
+  it("stop pauses; resume re-runs the loop off the durable bus", async () => {
     const created = await (await json("/", "POST", {
       projectName: "demo", projectPath: "/p/demo", name: "T",
       members: [{ role: "leader", name: "lead" }],
     })).json() as { data: { id: string } };
     const gid = created.data.id;
 
+    // Seed the bus with a task so resume has something to re-enter from.
+    await json(`/${gid}/message`, "POST", { content: "task" });
+    await waitForDone(gid);
+
     const stopRes = await json(`/${gid}/stop`, "POST");
     expect(stopRes.status).toBe(200);
     let detail = await (await json(`/${gid}`, "GET")).json() as { data: { status: string } };
     expect(detail.data.status).toBe("paused");
 
+    // Resume re-enters the loop; status leaves "paused" (active while running,
+    // then idle on convergence) — never stuck paused.
     const resumeRes = await json(`/${gid}/resume`, "POST");
     expect(resumeRes.status).toBe(200);
+    await waitForDone(gid);
     detail = await (await json(`/${gid}`, "GET")).json() as { data: { status: string } };
-    expect(detail.data.status).toBe("active");
+    expect(detail.data.status).not.toBe("paused");
   });
 
   it("rejects an invalid group id", async () => {
     const res = await json("/bad id!/feed", "GET");
     expect(res.status).toBe(400);
+  });
+
+  it("transcript route returns 404 when nothing archived, 400 for bad ref", async () => {
+    const created = await (await json("/", "POST", {
+      projectName: "demo", projectPath: "/p/demo", name: "T",
+      members: [{ role: "leader", name: "lead" }],
+    })).json() as { data: { id: string } };
+    const gid = created.data.id;
+
+    const missing = await json(`/${gid}/transcript?sessionRef=abc-123`, "GET");
+    expect(missing.status).toBe(404);
+
+    const badRef = await json(`/${gid}/transcript?sessionRef=bad ref!`, "GET");
+    expect(badRef.status).toBe(400);
   });
 
   it("deletes a group", async () => {
