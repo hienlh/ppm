@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 34;
+export const CURRENT_SCHEMA_VERSION = 35;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -779,6 +779,57 @@ function runMigrations(database: Database): void {
       );
     `);
     database.exec(`PRAGMA user_version = 34`);
+  }
+
+  if (current < 35) {
+    // Native group-chat engine: groups, members, and a single-table message bus
+    // (kind + JSON data, spike-validated — not split per kind).
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS chat_groups (
+        id                TEXT PRIMARY KEY,
+        project_name      TEXT NOT NULL,
+        project_path      TEXT NOT NULL,
+        name              TEXT NOT NULL,
+        leader_session_id TEXT,
+        status            TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('active','paused','idle')),
+        max_turns         INTEGER NOT NULL DEFAULT 40,
+        max_cost_usd      REAL NOT NULL DEFAULT 5.0,
+        created_at        INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_groups_project ON chat_groups(project_path);
+
+      CREATE TABLE IF NOT EXISTS chat_group_members (
+        id         TEXT PRIMARY KEY,
+        group_id   TEXT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+        role       TEXT NOT NULL CHECK(role IN ('leader','member')),
+        persona    TEXT,
+        agent_type TEXT,
+        model      TEXT,
+        session_id TEXT,
+        name       TEXT NOT NULL,
+        color      TEXT,
+        status     TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','working','done','error')),
+        joined_at  INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_members_group ON chat_group_members(group_id);
+
+      CREATE TABLE IF NOT EXISTS chat_group_messages (
+        seq              INTEGER PRIMARY KEY AUTOINCREMENT,
+        id               TEXT NOT NULL UNIQUE,
+        group_id         TEXT NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+        from_member      TEXT NOT NULL,
+        to_member        TEXT,
+        kind             TEXT NOT NULL CHECK(kind IN ('task','chat','status','completion','final')),
+        summary          TEXT,
+        full_session_ref TEXT,
+        data             TEXT,
+        turn_index       INTEGER NOT NULL DEFAULT 0,
+        created_at       INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      CREATE INDEX IF NOT EXISTS idx_gm_group_time ON chat_group_messages(group_id, seq);
+
+      PRAGMA user_version = 35;
+    `);
   }
 }
 
