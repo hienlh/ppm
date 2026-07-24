@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.12] - 2026-07-25
+
+### Fixed
+- **AI chat works on binary installs** — chat failed on GitHub-release binaries with "Native CLI binary for … not found". The Claude Agent SDK looks for its own bundled CLI (not a system `claude`), which a compiled binary doesn't carry. PPM now resolves a CLI: an explicit `PPM_CLAUDE_CLI` override, then a system `claude` (PATH or common install locations), then a version-matched `claude` now bundled in each release archive. Source (bun/npm) installs are unaffected.
+
 ## [0.17.11] - 2026-07-24
 
 ### Fixed
