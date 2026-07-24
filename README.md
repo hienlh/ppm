@@ -34,12 +34,12 @@ Two ways to install:
 
 **macOS / Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hienlh/ppm/main/scripts/install.sh | sh
+curl -fsSL https://ppm.sh/install | sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/hienlh/ppm/main/scripts/install.ps1 | iex
+irm https://ppm.sh/install.ps1 | iex
 ```
 
 Downloads the latest binary, adds to PATH, and shows next steps. To upgrade, run the same command again.
