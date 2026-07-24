@@ -8,7 +8,8 @@ import { useState, useRef, useCallback } from "react";
 import { Search, X, Plus, Columns2 } from "lucide-react";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { usePanelStore } from "@/stores/panel-store";
-import { useNotificationStore } from "@/stores/notification-store";
+import { useNotificationStore, notificationColor } from "@/stores/notification-store";
+import { useStreamingStore } from "@/stores/streaming-store";
 import { getTabTypeIcon } from "@/lib/tab-type-icons";
 import { buildTabSwitcherGroups, type TabSortMode } from "./tab-switcher-groups";
 import type { Tab } from "@/stores/tab-store";
@@ -35,12 +36,16 @@ interface MobileTabSwitcherSheetProps {
   onTabLongPress?: (tabId: string) => void;
   /** tabId → recency rank (0 = most recent); drives the "Recent" sort mode. */
   recency: Map<string, number>;
+  /** chat sessionId → tag; drives the per-row tag color bar (like the web tab bar). */
+  sessionTagMap: Record<string, { id: number; name: string; color: string }>;
 }
 
 export function MobileTabSwitcherSheet({
-  open, onClose, onOpenPalette, tabs, tabPanelMap, panelOrder, activeTabId, projectColor, onTabLongPress, recency,
+  open, onClose, onOpenPalette, tabs, tabPanelMap, panelOrder, activeTabId, projectColor, onTabLongPress, recency, sessionTagMap,
 }: MobileTabSwitcherSheetProps) {
   const [query, setQuery] = useState("");
+  const notifications = useNotificationStore((s) => s.notifications);
+  const streamingSessions = useStreamingStore((s) => s.sessions);
   const [sortMode, setSortMode] = useState<TabSortMode>(loadSortMode);
   const changeSort = useCallback((mode: TabSortMode) => {
     setSortMode(mode);
@@ -145,6 +150,14 @@ export function MobileTabSwitcherSheet({
               {group.tabs.map((tab) => {
                 const Icon = getTabTypeIcon(tab.type);
                 const isActive = tab.id === activeTabId;
+                const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string | undefined) : undefined;
+                const tagColor = sessionId ? sessionTagMap[sessionId]?.color : undefined;
+                const entry = sessionId ? notifications.get(sessionId) : undefined;
+                const notiType = entry && entry.count > 0 ? entry.type : null;
+                const notiManual = !!entry?.manual;
+                const isStreaming = sessionId ? streamingSessions.has(sessionId) : false;
+                // Tag color takes priority over project color for the left bar (matches web).
+                const accentColor = tagColor ?? (tab.projectId && projectColor ? projectColor : undefined);
                 return (
                   <button
                     key={tab.id}
@@ -158,13 +171,25 @@ export function MobileTabSwitcherSheet({
                       isActive ? "bg-primary/10" : "active:bg-surface-elevated",
                     )}
                   >
-                    {/* Project color accent bar */}
+                    {/* Tag (or project) color accent bar */}
                     <span
                       aria-hidden
                       className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-sm"
-                      style={{ backgroundColor: tab.projectId && projectColor ? projectColor : "transparent" }}
+                      style={{ backgroundColor: accentColor ?? "transparent" }}
                     />
-                    <Icon className={cn("size-4 shrink-0", isActive ? "text-primary" : "text-text-secondary")} />
+                    {/* Icon with streaming typing-dots / unread notification badge */}
+                    <span className={cn("relative shrink-0", isStreaming && "text-warning")}>
+                      <Icon className={cn("size-4", isStreaming ? undefined : isActive ? "text-primary" : "text-text-secondary")} />
+                      {isStreaming ? (
+                        <span aria-hidden className="absolute inset-0 flex items-center justify-center gap-[1.5px]">
+                          <span className="tab-typing-dot size-[2px] rounded-full bg-current" />
+                          <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.15s" }} />
+                          <span className="tab-typing-dot size-[2px] rounded-full bg-current" style={{ animationDelay: "0.3s" }} />
+                        </span>
+                      ) : notiType && (!isActive || notiManual) ? (
+                        <span className={cn("absolute -top-1 -right-1 size-2 rounded-full", notificationColor(notiType))} />
+                      ) : null}
+                    </span>
                     <span className={cn("flex-1 text-left text-sm font-medium truncate", isActive ? "text-primary" : "text-text-primary")}>
                       {tab.title}
                     </span>

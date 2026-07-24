@@ -346,6 +346,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
         projectColor={activeProject ? activeColor : null}
         onTabLongPress={(tabId) => setMenuTabId(tabId)}
         recency={recency}
+        sessionTagMap={sessionTagMap}
       />
 
       {/* Long-press tab action sheet. select-none stops the long-press gesture
