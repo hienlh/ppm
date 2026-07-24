@@ -169,7 +169,33 @@ export async function buildProgram(): Promise<Command> {
   return program;
 }
 
+/**
+ * Decide how this process entry should behave from argv.
+ *
+ * Compiled binaries have no source files to run, so the supervisor and server
+ * daemon children re-invoke the binary itself as `<bin> __supervise__ …` /
+ * `<bin> __serve__ …`. Those must be routed to the daemon modules (whose
+ * top-level guards read the sentinel from argv) instead of the Commander CLI,
+ * which would reject them as unknown commands. Source installs spawn the
+ * `.ts` files directly and never reach this entry with a sentinel.
+ */
+export function resolveEntryMode(argv: string[]): "supervise" | "serve" | "cli" {
+  if (argv.includes("__supervise__")) return "supervise";
+  if (argv.includes("__serve__")) return "serve";
+  return "cli";
+}
+
 if (import.meta.main) {
-  const program = await buildProgram();
-  program.parse();
+  switch (resolveEntryMode(process.argv)) {
+    case "supervise":
+      await import("./services/supervisor.ts");
+      break;
+    case "serve":
+      await import("./server/index.ts");
+      break;
+    default: {
+      const program = await buildProgram();
+      program.parse();
+    }
+  }
 }
