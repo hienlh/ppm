@@ -27,9 +27,16 @@ ppm.yaml
 *.pid
 *.log
 
-# Compiled binaries — too large for npm (users run via bun directly)
+# Compiled binaries + release artifacts — too large for npm (users run via bun
+# directly). Only dist/web/ (the prebuilt frontend) ships. Leftovers from a prior
+# `scripts/release.sh` run must never leak into the tarball (ERR_STRING_TOO_LONG).
 dist/ppm
 dist/ppm-*
+dist/ppm.exe
+dist/.cli-cache/
+dist/*.tar.gz
+dist/*.zip
+dist/SHA256SUMS
 
 # Vite may leak absolute paths into src/web/
 src/web/Users/
