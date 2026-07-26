@@ -1,8 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [0.17.13] - 2026-07-27
 
 ### Added
+- **Teams group chat (beta)** — a new "Teams" sidebar section lets you assemble a group of AI agents (a leader plus members, each with its own persona and model) and hand them a task. They split the work, discuss in a shared channel using @mentions, and converge to a final answer — rendered as a live team chat: each speaker has their own color across avatar, name, left accent bar, and highlighted @mentions; the message you send shows as "You"; the leader's closing message is boxed as the final. Includes a member roster with live typing/status, per-message summaries you can expand to the full archived transcript, and Stop/Resume (Resume re-spawns fresh agent sessions and continues from the durable message history). Marked **beta**.
 - **Customizable sidebar tabs** — sidebar/drawer tab order is now user-arranged via drag-and-drop and syncs across devices (desktop rail: mouse drag; mobile drawer: long-press drag). One shared order drives both platforms.
 - **Mobile drawer tab overflow** — the mobile bottom tab bar now uses fixed-width slots with a responsive visible count and a "More" sheet for the rest, so it never overflows regardless of how many tabs (built-in + Jira + extensions) exist. Selecting an overflow tab surfaces it in the last slot without shifting the row.
 - **Extension views on mobile** — extension-contributed sidebar views now appear in the mobile drawer (previously desktop-only).
