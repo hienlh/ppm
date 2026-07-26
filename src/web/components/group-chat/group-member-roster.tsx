@@ -44,7 +44,7 @@ export const GroupMemberRoster = memo(function GroupMemberRoster({
             className="flex items-center gap-2 rounded-md px-2 py-1.5"
           >
             <span
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold text-white"
+              className="flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold text-white ring-2 ring-background"
               style={{ backgroundColor: m.color ?? "var(--accent)" }}
               aria-hidden
             >
@@ -52,7 +52,7 @@ export const GroupMemberRoster = memo(function GroupMemberRoster({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <span className="truncate text-xs font-medium text-foreground">{m.name}</span>
+                <span className="truncate text-xs font-medium" style={{ color: m.color ?? "var(--color-foreground)" }}>{m.name}</span>
                 {m.role === "leader" && (
                   <span className="rounded-sm bg-accent-wash px-1 text-[9px] font-semibold uppercase text-primary">
                     lead

@@ -41,6 +41,11 @@ export function GroupChatTab({ metadata }: GroupChatTabProps) {
     return (name: string) => map.get(name) ?? null;
   }, [members]);
 
+  const isLeader = useMemo(() => {
+    const leaders = new Set(members.filter((m) => m.role === "leader").map((m) => m.name));
+    return (name: string) => leaders.has(name);
+  }, [members]);
+
   const handleSend = useCallback(() => {
     const content = draft.trim();
     if (!content) return;
@@ -105,7 +110,7 @@ export function GroupChatTab({ metadata }: GroupChatTabProps) {
           ) : (
             <div className="flex flex-col py-2">
               {messages.map((m) => (
-                <GroupMessageItem key={m.id} message={m} colorFor={colorFor} onViewFull={setTranscriptMsg} />
+                <GroupMessageItem key={m.id} message={m} colorFor={colorFor} isLeader={isLeader} onViewFull={setTranscriptMsg} />
               ))}
               {typingNames.length > 0 && (
                 <div className="px-3 py-1.5 text-xs italic text-text-subtle">
