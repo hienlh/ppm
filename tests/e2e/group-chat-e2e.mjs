@@ -8,14 +8,17 @@
 //      Seeding uses the exact store the feed reads, so the RENDER is 100% real.
 //   5. Captures the required screenshots (desktop + mobile) into the plan visuals dir.
 //   6. Optionally records a video (PPM_E2E_VIDEO=1) via CDP Page.startScreencast → MP4.
-//   7. Stops ONLY the servers it started, by exact PID.
+//   7. Optionally runs a LIVE mode (PPM_E2E_LIVE=1): real LLM agents, real cost, real MP4.
+//   8. Stops ONLY the servers it started, by exact PID.
 //
 // Run:
 //   bun tests/e2e/group-chat-e2e.mjs               # screenshots only (default)
 //   PPM_E2E_VIDEO=1 bun tests/e2e/group-chat-e2e.mjs  # screenshots + MP4 video
+//   PPM_E2E_LIVE=1 bun tests/e2e/group-chat-e2e.mjs   # REAL agents, real cost, live MP4
 //
 // Env overrides:
 //   PPM_E2E_VIDEO=1       record a video (CDP screencast → ffmpeg MP4 concat)
+//   PPM_E2E_LIVE=1        REAL LLM agents (maxTurns=6, maxCostUsd=1.0); outputs live MP4
 //   PPM_E2E_KEEP=1        keep servers + group running after the run (debugging)
 //   PPM_E2E_NO_SERVERS=1  assume servers already running; don't spawn/kill them
 //   CHROME_PATH=...       override Chrome executable path
@@ -24,6 +27,7 @@
 //   - Host Bun is fine for servers/scripts here; the known segfault only affects `bun test`/`tsc`.
 //   - Seeded content is clearly labelled "[SEED]" in log output (no live Claude turns).
 //   - Video pacing: deliberate 600-1000ms pauses make each story beat legible on screen.
+//   - LIVE mode: no seeding fallback; if the engine errors the raw error is reported plainly.
 
 import { spawn } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
@@ -52,6 +56,11 @@ const CHROME =
 const KEEP = !!process.env.PPM_E2E_KEEP;
 const NO_SERVERS = !!process.env.PPM_E2E_NO_SERVERS;
 const VIDEO = !!process.env.PPM_E2E_VIDEO;
+const LIVE = !!process.env.PPM_E2E_LIVE;
+const MP4_OUT_LIVE = join(VISUALS, "group-chat-e2e-live.mp4");
+
+// Live group name — different from seeded group to avoid reset collision.
+const LIVE_GROUP_NAME = "E2E Live Chat";
 
 const started = { server: null, web: null, chrome: null, chromeProfile: null };
 const log = (...a) => console.log(...a);
@@ -960,6 +969,210 @@ async function lookupMembers(groupId) {
 }
 
 // ---------------------------------------------------------------------------
+// Live LLM recording flow — real agents, real cost, real video.
+//
+// Flow:
+//   1. Create group via REST API with maxTurns=6, maxCostUsd=1.0 (cost-bounded).
+//   2. Navigate browser to the group tab via deep-link.
+//   3. Start CDP screencast BEFORE sending the task (capture every frame of agent activity).
+//   4. POST the task to /api/group-chat/:id/message (the engine runs server-side).
+//   5. Poll DB every 5s for status transition active→idle/paused (cap 4 min).
+//   6. Stop screencast, assemble group-chat-e2e-live.mp4.
+//   7. Screenshot 07-live-feed.png.
+//   8. Read messages from DB and log real quotes.
+//
+// HONESTY: if the engine errors (API key, network, etc.) the raw error is reported.
+// There is NO seeding fallback. The MP4 will contain whatever actually rendered.
+// ---------------------------------------------------------------------------
+async function runLive(cdp) {
+  // --- L-1. Create group via REST (not UI dialog — maxTurns/maxCostUsd not exposed there) ---
+  step("L-1. Create live group via REST API");
+  const createRes = await fetch(`${API}/api/group-chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${AUTH_TOKEN}`,
+    },
+    body: JSON.stringify({
+      projectName: PROJECT_NAME,
+      projectPath: "c:/Users/PC/ppm",
+      name: LIVE_GROUP_NAME,
+      maxTurns: 6,
+      maxCostUsd: 1.0,
+      members: [
+        {
+          role: "leader",
+          name: "Nova",
+          persona:
+            "Lead engineer. Keeps scope tight. Assigns sub-tasks to members, " +
+            "collects results, and closes with a DONE: line when consensus is reached.",
+        },
+        {
+          role: "member",
+          name: "Ivy",
+          persona: "Favours simplicity. Proposes the smallest solution that works.",
+        },
+        {
+          role: "member",
+          name: "Rhea",
+          persona:
+            "Raises edge cases. Points out one important edge case per proposal " +
+            "and suggests a guard for it.",
+        },
+      ],
+    }),
+  });
+  if (!createRes.ok) {
+    throw new Error(`Group create failed: HTTP ${createRes.status} — ${await createRes.text()}`);
+  }
+  const createJson = await createRes.json();
+  if (!createJson.ok) {
+    throw new Error(`Group create API error: ${JSON.stringify(createJson)}`);
+  }
+  const liveGroupId = createJson.data.id;
+  log(`  created live group: ${liveGroupId} (maxTurns=6, maxCostUsd=$1.00)`);
+
+  // --- L-2. Set auth + deep-link directly to the group tab ---
+  step("L-2. Set auth + navigate to live group tab");
+  await cdp.navigate(WEB);
+  await cdp.evaluate(
+    `localStorage.setItem(${JSON.stringify(TOKEN_KEY)}, ${JSON.stringify(AUTH_TOKEN)})`,
+  );
+  await Bun.sleep(300);
+  // Deep-link opens the project AND the specific group tab in one navigation.
+  await cdp.navigate(`${WEB_PROJECT}/group/${encodeURIComponent(liveGroupId)}`);
+  await waitFor(
+    cdp,
+    `document.querySelector('textarea[placeholder="Message the group…"]') ` +
+      `|| document.body.innerText.includes('${LIVE_GROUP_NAME}')`,
+    "live group tab opened",
+    25_000,
+  );
+  await cdp.evaluate(EXPAND_SIDEBAR_JS);
+  await Bun.sleep(1000);
+
+  // --- L-3. Start screencast BEFORE sending the task ---
+  step("L-3. Start screencast (capturing full agent activity)");
+  const framesDir = join(tmpdir(), `ppm-e2e-live-frames-${Date.now()}`);
+  screencast = new Screencast(cdp, framesDir);
+  await screencast.start();
+  await Bun.sleep(500);
+
+  // --- L-4. Submit the task (small, fast-converging: debounce helper) ---
+  // Posting via REST /message is equivalent to typing in the UI composer and
+  // pressing Send — it calls the same groupChatService.start() path.
+  step("L-4. POST task to engine");
+  const TASK =
+    "Design a debounce(fn, delayMs) helper: agree on the exact function " +
+    "signature, handle the leading-edge vs trailing-edge question, and name it. " +
+    "Keep it under 10 lines. Close with DONE: <final signature>.";
+  log(`  task: "${TASK}"`);
+
+  const msgRes = await fetch(`${API}/api/group-chat/${liveGroupId}/message`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${AUTH_TOKEN}`,
+    },
+    body: JSON.stringify({ content: TASK }),
+  });
+  if (!msgRes.ok) {
+    // Capture screenshot of whatever loaded, then throw.
+    await cdp.screenshot(join(VISUALS, "07-live-feed.png"));
+    throw new Error(`Engine start failed: HTTP ${msgRes.status} — ${await msgRes.text()}`);
+  }
+  const msgJson = await msgRes.json();
+  if (!msgJson.ok) {
+    await cdp.screenshot(join(VISUALS, "07-live-feed.png"));
+    throw new Error(`Engine start API error: ${JSON.stringify(msgJson)}`);
+  }
+  log("  engine started — agents are running...");
+
+  // --- L-5. Poll for completion (cap 4 minutes) ---
+  // Natural termination: status = "idle" (leader_done / max_turns / budget).
+  // User-stop: status = "paused" (shouldn't happen here but handle it gracefully).
+  step("L-5. Polling DB for engine completion (max 4 min)");
+  const POLL_CAP_MS = 4 * 60 * 1000;
+  const pollDeadline = Date.now() + POLL_CAP_MS;
+  let finalStatus = "active";
+  let polledTurns = 0;
+  while (Date.now() < pollDeadline) {
+    await Bun.sleep(5_000);
+    const db = new Database(DEV_DB);
+    const row = db
+      .query("SELECT status FROM chat_groups WHERE id = ?")
+      .get(liveGroupId);
+    const msgCount = db
+      .query("SELECT COUNT(*) as n FROM chat_group_messages WHERE group_id = ?")
+      .get(liveGroupId);
+    db.close();
+    finalStatus = row?.status ?? "unknown";
+    polledTurns = msgCount?.n ?? 0;
+    log(`  poll: status=${finalStatus} messages=${polledTurns}`);
+    if (finalStatus === "idle" || finalStatus === "paused") break;
+  }
+
+  const timedOut = finalStatus === "active";
+  if (timedOut) {
+    log("  WARN: engine still active after 4-minute cap — stopping via API");
+    // Force-stop so we can still capture the partial feed.
+    await fetch(`${API}/api/group-chat/${liveGroupId}/stop`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    }).catch(() => {});
+    await Bun.sleep(2000);
+    finalStatus = "paused (timeout)";
+  }
+
+  // Let the browser's WS catch up and render the latest feed state.
+  await Bun.sleep(2000);
+
+  // --- L-6. Stop screencast + assemble MP4 ---
+  step("L-6. Stop screencast + assemble live MP4");
+  await screencast.stop();
+  await screencast.assemble(MP4_OUT_LIVE);
+  await screencast.cleanup();
+  screencast = null;
+
+  // --- L-7. Final screenshot ---
+  step("L-7. Screenshot 07-live-feed.png");
+  await cdp.screenshot(join(VISUALS, "07-live-feed.png"));
+
+  // --- L-8. Read real messages from DB and report ---
+  step("L-8. Reading messages from DB");
+  const db = new Database(DEV_DB);
+  const rows = db
+    .query(
+      `SELECT from_member, kind, summary, turn_index
+       FROM chat_group_messages
+       WHERE group_id = ?
+       ORDER BY turn_index, rowid`,
+    )
+    .all(liveGroupId);
+  const groupRow = db.query("SELECT max_turns, max_cost_usd FROM chat_groups WHERE id = ?").get(liveGroupId);
+  db.close();
+
+  log(`\n--- LIVE RUN RESULTS ---`);
+  log(`  final status : ${finalStatus}`);
+  log(`  total messages : ${rows.length}`);
+  log(`  db maxTurns : ${groupRow?.max_turns ?? "?"}, maxCostUsd : $${groupRow?.max_cost_usd ?? "?"}`);
+  if (rows.length > 0) {
+    log("  messages (all):");
+    for (const r of rows) {
+      const preview = (r.summary ?? "").slice(0, 120).replace(/\n/g, " ");
+      log(`    [turn ${r.turn_index}] <${r.from_member}> [${r.kind}] ${preview}`);
+    }
+  } else {
+    log("  WARN: no messages found in DB — engine may have errored before producing any turns");
+  }
+  log(`  screenshots : ${join(VISUALS, "07-live-feed.png")}`);
+  log(`  MP4         : ${MP4_OUT_LIVE}`);
+  log(`------------------------\n`);
+
+  return { liveGroupId, finalStatus, rows };
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
@@ -971,13 +1184,21 @@ async function main() {
   step("2. Reset prior e2e groups (dev DB)");
   {
     const db = new Database(DEV_DB);
+    // Remove seeded group (used by screenshot + video modes)
     const prior = db.query("SELECT id FROM chat_groups WHERE name = ?").all("E2E Design Review");
     for (const row of prior) {
       db.query("DELETE FROM chat_group_messages WHERE group_id = ?").run(row.id);
       db.query("DELETE FROM chat_group_members WHERE group_id = ?").run(row.id);
       db.query("DELETE FROM chat_groups WHERE id = ?").run(row.id);
     }
-    log(`  removed ${prior.length} prior e2e group(s)`);
+    // Remove live group (used by LIVE mode) so the run always starts fresh
+    const priorLive = db.query("SELECT id FROM chat_groups WHERE name = ?").all(LIVE_GROUP_NAME);
+    for (const row of priorLive) {
+      db.query("DELETE FROM chat_group_messages WHERE group_id = ?").run(row.id);
+      db.query("DELETE FROM chat_group_members WHERE group_id = ?").run(row.id);
+      db.query("DELETE FROM chat_groups WHERE id = ?").run(row.id);
+    }
+    log(`  removed ${prior.length} seeded + ${priorLive.length} live prior e2e group(s)`);
     db.close();
   }
 
@@ -988,7 +1209,11 @@ async function main() {
   await cdp.send("Runtime.enable");
   await cdp.setViewport(1280, 900, false);
 
-  if (VIDEO) {
+  if (LIVE) {
+    log("  PPM_E2E_LIVE=1 — REAL agents, REAL cost, live MP4");
+    await runLive(cdp);
+    step("DONE — live MP4 written");
+  } else if (VIDEO) {
     log("  PPM_E2E_VIDEO=1 — recording MP4");
     await runVideo(cdp);
     step("DONE — MP4 written");
