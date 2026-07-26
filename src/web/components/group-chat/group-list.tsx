@@ -66,7 +66,12 @@ export function GroupList() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Teams</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Teams</span>
+          <span className="rounded-full bg-accent-wash px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
+            beta
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
