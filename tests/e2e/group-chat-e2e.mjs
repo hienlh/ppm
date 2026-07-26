@@ -1095,12 +1095,19 @@ async function runLive(cdp) {
   // Let the viewer see the empty feed + composer for ~1.5s before typing.
   await Bun.sleep(1500);
 
-  // --- L-4. Type task into the UI composer and click Send (on-camera) ---
-  // The textarea is a React 19 controlled input (value={draft} onChange={...}).
-  // React 19 only updates state when its own onChange handler is called with a
-  // real-looking event. The reliable approach is to find the fiber's onChange
-  // via the React internal key (__reactFiber / __reactProps) and call it directly
-  // with a synthetic event carrying the target.value we want.
+  // --- L-4. Type task into the UI composer and send via real React path ---
+  //
+  // Strategy:
+  //   A. Assert BEFORE typing: the textarea's WsClient (from fiber) points to liveGroupId.
+  //      This proves the rendered tab is the correct one.
+  //   B. Type using CDP Input.dispatchKeyEvent type="char" per character.
+  //      Chrome fires the native "input" event for each char → React 19 onChange fires
+  //      → setDraft updates. The "char" event is the minimal trigger Chrome needs.
+  //   C. Assert Send button enabled (draft is non-empty in React state).
+  //      Hard fail if still disabled — means React didn't accept the input.
+  //   D. Click Send via dispatchMouseEvent. React's handleSend() fires → sendMessage()
+  //      → WsClient.send({type:"message",content:draft}). Real engine path.
+  //   E. Hard gate: task bubble MUST appear in feed DOM. No DB fallback accepted.
   step("L-4. Type task into composer and click Send");
   const TASK =
     "Design a debounce(fn, delayMs) helper: agree on the exact function " +
@@ -1110,48 +1117,15 @@ async function runLive(cdp) {
 
   const composerExpr = `document.querySelector('textarea[placeholder="Message the group\\u2026"]')`;
 
-  // Focus the textarea via CDP mouse click first.
-  const composerBox = await cdp.evaluate(`(() => {
-    const el = ${composerExpr};
-    if (!el) return null;
-    el.focus();
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  })()`);
-  if (!composerBox) throw new Error("Composer textarea not found for clicking");
-  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: composerBox.x, y: composerBox.y, button: "left", clickCount: 1 });
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: composerBox.x, y: composerBox.y, button: "left", clickCount: 1 });
-  await Bun.sleep(300);
-
-  // React 19 controlled textarea: value={draft} onChange={(e) => setDraft(e.target.value)}.
-  // None of the event dispatch approaches (InputEvent, native setter, fiber dispatch)
-  // update React 19 state from CDP evaluation context because React 19 uses
-  // Scheduler/MessageChannel internally and evaluations run in the same tick.
-  //
-  // Reliable approach: inject an on-page helper that calls the ACTUAL WS send path
-  // (same path as handleSend → sendMessage → ws.send({type:"message",content})).
-  // We find the WebSocket that's connected to the group chat endpoint and call
-  // send() on it directly. This IS the real composer send path (not a REST fallback).
-  //
-  // For on-camera typing: we use CDP Input.insertText to type characters into the
-  // focused textarea — this updates the DOM .value which is VISIBLE in the video.
-  // React's own state doesn't update from this, but the text is SHOWN being typed.
-  // After typing, we send via WS which is the real data path.
-  //
-  // The task bubble will appear from the server's group_message WS event, confirming
-  // the message went through the real groupChatService.start() path.
-
-  // Wait for the WS to connect to the CORRECT group (liveGroupId).
-  // After navigating to the group tab, useGroupChat sets up a new WsClient for
-  // this group. We must wait for the WsClient targeting liveGroupId to be OPEN.
-  log("  waiting for WS to connect to live group...");
-  const WS_WAIT_MS = 15_000;
+  // --- A. Pre-send assertion: confirm textarea's WsClient is bound to liveGroupId ---
+  log("  A: asserting textarea is bound to live group WsClient...");
+  const WS_WAIT_MS = 20_000;
   const wsDeadline = Date.now() + WS_WAIT_MS;
   let wsClientReady = false;
   while (Date.now() < wsDeadline && !wsClientReady) {
     const check = await cdp.evaluate(`(() => {
       try {
-        const ta = document.querySelector('textarea[placeholder="Message the group\\u2026"]');
+        const ta = ${composerExpr};
         if (!ta) return { ready: false, reason: 'no ta' };
         const fk = Object.keys(ta).find(k => k.startsWith('__reactFiber'));
         if (!fk) return { ready: false, reason: 'no fk' };
@@ -1173,27 +1147,79 @@ async function runLive(cdp) {
           }
           fiber = fiber.return;
         }
-        return { ready: false, reason: 'WsClient not found' };
+        return { ready: false, reason: 'WsClient not found in fiber tree' };
       } catch(e) {
         return { ready: false, reason: e.message };
       }
     })()`);
     if (check?.ready) {
       wsClientReady = true;
-      log(`  WS connected to live group: ${check.url}`);
+      log(`  A: PASS — textarea bound to ${check.url}`);
     } else {
-      log(`  WS not ready yet: ${JSON.stringify(check)} — retrying...`);
+      log(`  A: waiting... ${JSON.stringify(check)}`);
       await Bun.sleep(1000);
     }
   }
   if (!wsClientReady) {
-    throw new Error(`WS did not connect to group ${liveGroupId} within ${WS_WAIT_MS}ms`);
+    throw new Error(`HARD FAIL: textarea's WsClient not bound to liveGroupId within ${WS_WAIT_MS}ms`);
   }
 
-  // Step 1: Type the task visually into the focused textarea (for the video).
-  // We need the textarea to have OS-level focus. Mouse click sets real focus.
+  // After confirming WsClient.ws.readyState===OPEN, also wait for React's isConnected
+  // state (set by case "group_state" in handleMessage) to be true. This ensures
+  // sendMessage() will use the WS path (not REST fallback) when Send is clicked.
+  log("  A2: waiting for React isConnected state to be true...");
+  const isConnDeadline = Date.now() + 10_000;
+  let reactIsConnected = false;
+  while (Date.now() < isConnDeadline && !reactIsConnected) {
+    const check = await cdp.evaluate(`(() => {
+      try {
+        const ta = document.querySelector('textarea[placeholder="Message the group\\u2026"]');
+        if (!ta) return { v: false, reason: 'no ta' };
+        const fk = Object.keys(ta).find(k => k.startsWith('__reactFiber'));
+        if (!fk) return { v: false, reason: 'no fk' };
+        // Walk fiber tree; isConnected is a boolean useState in useGroupChat.
+        // It's set to true when group_state is received from the server.
+        // We walk all fiber nodes and look for a hook sequence matching the
+        // useGroupChat pattern: messages(arr), members(arr), status(str), typing(obj),
+        // loading(bool), isConnected(bool), isRunning(bool).
+        // Simpler heuristic: find a hook node where memoizedState===true (a bool hook)
+        // in a fiber that also has an array-state hook nearby (messages or members).
+        let fiber = ta[fk].return;
+        while (fiber) {
+          let hook = fiber.memoizedState;
+          const bools = [];
+          while (hook) {
+            if (typeof hook.memoizedState === 'boolean') bools.push(hook.memoizedState);
+            hook = hook.next;
+          }
+          // useGroupChat has loading(false after load), isConnected(bool), isRunning(bool)
+          // After receiving group_state: isConnected=true appears in the bools array.
+          if (bools.includes(true)) return { v: true, bools };
+          fiber = fiber.return;
+        }
+        return { v: false, reason: 'no true bool in fiber' };
+      } catch(e) { return { v: false, reason: e.message }; }
+    })()`);
+    if (check?.v) {
+      reactIsConnected = true;
+      log(`  A2: PASS — React isConnected=true (bools: ${JSON.stringify(check.bools)})`);
+    } else {
+      log(`  A2: waiting... ${JSON.stringify(check)}`);
+      await Bun.sleep(500);
+    }
+  }
+  if (!reactIsConnected) {
+    log("  A2: WARN — could not confirm React isConnected=true within 10s; proceeding anyway");
+  }
+
+  // --- B. Focus textarea and type using CDP Input.dispatchKeyEvent type="char" ---
+  // "char" events are the only CDP key event type that triggers Chrome's native
+  // input handling (beforeinput → value mutation → input event). React 19 listens
+  // on the document root for "input" events and fires onChange on the active element.
   await cdp.send("Page.bringToFront");
-  await Bun.sleep(200);
+  await Bun.sleep(150);
+
+  // Get position for mouse click to set OS focus.
   const composerPos = await cdp.evaluate(`(() => {
     const el = ${composerExpr};
     if (!el) return null;
@@ -1202,137 +1228,175 @@ async function runLive(cdp) {
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   })()`);
   if (!composerPos) throw new Error("Composer textarea not found");
-  // CDP mouse click sequence to set real OS focus
-  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: composerPos.x, y: composerPos.y, button: "left", clickCount: 1, modifiers: 0 });
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: composerPos.x, y: composerPos.y, button: "left", clickCount: 1, modifiers: 0 });
-  await Bun.sleep(300);
 
-  // Use CDP Input.insertText — types into the focused element at the renderer level.
-  await cdp.send("Input.insertText", { text: TASK });
-  log("  task typed via CDP Input.insertText (visible on-camera)");
-  await Bun.sleep(600);
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed", x: composerPos.x, y: composerPos.y,
+    button: "left", clickCount: 1, modifiers: 0,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased", x: composerPos.x, y: composerPos.y,
+    button: "left", clickCount: 1, modifiers: 0,
+  });
+  await Bun.sleep(200);
 
-  // Verify the textarea shows the text visually.
-  const taVisualValue = await cdp.evaluate(`${composerExpr}?.value ?? ""`);
-  log(`  textarea visual value length: ${taVisualValue?.length ?? 0}`);
+  // Confirm focus landed on the textarea.
+  const isFocused = await cdp.evaluate(
+    `document.activeElement === ${composerExpr}`,
+  );
+  log(`  B: textarea focused: ${isFocused}`);
 
-  // Step 2: Find the WsClient instance in the React fiber ref and send via it.
-  // This IS the real composer send path: same as handleSend() → sendMessage() → ws.send().
-  // We search ONLY for the WsClient whose URL matches liveGroupId.
-  const wsSent = await cdp.evaluate(`(() => {
+  // Type characters. Each "char" event: Chrome appends the character to the focused
+  // textarea's value and fires the native "input" event → React onChange → setDraft.
+  // We type the first 80% quickly then slow down for the last visible bit on video.
+  const fastEnd = Math.floor(TASK.length * 0.80);
+  for (let i = 0; i < TASK.length; i++) {
+    const ch = TASK[i];
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "char",
+      text: ch,
+      unmodifiedText: ch,
+    });
+    // Slow pacing in the last 20% so typing is visible on video.
+    if (i >= fastEnd) await Bun.sleep(30);
+  }
+  log("  B: typed task via CDP dispatchKeyEvent char");
+  // Allow React scheduler to flush all the batched setDraft calls.
+  await Bun.sleep(800);
+
+  // Assert DOM value matches.
+  const taValue = await cdp.evaluate(`${composerExpr}?.value ?? ""`);
+  log(`  B: textarea DOM value length: ${taValue?.length ?? 0} (expected ${TASK.length})`);
+  if ((taValue?.length ?? 0) !== TASK.length) {
+    // Fallback: try native setter + programmatic InputEvent. React 19 listens on
+    // document for "input" events — dispatching from JS in the page context may work
+    // if the char events didn't because of focus/headless differences.
+    log("  B: char events did not fill textarea — trying native setter + InputEvent fallback");
+    const fbOk = await cdp.evaluate(`(() => {
+      const el = ${composerExpr};
+      if (!el) return false;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(el, ${JSON.stringify(TASK)});
+      // React 19 dispatches a synthetic onChange when it sees an "input" event whose
+      // nativeEvent.target.value differs from the fiber's tracked value.
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true, cancelable: true, inputType: 'insertText', data: ${JSON.stringify(TASK)},
+      }));
+      return true;
+    })()`);
+    await Bun.sleep(600);
+    const taValue2 = await cdp.evaluate(`${composerExpr}?.value ?? ""`);
+    log(`  B fallback: textarea value length: ${taValue2?.length ?? 0}`);
+  }
+
+  // --- C. Assert Send button is enabled ---
+  const sendBtn = await cdp.evaluate(`(() => {
+    const btn = document.querySelector('button[aria-label="Send"]');
+    if (!btn) return { found: false };
+    return { found: true, disabled: btn.disabled, draftInDom: ${composerExpr}?.value?.length ?? 0 };
+  })()`);
+  log(`  C: Send button: ${JSON.stringify(sendBtn)}`);
+
+  if (!sendBtn?.found) throw new Error("HARD FAIL: Send button not found in DOM");
+
+  if (sendBtn.disabled) {
+    // React draft state still "". This is the confirmed React 19 CDP input isolation
+    // issue. Per the requirement we must NOT call WsClient.send() directly because
+    // that bypasses the render path. Report and fail.
+    const feedDom = await cdp.evaluate(`document.querySelector('.flex.min-h-0.flex-1')?.innerText?.slice(0,200) ?? 'no feed'`);
+    throw new Error(
+      `HARD FAIL: Send button is disabled after typing. React draft state did not update. ` +
+      `textarea.value.length=${sendBtn.draftInDom}. Feed DOM: ${feedDom}. ` +
+      `CDP key events did not trigger React 19 onChange — real UX finding; ` +
+      `a human can type in the composer, but headless CDP char events are not wired to React 19 state.`,
+    );
+  }
+
+  // --- D. Click the Send button (real handleSend() path) ---
+  const sendBtnPos = await cdp.evaluate(`(() => {
+    const btn = document.querySelector('button[aria-label="Send"]');
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+  if (!sendBtnPos) throw new Error("Send button position not found");
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed", x: sendBtnPos.x, y: sendBtnPos.y,
+    button: "left", clickCount: 1, modifiers: 0,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased", x: sendBtnPos.x, y: sendBtnPos.y,
+    button: "left", clickCount: 1, modifiers: 0,
+  });
+  log("  D: Send button clicked");
+
+  // --- E. Hard gate: task bubble MUST appear in feed DOM ---
+  // After Send, the server echoes a group_message WS event back. The component's
+  // handleMessage receives it → setMessages → React re-renders → feed shows bubble.
+  // We also force a feed reload via REST after 3s to cover any WS race.
+  // Wait up to 30s.
+  log("  E: waiting for task bubble in feed DOM...");
+
+  // Diagnostic: probe isConnected and messages state immediately after Send.
+  await Bun.sleep(1000);
+  const postSendDiag = await cdp.evaluate(`(() => {
     try {
       const ta = document.querySelector('textarea[placeholder="Message the group\\u2026"]');
-      if (!ta) return { ok: false, reason: 'no textarea' };
-      const fiberKey = Object.keys(ta).find(k => k.startsWith('__reactFiber'));
-      if (!fiberKey) return { ok: false, reason: 'no fiberKey' };
-
-      // Walk fiber tree and collect ALL WsClient instances (diagnostic + search).
-      let fiber = ta[fiberKey].return;
-      const allClients = [];
-      let wsClient = null;
+      if (!ta) return { err: 'no ta' };
+      const fk = Object.keys(ta).find(k => k.startsWith('__reactFiber'));
+      if (!fk) return { err: 'no fk' };
+      // Walk fiber to find the useGroupChat state hooks (isConnected=bool, messages=array).
+      let fiber = ta[fk].return;
+      const states = [];
       while (fiber) {
         let hook = fiber.memoizedState;
         while (hook) {
           const ms = hook.memoizedState;
-          if (ms && typeof ms === 'object' && 'current' in ms && ms.current !== null) {
-            const cur = ms.current;
-            if (cur && typeof cur === 'object' && Array.isArray(cur.pendingMessages) && typeof cur.send === 'function') {
-              const url = cur.url || '';
-              const readyState = cur.ws?.readyState;
-              allClients.push({ url, readyState });
-              if (!wsClient && url.includes(${JSON.stringify(liveGroupId)})) {
-                wsClient = cur;
-              }
-            }
+          if (ms !== null && ms !== undefined) {
+            if (typeof ms === 'boolean') states.push({ type: 'bool', v: ms });
+            else if (Array.isArray(ms) && !Array.isArray(ms[0])) states.push({ type: 'arr', len: ms.length });
           }
           hook = hook.next;
         }
         fiber = fiber.return;
       }
-
-      if (!wsClient) return { ok: false, reason: 'WsClient for liveGroupId not found', allClients };
-
-      const isOpen = wsClient.ws?.readyState === WebSocket.OPEN;
-      const msg = JSON.stringify({ type: 'message', content: ${JSON.stringify(TASK)} });
-      wsClient.send(msg);
-      return { ok: true, wsReadyState: wsClient.ws?.readyState, isOpen, msgLen: msg.length, allClientsCount: allClients.length };
-    } catch(e) {
-      return { ok: false, reason: e.message };
-    }
+      // Also try REST feed directly from page
+      return { states: states.slice(0, 20), bodySlice: document.body.innerText.slice(0, 300) };
+    } catch(e) { return { err: e.message }; }
   })()`);
-  log(`  WS send result: ${JSON.stringify(wsSent)}`);
+  log(`  E diag (post-send): ${JSON.stringify(postSendDiag)}`);
 
-  if (!wsSent?.ok) {
-    // If WsClient not found in fiber, fall back to direct WS connection.
-    // Build the group WS URL and connect directly.
-    log(`  WsClient not in fiber tree — falling back to direct WS connection`);
-    const directWsSent = await cdp.evaluate(`(() => {
-      return new Promise((resolve) => {
-        const wsUrl = 'ws://localhost:8081/ws/project/' + encodeURIComponent('ppm') + '/group/' + encodeURIComponent(${JSON.stringify(liveGroupId)});
-        const ws = new WebSocket(wsUrl);
-        ws.onopen = () => {
-          // Send ready handshake then message
-          ws.send(JSON.stringify({ type: 'ready' }));
-          setTimeout(() => {
-            ws.send(JSON.stringify({ type: 'message', content: ${JSON.stringify(TASK)} }));
-            setTimeout(() => { ws.close(); resolve({ ok: true, url: wsUrl }); }, 500);
-          }, 300);
-        };
-        ws.onerror = (e) => resolve({ ok: false, reason: 'ws error' });
-        setTimeout(() => resolve({ ok: false, reason: 'ws timeout' }), 5000);
-      });
-    })()`);
-    log(`  direct WS send: ${JSON.stringify(directWsSent)}`);
-    if (!directWsSent?.ok) {
-      throw new Error(
-        `Cannot send via WsClient or direct WS: ${wsSent?.reason} / ${directWsSent?.reason}`,
-      );
-    }
-    log("  message sent via direct WS connection");
-  } else {
-    log("  message sent via live group-chat WsClient → real engine path");
-  }
-  log("  waiting for task bubble in feed (or DB entry)...");
+  // Force a feed reload by navigating to the same group URL (page reload will
+  // re-run getFeed which now has the task in DB).
+  await Bun.sleep(2000);
+  const bodyAfterSend = await cdp.evaluate(`document.body.innerText.slice(0, 300)`);
+  log(`  E: body after send (300): ${bodyAfterSend?.replace(/\n/g, '|')}`);
 
-  // Poll DB for the user's task message — even if the UI doesn't render it yet,
-  // the DB record confirms the WS send was processed by the server.
-  // We wait up to 30s for either the UI bubble OR the DB record.
-  const BUBBLE_WAIT_MS = 30_000;
-  const bubbleDeadline = Date.now() + BUBBLE_WAIT_MS;
-  let bubbleConfirmed = false;
-  while (Date.now() < bubbleDeadline && !bubbleConfirmed) {
-    // Check UI
-    const inUI = await cdp.evaluate(`document.body.innerText.includes("Design a debounce")`).catch(() => false);
-    if (inUI) {
-      bubbleConfirmed = true;
-      log("  task bubble confirmed in feed UI");
-      break;
-    }
-    // Check DB
-    const db = new Database(DEV_DB);
-    const taskMsg = db
-      .query("SELECT id FROM chat_group_messages WHERE group_id = ? AND kind = 'task' LIMIT 1")
-      .get(liveGroupId);
-    db.close();
-    if (taskMsg) {
-      bubbleConfirmed = true;
-      log("  task message confirmed in DB (UI may still be loading)");
-      // Wait a bit for the UI to catch up
+  const BUBBLE_WAIT = 30_000;
+  const bubbleDeadline = Date.now() + BUBBLE_WAIT;
+  let taskBubbleVisible = false;
+  while (Date.now() < bubbleDeadline && !taskBubbleVisible) {
+    const check = await cdp.evaluate(`(() => {
+      const body = document.body.innerText;
+      return {
+        hasDebounce: body.includes("Design a debounce"),
+        bodySlice: body.slice(0, 200),
+        sendEmpty: body.includes('Send a message to start the group'),
+      };
+    })()`).catch(() => null);
+    if (check?.hasDebounce) {
+      taskBubbleVisible = true;
+      log("  E: PASS — task bubble visible in feed");
+    } else {
+      log(`  E: not yet — body="${check?.bodySlice?.replace(/\n/g,'|').slice(0,100)}" sendEmpty=${check?.sendEmpty}`);
       await Bun.sleep(2000);
-      break;
     }
-    await Bun.sleep(1000);
   }
-
-  if (!bubbleConfirmed) {
-    // Still not confirmed — check what messages exist in DB
-    const db = new Database(DEV_DB);
-    const allMsgs = db
-      .query("SELECT from_member, kind, summary FROM chat_group_messages WHERE group_id = ? LIMIT 5")
-      .all(liveGroupId);
-    db.close();
-    log(`  DB messages found: ${JSON.stringify(allMsgs)}`);
-    throw new Error(`Task bubble not in feed or DB after ${BUBBLE_WAIT_MS}ms. DB msgs: ${allMsgs.length}`);
+  if (!taskBubbleVisible) {
+    const feedDump = await cdp.evaluate(`document.body.innerText.slice(0, 800)`).catch(() => "CDP error");
+    throw new Error(
+      `HARD FAIL: task bubble not in feed DOM after ${BUBBLE_WAIT}ms. ` +
+      `Body text (800): ${feedDump}`,
+    );
   }
   log("  engine is running — waiting for agents to respond");
 
@@ -1374,6 +1438,38 @@ async function runLive(cdp) {
 
   // Let the browser's WS catch up and render the latest feed state.
   await Bun.sleep(2000);
+
+  // --- Hard gate: feed must have user task + 2+ agent rows before shipping MP4 ---
+  step("L-5b. Hard gate: assert feed has user task + at least 2 agent rows");
+  const feedCheck = await cdp.evaluate(`(() => {
+    // Count message rows in the feed. Each GroupMessageItem renders a div with
+    // a sender name span. We count distinct message rows by looking for the
+    // message list container items.
+    const feedText = document.body.innerText;
+    const hasTask = feedText.includes("Design a debounce");
+    // Count agent rows by member names (Nova, Ivy, Rhea) appearing in the feed.
+    const agentRowMatches = (feedText.match(/\\b(Nova|Ivy|Rhea)\\b/g) || []).length;
+    // Also count total message bubbles by looking at the feed DOM structure.
+    const msgItems = document.querySelectorAll('[data-message-id], .group-message-item');
+    return {
+      hasTask,
+      agentRowMatches,
+      feedTextSlice: feedText.slice(0, 500),
+      msgItemCount: msgItems.length,
+    };
+  })()`);
+  log(`  feed gate check: ${JSON.stringify({ hasTask: feedCheck?.hasTask, agentRows: feedCheck?.agentRowMatches, msgItems: feedCheck?.msgItemCount })}`);
+  log(`  feed text (500 chars): ${feedCheck?.feedTextSlice?.replace(/\n/g, '|') ?? 'empty'}`);
+
+  if (!feedCheck?.hasTask || (feedCheck?.agentRowMatches ?? 0) < 2) {
+    // Feed is empty or incomplete — hard fail, do NOT assemble an empty-feed video.
+    throw new Error(
+      `HARD FAIL: feed gate failed. hasTask=${feedCheck?.hasTask}, agentRows=${feedCheck?.agentRowMatches}. ` +
+      `Feed DOM: ${feedCheck?.feedTextSlice?.slice(0, 200)}. ` +
+      `The video would show an empty feed — not shipping.`,
+    );
+  }
+  log("  feed gate PASSED");
 
   // --- L-6. Stop screencast + assemble MP4 ---
   step("L-6. Stop screencast + assemble live MP4");

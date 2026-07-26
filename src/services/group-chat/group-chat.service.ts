@@ -37,6 +37,8 @@ const MAX_BUFFER = 2000;
  *  model — FE disconnect does NOT abort the loop. */
 class GroupChatService {
   private runtimes = new Map<string, GroupRuntime>();
+  /** WS clients connected before a runtime exists — migrated into the runtime on start/resume. */
+  private pendingClients = new Map<string, Set<WsClient>>();
 
   // --- test seams (production uses the real provider-backed runner) --------
   private stubbedRunAgent: (() => (m: GroupMember, prompt: string) => Promise<AgentTurnResult>) | null = null;
@@ -59,9 +61,7 @@ class GroupChatService {
     const taskMsg = appendMessage({
       groupId, fromMember: "user", kind: "task", summary: userMessage, turnIndex: -1,
     });
-    this.emit(groupId, { type: "group_message", message: taskMsg });
-
-    await this.runLoop(group, members, userMessage, providerId);
+    await this.runLoop(group, members, userMessage, providerId, taskMsg);
   }
 
   /** Stop a running group: abort the in-flight turn + mark paused. Cooperative
@@ -104,6 +104,7 @@ class GroupChatService {
    *  register the runtime. Shared by both start() and resume(). */
   private async runLoop(
     group: Group, members: GroupMember[], task: string, providerId: string,
+    initialMessage?: GroupMessage,
   ): Promise<void> {
     const backend = this.spawnStub ? null : await this.getBackend();
     if (backend) await this.spawnSessions(group, members, backend);
@@ -141,7 +142,15 @@ class GroupChatService {
         this.runtimes.delete(group.id);
       });
 
-    this.runtimes.set(group.id, { abort, clients: new Set(), buffer: [], loop });
+    // Migrate any WS clients that connected before this runtime was created.
+    const inherited = this.pendingClients.get(group.id) ?? new Set<WsClient>();
+    this.pendingClients.delete(group.id);
+    this.runtimes.set(group.id, { abort, clients: inherited, buffer: [], loop });
+    // Emit the task message now that the runtime + client set exists, so WS
+    // clients that connected before start() was called receive it immediately.
+    if (initialMessage) {
+      this.emit(group.id, { type: "group_message", message: initialMessage });
+    }
     // Surface spawn/immediate errors to the caller; loop errors are emitted.
     await Promise.resolve();
   }
@@ -160,11 +169,19 @@ class GroupChatService {
     if (rt) {
       rt.clients.add(ws);
       for (const ev of rt.buffer) ws.send(JSON.stringify(ev));
+    } else {
+      // No runtime yet — park the client so it is migrated into the runtime when the
+      // engine starts. Without this the WS receives group_state but misses all
+      // group_message broadcasts because emit() only iterates rt.clients.
+      let pending = this.pendingClients.get(groupId);
+      if (!pending) { pending = new Set(); this.pendingClients.set(groupId, pending); }
+      pending.add(ws);
     }
   }
 
   removeClient(groupId: string, ws: WsClient): void {
     this.runtimes.get(groupId)?.clients.delete(ws);
+    this.pendingClients.get(groupId)?.delete(ws);
   }
 
   private emit(groupId: string, ev: GroupChatServerMessage): void {
