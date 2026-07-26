@@ -108,8 +108,24 @@ async function ensureServers() {
     await waitUp(WEB, "web");
     return;
   }
+
+  // LIVE mode: always start a guaranteed-fresh server so auth state is clean.
+  // Kill any existing listener on 8081/5173 by exact PID before spawning.
+  if (LIVE) {
+    log("  LIVE mode — forcing fresh servers (clearing ports 8081, 5173)");
+    await killPort(8081);
+    await killPort(5173);
+    // Brief pause to let OS release port bindings
+    await Bun.sleep(800);
+    // Confirm clear
+    const b = await isUp(`${API}/api/health`);
+    const w = await isUp(WEB);
+    if (b || w) throw new Error(`Port(s) still occupied after killPort: backend=${b} web=${w}`);
+    log("  ports 8081 + 5173 confirmed clear");
+  }
+
   // Backend
-  if (await isUp(`${API}/api/health`)) {
+  if (!LIVE && await isUp(`${API}/api/health`)) {
     log("  backend already up — reusing");
   } else {
     log("  starting backend: bun dev:server");
@@ -117,7 +133,7 @@ async function ensureServers() {
     await waitUp(`${API}/api/health`, "backend");
   }
   // Web
-  if (await isUp(WEB)) {
+  if (!LIVE && await isUp(WEB)) {
     log("  web already up — reusing");
   } else {
     log("  starting web: bun dev:web");
