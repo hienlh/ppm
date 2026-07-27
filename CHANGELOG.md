@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.15] - 2026-07-27
+
+### Fixed
+- **Windows upgrade broken by illegal filename in the npm package** — upgrading on Windows failed with `error: ENOENT extracting tarball` because a stray absolute host path (`C:/Users/.../AppData/Local/Temp/ppmbuild/index.js`) had leaked into the published package. A drive-letter colon is an illegal Windows filename, so extraction aborted before any file was written, silently blocking the in-app upgrade (Linux/macOS were unaffected — a colon is a legal filename there). The stray path is removed and `.npmignore` now excludes `Users/`, `AppData/`, and `ppmbuild/` so build-tool path leaks can't reach the tarball again. Windows installs on 0.17.13–0.17.14 can upgrade to this version normally.
+
 ## [0.17.14] - 2026-07-27
 
 ### Fixed
