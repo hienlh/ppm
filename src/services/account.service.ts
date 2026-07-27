@@ -575,16 +575,19 @@ class AccountService {
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
       console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
-      // invalid_grant or invalid_request = refresh token permanently dead → clear it so account becomes temporary
       if (errorBody.includes("invalid_grant") || errorBody.includes("invalid_request")) {
-        // Double-check: another session might have already refreshed between our read and the OAuth call
+        // Another session/process may have refreshed (and rotated) the token between
+        // our read and this OAuth call — if the DB token is now fresh, this failure is stale.
         const recheckAccount = this.getWithTokens(accountId);
         if (recheckAccount?.expiresAt && recheckAccount.expiresAt - Math.floor(Date.now() / 1000) > 60) {
           console.log(`[accounts] Refresh failed with invalid_grant but DB token is now fresh — another session refreshed it`);
           return;
         }
-        console.log(`[accounts] Clearing invalid refresh token for ${account.email ?? accountId} — account is now temporary`);
-        updateAccount(accountId, { refresh_token: encrypt("") });
+        // Do NOT wipe the refresh token. On multi-device/multi-process setups the token is
+        // usually rotated elsewhere, not truly dead; clearing it bricks the local copy
+        // permanently with no recovery path (esp. for parked/disabled accounts). Preserve
+        // it so re-enable / re-import / re-sync can restore access.
+        console.warn(`[accounts] Refresh token rejected for ${account.email ?? accountId} — preserving token for recovery (not clearing)`);
       }
       if (disableOnFail) {
         this.setDisabled(accountId);
@@ -743,9 +746,12 @@ class AccountService {
       const accounts = this.list();
       const nowS = Math.floor(Date.now() / 1000);
       for (const acc of accounts) {
-        // Disabled accounts are still refreshed to keep the refresh token alive.
-        // Disable only removes an account from the chat rotation; skipping refresh
-        // lets the token rotation lapse and eventually expires the account for good.
+        // Freeze disabled accounts: skip background refresh entirely.
+        // Refreshing rotates the OAuth refresh token; when the same account is
+        // shared across machines/processes the rotation races and one side gets
+        // invalid_grant, killing an account the user only meant to park. Leaving
+        // a disabled account untouched keeps its token intact until re-enabled.
+        if (acc.status === "disabled") continue;
         if (!acc.expiresAt) continue;
         if (acc.expiresAt - nowS > REFRESH_BUFFER_S) continue;
         // Skip temporary accounts (no refresh token) — they can't be refreshed

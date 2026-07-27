@@ -140,6 +140,34 @@ describe("AccountService", () => {
     expect(accountService.list()[0].id).toBe(acc.id);
   });
 
+  it("refreshAccessToken() preserves refresh token when OAuth returns invalid_grant", async () => {
+    // Regression: a rejected refresh token must NOT be wiped. On multi-device/multi-process
+    // setups the token is usually rotated elsewhere, not dead — clearing it permanently
+    // bricks parked/disabled accounts with no recovery path.
+    const acc = accountService.add({
+      email: "rotate@test.com",
+      accessToken: "sk-ant-oat-old-access",
+      refreshToken: "refresh-still-good-elsewhere",
+      expiresAt: Math.floor(Date.now() / 1000) - 100, // expired → forces the OAuth call
+    });
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ error: "invalid_grant", error_description: "Refresh token expired" }),
+        { status: 400 },
+      )) as typeof fetch;
+    try {
+      await expect(accountService.refreshAccessToken(acc.id, false)).rejects.toThrow();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    const after = accountService.getWithTokens(acc.id)!;
+    expect(after.refreshToken).toBe("refresh-still-good-elsewhere");
+    expect(accountService.hasRefreshToken(acc.id)).toBe(true);
+  });
+
   it("startOAuthFlow() returns valid Claude OAuth URL", () => {
     const url = accountService.startOAuthFlow("http://localhost:8081/api/accounts/oauth/callback");
     expect(url).toStartWith("https://claude.ai/oauth/authorize");
