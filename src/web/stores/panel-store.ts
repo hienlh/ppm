@@ -59,6 +59,16 @@ function pushHistory(history: string[], id: string): string[] {
   return filtered;
 }
 
+// Stamp the just-activated tab with a wall-clock time. The mobile tab-switcher's
+// "Recent" sort needs a GLOBAL most-recently-active order across split panels;
+// per-panel tabHistory can't be merged into one because it has no cross-panel
+// timestamp. Date.now() is monotonic enough across reloads (it persists with the
+// tab), so the active tab always sorts first even after a refresh.
+function stampActive(tabs: Tab[], id: string): Tab[] {
+  const now = Date.now();
+  return tabs.map((t) => (t.id === id ? { ...t, metadata: { ...t.metadata, lastActiveAt: now } } : t));
+}
+
 // ---------------------------------------------------------------------------
 // Store interface
 // ---------------------------------------------------------------------------
@@ -406,7 +416,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
               focusedPanelId: p.id,
               panels: {
                 ...s.panels,
-                [p.id]: { ...p, activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
+                [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
               },
             }));
             persist();
@@ -426,6 +436,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
                 ...s.panels,
                 [p.id]: {
                   ...p,
+                  tabs: stampActive(p.tabs, existing.id),
                   activeTabId: existing.id,
                   tabHistory: pushHistory(p.tabHistory, existing.id),
                 },
@@ -448,7 +459,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
               focusedPanelId: p.id,
               panels: {
                 ...s.panels,
-                [p.id]: { ...p, activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
+                [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
               },
             }));
             persist();
@@ -466,6 +477,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
             ...s.panels,
             [pid]: {
               ...currentPanel,
+              tabs: stampActive(currentPanel.tabs, existingInPanel.id),
               activeTabId: existingInPanel.id,
               tabHistory: pushHistory(currentPanel.tabHistory, existingInPanel.id),
             },
@@ -481,7 +493,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       );
       const id = existsElsewhere ? `${baseId}@${pid}` : baseId;
 
-      const tab: Tab = { ...tabDef, id };
+      const tab: Tab = { ...tabDef, id, metadata: { ...tabDef.metadata, lastActiveAt: Date.now() } };
       set((s) => {
         const p = s.panels[pid]!;
         return {
@@ -573,7 +585,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         const p = s.panels[pid]!;
         return {
           focusedPanelId: pid,
-          panels: { ...s.panels, [pid]: { ...p, activeTabId: tabId, tabHistory: pushHistory(p.tabHistory, tabId) } },
+          panels: { ...s.panels, [pid]: { ...p, tabs: stampActive(p.tabs, tabId), activeTabId: tabId, tabHistory: pushHistory(p.tabHistory, tabId) } },
         };
       });
       persist();

@@ -61,21 +61,21 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     return { tabs: allTabs, tabPanelMap: map };
   }, [panels, grid, currentProject]);
 
-  // Recency rank for the tab-switcher "Recent" sort: 0 = most recent. Each panel's
-  // tabHistory is MRU with the newest id last, so we walk it in reverse. Grid panels
-  // are concatenated in order (a mobile-simplifying tiebreak — one panel is the norm).
+  // Recency rank for the tab-switcher "Recent" sort: 0 = most recent. Ranked by the
+  // per-tab `lastActiveAt` stamp (set on every activation) so the order is a GLOBAL
+  // most-recently-active list across all split panels — not a per-panel history
+  // concatenation, which pushed the truly-active tab below older tabs of an earlier
+  // panel. Tabs never activated have no stamp and are left out (they sink to the
+  // bottom in insertion order via the sort's MAX_SAFE_INTEGER fallback).
   const recency = useMemo(() => {
+    const at = (t: Tab) => (typeof t.metadata?.lastActiveAt === "number" ? (t.metadata.lastActiveAt as number) : -1);
     const m = new Map<string, number>();
-    let rank = 0;
-    for (const pid of grid.flat()) {
-      const history = panels[pid]?.tabHistory ?? [];
-      for (let i = history.length - 1; i >= 0; i--) {
-        const id = history[i]!;
-        if (!m.has(id)) m.set(id, rank++);
-      }
-    }
+    [...tabs]
+      .filter((t) => at(t) >= 0)
+      .sort((a, b) => at(b) - at(a))
+      .forEach((t, i) => m.set(t.id, i));
     return m;
-  }, [panels, grid]);
+  }, [tabs]);
 
   // The current-tab button mirrors the main content, which renders the focused
   // GRID panel (falling back to the first grid panel when focus is elsewhere —
