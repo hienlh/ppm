@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.14] - 2026-07-27
+
+### Fixed
+- **Mobile tab switcher "Recent" order** — with multiple split panels, the mobile tab-switcher's "Recent" sort concatenated each panel's history, so the tab you were actually on could sit below older tabs from an earlier panel. It now ranks by a true global most-recently-active order across all panels (and persists across reload): the current tab is always on top, and selecting a tab moves it to the top.
+
 ## [0.17.13] - 2026-07-27
 
 ### Added
