@@ -38,8 +38,14 @@ dist/*.tar.gz
 dist/*.zip
 dist/SHA256SUMS
 
-# Vite may leak absolute paths into src/web/
-src/web/Users/
+# Build tools may leak absolute host paths into the repo as literal dirs
+# (e.g. `C:/Users/.../AppData/Local/Temp/ppmbuild/`). A drive-letter colon is an
+# illegal Windows filename, so such an entry aborts tarball extraction on Windows
+# ("ENOENT extracting tarball"). Match the path segments — the drive-letter dir
+# name may carry a lookalike-colon char that a literal `C:` pattern won't catch.
+Users/
+AppData/
+ppmbuild/
 
 # Keep dist/web/ for pre-built frontend
 
