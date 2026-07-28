@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.17.16] - 2026-07-28
+
+### Added
+- **Unified model + thinking picker on the chat input** — the model chip is now a single picker that also sets the reasoning **effort** (Low / Medium / High / Extra / Max) and toggles **Thinking** on/off, both per session and remembered across turns (and restored on reconnect). New models **Claude Opus 5** and **Claude Sonnet 5** are selectable. The popup is two columns — models on the left, effort + thinking on the right — and becomes a bottom sheet on mobile. Effort/thinking still fall back to the global AI Settings when a session hasn't overridden them.
+
+### Fixed
+- **Attachment-only chat messages now render** — user messages containing only attachments (no text) were previously blank; they now display, and links inside messages are clickable.
+- **Disabled or rotated OAuth tokens stay usable** — accounts whose OAuth token had been disabled or rotated were dropped, forcing avoidable re-authentication; they are now kept alive.
+
 ## [0.17.15] - 2026-07-27
 
 ### Fixed
