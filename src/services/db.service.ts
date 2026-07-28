@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 35;
+export const CURRENT_SCHEMA_VERSION = 36;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -831,6 +831,12 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 35;
     `);
   }
+
+  if (current < 36) {
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN effort TEXT"); } catch {}
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN thinking_budget INTEGER"); } catch {}
+    database.exec("PRAGMA user_version = 36;");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1021,6 +1027,30 @@ export function setSessionModel(sessionId: string, model: string): void {
   getDb().query(
     "INSERT INTO session_metadata (session_id, model) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET model = excluded.model",
   ).run(sessionId, model);
+}
+
+/** Per-session effort override; null when session uses provider default */
+export function getSessionEffort(sessionId: string): string | null {
+  const row = getDb().query("SELECT effort FROM session_metadata WHERE session_id = ?").get(sessionId) as { effort: string | null } | null;
+  return row?.effort ?? null;
+}
+
+export function setSessionEffort(sessionId: string, effort: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, effort) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET effort = excluded.effort",
+  ).run(sessionId, effort);
+}
+
+/** Per-session thinking budget (maxThinkingTokens); null = thinking OFF / use provider default */
+export function getSessionThinking(sessionId: string): number | null {
+  const row = getDb().query("SELECT thinking_budget FROM session_metadata WHERE session_id = ?").get(sessionId) as { thinking_budget: number | null } | null;
+  return row?.thinking_budget ?? null;
+}
+
+export function setSessionThinking(sessionId: string, budget: number | null): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, thinking_budget) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET thinking_budget = excluded.thinking_budget",
+  ).run(sessionId, budget);
 }
 
 // ---------------------------------------------------------------------------

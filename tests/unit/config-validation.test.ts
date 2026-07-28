@@ -35,7 +35,7 @@ describe("validateAIProviderConfig", () => {
   });
 
   it("accepts all valid effort values", () => {
-    for (const effort of ["low", "medium", "high"] as const) {
+    for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
       expect(validateAIProviderConfig({ effort })).toHaveLength(0);
     }
   });
@@ -70,6 +70,8 @@ describe("validateAIProviderConfig", () => {
   });
 
   it("accepts valid models", () => {
+    expect(validateAIProviderConfig({ model: "claude-opus-5" })).toHaveLength(0);
+    expect(validateAIProviderConfig({ model: "claude-sonnet-5" })).toHaveLength(0);
     expect(validateAIProviderConfig({ model: "claude-fable-5" })).toHaveLength(0);
     expect(validateAIProviderConfig({ model: "claude-sonnet-4-6" })).toHaveLength(0);
     expect(validateAIProviderConfig({ model: "claude-opus-4-8" })).toHaveLength(0);

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { chatService } from "../../../src/services/chat.service.ts";
+import { getSessionEffort, getSessionThinking } from "../../../src/services/db.service.ts";
 
 const PORT = 19879; // Unique port — avoid conflict with supervisor-resilience (19876)
 let server: ReturnType<typeof Bun.serve>;
@@ -668,6 +669,50 @@ describe("Chat WebSocket — New Protocol", () => {
     const phaseChanges = messages.filter((m) => m.type === "phase_changed");
     const lastPhase = phaseChanges[phaseChanges.length - 1];
     expect(lastPhase?.phase).toBe("idle");
+
+    close();
+  });
+});
+
+describe("Chat WebSocket — per-session effort + thinking", () => {
+  it("set_effort with a valid value persists and echoes in session_state", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, waitForNthType, close } = await connectWs(session.id);
+
+    ws.send(JSON.stringify({ type: "set_effort", effort: "xhigh" }));
+    const state = await waitForNthType("session_state", 2);
+    expect(state.effort).toBe("xhigh");
+    expect(getSessionEffort(session.id)).toBe("xhigh");
+
+    close();
+  });
+
+  it("set_effort rejects 'extra' (would crash the CLI) and leaves effort unchanged", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, waitForType, close } = await connectWs(session.id);
+    await waitForType("session_state");
+
+    ws.send(JSON.stringify({ type: "set_effort", effort: "extra" }));
+    const errMsg = await waitForType("error");
+    expect(errMsg.message).toContain("effort must be one of");
+    expect(getSessionEffort(session.id)).toBeNull();
+
+    close();
+  });
+
+  it("set_thinking on/off toggles the per-session budget and session_state flag", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, waitForNthType, close } = await connectWs(session.id);
+
+    ws.send(JSON.stringify({ type: "set_thinking", enabled: true }));
+    const on = await waitForNthType("session_state", 2);
+    expect(on.thinking).toBe(true);
+    expect(getSessionThinking(session.id)).toBe(12000);
+
+    ws.send(JSON.stringify({ type: "set_thinking", enabled: false }));
+    const off = await waitForNthType("session_state", 3);
+    expect(off.thinking).toBe(false);
+    expect(getSessionThinking(session.id)).toBe(0);
 
     close();
   });

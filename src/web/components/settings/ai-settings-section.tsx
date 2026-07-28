@@ -20,6 +20,8 @@ const EFFORT_OPTIONS = [
   { value: "low", label: "Low" },
   { value: "medium", label: "Medium" },
   { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra" },
+  { value: "max", label: "Max" },
 ];
 
 const PERMISSION_MODE_OPTIONS = [

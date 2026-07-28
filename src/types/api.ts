@@ -23,9 +23,11 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; model?: string }
+  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; model?: string; effort?: string; thinking?: boolean }
   | { type: "cancel" }
   | { type: "set_model"; model: string }
+  | { type: "set_effort"; effort: string }
+  | { type: "set_thinking"; enabled: boolean }
   | { type: "approval_response"; requestId: string; approved: boolean; reason?: string; data?: unknown }
   | { type: "kill_background_shell"; shellId: string }
   | { type: "ready" };
@@ -57,7 +59,7 @@ export type ChatWsServerMessage =
   | { type: "error"; message: string }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
-  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string }
+  | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean }
   | { type: "turn_events"; events: unknown[] }
   | { type: "title_updated"; title: string }
   | { type: "compact_status"; status: "compacting" | "done" }

@@ -7,7 +7,7 @@ import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
-import { ModelSelector } from "./model-selector";
+import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { SlashItem } from "./slash-command-picker";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
@@ -69,6 +69,14 @@ interface MessageInputProps {
   model?: string | null;
   /** Model change handler — undefined when no active session */
   onModelChange?: (model: string) => void;
+  /** Current per-session effort (null = provider default) */
+  effort?: string | null;
+  /** Effort change handler */
+  onEffortChange?: (effort: string) => void;
+  /** Current per-session thinking on/off */
+  thinking?: boolean;
+  /** Thinking toggle handler */
+  onThinkingChange?: (enabled: boolean) => void;
 }
 
 export const MessageInput = memo(function MessageInput({
@@ -96,6 +104,10 @@ export const MessageInput = memo(function MessageInput({
   onProviderChange,
   model,
   onModelChange,
+  effort,
+  onEffortChange,
+  thinking,
+  onThinkingChange,
 }: MessageInputProps) {
   // Uncontrolled textarea: value lives in DOM + ref, not React state.
   // Only `hasText` state triggers re-renders (empty↔non-empty for send button).
@@ -700,9 +712,13 @@ export const MessageInput = memo(function MessageInput({
             />
           )}
           {onModelChange && projectName && (
-            <ModelSelector
-              value={model ?? null}
-              onChange={onModelChange}
+            <ModelThinkingSelector
+              model={model ?? null}
+              effort={effort ?? null}
+              thinking={thinking ?? false}
+              onModelChange={onModelChange}
+              onEffortChange={onEffortChange ?? (() => {})}
+              onThinkingChange={onThinkingChange ?? (() => {})}
               projectName={projectName}
               providerId={providerId ?? "claude"}
               disabled={isStreaming}
@@ -795,9 +811,13 @@ export const MessageInput = memo(function MessageInput({
               />
             )}
             {onModelChange && projectName && (
-              <ModelSelector
-                value={model ?? null}
-                onChange={onModelChange}
+              <ModelThinkingSelector
+                model={model ?? null}
+                effort={effort ?? null}
+                thinking={thinking ?? false}
+                onModelChange={onModelChange}
+                onEffortChange={onEffortChange ?? (() => {})}
+                onThinkingChange={onThinkingChange ?? (() => {})}
                 projectName={projectName}
                 providerId={providerId ?? "claude"}
                 disabled={isStreaming}

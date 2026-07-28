@@ -67,6 +67,14 @@ interface UseChatReturn {
   model: string | null;
   /** Switch the per-session model (persists + recreates query on next message) */
   setModel: (model: string) => void;
+  /** Per-session effort override (null = provider default) */
+  effort: string | null;
+  /** Switch the per-session effort (low|medium|high|xhigh|max) */
+  setEffort: (effort: string) => void;
+  /** Whether per-session thinking is on */
+  thinking: boolean;
+  /** Toggle per-session thinking on/off */
+  setThinking: (enabled: boolean) => void;
   /** Team activity state from WS events */
   teamActivity: TeamActivityState;
   /** All team messages (ref-backed, updated live) */
@@ -126,6 +134,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   // On a draft chat the WS doesn't exist, so set_model is lost — without this
   // guard the initial session_state (provider default) clobbers the selection.
   const pendingModelRef = useRef<string | null>(null);
+  const [effort, setEffortState] = useState<string | null>(null);
+  const effortRef = useRef<string | null>(null);
+  const [thinking, setThinkingState] = useState<boolean>(false);
+  // null = user hasn't chosen; don't send a value that would override provider config.
+  const thinkingRef = useRef<boolean | null>(null);
   const prevSessionIdRef = useRef<string | null>(null);
   const streamingContentRef = useRef("");
   const streamingEventsRef = useRef<ChatEvent[]>([]);
@@ -657,6 +670,14 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           modelRef.current = state.model;
         }
       }
+      if (typeof state.effort === "string") {
+        setEffortState(state.effort);
+        effortRef.current = state.effort;
+      }
+      if (typeof state.thinking === "boolean") {
+        setThinkingState(state.thinking);
+        thinkingRef.current = state.thinking;
+      }
       if (state.pendingApproval) {
         setPendingApproval({
           requestId: state.pendingApproval.requestId,
@@ -903,6 +924,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         priority: opts?.priority,
         images: opts?.images,
         ...(modelRef.current && { model: modelRef.current }),
+        ...(effortRef.current && { effort: effortRef.current }),
+        ...(thinkingRef.current !== null && { thinking: thinkingRef.current }),
       }));
     },
     [send],
@@ -914,6 +937,24 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       modelRef.current = nextModel;
       pendingModelRef.current = nextModel; // guard against session_state clobber until server confirms
       send(JSON.stringify({ type: "set_model", model: nextModel }));
+    },
+    [send],
+  );
+
+  const setEffort = useCallback(
+    (nextEffort: string) => {
+      setEffortState(nextEffort); // optimistic
+      effortRef.current = nextEffort;
+      send(JSON.stringify({ type: "set_effort", effort: nextEffort }));
+    },
+    [send],
+  );
+
+  const setThinking = useCallback(
+    (enabled: boolean) => {
+      setThinkingState(enabled); // optimistic
+      thinkingRef.current = enabled;
+      send(JSON.stringify({ type: "set_thinking", enabled }));
     },
     [send],
   );
@@ -1104,6 +1145,10 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     sessionTitle,
     model,
     setModel,
+    effort,
+    setEffort,
+    thinking,
+    setThinking,
     teamActivity,
     teamMessages,
     markTeamRead,

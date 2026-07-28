@@ -4,6 +4,7 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
+import { buildModelQueryOptions } from "./claude-agent-sdk-query-options.ts";
 import type {
   AIProvider,
   Session,
@@ -639,10 +640,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
   async listModels(): Promise<ModelOption[]> {
     return [
+      { value: "claude-opus-5", label: "Claude Opus 5" },
       { value: "claude-fable-5", label: "Claude Fable 5 (flagship)" },
       { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
       { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
       { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+      { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
       { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
       { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
     ];
@@ -972,11 +975,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // 1M context (GA): the CLI enables a 1M window when the model name carries a
       // [1m] suffix. The suffix is stripped before the API call. Requires an entitled
       // account (Max/Team/Enterprise) and a supported model; otherwise the API errors.
-      const baseModel = opts?.model ?? providerConfig.model;
-      const resolvedModel =
-        baseModel && providerConfig.context_1m && !/\[1m\]$/i.test(baseModel)
-          ? `${baseModel}[1m]`
-          : baseModel;
+      // Per-call overrides win over provider config (lightweight calls can opt out of 1M;
+      // the chat input picker sets per-session model/effort/thinking). Effort enum is
+      // guarded inside the helper — "extra" would crash the CLI subprocess.
+      const mqo = buildModelQueryOptions(
+        {
+          model: opts?.model,
+          oneMContext: opts?.oneMContext,
+          effort: opts?.effort,
+          maxThinkingTokens: opts?.maxThinkingTokens,
+        },
+        providerConfig,
+      );
+      const resolvedModel = mqo.model;
+      const use1m = mqo.use1m;
 
       // Compiled binaries have no node_modules → resolve a Claude CLI explicitly
       // (system claude or the one shipped in cli/). Source installs → undefined
@@ -1004,16 +1016,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         permissionMode,
         allowDangerouslySkipPermissions: isBypass,
         ...(resolvedModel && { model: resolvedModel }),
-        ...(providerConfig.effort && { effort: providerConfig.effort }),
+        ...(mqo.effort && { effort: mqo.effort }),
         maxTurns: opts?.maxTurns ?? providerConfig.max_turns ?? 1000,
         ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-        ...(providerConfig.thinking_budget_tokens != null && {
-          maxThinkingTokens: providerConfig.thinking_budget_tokens,
+        ...(mqo.maxThinkingTokens != null && {
+          maxThinkingTokens: mqo.maxThinkingTokens,
         }),
         // Beta headers are honored only for API-key auth; OAuth/subscription sessions
         // reject them ("Custom betas are only available for API key users") and crash the
         // subprocess. Entitled OAuth accounts still get 1M context via the [1m] model suffix.
-        ...(providerConfig.context_1m && !!queryEnv.ANTHROPIC_API_KEY && { betas: ["context-1m-2025-08-07"] }),
+        ...(use1m && !!queryEnv.ANTHROPIC_API_KEY && { betas: ["context-1m-2025-08-07"] }),
         includePartialMessages: true,
         stderr: stderrCallback,
       };

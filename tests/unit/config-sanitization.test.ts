@@ -45,16 +45,15 @@ describe("sanitizeConfig — multi-provider", () => {
     expect(config.ai.providers.claude.type).toBe("agent-sdk");
   });
 
-  it("downgrades max effort to high", () => {
+  it("preserves max effort", () => {
     const config = makeConfig();
     (config.ai.providers.claude as any).effort = "max";
-    const dirty = sanitizeConfig(config);
-    expect(dirty).toBe(true);
-    expect(config.ai.providers.claude.effort).toBe("high");
+    sanitizeConfig(config);
+    expect(config.ai.providers.claude.effort).toBe("max");
   });
 
   it("does not modify valid effort values", () => {
-    for (const effort of ["low", "medium", "high"] as const) {
+    for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
       const config = makeConfig();
       config.ai.providers.claude.effort = effort;
       sanitizeConfig(config);
@@ -108,16 +107,15 @@ describe("sanitizeConfig — multi-provider", () => {
     expect(config.ai.providers.cursor).toBeDefined();
   });
 
-  it("downgrades max effort in CLI provider too", () => {
+  it("preserves max effort in CLI provider too", () => {
     const config = makeConfig();
     config.ai.providers.cursor = {
       type: "cli",
       cli_command: "cursor-agent",
       effort: "max" as any,
     };
-    const dirty = sanitizeConfig(config);
-    expect(dirty).toBe(true);
-    expect(config.ai.providers.cursor.effort).toBe("high");
+    sanitizeConfig(config);
+    expect(config.ai.providers.cursor.effort).toBe("max");
   });
 });
 

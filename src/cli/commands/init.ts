@@ -104,8 +104,8 @@ export async function initProject(options: InitOptions = {}) {
         }));
 
   // 6. Advanced settings
-  let aiModel = "claude-opus-4-8";
-  let aiEffort: "low" | "medium" | "high" | "max" = "high";
+  let aiModel = "claude-opus-5";
+  let aiEffort: "low" | "medium" | "high" | "xhigh" | "max" = "high";
   let aiMaxTurns = 100;
   let aiApiKeyEnv = "ANTHROPIC_API_KEY";
 
@@ -119,14 +119,16 @@ export async function initProject(options: InitOptions = {}) {
       aiModel = await select({
         message: "AI model:",
         choices: [
-          { value: "claude-fable-5", name: "Claude Fable 5 (flagship, most powerful)" },
-          { value: "claude-opus-4-8", name: "Claude Opus 4.8 (most powerful)" },
+          { value: "claude-opus-5", name: "Claude Opus 5 (most powerful)" },
+          { value: "claude-fable-5", name: "Claude Fable 5 (flagship)" },
+          { value: "claude-opus-4-8", name: "Claude Opus 4.8 (powerful)" },
           { value: "claude-opus-4-7", name: "Claude Opus 4.7 (powerful)" },
           { value: "claude-opus-4-6", name: "Claude Opus 4.6 (powerful)" },
+          { value: "claude-sonnet-5", name: "Claude Sonnet 5 (fast)" },
           { value: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (fast)" },
           { value: "claude-haiku-4-5", name: "Claude Haiku 4.5 (cheap)" },
         ],
-        default: "claude-opus-4-8",
+        default: "claude-opus-5",
       });
 
       aiEffort = await select({
@@ -135,6 +137,7 @@ export async function initProject(options: InitOptions = {}) {
           { value: "low" as const, name: "Low" },
           { value: "medium" as const, name: "Medium" },
           { value: "high" as const, name: "High (recommended)" },
+          { value: "xhigh" as const, name: "Extra" },
           { value: "max" as const, name: "Max" },
         ],
         default: "high" as const,

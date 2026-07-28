@@ -3,27 +3,44 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking } from "../../services/db.service.ts";
+import { VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
+
+/** Budget passed to the SDK as maxThinkingTokens when the per-session Thinking toggle is ON. */
+const DEFAULT_THINKING_BUDGET = 12000;
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
 
-/** Resolve the model shown in session_state: per-session override, else provider default. */
-function resolveSessionModel(sessionId: string): string | undefined {
-  const override = getSessionModel(sessionId);
-  if (override) return override;
+/** Resolve the SESSION's provider config — not the global default provider's.
+ * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
+function sessionProviderConfig(sessionId: string) {
   const ai = configService.get("ai");
-  // Fall back to the SESSION's provider default model — not the global default
-  // provider's. Otherwise a non-default provider's chat (e.g. codex) would show
-  // the claude default model in the picker.
   const pid = activeSessions.get(sessionId)?.providerId
     ?? chatService.getSession(sessionId)?.providerId
     ?? getSessionProvider(sessionId)
     ?? ai.default_provider ?? "claude";
-  return ai.providers[pid]?.model;
+  return ai.providers[pid];
+}
+
+/** Resolve the model shown in session_state: per-session override, else provider default. */
+function resolveSessionModel(sessionId: string): string | undefined {
+  return getSessionModel(sessionId) ?? sessionProviderConfig(sessionId)?.model;
+}
+
+/** Resolve the effort shown in session_state: per-session override, else provider default. */
+function resolveSessionEffort(sessionId: string): string | undefined {
+  return getSessionEffort(sessionId) ?? sessionProviderConfig(sessionId)?.effort;
+}
+
+/** Whether thinking is effectively ON: per-session override (>0) wins, else provider config budget. */
+function resolveSessionThinkingEnabled(sessionId: string): boolean {
+  const v = getSessionThinking(sessionId);
+  if (v != null) return v > 0;
+  return (sessionProviderConfig(sessionId)?.thinking_budget_tokens ?? 0) > 0;
 }
 
 // Broadcast file changes to all WS clients for real-time editor reload
@@ -294,7 +311,11 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       broadcast(sessionId, { type: "phase_changed", phase: "connecting", elapsed });
     }, 5_000);
 
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(model && { model }) })) {
+    // Per-session effort/thinking overrides (sticky, read fresh each turn). Null = inherit
+    // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
+    const effortOverride = getSessionEffort(sessionId) ?? undefined;
+    const thinkingBudget = getSessionThinking(sessionId);
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { maxThinkingTokens: thinkingBudget }) })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -635,6 +656,8 @@ export const chatWebSocket = {
         sessionTitle: session?.title || null,
         compactStatus: existing.compactStatus ?? null,
         model: resolveSessionModel(sessionId),
+        effort: resolveSessionEffort(sessionId),
+        thinking: resolveSessionThinkingEnabled(sessionId),
       }));
 
       // If actively streaming, send buffered turn events for reconnect sync
@@ -759,6 +782,8 @@ export const chatWebSocket = {
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
         model: resolveSessionModel(sessionId),
+        effort: resolveSessionEffort(sessionId),
+        thinking: resolveSessionThinkingEnabled(sessionId),
       }));
       if (entry.phase !== "idle") {
         sendTurnEvents(sessionId, ws);
@@ -803,6 +828,14 @@ export const chatWebSocket = {
       if (parsed.model) {
         entry.model = parsed.model;
         setSessionModel(sessionId, parsed.model);
+      }
+      // Effort/thinking picked on a draft chat (before the WS existed) ride along on the
+      // first message so they persist like the model does. Reject invalid effort ("extra").
+      if (parsed.effort && VALID_EFFORT_VALUES.includes(parsed.effort as typeof VALID_EFFORT_VALUES[number])) {
+        setSessionEffort(sessionId, parsed.effort);
+      }
+      if (typeof parsed.thinking === "boolean") {
+        setSessionThinking(sessionId, parsed.thinking ? DEFAULT_THINKING_BUDGET : 0);
       }
 
       // Intercept PPM-handled built-in commands (e.g. /skills, /version)
@@ -913,6 +946,54 @@ export const chatWebSocket = {
         sessionTitle: chatService.getSession(sessionId)?.title || null,
         compactStatus: entry.compactStatus ?? null,
         model: resolveSessionModel(sessionId),
+        effort: resolveSessionEffort(sessionId),
+        thinking: resolveSessionThinkingEnabled(sessionId),
+      }));
+    } else if (parsed.type === "set_effort") {
+      // Per-session effort override. Reject anything outside the SDK enum — notably
+      // "extra" (UI label maps to "xhigh"), which would crash the CLI subprocess.
+      if (!parsed.effort || !VALID_EFFORT_VALUES.includes(parsed.effort as typeof VALID_EFFORT_VALUES[number])) {
+        ws.send(JSON.stringify({ type: "error", message: `effort must be one of: ${VALID_EFFORT_VALUES.join(", ")}` }));
+        return;
+      }
+      setSessionEffort(sessionId, parsed.effort);
+      const provider = providerRegistry.get(providerId);
+      // Abort only when idle-but-alive so the next turn recreates the query with the new
+      // effort (mirror set_model); never interrupt an active turn.
+      if ((provider?.hasStreamingSession?.(sessionId) ?? false) && entry.phase === "idle") {
+        provider?.abortQuery?.(sessionId, "set_effort");
+      }
+      logSessionEvent(sessionId, "INFO", `Effort switched to ${parsed.effort}`);
+      ws.send(JSON.stringify({
+        type: "session_state",
+        sessionId,
+        phase: entry.phase,
+        pendingApproval: entry.pendingApprovalEvent ?? null,
+        sessionTitle: chatService.getSession(sessionId)?.title || null,
+        compactStatus: entry.compactStatus ?? null,
+        model: resolveSessionModel(sessionId),
+        effort: resolveSessionEffort(sessionId),
+        thinking: resolveSessionThinkingEnabled(sessionId),
+      }));
+    } else if (parsed.type === "set_thinking") {
+      // Per-session thinking toggle → maxThinkingTokens. ON = DEFAULT_THINKING_BUDGET,
+      // OFF = 0 (explicit, overrides provider config). Abort idle like set_model.
+      setSessionThinking(sessionId, parsed.enabled ? DEFAULT_THINKING_BUDGET : 0);
+      const provider = providerRegistry.get(providerId);
+      if ((provider?.hasStreamingSession?.(sessionId) ?? false) && entry.phase === "idle") {
+        provider?.abortQuery?.(sessionId, "set_thinking");
+      }
+      logSessionEvent(sessionId, "INFO", `Thinking ${parsed.enabled ? "on" : "off"}`);
+      ws.send(JSON.stringify({
+        type: "session_state",
+        sessionId,
+        phase: entry.phase,
+        pendingApproval: entry.pendingApprovalEvent ?? null,
+        sessionTitle: chatService.getSession(sessionId)?.title || null,
+        compactStatus: entry.compactStatus ?? null,
+        model: resolveSessionModel(sessionId),
+        effort: resolveSessionEffort(sessionId),
+        thinking: resolveSessionThinkingEnabled(sessionId),
       }));
     } else if (parsed.type === "cancel") {
       // Fully teardown streaming session — user must resume to continue

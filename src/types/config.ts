@@ -67,7 +67,7 @@ export interface AIProviderConfig {
   api_key_env?: string;
   api_key?: string;
   base_url?: string;
-  effort?: "low" | "medium" | "high" | "max";
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   max_turns?: number;
   max_budget_usd?: number;
   thinking_budget_tokens?: number;
@@ -97,7 +97,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
       claude: {
         type: "agent-sdk",
         api_key_env: "ANTHROPIC_API_KEY",
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         effort: "high",
         max_turns: 1000,
         permission_mode: "bypassPermissions",
@@ -120,8 +120,8 @@ export const DEFAULT_CONFIG: PpmConfig = {
 };
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;
-const VALID_EFFORTS = ["low", "medium", "high"] as const;
-const VALID_MODELS = ["claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"] as const;
+const VALID_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+const VALID_MODELS = ["claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"] as const;
 /** Allowed CLI commands for CLI providers (prevents command injection) */
 const VALID_CLI_COMMANDS = ["cursor-agent", "codex", "gemini"] as const;
 /** Only these values are allowed for default_provider in config */
@@ -241,12 +241,7 @@ export function sanitizeConfig(config: PpmConfig): boolean {
     dirty = true;
   }
 
-  // Downgrade "max" effort → "high" (not available for Claude.ai subscribers)
   for (const provider of Object.values(config.ai.providers)) {
-    if ((provider as any).effort === "max") {
-      provider.effort = "high";
-      dirty = true;
-    }
     // Fix invalid permission_mode
     if (provider.permission_mode != null && !["default", "acceptEdits", "plan", "bypassPermissions"].includes(provider.permission_mode)) {
       provider.permission_mode = "bypassPermissions";

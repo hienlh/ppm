@@ -112,6 +112,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     sessionTitle,
     model,
     setModel,
+    effort,
+    setEffort,
+    thinking,
+    setThinking,
     sendMessage,
     respondToApproval,
     cancelStreaming,
@@ -681,6 +685,10 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             onProviderChange={!sessionId ? setProviderId : undefined}
             model={model}
             onModelChange={setModel}
+            effort={effort}
+            onEffortChange={setEffort}
+            thinking={thinking}
+            onThinkingChange={setThinking}
           />
         )}
       </div>

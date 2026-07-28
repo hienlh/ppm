@@ -4,8 +4,16 @@ export interface SendMessageOpts {
   images?: Array<{ data: string; mediaType: string }>;
   /** Per-session model override; falls back to provider config model when absent */
   model?: string;
+  /** Override the provider's 1M-context setting for this call (false = never add the
+   *  [1m] suffix). Used by lightweight calls (e.g. the group-chat router) whose small
+   *  model may not support a 1M window. Falls back to provider config when absent. */
+  oneMContext?: boolean;
   /** Per-query turn cap; falls back to provider config max_turns when absent */
   maxTurns?: number;
+  /** Per-session effort override (low|medium|high|xhigh|max); falls back to provider config */
+  effort?: string;
+  /** Per-session thinking budget → SDK maxThinkingTokens; falls back to provider config */
+  maxThinkingTokens?: number;
 }
 
 export interface AIProvider {
