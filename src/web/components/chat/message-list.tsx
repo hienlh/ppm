@@ -637,12 +637,15 @@ function parseIdeOpenedFile(text: string): { idePath: string | null; cleanText: 
 /** Parse user message content, extracting attached file paths and the actual text */
 function parseUserAttachments(content: string): { files: string[]; text: string } {
   // Match: [Attached file: /path] or [Attached files:\n/path1\n/path2\n]
-  const singleMatch = content.match(/^\[Attached file: (.+?)\]\n\n?/);
+  // Trailing newlines are optional — an attachment-only message has the marker
+  // trimmed to the end of the string (extractTerminalBlocks trims), so the
+  // separator newlines may be absent.
+  const singleMatch = content.match(/^\[Attached file: (.+?)\]\n*/);
   if (singleMatch) {
     return { files: [singleMatch[1]!], text: content.slice(singleMatch[0].length) };
   }
 
-  const multiMatch = content.match(/^\[Attached files:\n([\s\S]+?)\]\n\n?/);
+  const multiMatch = content.match(/^\[Attached files:\n([\s\S]+?)\]\n*/);
   if (multiMatch) {
     const files = multiMatch[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
     return { files, text: content.slice(multiMatch[0].length) };
@@ -815,7 +818,7 @@ function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit
             expanded && "max-h-[50vh] overflow-y-auto",
           )}
         >
-          {isSystemContext ? <TextWithFilePaths text={text} projectName={projectName} /> : text}
+          {isSystemContext ? <TextWithFilePaths text={text} projectName={projectName} /> : <TextWithLinks text={text} />}
         </div>
       )}
       {(isOverflowing || expanded) && (
@@ -999,6 +1002,48 @@ function FilePathChip({ path, projectName }: { path: string; projectName?: strin
       <span className="truncate max-w-60">{basename(path)}</span>
       <ExternalLink className="size-2 shrink-0 opacity-50" />
     </button>
+  );
+}
+
+/** Render plain text with http(s) URLs turned into clickable links. Preserves
+ *  whitespace/newlines via the surrounding `whitespace-pre-wrap` container. */
+function TextWithLinks({ text }: { text: string }) {
+  const parts = useMemo(() => {
+    const re = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
+    const result: { kind: "text" | "url"; value: string }[] = [];
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) result.push({ kind: "text", value: text.slice(last, m.index) });
+      result.push({ kind: "url", value: m[1]! });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) result.push({ kind: "text", value: text.slice(last) });
+    return result;
+  }, [text]);
+
+  // No URLs — return the raw string so nothing about the layout changes.
+  if (parts.every((p) => p.kind === "text")) return <>{text}</>;
+
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.kind === "url" ? (
+          <a
+            key={i}
+            href={p.value}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2 hover:text-primary/80 break-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {p.value}
+          </a>
+        ) : (
+          <span key={i}>{p.value}</span>
+        ),
+      )}
+    </>
   );
 }
 
