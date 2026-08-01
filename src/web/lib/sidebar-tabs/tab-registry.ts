@@ -13,6 +13,8 @@ export interface SidebarTabDef {
   /** Compact label for the mobile bottom bar; falls back to `label`. */
   shortLabel?: string;
   icon: React.ElementType;
+  /** Marks the tab's feature as beta — renders a small "beta" tag on the rail + mobile bar. */
+  beta?: boolean;
 }
 
 /**
@@ -22,7 +24,7 @@ export interface SidebarTabDef {
  */
 export const BUILTIN_SIDEBAR_TABS: SidebarTabDef[] = [
   { id: "history", label: "Chat History", shortLabel: "History", icon: BotMessageSquare },
-  { id: "teams", label: "Teams", icon: Users },
+  { id: "teams", label: "Teams", icon: Users, beta: true },
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },

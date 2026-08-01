@@ -24,8 +24,8 @@ function Badge({ count }: { count: number }) {
 }
 
 // Section nav item: 38×38, active = tinted bg + inset accent bar + bolder icon.
-function NavItem({ icon: Icon, label, active, badge, onClick, dragging, dropBefore, onDragStart, onDragOver, onDrop, onDragEnd }: {
-  icon: React.ElementType; label: string; active: boolean; badge?: number; onClick: () => void;
+function NavItem({ icon: Icon, label, active, badge, beta, onClick, dragging, dropBefore, onDragStart, onDragOver, onDrop, onDragEnd }: {
+  icon: React.ElementType; label: string; active: boolean; badge?: number; beta?: boolean; onClick: () => void;
   dragging?: boolean; dropBefore?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onDragOver?: (e: React.DragEvent) => void;
@@ -51,6 +51,11 @@ function NavItem({ icon: Icon, label, active, badge, onClick, dragging, dropBefo
     >
       <Icon className="size-[18px]" strokeWidth={active ? 2.4 : 2} />
       {badge != null && badge > 0 && <Badge count={badge} />}
+      {beta && (
+        <span className="absolute -top-0.5 -right-0.5 rounded-full bg-accent-wash px-1 text-[7px] font-bold uppercase leading-[1.4] tracking-wide text-primary shadow-sm">
+          beta
+        </span>
+      )}
       {/* hover tooltip (pointer devices only) */}
       <span className="pointer-events-none absolute left-[calc(100%+8px)] z-50 hidden can-hover:group-hover:block whitespace-nowrap rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs font-medium text-foreground shadow-[0_4px_12px_rgba(0,0,0,.4)]">
         {label}
@@ -155,6 +160,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
             label={tab.label}
             active={sidebarActiveTab === tab.id}
             badge={tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : tab.id === "history" ? historyUnreadCount : undefined}
+            beta={tab.beta}
             onClick={() => handleTabClick(tab.id)}
             dragging={dragId === tab.id}
             dropBefore={dropId === tab.id && dragId !== tab.id}

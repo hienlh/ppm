@@ -134,6 +134,11 @@ export function MobileDrawerTabBar({ tabs, activeId, onSelect, onReorder }: Prop
           >
             <Icon className="size-4" />
             <span>{tab.shortLabel ?? tab.label}</span>
+            {tab.beta && (
+              <span className="absolute top-1 right-2 rounded-full bg-accent-wash px-1 text-[7px] font-bold uppercase leading-[1.4] tracking-wide text-primary">
+                beta
+              </span>
+            )}
           </button>
         );
       })}
@@ -168,6 +173,11 @@ export function MobileDrawerTabBar({ tabs, activeId, onSelect, onReorder }: Prop
               >
                 <Icon className="size-4 shrink-0" />
                 <span>{tab.label}</span>
+                {tab.beta && (
+                  <span className="rounded-full bg-accent-wash px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
+                    beta
+                  </span>
+                )}
               </button>
             );
           })}
