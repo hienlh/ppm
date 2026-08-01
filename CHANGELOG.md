@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.18] - 2026-08-01
+
+### Fixed
+- **Cloud & Share unreachable on mobile** — the button to sign in to PPM Cloud, link the device, and start sharing lived only in the desktop sidebar rail, which is hidden on phones — so there was no way to link a device from mobile. A **Cloud & Share** entry now sits in the mobile drawer footer (next to Report Bug) and opens the same panel as a bottom sheet.
+
 ## [0.17.17] - 2026-08-01
 
 ### Added
