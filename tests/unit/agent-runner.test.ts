@@ -52,6 +52,33 @@ describe("runAgentTurn", () => {
     const res = await runAgentTurn(backend, "claude", member("alice"), "prompt", { signal: ctrl.signal });
     expect(res.full).toBe("");
   });
+
+  it("forwards the member's configured model to the provider", async () => {
+    let usedModel: string | undefined = "UNSET";
+    const backend: ChatBackend = {
+      async createSession() { return { id: "sess" }; },
+      async *sendMessage(_pid, _sid, _prompt, opts) {
+        usedModel = opts?.model;
+        yield { type: "text", content: "ok" } as const;
+        yield { type: "done" } as const;
+      },
+    };
+    const m = { ...member("alice"), model: "claude-haiku-4-5" };
+    await runAgentTurn(backend, "claude", m, "prompt");
+    expect(usedModel).toBe("claude-haiku-4-5");
+  });
+
+  it("throws on a provider error event so the turn loop aborts instead of looping empty", async () => {
+    const backend: ChatBackend = {
+      async createSession() { return { id: "sess" }; },
+      async *sendMessage() {
+        yield { type: "error", message: "Authentication failed: check accounts" } as const;
+        yield { type: "done" } as const;
+      },
+    };
+    await expect(runAgentTurn(backend, "claude", member("alice"), "prompt"))
+      .rejects.toThrow(/Authentication failed/);
+  });
 });
 
 describe("dispatchParallel", () => {

@@ -74,3 +74,21 @@ export function readArchivedTranscript(sessionId: string, groupName: string): st
   if (!existsSync(dest)) return null;
   try { return readFileSync(dest, "utf8"); } catch { return null; }
 }
+
+/** Absolute path of an archived transcript JSONL if it exists (else null). */
+export function archivedTranscriptPath(sessionId: string, groupName: string): string | null {
+  const dest = join(archiveDir(groupName), `${sessionId}.jsonl`);
+  return existsSync(dest) ? dest : null;
+}
+
+/** Absolute path of a LIVE (not-yet-archived) session JSONL under the Claude projects
+ *  root, else null. Keep-alive sessions stay here until the group is deleted. */
+export async function liveTranscriptPath(sessionId: string): Promise<string | null> {
+  return findJsonl(sessionId);
+}
+
+/** Resolve a member transcript: prefer the LIVE session file (keep-alive), fall back to
+ *  the archived copy (post group/member delete). */
+export async function resolveTranscriptPath(sessionId: string, groupName: string): Promise<string | null> {
+  return (await liveTranscriptPath(sessionId)) ?? archivedTranscriptPath(sessionId, groupName);
+}

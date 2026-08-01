@@ -1,4 +1,4 @@
-import type { GroupMessage, GroupStatus, MemberStatus, TerminationReason } from "./group-chat.ts";
+import type { GroupMessage, GroupStatus, MemberStatus, BurstEndReason } from "./group-chat.ts";
 
 /** Server → client group-chat WS events. */
 export type GroupChatServerMessage =
@@ -7,7 +7,7 @@ export type GroupChatServerMessage =
   | { type: "member_status"; memberId: string; status: MemberStatus }
   | { type: "typing"; member: string }
   | { type: "turn_done"; turnIndex: number }
-  | { type: "group_done"; reason: TerminationReason; turns: number; costUsd: number }
+  | { type: "group_done"; reason: BurstEndReason; turns: number; costUsd: number }
   | { type: "error"; message: string }
   | { type: "ping" };
 

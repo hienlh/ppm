@@ -3,7 +3,8 @@ import { Loader2 } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { getTranscript } from "@/lib/api-group-chat";
+import { getTranscript, type TranscriptResult } from "@/lib/api-group-chat";
+import { GroupTranscriptMessages } from "./group-transcript-messages";
 import type { GroupMessage } from "../../../types/group-chat";
 
 interface GroupFullTranscriptViewProps {
@@ -16,7 +17,7 @@ interface GroupFullTranscriptViewProps {
  *  Adaptive: centered dialog on desktop, bottom sheet on mobile. */
 export function GroupFullTranscriptView({ groupId, message, onClose }: GroupFullTranscriptViewProps) {
   const isMobile = useIsMobile();
-  const [content, setContent] = useState<string | null>(null);
+  const [data, setData] = useState<TranscriptResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,11 +26,11 @@ export function GroupFullTranscriptView({ groupId, message, onClose }: GroupFull
   useEffect(() => {
     if (!message || !sessionRef) return;
     let cancelled = false;
-    setContent(null);
+    setData(null);
     setError(null);
     setLoading(true);
     getTranscript(groupId, sessionRef)
-      .then((res) => { if (!cancelled) setContent(res.content); })
+      .then((res) => { if (!cancelled) setData(res); })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load transcript"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -55,10 +56,10 @@ export function GroupFullTranscriptView({ groupId, message, onClose }: GroupFull
           )}
         </div>
       )}
-      {!loading && !error && content != null && (
-        <pre className="whitespace-pre-wrap break-words rounded-md bg-surface-elevated p-3 text-xs leading-relaxed text-text-secondary">
-          {content}
-        </pre>
+      {!loading && !error && data != null && (
+        <div className="px-1 py-1">
+          <GroupTranscriptMessages messages={data.messages} config={data.config} />
+        </div>
       )}
     </div>
   );

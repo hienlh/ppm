@@ -10,8 +10,8 @@ export interface ChatBackend {
     providerId: string,
     sessionId: string,
     prompt: string,
-    opts?: { permissionMode?: string; signal?: AbortSignal },
-  ): AsyncIterable<{ type: string; content?: string; costUsd?: number; usage?: { costUsd?: number } }>;
+    opts?: { permissionMode?: string; signal?: AbortSignal; model?: string; oneMContext?: boolean },
+  ): AsyncIterable<{ type: string; content?: string; message?: string; costUsd?: number; usage?: { costUsd?: number } }>;
 }
 
 export interface AgentRunResult {
@@ -38,12 +38,25 @@ export async function runAgentTurn(
 
   const events = backend.sendMessage(providerId, member.sessionId, prompt, {
     permissionMode: "bypassPermissions",
+    // Honor the member's configured model (e.g. haiku); falls back to the provider
+    // default when unset. Without this the turn always used the provider default.
+    model: member.model ?? undefined,
+    // Group turns are short/windowed — never request the 1M-context beta. If the user's
+    // config has context_1m on, the [1m] model suffix triggers "long context beta not
+    // available for this subscription" (HTTP 400). Opt out here (like the router).
+    oneMContext: false,
     signal: opts.signal,
   });
 
   for await (const ev of events) {
     if (opts.signal?.aborted) break;
     if (ev.type === "text") full += ev.content ?? "";
+    else if (ev.type === "error") {
+      // Provider errors (auth, rate limit, crash) are terminal for this turn.
+      // Throw so the turn loop aborts and surfaces the error to the UI instead
+      // of appending an empty message and looping to the turn cap.
+      throw new Error(ev.message || `agent turn failed for ${member.name}`);
+    }
     else if (ev.type === "done") {
       costUsd = ev.costUsd ?? ev.usage?.costUsd;
       break;

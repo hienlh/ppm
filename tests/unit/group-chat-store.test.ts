@@ -8,6 +8,9 @@ import {
   setGroupStatus,
   setGroupLeaderSession,
   addMember,
+  getMember,
+  updateMember,
+  removeMember,
   listMembers,
   setMemberSession,
   setMemberStatus,
@@ -75,6 +78,25 @@ describe("group-chat.store (SQLite)", () => {
     expect(alice.model).toBe("sonnet");
     expect(alice.color).toBe("#f00");
     expect(alice.status).toBe("idle");
+  });
+
+  it("getMember / updateMember / removeMember roundtrip", () => {
+    const g = createGroup({ projectName: "a", projectPath: "/p/a", name: "G" });
+    addMember({ groupId: g.id, role: "leader", name: "lead" });
+    const alice = addMember({ groupId: g.id, role: "member", name: "alice", persona: "backend" });
+
+    expect(getMember(alice.id)?.name).toBe("alice");
+
+    const updated = updateMember(alice.id, { name: "alice2", persona: "frontend", model: "opus" });
+    expect(updated?.name).toBe("alice2");
+    expect(updated?.persona).toBe("frontend");
+    expect(updated?.model).toBe("opus");
+    // Unspecified fields untouched (role stays member).
+    expect(updated?.role).toBe("member");
+
+    removeMember(alice.id);
+    expect(getMember(alice.id)).toBeNull();
+    expect(listMembers(g.id).map((m) => m.name)).toEqual(["lead"]);
   });
 
   it("setMemberSession / setMemberStatus / setGroupLeaderSession / setGroupStatus persist", () => {

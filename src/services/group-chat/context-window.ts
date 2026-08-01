@@ -41,3 +41,18 @@ export function renderWindow(window: GroupMessage[]): string {
   if (window.length === 0) return "(channel empty)";
   return window.map(line).join("\n");
 }
+
+/** Full turn text stored on the bus (`data.full`), falling back to the short feed
+ *  summary for legacy rows that predate full-text storage. */
+export function fullText(m: GroupMessage): string {
+  const full = (m.data as { full?: string } | null)?.full;
+  return typeof full === "string" && full.length > 0 ? full : (m.summary ?? "");
+}
+
+/** Render messages using FULL text (not the 600-char feed clip) for prompt injection. */
+export function renderFull(messages: GroupMessage[]): string {
+  if (messages.length === 0) return "(channel empty)";
+  return messages
+    .map((m) => `${m.fromMember} -> ${m.toMember ?? "all"}: ${fullText(m)}`.trim())
+    .join("\n");
+}

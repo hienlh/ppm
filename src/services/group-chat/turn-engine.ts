@@ -1,17 +1,22 @@
 import {
   type Group,
   type GroupMember,
-  type GroupMessage,
+  type BurstResult,
+  type BurstEndReason,
   type TurnEngineDeps,
-  type TurnLoopResult,
-  type TerminationReason,
 } from "../../types/group-chat.ts";
-import { buildContextWindow, renderWindow, DEFAULT_WINDOW } from "./context-window.ts";
+import { buildContextWindow, renderFull, DEFAULT_WINDOW } from "./context-window.ts";
+import { dispatchParallel } from "./agent-runner.ts";
 
-const DONE_RE = /^\s*DONE:/i;
-const MENTION_RE = /@(\w+)/;
-/** Feed summary cap — the bus stores a short summary; full text is retrievable
- *  via the member session (fullSessionRef → archived transcript). */
+/** Max AI turns triggered by a single user message before yielding back to the user.
+ *  Headroom for delegate → members report → leader wrap-up; the router ends earlier
+ *  (returns none) when there's nothing left to add. */
+export const REPLY_BURST_CAP = 10;
+
+/** Matches @name mentions; unicode-aware so non-ASCII member names (e.g. "Bình") work. */
+const MENTION_RE = /@([\p{L}\p{N}_]+)/u;
+const MENTION_RE_G = /@([\p{L}\p{N}_]+)/gu;
+/** Feed summary cap — the bus stores a short summary; full text lives in the member session. */
 const SUMMARY_CAP = 600;
 
 /** Cap a turn's text for the feed: first paragraph, bounded to SUMMARY_CAP. */
@@ -31,134 +36,207 @@ function leaderOf(members: GroupMember[]): GroupMember {
   return leader;
 }
 
-/** Pick the next speaker from an @mention in `text`; else fall back:
- *  leader → first non-leader member; member → leader (keeps discussion moving). */
-export function selectNextSpeaker(text: string, current: string, members: GroupMember[]): string {
-  const m = text.toLowerCase().match(MENTION_RE);
-  const target = m?.[1];
-  if (target && target !== current && findMember(members, target)) return target;
-  const leader = leaderOf(members);
-  if (current === leader.name) {
-    const other = members.find((x) => x.role !== "leader");
-    return other?.name ?? leader.name;
+/** Explicit @mentions of known members in the user's message (in order, deduped). */
+export function parseMentions(userText: string, members: GroupMember[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of userText.matchAll(MENTION_RE_G)) {
+    const name = m[1]!;
+    if (!seen.has(name) && findMember(members, name)) { out.push(name); seen.add(name); }
   }
-  return leader.name;
+  return out;
 }
 
-/** Build the per-turn prompt for `speaker`: task + windowed channel + rolling
- *  summary + role instructions. Only the leader may finalize with "DONE:". */
+/** Who replies to a user message (legacy mention-following mode): each @mentioned member;
+ *  if none mentioned, the leader answers. */
+export function selectInitialResponders(userText: string, members: GroupMember[]): string[] {
+  const mentions = parseMentions(userText, members);
+  return mentions.length > 0 ? mentions : [leaderOf(members).name];
+}
+
+/** Next teammate to pull in from a reply's @mention, or null when the reply has no
+ *  valid teammate mention (i.e. it was addressed to the user → end the burst). */
+export function selectNextSpeaker(text: string, current: string, members: GroupMember[]): string | null {
+  const target = text.match(MENTION_RE)?.[1];
+  if (target && target !== current && findMember(members, target)) return target;
+  return null;
+}
+
+/** Build the per-turn prompt for `speaker`. Keep-alive sessions retain the member's own
+ *  past turns natively, so inject only the shared-channel DELTA since it last spoke (full
+ *  text). First turn ever → the recent window (+ rolling summary) as a cold start. No
+ *  task/DONE language; the member must not hand off (a coordinator picks the next speaker). */
 export function buildTurnContext(
   group: Group,
   speaker: GroupMember,
   members: GroupMember[],
-  task: string,
   deps: TurnEngineDeps,
-  opts: { window?: number; forceFinal?: boolean } = {},
+  opts: { window?: number } = {},
 ): string {
   const window = opts.window ?? DEFAULT_WINDOW;
   const prior = deps.readMessages(group.id);
-  const { window: recent, rollingSummary } = buildContextWindow(prior, window);
   const others = members.filter((m) => m.name !== speaker.name).map((m) => m.name).join(", ");
-  const isLeader = speaker.role === "leader";
   const persona = speaker.persona ? `, ${speaker.persona}` : "";
 
+  // Last turn index this member itself produced (native memory covers ≤ this).
+  const lastSeen = prior.reduce(
+    (mx, m) => (m.fromMember === speaker.name && m.turnIndex > mx ? m.turnIndex : mx),
+    -1,
+  );
+
+  let contextBlock: string;
+  if (lastSeen >= 0) {
+    const delta = prior.filter((m) => m.turnIndex > lastSeen);
+    contextBlock = `\nNEW SINCE YOU LAST SPOKE:\n${delta.length ? renderFull(delta) : "(nothing new)"}`;
+  } else {
+    const { window: recent, rollingSummary } = buildContextWindow(prior, window);
+    contextBlock =
+      (rollingSummary ? `\nEARLIER (summary):\n${rollingSummary}` : "") +
+      `\nGROUP CHAT (recent):\n${renderFull(recent)}`;
+  }
+
   const parts = [
-    `You are "${speaker.name}"${persona}.`,
-    `Team task: ${task}`,
-    rollingSummary ? `\nEARLIER (summary):\n${rollingSummary}` : "",
-    `\nTEAM CHANNEL (recent, teammates: ${others}):\n${renderWindow(recent)}`,
-    `\nReply in MAX 2 sentences. Address a teammate with @name (e.g. @${others.split(", ")[0] || "alice"}).`,
-    isLeader
-      ? (opts.forceFinal
-          ? `You MUST finalize now: start your message with "DONE:" then the decision + 1 reason.`
-          : `If the team has converged, start with "DONE:" then the decision + 1 reason. Otherwise steer the discussion and @ someone.`)
-      : `Do NOT write "DONE:" — only the leader finalizes.`,
+    `You are "${speaker.name}"${persona}. You're chatting in a group with the user and your teammates: ${others}.`,
+    contextBlock,
+    `\nReply directly to the user, as yourself, in MAX 2 sentences — like a person in a group chat.`,
+    `Just give YOUR answer. Do NOT @mention teammates or hand off turns ("@X your turn", "over to you") — a coordinator decides who speaks next; handing off only creates loops.`,
+    `Do not narrate actions and never write "DONE".`,
   ];
   return parts.filter(Boolean).join("\n");
 }
 
-/** Run the shared-channel turn loop until one of four termination conditions:
- *  leader DONE · max_turns · budget cap · external stop. Always emits exactly
- *  one `final` message and always terminates (cap guarantees). */
-export async function runGroupTurnLoop(
+/** Run a bounded reply burst for the latest user message. When `deps.routeNextSpeaker`
+ *  is provided, an LLM router picks the next speaker each turn (history-driven, allows
+ *  AI↔AI silence, leader as fallback/moderator); otherwise it falls back to mention-
+ *  following. Either way: user @mention is an absolute override, a user message always
+ *  gets ≥1 reply, and total AI turns are capped. Emits only `kind:"chat"` messages. */
+export async function runReplyBurst(
   group: Group,
   members: GroupMember[],
   deps: TurnEngineDeps,
-  task: string,
-): Promise<TurnLoopResult> {
-  const leader = leaderOf(members);
-  let speaker = leader.name;
-  let turns = 0;
-  let costUsd = 0;
-  let reason: TerminationReason | null = null;
-  let finalText = "";
+  opts: { cap?: number; window?: number } = {},
+): Promise<BurstResult> {
+  return deps.routeNextSpeakers
+    ? runRoutedBurst(group, members, deps, opts)
+    : runMentionBurst(group, members, deps, opts);
+}
 
-  for (let turnIndex = 0; turnIndex < group.maxTurns; turnIndex++) {
-    if (deps.shouldStop?.()) { reason = "stopped"; break; }
-
-    const member = findMember(members, speaker) ?? leader;
-    const isLastTurn = turnIndex === group.maxTurns - 1;
-    // Force the leader to finalize on the final allowed turn.
-    const forceFinal = isLastTurn && member.role === "leader";
-    const prompt = buildTurnContext(group, member, members, task, deps, { forceFinal });
-
-    const result = await deps.runAgent(member, prompt);
-    turns++;
-    costUsd += result.usage?.costUsd ?? 0;
-    const text = result.text ?? "";
-
-    const isDone = member.role === "leader" && DONE_RE.test(text);
-    const mention = text.match(MENTION_RE)?.[1] ?? null;
-
-    const msg = deps.appendMessage({
-      groupId: group.id,
-      fromMember: member.name,
-      toMember: isDone ? "all" : mention,
-      kind: isDone ? "final" : "chat",
-      summary: feedSummary(text),
-      fullSessionRef: member.sessionId,
-      turnIndex,
-    });
-    deps.onMessage?.(msg);
-
-    if (isDone) { reason = "leader_done"; return { reason, turns, costUsd }; }
-
-    if (costUsd >= group.maxCostUsd) { reason = "budget"; finalText = text; break; }
-
-    // If the next turn is the last, steer to the leader so it can finalize.
-    if (turnIndex >= group.maxTurns - 2) {
-      speaker = leader.name;
-    } else {
-      speaker = selectNextSpeaker(text, speaker, members);
-    }
-  }
-
-  if (reason === null) reason = "max_turns";
-
-  // Ensure exactly one `final` message when the loop ended without a leader DONE.
-  const finalMsg = deps.appendMessage({
+/** Shared per-turn side effects: run the agent, persist + emit the message. */
+async function runTurn(
+  group: Group, members: GroupMember[], deps: TurnEngineDeps,
+  name: string, turnIndex: number, window?: number,
+): Promise<{ text: string; costUsd: number }> {
+  const member = findMember(members, name) ?? leaderOf(members);
+  const prompt = buildTurnContext(group, member, members, deps, { window });
+  deps.onTyping?.(name);
+  const result = await deps.runAgent(member, prompt);
+  const text = result.text ?? "";
+  const pull = selectNextSpeaker(text, name, members);
+  const msg = deps.appendMessage({
     groupId: group.id,
-    fromMember: leader.name,
-    toMember: "all",
-    kind: "final",
-    summary: buildFinalSummary(reason, finalText),
-    fullSessionRef: leader.sessionId,
-    turnIndex: turns,
+    fromMember: name,
+    toMember: pull,
+    kind: "chat",
+    summary: feedSummary(text),
+    // Full text for cross-member context injection (feed UI still shows `summary`).
+    data: { full: text },
+    fullSessionRef: member.sessionId,
+    turnIndex,
   });
-  deps.onMessage?.(finalMsg);
+  deps.onMessage?.(msg);
+  return { text, costUsd: result.usage?.costUsd ?? 0 };
+}
+
+/** Dedupe names, keeping order, dropping unknown members. */
+function knownUnique(names: string[], members: GroupMember[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const n of names) {
+    if (!seen.has(n) && findMember(members, n)) { out.push(n); seen.add(n); }
+  }
+  return out;
+}
+
+/** Router-driven turn-taking with PARALLEL batches: `deps.routeNextSpeakers` returns 0-N
+ *  members to run concurrently this turn. User @mentions run first (absolute, in parallel);
+ *  the first user-reply turn is forced to ≥1 (leader fallback); AI↔AI turns may end (empty →
+ *  silence). Each batch member counts toward the cap; batches are bounded to the remaining cap. */
+async function runRoutedBurst(
+  group: Group, members: GroupMember[], deps: TurnEngineDeps,
+  opts: { cap?: number; window?: number },
+): Promise<BurstResult> {
+  const cap = opts.cap ?? REPLY_BURST_CAP;
+  const prior = deps.readMessages(group.id);
+  const lastUser = [...prior].reverse().find((m) => m.fromMember === "user");
+  let mentionQueue = parseMentions(lastUser?.summary ?? "", members);
+  let nextTurnIndex = (prior[prior.length - 1]?.turnIndex ?? -1) + 1;
+
+  let turns = 0;
+  let assistantTurns = 0;
+  let costUsd = 0;
+  let reason: BurstEndReason = "no_more_mentions";
+
+  while (true) {
+    if (deps.shouldStop?.()) { reason = "stopped"; break; }
+    if (turns >= cap) { reason = "cap_reached"; break; }
+
+    const isUserTurn = assistantTurns === 0;
+    let names: string[];
+    if (mentionQueue.length > 0) {
+      // Explicit user @mentions → all of them reply in parallel (absolute override).
+      names = mentionQueue;
+      mentionQueue = [];
+    } else {
+      const history = deps.readMessages(group.id);
+      names = knownUnique(await deps.routeNextSpeakers!({ history, members, isUserTurn }), members);
+      if (names.length === 0) {
+        if (isUserTurn) names = [leaderOf(members).name]; // a user message always gets ≥1 reply
+        else break; // AI↔AI: nothing more to add → silence
+      }
+    }
+
+    // Bound the parallel batch to the remaining cap.
+    names = names.slice(0, cap - turns);
+    // Pre-assign turn indices so concurrent appends stay ordered/collision-free.
+    const batch = names.map((name) => ({ name, turnIndex: nextTurnIndex++ }));
+    const results = await dispatchParallel(
+      batch.map((b) => () => runTurn(group, members, deps, b.name, b.turnIndex, opts.window)),
+      cap, // concurrency ≤ cap (≤ remaining) — bounded fan-out, rate-limit guard
+    );
+    turns += batch.length;
+    assistantTurns += batch.length;
+    for (const r of results) costUsd += r.costUsd;
+  }
 
   return { reason, turns, costUsd };
 }
 
-function buildFinalSummary(reason: TerminationReason, lastText: string): string {
-  switch (reason) {
-    case "max_turns":
-      return `DONE: discussion reached the turn cap. ${lastText}`.trim();
-    case "budget":
-      return `DONE: discussion reached the budget cap. ${lastText}`.trim();
-    case "stopped":
-      return `DONE: discussion stopped by request.`;
-    default:
-      return `DONE: ${lastText}`.trim();
+/** Legacy conversational mode (no router): mentions → those members, else the leader;
+ *  repliers may @pull teammates; stop when a reply addresses the user (no mention). */
+async function runMentionBurst(
+  group: Group, members: GroupMember[], deps: TurnEngineDeps,
+  opts: { cap?: number; window?: number },
+): Promise<BurstResult> {
+  const cap = opts.cap ?? REPLY_BURST_CAP;
+  const prior = deps.readMessages(group.id);
+  const lastUser = [...prior].reverse().find((m) => m.fromMember === "user");
+  const queue = selectInitialResponders(lastUser?.summary ?? "", members);
+  let nextTurnIndex = (prior[prior.length - 1]?.turnIndex ?? -1) + 1;
+  let turns = 0;
+  let costUsd = 0;
+  let reason: BurstEndReason = "no_more_mentions";
+
+  while (queue.length > 0) {
+    if (deps.shouldStop?.()) { reason = "stopped"; break; }
+    if (turns >= cap) { reason = "cap_reached"; break; }
+
+    const name = queue.shift()!;
+    const { text, costUsd: c } = await runTurn(group, members, deps, name, nextTurnIndex++, opts.window);
+    turns++;
+    costUsd += c;
+    const pull = selectNextSpeaker(text, name, members);
+    if (pull) queue.push(pull);
   }
+
+  return { reason, turns, costUsd };
 }

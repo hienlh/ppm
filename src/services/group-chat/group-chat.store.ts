@@ -10,6 +10,7 @@ import {
   type MemberStatus,
   type CreateGroupInput,
   type AddMemberInput,
+  type UpdateMemberInput,
   type AppendMessageInput,
   type ReadMessagesOptions,
 } from "../../types/group-chat.ts";
@@ -142,6 +143,11 @@ export function setGroupLeaderSession(id: string, sessionId: string): void {
   getDb().query("UPDATE chat_groups SET leader_session_id = ? WHERE id = ?").run(sessionId, id);
 }
 
+/** Update the per-group reply-burst cap (max AI turns per user message). */
+export function setGroupMaxTurns(id: string, maxTurns: number): void {
+  getDb().query("UPDATE chat_groups SET max_turns = ? WHERE id = ?").run(maxTurns, id);
+}
+
 // ---------------------------------------------------------------------------
 // Members
 // ---------------------------------------------------------------------------
@@ -157,6 +163,30 @@ export function addMember(input: AddMemberInput): GroupMember {
   );
   const row = getDb().query("SELECT * FROM chat_group_members WHERE id = ?").get(id) as MemberRow;
   return toMember(row);
+}
+
+export function getMember(memberId: string): GroupMember | null {
+  const row = getDb().query("SELECT * FROM chat_group_members WHERE id = ?").get(memberId) as MemberRow | null;
+  return row ? toMember(row) : null;
+}
+
+/** Update the provided fields of a member; unspecified fields are left unchanged. */
+export function updateMember(memberId: string, patch: UpdateMemberInput): GroupMember | null {
+  const cols: Array<[string, string | null]> = [];
+  if (patch.role !== undefined) cols.push(["role", patch.role]);
+  if (patch.name !== undefined) cols.push(["name", patch.name]);
+  if (patch.persona !== undefined) cols.push(["persona", patch.persona]);
+  if (patch.agentType !== undefined) cols.push(["agent_type", patch.agentType]);
+  if (patch.model !== undefined) cols.push(["model", patch.model]);
+  if (patch.color !== undefined) cols.push(["color", patch.color]);
+  if (cols.length === 0) return getMember(memberId);
+  const set = cols.map(([c]) => `${c} = ?`).join(", ");
+  getDb().query(`UPDATE chat_group_members SET ${set} WHERE id = ?`).run(...cols.map(([, v]) => v), memberId);
+  return getMember(memberId);
+}
+
+export function removeMember(memberId: string): void {
+  getDb().query("DELETE FROM chat_group_members WHERE id = ?").run(memberId);
 }
 
 export function listMembers(groupId: string): GroupMember[] {

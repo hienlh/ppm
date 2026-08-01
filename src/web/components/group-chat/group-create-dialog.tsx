@@ -35,6 +35,7 @@ export function GroupCreateDialog({
 }: GroupCreateDialogProps) {
   const isMobile = useIsMobile();
   const [name, setName] = useState("");
+  const [cap, setCap] = useState(10); // reply-burst cap (max AI turns per message)
   const [leaderName, setLeaderName] = useState("Leader");
   const [leaderPersona, setLeaderPersona] = useState("");
   const [leaderModel, setLeaderModel] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export function GroupCreateDialog({
   const [error, setError] = useState<string | null>(null);
 
   const reset = useCallback(() => {
-    setName(""); setLeaderName("Leader"); setLeaderPersona(""); setLeaderModel(null);
+    setName(""); setCap(10); setLeaderName("Leader"); setLeaderPersona(""); setLeaderModel(null);
     setMembers([newMember()]); setError(null); setSubmitting(false);
   }, []);
 
@@ -79,14 +80,14 @@ export function GroupCreateDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const group = await createGroup({ projectName, projectPath, name: gName, members: roster });
+      const group = await createGroup({ projectName, projectPath, name: gName, maxTurns: cap, members: roster });
       onCreated(group);
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create group");
       setSubmitting(false);
     }
-  }, [name, leaderName, leaderPersona, leaderModel, members, projectName, projectPath, onCreated, close]);
+  }, [name, cap, leaderName, leaderPersona, leaderModel, members, projectName, projectPath, onCreated, close]);
 
   const inputCls =
     "w-full min-h-[40px] rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-text-subtle focus:outline-none focus:ring-1 focus:ring-primary";
@@ -97,6 +98,12 @@ export function GroupCreateDialog({
         <label className="mb-1 block text-xs font-medium text-text-secondary">Group name</label>
         <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Design Review" autoFocus />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-text-secondary">Reply cap (max AI turns per message, 1–50)</label>
+        <input type="number" min={1} max={50} className={inputCls} value={cap}
+          onChange={(e) => setCap(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} />
       </div>
 
       <div className="rounded-lg border border-border p-3">

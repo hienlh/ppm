@@ -5,11 +5,14 @@ import { useProjectStore } from "@/stores/project-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useGroupChat } from "@/hooks/use-group-chat";
 import { Button } from "@/components/ui/button";
+import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { cn } from "@/lib/utils";
 import { GroupMessageItem } from "./group-message-item";
 import { GroupMemberRoster } from "./group-member-roster";
+import { GroupMemberEditDialog, type MemberFormValues } from "./group-member-edit-dialog";
 import { GroupFullTranscriptView } from "./group-full-transcript-view";
-import type { GroupMessage } from "../../../types/group-chat";
+import { getGroup, addGroupMember, updateGroupMember, removeGroupMember, updateGroupSettings } from "@/lib/api-group-chat";
+import type { GroupMessage, GroupMember } from "../../../types/group-chat";
 
 interface GroupChatTabProps {
   metadata?: Record<string, unknown>;
@@ -31,20 +34,64 @@ export function GroupChatTab({ metadata }: GroupChatTabProps) {
   const [rosterOpen, setRosterOpen] = useState(false);
   const feedEndRef = useRef<HTMLDivElement>(null);
 
+  // Full roster (with persona/model) for management — the WS `members` only carry
+  // live status/color, so we fetch the editable detail separately and refetch on change.
+  const [roster, setRoster] = useState<GroupMember[]>([]);
+  const [cap, setCap] = useState<number | null>(null); // per-group reply-burst cap
+  const [rosterBusy, setRosterBusy] = useState(false);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  // `null` = dialog closed; `{ member: null }` = add; `{ member }` = edit.
+  const [editing, setEditing] = useState<{ member: GroupMember | null } | null>(null);
+
+  const reloadRoster = useCallback(async () => {
+    if (!groupId) return;
+    try { const g = await getGroup(groupId); setRoster(g.members); setCap(g.maxTurns); } catch { /* keep last */ }
+  }, [groupId]);
+
+  const handleCapChange = useCallback(async (n: number) => {
+    if (!groupId) return;
+    const clamped = Math.max(1, Math.min(50, Math.floor(n) || 1));
+    setCap(clamped);
+    try { await updateGroupSettings(groupId, { maxTurns: clamped }); }
+    catch { void reloadRoster(); }
+  }, [groupId, reloadRoster]);
+
+  useEffect(() => { setRoster([]); void reloadRoster(); }, [groupId, reloadRoster]);
+
   // Stick to bottom on new messages.
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length, typing]);
 
+  // memberId → live status from the running burst (overlays the fetched roster).
+  const liveStatus = useMemo(() => new Map(members.map((m) => [m.id, m.status] as const)), [members]);
+
+  // Prefer the fetched roster (fresh after edits); fall back to WS members before load.
+  const metaSource = roster.length ? roster : members;
   const colorFor = useMemo(() => {
-    const map = new Map(members.map((m) => [m.name, m.color]));
+    const map = new Map(metaSource.map((m) => [m.name, m.color]));
     return (name: string) => map.get(name) ?? null;
-  }, [members]);
+  }, [metaSource]);
 
   const isLeader = useMemo(() => {
-    const leaders = new Set(members.filter((m) => m.role === "leader").map((m) => m.name));
+    const leaders = new Set(metaSource.filter((m) => m.role === "leader").map((m) => m.name));
     return (name: string) => leaders.has(name);
-  }, [members]);
+  }, [metaSource]);
+
+  const handleSubmitMember = useCallback(async (values: MemberFormValues) => {
+    if (!groupId) return;
+    if (editing?.member) await updateGroupMember(groupId, editing.member.id, values);
+    else await addGroupMember(groupId, values);
+    await reloadRoster();
+  }, [groupId, editing, reloadRoster]);
+
+  const handleRemoveMember = useCallback(async (m: GroupMember) => {
+    if (!groupId) return;
+    setRosterBusy(true); setRosterError(null);
+    try { await removeGroupMember(groupId, m.id); await reloadRoster(); }
+    catch (e) { setRosterError(e instanceof Error ? e.message : "Failed to remove member"); }
+    finally { setRosterBusy(false); }
+  }, [groupId, reloadRoster]);
 
   const handleSend = useCallback(() => {
     const content = draft.trim();
@@ -156,17 +203,65 @@ export function GroupChatTab({ metadata }: GroupChatTabProps) {
         </div>
       </div>
 
-      {/* Roster — sidebar on desktop, drawer toggle on mobile */}
-      {rosterOpen && (
-        <div className={cn(
-          "shrink-0 border-l border-border bg-panel",
-          isMobile ? "absolute inset-y-0 right-0 z-20 w-64 shadow-xl" : "w-60",
-        )}>
-          <div className="flex h-11 items-center border-b border-border px-3 text-sm font-medium text-foreground">
+      {/* Roster — inline sidebar on desktop; bottom sheet on mobile (tap backdrop
+          or swipe down to dismiss, since the header toggle sits under an overlay). */}
+      {isMobile ? (
+        <BottomSheet open={rosterOpen} onClose={() => setRosterOpen(false)} className="flex max-h-[72vh] flex-col">
+          <div className="flex h-11 shrink-0 items-center px-4 text-sm font-medium text-foreground">
             Members
           </div>
-          <GroupMemberRoster members={members} typing={typing} />
-        </div>
+          <div className="min-h-0 overflow-y-auto">
+            {cap !== null && (
+              <label className="flex items-center gap-2 px-4 py-2 text-xs text-text-secondary">
+                <span>Reply cap</span>
+                <input type="number" min={1} max={50} value={cap}
+                  onChange={(e) => handleCapChange(Number(e.target.value))}
+                  className="w-14 rounded border border-border bg-background px-1.5 py-1 text-xs text-foreground" />
+                <span className="text-text-subtle">turns/msg</span>
+              </label>
+            )}
+            {rosterError && <p className="px-3 py-1 text-xs text-destructive">{rosterError}</p>}
+            <GroupMemberRoster
+              members={roster} liveStatus={liveStatus} typing={typing} busy={rosterBusy}
+              onAdd={() => setEditing({ member: null })} onEdit={(m) => setEditing({ member: m })} onRemove={handleRemoveMember}
+            />
+          </div>
+        </BottomSheet>
+      ) : (
+        rosterOpen && (
+          <div className="flex w-60 shrink-0 flex-col border-l border-border bg-panel">
+            <div className="flex h-11 shrink-0 items-center border-b border-border px-3 text-sm font-medium text-foreground">
+              Members
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {cap !== null && (
+                <label className="flex items-center gap-2 px-3 py-2 text-xs text-text-secondary">
+                  <span>Reply cap</span>
+                  <input type="number" min={1} max={50} value={cap}
+                    onChange={(e) => handleCapChange(Number(e.target.value))}
+                    className="w-14 rounded border border-border bg-background px-1.5 py-1 text-xs text-foreground" />
+                  <span className="text-text-subtle">turns/msg</span>
+                </label>
+              )}
+              {rosterError && <p className="px-3 py-1 text-xs text-destructive">{rosterError}</p>}
+              <GroupMemberRoster
+                members={roster} liveStatus={liveStatus} typing={typing} busy={rosterBusy}
+                onAdd={() => setEditing({ member: null })} onEdit={(m) => setEditing({ member: m })} onRemove={handleRemoveMember}
+              />
+            </div>
+          </div>
+        )
+      )}
+
+      {editing && (
+        <GroupMemberEditDialog
+          key={editing.member?.id ?? "add"}
+          open
+          member={editing.member}
+          projectName={projectName}
+          onSubmit={handleSubmitMember}
+          onClose={() => setEditing(null)}
+        />
       )}
 
       <GroupFullTranscriptView groupId={groupId} message={transcriptMsg} onClose={() => setTranscriptMsg(null)} />

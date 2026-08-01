@@ -1,5 +1,6 @@
 import { api } from "@/lib/api-client";
 import type { Group, GroupMember, GroupMessage, MemberRole } from "../../types/group-chat";
+import type { ChatMessage } from "../../types/chat";
 
 const BASE = "/api/group-chat";
 
@@ -41,6 +42,11 @@ export function createGroup(body: CreateGroupBody): Promise<Group> {
   return api.post<Group>(BASE, body);
 }
 
+/** Update per-group settings (currently the reply-burst cap `maxTurns`, 1–50). */
+export function updateGroupSettings(id: string, patch: { maxTurns?: number }): Promise<GroupDetail> {
+  return api.patch<GroupDetail>(`${BASE}/${encodeURIComponent(id)}`, patch);
+}
+
 /** Windowed feed for a group. */
 export function getFeed(
   id: string,
@@ -70,10 +76,47 @@ export function deleteGroup(id: string): Promise<void> {
   return api.del(`${BASE}/${encodeURIComponent(id)}`);
 }
 
-/** Raw archived transcript JSONL for a member session (powers "view full").
- *  Backend endpoint tracked for Phase 6 — surfaced as a friendly message if 404. */
-export function getTranscript(id: string, sessionRef: string): Promise<{ content: string }> {
-  return api.get<{ content: string }>(
+/** Member management (post-creation). */
+export interface MemberPatch {
+  role?: MemberRole;
+  name?: string;
+  persona?: string | null;
+  model?: string | null;
+  color?: string | null;
+}
+
+export function addGroupMember(
+  id: string,
+  member: { name: string; role?: MemberRole; persona?: string | null; model?: string | null; color?: string | null },
+): Promise<GroupMember> {
+  return api.post<GroupMember>(`${BASE}/${encodeURIComponent(id)}/members`, member);
+}
+
+export function updateGroupMember(id: string, memberId: string, patch: MemberPatch): Promise<GroupMember> {
+  return api.patch<GroupMember>(`${BASE}/${encodeURIComponent(id)}/members/${encodeURIComponent(memberId)}`, patch);
+}
+
+export function removeGroupMember(id: string, memberId: string): Promise<void> {
+  return api.del(`${BASE}/${encodeURIComponent(id)}/members/${encodeURIComponent(memberId)}`);
+}
+
+/** Parsed archived transcript for a member session (powers "view full") — chat-style
+ *  messages (text/thinking/tool_use/tool_result) plus the session input config. */
+export function getTranscript(id: string, sessionRef: string): Promise<TranscriptResult> {
+  return api.get<TranscriptResult>(
     `${BASE}/${encodeURIComponent(id)}/transcript?sessionRef=${encodeURIComponent(sessionRef)}`,
   );
+}
+
+export interface TranscriptConfig {
+  model?: string;
+  cwd?: string;
+  gitBranch?: string;
+  version?: string;
+  permissionMode?: string;
+}
+
+export interface TranscriptResult {
+  messages: ChatMessage[];
+  config: TranscriptConfig | null;
 }

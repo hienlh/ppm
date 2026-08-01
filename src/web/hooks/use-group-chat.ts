@@ -147,7 +147,14 @@ export function useGroupChat(groupId: string | null, projectName: string): UseGr
     getFeed(groupId, { limit: 200 })
       .then((res) => {
         if (cancelled) return;
-        setMessages(res.messages);
+        // Merge, don't clobber: a live WS message (e.g. the very first message on a
+        // brand-new group) can arrive BEFORE this fetch resolves. Keep any such live
+        // messages that the fetched snapshot doesn't already include.
+        setMessages((prev) => {
+          const fetchedIds = new Set(res.messages.map((m) => m.id));
+          const liveExtra = prev.filter((m) => !fetchedIds.has(m.id));
+          return [...res.messages, ...liveExtra];
+        });
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load feed");

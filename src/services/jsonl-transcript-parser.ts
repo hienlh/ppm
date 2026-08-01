@@ -82,6 +82,8 @@ export function parseSessionMessage(
         if (role === "assistant" && cleaned) {
           events.push({ type: "text", content: cleaned, ...(parentId && { parentToolUseId: parentId }) });
         }
+      } else if (block.type === "thinking" && typeof block.thinking === "string") {
+        events.push({ type: "thinking", content: block.thinking as string, ...(parentId && { parentToolUseId: parentId }) });
       } else if (block.type === "tool_use") {
         events.push({
           type: "tool_use",
@@ -237,4 +239,38 @@ export async function parseJsonlTranscript(
   return merged.filter(
     (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),
   );
+}
+
+/** Session input config surfaced in a transcript view. Fields are best-effort — the SDK
+ *  scatters them across user/assistant records rather than a single init line. */
+export interface TranscriptConfig {
+  model?: string;
+  cwd?: string;
+  gitBranch?: string;
+  version?: string;
+  permissionMode?: string;
+}
+
+/** Scan a transcript's records for the first-seen input-config values. Returns null when
+ *  nothing recognizable is found. Defensive: never throws, ignores malformed lines. */
+export async function parseTranscriptConfig(filePath: string): Promise<TranscriptConfig | null> {
+  let text: string;
+  try { text = await Bun.file(filePath).text(); } catch { return null; }
+  const cfg: TranscriptConfig = {};
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let e: Record<string, unknown>;
+    try { e = JSON.parse(trimmed); } catch { continue; }
+    if (cfg.cwd === undefined && typeof e.cwd === "string") cfg.cwd = e.cwd;
+    if (cfg.gitBranch === undefined && typeof e.gitBranch === "string") cfg.gitBranch = e.gitBranch;
+    if (cfg.version === undefined && typeof e.version === "string") cfg.version = e.version;
+    if (cfg.permissionMode === undefined && typeof e.permissionMode === "string") cfg.permissionMode = e.permissionMode as string;
+    if (cfg.model === undefined) {
+      const model = (e.message as Record<string, unknown> | undefined)?.model ?? e.model;
+      if (typeof model === "string" && model !== "<synthetic>") cfg.model = model;
+    }
+    if (cfg.model && cfg.cwd && cfg.gitBranch && cfg.version && cfg.permissionMode) break;
+  }
+  return Object.keys(cfg).length > 0 ? cfg : null;
 }
