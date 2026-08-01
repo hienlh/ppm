@@ -114,6 +114,10 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/group-chat`
 - `POST   /api/group-chat`
 - `GET    /api/group-chat/:id`
+- `PATCH  /api/group-chat/:id`
+- `POST   /api/group-chat/:id/members`
+- `PATCH  /api/group-chat/:id/members/:memberId`
+- `DELETE /api/group-chat/:id/members/:memberId`
 - `GET    /api/group-chat/:id/feed`
 - `GET    /api/group-chat/:id/transcript`
 - `POST   /api/group-chat/:id/message`
@@ -273,4 +277,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.17.16 -->
+<!-- Generated from src/server/routes/ for PPM v0.17.17 -->
