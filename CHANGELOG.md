@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.17] - 2026-08-01
+
+### Added
+- **Teams group chat, reimagined as a real conversation (beta)** — the Teams group chat now behaves like a natural group chat instead of a task swarm. You message the group and the right agents reply on their own (no more waiting for @mentions), continuing the thread with whoever you were just talking to. A lightweight router picks 1–N responders based on the recent conversation, runs independent replies in parallel, and lets the leader wrap up with a summary after delegating; the group can also stay quiet when there's nothing to add. Each of your messages always gets at least one reply. Agents now **remember the conversation** across messages (their sessions are kept alive), and teammates see each other's **full replies**, not clipped snippets.
+- **Member management for a group** — add, edit (name / persona / model), remove members, and reassign the leader after a group is created.
+- **Per-team reply cap** — set how many AI turns a single message can trigger (1–50), configurable per group.
+- **Beta badge on the Teams tab** — the Teams entry now shows a small "beta" marker in both the desktop rail and the mobile drawer.
+- **Rich transcript viewer** — "view full transcript" now renders like the live chat (assistant text, collapsible thinking, tool calls with inputs/outputs, and the session's input config) instead of raw JSONL, and works on a member's live (unarchived) session. The entry point is a subtle top-right icon (hover on desktop, long-press menu on mobile).
+
+### Fixed
+- **Group chat reliability** — your first message on a brand-new group now shows immediately (no tab reopen), messages no longer go missing across consecutive replies, a member's per-message model is respected (was always using the provider default), timestamps render correctly, and group turns no longer request the 1M-context beta that some subscriptions reject.
+- **Mobile group chat** — the members panel opens as a dismissable bottom sheet (tap backdrop / swipe down) instead of an overlay you couldn't close.
+- **In-app self-upgrade** — a server restart mid-upgrade is no longer surfaced as an error (e.g. a transient 502 through a tunnel); the app waits for the new version and reloads automatically.
+
 ## [0.17.16] - 2026-07-28
 
 ### Added
