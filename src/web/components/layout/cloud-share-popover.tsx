@@ -22,9 +22,11 @@ interface TunnelStatus {
 
 interface Props {
   onClose: () => void;
+  /** "popover" = self-contained card (desktop rail); "sheet" = fills a bottom sheet on mobile. */
+  variant?: "popover" | "sheet";
 }
 
-export function CloudSharePopover({ onClose }: Props) {
+export function CloudSharePopover({ onClose, variant = "popover" }: Props) {
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -184,7 +186,13 @@ export function CloudSharePopover({ onClose }: Props) {
   const shareUrl = tunnel?.url || cloud?.tunnel_url;
 
   return (
-    <div className="w-72 bg-background border border-border rounded-lg shadow-lg p-3 space-y-3">
+    <div
+      className={
+        variant === "sheet"
+          ? "w-full p-3 space-y-3"
+          : "w-72 bg-background border border-border rounded-lg shadow-lg p-3 space-y-3"
+      }
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">

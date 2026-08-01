@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { X, Bug as BugIcon } from "lucide-react";
+import { X, Bug as BugIcon, Cloud } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -19,6 +19,8 @@ import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
 import { MobileDrawerTabBar } from "@/components/layout/mobile-drawer-tab-bar";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
+import { CloudSharePopover } from "@/components/layout/cloud-share-popover";
+import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { cn } from "@/lib/utils";
 
 // Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
@@ -43,6 +45,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   const setSidebarTabOrder = useSettingsStore((s) => s.setSidebarTabOrder);
   const contributions = useExtensionStore((s) => s.contributions);
   const [activeTab, setActiveTab] = useState<SidebarActiveTab>(initialTab ?? "explorer");
+  const [cloudOpen, setCloudOpen] = useState(false);
 
   const tabs = useMemo(
     () => resolveTabOrder(getAvailableTabs({ jiraEnabled, contributions }), sidebarTabOrder).filter((t) => isMobileSupported(t.id)),
@@ -123,19 +126,33 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
             onReorder={setSidebarTabOrder}
           />
 
-          {/* Report Bug + Version / Upgrade */}
+          {/* Report Bug + Cloud & Share + Version / Upgrade */}
           <div className="flex items-center justify-between px-4 py-2 border-t border-border text-[11px]">
             <UpgradeButton align="left" />
-            <button
-              onClick={handleReportBug}
-              className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
-            >
-              <BugIcon className="size-3" />
-              <span>Report Bug</span>
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setCloudOpen(true)}
+                className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
+              >
+                <Cloud className="size-3" />
+                <span>Cloud &amp; Share</span>
+              </button>
+              <button
+                onClick={handleReportBug}
+                className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
+              >
+                <BugIcon className="size-3" />
+                <span>Report Bug</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Cloud & Share — bottom sheet (portals to body, so drawer transform doesn't clip it) */}
+      <BottomSheet open={cloudOpen} onClose={() => setCloudOpen(false)} zIndex={60}>
+        <CloudSharePopover variant="sheet" onClose={() => setCloudOpen(false)} />
+      </BottomSheet>
     </div>
   );
 }
