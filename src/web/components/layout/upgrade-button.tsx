@@ -82,6 +82,21 @@ async function reloadWhenServerReady() {
 }
 
 /**
+ * Whether an /api/upgrade/apply failure actually means "the server is
+ * restarting", not "the upgrade failed". The self-replace tears the server down
+ * mid-request, so the response often never arrives cleanly: the connection
+ * drops (TypeError) or a proxy/tunnel in front returns a gateway error while the
+ * origin is briefly gone (502/503/504, or Cloudflare's 52x). Real upgrade
+ * failures come back as a JSON 500 with a specific message and won't match here.
+ */
+function looksLikeServerRestart(e: unknown): boolean {
+  if (e instanceof TypeError) return true; // dropped connection / fetch failure
+  const msg = (e as Error)?.message ?? "";
+  if (/fetch|network|failed to fetch|load failed/i.test(msg)) return true;
+  return /HTTP 5(0[234]|2\d)\b/.test(msg); // 502/503/504 + Cloudflare 520–529
+}
+
+/**
  * Status-bar version chip. Shows the current version normally; when a new
  * release is available it turns into an accent "update" button that opens a
  * popover (Update now / Release notes / Later) — replaces the old top banner.
@@ -150,14 +165,23 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
       .finally(() => setNotesLoading(false));
   }, [open, current, hasUpdate, isTest]);
 
+  // The server is restarting into the new version — stop showing "Updating…",
+  // switch to the reconnect state, and auto-reload once it's listening again
+  // (no manual click, and no raw 502 surfaced while the origin is briefly down).
+  const enterRestartWait = useCallback(() => {
+    setUpgrading(false);
+    setComplete(true);
+    setReloading(true);
+    reloadWhenServerReady();
+  }, []);
+
   const handleUpgrade = useCallback(async () => {
     setUpgrading(true);
     setOpen(false);
     try {
       const data = await api.post<UpgradeResult>("/api/upgrade/apply");
       if (data.restart) {
-        setUpgrading(false);
-        setComplete(true);
+        enterRestartWait();
       } else {
         toast.info(data.message || "Upgrade installed. Restart PPM manually.");
         setUpgrading(false);
@@ -165,18 +189,16 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         setDismissed(true);
       }
     } catch (e) {
-      const isNetworkError = e instanceof TypeError
-        || (e as Error).message?.includes("fetch")
-        || (e as Error).message?.includes("network");
-      if (isNetworkError) {
-        setUpgrading(false);
-        setComplete(true);
+      if (looksLikeServerRestart(e)) {
+        // Expected: self-replace killed the server before the response flushed.
+        // The upgrade is in progress — wait for it, don't report a failure.
+        enterRestartWait();
       } else {
         toast.error(`Upgrade failed: ${(e as Error).message}`);
         setUpgrading(false);
       }
     }
-  }, [availableVersion]);
+  }, [availableVersion, enterRestartWait]);
 
   const handleDismiss = useCallback(() => {
     if (availableVersion) sessionStorage.setItem(DISMISS_KEY_PREFIX + availableVersion, "1");
@@ -194,10 +216,10 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         onClick={() => { setReloading(true); reloadWhenServerReady(); }}
         disabled={reloading}
         className="flex items-center gap-1 px-1 rounded-sm text-success hover:brightness-110 transition-[filter] disabled:opacity-70"
-        title={reloading ? "Waiting for the server to restart…" : "Reload to apply the update"}
+        title={reloading ? "Applying update — reconnecting to the server…" : "Reload to apply the update"}
       >
         {reloading
-          ? <><Loader2 className="size-3 animate-spin" /> Waiting for server…</>
+          ? <><Loader2 className="size-3 animate-spin" /> Updating, reconnecting…</>
           : <><RefreshCw className="size-3" /> Reload</>}
       </button>
     );
