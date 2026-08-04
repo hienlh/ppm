@@ -896,7 +896,7 @@ ai:
 - `effort`: Processing level (`low`, `medium`, `high`, `max`)
 - `max_turns`: Maximum interaction turns (1-500, default 100)
 - `max_budget_usd`: Spending limit in USD (optional)
-- `thinking_budget_tokens`: Extended thinking budget in tokens (optional, 0=disabled)
+- `thinking_budget_tokens`: Extended thinking, tri-state (optional). Omitted = adaptive (model picks depth, guided by `effort`); `0` = disabled; a positive number = fixed token budget. Per-session Thinking toggle overrides this.
 
 ### API Endpoints
 

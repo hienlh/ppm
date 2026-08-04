@@ -136,7 +136,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   const pendingModelRef = useRef<string | null>(null);
   const [effort, setEffortState] = useState<string | null>(null);
   const effortRef = useRef<string | null>(null);
-  const [thinking, setThinkingState] = useState<boolean>(false);
+  // Optimistic until session_state lands; the SDK default is adaptive thinking, so ON
+  // is the honest starting guess.
+  const [thinking, setThinkingState] = useState<boolean>(true);
   // null = user hasn't chosen; don't send a value that would override provider config.
   const thinkingRef = useRef<boolean | null>(null);
   const prevSessionIdRef = useRef<string | null>(null);
@@ -674,9 +676,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         setEffortState(state.effort);
         effortRef.current = state.effort;
       }
+      // Display only. Writing this back into the ref would promote a server-derived
+      // default into an explicit user choice that rides along on every message and
+      // pins the session — the path that silently disabled thinking.
       if (typeof state.thinking === "boolean") {
         setThinkingState(state.thinking);
-        thinkingRef.current = state.thinking;
       }
       if (state.pendingApproval) {
         setPendingApproval({
@@ -792,10 +796,12 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   useEffect(() => {
     let cancelled = false;
 
-    // Keep the user's unconfirmed model pick across the draft→real transition
-    // (null → id), but drop it when switching between two existing sessions.
+    // Keep the user's unconfirmed model/thinking picks across the draft→real transition
+    // (null → id), but drop them when switching between two existing sessions so one
+    // session's choice can't leak into the next.
     if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId) {
       pendingModelRef.current = null;
+      thinkingRef.current = null;
     }
     prevSessionIdRef.current = sessionId ?? null;
 

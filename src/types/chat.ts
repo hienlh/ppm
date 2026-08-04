@@ -12,8 +12,8 @@ export interface SendMessageOpts {
   maxTurns?: number;
   /** Per-session effort override (low|medium|high|xhigh|max); falls back to provider config */
   effort?: string;
-  /** Per-session thinking budget → SDK maxThinkingTokens; falls back to provider config */
-  maxThinkingTokens?: number;
+  /** Per-session thinking tri-state (see THINKING_ADAPTIVE); falls back to provider config */
+  thinkingBudget?: number;
 }
 
 export interface AIProvider {

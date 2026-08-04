@@ -265,7 +265,7 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
                 type="number"
                 min={0}
                 defaultValue={config?.thinking_budget_tokens ?? ""}
-                placeholder="Disabled"
+                placeholder="Adaptive (model decides)"
                 className={compact ? "h-7 text-[11px]" : undefined}
                 onBlur={(e) => {
                   const val = parseInt(e.target.value);

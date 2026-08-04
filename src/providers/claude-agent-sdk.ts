@@ -983,7 +983,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           model: opts?.model,
           oneMContext: opts?.oneMContext,
           effort: opts?.effort,
-          maxThinkingTokens: opts?.maxThinkingTokens,
+          thinkingBudget: opts?.thinkingBudget,
         },
         providerConfig,
       );
@@ -1019,9 +1019,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         ...(mqo.effort && { effort: mqo.effort }),
         maxTurns: opts?.maxTurns ?? providerConfig.max_turns ?? 1000,
         ...(providerConfig.max_budget_usd && { maxBudgetUsd: providerConfig.max_budget_usd }),
-        ...(mqo.maxThinkingTokens != null && {
-          maxThinkingTokens: mqo.maxThinkingTokens,
-        }),
+        ...(mqo.thinking && { thinking: mqo.thinking }),
         // Beta headers are honored only for API-key auth; OAuth/subscription sessions
         // reject them ("Custom betas are only available for API key users") and crash the
         // subprocess. Entitled OAuth accounts still get 1M context via the [1m] model suffix.

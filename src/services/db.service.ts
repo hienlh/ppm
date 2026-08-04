@@ -1041,7 +1041,7 @@ export function setSessionEffort(sessionId: string, effort: string): void {
   ).run(sessionId, effort);
 }
 
-/** Per-session thinking budget (maxThinkingTokens); null = thinking OFF / use provider default */
+/** Per-session thinking tri-state (see THINKING_ADAPTIVE); null = inherit provider config */
 export function getSessionThinking(sessionId: string): number | null {
   const row = getDb().query("SELECT thinking_budget FROM session_metadata WHERE session_id = ?").get(sessionId) as { thinking_budget: number | null } | null;
   return row?.thinking_budget ?? null;

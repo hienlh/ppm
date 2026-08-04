@@ -4,11 +4,8 @@ import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
 import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking } from "../../services/db.service.ts";
-import { VALID_EFFORT_VALUES } from "../../providers/claude-agent-sdk-query-options.ts";
+import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
-
-/** Budget passed to the SDK as maxThinkingTokens when the per-session Thinking toggle is ON. */
-const DEFAULT_THINKING_BUDGET = 12000;
 import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
@@ -36,11 +33,12 @@ function resolveSessionEffort(sessionId: string): string | undefined {
   return getSessionEffort(sessionId) ?? sessionProviderConfig(sessionId)?.effort;
 }
 
-/** Whether thinking is effectively ON: per-session override (>0) wins, else provider config budget. */
+/** Whether thinking is effectively ON: per-session override wins, else provider config, else SDK default. */
 function resolveSessionThinkingEnabled(sessionId: string): boolean {
-  const v = getSessionThinking(sessionId);
-  if (v != null) return v > 0;
-  return (sessionProviderConfig(sessionId)?.thinking_budget_tokens ?? 0) > 0;
+  return isThinkingEnabled(
+    getSessionThinking(sessionId),
+    sessionProviderConfig(sessionId)?.thinking_budget_tokens,
+  );
 }
 
 // Broadcast file changes to all WS clients for real-time editor reload
@@ -315,7 +313,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { maxThinkingTokens: thinkingBudget }) })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }) })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -835,7 +833,7 @@ export const chatWebSocket = {
         setSessionEffort(sessionId, parsed.effort);
       }
       if (typeof parsed.thinking === "boolean") {
-        setSessionThinking(sessionId, parsed.thinking ? DEFAULT_THINKING_BUDGET : 0);
+        setSessionThinking(sessionId, parsed.thinking ? THINKING_ADAPTIVE : 0);
       }
 
       // Intercept PPM-handled built-in commands (e.g. /skills, /version)
@@ -976,9 +974,9 @@ export const chatWebSocket = {
         thinking: resolveSessionThinkingEnabled(sessionId),
       }));
     } else if (parsed.type === "set_thinking") {
-      // Per-session thinking toggle → maxThinkingTokens. ON = DEFAULT_THINKING_BUDGET,
+      // Per-session thinking toggle. ON = adaptive (model picks depth, guided by effort),
       // OFF = 0 (explicit, overrides provider config). Abort idle like set_model.
-      setSessionThinking(sessionId, parsed.enabled ? DEFAULT_THINKING_BUDGET : 0);
+      setSessionThinking(sessionId, parsed.enabled ? THINKING_ADAPTIVE : 0);
       const provider = providerRegistry.get(providerId);
       if ((provider?.hasStreamingSession?.(sessionId) ?? false) && entry.phase === "idle") {
         provider?.abortQuery?.(sessionId, "set_thinking");
