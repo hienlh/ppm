@@ -83,7 +83,7 @@ export function GlideDataGrid(props: GlideGridProps) {
   const { getCellContent, onCellEdited } = useGlideCellContent(displayRows, columnOrder, schema, pkCol, addEdit, pendingRef);
   const { gridSelection, onGridSelectionChange, selectedRowIndices, clearSelection } = useGlideSelection();
   const {
-    previewData, setPreviewData, openRowPreview, openCellPreview, openPreviewInTab,
+    previewData, closePreview, openRowPreview, openCellPreview, openPreviewInTab,
     handlePaste, getContextFk, isCellViewable, openFkTable,
   } = useGlideGridActions({ displayRows, columnOrder, schema, pkCol, connectionId, connectionName, selectedTable, selectedSchema, addEdit, gridSelection, containerRef });
 
@@ -124,11 +124,11 @@ export function GlideDataGrid(props: GlideGridProps) {
 
   const [colSearchOpen, setColSearchOpen] = useState(false);
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Escape") { setPreviewData(null); setColSearchOpen(false); return; }
+    if (e.key === "Escape") { closePreview(); setColSearchOpen(false); return; }
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && hasPending) { e.preventDefault(); commitAll(); }
     const tag = (e.target as HTMLElement)?.tagName;
     if (e.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA") { e.preventDefault(); setColSearchOpen(true); }
-  }, [hasPending, commitAll]);
+  }, [hasPending, commitAll, closePreview]);
   const handleRowAppended = useCallback(() => {
     if (!pkCol || !onInsertRow) return;
     setInsertedRows((prev) => [...prev, { [pkCol]: `__new_${Date.now()}` }]);
@@ -179,7 +179,7 @@ export function GlideDataGrid(props: GlideGridProps) {
       </div>
 
       {hasPending && <GlideSaveBar pendingCount={pendingCount} onSave={commitAll} onDiscard={() => { discardAll(); setInsertedRows([]); }} />}
-      {previewData && <GlideDataPreviewPanel data={previewData} onClose={() => setPreviewData(null)} onOpenInTab={openPreviewInTab} />}
+      {previewData && <GlideDataPreviewPanel data={previewData} onClose={closePreview} onOpenInTab={openPreviewInTab} />}
       <GlideGridPagination total={total} page={page} totalPages={Math.ceil(total / limit) || 1} onPageChange={onPageChange} />
 
       {headerMenu && (

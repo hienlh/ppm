@@ -1,10 +1,10 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import type { Item, GridSelection } from "@glideapps/glide-data-grid";
 import type { GridColumnSchema } from "./glide-grid-types";
-import { formatCellValue, detectLang, needsViewer } from "./glide-grid-types";
-import type { PreviewData } from "./glide-data-preview-panel";
+import { needsViewer } from "./glide-grid-types";
+import { resolvePreviewData, rowPk, type PreviewSource } from "./resolve-preview-data";
 
 interface UseGlideGridActionsParams {
   displayRows: Record<string, unknown>[];
@@ -29,7 +29,7 @@ interface UseGlideGridActionsParams {
 export function useGlideGridActions(params: UseGlideGridActionsParams) {
   const { displayRows, columnOrder, schema, pkCol, connectionId, connectionName, selectedTable, selectedSchema, addEdit, gridSelection, containerRef } = params;
   const { openTab } = useTabStore(useShallow((s) => ({ openTab: s.openTab })));
-  const [previewData, setPreviewData] = useState<PreviewData | null>(null);
+  const [previewSource, setPreviewSource] = useState<PreviewSource | null>(null);
 
   // Refs to avoid stale closures in canvas callbacks
   const displayRowsRef = useRef(displayRows);
@@ -38,24 +38,26 @@ export function useGlideGridActions(params: UseGlideGridActionsParams) {
   columnOrderRef.current = columnOrder;
 
   // Preview panel — inline Monaco viewer for cell/row content
+  const rowPkOf = useCallback((row: Record<string, unknown>) => rowPk(row, pkCol), [pkCol]);
+
   const openRowPreview = useCallback((rowIdx: number) => {
     const row = displayRows[rowIdx]; if (!row) return;
-    const pk = pkCol ? String(row[pkCol] ?? "") : "";
-    const table = selectedTable ?? "";
-    const content = JSON.stringify(row, null, 2);
-    setPreviewData({ title: pk ? `Row #${pk}${table ? ` — ${table}` : ""}` : `Row — ${table}`,
-      content, language: "json", viewerKey: `${connectionId}:${table}:row:${pk}` });
-  }, [displayRows, pkCol, selectedTable, connectionId]);
+    setPreviewSource({ kind: "row", rowIdx, pk: rowPkOf(row) });
+  }, [displayRows, rowPkOf]);
 
   const openCellPreview = useCallback((rowIdx: number, colIdx: number) => {
     const row = displayRows[rowIdx]; if (!row) return;
     const colName = columnOrder[colIdx]; if (!colName) return;
-    const val = formatCellValue(row[colName]);
-    const pk = pkCol ? String(row[pkCol] ?? rowIdx) : String(rowIdx);
-    const table = selectedTable ?? "";
-    setPreviewData({ title: `${colName} #${pk}${table ? ` — ${table}` : ""}`,
-      content: val, language: detectLang(val), viewerKey: `${connectionId}:${table}:${colName}:${pk}` });
-  }, [displayRows, columnOrder, pkCol, selectedTable, connectionId]);
+    setPreviewSource({ kind: "cell", rowIdx, pk: rowPkOf(row), colName });
+  }, [displayRows, columnOrder, rowPkOf]);
+
+  const closePreview = useCallback(() => setPreviewSource(null), []);
+
+  // Derived from current rows so a table reload refreshes the open preview
+  const previewData = useMemo(
+    () => resolvePreviewData(previewSource, { displayRows, pkCol, selectedTable, connectionId }),
+    [previewSource, displayRows, pkCol, selectedTable, connectionId],
+  );
 
   const openPreviewInTab = useCallback(() => {
     if (!previewData) return;
@@ -157,7 +159,7 @@ export function useGlideGridActions(params: UseGlideGridActionsParams) {
   }, [connectionId, connectionName, selectedSchema, openTab]);
 
   return {
-    previewData, setPreviewData,
+    previewData, closePreview,
     openRowPreview, openCellPreview, openPreviewInTab,
     handlePaste, getContextFk, isCellViewable, openFkTable,
   };

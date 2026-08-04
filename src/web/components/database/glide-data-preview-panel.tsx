@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Eye, Sparkles, WrapText, ExternalLink, X, GripHorizontal } from "lucide-react";
 import Editor from "@monaco-editor/react";
 import { Loader2 } from "lucide-react";
@@ -17,41 +17,40 @@ interface PreviewPanelProps {
   onOpenInTab: () => void;
 }
 
+/** Pretty-print JSON/XML content, or null when it can't be formatted */
+function beautify(content: string, language: string): string | null {
+  if (language === "json") {
+    try { return JSON.stringify(JSON.parse(content.trim()), null, 2); } catch { return null; }
+  }
+  if (language === "xml") {
+    let depth = 0;
+    return content.trim().replace(/>\s*</g, ">\n<").split("\n").map((line) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("</")) depth = Math.max(0, depth - 1);
+      const indented = "  ".repeat(depth) + trimmed;
+      if (trimmed.startsWith("<") && !trimmed.startsWith("</") && !trimmed.endsWith("/>") && !trimmed.startsWith("<?")) depth++;
+      return indented;
+    }).join("\n");
+  }
+  return null;
+}
+
 /** Inline preview panel for cell/row content with Monaco editor */
 export function GlideDataPreviewPanel({ data, onClose, onOpenInTab }: PreviewPanelProps) {
   const monacoTheme = useMonacoTheme();
   const [wordWrap, setWordWrap] = useState(true);
-  const [displayContent, setDisplayContent] = useState(data.content);
   const [beautified, setBeautified] = useState(false);
   const canBeautify = data.language === "json" || data.language === "xml";
 
-  // Reset state when data changes
-  const prevKey = useRef(data.title);
-  if (prevKey.current !== data.title) {
-    prevKey.current = data.title;
-    setDisplayContent(data.content);
-    setBeautified(false);
-  }
+  // Derived, never snapshotted — keeps the viewer in sync when the row is reloaded
+  const displayContent = useMemo(() => {
+    if (!beautified) return data.content;
+    return beautify(data.content, data.language) ?? data.content;
+  }, [beautified, data.content, data.language]);
 
   const toggleBeautify = useCallback(() => {
-    if (beautified) {
-      setDisplayContent(data.content);
-      setBeautified(false);
-    } else if (data.language === "json") {
-      try { setDisplayContent(JSON.stringify(JSON.parse(data.content.trim()), null, 2)); setBeautified(true); } catch { /* invalid */ }
-    } else if (data.language === "xml") {
-      let depth = 0;
-      const formatted = data.content.trim().replace(/>\s*</g, ">\n<").split("\n").map((line) => {
-        const trimmed = line.trim();
-        if (trimmed.startsWith("</")) depth = Math.max(0, depth - 1);
-        const indented = "  ".repeat(depth) + trimmed;
-        if (trimmed.startsWith("<") && !trimmed.startsWith("</") && !trimmed.endsWith("/>") && !trimmed.startsWith("<?")) depth++;
-        return indented;
-      }).join("\n");
-      setDisplayContent(formatted);
-      setBeautified(true);
-    }
-  }, [beautified, data.content, data.language]);
+    setBeautified((prev) => (prev ? false : beautify(data.content, data.language) !== null));
+  }, [data.content, data.language]);
 
   const [panelHeight, setPanelHeight] = useState(200);
   const handleDrag = useCallback((e: React.MouseEvent) => {
