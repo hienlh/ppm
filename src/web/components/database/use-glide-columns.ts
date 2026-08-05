@@ -40,12 +40,28 @@ export function useGlideColumns(
   orderBy?: string | null,
   orderDir?: "ASC" | "DESC",
 ): UseGlideColumnsResult {
+  const schemaMap = useMemo(() => new Map(schema.map((s) => [s.name, s])), [schema]);
+
+  // String keys so a refetch handing back an equal-but-new schema/columns array
+  // doesn't count as a change.
+  const columnsKey = columnNames.join("|");
+  const typesKey = schema.map((s) => `${s.name}:${s.type}`).join("|");
+  const hasRows = rows.length > 0;
+
+  // Measured once per table, from the first page that arrives: re-measuring on
+  // every fetch made sorting and paging resize every column.
+  const autoWidths = useMemo(() => {
+    const widths = new Map<string, number>();
+    for (const name of columnNames) {
+      widths.set(name, estimateColWidth(name, rows, schemaMap.get(name)?.type ?? "text"));
+    }
+    return widths;
+  }, [columnsKey, typesKey, hasRows]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return useMemo(() => {
     const pinned = columnNames.filter((c) => pinnedCols.has(c));
     const unpinned = columnNames.filter((c) => !pinnedCols.has(c));
     const ordered = [...pinned, ...unpinned];
-
-    const schemaMap = new Map(schema.map((s) => [s.name, s]));
 
     const columns: GridColumn[] = ordered.map((name) => {
       const col = schemaMap.get(name);
@@ -60,10 +76,10 @@ export function useGlideColumns(
         icon = "headerFk";
       }
 
-      const width = colWidths.get(name) ?? estimateColWidth(name, rows, col?.type ?? "text");
+      const width = colWidths.get(name) ?? autoWidths.get(name) ?? 100;
       return { title: name, id: name, width, hasMenu: true, icon };
     });
 
     return { columns, freezeColumns: pinned.length, columnOrder: ordered };
-  }, [schema, columnNames, pinnedCols, colWidths, rows, orderBy, orderDir]);
+  }, [schemaMap, columnNames, pinnedCols, colWidths, autoWidths, orderBy, orderDir]);
 }
