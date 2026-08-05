@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.20] - 2026-08-05
+
+### Fixed
+- **Table header smearing after a sort** — sorting a table left the column headers looking doubled and blurry, as if the grid were lagging. The grid draws its header on a canvas but was filling it with a see-through surface colour, so each repaint painted the new header on top of the old one instead of replacing it. Surface colours are now resolved against the page background before they reach the grid — this affects the Aurora themes, where the panel colour is translucent.
+- **Columns resizing themselves on every sort or page change** — column widths were estimated from whichever rows happened to be loaded, so changing sort or turning the page reshuffled the whole layout. Widths are now measured once per table and stay put; resizing a column by hand still overrides them, and opening a different table re-measures.
+
 ## [0.17.19] - 2026-08-05
 
 ### Fixed
