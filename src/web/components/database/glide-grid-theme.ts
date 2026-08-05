@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import type { Theme } from "@glideapps/glide-data-grid";
+import { flattenColor } from "@/lib/color-utils";
 import "@glideapps/glide-data-grid/dist/index.css";
 
 /** Read a CSS custom property from :root */
@@ -23,7 +24,9 @@ function withAlpha(color: string, alpha: number): string {
 function buildTheme(): Partial<Theme> {
   const bg = cssVar("--color-background");
   const fg = cssVar("--color-foreground");
-  const muted = cssVar("--color-muted");
+  // Surface tokens are translucent in several themes; the grid paints them as
+  // canvas fills, which must be opaque to erase the previous frame.
+  const muted = flattenColor(cssVar("--color-muted"), bg);
   const mutedFg = cssVar("--color-muted-foreground");
   const primary = cssVar("--color-primary");
   const primaryFg = cssVar("--color-primary-foreground");
