@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.19] - 2026-08-05
+
+### Fixed
+- **Thinking blocks missing from chat** — reasoning stopped appearing in the transcript because the CLI now streams thinking frames with an empty body (token estimates only), leaving nothing to render. PPM now asks for summarized reasoning so the content comes through again. Thinking is also carried through the SDK's own config instead of the deprecated token budget, and a session's thinking state keeps its three values (inherit / on / off) — previously a session that had never opted out was reported as "off" and saved back as an explicit disable.
+- **Database preview panel showing stale data** — opening the JSON/cell viewer on a record and then reloading the table left the panel displaying the record's old value. The viewer now reads from the current rows, so a reload refreshes it in place; it tracks the record by primary key, so reloads that reorder rows still follow the same row, and closes itself if that row is gone.
+
 ## [0.17.18] - 2026-08-01
 
 ### Fixed
