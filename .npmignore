@@ -19,6 +19,7 @@ codex-junction-skill-probe.ts
 .playwright-mcp
 .cursor/
 plans/
+docs/journal/
 *.png
 sdh-uit-edu-vn-screenshot.png
 tests/
