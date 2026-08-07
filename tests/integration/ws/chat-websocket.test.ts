@@ -17,9 +17,12 @@ beforeAll(async () => {
 
       // WebSocket upgrade for chat
       if (url.pathname.startsWith("/ws/chat/")) {
-        const sessionId = url.pathname.split("/ws/chat/")[1] ?? "";
+        const sessionId = (url.pathname.split("/ws/chat/")[1] ?? "").split("?")[0] ?? "";
+        // `?project=` lets a test attach a projectName, mirroring the real
+        // /ws/project/:projectName/chat/:id upgrade.
+        const projectName = url.searchParams.get("project") ?? undefined;
         const upgraded = srv.upgrade(req, {
-          data: { type: "chat", sessionId },
+          data: { type: "chat", sessionId, projectName },
         });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });
@@ -39,7 +42,7 @@ afterAll(() => {
   server?.stop(true);
 });
 
-function connectWs(sessionId: string): Promise<{
+function connectWs(sessionId: string, projectName?: string): Promise<{
   ws: WebSocket;
   messages: any[];
   waitForType: (type: string, timeout?: number) => Promise<any>;
@@ -47,7 +50,8 @@ function connectWs(sessionId: string): Promise<{
   close: () => void;
 }> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${PORT}/ws/chat/${sessionId}`, {
+    const query = projectName ? `?project=${encodeURIComponent(projectName)}` : "";
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws/chat/${sessionId}${query}`, {
     } as any);
     const messages: any[] = [];
 
@@ -714,6 +718,64 @@ describe("Chat WebSocket — per-session effort + thinking", () => {
     expect(off.thinking).toBe(false);
     expect(getSessionThinking(session.id)).toBe(0);
 
+    close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listRunningSessions — powers the tab-strip spinner for unmounted chat tabs
+// ---------------------------------------------------------------------------
+
+describe("listRunningSessions", () => {
+  it("reports a session while its turn is in flight and drops it once idle", async () => {
+    const { listRunningSessions } = await import("../../../src/server/ws/chat.ts");
+    const session = await chatService.createSession("mock", {});
+    const { ws, waitForType, close } = await connectWs(session.id);
+
+    await waitForType("session_state");
+    expect(listRunningSessions().some((s) => s.sessionId === session.id)).toBe(false);
+
+    ws.send(JSON.stringify({ type: "message", content: "hello" }));
+
+    // Catch the turn mid-flight: poll until the session shows a non-idle phase.
+    let seen: { sessionId: string; phase: string } | undefined;
+    for (let i = 0; i < 100 && !seen; i++) {
+      seen = listRunningSessions().find((s) => s.sessionId === session.id);
+      if (!seen) await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(seen).toBeDefined();
+    expect(seen!.phase).not.toBe("idle");
+
+    await waitForType("done");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(listRunningSessions().some((s) => s.sessionId === session.id)).toBe(false);
+
+    close();
+  });
+
+  it("matches its own project and excludes others", async () => {
+    const { listRunningSessions } = await import("../../../src/server/ws/chat.ts");
+    const session = await chatService.createSession("mock", {});
+    // Carries a real projectName, so a positive match is actually asserted — a
+    // session with no projectName would pass even if the filter were inverted.
+    const { ws, waitForType, close } = await connectWs(session.id, "proj-alpha");
+
+    await waitForType("session_state");
+    ws.send(JSON.stringify({ type: "message", content: "hello" }));
+
+    let seen: { sessionId: string; phase: string } | undefined;
+    for (let i = 0; i < 100 && !seen; i++) {
+      seen = listRunningSessions("proj-alpha").find((s) => s.sessionId === session.id);
+      if (!seen) await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(seen).toBeDefined();
+
+    // Same instant, different project filter → must not appear.
+    expect(listRunningSessions("proj-beta").some((s) => s.sessionId === session.id)).toBe(false);
+    // Unfiltered still includes it.
+    expect(listRunningSessions().some((s) => s.sessionId === session.id)).toBe(true);
+
+    await waitForType("done");
     close();
   });
 });

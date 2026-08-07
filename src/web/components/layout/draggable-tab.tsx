@@ -86,6 +86,7 @@ export function DraggableTab({
     <button
       ref={tabRef}
       data-tab-item
+      data-tab-id={tab.id}
       draggable={!editing}
       onClick={onSelect}
       onAuxClick={(e) => { if (e.button === 1 && tab.closable) { e.preventDefault(); onClose(); } }}

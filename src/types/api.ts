@@ -47,6 +47,15 @@ export interface BackgroundShell {
 /** Session phase for the 5-state machine (BE-owned) */
 export type SessionPhase = "initializing" | "connecting" | "thinking" | "streaming" | "idle";
 
+/** One group of edited versions of the same user message. Part of the
+ *  GET /chat/sessions/:id/messages response, keyed by user-message ordinal. */
+export interface VersionGroup {
+  /** Ordered version session ids: parent (v1 / original) first, then children oldest-first. */
+  ids: string[];
+  /** Position of the queried session within `ids`. */
+  currentIndex: number;
+}
+
 export type ChatWsServerMessage =
   | { type: "text"; content: string; parentToolUseId?: string }
   | { type: "thinking"; content: string; parentToolUseId?: string }

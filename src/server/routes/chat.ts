@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
-import { mkdirSync, existsSync, readdirSync, statSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
@@ -14,7 +14,7 @@ import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-tr
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
-import { recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
+import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
 import {
   search as chatSearchQuery,
   startBackfill as chatSearchStartBackfill,
@@ -274,40 +274,9 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
         m.timestamp = r.timestamp;
       }
     }
-    return c.json(ok(messages));
-  } catch (e) {
-    return c.json(err((e as Error).message), 500);
-  }
-});
-
-/**
- * GET /chat/sessions/:id/versions — list edited versions of a user message.
- * `ordinal` is the 1-based user-message ordinal of the message (stable across
- * forks — forkSession reassigns UUIDs). Returns ordered version sessions + the
- * index of the current one, or 400 when no fork exists at that ordinal so the
- * FE can hide the switcher. MUST be registered before the generic `/sessions/:id`.
- */
-chatRoutes.get("/sessions/:id/versions", async (c) => {
-  try {
-    const id = c.req.param("id");
-    const ordinal = parseInt(c.req.query("ordinal") ?? "", 10);
-    if (!Number.isInteger(ordinal) || ordinal < 1) return c.json(err("ordinal is required"), 400);
-    const providerId = c.req.query("providerId") ?? "claude";
-    const projectPath = c.get("projectPath");
-
-    const group = resolveVersionGroup(id, ordinal);
-    if (!group) return c.json(err("No versions at this ordinal"), 400);
-
-    const provider = providerRegistry.get(providerId) as any;
-    const versions = await Promise.all(
-      group.ids.map(async (vid) => {
-        const info = provider?.getSessionInfoById
-          ? await provider.getSessionInfoById(vid, projectPath).catch(() => null)
-          : null;
-        return info ?? { id: vid, providerId, title: "", createdAt: "" };
-      }),
-    );
-    return c.json(ok({ versions, currentIndex: group.currentIndex }));
+    // versionMap ships with the history so the `‹ n/m ›` switcher needs no
+    // per-message request. Ordinals absent from the map have no edited versions.
+    return c.json(ok({ messages, versionMap: resolveVersionMap(id) }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -455,6 +424,23 @@ chatRoutes.delete("/sessions/:id/pin", (c) => {
 chatRoutes.get("/sessions/unread", (c) => {
   try {
     return c.json(ok(getAllUnread()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /chat/sessions/running — sessions in this project with a turn in flight.
+ *
+ * Lets the frontend show the tab-strip spinner and title indicator for a running
+ * session whose chat tab is not mounted (tabs mount lazily). Reads the in-memory
+ * WS session registry, so it is O(active sessions) with no DB access.
+ * Static `running` segment mirrors `/sessions/unread` above.
+ */
+chatRoutes.get("/sessions/running", async (c) => {
+  try {
+    const { listRunningSessions } = await import("../ws/chat.ts");
+    return c.json(ok(listRunningSessions(c.get("projectName"))));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -768,8 +754,7 @@ chatRoutes.post("/upload", async (c) => {
     const files = Array.isArray(body["files"]) ? body["files"] : body["files"] ? [body["files"]] : [];
     if (files.length === 0) return c.json(err("No files provided"), 400);
 
-    const uploadDir = resolve(tmpdir(), "ppm-uploads");
-    if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
+    const uploadDir = ensureUploadsDir();
 
     const results: Array<{ name: string; path: string; type: string; size: number }> = [];
     for (const entry of files) {
@@ -795,13 +780,26 @@ chatRoutes.get("/uploads/:filename", async (c) => {
     if (!filename || filename.includes("/") || filename.includes("..")) {
       return c.json(err("Invalid filename"), 400);
     }
-    const uploadDir = resolve(tmpdir(), "ppm-uploads");
-    const filePath = join(uploadDir, filename);
-    if (!existsSync(filePath)) return c.json(err("Not found"), 404);
+    // Reads the durable location first, then the legacy temp dir so images in
+    // older conversations keep resolving.
+    const filePath = resolveUploadPath(filename);
+    if (!filePath) return c.json(err("Not found"), 404);
 
     const file = Bun.file(filePath);
+    // Uploads are write-once: each upload mints a fresh id prefix (see POST
+    // /chat/upload) and the file is never rewritten, so it is safe to cache
+    // forever. Without this every chat tab mount re-downloaded the full image —
+    // measured at 2.8 MB of a 3.1 MB tab-open payload for a single 1.4 MB PNG.
+    const etag = `"${filename}-${file.size}"`;
+    if (c.req.header("if-none-match") === etag) {
+      return new Response(null, { status: 304, headers: { ETag: etag } });
+    }
     return new Response(file.stream(), {
-      headers: { "Content-Type": file.type || "application/octet-stream" },
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        "Cache-Control": "public, max-age=31536000, immutable",
+        ETag: etag,
+      },
     });
   } catch (e) {
     return c.json(err((e as Error).message), 500);

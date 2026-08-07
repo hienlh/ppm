@@ -27,33 +27,46 @@ async function req(path: string, init?: RequestInit) {
   return app.request(new Request(url, { ...init, headers }));
 }
 
-describe("GET /chat/sessions/:id/versions", () => {
-  it("returns ordered versions + currentIndex viewing the parent", async () => {
+/**
+ * versionMap replaces the former GET /chat/sessions/:id/versions endpoint, which
+ * cost one request per rendered user message and signalled "no versions here"
+ * with HTTP 400 (measured: 169 requests, 165 of them 400s, on a single boot).
+ * These cases are the old endpoint's contract, re-expressed on /messages.
+ */
+describe("GET /chat/sessions/:id/messages — versionMap", () => {
+  it("returns ordered version ids + currentIndex viewing the parent", async () => {
     recordBranch("c1", "P", "F", 2);
     recordBranch("c2", "P", "F", 2);
-    const res = await req("/chat/sessions/P/versions?ordinal=2&providerId=mock");
+    const res = await req("/chat/sessions/P/messages?providerId=mock");
     expect(res.status).toBe(200);
     const { data } = (await res.json()) as any;
-    expect(data.versions.map((v: any) => v.id)).toEqual(["P", "c1", "c2"]);
-    expect(data.currentIndex).toBe(0);
+    expect(data.versionMap["2"].ids).toEqual(["P", "c1", "c2"]);
+    expect(data.versionMap["2"].currentIndex).toBe(0);
   });
 
   it("computes currentIndex viewing a child", async () => {
     recordBranch("c1", "P", "F", 2);
     recordBranch("c2", "P", "F", 2);
-    const res = await req("/chat/sessions/c2/versions?ordinal=2&providerId=mock");
+    const res = await req("/chat/sessions/c2/messages?providerId=mock");
     const { data } = (await res.json()) as any;
-    expect(data.currentIndex).toBe(2);
+    expect(data.versionMap["2"].currentIndex).toBe(2);
   });
 
-  it("400 when no fork exists at the ordinal", async () => {
-    const res = await req("/chat/sessions/P/versions?ordinal=9&providerId=mock");
-    expect(res.status).toBe(400);
+  it("omits ordinals with no fork instead of returning an error", async () => {
+    recordBranch("c1", "P", "F", 2);
+    recordBranch("c2", "P", "F", 2);
+    const res = await req("/chat/sessions/P/messages?providerId=mock");
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as any;
+    expect(data.versionMap["9"]).toBeUndefined();
+    expect(data.versionMap["1"]).toBeUndefined();
   });
 
-  it("400 when ordinal missing", async () => {
-    const res = await req("/chat/sessions/P/versions?providerId=mock");
-    expect(res.status).toBe(400);
+  it("returns an empty map for an unforked session (no failing request needed)", async () => {
+    const res = await req("/chat/sessions/P/messages?providerId=mock");
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as any;
+    expect(data.versionMap).toEqual({});
   });
 });
 

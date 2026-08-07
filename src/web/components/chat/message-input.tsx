@@ -9,6 +9,7 @@ import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { SlashItem } from "./slash-command-picker";
+import { fetchSlashItems, clearSlashItemsCache } from "@/lib/slash-items-cache";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
 
@@ -234,15 +235,16 @@ export const MessageInput = memo(function MessageInput({
     setTimeout(() => { getVisibleTextarea()?.focus(); }, 100);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch slash items from server
-  const fetchSlashItems = useCallback(() => {
+  // Load slash items via the shared per-project cache. The list is identical for
+  // every chat tab, and the picker renders nothing until it resolves — fetching it
+  // per tab mount put a 23 KB round trip in front of the first `/` in every tab.
+  const loadSlashItems = useCallback(() => {
     if (!projectName) {
       slashItemsRef.current = [];
       onSlashItemsLoaded?.([], []);
       return;
     }
-    api
-      .get<{ items: SlashItem[]; recentNames: string[] }>(`${projectUrl(projectName)}/chat/slash-items`)
+    fetchSlashItems(projectName)
       .then((data) => {
         slashItemsRef.current = data.items;
         onSlashItemsLoaded?.(data.items, data.recentNames);
@@ -253,15 +255,18 @@ export const MessageInput = memo(function MessageInput({
       });
   }, [projectName, onSlashItemsLoaded]);
 
-  // Fetch slash items when projectName changes
-  useEffect(() => { fetchSlashItems(); }, [fetchSlashItems]);
+  // Load when projectName changes (cache hit after the first tab in a project)
+  useEffect(() => { loadSlashItems(); }, [loadSlashItems]);
 
-  // Re-fetch when cache is invalidated via refresh button
+  // Refresh button invalidated the server cache — drop ours too, then refetch.
   useEffect(() => {
-    const handler = () => fetchSlashItems();
+    const handler = () => {
+      clearSlashItemsCache(projectName);
+      loadSlashItems();
+    };
     window.addEventListener("ppm:slash-items-refresh", handler);
     return () => window.removeEventListener("ppm:slash-items-refresh", handler);
-  }, [fetchSlashItems]);
+  }, [loadSlashItems, projectName]);
 
   // Sync file picker items from store index — subscribe imperatively to avoid re-renders.
   // Reads fileIndex on mount + whenever fileIndex/indexStatus changes in the store.

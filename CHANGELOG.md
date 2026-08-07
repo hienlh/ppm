@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.21] - 2026-08-07
+
+### Fixed
+- **Slow first load when many chat tabs are open** — reloading the page took tens of seconds to show the chat you were looking at, on both desktop and mobile. Every tab saved in the workspace was being loaded at once, not just the visible one, so a workspace with 18 chat tabs fired **515 requests and 36.7 MB** on a single reload and the tab you actually wanted queued behind tabs you could not see. Tabs now load when you first open them and stay loaded afterwards, so switching back to a tab you have already visited is still instant. Measured on that same workspace: no failed requests (was 169), and the slowest request dropped from 16.3s to 0.55s.
+- **Version info was requested once per chat message** — every message in a conversation made its own request to check whether it had edited versions, and 96% of those came back as errors (169 requests, 165 errors, on one reload). The `‹ 1/9 ›` version switcher now receives everything it needs together with the message history, in a single request.
+- **Chat images were re-downloaded every time a tab opened** — uploaded images had no caching headers, so a single 1.4 MB screenshot was fetched again on every mount: 2.8 MB of a 3.1 MB tab-open. Uploads are now cached permanently by the browser (they are write-once), so an image downloads once and never again.
+- **Opening a chat tab fired several duplicate requests** — different parts of the UI asked for the same project data at the same moment (the model list was requested four times, the session list four times). Requests that are already in flight are now shared, so each is made once. This shares only in-flight requests, so nothing is ever served stale.
+- **Skill suggestions were slow the first time you typed `/` in a new tab** — the command list (23 KB, identical for every tab) was re-fetched on each tab open, and the suggestion popup stays hidden until it arrives. It is now fetched once per project.
+- **Chat images could disappear from old conversations** — uploads were written to the operating system's temporary folder, which the OS is free to clear on cleanup or reboot, breaking images in past chats. They now live under `~/.ppm/uploads`; images already uploaded to the old location still load.
+- **Development journals were being published to npm** — an ignore rule targeted `docs/journal/` but the folder is `docs/journals/`, so 17 internal notes shipped in the package.
+
+### Added
+- **Recently used chat tabs are warmed in the background on desktop** — once the page settles, up to three recently used chat tabs load quietly so switching to them feels instant. They load one at a time and stop for anything you click, and this is skipped entirely on mobile so it never spends cellular data on tabs you may not open.
+
+### Internal
+- File watching and app-wide events (editor live-reload, file-tree refresh, cross-device unread sync) moved onto a dedicated `/ws/global` connection. They previously rode on the chat WebSocket, which only existed while a chat tab happened to be mounted — with tabs now loading lazily, that would have silently disabled them.
+
 ## [0.17.20] - 2026-08-05
 
 ### Fixed

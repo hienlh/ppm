@@ -1,6 +1,9 @@
 const TOKEN_KEY = "ppm-auth-token";
 const RELOAD_GUARD_KEY = "ppm-auth-reload-ts";
 
+/** GETs currently awaiting a response, keyed by absolute URL. See ApiClient.get. */
+const pendingGets = new Map<string, Promise<unknown>>();
+
 class ApiClient {
   private baseUrl: string;
 
@@ -19,11 +22,34 @@ class ApiClient {
     return h;
   }
 
-  /** Auto-unwraps {ok, data} envelope. Returns T directly. */
-  async get<T>(path: string, options?: { signal?: AbortSignal }): Promise<T> {
+  /**
+   * Auto-unwraps {ok, data} envelope. Returns T directly.
+   *
+   * Concurrent GETs of the same path share one request. Several components ask for
+   * the same project-scoped data when a chat tab mounts — measured 4 identical
+   * `providers/claude/models` and 4 `chat/sessions` requests within 2ms of each
+   * other on a single tab open. This is in-flight sharing only, NOT a response
+   * cache: the entry is dropped as soon as it settles, so nothing goes stale.
+   *
+   * Requests carrying an AbortSignal opt out — one caller aborting must not cancel
+   * another's request.
+   */
+  get<T>(path: string, options?: { signal?: AbortSignal }): Promise<T> {
+    if (options?.signal) return this.rawGet<T>(path, options.signal);
+
+    const key = `${this.baseUrl}${path}`;
+    const inFlight = pendingGets.get(key);
+    if (inFlight) return inFlight as Promise<T>;
+
+    const p = this.rawGet<T>(path).finally(() => pendingGets.delete(key));
+    pendingGets.set(key, p);
+    return p;
+  }
+
+  private async rawGet<T>(path: string, signal?: AbortSignal): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       headers: this.headers(),
-      signal: options?.signal,
+      signal,
     });
     return this.handleResponse<T>(res);
   }

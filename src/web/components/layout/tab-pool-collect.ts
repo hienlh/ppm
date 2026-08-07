@@ -138,3 +138,18 @@ export function collectTabEntries(
   tabEntries.sort((a, b) => a.tabId.localeCompare(b.tabId));
   return tabEntries;
 }
+
+/**
+ * Narrow collected entries to the ones TabPool may actually mount.
+ *
+ * An entry qualifies when it is visible right now (`isActive`, computed
+ * per-panel so every panel of a split contributes its own tab) or when it was
+ * mounted earlier this session. Everything else stays unmounted so a saved
+ * workspace with dozens of tabs does not run every tab's fetch effects on boot.
+ *
+ * Relative order is preserved, so the stable tabId sort from collectTabEntries
+ * still holds and React will not reorder (and thereby yank) reparented nodes.
+ */
+export function filterMountableEntries(entries: TabEntry[], mounted: Set<string>): TabEntry[] {
+  return entries.filter((e) => e.isActive || mounted.has(e.tabId));
+}

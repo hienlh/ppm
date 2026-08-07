@@ -2,13 +2,12 @@ import { useState, useCallback, useRef, useEffect, useMemo, startTransition } fr
 import { useWebSocket } from "./use-websocket";
 import { api, getAuthToken, projectUrl } from "@/lib/api-client";
 import { flattenWithExpansions, prefixPreCompactIds } from "@/lib/flatten-expansions";
-import { useNotificationStore } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
 import { usePanelStore } from "@/stores/panel-store";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
-import type { ChatWsServerMessage, SessionPhase, BackgroundShell } from "../../types/api";
+import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 
 interface ApprovalRequest {
@@ -54,6 +53,9 @@ interface UseChatReturn {
   /** Remove all system/error bubbles from the local view. */
   clearErrors: () => void;
   messagesLoading: boolean;
+  /** Edited-version groups keyed by user-message ordinal. A missing ordinal means
+   *  the message has no alternate versions, so the switcher stays hidden. */
+  versionMap: Record<number, VersionGroup>;
   isStreaming: boolean;
   phase: SessionPhase;
   isReconnecting: boolean;
@@ -111,6 +113,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   /** Map of compactMessageId → pre-compact messages (already ID-prefixed). Ephemeral. */
   const [expansions, setExpansions] = useState<Map<string, ChatMessage[]>>(new Map());
   const [messagesLoading, setMessagesLoading] = useState(false);
+  // Edited-version groups for this session, keyed by user-message ordinal.
+  // Ships with /messages so the switcher needs no per-message request.
+  const [versionMap, setVersionMap] = useState<Record<number, VersionGroup>>({});
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [connectingElapsed, setConnectingElapsed] = useState(0);
@@ -596,24 +601,9 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // Ignore keepalive pings
     if ((data as any).type === "ping") return;
 
-    // Dispatch file change events for real-time editor reload
-    if ((data as any).type === "file:changed") {
-      window.dispatchEvent(new CustomEvent("file:changed", { detail: data }));
-      return;
-    }
-
-    // Cross-tab/device unread sync — server broadcasts when unread state changes
-    if ((data as any).type === "session:unread_changed") {
-      const { sessionId: sid, unreadCount, unreadType, projectName: pn, sessionTitle: sTitle, manual } = data as any;
-      useNotificationStore.getState().handleUnreadChanged(sid, unreadCount, unreadType, pn, sTitle, manual);
-      return;
-    }
-
-    // Dispatch global Jira events so components can listen via window events
-    if (typeof (data as any).type === "string" && (data as any).type.startsWith("jira:")) {
-      window.dispatchEvent(new CustomEvent((data as any).type, { detail: data }));
-      return;
-    }
+    // file:changed, session:unread_changed and jira:* are app-wide and now arrive
+    // on the global bus (`use-global-events.ts`) instead of here — a chat socket is
+    // not guaranteed to exist since chat tabs mount lazily.
 
     // Handle title updates from SDK summary
     if ((data as any).type === "title_updated") {
@@ -812,6 +802,10 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setCompactStatus(null);
     // Clear ephemeral pre-compact expansions on session change
     setExpansions(new Map());
+    // Drop the previous session's version groups. Keeping them would let the
+    // switcher navigate to a session in a different branch tree if the new
+    // session's /messages fetch fails or the tab swaps to a draft.
+    setVersionMap({});
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     replayTurnUserMsgRef.current = null;
@@ -841,7 +835,14 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         .then((r) => r.json())
         .then((json: any) => {
           if (cancelled) return;
-          let history: ChatMessage[] = json.ok && Array.isArray(json.data) ? json.data : [];
+          // Tolerate the pre-versionMap shape (a bare array): a browser running a
+          // cached bundle from before the upgrade would otherwise render an empty
+          // history with no error.
+          const payload = json.ok
+            ? (Array.isArray(json.data) ? { messages: json.data, versionMap: {} } : json.data)
+            : null;
+          let history: ChatMessage[] = Array.isArray(payload?.messages) ? payload.messages : [];
+          if (payload?.versionMap) setVersionMap(payload.versionMap);
           // If a live turn_events replay already owns the active (unfinished) turn,
           // the REST history still contains that same turn — trim it (from its last
           // user message onward) so it isn't rendered twice.
@@ -1081,8 +1082,16 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         // fetched history predates that send, so replacing now would drop the
         // just-sent user message — leaving it missing until a manual reload.
         if (phaseRef.current !== "idle") return;
-        if (json.ok && Array.isArray(json.data) && json.data.length > 0) {
-          setMessages(json.data);
+        // Same back-compat unwrap as the initial load above.
+        const payload = json.ok
+          ? (Array.isArray(json.data) ? { messages: json.data, versionMap: undefined } : json.data)
+          : null;
+        // versionMap is refreshed independently of the length guard below: an
+        // edit changes the branch tree without necessarily changing history
+        // length, and the `n/m` counts must not go stale.
+        if (payload?.versionMap) setVersionMap(payload.versionMap);
+        if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
+          setMessages(payload.messages);
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
         }
@@ -1140,6 +1149,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     dismissMessage,
     clearErrors,
     messagesLoading,
+    versionMap,
     isStreaming,
     phase,
     isReconnecting,

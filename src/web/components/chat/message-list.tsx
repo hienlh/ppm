@@ -41,6 +41,7 @@ import {
 import { ChatWelcome } from "./chat-welcome";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
+import type { VersionGroup } from "../../../types/api";
 import { QuestionCard } from "./question-card";
 import type { Question } from "./question-card";
 import { useTabStore } from "@/stores/tab-store";
@@ -76,6 +77,9 @@ interface MessageListProps {
   providerId?: string;
   /** Swap the tab to another version's session (used by the version switcher) */
   onNavigateVersion?: (sessionId: string) => void;
+  /** Edited-version groups keyed by user-message ordinal, from the /messages
+   *  response. A missing ordinal means that message has no alternate versions. */
+  versionMap?: Record<number, VersionGroup>;
   /** Called when user selects a recent session from the welcome screen */
   onSelectSession?: (session: import("../../../types/chat").SessionInfo) => void;
   /** Dismiss a single message (removes from local view only — not persisted history) */
@@ -109,6 +113,7 @@ export function MessageList({
   sessionId,
   providerId,
   onNavigateVersion,
+  versionMap,
   bashPartialOutput,
   onExpandCompact,
   isCompactExpanded,
@@ -321,6 +326,9 @@ export function MessageList({
             const versionOrdinal = msg.role === "user"
               ? filtered.slice(0, globalIdx + 1).reduce((n, m) => n + (m.role === "user" ? 1 : 0), 0)
               : 0;
+            // Resolved here rather than deeper down so the ordinal→group lookup
+            // happens once per message instead of being threaded through bubbles.
+            const versionGroup = versionOrdinal ? versionMap?.[versionOrdinal] : undefined;
             // Highlight the user message armed for edit (matched by its own id).
             const isEditing = msg.role === "user" && editingMsgId != null && msg.id === editingMsgId;
             // An assistant turn spans multiple consecutive assistant messages (text +
@@ -358,7 +366,7 @@ export function MessageList({
                     prevMsgId={prevMsg?.sdkUuid ?? prevMsg?.id}
                     sessionId={sessionId}
                     providerId={providerId}
-                    versionOrdinal={versionOrdinal}
+                    versionGroup={versionGroup}
                     onNavigateVersion={onNavigateVersion}
                     versionNavDisabled={isStreaming}
                     bashPartialOutput={bashPartialOutput}
@@ -479,7 +487,7 @@ function assistantMessageText(msg: ChatMessage): string {
     : msg.content;
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
   message: ChatMessage; isStreaming: boolean; isLastAssistantInTurn?: boolean; turnCopyText?: string; projectName?: string;
   onFork?: (content: string, messageId: string | undefined) => void;
   onEdit?: (content: string, messageId: string | undefined, ownMsgId?: string) => void;
@@ -488,7 +496,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
   prevMsgId?: string;
   sessionId?: string;
   providerId?: string;
-  versionOrdinal?: number;
+  versionGroup?: VersionGroup;
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
   bashPartialOutput?: React.RefObject<Map<string, BashPartialEntry>>;
@@ -507,7 +515,7 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
         isEditing={isEditing}
         sessionId={sessionId}
         providerId={providerId}
-        versionOrdinal={versionOrdinal}
+        versionGroup={versionGroup}
         onNavigateVersion={onNavigateVersion}
         versionNavDisabled={versionNavDisabled}
       />
@@ -689,7 +697,7 @@ function extractTerminalBlocks(text: string): { blocks: string[]; remainingText:
 }
 
 /** User message bubble — full width, collapsible, with system tag badges */
-function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, isEditing, sessionId, providerId, versionOrdinal, onNavigateVersion, versionNavDisabled }: {
+function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit, isEditing, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled }: {
   content: string;
   messageId?: string;
   timestamp: string;
@@ -699,7 +707,7 @@ function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit
   isEditing?: boolean;
   sessionId?: string;
   providerId?: string;
-  versionOrdinal?: number;
+  versionGroup?: VersionGroup;
   onNavigateVersion?: (sessionId: string) => void;
   versionNavDisabled?: boolean;
 }) {
@@ -835,10 +843,7 @@ function UserBubble({ content, messageId, timestamp, projectName, onFork, onEdit
       {/* Version switcher — only when this message has edited siblings */}
       {!isSystemContext && onNavigateVersion && (
         <VersionSwitcher
-          projectName={projectName}
-          sessionId={sessionId}
-          providerId={providerId ?? "claude"}
-          ordinal={versionOrdinal}
+          group={versionGroup}
           onNavigate={onNavigateVersion}
           disabled={versionNavDisabled}
         />

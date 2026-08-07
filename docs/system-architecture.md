@@ -123,8 +123,8 @@ GET    /api/projects/:name/image  → Stream project avatar (immutable cache, pa
 DELETE /api/projects/:name/image  → Remove project avatar (reverts to color+initials)
 GET    /api/project/:name/chat/sessions           → List sessions
 POST   /api/project/:name/chat/sessions           → Create session
-GET    /api/project/:name/chat/sessions/:id/messages → Get history
-GET    /api/project/:name/chat/sessions/:id/versions → Edited-message version group (?ordinal= — user-msg ordinal, stable across forks)
+GET    /api/project/:name/chat/sessions/:id/messages → { messages, versionMap } — versionMap keys are user-msg ordinals (stable across forks); an absent ordinal means that message has no edited versions
+GET    /api/project/:name/chat/sessions/running    → Sessions with a turn in flight (in-memory registry, no DB) — lets the tab strip and title indicator show a running session whose chat tab is not mounted
 DELETE /api/project/:name/chat/sessions/:id       → Delete session (leaf-only: 409 if it has edited children)
 GET    /api/project/:name/chat/drafts/:sessionId  → Get draft (or null)
 PUT    /api/project/:name/chat/drafts/:sessionId  → Save/update draft
@@ -159,8 +159,10 @@ PATCH  /api/projects/:path/default-tag            → Set project default tag
 PATCH  /api/project/:name/chat/sessions/:id/tag   → Assign tag to session
 DELETE /api/project/:name/chat/sessions/:id/tag   → Remove tag from session
 PATCH  /api/project/:name/chat/sessions/bulk-tag  → Bulk assign tag to multiple sessions
-WS     /ws/project/:name/chat/:sessionId          → Chat streaming
+WS     /ws/project/:name/chat/:sessionId          → Chat streaming (per session)
 WS     /ws/project/:name/terminal/:id             → Terminal I/O
+WS     /ws/global                                 → App-wide event bus: owns project file watching (client sends {type:"watch", projectName}) and delivers file:changed / session:unread_changed / session:phase_changed / jira:* . Must NOT ride on the chat WS — chat tabs mount lazily, so a chat socket is not guaranteed to exist.
+WS     /ws/extensions                             → Extension UI bridge
 ```
 
 **URL Format (Deterministic Tabs, v0.8.77+):**
@@ -192,7 +194,7 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | Service | Purpose | Key Methods |
 |---------|---------|-------------|
 | **ChatService** | Session management, message streaming | createSession, streamMessage, getHistory |
-| **SessionBranchService** | Edit-message global branch tree (`session_branches` table) — links forked sessions, resolves version groups, collapses history to per-tree heads | recordBranch, resolveVersionGroup, collapseTreesToHeads, hasChildren, getTreeByRoot |
+| **SessionBranchService** | Edit-message global branch tree (`session_branches` table) — links forked sessions, resolves version groups, collapses history to per-tree heads. `resolveVersionMap` batches every ordinal's group for a session in 2 queries (the per-ordinal `resolveVersionGroup` walks the ancestor chain with one query per hop) | recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, getTreeByRoot |
 | **TaskStatusAggregator** | Rebuild Claude Task* state from session JSONL (TaskCreate/TaskUpdate/TaskStop tracking) | aggregateTasks |
 | **ConfigService** | Config loading (YAML→SQLite migration) | load, save, getToken |
 | **DbService** | SQLite persistence (10 tables, WAL, connections/accounts/workspace CRUD) | getDb, openTestDb, getWorkspace, setWorkspace, getConnections, insertConnection, deleteConnection, getTableCache |

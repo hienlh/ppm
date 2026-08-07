@@ -6,7 +6,9 @@ import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk"
 import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking } from "../../services/db.service.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
-import { startWatching, stopWatching, onFileChange } from "../../services/file-watcher.service.ts";
+// File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
+// — a chat socket is not guaranteed to exist now that chat tabs mount lazily.
+import { broadcastGlobalEvent } from "./global.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
 import { basename } from "node:path";
@@ -40,11 +42,6 @@ function resolveSessionThinkingEnabled(sessionId: string): boolean {
     sessionProviderConfig(sessionId)?.thinking_budget_tokens,
   );
 }
-
-// Broadcast file changes to all WS clients for real-time editor reload
-onFileChange((projectName, path) => {
-  broadcastGlobalEvent({ type: "file:changed", projectName, path });
-});
 
 const PING_INTERVAL_MS = 15_000; // 15s keepalive
 const CLEANUP_TIMEOUT_MS = 5 * 60_000; // 5min after Claude done + no FE
@@ -111,15 +108,30 @@ export function hasActiveClient(): boolean {
   return false;
 }
 
-/** Broadcast event to ALL connected WebSocket clients across all sessions */
-export function broadcastGlobalEvent(event: unknown): void {
-  const json = JSON.stringify(event);
-  for (const entry of activeSessions.values()) {
-    for (const ws of entry.clients) {
-      try { ws.send(json); } catch {}
-    }
+/**
+ * Sessions with a turn in flight, optionally narrowed to one project.
+ *
+ * Exists because the frontend only learns a session's phase by connecting to its
+ * WebSocket, which requires the chat tab to be mounted. Tabs mount lazily, so a
+ * background turn would otherwise show no spinner in the tab strip and no
+ * indicator in the document title. Reads the in-memory registry only — no DB.
+ */
+export function listRunningSessions(projectName?: string): { sessionId: string; phase: SessionPhase }[] {
+  const running: { sessionId: string; phase: SessionPhase }[] = [];
+  for (const [sessionId, entry] of activeSessions) {
+    if (entry.phase === "idle") continue;
+    if (projectName && entry.projectName !== projectName) continue;
+    running.push({ sessionId, phase: entry.phase });
   }
+  return running;
 }
+
+/**
+ * App-wide broadcasts live on the global bus (`/ws/global`), not on chat sockets:
+ * chat tabs mount lazily, so a chat socket is not guaranteed to exist. Re-exported
+ * here because routes and services already import it from this module.
+ */
+export { broadcastGlobalEvent } from "./global.ts";
 
 /** Remove a client from the session, cleaning up its ping interval */
 function evictClient(entry: SessionEntry, ws: ChatWsSocket): void {
@@ -188,6 +200,10 @@ function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): voi
   if (!entry || entry.phase === phase) return;
   entry.phase = phase;
   broadcast(sessionId, { type: "phase_changed", phase, ...(elapsed != null ? { elapsed } : {}) });
+  // Also announce app-wide: the tab strip and title indicator must reflect a
+  // running session whose chat tab is not mounted, and — more importantly — must
+  // stop indicating once it goes idle. Volume is a handful of events per turn.
+  broadcastGlobalEvent({ type: "session:phase_changed", sessionId, phase, projectName: entry.projectName ?? "" });
   console.log(`[chat] session=${sessionId} phase → ${phase}`);
 }
 
@@ -239,7 +255,6 @@ function startCleanupTimer(sessionId: string): void {
     entry.pingIntervals.clear();
     for (const w of entry.teamWatchers.values()) w.cleanup();
     entry.teamWatchers.clear();
-    if (entry.projectName) stopWatching(entry.projectName);
     backgroundShellRegistry.clearSession(sessionId);
     activeSessions.delete(sessionId);
   }, CLEANUP_TIMEOUT_MS);
@@ -679,7 +694,6 @@ export const chatWebSocket = {
           }
         }).catch(() => {});
       }
-      if (projectName && projectPath) startWatching(projectName, projectPath);
       console.log(`[chat] session=${sessionId} FE reconnected (phase=${existing.phase}, clients=${existing.clients.size})`);
       return;
     }
@@ -701,7 +715,6 @@ export const chatWebSocket = {
     };
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
-    if (projectName && projectPath) startWatching(projectName, projectPath);
 
     ws.send(JSON.stringify({
       type: "session_state",
@@ -1075,7 +1088,6 @@ export const chatWebSocket = {
 
     // Remove from clients Set + clear per-client ping
     evictClient(entry, ws);
-    if (entry.projectName) stopWatching(entry.projectName);
     console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
     if (entry.clients.size === 0) {

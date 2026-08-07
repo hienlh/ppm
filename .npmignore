@@ -20,6 +20,7 @@ codex-junction-skill-probe.ts
 .cursor/
 plans/
 docs/journal/
+docs/journals/
 *.png
 sdh-uit-edu-vn-screenshot.png
 tests/

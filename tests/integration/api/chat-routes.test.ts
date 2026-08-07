@@ -75,7 +75,7 @@ describe("Chat REST API", () => {
     expect(json.data.sessions.every((s: any) => s.providerId === "mock")).toBe(true);
   });
 
-  it("GET /chat/sessions/:id/messages returns history", async () => {
+  it("GET /chat/sessions/:id/messages returns history plus a versionMap", async () => {
     const createRes = await req("/chat/sessions", {
       method: "POST",
       body: JSON.stringify({ providerId: "mock" }),
@@ -85,6 +85,18 @@ describe("Chat REST API", () => {
     const msgRes = await req(`/chat/sessions/${session.id}/messages?providerId=mock`);
     const json = await msgRes.json() as any;
 
+    expect(json.ok).toBe(true);
+    expect(Array.isArray(json.data.messages)).toBe(true);
+    // versionMap replaces the old per-message /versions request (which used
+    // HTTP 400 to mean "no versions here"). Unforked session → empty map.
+    expect(json.data.versionMap).toEqual({});
+  });
+
+  it("GET /chat/sessions/running returns an array and is not shadowed by /sessions/:id", async () => {
+    const res = await req("/chat/sessions/running");
+    const json = await res.json() as any;
+
+    expect(res.status).toBe(200);
     expect(json.ok).toBe(true);
     expect(Array.isArray(json.data)).toBe(true);
   });

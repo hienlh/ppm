@@ -68,3 +68,64 @@ Key: `stream_event` contains raw API events (`content_block_delta` with `text_de
 ### tool_result lives in `user` events
 
 SDK returns tool results as `user` type messages (not `assistant`). Provider fetches them via `getSessionMessages()` after detecting `pendingToolCount > 0`.
+
+---
+
+## Panel / Tab Layout
+
+### Eagerly mounting every saved tab makes boot O(saved tabs)
+
+**Problem**: `TabPool` rendered every tab of every open project on mount, hiding the
+inactive ones with `display: none`. Hidden still means mounted, so every tab ran its
+full data-fetch effects at boot. A saved workspace with 18 chat tabs cost **515
+requests / 36.7 MB / 169 failed requests**, with the last request landing 31.6s after
+reload.
+
+**Symptom that misleads**: individual endpoints appear slow (8-16s for handlers that
+normally take milliseconds). The server is not slow — Bun is single-threaded and 347
+requests arrived in the first 3 seconds, so everything queued. The tab the user was
+waiting on sat behind requests for tabs they could not see.
+
+**Fix**: mount a tab only once it has been visible (`isActive`, computed per panel so
+splits still mount both), then keep it mounted for the rest of the session so
+keep-alive still holds. See `src/web/stores/mounted-tabs-store.ts` and
+`filterMountableEntries` in `src/web/components/layout/tab-pool-collect.ts`.
+
+**Do not** derive the mount set by adding a "mark activated" call at each site that
+assigns `activeTabId` — there are ~8 of them (`setActiveTab`, `openTab`, `moveTab`,
+`splitPanel`, `closeTab`, `redockTab`, `openInDock`, `pickDockActiveTab`) and a new one
+will be added without the call. Deriving it from `isActive` on the next render covers
+every present and future assignment site.
+
+**Never persist the mount set.** It is session-only by design; persisting it would
+restore the storm on the next reload.
+
+**Never prefetch terminal tabs.** Mounting a terminal spawns a PTY process, so
+speculative mounting starts real processes the user never asked for.
+
+**Measure with**: `bun tests/e2e/boot-network-audit.mjs [port] [--mobile]`.
+
+### HTTP 400 as a normal control-flow signal costs a request per occurrence
+
+**Problem**: `GET /chat/sessions/:id/versions` returned 400 to mean "this message has
+no edited versions", and the frontend rendered one switcher per user message. Measured
+**169 requests, 165 of them 400s**, on a single boot. Each call also walked the branch
+ancestor chain with one DB query per hop (up to 100 sequential queries).
+
+**Fix**: ship the whole answer with the data the caller already fetches. `/messages`
+now returns `versionMap` (`ordinal → { ids, currentIndex }`), computed for the entire
+session in 2 queries via `resolveVersionMap`. Absence of an ordinal replaces the 400.
+
+**Watch out**: rows predating the `fork_ordinal` migration have it `NULL`. SQL
+`WHERE fork_ordinal = NULL` never matches, so per-ordinal code silently skipped them —
+batch code building an in-memory index must skip them explicitly or it emits a bogus
+`null` key.
+
+### requestIdleCallback's `timeout` is a deadline, not a delay
+
+Passing a delay as `requestIdleCallback(fn, { timeout: 2500 })` does **not** wait 2.5s.
+It means "run by 2.5s at the latest", so the callback fires at the first idle moment —
+which during boot is almost immediately. Idle prefetching scheduled this way fired all
+its work ~1.5s into boot, competing with the visible tabs. Use `setTimeout` for the
+spacing and `requestIdleCallback` only to avoid landing in the middle of other work.
+See `src/web/hooks/use-tab-prefetch.ts`.

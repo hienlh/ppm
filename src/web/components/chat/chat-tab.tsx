@@ -12,7 +12,6 @@ import { openBugReportPopup } from "@/lib/report-bug";
 import { getAISettings } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
-import { clearVersionsCache } from "./version-switcher";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
@@ -101,6 +100,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     dismissMessage,
     clearErrors,
     messagesLoading,
+    versionMap,
     isStreaming,
     phase,
     isReconnecting,
@@ -304,9 +304,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           `${projectUrl(projectName)}/chat/sessions/${sessionId}/fork?providerId=${providerId}&mode=edit`,
           { messageId: anchorMsgId },
         );
-        // The tree gained a sibling — drop cached version groups so switchers
-        // refetch fresh n/m counts instead of showing stale numbers.
-        clearVersionsCache();
+        // The tree gained a sibling. Swapping sessionId below refetches
+        // /messages, which carries a fresh versionMap, so the switcher's n/m
+        // counts update without any cache to invalidate.
         // Queue the edited message — flushed by the connect effect once the WS
         // reconnects to the forked session.
         pendingSendRef.current = { content: fullContent, permissionMode };
@@ -586,6 +586,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         sessionId={sessionId ?? undefined}
         providerId={providerId}
         onNavigateVersion={handleSwitchVersion}
+        versionMap={versionMap}
         onSelectSession={handleSelectSession}
         onDismissMessage={dismissMessage}
         onClearErrors={clearErrors}

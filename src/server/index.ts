@@ -21,6 +21,7 @@ import { initAdapters } from "../services/database/init-adapters.ts";
 import { terminalWebSocket } from "./ws/terminal.ts";
 import { chatWebSocket } from "./ws/chat.ts";
 import { extensionWebSocket } from "./ws/extensions.ts";
+import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
 import { ok, err } from "../types/api.ts";
 
@@ -744,6 +745,21 @@ if (process.argv.includes("__serve__")) {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
+      if (url.pathname === "/ws/global") {
+        // App-wide event bus: owns file watching + cross-cutting broadcasts, so
+        // they no longer depend on a chat tab being mounted. Same auth as below.
+        const authConfig = configService.get("auth");
+        if (authConfig.enabled) {
+          const token = url.searchParams.get("token");
+          if (token !== authConfig.token) {
+            return new Response("Unauthorized", { status: 401 });
+          }
+        }
+        const upgraded = server.upgrade(req, { data: { type: "global" } });
+        if (upgraded) return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
       if (url.pathname === "/ws/extensions") {
         // Auth check for extension WS
         const authConfig = configService.get("auth");
@@ -800,18 +816,21 @@ if (process.argv.includes("__serve__")) {
         if (ws.data?.type === "chat") chatWebSocket.open(ws);
         else if (ws.data?.type === "group") groupChatWebSocket.open(ws);
         else if (ws.data?.type === "extensions") extensionWebSocket.open(ws);
+        else if (ws.data?.type === "global") globalWebSocket.open(ws);
         else terminalWebSocket.open(ws);
       },
       message(ws: any, msg: any) {
         if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
         else if (ws.data?.type === "group") groupChatWebSocket.message(ws, msg);
         else if (ws.data?.type === "extensions") extensionWebSocket.message(ws, msg);
+        else if (ws.data?.type === "global") globalWebSocket.message(ws, msg);
         else terminalWebSocket.message(ws, msg);
       },
       close(ws: any) {
         if (ws.data?.type === "chat") chatWebSocket.close(ws);
         else if (ws.data?.type === "group") groupChatWebSocket.close(ws);
         else if (ws.data?.type === "extensions") extensionWebSocket.close(ws);
+        else if (ws.data?.type === "global") globalWebSocket.close(ws);
         else terminalWebSocket.close(ws);
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,

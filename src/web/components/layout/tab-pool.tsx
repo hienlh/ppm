@@ -10,11 +10,12 @@
  * Why not createPortal? Changing a portal's container element causes React
  * to unmount/remount the children — defeating the purpose.
  */
-import { useRef, useLayoutEffect, useSyncExternalStore, Suspense, lazy } from "react";
+import { useRef, useLayoutEffect, useEffect, useSyncExternalStore, Suspense, lazy } from "react";
 import { Loader2 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
+import { useMountedTabsStore } from "@/stores/mounted-tabs-store";
 import type { TabType } from "@/stores/tab-store";
-import { collectFromGrid, collectFromDock } from "./tab-pool-collect";
+import { collectTabEntries, filterMountableEntries } from "./tab-pool-collect";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 
 // ---------------------------------------------------------------------------
@@ -102,33 +103,34 @@ export function TabPool() {
   // tab state across project switches (keep-alive). Each project's
   // PanelLayout stays mounted (CSS hidden), so slots remain registered.
   // Logic lives in tab-pool-collect.ts (pure helper) so it is unit-testable
-  // without a DOM. Stable key order prevents React insertBefore() reorders
-  // that would yank reparented DOM nodes back to the hidden container.
-  const seenTabs = new Set<string>();
-  const tabEntries: { tabId: string; panelId: string; type: TabType; metadata?: Record<string, unknown>; isActive: boolean }[] = [];
+  // without a DOM; it also applies the stable tabId sort that prevents React
+  // insertBefore() reorders from yanking reparented DOM nodes back here.
+  const allEntries = collectTabEntries(panels, grid, projectGrids, currentProject);
 
-  // Active project uses s.grid
-  collectFromGrid(grid, currentProject, true, panels, seenTabs, tabEntries);
+  // Lazy mount: a saved workspace can hold dozens of tabs, and mounting them
+  // all on boot runs every tab's data-fetch effects at once (measured: 515
+  // requests / 36.7 MB for 18 chat tabs), starving the tab the user is
+  // actually waiting on. Mount only what is visible NOW plus anything already
+  // mounted earlier this session, so keep-alive still holds for opened tabs.
+  // `isActive` is per-panel, so every panel of a split contributes its own tab.
+  const mounted = useMountedTabsStore((s) => s.mounted);
+  const tabEntries = filterMountableEntries(allEntries, mounted);
 
-  // Non-active projects use projectGrids (keep-alive)
-  for (const [projectName, projectGrid] of Object.entries(projectGrids)) {
-    if (projectName === currentProject) continue;
-    collectFromGrid(projectGrid, projectName, false, panels, seenTabs, tabEntries);
-  }
-
-  // Dock panel — collected last so grid tabs win dedup (a tab moved from dock
-  // to a grid panel renders in the grid slot, not back in the dock slot).
-  // When dock is hidden, no slot exists for __dock__ so dock tabs park in the
-  // hidden container — alive but invisible until the dock is shown again.
-  const dockPanel = panels[DOCK_PANEL_ID];
-  if (dockPanel) {
-    collectFromDock(dockPanel, seenTabs, tabEntries);
-  }
-
-  // Stable key order — prevents React from calling insertBefore() to reorder
-  // children, which would yank reparented DOM nodes back to the hidden container
-  // and reset scroll positions / trigger resize observers.
-  tabEntries.sort((a, b) => a.tabId.localeCompare(b.tabId));
+  // Record visible tabs so they stay mounted after the user switches away.
+  // Filtering on `isActive` above means this never delays a tab's first paint —
+  // it only makes the decision sticky. Keyed on the id list so it is a no-op
+  // on unrelated re-renders.
+  const visibleIds = allEntries.filter((e) => e.isActive).map((e) => e.tabId);
+  // JSON, not join("|") — editor tab ids embed file paths and "|" is a legal
+  // filename character, so a delimiter join is ambiguous.
+  const visibleKey = JSON.stringify(visibleIds);
+  useEffect(() => {
+    const { mount } = useMountedTabsStore.getState();
+    for (const id of visibleIds) mount(id);
+    // visibleIds is derived from visibleKey; depending on the string keeps the
+    // effect stable across re-renders that don't change the visible set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleKey]);
 
   return (
     // Off-screen mount point. React mounts tab wrappers here, then

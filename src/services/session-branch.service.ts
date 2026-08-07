@@ -1,4 +1,5 @@
 import { getDb } from "./db.service.ts";
+import type { VersionGroup } from "../types/api.ts";
 
 /** A node in the edit-message branch tree (one forked session). */
 export interface BranchRow {
@@ -77,12 +78,7 @@ export function deleteBranchesFor(sessionId: string): void {
   getDb().run("DELETE FROM session_branches WHERE child_id = ?", [sessionId]);
 }
 
-export interface VersionGroup {
-  /** Ordered version session ids: parent (v1 / original) first, then children oldest-first. */
-  ids: string[];
-  /** Position of the queried session within `ids`. */
-  currentIndex: number;
-}
+export type { VersionGroup } from "../types/api.ts";
 
 /**
  * Resolve the sibling versions of the user message at user-ordinal `ordinal`.
@@ -112,6 +108,58 @@ export function resolveVersionGroup(sessionId: string, ordinal: number): Version
   // Position by lineage: the viewed session counts as its ancestor in this group.
   const idx = ids.indexOf(current);
   return { ids, currentIndex: idx < 0 ? 0 : idx };
+}
+
+/**
+ * Every version group in `sessionId`'s tree, keyed by user-message ordinal.
+ *
+ * Same answer as calling resolveVersionGroup() for each ordinal, but with two
+ * queries instead of an ancestor walk per ordinal (one getBranchRow per hop).
+ * The switcher renders on every user message, so the per-ordinal path cost one
+ * request and up to 100 sequential queries per rendered message.
+ *
+ * An ordinal absent from the result means "no versions here" — the caller hides
+ * the switcher. Only ordinals that some node actually forked at can appear, so
+ * the map holds one entry per edited message.
+ */
+export function resolveVersionMap(sessionId: string): Record<number, VersionGroup> {
+  const ownRow = getBranchRow(sessionId);
+  const rootId = ownRow?.root_id ?? sessionId;
+  const tree = getTreeByRoot(rootId);
+  if (tree.length === 0) return {};
+
+  const byChild = new Map<string, BranchRow>();
+  const siblings = new Map<string, BranchRow[]>();
+  for (const row of tree) {
+    byChild.set(row.child_id, row);
+    const key = `${row.parent_id}:${row.fork_ordinal}`;
+    const list = siblings.get(key);
+    if (list) list.push(row);
+    else siblings.set(key, [row]);
+  }
+
+  const map: Record<number, VersionGroup> = {};
+  // Rows written before fork_ordinal existed have it NULL. SQL `= NULL` never
+  // matches, so the per-ordinal path silently ignores them; skip them here too
+  // instead of emitting a bogus `null` key into the response.
+  for (const ordinal of new Set(tree.map((r) => r.fork_ordinal))) {
+    if (!Number.isInteger(ordinal)) continue;
+    // Mirror resolveVersionGroup: climb while the queried message still lies in
+    // the inherited prefix, so a deep leaf keeps showing its ancestor's group.
+    let current = sessionId;
+    let row = byChild.get(current);
+    for (let hops = 0; row && ordinal < row.fork_ordinal && hops < 100; hops++) {
+      current = row.parent_id;
+      row = byChild.get(current);
+    }
+    const parentId = row && row.fork_ordinal === ordinal ? row.parent_id : current;
+    const children = siblings.get(`${parentId}:${ordinal}`);
+    if (!children || children.length === 0) continue;
+    const ids = [parentId, ...children.map((c) => c.child_id)];
+    const idx = ids.indexOf(current);
+    map[ordinal] = { ids, currentIndex: idx < 0 ? 0 : idx };
+  }
+  return map;
 }
 
 /** Minimal shape needed to collapse a session list into per-tree heads. */
