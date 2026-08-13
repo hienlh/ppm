@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.22] - 2026-08-14
+
+### Fixed
+- **Deleting or editing a row failed silently** — removing a row that other rows referenced appeared to do nothing at all: no error, no message, the row simply stayed. The request was being rejected by the database and the reason travelled all the way back to the browser, but no part of the viewer ever displayed it. Failures from deleting, bulk-deleting, editing a cell and inserting a row now surface as a message showing what the database actually said, such as a foreign key violation or a connection being in read-only mode.
+- **SQLite ignored foreign keys, so the viewer could orphan rows** — SQLite only enforces foreign keys when each connection asks it to, and PPM never did. A delete that other tools correctly refuse would go through here, quietly leaving behind rows pointing at something that no longer existed. Foreign keys are now enforced on every SQLite connection PPM opens. Existing data is untouched — only new writes are checked — but a delete that was silently accepted before will now be refused with a clear reason. Scripts that relied on the old behaviour can opt out per script with `PRAGMA foreign_keys = OFF;`.
+
+### Added
+- **Query audit log** — every statement you run is now recorded: what was run, when, against which connection, how long it took, how many rows it touched, and a sample of the result (first and last few rows). This covers SQL you type in the editor, edits made through the data grid, column filters, and the `ppm db` command line. Failed and refused attempts are recorded too, so a rejected write leaves a trace instead of disappearing. The log lives in its own file, separate from your settings and chat history, and is never allowed to interfere with a query — if recording fails, the query still runs and PPM tells you the log is broken rather than staying quiet about it.
+- **Audit log limits under Settings → Query Audit Log** — the log is pruned automatically by age and by size, whichever comes first, defaulting to 30 days or 500 MB. Both are adjustable, the current size and entry count are shown, and the whole log can be cleared in one action.
+
 ## [0.17.21] - 2026-08-07
 
 ### Fixed
