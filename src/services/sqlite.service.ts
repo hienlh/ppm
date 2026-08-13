@@ -55,6 +55,9 @@ class SqliteService {
     }
     const db = new Database(absPath);
     db.exec("PRAGMA journal_mode = WAL");
+    // SQLite defaults FK enforcement off per connection, which would let the
+    // viewer delete rows other clients reject and leave orphaned children.
+    db.exec("PRAGMA foreign_keys = ON");
     const timer = setTimeout(() => this.close(absPath), IDLE_TIMEOUT_MS);
     this.cache.set(absPath, { db, timer });
     return db;
