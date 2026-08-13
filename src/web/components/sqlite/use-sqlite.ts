@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
 
 export interface TableInfo { name: string; rowCount: number }
@@ -83,6 +84,14 @@ export function useSqlite(projectName: string, dbPath: string, connectionId?: nu
     }
   }, [base, unifiedBase, dbPath, fetchTableData]);
 
+  // The grid has no inline error surface, so mutation failures (FK violations,
+  // readonly connections) would otherwise be invisible.
+  const failMutation = useCallback((action: string, e: unknown) => {
+    const message = (e as Error).message;
+    setError(message);
+    toast.error(`${action} failed`, { description: message });
+  }, []);
+
   const updateCell = useCallback(async (rowid: number, column: string, value: unknown) => {
     if (!selectedTable) return;
     try {
@@ -93,9 +102,9 @@ export function useSqlite(projectName: string, dbPath: string, connectionId?: nu
       }
       fetchTableData();
     } catch (e) {
-      setError((e as Error).message);
+      failMutation("Update cell", e);
     }
-  }, [base, unifiedBase, dbPath, selectedTable, fetchTableData]);
+  }, [base, unifiedBase, dbPath, selectedTable, fetchTableData, failMutation]);
 
   const deleteRow = useCallback(async (rowid: number) => {
     if (!selectedTable) return;
@@ -108,9 +117,9 @@ export function useSqlite(projectName: string, dbPath: string, connectionId?: nu
       fetchTableData();
       fetchTables(); // refresh row counts
     } catch (e) {
-      setError((e as Error).message);
+      failMutation("Delete row", e);
     }
-  }, [base, unifiedBase, dbPath, selectedTable, fetchTableData, fetchTables]);
+  }, [base, unifiedBase, dbPath, selectedTable, fetchTableData, fetchTables, failMutation]);
 
   return {
     tables, selectedTable, selectTable, tableData, schema,

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from "react";
+import { toast } from "sonner";
 import { api } from "@/lib/api-client";
 
 export interface DbTableInfo { name: string; schema: string; rowCount: number }
@@ -137,6 +138,14 @@ export function useDatabase(connectionId: number) {
     fetchTableData(t, s);
   }, [queryAsTable, fetchTableData]);
 
+  // The grid has no inline error surface, so mutation failures (FK violations,
+  // readonly connections) would otherwise be invisible.
+  const failMutation = useCallback((action: string, e: unknown) => {
+    const message = (e as Error).message;
+    setError(message);
+    toast.error(`${action} failed`, { description: message });
+  }, []);
+
   const updateCell = useCallback(async (pkColumn: string, pkValue: unknown, column: string, value: unknown) => {
     if (!selectedTable) return;
     const t = selectedTable;
@@ -146,9 +155,9 @@ export function useDatabase(connectionId: number) {
       // Re-fetch with explicit args to avoid stale closure
       refetchTable(t, s);
     } catch (e) {
-      setError((e as Error).message);
+      failMutation("Update cell", e);
     }
-  }, [base, selectedTable, selectedSchema, refetchTable]);
+  }, [base, selectedTable, selectedSchema, refetchTable, failMutation]);
 
   const deleteRow = useCallback(async (pkColumn: string, pkValue: unknown) => {
     if (!selectedTable) return;
@@ -158,9 +167,9 @@ export function useDatabase(connectionId: number) {
       await api.del(`${base}/row`, { table: t, schema: s, pkColumn, pkValue });
       refetchTable(t, s);
     } catch (e) {
-      setError((e as Error).message);
+      failMutation("Delete row", e);
     }
-  }, [base, selectedTable, selectedSchema, refetchTable]);
+  }, [base, selectedTable, selectedSchema, refetchTable, failMutation]);
 
   /** Toggle sort: none → ASC → DESC → none */
   const toggleSort = useCallback((column: string) => {
@@ -196,9 +205,9 @@ export function useDatabase(connectionId: number) {
       await api.post(`${base}/rows/delete`, { table: t, schema: s, pkColumn, pkValues });
       refetchTable(t, s);
     } catch (e) {
-      setError((e as Error).message);
+      failMutation("Delete rows", e);
     }
-  }, [base, selectedTable, selectedSchema, refetchTable]);
+  }, [base, selectedTable, selectedSchema, refetchTable, failMutation]);
 
   /** Insert a new row */
   const insertRow = useCallback(async (values: Record<string, unknown>) => {
@@ -209,10 +218,10 @@ export function useDatabase(connectionId: number) {
       await api.post(`${base}/row`, { table: t, schema: s, values });
       refetchTable(t, s);
     } catch (e) {
-      setError((e as Error).message);
+      failMutation("Insert row", e);
       throw e;
     }
-  }, [base, selectedTable, selectedSchema, refetchTable]);
+  }, [base, selectedTable, selectedSchema, refetchTable, failMutation]);
 
   /** Reload the currently displayed view (custom query, filtered table, or base table). */
   const reload = useCallback(() => {
