@@ -264,6 +264,53 @@ try {
 }
 ```
 
+### Query Audit Logging (Non-Breaking Pattern)
+
+Query audit logs every SQL statement to a separate database (`~/.ppm/query-audit.db`), recording source (editor, grid, cli, filter), actor (human vs agent), operation type, and sample result rows. **Critical:** audit failures must never break a user query.
+
+**Pattern** (`routes/database.ts`, `routes/sqlite.ts`):
+```typescript
+const startedAt = Date.now();
+// Build the audit shape once — the blocked, ok and error branches all reuse it.
+const audit = {
+  ...connAudit(conn),                 // connectionId + connectionName + dbType
+  source: "editor" as const,
+  operation: detectOperation(body.sql),
+  sql: body.sql,
+};
+
+if (conn.readonly && !isReadOnlyQuery(body.sql)) {
+  logQuery(c, { ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
+  return c.json(err(message), 403);
+}
+
+try {
+  const result = await adapter.executeQuery(config, body.sql);
+  logQuery(c, {
+    ...audit,
+    status: "ok",
+    rows: result.rows,                // pass them all; truncateResult does the sampling
+    rowCount: result.changeType === "select" ? result.rows.length : result.rowsAffected,
+    durationMs: Date.now() - startedAt,
+  });
+  return c.json(ok(result));
+} catch (e) {
+  logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+  throw e;                            // outer catch produces the usual 500
+}
+```
+
+`logQuery()` swallows its own failures and reports them through an `x-ppm-audit-error` response header, which `api-client.ts` turns into one toast per session. CLI paths call `logCliQuery()` instead — same rows with `source`/`actor` = `"cli"`, warning on stderr.
+
+**Implementation Details:**
+- `x-ppm-client: "web"` header (set by api-client.ts) determines `actor` (human vs agent). Client-supplied, so treat it as a hint, not attribution.
+- Result sample = first 5 + last 5 rows sharing ONE 16KB budget (not 16KB each). `sql` and `params_json` are separately capped at 16KB.
+- **PRAGMA auto_vacuum = INCREMENTAL must be set before the first CREATE TABLE** — otherwise deleted rows never return disk space and `incremental_vacuum` reclaims nothing (measured: 48.3MB stayed 48.3MB without it, dropped to 8.1MB with it).
+- `source` values: `"editor"` (user-typed SQL), `"grid"` (cell/row mutations), `"cli"`, `"filter"` (column-filter UI, which reuses the `/query` endpoint).
+- Browsing routes (`/tables`, `/schema`, `/data`) are intentionally NOT logged.
+
+**Files:** `src/services/query-audit/`, `src/server/routes/query-audit-hook.ts`, `src/cli/commands/db-cmd-audit.ts`
+
 ### Provider Interface Pattern (Multi-Provider)
 
 PPM supports multiple AI providers through an extensible interface pattern:

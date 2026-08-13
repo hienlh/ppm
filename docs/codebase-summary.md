@@ -111,6 +111,10 @@ src/
 │   ├── clawbot/                 # Legacy: Telegram bot service layer (deprecated v0.9.11)
 │   │   ├── clawbot.service.ts   # (Original direct-chat model, replaced by coordinator)
 │   │   └── ... (other files)
+│   ├── query-audit/             # Database query audit log (separate SQLite db)
+│   │   ├── query-audit-db.ts    # Connection + schema initialization
+│   │   ├── query-audit.service.ts # Insert/list/count queries; detectOperation()
+│   │   └── result-truncate.ts   # Truncate result rows (first 5 + last 5); cap sql/params at 16KB
 │   ├── database/
 │   │   ├── adapter-registry.ts  # SQLite/Postgres adapter registry
 │   │   ├── sqlite-adapter.ts
