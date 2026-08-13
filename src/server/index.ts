@@ -706,6 +706,31 @@ if (process.argv.includes("__serve__")) {
     setInterval(() => cleanupOldProxyRequests(30), 24 * 60 * 60 * 1000);
   }
 
+  // Same idea for the SQL audit log, but the limits are user-configurable.
+  // Skipped when the audit database was never created — no queries have run yet.
+  {
+    const { existsSync } = await import("node:fs");
+    const { getAuditDbPath } = await import("../services/query-audit/query-audit-db.ts");
+    const { cleanupQueryAudit } = await import("../services/query-audit/query-audit-cleanup.ts");
+
+    const runCleanup = () => {
+      if (!existsSync(getAuditDbPath())) return;
+      try {
+        const { retention_days, max_size_mb } = configService.get("query_audit");
+        const { deletedByAge, deletedBySize, freedBytes } = cleanupQueryAudit(retention_days, max_size_mb);
+        const removed = deletedByAge + deletedBySize;
+        if (removed > 0) {
+          console.log(`[query-audit] pruned ${removed} entries (${(freedBytes / 1024 / 1024).toFixed(1)} MB freed)`);
+        }
+      } catch (e) {
+        console.error(`[query-audit] cleanup failed: ${(e as Error).message}`);
+      }
+    };
+
+    runCleanup();
+    setInterval(runCleanup, 24 * 60 * 60 * 1000);
+  }
+
   // On Windows the supervisor reaps the previous server's whole process tree
   // before respawning, so the port is released cleanly. A lingering bind can
   // still appear for a moment during an upgrade handoff, so wait for it to

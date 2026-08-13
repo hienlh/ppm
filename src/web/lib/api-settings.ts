@@ -221,3 +221,24 @@ export function getProxySettings(): Promise<ProxySettings> {
 export function updateProxySettings(params: { enabled?: boolean; authKey?: string; generateKey?: boolean }): Promise<ProxySettings> {
   return api.put<ProxySettings>("/api/settings/proxy", params);
 }
+
+export interface QueryAuditSettings {
+  retention_days: number;
+  max_size_mb: number;
+  size_bytes: number;
+  entry_count: number;
+}
+
+export function getQueryAuditSettings(): Promise<QueryAuditSettings> {
+  return api.get<QueryAuditSettings>("/api/settings/query-audit");
+}
+
+export function updateQueryAuditSettings(
+  params: { retention_days?: number; max_size_mb?: number },
+): Promise<QueryAuditSettings> {
+  return api.put<QueryAuditSettings>("/api/settings/query-audit", params);
+}
+
+export function clearQueryAuditLogs(): Promise<void> {
+  return api.del("/api/settings/query-audit/logs");
+}

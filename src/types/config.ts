@@ -32,6 +32,14 @@ export interface PpmConfig {
   telegram?: TelegramConfig;
   clawbot?: PPMBotConfig;
   cloud_url?: string;
+  query_audit: QueryAuditConfig;
+}
+
+export interface QueryAuditConfig {
+  /** Entries older than this are pruned. */
+  retention_days: number;
+  /** Hard ceiling for query-audit.db; oldest entries go first once it is hit. */
+  max_size_mb: number;
 }
 
 export interface AuthConfig {
@@ -104,6 +112,10 @@ export const DEFAULT_CONFIG: PpmConfig = {
         inherit_claude_mcp: true,
       },
     },
+  },
+  query_audit: {
+    retention_days: 30,
+    max_size_mb: 500,
   },
   telegram: {
     bot_token: "",

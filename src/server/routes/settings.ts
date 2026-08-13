@@ -374,6 +374,70 @@ settingsRoutes.put("/proxy", async (c) => {
   }
 });
 
+// ── Query audit log ────────────────────────────────────────────
+
+/** Config plus what the log currently costs on disk, so the UI can show both together. */
+async function buildQueryAuditResponse() {
+  const { existsSync } = await import("node:fs");
+  const config = configService.get("query_audit") ?? DEFAULT_CONFIG.query_audit;
+  const { getAuditDbPath, getAuditDbSizeBytes } = await import("../../services/query-audit/query-audit-db.ts");
+
+  if (!existsSync(getAuditDbPath())) {
+    return { ...config, size_bytes: 0, entry_count: 0 };
+  }
+
+  const { countQueryLogs } = await import("../../services/query-audit/query-audit.service.ts");
+  return { ...config, size_bytes: getAuditDbSizeBytes(), entry_count: countQueryLogs() };
+}
+
+/** GET /settings/query-audit */
+settingsRoutes.get("/query-audit", async (c) => {
+  try {
+    return c.json(ok(await buildQueryAuditResponse()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** PUT /settings/query-audit — body: { retention_days?, max_size_mb? } */
+settingsRoutes.put("/query-audit", async (c) => {
+  try {
+    const body = await c.req.json<{ retention_days?: number; max_size_mb?: number }>();
+    const current = configService.get("query_audit") ?? DEFAULT_CONFIG.query_audit;
+
+    const retention_days = body.retention_days ?? current.retention_days;
+    const max_size_mb = body.max_size_mb ?? current.max_size_mb;
+
+    if (!Number.isInteger(retention_days) || retention_days < 1) {
+      return c.json(err("retention_days must be a whole number of at least 1"), 400);
+    }
+    // Below ~10MB a single burst of large results would wipe the log immediately.
+    if (!Number.isInteger(max_size_mb) || max_size_mb < 10) {
+      return c.json(err("max_size_mb must be a whole number of at least 10"), 400);
+    }
+
+    configService.set("query_audit", { retention_days, max_size_mb });
+    configService.save();
+    return c.json(ok(await buildQueryAuditResponse()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/** DELETE /settings/query-audit/logs — wipe every recorded statement */
+settingsRoutes.delete("/query-audit/logs", async (c) => {
+  try {
+    const { existsSync } = await import("node:fs");
+    const { getAuditDbPath } = await import("../../services/query-audit/query-audit-db.ts");
+    if (!existsSync(getAuditDbPath())) return c.json(ok({ deleted: 0 }));
+
+    const { clearQueryAudit } = await import("../../services/query-audit/query-audit-cleanup.ts");
+    return c.json(ok({ deleted: clearQueryAudit() }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
 // ── PPMBot ─────────────────────────────────────────────────────
 
 /** GET /settings/clawbot — return current clawbot config */

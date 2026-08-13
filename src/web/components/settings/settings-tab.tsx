@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Moon, Sun, Monitor, Bell, Check, ChevronRight, ArrowLeft,
-  Bot, BellRing, Keyboard, Globe, Puzzle, Bug, FolderSearch, WrapText, CalendarClock,
+  Bot, BellRing, Keyboard, Globe, Puzzle, Bug, FolderSearch, WrapText, CalendarClock, DatabaseZap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ import { ChangePasswordSection } from "./change-password-section";
 import { FilesSettingsSection } from "./files-settings-section";
 import { SchedulesSettingsSection } from "./schedules/schedules-settings-section";
 import { ThemeManagerSection } from "./theme-manager-section";
+import { QueryAuditSection } from "./query-audit-section";
 import { ThemeGrid } from "./theme-grid";
 const THEME_OPTIONS: { value: PpmThemeMode; label: string; icon: React.ElementType }[] = [
   { value: "light", label: "Light", icon: Sun },
@@ -34,7 +35,7 @@ const TAB_STYLE_OPTIONS: { value: EditorTabStyle; label: string }[] = [
   { value: "pill", label: "Pill" },
 ];
 
-type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "extensions" | "files";
+type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "extensions" | "files" | "queryAudit";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
   { value: "ai", label: "AI Provider", subtitle: "Model, execution mode, limits", icon: Bot },
@@ -46,6 +47,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
   { value: "shortcuts", label: "Keyboard Shortcuts", subtitle: "Customize key bindings", icon: Keyboard },
   { value: "extensions", label: "Extensions", subtitle: "Install and manage extensions", icon: Puzzle },
   { value: "files", label: "File Filters", subtitle: "Exclude patterns, ignore files", icon: FolderSearch },
+  { value: "queryAudit", label: "Query Audit Log", subtitle: "SQL history retention and size", icon: DatabaseZap },
 ];
 
 export function SettingsTab() {
@@ -102,6 +104,7 @@ export function SettingsTab() {
             {activeCategory === "shortcuts" && <KeyboardShortcutsSection />}
             {activeCategory === "extensions" && <ExtensionManagerSection />}
             {activeCategory === "files" && <FilesSettingsSection />}
+            {activeCategory === "queryAudit" && <QueryAuditSection />}
           </div>
         </ScrollArea>
       </div>
