@@ -355,34 +355,61 @@ export function registerDbCommands(program: Command): void {
           process.exit(1);
         }
         const cfg = parseConfig(conn);
+        const startedAt = Date.now();
+        const { logCliQuery } = await import("./db-cmd-audit.ts");
+        const { detectOperation } = await import("../../services/query-audit/query-audit.service.ts");
+        const audit = {
+          connectionId: conn.id,
+          connectionName: conn.name,
+          dbType: conn.type,
+          operation: detectOperation(sql),
+          sql,
+        };
 
         // Enforce readonly — CLI cannot disable this, only the web UI can toggle it
         if (conn.readonly && !isReadOnlyQuery(sql)) {
-          console.error(`${C.red}Error:${C.reset} Connection "${conn.name}" is readonly — only SELECT queries allowed.`);
+          const message = `Connection "${conn.name}" is readonly — only SELECT queries allowed.`;
+          logCliQuery({ ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
+          console.error(`${C.red}Error:${C.reset} ${message}`);
           console.error(`  To allow writes, toggle the readonly switch in the PPM web UI.`);
           process.exit(1);
         }
 
-        if (conn.type === "postgres") {
-          const { postgresService } = await import("../../services/postgres.service.ts");
-          const result = await postgresService.executeQuery(cfg.connectionString!, sql);
-          await postgresService.closeAll();
-          if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
-          if (result.changeType === "select") {
-            formatRows(result.columns, result.rows);
+        try {
+          if (conn.type === "postgres") {
+            const { postgresService } = await import("../../services/postgres.service.ts");
+            const result = await postgresService.executeQuery(cfg.connectionString!, sql);
+            await postgresService.closeAll();
+            logCliQuery({
+              ...audit, status: "ok", rows: result.rows,
+              rowCount: result.changeType === "select" ? result.rows.length : result.rowsAffected,
+              durationMs: Date.now() - startedAt,
+            });
+            if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
+            if (result.changeType === "select") {
+              formatRows(result.columns, result.rows);
+            } else {
+              console.log(`${C.green}OK${C.reset} — ${result.rowsAffected} row(s) affected`);
+            }
           } else {
-            console.log(`${C.green}OK${C.reset} — ${result.rowsAffected} row(s) affected`);
+            const { sqliteService } = await import("../../services/sqlite.service.ts");
+            const result = sqliteService.executeQuery(cfg.path!, cfg.path!, sql);
+            sqliteService.closeAll();
+            logCliQuery({
+              ...audit, status: "ok", rows: result.rows,
+              rowCount: result.changeType === "select" ? result.rows.length : result.rowsAffected,
+              durationMs: Date.now() - startedAt,
+            });
+            if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
+            if (result.changeType === "select") {
+              formatRows(result.columns, result.rows);
+            } else {
+              console.log(`${C.green}OK${C.reset} — ${result.rowsAffected} row(s) affected`);
+            }
           }
-        } else {
-          const { sqliteService } = await import("../../services/sqlite.service.ts");
-          const result = sqliteService.executeQuery(cfg.path!, cfg.path!, sql);
-          sqliteService.closeAll();
-          if (options.json) { console.log(JSON.stringify(result, null, 2)); return; }
-          if (result.changeType === "select") {
-            formatRows(result.columns, result.rows);
-          } else {
-            console.log(`${C.green}OK${C.reset} — ${result.rowsAffected} row(s) affected`);
-          }
+        } catch (e) {
+          logCliQuery({ ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+          throw e;
         }
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);
@@ -415,9 +442,22 @@ export function registerDbCommands(program: Command): void {
           return;
         }
 
+        const startedAt = Date.now();
+        const { logCliQuery } = await import("./db-cmd-audit.ts");
+        const audit = {
+          connectionId: conn.id,
+          connectionName: conn.name,
+          dbType: conn.type,
+          operation: "script" as const,
+          sql,
+          params: { file: absFile },
+        };
+
         // Enforce readonly
         if (conn.readonly && !isReadOnlyQuery(sql)) {
-          console.error(`${C.red}Error:${C.reset} Connection "${conn.name}" is readonly — file contains write statements.`);
+          const message = `Connection "${conn.name}" is readonly — file contains write statements.`;
+          logCliQuery({ ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
+          console.error(`${C.red}Error:${C.reset} ${message}`);
           console.error(`  To allow writes, toggle the readonly switch in the PPM web UI.`);
           process.exit(1);
         }
@@ -425,16 +465,29 @@ export function registerDbCommands(program: Command): void {
         const cfg = parseConfig(conn);
         console.log(`${C.cyan}Running${C.reset} ${absFile} ${C.dim}on${C.reset} ${conn.name} (${conn.type})...\n`);
 
-        if (conn.type === "postgres") {
-          const { postgresService } = await import("../../services/postgres.service.ts");
-          const result = await postgresService.executeScript(cfg.connectionString!, sql);
-          await postgresService.closeAll();
-          console.log(`${C.green}OK${C.reset} — ${result.statementsRun} statement(s) executed (${result.executionTimeMs}ms)`);
-        } else {
-          const { sqliteService } = await import("../../services/sqlite.service.ts");
-          const result = sqliteService.executeScript(cfg.path!, cfg.path!, sql);
-          sqliteService.closeAll();
-          console.log(`${C.green}OK${C.reset} — script executed (${result.executionTimeMs}ms)`);
+        try {
+          if (conn.type === "postgres") {
+            const { postgresService } = await import("../../services/postgres.service.ts");
+            const result = await postgresService.executeScript(cfg.connectionString!, sql);
+            await postgresService.closeAll();
+            // row_count means rows everywhere else — keep statement count in params.
+            logCliQuery({
+              ...audit,
+              params: { ...audit.params, statementsRun: result.statementsRun },
+              status: "ok",
+              durationMs: Date.now() - startedAt,
+            });
+            console.log(`${C.green}OK${C.reset} — ${result.statementsRun} statement(s) executed (${result.executionTimeMs}ms)`);
+          } else {
+            const { sqliteService } = await import("../../services/sqlite.service.ts");
+            const result = sqliteService.executeScript(cfg.path!, cfg.path!, sql);
+            sqliteService.closeAll();
+            logCliQuery({ ...audit, status: "ok", durationMs: Date.now() - startedAt });
+            console.log(`${C.green}OK${C.reset} — script executed (${result.executionTimeMs}ms)`);
+          }
+        } catch (e) {
+          logCliQuery({ ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+          throw e;
         }
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);

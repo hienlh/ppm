@@ -1,5 +1,17 @@
+import { toast } from "sonner";
+
 const TOKEN_KEY = "ppm-auth-token";
 const RELOAD_GUARD_KEY = "ppm-auth-reload-ts";
+
+/** An audit log that stops recording must not fail silently — but one warning per session is enough. */
+let auditFailureReported = false;
+
+function warnOnAuditFailure(res: Response): void {
+  const reason = res.headers.get("x-ppm-audit-error");
+  if (!reason || auditFailureReported) return;
+  auditFailureReported = true;
+  toast.error("Query audit log is not recording", { description: reason });
+}
 
 /** GETs currently awaiting a response, keyed by absolute URL. See ApiClient.get. */
 const pendingGets = new Map<string, Promise<unknown>>();
@@ -19,6 +31,8 @@ class ApiClient {
     const h: HeadersInit = { "Content-Type": "application/json" };
     const token = this.getToken();
     if (token) h["Authorization"] = `Bearer ${token}`;
+    // Lets the server tell a browser session apart from an automated caller in audit logs.
+    h["x-ppm-client"] = "web";
     return h;
   }
 
@@ -91,6 +105,8 @@ class ApiClient {
   }
 
   private async handleResponse<T>(res: Response): Promise<T> {
+    warnOnAuditFailure(res);
+
     if (res.status === 401) {
       localStorage.removeItem(TOKEN_KEY);
       // Guard against infinite reload loops: skip reload if we already reloaded within 3s

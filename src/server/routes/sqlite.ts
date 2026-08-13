@@ -1,10 +1,17 @@
 import { Hono } from "hono";
 import { sqliteService } from "../../services/sqlite.service.ts";
+import { detectOperation } from "../../services/query-audit/query-audit.service.ts";
+import { logQuery, literal, quoteIdent, type AuditFields } from "./query-audit-hook.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
 
 export const sqliteRoutes = new Hono<Env>();
+
+/** These legacy routes address a database by file path, so there is no saved connection id. */
+function fileAudit(dbPath: string): Pick<AuditFields, "connectionId" | "connectionName" | "dbType"> {
+  return { connectionId: null, connectionName: dbPath, dbType: "sqlite" };
+}
 
 /** GET /sqlite/tables?path=relative/path.db */
 sqliteRoutes.get("/tables", (c) => {
@@ -50,11 +57,32 @@ sqliteRoutes.get("/data", (c) => {
 
 /** POST /sqlite/query — body: { path, sql } */
 sqliteRoutes.post("/query", async (c) => {
+  const startedAt = Date.now();
   try {
     const body = await c.req.json<{ path: string; sql: string }>();
     if (!body.path || !body.sql) return c.json(err("Missing required fields: path, sql"), 400);
-    const result = sqliteService.executeQuery(c.get("projectPath"), body.path, body.sql);
-    return c.json(ok(result));
+
+    const audit = {
+      ...fileAudit(body.path),
+      source: "editor" as const,
+      operation: detectOperation(body.sql),
+      sql: body.sql,
+    };
+
+    try {
+      const result = sqliteService.executeQuery(c.get("projectPath"), body.path, body.sql);
+      logQuery(c, {
+        ...audit,
+        status: "ok",
+        rows: result.rows,
+        rowCount: result.changeType === "select" ? result.rows.length : result.rowsAffected,
+        durationMs: Date.now() - startedAt,
+      });
+      return c.json(ok(result));
+    } catch (e) {
+      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -62,13 +90,28 @@ sqliteRoutes.post("/query", async (c) => {
 
 /** PUT /sqlite/cell — body: { path, table, rowid, column, value } */
 sqliteRoutes.put("/cell", async (c) => {
+  const startedAt = Date.now();
   try {
     const body = await c.req.json<{ path: string; table: string; rowid: number; column: string; value: unknown }>();
     if (!body.path || !body.table || body.rowid == null || !body.column) {
       return c.json(err("Missing required fields: path, table, rowid, column"), 400);
     }
-    sqliteService.updateCell(c.get("projectPath"), body.path, body.table, body.rowid, body.column, body.value);
-    return c.json(ok({ updated: true }));
+    const audit = {
+      ...fileAudit(body.path),
+      source: "grid" as const,
+      operation: "update" as const,
+      sql: `UPDATE ${quoteIdent(body.table)} SET ${quoteIdent(body.column)} = ${literal(body.value)} WHERE "rowid" = ${literal(body.rowid)}`,
+      params: { table: body.table, rowid: body.rowid, column: body.column },
+    };
+
+    try {
+      sqliteService.updateCell(c.get("projectPath"), body.path, body.table, body.rowid, body.column, body.value);
+      logQuery(c, { ...audit, status: "ok", rowCount: 1, durationMs: Date.now() - startedAt });
+      return c.json(ok({ updated: true }));
+    } catch (e) {
+      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -76,13 +119,29 @@ sqliteRoutes.put("/cell", async (c) => {
 
 /** DELETE /sqlite/row — body: { path, table, rowid } */
 sqliteRoutes.delete("/row", async (c) => {
+  const startedAt = Date.now();
   try {
     const body = await c.req.json<{ path: string; table: string; rowid: number }>();
     if (!body.path || !body.table || body.rowid == null) {
       return c.json(err("Missing required fields: path, table, rowid"), 400);
     }
-    sqliteService.deleteRow(c.get("projectPath"), body.path, body.table, body.rowid);
-    return c.json(ok({ deleted: true }));
+
+    const audit = {
+      ...fileAudit(body.path),
+      source: "grid" as const,
+      operation: "delete" as const,
+      sql: `DELETE FROM ${quoteIdent(body.table)} WHERE "rowid" = ${literal(body.rowid)}`,
+      params: { table: body.table, rowid: body.rowid },
+    };
+
+    try {
+      sqliteService.deleteRow(c.get("projectPath"), body.path, body.table, body.rowid);
+      logQuery(c, { ...audit, status: "ok", rowCount: 1, durationMs: Date.now() - startedAt });
+      return c.json(ok({ deleted: true }));
+    } catch (e) {
+      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

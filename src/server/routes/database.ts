@@ -7,6 +7,8 @@ import {
 import { getAdapter } from "../../services/database/adapter-registry.ts";
 import { syncTables, searchTables, getTablesFromCache } from "../../services/table-cache.service.ts";
 import { isReadOnlyQuery } from "../../services/database/readonly-check.ts";
+import { detectOperation } from "../../services/query-audit/query-audit.service.ts";
+import { logQuery, literal, literalList, quoteIdent, qualifiedTable, type AuditFields } from "./query-audit-hook.ts";
 import { ok, err } from "../../types/api.ts";
 
 /** Race a promise against a timeout — ensures routes always respond */
@@ -24,6 +26,16 @@ function sanitizeConn(conn: ConnectionRow): Omit<ConnectionRow, "connection_conf
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { connection_config: _, ...safe } = conn;
   return safe;
+}
+
+/** Connection identity shared by every audit entry from these routes */
+function connAudit(conn: ConnectionRow): Pick<AuditFields, "connectionId" | "connectionName" | "dbType"> {
+  return { connectionId: conn.id, connectionName: conn.name, dbType: conn.type };
+}
+
+/** Only postgres qualifies tables with a schema; sqlite ignores it entirely. */
+function auditSchema(conn: ConnectionRow, schema?: string | null): string | null {
+  return conn.type === "postgres" ? (schema ?? "public") : null;
 }
 
 /** Validate hex color string (e.g. #3b82f6) */
@@ -279,20 +291,43 @@ databaseRoutes.get("/connections/:id/data", async (c) => {
 
 /** POST /api/db/connections/:id/query — body: { sql } — enforces readonly */
 databaseRoutes.post("/connections/:id/query", async (c) => {
+  const startedAt = Date.now();
   try {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
-    const body = await c.req.json<{ sql: string }>();
+    const body = await c.req.json<{ sql: string; source?: "filter" }>();
     if (!body.sql) return c.json(err("sql is required"), 400);
 
+    const audit = {
+      ...connAudit(conn),
+      // The grid reuses this endpoint for column filters, so it says when the SQL is not user-typed.
+      source: body.source === "filter" ? ("filter" as const) : ("editor" as const),
+      operation: detectOperation(body.sql),
+      sql: body.sql,
+    };
+
     if (conn.readonly && !isReadOnlyQuery(body.sql)) {
-      return c.json(err("Connection is readonly — only SELECT queries allowed. Change this in PPM web UI."), 403);
+      const message = "Connection is readonly — only SELECT queries allowed. Change this in PPM web UI.";
+      logQuery(c, { ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
+      return c.json(err(message), 403);
     }
 
     const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
-    const result = await adapter.executeQuery(config, body.sql);
-    return c.json(ok(result));
+    try {
+      const result = await adapter.executeQuery(config, body.sql);
+      logQuery(c, {
+        ...audit,
+        status: "ok",
+        rows: result.rows,
+        rowCount: result.changeType === "select" ? result.rows.length : result.rowsAffected,
+        durationMs: Date.now() - startedAt,
+      });
+      return c.json(ok(result));
+    } catch (e) {
+      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -300,32 +335,52 @@ databaseRoutes.post("/connections/:id/query", async (c) => {
 
 /** PUT /api/db/connections/:id/cell — body: { table, schema?, pkColumn, pkValue, column, value } — enforces readonly */
 databaseRoutes.put("/connections/:id/cell", async (c) => {
+  const startedAt = Date.now();
   try {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
 
-    if (conn.readonly) {
-      return c.json(err("Connection is readonly — cell editing is disabled. Change this in PPM web UI."), 403);
-    }
-
+    // Parsed before the readonly check so a blocked attempt is still audited with real details.
     const body = await c.req.json<{
       table: string; schema?: string;
       pkColumn: string; pkValue: unknown; column: string; value: unknown;
     }>();
+
+    const target = qualifiedTable(body.table ?? "", auditSchema(conn, body.schema));
+    const audit = {
+      ...connAudit(conn),
+      source: "grid" as const,
+      operation: "update" as const,
+      sql: `UPDATE ${target} SET ${quoteIdent(body.column ?? "")} = ${literal(body.value)} WHERE ${quoteIdent(body.pkColumn ?? "")} = ${literal(body.pkValue)}`,
+      params: { table: body.table, schema: body.schema, column: body.column, pkColumn: body.pkColumn, pkValue: body.pkValue },
+    };
+
+    if (conn.readonly) {
+      const message = "Connection is readonly — cell editing is disabled. Change this in PPM web UI.";
+      logQuery(c, { ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
+      return c.json(err(message), 403);
+    }
+
     if (!body.table || !body.pkColumn || !body.column) {
       return c.json(err("table, pkColumn, and column are required"), 400);
     }
 
     const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
-    await adapter.updateCell(config, body.table, {
-      schema: body.schema,
-      pkColumn: body.pkColumn,
-      pkValue: body.pkValue,
-      column: body.column,
-      value: body.value,
-    });
-    return c.json(ok({ updated: true }));
+    try {
+      await adapter.updateCell(config, body.table, {
+        schema: body.schema,
+        pkColumn: body.pkColumn,
+        pkValue: body.pkValue,
+        column: body.column,
+        value: body.value,
+      });
+      logQuery(c, { ...audit, status: "ok", rowCount: 1, durationMs: Date.now() - startedAt });
+      return c.json(ok({ updated: true }));
+    } catch (e) {
+      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -333,30 +388,48 @@ databaseRoutes.put("/connections/:id/cell", async (c) => {
 
 /** DELETE /api/db/connections/:id/row — body: { table, schema?, pkColumn, pkValue } — enforces readonly */
 databaseRoutes.delete("/connections/:id/row", async (c) => {
+  const startedAt = Date.now();
   try {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
-
-    if (conn.readonly) {
-      return c.json(err("Connection is readonly — row deletion is disabled. Change this in PPM web UI."), 403);
-    }
 
     const body = await c.req.json<{
       table: string; schema?: string;
       pkColumn: string; pkValue: unknown;
     }>();
+
+    const audit = {
+      ...connAudit(conn),
+      source: "grid" as const,
+      operation: "delete" as const,
+      sql: `DELETE FROM ${qualifiedTable(body.table ?? "", auditSchema(conn, body.schema))} WHERE ${quoteIdent(body.pkColumn ?? "")} = ${literal(body.pkValue)}`,
+      params: { table: body.table, schema: body.schema, pkColumn: body.pkColumn, pkValue: body.pkValue },
+    };
+
+    if (conn.readonly) {
+      const message = "Connection is readonly — row deletion is disabled. Change this in PPM web UI.";
+      logQuery(c, { ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
+      return c.json(err(message), 403);
+    }
+
     if (!body.table || !body.pkColumn || body.pkValue == null) {
       return c.json(err("table, pkColumn, and pkValue are required"), 400);
     }
 
     const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
-    await adapter.deleteRow(config, body.table, {
-      schema: body.schema,
-      pkColumn: body.pkColumn,
-      pkValue: body.pkValue,
-    });
-    return c.json(ok({ deleted: true }));
+    try {
+      await adapter.deleteRow(config, body.table, {
+        schema: body.schema,
+        pkColumn: body.pkColumn,
+        pkValue: body.pkValue,
+      });
+      logQuery(c, { ...audit, status: "ok", rowCount: 1, durationMs: Date.now() - startedAt });
+      return c.json(ok({ deleted: true }));
+    } catch (e) {
+      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -368,22 +441,56 @@ databaseRoutes.delete("/connections/:id/row", async (c) => {
 
 /** POST /api/db/connections/:id/rows/delete — bulk delete by PK values */
 databaseRoutes.post("/connections/:id/rows/delete", async (c) => {
+  const startedAt = Date.now();
   try {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
-    if (conn.readonly) return c.json(err("Connection is readonly — bulk delete is disabled."), 403);
 
     const body = await c.req.json<{ table: string; schema?: string; pkColumn: string; pkValues: unknown[] }>();
-    if (!body.table || !body.pkColumn || !Array.isArray(body.pkValues) || body.pkValues.length === 0) {
+    const pkValues = Array.isArray(body.pkValues) ? body.pkValues : [];
+
+    // One entry for the whole batch — it is a single user action, and the ids live in params.
+    const audit = {
+      ...connAudit(conn),
+      source: "grid" as const,
+      operation: "delete" as const,
+      sql: `DELETE FROM ${qualifiedTable(body.table ?? "", auditSchema(conn, body.schema))} WHERE ${quoteIdent(body.pkColumn ?? "")} IN (${literalList(pkValues)})`,
+      params: { table: body.table, schema: body.schema, pkColumn: body.pkColumn, pkValues },
+    };
+
+    if (conn.readonly) {
+      const message = "Connection is readonly — bulk delete is disabled.";
+      logQuery(c, { ...audit, status: "blocked", error: message, durationMs: Date.now() - startedAt });
+      return c.json(err(message), 403);
+    }
+
+    if (!body.table || !body.pkColumn || pkValues.length === 0) {
       return c.json(err("table, pkColumn, and pkValues[] are required"), 400);
     }
 
     const config = decryptConfig(conn.connection_config);
     const adapter = getAdapter(conn.type);
-    for (const pkValue of body.pkValues) {
-      await adapter.deleteRow(config, body.table, { schema: body.schema, pkColumn: body.pkColumn, pkValue });
+    // Rows are deleted one statement at a time, so a mid-batch failure leaves the
+    // earlier ones gone. Record how many actually went, otherwise the audit trail
+    // would imply an all-or-nothing batch that never happened.
+    let deleted = 0;
+    try {
+      for (const pkValue of pkValues) {
+        await adapter.deleteRow(config, body.table, { schema: body.schema, pkColumn: body.pkColumn, pkValue });
+        deleted++;
+      }
+      logQuery(c, { ...audit, status: "ok", rowCount: deleted, durationMs: Date.now() - startedAt });
+      return c.json(ok({ deleted }));
+    } catch (e) {
+      logQuery(c, {
+        ...audit,
+        status: "error",
+        error: `${(e as Error).message} (deleted ${deleted} of ${pkValues.length} before failing)`,
+        rowCount: deleted,
+        durationMs: Date.now() - startedAt,
+      });
+      throw e;
     }
-    return c.json(ok({ deleted: body.pkValues.length }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -391,12 +498,28 @@ databaseRoutes.post("/connections/:id/rows/delete", async (c) => {
 
 /** POST /api/db/connections/:id/row — insert a new row */
 databaseRoutes.post("/connections/:id/row", async (c) => {
+  const startedAt = Date.now();
   try {
     const conn = resolveConn(c.req.param("id"));
     if (!conn) return c.json(err("Connection not found"), 404);
-    if (conn.readonly) return c.json(err("Connection is readonly — insert is disabled."), 403);
 
     const body = await c.req.json<{ table: string; schema?: string; values: Record<string, unknown> }>();
+
+    if (conn.readonly) {
+      const message = "Connection is readonly — insert is disabled.";
+      logQuery(c, {
+        ...connAudit(conn),
+        source: "grid",
+        operation: "insert",
+        sql: `INSERT INTO ${qualifiedTable(body.table ?? "", auditSchema(conn, body.schema))} (${Object.keys(body.values ?? {}).map(quoteIdent).join(", ")}) VALUES (${Object.values(body.values ?? {}).map(literal).join(", ")})`,
+        params: { table: body.table, schema: body.schema, columns: Object.keys(body.values ?? {}) },
+        status: "blocked",
+        error: message,
+        durationMs: Date.now() - startedAt,
+      });
+      return c.json(err(message), 403);
+    }
+
     if (!body.table || !body.values || Object.keys(body.values).length === 0) {
       return c.json(err("table and values are required"), 400);
     }
@@ -413,13 +536,28 @@ databaseRoutes.post("/connections/:id/row", async (c) => {
     const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
     const schema = body.schema && conn.type === "postgres" ? `"${body.schema}".` : "";
     const sql = `INSERT INTO ${schema}"${body.table}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${placeholders})`;
-    await adapter.executeQuery(config, sql.replace(/\$(\d+)/g, (_, n) => {
+    const executableSql = sql.replace(/\$(\d+)/g, (_, n) => {
       const v = vals[Number(n) - 1];
       if (v === null || v === undefined) return "NULL";
       if (typeof v === "number") return String(v);
       return `'${String(v).replace(/'/g, "''")}'`;
-    }));
-    return c.json(ok({ inserted: true }), 201);
+    });
+    const audit = {
+      ...connAudit(conn),
+      source: "grid" as const,
+      operation: "insert" as const,
+      sql: executableSql,
+      params: { table: body.table, schema: body.schema, columns: cols },
+    };
+
+    try {
+      await adapter.executeQuery(config, executableSql);
+      logQuery(c, { ...audit, status: "ok", rowCount: 1, durationMs: Date.now() - startedAt });
+      return c.json(ok({ inserted: true }), 201);
+    } catch (e) {
+      logQuery(c, { ...audit, status: "error", error: (e as Error).message, durationMs: Date.now() - startedAt });
+      throw e;
+    }
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

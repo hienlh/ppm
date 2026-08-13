@@ -100,7 +100,8 @@ export function useDatabase(connectionId: number) {
     activeQueryRef.current = { sql: sqlText, mode: "table" };
     setLoading(true);
     try {
-      const result = await api.post<DbQueryResult>(`${base}/query`, { sql: sqlText });
+      // Tagged so the audit log can tell filter-generated SQL from what the user typed.
+      const result = await api.post<DbQueryResult>(`${base}/query`, { sql: sqlText, source: "filter" });
       if (result.changeType === "select") {
         setTableData({ columns: result.columns, rows: result.rows, total: result.rows.length, page: 1, limit: result.rows.length });
       }
