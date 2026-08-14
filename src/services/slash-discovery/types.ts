@@ -9,7 +9,8 @@ export type DefinitionSource =
   | "user-claw"        // 6 — ~/.claw/
   | "user-codex"       // 7 — ~/.codex/
   | "user-claude"      // 8 — ~/.claude/
-  | "bundled";         // 9 — shipped with PPM package
+  | "user-plugin"      // 9 — ~/.claude/plugins/<plugin>/
+  | "bundled";         // 10 — shipped with PPM package
 
 export type SlashItemType = "skill" | "command" | "builtin" | "agent";
 export type SlashItemScope = "project" | "user" | "bundled";

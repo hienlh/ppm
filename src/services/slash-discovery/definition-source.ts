@@ -11,7 +11,8 @@ export const SOURCE_PRIORITY: Record<DefinitionSource, number> = {
   "user-claw": 6,
   "user-codex": 7,
   "user-claude": 8,
-  "bundled": 9,
+  "user-plugin": 9,
+  "bundled": 10,
 };
 
 /** Compare two sources by priority (for sorting highest-priority first) */

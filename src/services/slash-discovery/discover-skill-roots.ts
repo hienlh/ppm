@@ -1,7 +1,8 @@
 import { resolve, dirname } from "node:path";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { loadDisabledPluginKeys } from "./plugin-enablement.ts";
 import type { SkillRoot, DefinitionSource, ItemOrigin } from "./types.ts";
 
 /** Tool ecosystem prefixes mapped to their DefinitionSource for project-level roots */
@@ -100,6 +101,61 @@ function addUserGlobalRoots(roots: SkillRoot[], seen: Set<string>): void {
   }
 }
 
+/** Entry shape we rely on from ~/.claude/plugins/installed_plugins.json (schema version 2) */
+interface InstalledPluginsFile {
+  plugins?: Record<string, Array<{ installPath?: string }>>;
+}
+
+/** An installed plugin. `key` is `plugin-id@marketplace-id`, absent for scanned fallbacks. */
+export interface InstalledPlugin {
+  key?: string;
+  path: string;
+}
+
+/**
+ * Resolve installed Claude Code plugins.
+ * Prefers the registry file (it pins the active version and covers remote
+ * marketplaces); falls back to scanning for directories carrying a manifest.
+ */
+export function resolveInstalledPlugins(pluginsDir: string): InstalledPlugin[] {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(resolve(pluginsDir, "installed_plugins.json"), "utf-8"),
+    ) as InstalledPluginsFile;
+    const installs: InstalledPlugin[] = [];
+    for (const [key, entries] of Object.entries(parsed.plugins ?? {})) {
+      for (const entry of entries ?? []) {
+        if (typeof entry?.installPath === "string" && isDir(entry.installPath)) {
+          installs.push({ key, path: entry.installPath });
+        }
+      }
+    }
+    if (installs.length) return installs;
+  } catch { /* registry missing or malformed — fall through to scan */ }
+
+  try {
+    return readdirSync(pluginsDir)
+      .map((entry) => resolve(pluginsDir, entry))
+      .filter((p) => isDir(p) && existsSync(resolve(p, ".claude-plugin", "plugin.json")))
+      .map((path) => ({ path }));
+  } catch {
+    return [];
+  }
+}
+
+/** Add roots for Claude Code plugins, which ship their own skills/commands/agents */
+function addPluginRoots(roots: SkillRoot[], seen: Set<string>, projectPath: string): void {
+  const pluginsDir = resolve(homedir(), ".claude", "plugins");
+  if (!isDir(pluginsDir)) return;
+  const disabled = loadDisabledPluginKeys(projectPath);
+  for (const plugin of resolveInstalledPlugins(pluginsDir)) {
+    if (plugin.key && disabled.has(plugin.key)) continue;
+    for (const origin of ORIGINS) {
+      addRoot(roots, seen, plugin.path, origin, "user-plugin");
+    }
+  }
+}
+
 /** Add bundled skills root (shipped with PPM package) */
 function addBundledRoot(roots: SkillRoot[], seen: Set<string>): void {
   if (isDir(BUNDLED_SKILLS_DIR)) {
@@ -122,6 +178,7 @@ export function discoverSkillRoots(projectPath: string): SkillRoot[] {
   walkAncestors(projectPath, roots, seen);
   checkEnvVars(roots, seen);
   addUserGlobalRoots(roots, seen);
+  addPluginRoots(roots, seen, projectPath);
   addBundledRoot(roots, seen);
 
   return roots;
