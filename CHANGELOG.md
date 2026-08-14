@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.23] - 2026-08-15
+
+### Fixed
+- **Skills installed as Claude Code plugins never showed up** — PPM looked for skills, commands and agents only in `~/.claude/skills`, `~/.claude/commands` and `~/.claude/agents`. Anything delivered as a Claude Code plugin lives elsewhere, under `~/.claude/plugins`, so none of it was listed: typing `/` showed a menu with the plugin's skills missing entirely. This stayed hidden while most toolkits wrote their files straight into `~/.claude`, but one that ships as a plugin would leave the menu nearly empty. PPM now reads the plugin install registry and picks up the skills, commands and agents each installed plugin provides. Plugins you have turned off in your Claude Code settings are left out; a plugin your settings never mention still shows, since being installed is what decides that it exists. Skills you wrote yourself in `~/.claude/skills` continue to take precedence over a plugin's skill of the same name.
+
 ## [0.17.22] - 2026-08-14
 
 ### Fixed
