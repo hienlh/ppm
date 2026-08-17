@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { unlinkSync, existsSync } from "node:fs";
@@ -173,5 +173,81 @@ describe("AccountService", () => {
     expect(url).toStartWith("https://claude.ai/oauth/authorize");
     expect(url).toContain("code_challenge=");
     expect(url).toContain("state=");
+  });
+});
+
+describe("AccountService.refreshAccessToken", () => {
+  const originalFetch = globalThis.fetch;
+  let calls: number;
+
+  /** Queue of responses/errors returned by successive fetch calls. */
+  function mockOAuth(...results: (Response | Error)[]) {
+    calls = 0;
+    globalThis.fetch = mock(() => {
+      const result = results[Math.min(calls, results.length - 1)];
+      calls++;
+      return result instanceof Error ? Promise.reject(result) : Promise.resolve(result.clone());
+    }) as any;
+  }
+
+  function tokenResponse(accessToken = "fresh-access") {
+    return new Response(
+      JSON.stringify({ access_token: accessToken, refresh_token: "rotated-refresh", expires_in: 28800 }),
+      { status: 200 },
+    );
+  }
+
+  /** Account whose token is valid for another 30 minutes. */
+  function halfHourAccount() {
+    return accountService.add({
+      email: "refresh@test.com",
+      accessToken: "sk-ant-oat-old",
+      refreshToken: "refresh-token",
+      expiresAt: Math.floor(Date.now() / 1000) + 1800,
+    });
+  }
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("honours a caller-supplied freshness threshold instead of the hardcoded 60s guard", async () => {
+    // Regression: the proactive 1h buffer used to be cancelled by an inner 60s guard,
+    // so tokens were only ever refreshed after they had already expired.
+    const acc = halfHourAccount();
+    mockOAuth(tokenResponse());
+
+    await accountService.refreshAccessToken(acc.id, false, false, 3600);
+
+    expect(calls).toBe(1);
+    expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("fresh-access");
+  });
+
+  it("skips the OAuth call when the token is fresher than the threshold", async () => {
+    const acc = halfHourAccount();
+    mockOAuth(tokenResponse());
+
+    await accountService.refreshAccessToken(acc.id, false);
+
+    expect(calls).toBe(0);
+    expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("sk-ant-oat-old");
+  });
+
+  it("retries a transient network failure instead of burning the refresh cycle", async () => {
+    const acc = halfHourAccount();
+    mockOAuth(new Error("The operation timed out."), tokenResponse("recovered-access"));
+
+    await accountService.refreshAccessToken(acc.id, false, false, 3600);
+
+    expect(calls).toBe(2);
+    expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("recovered-access");
+  });
+
+  it("does not retry a permanent invalid_grant rejection", async () => {
+    const acc = halfHourAccount();
+    mockOAuth(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 }));
+
+    await expect(accountService.refreshAccessToken(acc.id, false, false, 3600)).rejects.toThrow("invalid_grant");
+    expect(calls).toBe(1);
   });
 });

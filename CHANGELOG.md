@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.24] - 2026-08-17
+
+### Fixed
+- **Accounts kept expiring and had to be signed in again** — an account could stop working overnight and show as expired, with no way back other than signing in again. PPM is meant to renew each account an hour before its access runs out, but an internal check disagreed with that: it refused any renewal while more than a minute of access remained, so the early renewal never actually happened and accounts were only ever renewed *after* they had already stopped working. That left a window of a few minutes in which PPM had to reach Anthropic successfully. Access runs out eight hours after the previous renewal, so that window drifts and regularly lands in the middle of the night — precisely when the machine is likely to be asleep or the network briefly unavailable. Anthropic's permission to renew lapses shortly after access itself does, so a single missed window lost the account permanently. Renewal now begins a full hour early as intended, which gives around twelve attempts before anything is at risk, and a renewal that fails because of a network error or a temporary server error is retried immediately instead of waiting for the next attempt. A renewal rejected outright is still reported rather than retried.
+
 ## [0.17.23] - 2026-08-15
 
 ### Fixed

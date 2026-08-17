@@ -141,7 +141,7 @@ class AccountService {
     if (acc.expiresAt - nowS > REFRESH_BUFFER_S) return acc; // still fresh
     try {
       console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s, buffer=${REFRESH_BUFFER_S}s)`);
-      await this.refreshAccessToken(id, false);
+      await this.refreshAccessToken(id, false, false, REFRESH_BUFFER_S);
       return this.getWithTokens(id);
     } catch (e) {
       console.error(`[accounts] Pre-flight refresh failed for ${id}: ${(e as Error).message ?? e}`);
@@ -529,8 +529,11 @@ class AccountService {
    *   Background/startup refresh should pass false to avoid disabling accounts prematurely.
    * @param force - if true, bypass the skip-if-fresh check (use after 401 errors where
    *   the token is demonstrably invalid despite having a future expiresAt).
+   * @param freshThresholdS - skip the OAuth call if the DB token still has more than this
+   *   many seconds left. Callers doing proactive refresh must pass their own buffer here,
+   *   otherwise this guard silently cancels the refresh they asked for.
    */
-  async refreshAccessToken(accountId: string, disableOnFail = true, force = false): Promise<void> {
+  async refreshAccessToken(accountId: string, disableOnFail = true, force = false, freshThresholdS = 60): Promise<void> {
     // Dedup: if a refresh is already in progress for this account, wait for it instead of racing
     const pending = this.pendingRefreshes.get(accountId);
     if (pending) {
@@ -538,7 +541,7 @@ class AccountService {
       return pending;
     }
 
-    const promise = this._doRefreshAccessToken(accountId, disableOnFail, force);
+    const promise = this._doRefreshAccessToken(accountId, disableOnFail, force, freshThresholdS);
     this.pendingRefreshes.set(accountId, promise);
     try {
       await promise;
@@ -547,7 +550,43 @@ class AccountService {
     }
   }
 
-  private async _doRefreshAccessToken(accountId: string, disableOnFail: boolean, force = false): Promise<void> {
+  /**
+   * POST the refresh grant, retrying transient failures with backoff.
+   * A network blip (e.g. waking from sleep) must not cost a whole refresh cycle —
+   * Anthropic's refresh token dies shortly after the access token, so the retry
+   * window before it lapses for good is narrow.
+   */
+  private async postRefreshGrant(refreshToken: string, label: string): Promise<Response> {
+    const backoffMs = [2_000, 6_000];
+    for (let attempt = 0; ; attempt++) {
+      const retryIn = backoffMs[attempt];
+      try {
+        const res = await fetch(OAUTH_TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            grant_type: "refresh_token",
+            client_id: OAUTH_CLIENT_ID,
+            refresh_token: refreshToken,
+          }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        // 429/5xx leave the refresh token intact — retrying is safe and cheaper than waiting a full cycle
+        if (retryIn !== undefined && (res.status === 429 || res.status >= 500)) {
+          console.warn(`[accounts] Transient ${res.status} refreshing ${label} — retrying in ${retryIn}ms`);
+          await Bun.sleep(retryIn);
+          continue;
+        }
+        return res;
+      } catch (e) {
+        if (retryIn === undefined) throw e;
+        console.warn(`[accounts] Network error refreshing ${label} (${(e as Error).message}) — retrying in ${retryIn}ms`);
+        await Bun.sleep(retryIn);
+      }
+    }
+  }
+
+  private async _doRefreshAccessToken(accountId: string, disableOnFail: boolean, force = false, freshThresholdS = 60): Promise<void> {
     const account = this.getWithTokens(accountId);
     if (!account) throw new Error(`Account ${accountId} not found`);
     // Skip refresh for temporary accounts (no refresh token)
@@ -558,29 +597,22 @@ class AccountService {
     // But when force=true (after a 401), always refresh — the token may be
     // revoked server-side despite having a future expiresAt.
     const nowS = Math.floor(Date.now() / 1000);
-    if (!force && account.expiresAt && account.expiresAt - nowS > 60) {
-      console.log(`[accounts] Token for ${account.email ?? accountId} is already fresh (expires in ${account.expiresAt - nowS}s) — skipping OAuth refresh`);
+    if (!force && account.expiresAt && account.expiresAt - nowS > freshThresholdS) {
+      console.log(`[accounts] Token for ${account.email ?? accountId} is already fresh (expires in ${account.expiresAt - nowS}s, threshold=${freshThresholdS}s) — skipping OAuth refresh`);
       return;
     }
-    const res = await fetch(OAUTH_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        client_id: OAUTH_CLIENT_ID,
-        refresh_token: account.refreshToken,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const res = await this.postRefreshGrant(account.refreshToken, account.email ?? accountId);
     if (!res.ok) {
       const errorBody = await res.text().catch(() => "");
       console.error(`[accounts] Refresh failed for ${accountId}: ${res.status} ${errorBody}`);
       if (errorBody.includes("invalid_grant") || errorBody.includes("invalid_request")) {
-        // Another session/process may have refreshed (and rotated) the token between
-        // our read and this OAuth call — if the DB token is now fresh, this failure is stale.
+        // Another session/process may have refreshed (and rotated) the token between our read
+        // and this OAuth call, making this failure stale. Detect that by comparing against the
+        // expiry we read — testing "is it fresh" instead would swallow genuine rejections
+        // whenever we refresh proactively, while the token is still valid.
         const recheckAccount = this.getWithTokens(accountId);
-        if (recheckAccount?.expiresAt && recheckAccount.expiresAt - Math.floor(Date.now() / 1000) > 60) {
-          console.log(`[accounts] Refresh failed with invalid_grant but DB token is now fresh — another session refreshed it`);
+        if (recheckAccount?.expiresAt && recheckAccount.expiresAt !== account.expiresAt) {
+          console.log(`[accounts] Refresh failed with invalid_grant but DB token changed — another session refreshed it`);
           return;
         }
         // Do NOT wipe the refresh token. On multi-device/multi-process setups the token is
@@ -740,7 +772,10 @@ class AccountService {
   startAutoRefresh(): void {
     if (acctHotState.refreshTimer) return;
     const CHECK_INTERVAL_MS = 5 * 60_000;
-    const REFRESH_BUFFER_S = 5 * 60;
+    // Refresh a full hour early: Anthropic's refresh token lapses soon after the access
+    // token expires, so waiting until the last minutes leaves no room to recover from a
+    // network outage. An hour of headroom gives ~12 retry ticks before the token is lost.
+    const REFRESH_BUFFER_S = 60 * 60;
 
     const refreshExpiring = async () => {
       const accounts = this.list();
@@ -759,7 +794,7 @@ class AccountService {
         if (!withTokens?.refreshToken) continue;
         console.log(`[accounts] Auto-refreshing token for ${acc.email ?? acc.id}`);
         try {
-          await this.refreshAccessToken(acc.id, false);
+          await this.refreshAccessToken(acc.id, false, false, REFRESH_BUFFER_S);
         } catch (e) {
           console.error(`[accounts] Auto-refresh failed for ${acc.id}: ${(e as Error).message ?? e}`);
         }
