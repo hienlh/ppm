@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.25] - 2026-08-17
+
+### Fixed
+- **The database sidebar forgot which connections and tables you had opened** — expanding a connection and a few of its tables lasted only until the page was reloaded, and even switching to another sidebar panel and back was enough to collapse the whole tree, leaving you to click your way down to the same table again and again. The open state was held only in the browser's memory for as long as that panel stayed on screen, and nothing ever wrote it down. It is now kept alongside your other interface preferences, which live on the PPM server rather than in the browser alone, so it also survives opening PPM at a different address or from another device. Restoring the tree fetches what it needs again: the table list for each connection that was open, and the columns of each table that was expanded. Connections you delete are removed from the record, so it cannot fill up with entries for things that no longer exist.
+
 ## [0.17.24] - 2026-08-17
 
 ### Fixed
