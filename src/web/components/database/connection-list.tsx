@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { ChevronRight, ChevronDown } from "lucide-react";
 import type { Connection, CachedTable } from "./use-connections";
 import type { ColumnInfo } from "./schema-table-tree";
 import { ConnectionRow } from "./connection-row";
+import { useDbTreeExpansion, tableKey } from "./use-db-tree-expansion";
 
 interface ConnectionListProps {
   connections: Connection[];
@@ -21,48 +22,41 @@ export function ConnectionList({
   onOpenTable, onRefreshTables, onEdit, onDelete,
   onFetchColumns, columnCache,
 }: ConnectionListProps) {
-  const [expandedConns, setExpandedConns] = useState<Set<number>>(new Set());
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["__ungrouped__"]));
-  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+  const {
+    expandedConns, expandedGroups, expandedTables,
+    toggleConn: toggleConnExpanded, toggleGroup, setTableExpanded, pruneDeletedConns,
+  } = useDbTreeExpansion();
   const [refreshingIds, setRefreshingIds] = useState<Set<number>>(new Set());
   const [tableFilter, setTableFilter] = useState<Map<number, string>>(new Map());
   const [loadingColumns, setLoadingColumns] = useState<Set<string>>(new Set());
   const [columnErrors, setColumnErrors] = useState<Set<string>>(new Set());
 
   const toggleConn = (id: number, autoRefresh: boolean) => {
-    setExpandedConns((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    toggleConnExpanded(id);
     if (autoRefresh) handleRefresh(id);
   };
 
-  const toggleGroup = (group: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(group)) next.delete(group); else next.add(group);
-      return next;
-    });
+  const loadColumns = async (connId: number, tableName: string, schemaName: string) => {
+    const key = tableKey(connId, schemaName, tableName);
+    if (!onFetchColumns || columnCache?.has(key)) return;
+    setLoadingColumns((prev) => new Set(prev).add(key));
+    setColumnErrors((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    try {
+      await onFetchColumns(connId, tableName, schemaName);
+    } catch {
+      setColumnErrors((prev) => new Set(prev).add(key));
+    }
+    setLoadingColumns((prev) => { const n = new Set(prev); n.delete(key); return n; });
   };
 
   const toggleTable = async (connId: number, tableName: string, schemaName: string) => {
-    const key = `${connId}:${schemaName}.${tableName}`;
+    const key = tableKey(connId, schemaName, tableName);
     if (expandedTables.has(key)) {
-      setExpandedTables((prev) => { const n = new Set(prev); n.delete(key); return n; });
+      setTableExpanded(key, false);
       return;
     }
-    setExpandedTables((prev) => new Set(prev).add(key));
-    if (onFetchColumns && !columnCache?.has(key)) {
-      setLoadingColumns((prev) => new Set(prev).add(key));
-      setColumnErrors((prev) => { const n = new Set(prev); n.delete(key); return n; });
-      try {
-        await onFetchColumns(connId, tableName, schemaName);
-      } catch {
-        setColumnErrors((prev) => new Set(prev).add(key));
-      }
-      setLoadingColumns((prev) => { const n = new Set(prev); n.delete(key); return n; });
-    }
+    setTableExpanded(key, true);
+    await loadColumns(connId, tableName, schemaName);
   };
 
   const handleRefresh = async (id: number) => {
@@ -75,6 +69,34 @@ export function ConnectionList({
   const handleFilterChange = (connId: number, value: string) => {
     setTableFilter((prev) => new Map(prev).set(connId, value));
   };
+
+  // Table lists and column metadata are memory-only, so a restored expansion
+  // state starts empty — refetch it once per node, and forget dead connections.
+  const restoredRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    // An empty list can also mean the fetch failed — pruning then would wipe
+    // expansion state the user still wants, so only prune against real data.
+    if (connections.length === 0) return;
+    pruneDeletedConns(connections.map((c) => c.id));
+    for (const conn of connections) {
+      if (!expandedConns.has(conn.id)) continue;
+      const tables = cachedTables.get(conn.id) ?? [];
+      if (tables.length === 0) {
+        if (restoredRef.current.has(`conn:${conn.id}`)) continue;
+        restoredRef.current.add(`conn:${conn.id}`);
+        handleRefresh(conn.id).catch(() => { /* surfaced via refreshErrors */ });
+        continue;
+      }
+      for (const t of tables) {
+        const key = tableKey(conn.id, t.schemaName, t.tableName);
+        if (!expandedTables.has(key) || columnCache?.has(key) || restoredRef.current.has(key)) continue;
+        restoredRef.current.add(key);
+        void loadColumns(conn.id, t.tableName, t.schemaName);
+      }
+    }
+    // handleRefresh/loadColumns are recreated per render but stable in behaviour
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections, cachedTables, expandedConns, expandedTables, columnCache, pruneDeletedConns]);
 
   // L3 fix: memoize group computation
   const { groups, groupKeys } = useMemo(() => {

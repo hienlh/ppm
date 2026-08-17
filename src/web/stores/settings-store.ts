@@ -8,6 +8,13 @@ export type EditorTabStyle = "default" | "boxed" | "pill";
 export type DockPosition = "left" | "bottom" | "right";
 export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | `ext:${string}`;
 
+/** Expanded nodes of the Database sidebar tree. Table keys are `${connId}:${schema}.${table}`. */
+export interface DbSidebarExpanded {
+  conns: number[];
+  groups: string[];
+  tables: string[];
+}
+
 const STORAGE_KEY = "ppm-settings";
 
 interface SettingsState {
@@ -28,6 +35,7 @@ interface SettingsState {
   sidebarTabOrder: SidebarActiveTab[];
   jiraEnabled: boolean;
   dockPosition: DockPosition;
+  dbSidebarExpanded: DbSidebarExpanded;
   deviceName: string | null;
   version: string | null;
   tunnelActive: boolean;
@@ -50,6 +58,7 @@ interface SettingsState {
   setSidebarActiveTab: (tab: SidebarActiveTab) => void;
   setSidebarTabOrder: (order: SidebarActiveTab[]) => void;
   setDockPosition: (position: DockPosition) => void;
+  setDbSidebarExpanded: (next: DbSidebarExpanded) => void;
   fetchServerInfo: () => Promise<void>;
 }
 
@@ -69,6 +78,7 @@ interface PersistedSettings {
   sidebarTabOrder?: SidebarActiveTab[];
   jiraEnabled?: boolean;
   dockPosition?: DockPosition;
+  dbSidebarExpanded?: DbSidebarExpanded;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -113,6 +123,30 @@ function sanitizeTabOrder(value: unknown): SidebarActiveTab[] {
     }
   }
   return out;
+}
+
+// "__ungrouped__" is the synthetic group holding connections without a group.
+const DEFAULT_DB_EXPANDED: DbSidebarExpanded = { conns: [], groups: ["__ungrouped__"], tables: [] };
+
+// Caps keep the pref small enough to ride along with every ui-prefs write.
+// Server mirrors these limits in its validator.
+const DB_EXPANDED_CAPS = { conns: 200, groups: 200, tables: 500 } as const;
+
+/** Coerce stored/server data into a valid expansion set; null when unusable. */
+function sanitizeDbExpanded(value: unknown): DbSidebarExpanded | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  const strings = (raw: unknown, cap: number) =>
+    Array.isArray(raw)
+      ? raw.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 300).slice(0, cap)
+      : [];
+  return {
+    conns: Array.isArray(v.conns)
+      ? v.conns.filter((x): x is number => typeof x === "number" && Number.isInteger(x)).slice(0, DB_EXPANDED_CAPS.conns)
+      : [],
+    groups: strings(v.groups, DB_EXPANDED_CAPS.groups),
+    tables: strings(v.tables, DB_EXPANDED_CAPS.tables),
+  };
 }
 
 function persistSettings(update: Partial<PersistedSettings>) {
@@ -182,6 +216,8 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (data.dockPosition === "left" || data.dockPosition === "bottom" || data.dockPosition === "right") {
     patch.dockPosition = data.dockPosition;
   }
+  const dbExpanded = sanitizeDbExpanded(data.dbSidebarExpanded);
+  if (dbExpanded) patch.dbSidebarExpanded = dbExpanded;
   if (Object.keys(patch).length === 0) return;
   persistSettings(patch);
   useSettingsStore.setState(patch as Partial<SettingsState>);
@@ -205,6 +241,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarTabOrder: sanitizeTabOrder(_initial.sidebarTabOrder),
   jiraEnabled: _initial.jiraEnabled ?? false,
   dockPosition: (_initial.dockPosition === "left" || _initial.dockPosition === "right") ? _initial.dockPosition : "bottom",
+  dbSidebarExpanded: sanitizeDbExpanded(_initial.dbSidebarExpanded) ?? DEFAULT_DB_EXPANDED,
   deviceName: null,
   version: null,
   tunnelActive: false,
@@ -337,6 +374,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setDockPosition: (position) => {
     persistUiPref({ dockPosition: position });
     set({ dockPosition: position });
+  },
+
+  setDbSidebarExpanded: (next) => {
+    const clean = sanitizeDbExpanded(next) ?? DEFAULT_DB_EXPANDED;
+    persistUiPref({ dbSidebarExpanded: clean });
+    set({ dbSidebarExpanded: clean });
   },
 
   fetchServerInfo: async () => {

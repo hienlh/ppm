@@ -120,6 +120,17 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   sidebarActiveTab: (v) => typeof v === "string",
   sidebarTabOrder: (v) => Array.isArray(v) && v.length <= 50 && v.every((t) => typeof t === "string"),
   jiraEnabled: (v) => typeof v === "boolean",
+  // Database sidebar tree expansion: { conns: number[], groups: string[], tables: string[] }
+  dbSidebarExpanded: (v) => {
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+    const { conns, groups, tables } = v as Record<string, unknown>;
+    const strList = (x: unknown, max: number) =>
+      Array.isArray(x) && x.length <= max && x.every((s) => typeof s === "string" && s.length <= 300);
+    return (
+      Array.isArray(conns) && conns.length <= 200 && conns.every((n) => typeof n === "number") &&
+      strList(groups, 200) && strList(tables, 500)
+    );
+  },
   // Project switcher prefs
   projectSortMode: (v) => v === "recent" || v === "priority" || v === "name",
   recentOpen: (v) =>
