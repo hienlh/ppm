@@ -1,5 +1,8 @@
-import { describe, test, expect } from "bun:test";
-import { getDownloadUrl } from "../../../src/services/cloudflared.service.ts";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { getDownloadUrl, getQuickTunnelArgs } from "../../../src/services/cloudflared.service.ts";
 
 describe("cloudflared.service", () => {
   describe("getDownloadUrl", () => {
@@ -28,6 +31,37 @@ describe("cloudflared.service", () => {
       } else if (process.arch === "x64") {
         expect(url).toContain("amd64");
       }
+    });
+  });
+
+  describe("getQuickTunnelArgs", () => {
+    let ppmHome: string;
+    let prevHome: string | undefined;
+
+    beforeAll(() => {
+      prevHome = process.env.PPM_HOME;
+      ppmHome = mkdtempSync(resolve(tmpdir(), "ppm-cf-"));
+      process.env.PPM_HOME = ppmHome;
+    });
+
+    afterAll(() => {
+      if (prevHome === undefined) delete process.env.PPM_HOME;
+      else process.env.PPM_HOME = prevHome;
+      rmSync(ppmHome, { recursive: true, force: true });
+    });
+
+    test("pins --config before the tunnel subcommand so ~/.cloudflared/config.yml is ignored", () => {
+      const args = getQuickTunnelArgs(8080);
+      expect(args[0]).toBe("--config");
+      expect(args.indexOf("--config")).toBeLessThan(args.indexOf("tunnel"));
+      expect(args.slice(2)).toEqual(["tunnel", "--url", "http://127.0.0.1:8080"]);
+    });
+
+    test("creates an empty config file with no ingress rules", () => {
+      const configPath = getQuickTunnelArgs(8080)[1]!;
+      expect(existsSync(configPath)).toBe(true);
+      const body = readFileSync(configPath, "utf-8");
+      expect(body.replace(/#.*/g, "").trim()).toBe("");
     });
   });
 });

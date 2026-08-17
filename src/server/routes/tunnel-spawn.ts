@@ -5,7 +5,7 @@
  * and the new `/api/tunnels` registry routes reuse ONE spawn implementation and
  * ONE shared `activeTunnels` map (no duplicate spawn logic, no split-brain state).
  */
-import { ensureCloudflared } from "../../services/cloudflared.service.ts";
+import { ensureCloudflared, getQuickTunnelArgs } from "../../services/cloudflared.service.ts";
 
 export const TUNNEL_URL_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
 
@@ -30,7 +30,7 @@ export async function spawnTunnelProcess(
 ): Promise<{ process: import("bun").Subprocess; url: string }> {
   const bin = await ensureCloudflared();
   const proc = Bun.spawn(
-    [bin, "tunnel", "--url", `http://127.0.0.1:${port}`],
+    [bin, ...getQuickTunnelArgs(port)],
     { stderr: "pipe", stdout: "ignore", stdin: "ignore" },
   );
 

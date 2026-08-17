@@ -377,9 +377,11 @@ async function syncUrlToCloud(url: string) {
 export async function spawnTunnel(port: number, generation: number = ++tunnelGeneration): Promise<void> {
   tunnelPort = port; // remember origin port so resume/port-move can re-point
   let bin: string;
+  let quickArgs: string[];
   try {
-    const { ensureCloudflared } = await import("./cloudflared.service.ts");
+    const { ensureCloudflared, getQuickTunnelArgs } = await import("./cloudflared.service.ts");
     bin = await ensureCloudflared();
+    quickArgs = getQuickTunnelArgs(port);
   } catch (err) {
     log("ERROR", `Failed to get cloudflared: ${err}`);
     return;
@@ -404,7 +406,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   // when the supervisor itself was started consoleless by the upgrade path.
   if (process.platform === "win32") {
     const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
-    const proc = nodeSpawn(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`], {
+    const proc = nodeSpawn(bin, quickArgs, {
       detached: true,
       windowsHide: true,
       stdio: ["ignore", "ignore", tunnelLogFd] as ["ignore", "ignore", number],
@@ -462,9 +464,9 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     ? [
         "systemd-run", "--user", "--scope", "--quiet", "--collect",
         "--",
-        bin, "tunnel", "--url", `http://127.0.0.1:${port}`,
+        bin, ...quickArgs,
       ]
-    : [bin, "tunnel", "--url", `http://127.0.0.1:${port}`];
+    : [bin, ...quickArgs];
 
   // Own this cloudflared via a LOCAL ref for the whole loop. `tunnelChild` is a
   // mutable global that a concurrent restartTunnel() nulls/reassigns; awaiting
@@ -707,7 +709,8 @@ async function reapOrphanedTunnels(keepPid: number | null): Promise<void> {
   try {
     const { getCloudflaredPath } = await import("./cloudflared.service.ts");
     const bin = getCloudflaredPath();
-    const res = Bun.spawnSync(["pgrep", "-f", `${bin} tunnel --url`]);
+    // `.*` spans the `--config <path>` args that sit between bin and `tunnel`.
+    const res = Bun.spawnSync(["pgrep", "-f", `${bin}.*tunnel --url`]);
     // pgrep exits 1 when nothing matches — not an error.
     const pids = new TextDecoder().decode(res.stdout)
       .split("\n")

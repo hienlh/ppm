@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { resolve } from "node:path";
 import { existsSync, unlinkSync, readFileSync, writeFileSync, renameSync } from "node:fs";
-import { ensureCloudflared } from "./cloudflared.service.ts";
+import { ensureCloudflared, getQuickTunnelArgs } from "./cloudflared.service.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 
 const TUNNEL_URL_REGEX = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
@@ -26,7 +26,7 @@ class TunnelService {
     const bin = await ensureCloudflared();
 
     const proc = Bun.spawn(
-      [bin, "tunnel", "--url", `http://127.0.0.1:${port}`],
+      [bin, ...getQuickTunnelArgs(port)],
       { stderr: "pipe", stdout: "ignore", stdin: "ignore" },
     );
     this.childProcess = proc;

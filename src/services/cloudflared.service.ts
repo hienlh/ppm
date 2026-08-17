@@ -1,10 +1,11 @@
 import { resolve } from "node:path";
-import { existsSync, mkdirSync, chmodSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, chmodSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
 
 const isWindows = process.platform === "win32";
 const cloudflaredDir = () => resolve(getPpmDir(), "bin");
 const cloudflaredPath = () => resolve(cloudflaredDir(), isWindows ? "cloudflared.exe" : "cloudflared");
+const quickTunnelConfigPath = () => resolve(getPpmDir(), "cloudflared-quick.yml");
 
 const OS_MAP: Record<string, string> = { darwin: "darwin", linux: "linux", win32: "windows" };
 const ARCH_MAP: Record<string, string> = { x64: "amd64", arm64: "arm64" };
@@ -103,4 +104,29 @@ export async function ensureCloudflared(): Promise<string> {
 /** Get path where cloudflared binary is/will be stored */
 export function getCloudflaredPath(): string {
   return cloudflaredPath();
+}
+
+/**
+ * Argv (minus the binary) for a quick tunnel to a local port.
+ *
+ * The `--config` pin is load-bearing: cloudflared auto-loads
+ * `~/.cloudflared/config.yml` even for `tunnel --url`. If the user also runs a
+ * named tunnel, that file's ingress rules apply to PPM's quick tunnel too, and
+ * its catch-all (`service: http_status:404`) answers every request before it
+ * reaches the origin — the tunnel registers fine but serves only 404s, so the
+ * health probe regenerates it forever. Pointing at our own empty config
+ * isolates PPM from whatever the user has configured.
+ */
+export function getQuickTunnelArgs(port: number): string[] {
+  return ["--config", ensureQuickTunnelConfig(), "tunnel", "--url", `http://127.0.0.1:${port}`];
+}
+
+/** Create the empty quick-tunnel config if absent; returns its path. */
+function ensureQuickTunnelConfig(): string {
+  const path = quickTunnelConfigPath();
+  if (!existsSync(path)) {
+    mkdirSync(getPpmDir(), { recursive: true });
+    writeFileSync(path, "# PPM quick tunnel config — intentionally empty. Do not add ingress rules.\n");
+  }
+  return path;
 }
