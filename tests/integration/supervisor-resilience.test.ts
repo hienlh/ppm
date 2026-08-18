@@ -389,6 +389,29 @@ describe("Supervisor self-heal patterns", () => {
     expect(supervisorCode).toMatch(/else if \(!alive\) \{/);
   });
 
+  test("port probe can never stall the server spawn", () => {
+    // The probe really listens, so reconnecting clients can land on it. An open
+    // connection makes close(cb) wait forever — spawnServer then never spawns,
+    // silently, while supervisor + tunnel still look healthy.
+    expect(supervisorCode).toContain('tester.on("connection", (socket) => socket.destroy())');
+    expect(supervisorCode).toContain("PORT_PROBE_TIMEOUT_MS");
+    expect(supervisorCode).toMatch(/timed out — treating as unbindable/);
+  });
+
+  test("health check revives a server child that never spawned", () => {
+    expect(supervisorCode).toContain("No server child while state=running");
+    expect(supervisorCode).toContain("SERVER_REVIVE_AFTER_MS");
+  });
+
+  test("SIGUSR2 spawns a server when there is none to bounce", () => {
+    expect(supervisorCode).toContain("No server child to restart");
+  });
+
+  test("self-replace detaches the new supervisor into its own session", () => {
+    // Same process group as launchd/systemd = the replacement is torn down with us.
+    expect(supervisorCode).toMatch(/detached: true,[\s\S]{0,200}windowsHide: true/);
+  });
+
   test("resume-from-sleep detection resets budgets and regenerates the tunnel", () => {
     expect(supervisorCode).toContain("Resume-from-sleep detection");
     expect(supervisorCode).toContain("RESUME_GAP_MS");
@@ -407,6 +430,12 @@ describe("Autostart config improvements", () => {
     expect(plist).toContain("<key>KeepAlive</key>");
     expect(plist).toContain("<true/>");
     expect(plist).not.toContain("<key>SuccessfulExit</key>");
+  });
+
+  test("macOS plist abandons the process group so upgrades survive", () => {
+    const { generatePlist } = require("../../src/services/autostart-generator.ts");
+    const plist = generatePlist({ port: 8080, host: "0.0.0.0", share: false });
+    expect(plist).toContain("<key>AbandonProcessGroup</key>");
   });
 
   test("Linux systemd uses Restart=always", () => {

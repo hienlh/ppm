@@ -88,6 +88,11 @@ ${programArgs}
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <!-- Upgrades self-replace by spawning a new supervisor and exiting. Without
+         this, launchd tears down the whole process group when the old
+         supervisor exits and kills the replacement seconds after it started. -->
+    <key>AbandonProcessGroup</key>
+    <true/>
     <key>StandardOutPath</key>
     <string>${escapeXml(logPath)}</string>
     <key>StandardErrorPath</key>

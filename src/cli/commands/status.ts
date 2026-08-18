@@ -22,6 +22,17 @@ function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+async function probeHealth(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 function getDaemonStatus(): DaemonStatus {
   const dead: DaemonStatus = {
     running: false, pid: null, port: null, host: null,
@@ -155,8 +166,13 @@ export async function showStatus(options: { json?: boolean; all?: boolean }) {
     return;
   }
 
+  // Liveness from status.json alone can lie: a supervisor whose server child
+  // never spawned still reports state=running with a live tunnel. Only an
+  // answer from the HTTP endpoint proves PPM is actually serving.
+  const healthy = status.port ? await probeHealth(status.port) : false;
+
   if (options.json) {
-    console.log(JSON.stringify(status));
+    console.log(JSON.stringify({ ...status, healthy }));
     return;
   }
 
@@ -180,7 +196,10 @@ export async function showStatus(options: { json?: boolean; all?: boolean }) {
     console.log(`  State:   UPGRADING`);
   }
   console.log(`  Server:  ${status.running ? "running" : "stopped"} (PID: ${status.pid})`);
-  if (status.port) console.log(`  Local:   http://localhost:${status.port}/`);
+  if (status.port) {
+    console.log(`  Local:   http://localhost:${status.port}/`);
+    console.log(`  Health:  ${healthy ? "ok" : "NOT RESPONDING — run: ppm restart"}`);
+  }
   if (status.tunnelPid) {
     console.log(`  Tunnel:  ${status.tunnelAlive ? "running" : "stopped"} (PID: ${status.tunnelPid})`);
   }

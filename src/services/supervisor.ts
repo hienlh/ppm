@@ -34,6 +34,8 @@ const BACKOFF_MAX_MS = 60_000;
 const STABLE_WINDOW_MS = 300_000;       // 5min stable → reset restart counter
 const SERVER_HEALTH_INTERVAL_MS = 30_000;
 const SERVER_HEALTH_FAIL_THRESHOLD = 3;
+const PORT_PROBE_TIMEOUT_MS = 2000;         // a bind probe must never stall the server spawn
+const SERVER_REVIVE_AFTER_MS = 90_000;      // > BACKOFF_MAX_MS, so crash backoff is never mistaken for a stall
 const TUNNEL_PROBE_INTERVAL_MS = 30_000;    // 30s — adopted tunnels have no `exited` promise
 const TUNNEL_ZOMBIE_THRESHOLD = 10;         // ~5min @ 30s probe — only regenerate a truly-zombied URL (process alive, edge dropped). cloudflared self-heals transient QUIC drops, so don't kill it early.
 const TUNNEL_URL_REGEX = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
@@ -76,6 +78,7 @@ let tunnelRestarts = 0;
 let lastTunnelCrash = 0;
 
 let healthFailCount = 0;
+let noServerChildCycles = 0; // consecutive health cycles with no server child
 let tunnelFailCount = 0;
 let serverRestartRequested = false; // SIGUSR2 flag — skip backoff on next crash
 
@@ -107,13 +110,31 @@ function backoffDelay(restartCount: number): number {
 }
 
 // ─── Port recovery ─────────────────────────────────────────────────────
+// The probe socket really listens, so clients retrying against the port (browser
+// tabs, extension/chat WebSockets after a server restart) can connect to it. An
+// open connection makes close(cb) wait forever, which used to hang spawnServer
+// before it ever spawned — supervisor alive, tunnel alive, nothing serving.
+// Hence: drop incoming connections, and never let the probe outlive the timeout.
 function isPortBindable(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const net = require("node:net") as typeof import("node:net");
-    const tester = net.createServer()
-      .once("error", () => resolve(false))
-      .once("listening", () => tester.close(() => resolve(true)))
-      .listen(port, host);
+    let settled = false;
+    const finish = (bindable: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(bindable);
+    };
+    const timer = setTimeout(() => {
+      log("WARN", `Port probe for ${port} timed out — treating as unbindable`);
+      try { tester.close(); } catch {}
+      finish(false);
+    }, PORT_PROBE_TIMEOUT_MS);
+    const tester = net.createServer();
+    tester.on("connection", (socket) => socket.destroy());
+    tester.once("error", () => finish(false));
+    tester.once("listening", () => tester.close(() => finish(true)));
+    tester.listen(port, host);
   });
 }
 
@@ -558,7 +579,22 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
 // ─── Health checks ─────────────────────────────────────────────────────
 function startServerHealthCheck() {
   healthTimer = setInterval(async () => {
-    if (shuttingDown || !serverChild || getState() === "stopped") return;
+    if (shuttingDown || getState() === "stopped") return;
+    // The spawn loop can stall before ever producing a child, leaving supervisor
+    // and tunnel healthy while nothing serves — invisible to every other probe.
+    // Crash backoff also parks serverChild at null, but never longer than
+    // BACKOFF_MAX_MS, so only revive past that margin.
+    if (!serverChild) {
+      if (getState() !== "running") return;
+      noServerChildCycles++;
+      if (noServerChildCycles * SERVER_HEALTH_INTERVAL_MS >= SERVER_REVIVE_AFTER_MS) {
+        noServerChildCycles = 0;
+        log("WARN", "No server child while state=running — reviving server");
+        spawnServer(_serverArgs, _logFd).catch((e) => log("ERROR", `Server revive failed: ${e}`));
+      }
+      return;
+    }
+    noServerChildCycles = 0;
     // _opts.port tracks the server's real port (spawnServer updates it on
     // zombie-port fallback). status.json can override, but never trust a
     // startup-time closure value — a stale port here makes the health check
@@ -842,30 +878,21 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // Spawn new supervisor using saved argv
     const cmd = originalArgv.slice();
     const newLogFd = openSync(logFile(), "a");
-    let killNewChild = () => {};
 
-    if (process.platform === "win32") {
-      // On Windows, Bun.spawn children die when parent exits (same job object).
-      // Use node:child_process with detached:true to create a truly independent process.
-      const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
-      const proc = nodeSpawn(cmd[0]!, cmd.slice(1), {
-        detached: true,
-        stdio: ["ignore", newLogFd, newLogFd] as any,
-        env: process.env as NodeJS.ProcessEnv,
-        windowsHide: true,
-      });
-      killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };
-      proc.unref();
-      try { closeSync(newLogFd); } catch {} // child inherited fd, parent can close
-    } else {
-      const proc = Bun.spawn({
-        cmd,
-        stdio: ["ignore", newLogFd, newLogFd],
-        env: process.env,
-      });
-      killNewChild = () => { try { proc.kill(); } catch {} };
-      proc.unref();
-    }
+    // detached:true is what makes the replacement independent of us: a new job
+    // object on Windows, a new session on POSIX. Without the POSIX session,
+    // launchd/systemd tears the replacement down along with our process group
+    // the moment we exit — it dies seconds after adopting the tunnel.
+    const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
+    const proc = nodeSpawn(cmd[0]!, cmd.slice(1), {
+      detached: true,
+      stdio: ["ignore", newLogFd, newLogFd] as any,
+      env: process.env as NodeJS.ProcessEnv,
+      windowsHide: true,
+    });
+    const killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };
+    proc.unref();
+    try { closeSync(newLogFd); } catch {} // child inherited fd, parent can close
 
     // Poll status.json for new supervisor PID (up to 30s)
     const start = Date.now();
@@ -1329,6 +1356,12 @@ export async function runSupervisor(opts: {
     if (serverChild) {
       serverRestartRequested = true; // flag so spawnServer skips backoff
       requestServerShutdown(serverChild).catch(() => {});
+    } else {
+      // Nothing to bounce — the spawn loop is gone. Without this `ppm restart`
+      // silently no-ops and only `stop --kill` + `start` recovers.
+      log("WARN", "No server child to restart — spawning one");
+      noServerChildCycles = 0;
+      spawnServer(serverArgs, logFd).catch((e) => log("ERROR", `Server respawn failed: ${e}`));
     }
   });
 

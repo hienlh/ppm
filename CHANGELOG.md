@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.26] - 2026-08-18
+
+### Fixed
+- **PPM could go silently dead right after an upgrade** — once the upgrade finished, neither the local address nor the share link answered any more; the page simply spun forever instead of failing. `ppm status` insisted everything was running, and `ppm restart` changed nothing, so the only way back was `ppm stop --kill` followed by `ppm start`. Before starting the server, PPM checks that the port is free by briefly listening on it itself. That check is a real listening socket, so the browser tabs, extensions and chat windows all reconnecting after the upgrade could connect to it — and a socket with a connection open never finishes closing, so the check never returned an answer and the server was never started at all. Everything around it stayed healthy, which is why nothing reported a problem: the supervisor was alive, the share tunnel was alive, and the port was open and accepting connections — just never replying. The check now refuses connections and gives up after two seconds, and three further gaps that let this go unnoticed are closed: the health check now starts a server that was never started rather than only watching one that already exists, `ppm restart` now starts a server when there is none to restart, and `ppm status` now asks the server itself instead of trusting its own notes.
+- **Upgrading dropped the share link and started over** — every upgrade was supposed to hand the running tunnel to the new version so the public address stays the same, and it did, but on macOS the replacement was killed a second later and a cold one started in its place, with a new address. The upgrade works by starting the new version and stepping aside, and macOS was treating the replacement as part of the outgoing version and shutting it down along with it. The replacement now runs in its own right, so the handover survives.
+
 ## [0.17.25] - 2026-08-17
 
 ### Fixed
