@@ -3,6 +3,7 @@ import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clo
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
+import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
 import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
@@ -184,12 +185,18 @@ export const MessageInput = memo(function MessageInput({
     }
   }, [voice.isListening, voice.start, voice.stop, voiceResultCb]);
 
-  // Listen for global keyboard shortcut (Cmd+Shift+V) to toggle voice
+  // Listen for global keyboard shortcut (Cmd+Shift+V) to toggle voice.
+  // Guarded so that only the focused panel's chat reacts — every chat tab stays
+  // mounted, so an unguarded listener toggles the mic in all of them at once.
   useEffect(() => {
-    const handler = () => { if (voice.supported) handleVoiceToggle(); };
+    const handler = () => {
+      if (!voice.supported) return;
+      if (!ownsGlobalShortcut(getVisibleTextarea())) return;
+      handleVoiceToggle();
+    };
     window.addEventListener("toggle-voice-input", handler);
     return () => window.removeEventListener("toggle-voice-input", handler);
-  }, [voice.supported, handleVoiceToggle]);
+  }, [voice.supported, handleVoiceToggle, getVisibleTextarea]);
 
   // Listen for "Send to Chat" from terminal or other tabs — add as attachment chip
   useEffect(() => {
