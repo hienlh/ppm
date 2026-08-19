@@ -39,6 +39,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { ChatWelcome } from "./chat-welcome";
+import { ChatScrollNav } from "./chat-scroll-nav";
 import { MessageActionBar, ActionButton } from "./message-action-bar";
 import { VersionSwitcher } from "./version-switcher";
 import type { VersionGroup } from "../../../types/api";
@@ -387,94 +388,7 @@ export function MessageList({
           )}
         </div>
       </div>
-      <ScrollNavButtons scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} />
-    </div>
-  );
-}
-
-/**
- * Floating bottom-right navigation between the user's own messages. Every bubble is
- * now in the real DOM (no virtualization), so navigation queries the rendered rows by
- * their `data-msg-index` and scrolls to the target. Up jumps to the nearest user
- * message above the top of the viewport; Down jumps to the nearest one below, or to
- * the very bottom when none remain.
- */
-function ScrollNavButtons({ scrollElement, userIndices, scrollToBottom }: {
-  scrollElement: HTMLDivElement | null;
-  userIndices: number[];
-  scrollToBottom: (opts?: { animation?: "instant" | "smooth" }) => void | Promise<boolean> | boolean;
-}) {
-  const [hasAbove, setHasAbove] = useState(false);
-  const [atBottom, setAtBottom] = useState(true);
-
-  // Top of a row in the scroll container's content coordinates (scrollTop space).
-  const rowTop = (el: HTMLElement, row: HTMLElement) =>
-    row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
-
-  const userRows = useCallback((el: HTMLElement) =>
-    Array.from(el.querySelectorAll<HTMLElement>("[data-msg-index]"))
-      .filter((r) => userIndices.includes(Number(r.dataset.msgIndex))),
-    [userIndices]);
-
-  useEffect(() => {
-    const el = scrollElement;
-    if (!el) return;
-    let raf = 0;
-    const recompute = () => {
-      const top = el.scrollTop;
-      const above = userRows(el).some((r) => rowTop(el, r) < top - 4);
-      setHasAbove((prev) => (prev === above ? prev : above));
-      const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
-      setAtBottom((prev) => (prev === bottom ? prev : bottom));
-    };
-    const schedule = () => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(recompute);
-    };
-    recompute();
-    el.addEventListener("scroll", schedule, { passive: true });
-    const ro = new ResizeObserver(schedule);
-    ro.observe(el);
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      el.removeEventListener("scroll", schedule);
-      ro.disconnect();
-    };
-  }, [scrollElement, userRows]);
-
-  const goUp = useCallback(() => {
-    const el = scrollElement;
-    if (!el) return;
-    const top = el.scrollTop;
-    let target: number | undefined;
-    for (const r of userRows(el)) {
-      const t = rowTop(el, r);
-      if (t < top - 4) target = t; // ascending — keep the last one still above
-      else break;
-    }
-    if (target != null) el.scrollTo({ top: target, behavior: "auto" });
-  }, [scrollElement, userRows]);
-
-  const goDown = useCallback(() => {
-    const el = scrollElement;
-    if (!el) return;
-    const top = el.scrollTop;
-    const next = userRows(el).map((r) => rowTop(el, r)).find((t) => t > top + 4);
-    if (next != null) el.scrollTo({ top: next, behavior: "auto" });
-    else scrollToBottom({ animation: "instant" });
-  }, [scrollElement, userRows, scrollToBottom]);
-
-  const btnClass =
-    "size-8 flex items-center justify-center rounded-full bg-surface-elevated/60 border border-border/60 text-text-secondary shadow-md backdrop-blur-sm transition-all hover:bg-surface-elevated hover:text-foreground disabled:opacity-30 disabled:cursor-default disabled:hover:bg-surface-elevated/60 disabled:hover:text-text-secondary";
-
-  return (
-    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-2">
-      <button type="button" onClick={goUp} disabled={!hasAbove} aria-label="Jump to previous message" className={btnClass}>
-        <ChevronUp className="size-4" />
-      </button>
-      <button type="button" onClick={goDown} disabled={atBottom} aria-label="Jump to next message" className={btnClass}>
-        <ChevronDown className="size-4" />
-      </button>
+      <ChatScrollNav scrollElement={scrollEl} userIndices={userIndices} scrollToBottom={scrollToBottom} />
     </div>
   );
 }

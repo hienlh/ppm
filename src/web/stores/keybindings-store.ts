@@ -38,6 +38,8 @@ export const KEY_ACTIONS: KeyAction[] = [
   { id: "open-git-status", label: "Git Status (sidebar)", category: "tabs", defaultKey: "Mod+Shift+E" },
   { id: "open-search", label: "Search Files (sidebar)", category: "tabs", defaultKey: "Mod+Shift+F" },
   { id: "voice-input", label: "Voice Input", category: "general", defaultKey: "Mod+Shift+V", note: "Toggle speech-to-text in chat" },
+  { id: "chat-nav-prev", label: "Previous Chat Message", category: "general", defaultKey: "Alt+ArrowUp", note: "Jump to your previous message in the visible chat transcript" },
+  { id: "chat-nav-next", label: "Next Chat Message", category: "general", defaultKey: "Alt+ArrowDown", note: "Jump to your next message in the visible chat transcript" },
   { id: "compare-files", label: "Compare Files...", category: "general", defaultKey: "Mod+Alt+D", note: "Open file-compare picker (seeds active file as A)" },
   // Projects — Mod+1..9
   ...Array.from({ length: 9 }, (_, i) => ({

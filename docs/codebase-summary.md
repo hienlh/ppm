@@ -196,11 +196,12 @@ src/
 │       │   └── globals.css          # Tailwind directives, custom CSS
 │       └── components/              # React components (organized by feature)
 │           ├── auth/                # Login screen (88 LOC)
-│           ├── chat/                # Chat UI (12 files)
+│           ├── chat/                # Chat UI (13 files)
 │           │   ├── chat-tab.tsx     # Main chat container, session picker, streaming
 │           │   ├── chat-history-bar.tsx # Session history sidebar, inline rename
 │           │   ├── chat-history-panel.tsx # Full session list modal
 │           │   ├── message-list.tsx # Scrolling message view with tool results
+│           │   ├── chat-scroll-nav.tsx # Collapsed puck to jump between your messages
 │           │   ├── message-input.tsx # Textarea with attachments, @ slash commands
 │           │   ├── session-picker.tsx # Dropdown to select/create session
 │           │   ├── file-picker.tsx  # Filterable file tree picker

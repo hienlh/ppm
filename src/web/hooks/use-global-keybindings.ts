@@ -34,6 +34,15 @@ export function useGlobalKeybindings() {
     function onCompositionStart() { composing = true; }
     function onCompositionEnd() { composing = false; }
 
+    /** Chat transcript jumps. Returns true when the event was consumed. */
+    function dispatchChatNav(e: KeyboardEvent, m: (ev: KeyboardEvent, id: string) => boolean) {
+      const dir = m(e, "chat-nav-prev") ? "prev" : m(e, "chat-nav-next") ? "next" : null;
+      if (!dir) return false;
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent(`chat-nav-${dir}`));
+      return true;
+    }
+
     function handler(e: KeyboardEvent) {
       // Track whether Shift is pressed alone (not as a modifier for another key)
       if (e.type === "keydown" && e.key === "Shift") {
@@ -84,6 +93,9 @@ export function useGlobalKeybindings() {
           e.preventDefault();
           usePanelStore.getState().toggleDock();
         }
+        // The composer holds focus for most of a chat session, so the transcript
+        // jumps have to survive this early return or they are unreachable.
+        dispatchChatNav(e, m);
         return;
       }
 
@@ -183,6 +195,9 @@ export function useGlobalKeybindings() {
         window.dispatchEvent(new CustomEvent("toggle-voice-input"));
         return;
       }
+
+      // Chat transcript navigation — the focused panel's chat tab picks these up
+      if (dispatchChatNav(e, match)) return;
 
       // Compare Files — seed A from active editor tab if applicable, then open picker
       if (match(e, "compare-files")) {
