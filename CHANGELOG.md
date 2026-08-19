@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.27] - 2026-08-19
+
+### Added
+- **The message navigation no longer sits on top of the conversation** — the two round arrows anchored to the bottom-right corner of a chat floated above the transcript rather than beside it, so on longer messages they covered the last line or two of your own text and clipped the right edge of whatever tool result happened to be underneath them. They are replaced by a single dim dot about a third of the size, which stays out of the way until you click it. It then opens into the same up and down arrows, a counter showing which of your messages you are currently level with, and a new button that jumps straight to the end of the conversation; it folds back into the dot a few seconds after you stop using it. Two shortcuts were added for the same jumps — Alt with the up or down arrow — and they keep working while you are typing in the message box, since that is where the cursor sits for most of a conversation. Both appear under Settings as "Previous Chat Message" and "Next Chat Message" and can be changed there.
+
+### Fixed
+- **Dictation started in every open chat at once** — with more than one chat open, the voice input shortcut switched the microphone on in all of them instead of the one you were working in, so turning it back off meant pressing the shortcut once per chat. Chats stay loaded in the background once opened, so that switching between them is instant, and the shortcut was reaching every one of them equally. It now applies only to the chat you are actually in, whether it comes from the keyboard or from the command palette.
+
 ## [0.17.26] - 2026-08-18
 
 ### Fixed
