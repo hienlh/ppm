@@ -411,6 +411,19 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     [handleSend, clearDraft, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments],
   );
 
+  // Past user messages for the composer's ArrowUp/Down recall. Read through a ref
+  // so the getter identity stays stable — `messages` changes on every stream chunk,
+  // and a fresh array each time would break MessageInput's memo().
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const getUserHistory = useCallback(
+    () =>
+      messagesRef.current
+        .filter((m) => m.role === "user" && m.content.trim())
+        .map((m) => m.content),
+    [],
+  );
+
   /** Draft auto-save callback — called by MessageInput on content change */
   const handleContentChange = useCallback(
     (content: string, attachments?: DraftAttachment[]) => {
@@ -680,6 +693,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
             onExternalPathsConsumed={handleExternalPathsConsumed}
             onDisambiguate={handleDisambiguate}
             onContentChange={handleContentChange}
+            getUserHistory={getUserHistory}
             permissionMode={permissionMode}
             onModeChange={setPermissionMode}
             providerId={providerId}

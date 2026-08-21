@@ -6,6 +6,8 @@ import { randomId } from "@/lib/utils";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
 import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
+import { stepHistory } from "./message-history-recall";
+import { toComposerDraft } from "./user-message-parse";
 import { ModeSelector, getModeLabel, getModeIcon } from "./mode-selector";
 import { ProviderSelector } from "./provider-selector";
 import { ModelThinkingSelector } from "./model-thinking-selector";
@@ -57,6 +59,8 @@ interface MessageInputProps {
   clearSignal?: number;
   /** Called on content change for draft auto-save */
   onContentChange?: (content: string, attachments?: Array<{ name: string; path: string }>) => void;
+  /** Returns this session's user messages, oldest first — powers ArrowUp/Down recall */
+  getUserHistory?: () => string[];
   /** Auto-focus textarea on mount */
   autoFocus?: boolean;
   /** Current permission mode */
@@ -99,6 +103,7 @@ export const MessageInput = memo(function MessageInput({
   initialValue,
   clearSignal,
   onContentChange,
+  getUserHistory,
   autoFocus,
   permissionMode,
   onModeChange,
@@ -156,6 +161,34 @@ export const MessageInput = memo(function MessageInput({
       ? textareaRef.current
       : mobileTextareaRef.current;
   }, []);
+
+  // Shell-style history recall. Counts back from the newest user message
+  // (0 = newest); -1 means not browsing, so the input holds a live draft.
+  const historyIdxRef = useRef(-1);
+
+  /** Step through past user messages. Returns false when the step is out of range. */
+  const recallHistory = useCallback(
+    (delta: number) => {
+      const step = stepHistory(getUserHistory?.() ?? [], historyIdxRef.current, delta);
+      if (!step) return false;
+      historyIdxRef.current = step.index;
+      // Recalled content still carries its send-time wrappers — unwrap it back
+      // into what was typed, with the delegated agent restored as a chip.
+      const { agent, text } = toComposerDraft(step.text);
+      setAgentTag(agent);
+      writeTextareas(text);
+      const ta = getVisibleTextarea();
+      if (!ta) return true;
+      ta.focus();
+      requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = text.length; });
+      if (needsJsResize.current) {
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, ta === mobileTextareaRef.current ? 80 : 160) + "px";
+      }
+      return true;
+    },
+    [getUserHistory, writeTextareas, getVisibleTextarea],
+  );
 
   // Voice input (Web Speech API)
   const voice = useVoiceInput();
@@ -492,6 +525,7 @@ export const MessageInput = memo(function MessageInput({
     setAgentTag(null);
     setPendingSend(false);
     setPriority('next');
+    historyIdxRef.current = -1;
     if (needsJsResize.current) {
       if (textareaRef.current) textareaRef.current.style.height = "auto";
       if (mobileTextareaRef.current) mobileTextareaRef.current.style.height = "auto";
@@ -527,6 +561,16 @@ export const MessageInput = memo(function MessageInput({
         handleSend();
         return;
       }
+      // History recall. Only starts from an empty input so ArrowUp keeps moving
+      // the caret inside a multi-line draft. The slash/@ pickers swallow these
+      // keys before they reach here while either one is open.
+      // Bare arrows only — Alt+Arrow is the global chat-transcript jump.
+      if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        const browsing = historyIdxRef.current >= 0;
+        if (!browsing && (e.key === "ArrowDown" || valueRef.current !== "" || agentTag)) return;
+        if (recallHistory(e.key === "ArrowUp" ? 1 : -1)) e.preventDefault();
+        return;
+      }
       // Shift+Tab: cycle permission mode
       if (e.shiftKey && e.key === "Tab") {
         e.preventDefault();
@@ -536,7 +580,7 @@ export const MessageInput = memo(function MessageInput({
         onModeChange?.(next);
       }
     },
-    [handleSend, permissionMode, onModeChange],
+    [handleSend, permissionMode, onModeChange, recallHistory, agentTag],
   );
 
   const updatePickerState = useCallback(
@@ -589,6 +633,8 @@ export const MessageInput = memo(function MessageInput({
       const el = e.target;
       const text = el.value;
       valueRef.current = text;
+      // Typing turns a recalled message back into a live draft.
+      historyIdxRef.current = -1;
       // Sync the other textarea (handles viewport rotation edge case)
       const other = el === textareaRef.current ? mobileTextareaRef.current : textareaRef.current;
       if (other) other.value = text;
