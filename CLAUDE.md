@@ -64,6 +64,7 @@ Exceptions (intentionally use real `homedir()`):
 ## Known Gotchas
 
 - **SDK .env poisoning**: Projects with `ANTHROPIC_API_KEY` in `.env` break SDK tool execution. Provider neutralizes these vars. See `docs/lessons-learned.md`.
+- **File watching**: never `fs.watch(dir, { recursive: true })` on a project root — on Linux that is one inotify watch per subdirectory, `node_modules` included (it once cost 359k watches). Ignored dirs must be pruned at registration time via `src/services/file-watcher/watch-tree.ts`.
 - **Project Claude settings**: `.claude/settings.local.json` can restrict tools even with `bypassPermissions`. Provider overrides with empty settings.
 
 ## UI Rules

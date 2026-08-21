@@ -129,3 +129,27 @@ which during boot is almost immediately. Idle prefetching scheduled this way fir
 its work ~1.5s into boot, competing with the visible tabs. Use `setTimeout` for the
 spacing and `requestIdleCallback` only to avoid landing in the middle of other work.
 See `src/web/hooks/use-tab-prefetch.ts`.
+
+---
+
+## File Watching
+
+### `fs.watch(dir, { recursive: true })` costs one inotify watch per subdirectory
+
+One call, but on Linux the runtime expands it into a watch per directory in the tree —
+`node_modules` included. Filtering unwanted paths when the event *arrives* still pays the
+full registration cost: PPM held **359,058** inotify watches on one machine (68.5% of the
+524,288 default `fs.inotify.max_user_watches`, with the box at 91.6% overall), which starves
+every other process on the system — editors, language servers, dev servers.
+
+A directory census of this repo shows why: 18,731 directories total, of which `node_modules`
+is 16,926 (90.4%) and `.git` 286. Only ~200 are worth watching.
+
+**Rule:** prune at registration, never at event time. `src/services/file-watcher/watch-tree.ts`
+scans once, then attaches the fewest watchers that cover the tree without ever handing an
+ignored directory to the runtime: one native recursive watch for any subtree that contains no
+ignored directory, and a non-recursive watch plus per-child recursion wherever one sits. Keeping
+the handle count low also keeps `fs.inotify.max_user_instances` (default 128) out of play.
+
+Raising the sysctl limit is not a fix — each watch pins ~1KB of kernel memory, so a 2M ceiling
+reserves ~2GB to paper over waste.
