@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.28] - 2026-08-21
+
+### Added
+- **Press the up arrow to bring back what you typed before** — the composer now keeps the messages you sent in this chat, the way a terminal keeps your command history. From an empty composer the up arrow steps back through them one at a time and the down arrow comes forward again; start typing and whatever you recalled turns back into an ordinary draft. Anything the composer added on the way out is stripped back off, so you get what you actually typed, and if the message was addressed to a particular agent that comes back as a chip rather than as text you have to delete by hand. The arrows only do this while the composer is empty, so they still move the cursor around inside a draft you are in the middle of writing.
+
+### Fixed
+- **PPM was quietly using up the machine's file-watching capacity** — watching a single project could consume hundreds of thousands of the system's file-watch slots, and on Linux those slots are shared with everything else running, so editors, language servers and dev servers could start missing file changes or fail to watch anything at all. On one machine PPM alone held 359,058 of the 524,288 available, with the system at 91.6% overall. Asking to watch a folder and everything beneath it looks like one request, but the operating system charges for it one folder at a time, and PPM was asking for the entire project — dependency folders included — then discarding the notifications it did not want after having paid for them. In this repository that meant 18,731 folders watched in order to usefully follow about 200. PPM now decides what to watch before asking instead of filtering afterwards, leaving dependency, build and cache folders out from the start, which brings the same repository down to 198. There are also limits per project and across all of them so no single project can run away with the machine's capacity, and a folder that cannot be watched is now reported rather than silently going quiet over that part of the project. Separately, a project that never stopped changing — a build running, a large branch switch — could stop reporting changes to the editor and file tree entirely, because every new change pushed the notification further out; they now go out on a steady beat.
+
 ## [0.17.27] - 2026-08-19
 
 ### Added
