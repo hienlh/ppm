@@ -79,14 +79,24 @@ const trackedFile = () => resolve(getPpmDir(), "tracked-descendants.json");
 const PS_LIST_CMD =
   'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)|$($_.ParentProcessId)|$($_.CreationDate.Ticks)" }';
 
+// Shorter than the caller's 30s poll, so a wedged PowerShell can never outlive
+// the interval that spawned it and stack up behind the in-flight guard.
+const LIST_TIMEOUT_MS = 20_000;
+
 async function listProcesses(): Promise<Map<number, { ppid: number; ticks: string }>> {
   const map = new Map<number, { ppid: number; ticks: string }>();
   const proc = Bun.spawn(
     ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", PS_LIST_CMD],
     { stdout: "pipe", stderr: "ignore", stdin: "ignore", windowsHide: true },
   );
-  const out = await new Response(proc.stdout).text();
-  await proc.exited;
+  const killTimer = setTimeout(() => { try { proc.kill(); } catch {} }, LIST_TIMEOUT_MS);
+  let out: string;
+  try {
+    out = await new Response(proc.stdout).text();
+    await proc.exited;
+  } finally {
+    clearTimeout(killTimer);
+  }
   for (const line of out.split("\n")) {
     const [pidStr, ppidStr, ticks] = line.trim().split("|");
     const pid = parseInt(pidStr ?? "", 10);
@@ -136,8 +146,17 @@ export function killProcessTree(pid: number): void {
  * matching creation time) are kept even if they have since orphaned out of
  * the tree — that is exactly the case the reaper exists for.
  */
+let snapshotInFlight = false;
+
 export async function snapshotServerDescendants(rootPid: number): Promise<void> {
   if (process.platform !== "win32") return;
+  // The supervisor fires this from a timer without awaiting. Every concurrent
+  // call spawns a PowerShell and builds a full process map, which costs a 32MiB
+  // allocator segment that is never returned to the OS — so overlapping calls
+  // ratchet the process commit charge up permanently (observed: 19GB committed
+  // against 1GB resident). One at a time; a skipped tick is harmless.
+  if (snapshotInFlight) return;
+  snapshotInFlight = true;
   try {
     const procs = await listProcesses();
 
@@ -166,7 +185,9 @@ export async function snapshotServerDescendants(rootPid: number): Promise<void> 
     }
 
     writeFileSync(trackedFile(), JSON.stringify([...tracked.values()]));
-  } catch {}
+  } catch {} finally {
+    snapshotInFlight = false;
+  }
 }
 
 /**
