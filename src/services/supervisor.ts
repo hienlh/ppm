@@ -109,6 +109,22 @@ function backoffDelay(restartCount: number): number {
   return Math.min(BACKOFF_BASE_MS * 2 ** (restartCount - 1), BACKOFF_MAX_MS);
 }
 
+// ─── Probe/spawn gate ──────────────────────────────────────────────────
+// On Windows, spawning a child with fd stdio turns on handle inheritance for
+// the whole process, so EVERY inheritable handle — including a port-probe
+// listener that happens to be open at that instant — is duplicated into the
+// child. The child (cloudflared, server) never closes the copy, the kernel
+// keeps the port in LISTEN, and the server child can never bind: startup
+// crash-loops with "port still in use" while netstat blames the supervisor.
+// Serialize all bind probes and all child spawns through this gate so a probe
+// socket is never open across a CreateProcess. Never nest gated calls.
+let probeSpawnGate: Promise<unknown> = Promise.resolve();
+function withProbeSpawnGate<T>(fn: () => Promise<T> | T): Promise<T> {
+  const run = probeSpawnGate.then(fn);
+  probeSpawnGate = run.catch(() => {});
+  return run;
+}
+
 // ─── Port recovery ─────────────────────────────────────────────────────
 // The probe socket really listens, so clients retrying against the port (browser
 // tabs, extension/chat WebSockets after a server restart) can connect to it. An
@@ -116,7 +132,9 @@ function backoffDelay(restartCount: number): number {
 // before it ever spawned — supervisor alive, tunnel alive, nothing serving.
 // Hence: drop incoming connections, and never let the probe outlive the timeout.
 function isPortBindable(port: number, host: string): Promise<boolean> {
-  return new Promise((resolve) => {
+  // Gated: the probe listener must never be open while a child is spawned,
+  // or the child inherits the socket handle and wedges the port (see gate).
+  return withProbeSpawnGate(() => new Promise<boolean>((resolve) => {
     const net = require("node:net") as typeof import("node:net");
     let settled = false;
     const finish = (bindable: boolean) => {
@@ -135,7 +153,7 @@ function isPortBindable(port: number, host: string): Promise<boolean> {
     tester.once("error", () => finish(false));
     tester.once("listening", () => tester.close(() => finish(true)));
     tester.listen(port, host);
-  });
+  }));
 }
 
 /**
@@ -157,7 +175,17 @@ async function ensureBindablePort(preferred: number, host: string): Promise<numb
     if (holderPid > 0) {
       let alive = false;
       try { process.kill(holderPid, 0); alive = true; } catch {}
-      if (alive && isPpmProcess(holderPid)) {
+      if (holderPid === process.pid) {
+        // The LISTEN entry is our own leaked probe socket, kept open by a
+        // child that inherited the handle at spawn time. killProcessTree here
+        // would kill THIS supervisor (and everything under it) — the exact
+        // "starts then dies, status.json says running" failure. Bounce the
+        // tunnel instead: cloudflared is the detached child holding the
+        // inherited handle, and replacing it releases the port.
+        log("WARN", `Port ${preferred} LISTEN owned by this supervisor — leaked probe handle inherited by a child; bouncing tunnel to release it`);
+        restartTunnel(preferred);
+        await Bun.sleep(1500);
+      } else if (alive && isPpmProcess(holderPid)) {
         log("WARN", `Port ${preferred} held by stale PPM process (PID ${holderPid}) — reclaiming`);
         killProcessTree(holderPid);
         await Bun.sleep(800);
@@ -278,7 +306,8 @@ export async function spawnServer(
     ? [process.execPath, ...serverArgs]
     : [process.execPath, "run", resolve(import.meta.dir, "..", "server", "index.ts"), ...serverArgs];
 
-  serverChild = Bun.spawn({
+  // Gated: never spawn while a port probe is open (see gate).
+  serverChild = await withProbeSpawnGate(() => Bun.spawn({
     cmd,
     stdio: ["ignore", logFd, logFd],
     env: process.env,
@@ -286,7 +315,7 @@ export async function spawnServer(
     // supervisor is spawned consoleless (detached), so without this its console
     // children — and the Claude SDK grandchildren they spawn — pop blank windows.
     windowsHide: true,
-  });
+  }));
 
   const childPid = serverChild.pid;
   updateStatus({ pid: childPid });
@@ -427,11 +456,13 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   // when the supervisor itself was started consoleless by the upgrade path.
   if (process.platform === "win32") {
     const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
-    const proc = nodeSpawn(bin, quickArgs, {
+    // Gated: fd stdio enables handle inheritance — spawning while a port
+    // probe is open would hand cloudflared the listener handle (see gate).
+    const proc = await withProbeSpawnGate(() => nodeSpawn(bin, quickArgs, {
       detached: true,
       windowsHide: true,
       stdio: ["ignore", "ignore", tunnelLogFd] as ["ignore", "ignore", number],
-    });
+    }));
     proc.unref();
     try { closeSync(tunnelLogFd); } catch {}  // child keeps its own fd
     const pid = proc.pid ?? null;
@@ -497,7 +528,8 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   // self-contained; we only touch the global when it still points at us.
   let child: Subprocess;
   try {
-    child = Bun.spawn(tunnelCmd, { stderr: tunnelLogFd, stdout: "ignore", stdin: "ignore" });
+    child = await withProbeSpawnGate(() =>
+      Bun.spawn(tunnelCmd, { stderr: tunnelLogFd, stdout: "ignore", stdin: "ignore" }));
     tunnelChild = child; // publish so restartTunnel/killStaleTunnel can reach the live child
   } finally {
     // Close our handle; cloudflared keeps its own via dup2
@@ -840,13 +872,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     const portFreeStart = Date.now();
     const portTimeout = process.platform === "win32" ? 3_000 : 10_000;
     while (Date.now() - portFreeStart < portTimeout) {
-      const inUse = await new Promise<boolean>((resolve) => {
-        const net = require("node:net") as typeof import("node:net");
-        const tester = net.createServer()
-          .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
-          .once("listening", () => tester.close(() => resolve(false)))
-          .listen(_opts.port, _opts.host);
-      });
+      const inUse = !(await isPortBindable(_opts.port, _opts.host));
       if (!inUse) break;
       log("DEBUG", `Port ${_opts.port} still in use, waiting...`);
       await Bun.sleep(200);
@@ -858,13 +884,7 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // supervisor can never bind. Resolve the real holder via netstat and
     // tree-kill it so the handoff doesn't dead-end on a zombie port.
     if (process.platform === "win32") {
-      const stillInUse = await new Promise<boolean>((resolve) => {
-        const net = require("node:net") as typeof import("node:net");
-        const tester = net.createServer()
-          .once("error", (e: NodeJS.ErrnoException) => resolve(e.code === "EADDRINUSE"))
-          .once("listening", () => tester.close(() => resolve(false)))
-          .listen(_opts.port, _opts.host);
-      });
+      const stillInUse = !(await isPortBindable(_opts.port, _opts.host));
       if (stillInUse) {
         const holderPid = findPortListenerPid(_opts.port);
         if (holderPid > 0) {
@@ -884,12 +904,13 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // launchd/systemd tears the replacement down along with our process group
     // the moment we exit — it dies seconds after adopting the tunnel.
     const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
-    const proc = nodeSpawn(cmd[0]!, cmd.slice(1), {
+    // Gated: never spawn while a port probe is open (see gate).
+    const proc = await withProbeSpawnGate(() => nodeSpawn(cmd[0]!, cmd.slice(1), {
       detached: true,
       stdio: ["ignore", newLogFd, newLogFd] as any,
       env: process.env as NodeJS.ProcessEnv,
       windowsHide: true,
-    });
+    }));
     const killNewChild = () => { try { if (proc.pid) process.kill(proc.pid); } catch {} };
     proc.unref();
     try { closeSync(newLogFd); } catch {} // child inherited fd, parent can close
