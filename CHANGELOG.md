@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.29] - 2026-08-25
+
+### Fixed
+- **PPM said it had started but nothing answered** — `ppm start` printed the local address and a share link, yet neither localhost nor the link ever responded, and the status file kept insisting everything was running while every process it referred to was already dead. Two things went wrong in sequence, both on Windows. First, before starting the server, PPM briefly listens on the port itself to make sure it is free; starting the share tunnel at the same moment made Windows hand the tunnel a copy of that short-lived listening socket — a copy the tunnel never closes — so the port stayed occupied and the real server could never take it, timing out after ten seconds on every attempt. Second, the supervisor then went looking for whichever process was hogging the port so it could clear it out, and the answer came back as the supervisor itself — which it dutifully killed, taking the server, the tunnel and its own status reporting down with it. That is why the status file still said "running": nothing was left alive to correct it. The port check and the starting of child processes now take turns instead of overlapping, so the socket can no longer leak into a child; and if the port ever does show up as held by the supervisor itself, it restarts the tunnel — the only thing that can actually be holding the leaked copy — rather than killing itself.
+- **PPM's reserved memory could grow without limit on Windows** — the supervisor takes a periodic inventory of the helper processes the server has started, so that after a crash it knows exactly what to clean up. Each inventory launches a PowerShell and builds a list of every process on the machine, which is fine on its own — but on a busy machine one inventory could still be running when the next fired, and every simultaneous run permanently reserved a chunk of memory that was never returned to the system. Left long enough this ratcheted up to an observed 19GB of reserved memory against 1GB actually in use. Inventories now run one at a time — a tick that finds the previous one still running simply skips its turn — and a PowerShell that gets stuck is cut off after twenty seconds instead of lingering forever.
+
 ## [0.17.28] - 2026-08-21
 
 ### Added
