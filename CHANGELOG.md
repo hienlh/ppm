@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.30] - 2026-08-26
+
+### Fixed
+- **Every copy button did nothing when PPM was opened at a plain address** — reaching PPM over `http://` rather than `https://`, which is what happens with a Tailscale machine name or a bare LAN address, left every Copy in the interface inert: copying a chat message, a code block, a file path, a project path, a share link, a proxy setting, a set of database rows. Worse, most of them still reported success — the button flipped to a tick, the toast said "URL copied" — while nothing had reached the clipboard. Browsers only hand out the clipboard interface to pages served over a secure connection, of which `localhost` counts as one and a plain address does not, so on those addresses the interface was simply absent; PPM asked for it anyway and quietly discarded the resulting error. Copies now go through one shared routine that falls back to the older selection-based method, which browsers still allow on plain addresses, so the same buttons work at whatever address you happen to be using. The ones that report an outcome now report the real one, and the two account-backup buttons still fall back to downloading a file. Pasting *from* the clipboard is a separate permission that plain addresses genuinely cannot be granted, so terminal paste and importing database connections from the clipboard still need a secure address; the mobile editor's paste button already offers a long-press box for that case.
+
 ## [0.17.29] - 2026-08-25
 
 ### Fixed
