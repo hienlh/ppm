@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { MoreVertical, Download, Upload, Clipboard, ClipboardPaste } from "lucide-react";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface Props {
   onExport: () => Promise<{ version: number; exported_at: string; connections: unknown[] }>;
@@ -32,8 +33,10 @@ export function ConnectionImportExport({ onExport, onImport }: Props) {
     close();
     try {
       const data = await onExport();
-      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-      alert(`Copied ${data.connections.length} connection(s) to clipboard`);
+      const ok = await copyToClipboard(JSON.stringify(data, null, 2));
+      alert(ok
+        ? `Copied ${data.connections.length} connection(s) to clipboard`
+        : "Copy failed — clipboard unavailable");
     } catch (e) {
       alert(`Export failed: ${(e as Error).message}`);
     }

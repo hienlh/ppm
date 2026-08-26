@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Check, Copy, ExternalLink, Globe, Loader2, Lock, RefreshCw, Square } from "lucide-react";
 import { tunnelsApi, type TunnelEntry } from "@/lib/api-tunnels";
+import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "sonner";
 
 /** Badge label + style per tunnel source. */
@@ -73,11 +74,12 @@ export function TunnelManagerTab() {
   };
 
   const copyUrl = (pid: number, url: string) => {
-    navigator.clipboard.writeText(url).then(() => {
+    copyToClipboard(url).then((ok) => {
+      if (!ok) { toast.error("Failed to copy URL"); return; }
       setCopiedPid(pid);
       toast.success("URL copied");
       setTimeout(() => setCopiedPid(null), 2000);
-    }).catch(() => toast.error("Failed to copy URL"));
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {

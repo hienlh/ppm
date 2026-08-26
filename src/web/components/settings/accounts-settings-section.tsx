@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Eye, Loader2, Copy, X, Download, Upload, Lock, FlaskConical } from "lucide-react";
 import { getAuthToken } from "../../lib/api-client";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   getAccounts,
   getActiveAccount,
@@ -347,10 +348,9 @@ export function AccountsSettingsSection() {
       if (!res.ok) { const j = await res.json() as any; throw new Error(j.error ?? `Export failed: ${res.status}`); }
       const text = await res.text();
       if (toClipboard) {
-        try {
-          await navigator.clipboard.writeText(text);
+        if (await copyToClipboard(text)) {
           showMessage({ type: "success", text: "Backup copied to clipboard!" });
-        } catch {
+        } else {
           const blob = new Blob([text], { type: "application/json" });
           const a = document.createElement("a");
           a.href = URL.createObjectURL(blob);

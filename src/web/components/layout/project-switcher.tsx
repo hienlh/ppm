@@ -6,6 +6,7 @@ import { useProjectStore, resolveOrder, loadRecentTimes, type ProjectInfo } from
 import { SORT_OPTIONS, applySort } from "@/components/layout/project-sort";
 import { buildUrl } from "@/hooks/use-url-sync";
 import { formatRelativeDate } from "@/lib/format-date";
+import { copyToClipboard } from "@/lib/clipboard";
 import { resolveProjectColor, PROJECT_PALETTE } from "@/lib/project-palette";
 import { ProjectAvatar } from "@/components/layout/project-avatar";
 import { useNotificationStore, selectProjectUrgentType, notificationColor } from "@/stores/notification-store";
@@ -358,7 +359,7 @@ export const ProjectSwitcher = memo(function ProjectSwitcher() {
                           <Trash2 className="size-3.5 mr-2" /> Remove Image
                         </ContextMenuItem>
                       )}
-                      <ContextMenuItem onClick={() => navigator.clipboard.writeText(p.path)}>
+                      <ContextMenuItem onClick={() => void copyToClipboard(p.path)}>
                         <Copy className="size-3.5 mr-2" /> Copy Path
                       </ContextMenuItem>
                       <ContextMenuSeparator />

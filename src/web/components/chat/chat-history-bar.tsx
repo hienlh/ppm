@@ -17,6 +17,7 @@ import { CodexUsagePanel } from "./codex-usage-panel";
 import { TeamActivityPanel } from "./team-activity-panel";
 import { ProviderBadge } from "./provider-selector";
 import { formatRelativeDate } from "@/lib/format-date";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import type { SessionInfo, SessionListResponse, ProjectTag } from "../../../types/chat";
 import type { UsageInfo } from "../../../types/chat";
@@ -113,10 +114,11 @@ function DebugCopyButton({ sessionId, projectName }: { sessionId: string; projec
 
   const copy = () => {
     if (!info) return;
-    navigator.clipboard.writeText(info).then(() => {
+    copyToClipboard(info).then((ok) => {
+      if (!ok) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    }).catch(() => { /* silent */ });
+    });
   };
 
   const body = (

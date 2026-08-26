@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Download, Copy, Lock } from "lucide-react";
 import { getAuthToken } from "../../lib/api-client";
+import { copyToClipboard } from "@/lib/clipboard";
 import {
   addAccount,
   getOAuthUrl,
@@ -207,10 +208,9 @@ export function ExportAccountsDialog({ open, onOpenChange, accounts, preselectId
       if (!res.ok) { const j = await res.json() as any; throw new Error(j.error ?? `Export failed: ${res.status}`); }
       const text = await res.text();
       if (toClipboard) {
-        try {
-          await navigator.clipboard.writeText(text);
+        if (await copyToClipboard(text)) {
           onMessage?.("Backup copied to clipboard!");
-        } catch {
+        } else {
           downloadBlob(text);
           onMessage?.("Backup downloaded.");
         }

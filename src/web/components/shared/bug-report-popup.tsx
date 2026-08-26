@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Copy, ExternalLink, X, Check } from "lucide-react";
-import { openGithubIssue, copyToClipboard } from "@/lib/report-bug";
+import { openGithubIssue } from "@/lib/report-bug";
+import { copyToClipboard } from "@/lib/clipboard";
 
 export function BugReportPopup() {
   const [text, setText] = useState<string | null>(null);

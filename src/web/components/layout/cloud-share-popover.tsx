@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Cloud, Share2, Loader2, Copy, Check, X, LogOut, Link, Unlink, ExternalLink } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "@/lib/api-client";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface CloudStatus {
   logged_in: boolean;
@@ -54,7 +55,7 @@ export function CloudSharePopover({ onClose, variant = "popover" }: Props) {
   }, []);
 
   const handleCopy = useCallback((url: string) => {
-    navigator.clipboard.writeText(url);
+    void copyToClipboard(url);
     setCopied(url);
     setTimeout(() => setCopied(null), 2000);
   }, []);

@@ -60,16 +60,6 @@ export function openGithubIssue(body: string) {
   window.open(url, "_blank");
 }
 
-/** Copy text to clipboard */
-export async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Open bug report popup globally via custom event */
 export function openBugReportPopup(
   version: string | null,

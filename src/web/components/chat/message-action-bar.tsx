@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatRelativeDate } from "@/lib/format-date";
+import { copyToClipboard } from "@/lib/clipboard";
 
 /** Full timestamp for the relative-time tooltip. */
 function fullDate(iso: string): string {
@@ -50,7 +51,7 @@ function CopyButton({ content }: { content: string }) {
       label={copied ? "Copied" : "Copy"}
       title="Copy message to clipboard"
       onClick={() => {
-        navigator.clipboard?.writeText(content).catch(() => {});
+        void copyToClipboard(content);
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       }}

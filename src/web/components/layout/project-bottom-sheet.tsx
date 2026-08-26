@@ -10,6 +10,7 @@ import { ProjectAvatar } from "@/components/layout/project-avatar";
 import { buildUrl } from "@/hooks/use-url-sync";
 import { formatRelativeDate } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 
 interface ProjectBottomSheetProps {
@@ -181,7 +182,7 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
       label: "Copy Path",
       icon: Copy,
       onClick: () => {
-        if (actionProject) navigator.clipboard.writeText(actionProject.path).catch(() => { /* ignore */ });
+        if (actionProject) void copyToClipboard(actionProject.path);
         setActionTarget(null);
       },
     },

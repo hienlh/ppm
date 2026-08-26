@@ -14,6 +14,7 @@ import { resolveProjectColor } from "@/lib/project-palette";
 import { ProjectAvatar } from "@/components/layout/project-avatar";
 import type { Tab } from "@/stores/tab-store";
 import { cn, basename } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "sonner";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { useNotificationStore } from "@/stores/notification-store";
@@ -188,12 +189,12 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     const projectName = tab.metadata?.projectName as string | undefined;
     switch (action) {
       case "copy-path":
-        if (filePath) navigator.clipboard.writeText(filePath).catch(() => {});
+        if (filePath) void copyToClipboard(filePath);
         break;
       case "copy-full-path": {
         if (filePath) {
           const project = projectName ? useProjectStore.getState().projects.find((p) => p.name === projectName) : null;
-          navigator.clipboard.writeText(project ? `${project.path}/${filePath}` : filePath).catch(() => {});
+          void copyToClipboard(project ? `${project.path}/${filePath}` : filePath);
         }
         break;
       }

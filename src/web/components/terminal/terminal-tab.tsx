@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useTerminal } from "@/hooks/use-terminal";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { Copy, ClipboardPaste, RotateCcw, MessageSquare } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
@@ -88,7 +89,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const handleCopy = useCallback(async () => {
     const selection = getSelection();
     if (selection) {
-      await navigator.clipboard.writeText(selection);
+      await copyToClipboard(selection);
     }
   }, [getSelection]);
 

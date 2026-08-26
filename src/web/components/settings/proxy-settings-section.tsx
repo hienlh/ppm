@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { getProxySettings, updateProxySettings, type ProxySettings } from "@/lib/api-settings";
+import { copyToClipboard } from "@/lib/clipboard";
 import { ProxyTestButton } from "./proxy-test-section";
 
 export function ProxySettingsSection() {
@@ -37,8 +38,8 @@ export function ProxySettingsSection() {
     }
   };
 
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopy = (text: string, label: string) => {
+    void copyToClipboard(text);
     setCopied(label);
     setTimeout(() => setCopied(null), 2000);
   };
@@ -96,7 +97,7 @@ export function ProxySettingsSection() {
               variant="outline"
               size="sm"
               className="h-7 px-2 cursor-pointer shrink-0"
-              onClick={() => copyToClipboard(settings.authKey!, "key")}
+              onClick={() => handleCopy(settings.authKey!, "key")}
             >
               {copied === "key" ? "Copied!" : <Copy className="size-3" />}
             </Button>
@@ -145,7 +146,7 @@ export function ProxySettingsSection() {
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1.5 cursor-pointer shrink-0"
-                onClick={() => copyToClipboard(hasTunnel ? settings.proxyEndpoint! : localEndpoint, "anthropic")}
+                onClick={() => handleCopy(hasTunnel ? settings.proxyEndpoint! : localEndpoint, "anthropic")}
               >
                 {copied === "anthropic" ? "Copied!" : <Copy className="size-3" />}
               </Button>
@@ -163,7 +164,7 @@ export function ProxySettingsSection() {
                 variant="ghost"
                 size="sm"
                 className="h-6 px-1.5 cursor-pointer shrink-0"
-                onClick={() => copyToClipboard(
+                onClick={() => handleCopy(
                   hasTunnel ? settings.openAiEndpoint! : settings.localOpenAiEndpoint, "openai",
                 )}
               >
@@ -190,7 +191,7 @@ ANTHROPIC_API_KEY=${settings.authKey}`}
                 variant="ghost"
                 size="sm"
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
-                onClick={() => copyToClipboard(
+                onClick={() => handleCopy(
                   `ANTHROPIC_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy" : localBaseUrl + "/proxy"}\nANTHROPIC_API_KEY=${settings.authKey}`,
                   "anthropic-env",
                 )}
@@ -211,7 +212,7 @@ OPENAI_API_KEY=${settings.authKey}`}
                 variant="ghost"
                 size="sm"
                 className="absolute top-1 right-1 h-5 px-1 cursor-pointer"
-                onClick={() => copyToClipboard(
+                onClick={() => handleCopy(
                   `OPENAI_BASE_URL=${hasTunnel ? settings.tunnelUrl + "/proxy/v1" : localBaseUrl + "/proxy/v1"}\nOPENAI_API_KEY=${settings.authKey}`,
                   "openai-env",
                 )}

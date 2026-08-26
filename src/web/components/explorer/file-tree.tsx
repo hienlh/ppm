@@ -13,6 +13,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
+import { copyToClipboard } from "@/lib/clipboard";
 import { useShallow } from "zustand/react/shallow";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -244,12 +245,12 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       return;
     }
     if (action === "copy-path") {
-      navigator.clipboard.writeText(node.path).catch(() => {});
+      void copyToClipboard(node.path);
       return;
     }
     if (action === "copy-full-path") {
       const root = activeProject?.path;
-      navigator.clipboard.writeText(root ? `${root}/${node.path}` : node.path).catch(() => {});
+      void copyToClipboard(root ? `${root}/${node.path}` : node.path);
       return;
     }
     if (action === "select-for-compare") {

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Download } from "lucide-react";
 import { serializeCsv } from "@/lib/csv-parser";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface ExportButtonProps {
   columns: string[];
@@ -53,10 +54,10 @@ export function ExportButton({ columns, rows, filename = "export", exportAllUrl 
     setOpen(false);
   };
 
-  const copyToClipboard = async () => {
+  const handleCopy = async () => {
     const header = columns.join("\t");
     const body = rows.map((r) => columns.map((c) => String(r[c] ?? "")).join("\t")).join("\n");
-    await navigator.clipboard.writeText(header + "\n" + body);
+    await copyToClipboard(header + "\n" + body);
     setOpen(false);
   };
 
@@ -90,7 +91,7 @@ export function ExportButton({ columns, rows, filename = "export", exportAllUrl 
         <div ref={dropdownRef}
           style={{ position: "fixed", left: Math.min(rect.left, window.innerWidth - 170), top: rect.bottom + 4, zIndex: 10000 }}
           className="bg-popover border border-border rounded-md shadow-md py-1 min-w-[160px] text-xs">
-          <button onClick={copyToClipboard} className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors text-foreground">
+          <button onClick={handleCopy} className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors text-foreground">
             Copy to Clipboard (TSV)
           </button>
           <button onClick={exportPageCsv} className="w-full text-left px-3 py-1.5 hover:bg-muted transition-colors text-foreground">

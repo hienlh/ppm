@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
 import { useTabStore } from "@/stores/tab-store";
 import { highlightToHtml, highlightSync, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
+import { copyToClipboard } from "@/lib/clipboard";
 
 /**
  * Shiki-highlighted HTML for a code block. Returns null while streaming or
@@ -88,13 +89,13 @@ export function MdPre({ children, node, ...rest }: any) {
         : <pre {...rest}>{children}</pre>}
       {codeActions && (
         <div className="code-actions absolute top-1 right-1 flex gap-1">
-          <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => navigator.clipboard.writeText(text)} />
+          <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => void copyToClipboard(text)} />
           {isBash && projectName && (
             <ActionBtn
               title="Run in terminal"
               icon={<PlayIcon />}
               onClick={() => {
-                navigator.clipboard.writeText(text.replace(/^\$\s*/gm, ""));
+                void copyToClipboard(text.replace(/^\$\s*/gm, ""));
                 openTab({ type: "terminal", title: "Terminal", metadata: { projectName }, projectId: projectName, closable: true });
               }}
             />

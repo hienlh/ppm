@@ -43,6 +43,7 @@ import { DraggableTab } from "./draggable-tab";
 import { cn } from "@/lib/utils";
 import type { Tab } from "@/stores/tab-store";
 import { downloadFile } from "@/lib/file-download";
+import { copyToClipboard } from "@/lib/clipboard";
 import { FileActions } from "@/components/explorer/file-actions";
 import {
   ContextMenu as BarContextMenu,
@@ -278,7 +279,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
       }
       case "copy-path": {
         const filePath = tab.metadata?.filePath as string | undefined;
-        if (filePath) navigator.clipboard.writeText(filePath).catch(() => {});
+        if (filePath) void copyToClipboard(filePath);
         break;
       }
       case "copy-full-path": {
@@ -286,7 +287,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         const projectName = tab.metadata?.projectName as string | undefined;
         if (filePath) {
           const project = projectName ? useProjectStore.getState().projects.find((p) => p.name === projectName) : null;
-          navigator.clipboard.writeText(project ? `${project.path}/${filePath}` : filePath).catch(() => {});
+          void copyToClipboard(project ? `${project.path}/${filePath}` : filePath);
         }
         break;
       }
