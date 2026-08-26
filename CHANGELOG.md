@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.31] - 2026-08-27
+
+### Added
+- **A finished reply now tells you which of your files it changed** — at the end of every reply that touched a file, the row of buttons underneath it gains a small summary reading something like "4 files +312 −41". Opening it lists the files that reply changed: what happened to each one — created, overwritten, edited — how many times it was touched, and how many lines went in and out. Opening one of those files lists that file's individual edits with their diffs. Every row is also a jump: clicking one scrolls the conversation back to the exact tool card that made that change and flashes it, so the summary acts as an index into a long reply rather than as a second copy of it. On a phone it opens as a sheet from the bottom of the screen; on a desktop it opens beside the reply as a two-pane panel you can move through with `j` and `k` and jump from with `enter`. It appears only on replies that actually changed a file. Two things worth knowing: the separate edits to one file are shown one by one rather than merged into a single before-and-after, because each edit describes only its own fragment of the file and those fragments cannot be stitched back together; and edits made by a sub-agent appear while the reply is still running but are gone from the summary after a reload, because a sub-agent's steps are never written to disk, so after the fact there is nothing left to list.
+- **A share link that survives a restart** — the share link PPM hands out changes every time it restarts, so a link you sent to your phone has usually stopped working by the next day. A permanent address that always points at your machine was already available, but nothing in the interface said so: the only way in was an unlabelled icon in the side rail. The share popover now explains the rotation while you are signed out, offers to set a permanent address up, and shows that address once it is linked; if it cannot read your current one it now says so rather than looking as though you have none, which previously risked quietly replacing a link already in use. It is reachable from the command palette on both desktop and phone, and the startup banner mentions it when you are sharing without one. Claiming an address no longer requires the command line.
+
+### Fixed
+- **Notebook edits showed a blank file path** — the card for an edit to a notebook displayed no path at all, because it looked for the field the other file tools use rather than the one notebooks are passed under.
+
+### Changed
+- Two claims that were not true have been dropped from the documentation: browser notifications do not currently arrive at all — only Telegram does — and the cloud stores an account email alongside machine names and share addresses.
+
 ## [0.17.30] - 2026-08-26
 
 ### Fixed
