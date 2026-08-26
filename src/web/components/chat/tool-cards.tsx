@@ -154,7 +154,10 @@ export function ToolCard({
   const isInteractive = toolName === "AskUserQuestion" || toolName === "ExitPlanMode" || isSubagent;
 
   return (
-    <div className={`rounded-[11px] border overflow-hidden text-xs bg-panel ${isInteractive ? "border-accent-wash-border" : "border-border"}`}>
+    <div
+      data-tool-ref={toolUseId}
+      className={`rounded-[11px] border overflow-hidden text-xs bg-panel ${isInteractive ? "border-accent-wash-border" : "border-border"}`}
+    >
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2.5 px-2.5 py-2 w-full text-left hover:bg-panel-2/40 transition-colors min-w-0"
@@ -183,7 +186,7 @@ export function ToolCard({
       {expanded && (
         <div className="px-2 pb-2 space-y-1.5 select-text">
           {(tool.type === "tool_use" || tool.type === "approval_request") && (
-            <ToolDetails name={toolName} input={input} projectName={projectName} />
+            <ToolDetails name={toolName} input={input} projectName={projectName} toolUseId={toolUseId} />
           )}
           {/* Streaming bash output */}
           {partial && <StreamingBashOutput content={partial.content} lineCount={partial.lineCount} />}
@@ -256,10 +259,13 @@ function ToolDetails({
   name,
   input,
   projectName,
+  toolUseId,
 }: {
   name: string;
   input: Record<string, unknown>;
   projectName?: string;
+  /** Anchors each rendered edit so the change tray can jump to it. */
+  toolUseId?: string;
 }) {
   const s = (v: unknown) => String(v ?? "");
   const { openTab } = useTabStore(useShallow((state) => ({ openTab: state.openTab })));
@@ -301,8 +307,10 @@ function ToolDetails({
     case "Edit":
     case "MultiEdit":
     case "NotebookEdit": {
-      const filePath = s(input.file_path);
+      // NotebookEdit carries `notebook_path`; the other three carry `file_path`.
+      const filePath = s(input.notebook_path || input.file_path);
       const hasEditDiff = name === "Edit" && (!!input.old_string || !!input.new_string);
+      const editRef = (i: number) => (toolUseId ? `${toolUseId}-${i}` : undefined);
       return (
         <div className="space-y-1">
           <div className="flex items-start gap-3">
@@ -328,12 +336,14 @@ function ToolDetails({
             )}
           </div>
           {hasEditDiff && (
-            <EditDiffPreview oldStr={s(input.old_string)} newStr={s(input.new_string)} filePath={filePath} />
+            <div data-edit-ref={editRef(0)}>
+              <EditDiffPreview oldStr={s(input.old_string)} newStr={s(input.new_string)} filePath={filePath} />
+            </div>
           )}
           {name === "MultiEdit" && Array.isArray(input.edits) && (
             <div className="space-y-1.5">
               {(input.edits as Array<{ old_string?: string; new_string?: string }>).map((e, i) => (
-                <div key={i} className="space-y-0.5">
+                <div key={i} data-edit-ref={editRef(i)} className="space-y-0.5">
                   <p className="text-text-subtle text-[10px]">Edit {i + 1}</p>
                   <EditDiffPreview oldStr={s(e.old_string)} newStr={s(e.new_string)} filePath={filePath} />
                 </div>
@@ -341,7 +351,7 @@ function ToolDetails({
             </div>
           )}
           {name === "Write" && !!input.content && (
-            <pre className="font-mono text-text-subtle overflow-x-auto max-h-32 whitespace-pre-wrap">{truncate(s(input.content), 300)}</pre>
+            <pre data-edit-ref={editRef(0)} className="font-mono text-text-subtle overflow-x-auto max-h-32 whitespace-pre-wrap">{truncate(s(input.content), 300)}</pre>
           )}
         </div>
       );

@@ -145,6 +145,22 @@ samp,
   font-feature-settings: "liga" 0, "calt" 0;
 }
 
+/* Jump-target flash, set imperatively by jump-to-edit.ts and cleared after 1400ms.
+   Attribute-driven rather than React state so highlighting one card in a long
+   transcript does not re-render the rest. */
+[data-flash="card"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent),
+    0 0 22px -6px color-mix(in srgb, var(--accent) 50%, transparent);
+  transition: border-color 200ms ease-out, box-shadow 200ms ease-out;
+}
+
+[data-flash="edit"] {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  transition: background 200ms ease-out;
+}
+
 /* Scrollbar styling — thin & unobtrusive */
 ::-webkit-scrollbar {
   width: 5px;

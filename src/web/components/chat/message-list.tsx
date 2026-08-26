@@ -5,6 +5,13 @@ import type { ChatMessage, ChatEvent } from "../../../types/chat";
 import type { SessionPhase } from "../../../types/api";
 import type { BashPartialEntry } from "../../hooks/use-chat";
 import { ToolCard } from "./tool-cards";
+import { jumpToEdit } from "./jump-to-edit";
+import {
+  aggregateTurnFileChanges,
+  collectTurnMessages,
+  type TurnFileChange,
+} from "@/lib/aggregate-turn-file-changes";
+import { TurnChangeRollup } from "./turn-change-rollup";
 import { TaskTracker } from "./task-tracker";
 import { extractJsonlPath } from "./pre-compact-button";
 // Kick off the markdown chunk fetch at module load (not first render): Suspense
@@ -152,6 +159,40 @@ export function MessageList({
     scrollRef(el);
     setScrollEl(el);
   }, [scrollRef]);
+
+  // File changes per turn, keyed by the index of the turn's last assistant message.
+  //
+  // `filtered` is a new array on every streamed token, so this must not re-aggregate
+  // the whole transcript each time — diffing every edit in a long session at token
+  // rate is far too slow. Completed turns are therefore cached by their last
+  // message's identity, leaving only the in-flight turn to recompute.
+  const turnChangeCache = useRef(new Map<string, TurnFileChange[]>());
+  const turnChanges = useMemo(() => {
+    const cache = turnChangeCache.current;
+    const out = new Map<number, TurnFileChange[]>();
+    for (let i = 0; i < filtered.length; i++) {
+      const msg = filtered[i]!;
+      if (msg.role !== "assistant" || filtered[i + 1]?.role === "assistant") continue;
+      const key = `${msg.id}:${msg.events?.length ?? 0}`;
+      let changes = cache.get(key);
+      if (!changes) {
+        changes = aggregateTurnFileChanges(collectTurnMessages(filtered, i));
+        cache.set(key, changes);
+      }
+      if (changes.length > 0) out.set(i, changes);
+    }
+    return out;
+  }, [filtered]);
+
+  // Jump from a change-tray row to the tool card that made the edit. The returned
+  // cleanup clears the pending flash, so a second jump can't leave a stale highlight.
+  const flashCleanupRef = useRef<(() => void) | null>(null);
+  const handleJumpToEdit = useCallback((editRef: string) => {
+    if (!scrollEl) return;
+    flashCleanupRef.current?.();
+    flashCleanupRef.current = jumpToEdit(scrollEl, editRef);
+  }, [scrollEl]);
+  useEffect(() => () => flashCleanupRef.current?.(), []);
 
   // Preserve the viewport when older messages are prepended (compact expand): capture
   // distance-from-bottom before the prepend, restore scrollTop after so the content
@@ -360,6 +401,8 @@ export function MessageList({
                     isStreaming={isStreaming && msg.id.startsWith("streaming-")}
                     isLastAssistantInTurn={isLastAssistantInTurn}
                     turnCopyText={turnCopyText}
+                    turnChanges={isLastAssistantInTurn ? turnChanges.get(globalIdx) : undefined}
+                    onJumpToEdit={handleJumpToEdit}
                     projectName={projectName}
                     onFork={msg.role === "user" && onFork ? handleFork : undefined}
                     onEdit={msg.role === "user" && onEdit ? handleEdit : undefined}
@@ -402,8 +445,11 @@ function assistantMessageText(msg: ChatMessage): string {
     : msg.content;
 }
 
-const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
+const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLastAssistantInTurn, turnCopyText, turnChanges, onJumpToEdit, projectName, onFork, onEdit, isEditing, onDismiss, prevMsgId, sessionId, providerId, versionGroup, onNavigateVersion, versionNavDisabled, bashPartialOutput }: {
   message: ChatMessage; isStreaming: boolean; isLastAssistantInTurn?: boolean; turnCopyText?: string; projectName?: string;
+  /** Files this turn changed — drives the action-bar change pill. */
+  turnChanges?: TurnFileChange[];
+  onJumpToEdit?: (editRef: string) => void;
   onFork?: (content: string, messageId: string | undefined) => void;
   onEdit?: (content: string, messageId: string | undefined, ownMsgId?: string) => void;
   isEditing?: boolean;
@@ -469,11 +515,12 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
           )}
       {/* Action bar: only on the last assistant message of the turn, after streaming ends */}
       {!isStreaming && isLastAssistantInTurn && (
-        <MessageActionBar
+        <TurnChangeRollup
           timestamp={message.timestamp}
           content={turnCopyText ?? assistantMessageText(message)}
           accountLabel={message.accountLabel}
-          className="-mt-1.5"
+          changes={turnChanges}
+          onJumpToEdit={onJumpToEdit}
         />
       )}
     </div>
