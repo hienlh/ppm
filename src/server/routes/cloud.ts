@@ -9,6 +9,9 @@ import {
   unlinkDevice,
   sendHeartbeat,
   startHeartbeat,
+  getAlias,
+  setAlias,
+  removeAlias,
   DEFAULT_CLOUD_URL,
 } from "../../services/cloud.service.ts";
 import { tunnelService } from "../../services/tunnel.service.ts";
@@ -96,6 +99,38 @@ cloudRoutes.post("/unlink", async (c) => {
     return c.json(ok(true));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /api/cloud/alias — permanent link slug for this machine */
+cloudRoutes.get("/alias", async (c) => {
+  try {
+    return c.json(ok(await getAlias()));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
+/**
+ * PATCH /api/cloud/alias — claim a slug, or clear it by sending an explicit null.
+ * An empty string is a client mistake, not a delete: treating it as one would
+ * drop a link the user has already shared.
+ */
+cloudRoutes.patch("/alias", async (c) => {
+  const body = await c.req.json<{ slug?: string | null }>().catch(() => ({} as { slug?: string | null }));
+
+  if (body.slug === undefined || body.slug === "") {
+    return c.json(err("slug required — send null to remove the alias"), 400);
+  }
+
+  try {
+    if (body.slug === null) {
+      await removeAlias();
+      return c.json(ok({ slug: null }));
+    }
+    return c.json(ok(await setAlias(body.slug)));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
   }
 });
 

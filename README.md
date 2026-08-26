@@ -71,8 +71,9 @@ After setup, open the URL shown in terminal and enter your access password.
 - **File Explorer** — Browse, edit, create, delete files with Monaco editor
 - **Git** — Status, diff, commit, push/pull, branching, merge, rebase, commit graph
 - **Database** — SQLite + PostgreSQL viewer with query editor, data grid, cell editing
-- **Notifications** — Web Push + Telegram bot integration
+- **Notifications** — Telegram bot integration
 - **Remote Access** — Cloudflare tunnel for public URL sharing (always enabled)
+- **PPM Cloud** *(optional)* — Permanent private link to each machine, phone dashboard to see and open them, remote restart. Stores only your email, machine names and their tunnel URLs — never your code or chats. PPM works fully without it.
 - **Command Palette** — Fuzzy search for commands, files, tables (Shift+Shift or F1)
 - **PWA** — Installable as a progressive web app
 - **Mobile-First** — Responsive UI with bottom sheets and touch optimization

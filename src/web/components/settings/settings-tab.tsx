@@ -279,16 +279,16 @@ export function SettingsTab() {
 function NotificationsContent() {
   return (
     <div className="space-y-4">
-      {/* Cloud Push */}
+      {/* Browser push */}
       <section className="space-y-2">
         <h3 className="text-xs font-medium text-muted-foreground">Push Notifications</h3>
         <div className="flex items-center gap-1.5">
           <Bell className="size-3.5 text-muted-foreground" />
-          <span className="text-xs">Managed via PPM Cloud</span>
+          <span className="text-xs">Not available yet</span>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Push notifications are now dispatched through PPM Cloud.
-          Visit your Cloud dashboard to manage subscriptions.
+          Browser push does not deliver right now.
+          Use Telegram below to get alerted when a session finishes or needs approval.
         </p>
       </section>
 

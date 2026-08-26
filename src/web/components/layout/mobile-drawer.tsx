@@ -21,6 +21,7 @@ import { openBugReportPopup } from "@/lib/report-bug";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { CloudSharePopover } from "@/components/layout/cloud-share-popover";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 
 // Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
@@ -61,6 +62,15 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   useEffect(() => {
     if (tabs.length > 0 && !tabs.some((t) => t.id === activeTab)) setActiveTab(tabs[0]!.id);
   }, [tabs, activeTab]);
+
+  // Command palette request — the desktop rail is hidden on mobile, so the
+  // sheet here is what opens. The sheet portals to body, so it shows even while
+  // the drawer itself is closed.
+  useEffect(() => {
+    const open = () => { if (isMobileDevice()) setCloudOpen(true); };
+    window.addEventListener("open-cloud-share", open);
+    return () => window.removeEventListener("open-cloud-share", open);
+  }, []);
 
   const handleReportBug = useCallback(() => openBugReportPopup(version), [version]);
 

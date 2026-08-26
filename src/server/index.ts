@@ -600,6 +600,12 @@ export async function startServer(options: {
     console.log(`  ➜  Local:   http://localhost:${port}/`);
     if (shareUrl) {
       console.log(`  ➜  Share:   ${shareUrl}`);
+      // The quick-tunnel URL rotates on every restart. Point users at the cloud
+      // alias, which stays stable — but only if they haven't linked already.
+      const { getCloudDevice } = await import("../services/cloud.service.ts");
+      if (!getCloudDevice()) {
+        console.log(`  ➜  Cloud:   not linked — run 'ppm cloud login' to set up a permanent link`);
+      }
       if (!configService.get("auth").enabled) {
         console.log(`\n  ⚠  Warning: auth is disabled — your IDE is publicly accessible!`);
         console.log(`     Enable auth: run 'ppm config set auth.enabled true' or restart without --share.`);

@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Plus,
   Columns2,
+  Cloud,
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -193,6 +194,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       { id: "new-db-query", label: "New DB Query", icon: Database, action: () => { useTabStore.getState().openNewFile({ language: "sql", title: "SQL Query" }); onClose(); }, keywords: "sql database query scratchpad new", group: "action" },
       { id: "terminal", label: "New Terminal", icon: Terminal, action: openNewTab("terminal", "Terminal"), keywords: "bash shell console", group: "action", shortcut: formatShortcut(getBinding("open-terminal")) },
       { id: "tunnels", label: "Cloudflare Tunnels", icon: Globe, action: () => { if (sidebarCollapsed) toggleSidebar(); setSidebarActiveTab("tunnels"); onClose(); }, keywords: "web preview localhost port forward tunnel cloudflare url", group: "action" },
+      { id: "cloud-share", label: "PPM Cloud & Share", icon: Cloud, action: () => { window.dispatchEvent(new CustomEvent("open-cloud-share")); onClose(); }, keywords: "cloud permanent link alias share phone remote device qr sign in login", group: "action" },
       { id: "postgres", label: "PostgreSQL", icon: Database, action: openNewTab("postgres", "PostgreSQL"), keywords: "database pg sql query", group: "action" },
       { id: "voice-input", label: "Voice Input", icon: Mic, action: () => { window.dispatchEvent(new CustomEvent("toggle-voice-input")); onClose(); }, keywords: "speech microphone dictate voice", group: "action", shortcut: formatShortcut(getBinding("voice-input")) },
       { id: "git-status", label: "Git Status", icon: GitCommitHorizontal, action: () => { setSidebarActiveTab("git"); onClose(); }, keywords: "changes diff staged", group: "action", shortcut: formatShortcut(getBinding("open-git-status")) },

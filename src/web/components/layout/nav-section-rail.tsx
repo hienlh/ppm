@@ -13,6 +13,7 @@ import { useNotificationStore, selectProjectUnread } from "@/stores/notification
 import { NotificationBellPopover } from "./notification-bell-popover";
 import { CloudSharePopover } from "./cloud-share-popover";
 import { openBugReportPopup } from "@/lib/report-bug";
+import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 
 function Badge({ count }: { count: number }) {
@@ -134,6 +135,14 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
     const rect = cloudBtnRef.current.getBoundingClientRect();
     setPopoverPos({ left: rect.right + 6, bottom: window.innerHeight - rect.bottom });
   }, [cloudOpen]);
+
+  // Command palette can't reach the popover's local state, so it asks via event.
+  // The rail is `hidden md:flex`, so on mobile the drawer's bottom sheet answers.
+  useEffect(() => {
+    const open = () => { if (!isMobileDevice()) setCloudOpen(true); };
+    window.addEventListener("open-cloud-share", open);
+    return () => window.removeEventListener("open-cloud-share", open);
+  }, []);
 
   const handleReportBug = () => openBugReportPopup(version);
 

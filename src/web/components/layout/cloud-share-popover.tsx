@@ -3,6 +3,7 @@ import { Cloud, Share2, Loader2, Copy, Check, X, LogOut, Link, Unlink, ExternalL
 import { QRCodeSVG } from "qrcode.react";
 import { api } from "@/lib/api-client";
 import { copyToClipboard } from "@/lib/clipboard";
+import { CloudAliasRow } from "./cloud-alias-row";
 
 interface CloudStatus {
   logged_in: boolean;
@@ -250,13 +251,21 @@ export function CloudSharePopover({ onClose, variant = "popover" }: Props) {
                 )}
               </div>
             ) : (
-              <button
-                onClick={handleCloudLogin}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-border hover:bg-muted transition-colors"
-              >
-                <Cloud className="size-3.5" />
-                Sign in to PPM Cloud
-              </button>
+              <>
+                {shareUrl && (
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    This link changes every time PPM restarts. Sign in to get a permanent one
+                    that always points here — private to your account.
+                  </p>
+                )}
+                <button
+                  onClick={handleCloudLogin}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-md border border-border hover:bg-muted transition-colors"
+                >
+                  <Cloud className="size-3.5" />
+                  {shareUrl ? "Get a permanent link" : "Sign in to PPM Cloud"}
+                </button>
+              </>
             )}
           </div>
 
@@ -264,20 +273,23 @@ export function CloudSharePopover({ onClose, variant = "popover" }: Props) {
           {cloud?.logged_in && (
             <div className="space-y-1.5">
               {cloud.linked ? (
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Link className="size-3 text-primary shrink-0" />
-                    <span className="text-foreground truncate">{cloud.device_name}</span>
+                <>
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Link className="size-3 text-primary shrink-0" />
+                      <span className="text-foreground truncate">{cloud.device_name}</span>
+                    </div>
+                    <button
+                      onClick={handleUnlink}
+                      disabled={unlinking}
+                      className="text-text-subtle hover:text-destructive p-1 rounded hover:bg-muted transition-colors shrink-0"
+                      title="Unlink device"
+                    >
+                      {unlinking ? <Loader2 className="size-3 animate-spin" /> : <Unlink className="size-3" />}
+                    </button>
                   </div>
-                  <button
-                    onClick={handleUnlink}
-                    disabled={unlinking}
-                    className="text-text-subtle hover:text-destructive p-1 rounded hover:bg-muted transition-colors shrink-0"
-                    title="Unlink device"
-                  >
-                    {unlinking ? <Loader2 className="size-3 animate-spin" /> : <Unlink className="size-3" />}
-                  </button>
-                </div>
+                  <CloudAliasRow cloudUrl={cloud.cloud_url} deviceName={cloud.device_name} />
+                </>
               ) : (
                 <button
                   onClick={handleLink}

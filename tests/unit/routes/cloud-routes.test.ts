@@ -200,3 +200,61 @@ describe("POST /cloud/unlink", () => {
     expect(json.ok).toBe(true);
   });
 });
+
+describe("cloud alias routes", () => {
+  it("GET /cloud/alias fails cleanly when the machine is not linked", async () => {
+    const app = createApp();
+    const res = await app.request("/cloud/alias");
+    expect(res.status).toBe(400);
+    const json = await res.json() as any;
+    expect(json.ok).toBe(false);
+    expect(json.error).toContain("Not linked");
+  });
+
+  it("PATCH /cloud/alias fails cleanly when the machine is not linked", async () => {
+    const app = createApp();
+    const res = await app.request("/cloud/alias", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: "my-mac" }),
+    });
+    expect(res.status).toBe(400);
+    const json = await res.json() as any;
+    expect(json.ok).toBe(false);
+  });
+
+  it("PATCH /cloud/alias rejects an empty slug instead of clearing the alias", async () => {
+    const app = createApp();
+    const res = await app.request("/cloud/alias", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: "" }),
+    });
+    expect(res.status).toBe(400);
+    const json = await res.json() as any;
+    expect(json.error).toContain("slug required");
+  });
+
+  it("PATCH /cloud/alias treats an explicit null as a removal request", async () => {
+    const app = createApp();
+    const res = await app.request("/cloud/alias", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug: null }),
+    });
+    // No linked device here, so removal surfaces that — never a silent success.
+    expect(res.status).toBe(400);
+    const json = await res.json() as any;
+    expect(json.error).toContain("Not linked");
+  });
+
+  it("PATCH /cloud/alias survives malformed JSON", async () => {
+    const app = createApp();
+    const res = await app.request("/cloud/alias", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: "not json",
+    });
+    expect(res.status).toBe(400);
+  });
+});
