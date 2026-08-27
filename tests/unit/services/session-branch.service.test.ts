@@ -188,5 +188,48 @@ describe("session-branch.service (SQLite-backed)", () => {
       const ids = collapseTreesToHeads(sessions).map((s) => s.id).sort();
       expect(ids).toEqual(["P", "c1"]);
     });
+
+    it("keeps an explicit fork as its own row alongside its source", () => {
+      recordBranch("fork-1", "P", "F", 2, "fork");
+      const sessions = [
+        { id: "P", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+        { id: "fork-1", createdAt: "2026-01-02T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z" },
+      ];
+      const ids = collapseTreesToHeads(sessions).map((s) => s.id).sort();
+      expect(ids).toEqual(["P", "fork-1"]);
+    });
+
+    it("shows both sides regardless of which transcript was touched last", () => {
+      recordBranch("fork-1", "P", "F", 2, "fork");
+      const sessions = [
+        { id: "P", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-09T00:00:00Z" },
+        { id: "fork-1", createdAt: "2026-01-02T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z" },
+      ];
+      const ids = collapseTreesToHeads(sessions).map((s) => s.id).sort();
+      expect(ids).toEqual(["P", "fork-1"]);
+    });
+
+    it("folds edits of a fork into the fork, not into the fork's source", () => {
+      recordBranch("fork-1", "P", "F", 2, "fork");
+      recordBranch("edit-1", "fork-1", "G", 3, "edit");
+      const sessions = [
+        { id: "P", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+        { id: "fork-1", createdAt: "2026-01-02T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z" },
+        { id: "edit-1", createdAt: "2026-01-03T00:00:00Z", updatedAt: "2026-01-03T00:00:00Z" },
+      ];
+      const ids = collapseTreesToHeads(sessions).map((s) => s.id).sort();
+      expect(ids).toEqual(["P", "edit-1"]); // fork-1 collapsed into its newer edit
+    });
+
+    it("keeps rows written before kind existed visible", () => {
+      recordBranch("legacy-1", "P", "F", 2);
+      getDb().run("UPDATE session_branches SET kind = NULL WHERE child_id = ?", ["legacy-1"]);
+      const sessions = [
+        { id: "P", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" },
+        { id: "legacy-1", createdAt: "2026-01-02T00:00:00Z", updatedAt: "2026-01-02T00:00:00Z" },
+      ];
+      const ids = collapseTreesToHeads(sessions).map((s) => s.id).sort();
+      expect(ids).toEqual(["P", "legacy-1"]);
+    });
   });
 });

@@ -577,7 +577,10 @@ chatRoutes.post("/sessions/:id/fork", async (c) => {
           // partial, inconsistent version counts. Re-parent onto the group root.
           const existingGroup = resolveVersionGroup(sourceId, forkOrdinal);
           const versionParent = existingGroup ? existingGroup.ids[0]! : sourceId;
-          recordBranch(result.sessionId, versionParent, body.messageId, forkOrdinal);
+          // An explicit fork is a separate thread, not another version of this
+          // one: recording it as `edit` would let the history list collapse it
+          // together with its source and show only whichever was touched last.
+          recordBranch(result.sessionId, versionParent, body.messageId, forkOrdinal, isEdit ? "edit" : "fork");
           // Edit versions must show the group root's clean title — codex names a
           // forked thread "<title> (fork)", so without this the suffix compounds
           // ("Hello (fork) (fork)") across repeated edits. Pin the PPM title.

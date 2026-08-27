@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 36;
+export const CURRENT_SCHEMA_VERSION = 37;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -836,6 +836,17 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN effort TEXT"); } catch {}
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN thinking_budget INTEGER"); } catch {}
     database.exec("PRAGMA user_version = 36;");
+  }
+
+  if (current < 37) {
+    // Same-tab message edits and explicit new-tab forks both land in
+    // session_branches, but only edits are alternate versions of one
+    // conversation — a fork is its own thread and must keep its own history row.
+    // Existing rows can no longer be told apart, so treat them as forks: showing
+    // an extra row is recoverable, hiding a conversation is not.
+    try { database.exec("ALTER TABLE session_branches ADD COLUMN kind TEXT"); } catch { /* column exists */ }
+    database.exec("UPDATE session_branches SET kind = 'fork' WHERE kind IS NULL");
+    database.exec("PRAGMA user_version = 37;");
   }
 }
 

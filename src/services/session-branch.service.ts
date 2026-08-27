@@ -1,6 +1,14 @@
 import { getDb } from "./db.service.ts";
 import type { VersionGroup } from "../types/api.ts";
 
+/**
+ * How a branch came to exist. `edit` is an alternate version of the same
+ * conversation, reachable through the in-message version switcher. `fork` is a
+ * deliberate new thread opened in its own tab. Only `edit` nodes collapse in the
+ * history list; a fork stays a first-class conversation there.
+ */
+export type BranchKind = "edit" | "fork";
+
 /** A node in the edit-message branch tree (one forked session). */
 export interface BranchRow {
   child_id: string;
@@ -9,6 +17,8 @@ export interface BranchRow {
   /** User-message ordinal (1-based) of the divergent message — stable across forks. */
   fork_ordinal: number;
   root_id: string;
+  /** Null on rows written before the kind column existed; treated as `fork`. */
+  kind: BranchKind | null;
   created_at: string;
 }
 
@@ -20,13 +30,19 @@ export interface BranchRow {
  * parent-space fork_msg_id can't be matched against the child's transcript).
  * Idempotent on child_id (INSERT OR REPLACE).
  */
-export function recordBranch(childId: string, parentId: string, forkMsgId: string, forkOrdinal: number): void {
+export function recordBranch(
+  childId: string,
+  parentId: string,
+  forkMsgId: string,
+  forkOrdinal: number,
+  kind: BranchKind = "edit",
+): void {
   const parentRoot = getRootId(parentId);
   const rootId = parentRoot ?? parentId;
   getDb().run(
-    `INSERT OR REPLACE INTO session_branches (child_id, parent_id, fork_msg_id, fork_ordinal, root_id)
-     VALUES (?, ?, ?, ?, ?)`,
-    [childId, parentId, forkMsgId, forkOrdinal, rootId],
+    `INSERT OR REPLACE INTO session_branches (child_id, parent_id, fork_msg_id, fork_ordinal, root_id, kind)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [childId, parentId, forkMsgId, forkOrdinal, rootId, kind],
   );
 }
 
@@ -171,9 +187,26 @@ export interface GroupableSession {
 }
 
 /**
- * Collapse branch-tree members so each tree shows a single row — its head, the
- * most recently active node (max updatedAt, falling back to createdAt). Pinned
- * sessions are passed through untouched. Caller is responsible for final sort.
+ * Session whose history row this one folds into: climb while every hop is a
+ * message edit, and stop at the first explicit fork. A fork therefore anchors
+ * its own group, so it never displaces — or gets displaced by — the thread it
+ * was forked from. An unclassified (pre-`kind`) row stops the climb too, which
+ * errs toward showing a row rather than hiding a conversation.
+ */
+export function getCollapseGroupId(sessionId: string): string {
+  let current = sessionId;
+  for (let hops = 0; hops < 100; hops++) {
+    const row = getBranchRow(current);
+    if (!row || row.kind !== "edit") return current;
+    current = row.parent_id;
+  }
+  return current;
+}
+
+/**
+ * Collapse each edit-version group to a single row — its head, the most recently
+ * active node (max updatedAt, falling back to createdAt). Pinned sessions are
+ * passed through untouched. Caller is responsible for final sort.
  */
 export function collapseTreesToHeads<T extends GroupableSession>(sessions: T[]): T[] {
   const heads = new Map<string, T>();
@@ -184,9 +217,9 @@ export function collapseTreesToHeads<T extends GroupableSession>(sessions: T[]):
       out.push(s);
       continue;
     }
-    const rootId = getRootId(s.id) ?? s.id;
-    const cur = heads.get(rootId);
-    if (!cur || activity(s) > activity(cur)) heads.set(rootId, s);
+    const groupId = getCollapseGroupId(s.id);
+    const cur = heads.get(groupId);
+    if (!cur || activity(s) > activity(cur)) heads.set(groupId, s);
   }
   out.push(...heads.values());
   return out;
