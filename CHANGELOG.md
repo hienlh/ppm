@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.33] - 2026-08-27
+
+### Added
+- **Claude's own slash commands now show in the picker** — `/context`, `/init`, `/usage`, `/goal`, `/review` and the rest live inside the Claude CLI with no file on disk, so the picker never found them. They are now fetched from the SDK once per project.
+- **`/clear` opens a new chat tab** — the SDK treats it as a no-op because session lifecycle belongs to the app. Any text after it becomes the tab title, and the chat it was cleared from is recorded.
+
+### Fixed
+- **Searching the slash picker ignored what you use most** — the unfiltered list was ordered by recent use, but typing reordered it alphabetically. Recent commands now stay on top, promoted just enough to beat an equally relevant match.
+- **A terminal tab could not be closed from the editor grid** — closing it moved the terminal into the dock and pulled the dock open. Parking a live session is now only the explicit "Move to Dock" action.
+- **The dock covered the whole screen on mobile after a reload** — a dock left open on desktop synced across and reopened as a full-height sheet. Restored dock state now starts collapsed on mobile.
+
 ## [0.17.32] - 2026-08-27
 
 ### Fixed
