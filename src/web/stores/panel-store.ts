@@ -26,6 +26,7 @@ import {
   persistDock,
   snapshotDockForProject,
   restoreDockForProject,
+  collapseRestoredDockOnMobile,
   activeProjectDockTabCount,
 } from "./dock-actions";
 
@@ -284,7 +285,10 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         const mergedPanels = { ...panels, ...migratedPanels, [DOCK_PANEL_ID]: mergedDockPanel };
         newProjectGrids[projectName] = loaded.grid;
         newProjectFocused[projectName] = loaded.focusedPanelId;
-        const restoredDock = loaded.dock ?? restoreDockForProject(projectName, newProjectDock);
+        const restoredDock = collapseRestoredDockOnMobile(
+          loaded.dock ?? restoreDockForProject(projectName, newProjectDock),
+          get().isMobile(),
+        );
         set({
           currentProject: projectName,
           panels: mergedPanels,
@@ -518,19 +522,9 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (!panel) return;
       const pid = panel.id;
 
-      // Location-based re-dock: closing a terminal from ANY grid panel parks it in the
-      // dock instead of killing it. Real kill only when closed from WITHIN the dock,
-      // on shell exit (onExit handler), or after idle/grace expiry.
-      // Decision is purely location-based — no Tab.home flag needed.
-      if (tabId.startsWith("terminal:") && pid !== DOCK_PANEL_ID) {
-        // Park in dock — redockTab moves the tab object and shows the dock.
-        // Does NOT strip the localStorage session key (PTY stays alive).
-        // redockTab calls moveTab, never closeTab → no recursion.
-        get().redockTab(tabId, pid);
-        return;
-      }
-
-      // Real-close path: terminal closed from dock, or non-terminal tab.
+      // Closing a terminal ends it, from a grid panel and from the dock alike.
+      // Parking a live session is an explicit action ("Move to Dock" / redockTab),
+      // never a side effect of close.
       // Clear persisted terminal session so reopening creates a fresh PTY.
       if (tabId.startsWith("terminal:")) {
         try { localStorage.removeItem(`ppm:terminal-session:${tabId}`); } catch { /* */ }

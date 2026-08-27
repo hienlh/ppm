@@ -2,11 +2,10 @@
  * Regression: emptying the dock (closing its last terminal) must NOT delete the
  * reserved __dock__ panel. If it does, a later re-dock (moveTab → __dock__) silently
  * no-ops (to === undefined): the terminal stays stuck in the grid while an empty dock
- * opens. Repro of the exact user-reported flow:
- *   dock empty → open terminal in editor → close it → expected to move into the dock.
+ * opens.
  *
- * Uses the REAL openTab/closeTab flow so id-derivation + panel-registry edge cases
- * are exercised (not synthetic seed state only).
+ * Uses the REAL openTab/closeTab/redockTab flow so id-derivation + panel-registry
+ * edge cases are exercised (not synthetic seed state only).
  */
 import { describe, it, expect, beforeEach } from "bun:test";
 
@@ -29,14 +28,14 @@ describe("redock — empty dock, terminal opened in grid via real openTab", () =
     usePanelStore.getState().switchProject("proj-x");
   });
 
-  it("closing the grid terminal moves it into the (empty) dock and shows the dock", () => {
+  it("redocking the grid terminal moves it into the (empty) dock and shows the dock", () => {
     const termId = usePanelStore.getState().openTab({
       type: "terminal", title: "Terminal", projectId: "proj-x", closable: true, metadata: { projectName: "proj-x" },
     });
     const gridPid = usePanelStore.getState().grid.flat()[0]!;
     expect(usePanelStore.getState().panels[gridPid]?.tabs.map((t) => t.id)).toContain(termId);
 
-    usePanelStore.getState().closeTab(termId, gridPid);
+    usePanelStore.getState().redockTab(termId, gridPid);
 
     const s = usePanelStore.getState();
     expect(s.dock.visible).toBe(true);
@@ -61,11 +60,12 @@ describe("redock — empty dock, terminal opened in grid via real openTab", () =
     expect(usePanelStore.getState().panels[DOCK_PANEL_ID]).toBeDefined();
     expect(usePanelStore.getState().panels[DOCK_PANEL_ID]?.tabs.length).toBe(0);
 
-    // Now open a terminal in a grid panel and close it → must re-dock (not get stuck).
+    // Now open a terminal in a grid panel and re-dock it → must land in the dock
+    // (not get stuck in the grid against a destroyed dock panel).
     const termId = usePanelStore.getState().openTab({
       type: "terminal", title: "Terminal", projectId: "proj-x", closable: true, metadata: { projectName: "proj-x" },
     }, a.id);
-    usePanelStore.getState().closeTab(termId, a.id);
+    usePanelStore.getState().redockTab(termId, a.id);
 
     const s = usePanelStore.getState();
     expect(s.panels[DOCK_PANEL_ID]?.tabs.map((t) => t.id)).toContain(termId);

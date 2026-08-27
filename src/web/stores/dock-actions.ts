@@ -174,10 +174,8 @@ export function makeOpenInDock(set: Set, get: Get) {
 // ---------------------------------------------------------------------------
 // Re-dock: move a terminal tab from a grid panel back to __dock__ + show dock.
 //
-// Called by closeTab when a terminal is closed from a GRID panel.
-// Closing a terminal from the grid PARKS it in the dock instead of killing it —
-// real kill only happens when closed from WITHIN the dock, on shell exit, or
-// after the idle/grace period expires.
+// Explicit user action only ("Move to Dock"): it parks a live terminal without
+// restarting its PTY. Closing a tab never routes here — close ends the session.
 //
 // IMPORTANT: this function MUST NOT call closeTab (loop guard). It uses the
 // low-level moveTab primitive directly via the store getter.
@@ -244,4 +242,16 @@ export function restoreDockForProject(
   projectDock: Record<string, DockState>,
 ): DockState {
   return projectDock[projectName] ?? { visible: false, height: 30 };
+}
+
+/**
+ * Collapse a persisted "visible" dock on mobile.
+ *
+ * Mobile renders the dock as a full-width bottom sheet covering the tab bar, so
+ * restoring a visible dock — persisted locally or synced from a desktop session —
+ * would pop the sheet open over the workspace before the user asks for it. The
+ * sheet only opens from the nav's terminal button.
+ */
+export function collapseRestoredDockOnMobile(dock: DockState, isMobile: boolean): DockState {
+  return isMobile && dock.visible ? { ...dock, visible: false } : dock;
 }

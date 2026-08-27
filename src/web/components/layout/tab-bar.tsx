@@ -225,7 +225,8 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
 
   /**
    * Terminal-only "Move to Dock" / "Move to Editor" item.
-   * The action moves the same live session; closing later re-docks it.
+   * Reparents the same live session — the only way to keep a terminal running
+   * outside its current slot, since closing the tab ends it.
    */
   function dockMoveMenuItems(tab: Tab): React.ReactNode {
     if (tab.type !== "terminal") return null;
@@ -253,8 +254,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
         break;
       case "move-to-dock":
         // Park the terminal in the dock (same live session — reparented, no restart).
-        panelState.moveTab(tab.id, effectivePanelId, DOCK_PANEL_ID);
-        panelState.setDockVisible(true);
+        panelState.redockTab(tab.id, effectivePanelId);
         break;
       case "move-to-editor": {
         // Send a dock terminal back to a grid panel: prefer the focused grid

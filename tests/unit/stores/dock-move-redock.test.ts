@@ -1,13 +1,13 @@
 /**
- * Tests for dock⇄grid move semantics and location-based re-dock on terminal close.
+ * Tests for dock⇄grid move semantics and terminal close semantics.
  *
- * Decision rule (location-based, no Tab.home flag):
- *  - terminal closed from a GRID panel → re-dock (move to __dock__, show dock)
- *  - terminal closed from __dock__      → real close (strip localStorage key, remove tab)
+ * Close always ends the terminal, wherever the tab lives:
+ *  - terminal closed from a GRID panel → real close (strip localStorage key, remove tab)
+ *  - terminal closed from __dock__      → real close (same)
  *  - non-terminal closed from anywhere  → real close
  *
- * "Re-dock" = parking the tab in __dock__ instead of killing it.
- * Real kill paths: close from dock, shell exit (onExit), idle/grace.
+ * "Re-dock" (parking a live tab in __dock__ without restarting its PTY) is an
+ * explicit user action via redockTab — never a side effect of close.
  */
 import { describe, it, expect, beforeEach, spyOn } from "bun:test";
 
@@ -178,10 +178,10 @@ describe("moveTab — dock⇄grid", () => {
   });
 });
 
-describe("closeTab — location-based re-dock semantics", () => {
+describe("closeTab — terminal close semantics", () => {
   beforeEach(() => { localStorageStub.clear(); });
 
-  it("closing terminal from GRID panel → re-docks: tab in __dock__, dock.visible===true, NO localStorage.removeItem", () => {
+  it("closing terminal from GRID panel → real close: tab gone, never parked in __dock__, dock stays hidden", () => {
     const panel = makePanel("panel-A", [
       { id: "terminal:1", type: "terminal" },
       { id: "editor:/foo.ts", type: "editor" },
@@ -195,25 +195,17 @@ describe("closeTab — location-based re-dock semantics", () => {
     });
     localStorageStub.setItem("ppm:terminal-session:terminal:1", "session-abc");
 
-    const removeSpy = spyOn(localStorageStub, "removeItem");
-    try {
-      usePanelStore.getState().closeTab("terminal:1", "panel-A");
+    usePanelStore.getState().closeTab("terminal:1", "panel-A");
 
-      const state = usePanelStore.getState();
-      // Tab moved to __dock__
-      expect(state.panels[DOCK_PANEL_ID]?.tabs.map((t) => t.id)).toContain("terminal:1");
-      // Tab removed from grid panel
-      expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).not.toContain("terminal:1");
-      // Dock is now visible
-      expect(state.dock.visible).toBe(true);
-      // Session key NOT stripped (session stays alive in dock)
-      const strippedSession = removeSpy.mock.calls.some(
-        (args) => String(args[0]) === "ppm:terminal-session:terminal:1",
-      );
-      expect(strippedSession).toBe(false);
-    } finally {
-      removeSpy.mockRestore();
-    }
+    const state = usePanelStore.getState();
+    // Tab removed from grid panel
+    expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).not.toContain("terminal:1");
+    // Tab NOT parked in the dock
+    expect(state.panels[DOCK_PANEL_ID]?.tabs.map((t) => t.id)).not.toContain("terminal:1");
+    // Dock must not be pulled open by a close
+    expect(state.dock.visible).toBe(false);
+    // Session key stripped — a reopen gets a fresh PTY
+    expect(localStorageStub.getItem("ppm:terminal-session:terminal:1")).toBeNull();
   });
 
   it("closing terminal from __dock__ → real close: localStorage.removeItem called, tab gone from dock", () => {
@@ -258,50 +250,42 @@ describe("closeTab — location-based re-dock semantics", () => {
     const state = usePanelStore.getState();
     // Editor tab removed from panel (real close)
     expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).not.toContain("editor:/bar.ts");
-    // Dock NOT shown (no re-dock triggered)
+    // Dock NOT shown
     expect(state.dock.visible).toBe(false);
-    // Dock has no editor tab (only terminals can re-dock)
+    // Dock has no editor tab (only terminals are ever parked there)
     expect(state.panels[DOCK_PANEL_ID]?.tabs.map((t) => t.id)).not.toContain("editor:/bar.ts");
   });
+});
 
-  it("loop guard: closeTab(terminal, gridPanel) performs a single state transition, redockTab never calls closeTab again", () => {
-    const panel = makePanel("panel-A", [{ id: "terminal:3", type: "terminal" }]);
+describe("redockTab — explicit park (Move to Dock)", () => {
+  beforeEach(() => { localStorageStub.clear(); });
+
+  it("parks the terminal in __dock__, shows the dock, and keeps the session key", () => {
+    const panel = makePanel("panel-A", [
+      { id: "terminal:3", type: "terminal" },
+      { id: "editor:/foo.ts", type: "editor" },
+    ]);
     seedStore({
       gridPanels: [panel],
       grid: [["panel-A"]],
       focusedPanelId: "panel-A",
       dockTabs: [],
+      dockVisible: false,
     });
+    localStorageStub.setItem("ppm:terminal-session:terminal:3", "session-abc");
 
-    // Track how many times closeTab is entered by the store's implementation.
-    // We spy on the original function; if the re-dock path re-called closeTab,
-    // the spy count would be > 1. After the first call resolves, tab must be in __dock__.
-    let callCount = 0;
-    const original = usePanelStore.getState().closeTab;
-    usePanelStore.setState({
-      closeTab: (tabId, panelId?) => {
-        callCount++;
-        original(tabId, panelId);
-      },
-    });
-
-    usePanelStore.getState().closeTab("terminal:3", "panel-A");
-
-    // Our wrapper was called exactly once (no recursive re-entry from redockTab)
-    expect(callCount).toBe(1);
+    usePanelStore.getState().redockTab("terminal:3", "panel-A");
 
     const state = usePanelStore.getState();
-    // Terminal is in dock (re-dock happened)
     expect(state.panels[DOCK_PANEL_ID]?.tabs.map((t) => t.id)).toContain("terminal:3");
-
-    // Restore original
-    usePanelStore.setState({ closeTab: original });
+    expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).not.toContain("terminal:3");
+    expect(state.dock.visible).toBe(true);
+    // Session survives the reparent — no PTY restart
+    expect(localStorageStub.getItem("ppm:terminal-session:terminal:3")).toBe("session-abc");
   });
 
-  it("closing terminal from grid when __dock__ already has tabs: terminal appended, dock visible", () => {
-    const panel = makePanel("panel-A", [
-      { id: "terminal:4", type: "terminal" },
-    ]);
+  it("appends to a dock that already has tabs, without recursing into closeTab", () => {
+    const panel = makePanel("panel-A", [{ id: "terminal:4", type: "terminal" }]);
     seedStore({
       gridPanels: [panel],
       grid: [["panel-A"]],
@@ -310,8 +294,18 @@ describe("closeTab — location-based re-dock semantics", () => {
       dockVisible: false,
     });
 
-    usePanelStore.getState().closeTab("terminal:4", "panel-A");
+    // Loop guard: redockTab uses the moveTab primitive; re-entering closeTab would
+    // strip the session key and defeat the whole point of parking.
+    let closeCalls = 0;
+    const original = usePanelStore.getState().closeTab;
+    usePanelStore.setState({
+      closeTab: (tabId, panelId?) => { closeCalls++; original(tabId, panelId); },
+    });
 
+    usePanelStore.getState().redockTab("terminal:4", "panel-A");
+    usePanelStore.setState({ closeTab: original });
+
+    expect(closeCalls).toBe(0);
     const state = usePanelStore.getState();
     const dockTabIds = state.panels[DOCK_PANEL_ID]?.tabs.map((t) => t.id) ?? [];
     expect(dockTabIds).toContain("terminal:4");
