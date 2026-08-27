@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.32] - 2026-08-27
+
+### Fixed
+- **A forked chat and the chat it was forked from could not both appear in the history list** — the list showed one of the two and hid the other, and which one it hid kept changing: refresh after working in the fork and the original was gone, refresh after working in the original and the fork was gone. Pinning one of them brought both back, which was the only reliable way to reach either. Forking a chat and editing one of your earlier messages both create a new chat behind the scenes, and the history list deliberately folds the versions of an edited message into a single row, so that revising one message five times does not leave five near-identical rows behind. The two kinds were not being told apart, so a fork — a separate conversation you opened in its own tab on purpose — was folded in as though it were just another version of an edited message, and only whichever of the pair had been written to most recently survived the fold. A fork is now recorded as a conversation in its own right and always keeps its own row, whichever side you last used. Edited messages still collapse into one row, with the other versions reachable from the arrows on the message itself. Forks and edits made before this release can no longer be told apart, so all of them are now treated as forks and will each keep a row — a message you had revised several times may therefore show more rows in the list than it used to.
+
 ## [0.17.31] - 2026-08-27
 
 ### Added
