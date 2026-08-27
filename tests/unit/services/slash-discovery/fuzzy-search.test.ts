@@ -183,3 +183,85 @@ describe("searchSlashItems", () => {
     expect(results.length).toBeLessThanOrEqual(3);
   });
 });
+
+describe("searchSlashItems — recency ordering", () => {
+  const item = (name: string, description = ""): SlashItem =>
+    ({ type: "skill", name, description, scope: "user" });
+
+  it("orders recent matches most-recent-first, not alphabetically", () => {
+    const items = [item("alpha-run"), item("beta-run"), item("gamma-run")];
+
+    const results = searchSlashItems(items, "run", 20, ["gamma-run", "alpha-run"]);
+
+    expect(results.map((i) => i.name)).toEqual(["gamma-run", "alpha-run", "beta-run"]);
+  });
+
+  it("keeps recency ahead of match offset for contains-matches", () => {
+    // Same tier, different offsets (2 vs 4) — the offset used to decide every
+    // comparison before recency was ever read.
+    const items = [item("aadeploy"), item("bbbbdeploy")];
+
+    const results = searchSlashItems(items, "deploy", 20, ["bbbbdeploy"]);
+
+    expect(results[0]!.name).toBe("bbbbdeploy");
+  });
+
+  it("promotes a recent item one tier — a recent contains-hit beats a stranger's prefix-hit", () => {
+    const items = [item("test"), item("latest")];
+
+    const results = searchSlashItems(items, "test", 20, ["latest"]);
+
+    expect(results[0]!.name).toBe("latest");
+  });
+
+  it("does not boost a recent item that only matched in its description", () => {
+    // Otherwise every recent item floats to the top of every search, since prose
+    // contains almost any short query.
+    const items = [item("deploy"), item("git-manager", "Handles code deduplication")];
+
+    const results = searchSlashItems(items, "de", 20, ["git-manager"]);
+
+    expect(results[0]!.name).toBe("deploy");
+  });
+
+  it("still boosts when the name matched the winning tier but the description matched closer", () => {
+    // "review" sits at offset 5 in the name and offset 3 in the description —
+    // the description winning on offset must not disqualify the boost.
+    const items = [
+      item("code-reviewer", "Pre-review helper"),
+      item("ak:code-review", "Audit changes"),
+    ];
+
+    const results = searchSlashItems(items, "review", 20, ["code-reviewer"]);
+
+    expect(results[0]!.name).toBe("code-reviewer");
+  });
+
+  it("stops at one tier — a recent fuzzy-hit still loses to a prefix-hit", () => {
+    // "tost" only matches "test" by edit distance (two tiers below a prefix hit).
+    const items = [item("test"), item("tost")];
+
+    const results = searchSlashItems(items, "test", 20, ["tost"]);
+
+    expect(results[0]!.name).toBe("test");
+  });
+
+  it("falls back to match offset, then name, when nothing is recent", () => {
+    // zeta-run/alfa-run share offset 5 so the name decides; gamma-run's offset
+    // is 6 and must sort after both.
+    const items = [item("gamma-run"), item("zeta-run"), item("alfa-run")];
+
+    const results = searchSlashItems(items, "run", 20, []);
+
+    expect(results.map((i) => i.name)).toEqual(["alfa-run", "zeta-run", "gamma-run"]);
+  });
+
+  it("matches the unfiltered picker's recency order for the same items", () => {
+    const recentNames = ["deploy", "review"];
+    const items = [item("review"), item("deploy"), item("debug")];
+
+    const searched = searchSlashItems(items, "e", 20, recentNames);
+
+    expect(searched.slice(0, 2).map((i) => i.name)).toEqual(recentNames);
+  });
+});

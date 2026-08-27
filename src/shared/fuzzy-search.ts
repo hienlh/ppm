@@ -49,8 +49,21 @@ export function scoreFuzzy(query: string, candidate: string): FuzzyScore | null 
 }
 
 /**
+ * Promotion a recently used item gets, measured in match tiers. One tier lets a
+ * recent "contains" hit edge out a stranger's "prefix" hit, while a two-tier gap
+ * (prefix vs fuzzy) still wins on relevance.
+ *
+ * Only granted when the query matched the item's NAME. Descriptions are prose and
+ * match almost any short query, so boosting those would float every recent item
+ * to the top of every search.
+ */
+const RECENT_TIER_BOOST = 1;
+
+/**
  * Search items by query with fuzzy matching.
- * Recently used items get a rank boost (sorted earlier within same rank tier).
+ * Recently used items are promoted by one match tier and then ordered
+ * most-recent-first, so a filtered list keeps the recency ordering the
+ * unfiltered picker shows.
  * Returns ranked results (best match first), truncated to limit.
  */
 export function searchFuzzy<T extends FuzzySearchable>(
@@ -63,8 +76,10 @@ export function searchFuzzy<T extends FuzzySearchable>(
   // Cap query length to prevent quadratic blowup in Levenshtein
   query = query.slice(0, 50);
 
-  const recentSet = new Set(recentNames);
-  const scored: Array<{ item: T; rank: number; distance: number; recent: boolean }> = [];
+  // Position in recentNames, not a boolean: the caller's list is already ordered
+  // most-recent-first and that order has to survive into the results.
+  const recentRank = new Map(recentNames.map((name, i) => [name, i]));
+  const scored: Array<{ item: T; rank: number; distance: number; recency: number }> = [];
 
   for (const item of items) {
     const nameScore = scoreFuzzy(query, item.name);
@@ -73,13 +88,30 @@ export function searchFuzzy<T extends FuzzySearchable>(
       .filter((s): s is FuzzyScore => s !== null)
       .sort((a, b) => a.rank - b.rank || a.distance - b.distance)[0];
 
-    if (best) scored.push({ item, rank: best.rank, distance: best.distance, recent: recentSet.has(item.name) });
+    if (best) {
+      const recency = recentRank.get(item.name);
+      // "Name reached the winning tier", not "name outscored the description":
+      // a description can happen to match at a smaller offset and would then
+      // silently disqualify a perfectly good name match from the boost.
+      const boosted = recency !== undefined && nameScore?.rank === best.rank;
+      scored.push({
+        item,
+        rank: best.rank - (boosted ? RECENT_TIER_BOOST : 0),
+        distance: best.distance,
+        // Sentinel, not Infinity: Infinity - Infinity is NaN and would silently
+        // neutralise the comparator for every pair of non-recent items.
+        recency: recency ?? recentNames.length,
+      });
+    }
   }
 
+  // Recency outranks distance so it actually takes effect: for "contains" matches
+  // distance is the match offset, which differs per item and previously decided
+  // every comparison before recency was ever consulted.
   scored.sort((a, b) =>
     a.rank - b.rank
+    || a.recency - b.recency
     || a.distance - b.distance
-    || (a.recent === b.recent ? 0 : a.recent ? -1 : 1)
     || a.item.name.localeCompare(b.item.name),
   );
 
