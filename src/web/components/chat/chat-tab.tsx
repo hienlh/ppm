@@ -227,11 +227,11 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     return () => clearTimeout(t);
   }, [editForking]);
 
-  const handleNewSession = useCallback(() => {
+  const handleNewSession = useCallback((title?: string, clearedFrom?: string) => {
     useTabStore.getState().openTab({
       type: "chat",
-      title: "AI Chat",
-      metadata: { projectName, providerId },
+      title: title || "AI Chat",
+      metadata: { projectName, providerId, ...(clearedFrom && { clearedFrom }) },
       projectId: projectName || null,
       closable: true,
     });
@@ -379,6 +379,8 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
           const session = await api.post<Session>(`${projectUrl(pName)}/chat/sessions`, {
             providerId,
             title: content.slice(0, 50),
+            // Set by /clear — the session only exists now, so persist the lineage here.
+            clearedFrom: metadata?.clearedFrom as string | undefined,
           });
           setSessionId(session.id);
           setProviderId(session.providerId);
@@ -392,12 +394,30 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       }
       sendMessage(fullContent, { permissionMode, priority });
     },
-    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode],
+    [sessionId, providerId, projectName, sendMessage, buildMessageWithAttachments, permissionMode, metadata],
   );
+
+  // Read through a ref so handleInputSend keeps a stable identity — it is passed to
+  // the memoized MessageInput, and slashItems changes once the picker list loads.
+  const slashItemsRef = useRef(slashItems);
+  slashItemsRef.current = slashItems;
 
   /** Stable wrapper for MessageInput onSend — clears forkDraft + draft and delegates to handleSend */
   const handleInputSend = useCallback(
     (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => {
+      // Client-handled built-ins act on the UI, so they must not reach the SDK.
+      const slash = content.trim().match(/^\/(\S+)(?:\s+([\s\S]+))?$/);
+      if (slash) {
+        const item = slashItemsRef.current.find(
+          (i) => i.handler === "client" && (i.name === slash[1] || i.aliases?.includes(slash[1]!)),
+        );
+        if (item?.name === "clear") {
+          clearDraft();
+          handleNewSession(slash[2]?.trim(), sessionId ?? undefined);
+          return;
+        }
+      }
+
       setForkDraft(undefined);
       clearDraft();
       if (editFork && sessionId && projectName) {
@@ -408,7 +428,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
       }
       handleSend(content, attachments, priority);
     },
-    [handleSend, clearDraft, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments],
+    [handleSend, clearDraft, editFork, sessionId, projectName, handleEditSend, buildMessageWithAttachments, handleNewSession],
   );
 
   // Past user messages for the composer's ArrowUp/Down recall. Read through a ref

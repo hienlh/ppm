@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 37;
+export const CURRENT_SCHEMA_VERSION = 38;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -848,6 +848,15 @@ function runMigrations(database: Database): void {
     database.exec("UPDATE session_branches SET kind = 'fork' WHERE kind IS NULL");
     database.exec("PRAGMA user_version = 37;");
   }
+
+  if (current < 38) {
+    // /clear starts an empty session, so it shares no messages with its origin and
+    // cannot live in session_branches (which anchors on a divergent message).
+    // Record the origin here so the lineage survives even though the transcript
+    // does not.
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN cleared_from TEXT"); } catch { /* column exists */ }
+    database.exec("PRAGMA user_version = 38;");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -998,6 +1007,21 @@ export function setSessionMetadata(sessionId: string, projectName?: string, proj
   getDb().query(
     "INSERT INTO session_metadata (session_id, project_name, project_path) VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET project_name = COALESCE(excluded.project_name, session_metadata.project_name), project_path = COALESCE(excluded.project_path, session_metadata.project_path)",
   ).run(sessionId, projectName ?? null, projectPath ?? null);
+}
+
+/** Record which session a /clear started from */
+export function setSessionClearedFrom(sessionId: string, sourceSessionId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, cleared_from) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET cleared_from = excluded.cleared_from",
+  ).run(sessionId, sourceSessionId);
+}
+
+/** Session this one was cleared from, or null when it wasn't started by /clear */
+export function getSessionClearedFrom(sessionId: string): string | null {
+  const row = getDb()
+    .query("SELECT cleared_from FROM session_metadata WHERE session_id = ?")
+    .get(sessionId) as { cleared_from: string | null } | null;
+  return row?.cleared_from ?? null;
 }
 
 export function deleteSessionMetadata(sessionId: string): void {

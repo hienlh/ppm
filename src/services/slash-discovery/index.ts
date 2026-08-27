@@ -2,6 +2,7 @@ import { discoverSkillRoots } from "./discover-skill-roots.ts";
 import { loadItemsFromRoots } from "./skill-loader.ts";
 import { resolveOverrides } from "./resolve-overrides.ts";
 import { getBuiltinSlashItems } from "./builtin-commands.ts";
+import { getSdkCommands, selectSdkOnlyCommands } from "./sdk-commands.ts";
 import { getCached, setCache } from "./cache.ts";
 import type { SlashItem, SlashItemWithSource, DiscoveryResult } from "./types.ts";
 
@@ -9,6 +10,7 @@ export { searchSlashItems } from "./fuzzy-search.ts";
 export { isPpmHandled, getBuiltinByName } from "./builtin-commands.ts";
 export { executeBuiltin } from "./builtin-handlers.ts";
 export { invalidateCache, invalidateAll } from "./cache.ts";
+export { ensureSdkCommands, invalidateSdkCommands } from "./sdk-commands.ts";
 export type { SlashItem, SlashItemWithSource, ShadowedItem, DiscoveryResult, SkillRoot, DefinitionSource } from "./types.ts";
 
 /**
@@ -28,9 +30,14 @@ export function listSlashItemsDetailed(projectPath: string): DiscoveryResult {
     filePath: "",
   }));
 
+  const sdkItems: SlashItemWithSource[] = selectSdkOnlyCommands(
+    getSdkCommands(projectPath),
+    [...builtinItems, ...result.active].map((i) => i.name),
+  ).map((item) => ({ ...item, source: "bundled" as const, rootPath: "", filePath: "" }));
+
   return {
     ...result,
-    active: [...builtinItems, ...result.active],
+    active: [...builtinItems, ...sdkItems, ...result.active],
   };
 }
 

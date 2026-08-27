@@ -13,6 +13,8 @@ export interface SlashItem {
   aliases?: string[];
   /** Agent-only: model the subagent runs on */
   model?: string;
+  /** Built-in only: which layer executes the command */
+  handler?: "ppm" | "sdk" | "client";
 }
 
 interface SlashCommandPickerProps {

@@ -1,4 +1,4 @@
-import type { SlashItem } from "./types.ts";
+import type { SlashItem, SlashHandler } from "./types.ts";
 
 export interface BuiltinSlashCommand {
   name: string;
@@ -6,8 +6,8 @@ export interface BuiltinSlashCommand {
   category: "session" | "tools" | "config";
   argumentHint?: string;
   aliases?: string[];
-  /** "ppm" = PPM intercepts and executes, "sdk" = passed through to Claude SDK */
-  handler: "ppm" | "sdk";
+  /** "ppm" = server intercepts, "client" = web UI intercepts, "sdk" = passed through */
+  handler: SlashHandler;
 }
 
 /** Static registry of built-in slash commands */
@@ -15,6 +15,9 @@ const BUILTIN_COMMANDS: BuiltinSlashCommand[] = [
   // PPM-executed commands (intercepted before SDK)
   { name: "skills", summary: "List available skills and their sources", category: "tools", aliases: ["sk"], handler: "ppm" },
   { name: "version", summary: "Show PPM and SDK version info", category: "session", handler: "ppm" },
+  // Client-executed: the SDK treats /clear as a no-op because session lifecycle
+  // belongs to the host UI, so the web client opens a fresh chat tab instead.
+  { name: "clear", summary: "Start a new chat tab with empty context", category: "session", argumentHint: "[title]", handler: "client" },
   // SDK-passthrough commands (picker hints, SDK handles execution)
   { name: "help", summary: "Show available commands and skills", category: "session", handler: "sdk" },
   { name: "status", summary: "Show session status and context usage", category: "session", handler: "sdk" },
@@ -35,6 +38,7 @@ export function getBuiltinSlashItems(): SlashItem[] {
     scope: "bundled" as const,
     category: cmd.category,
     aliases: cmd.aliases,
+    handler: cmd.handler,
   }));
 }
 

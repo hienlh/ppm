@@ -16,6 +16,9 @@ export type SlashItemType = "skill" | "command" | "builtin" | "agent";
 export type SlashItemScope = "project" | "user" | "bundled";
 export type ItemOrigin = "skills" | "commands" | "agents";
 
+/** Who runs a built-in: PPM server, the web client, or the Claude SDK */
+export type SlashHandler = "ppm" | "sdk" | "client";
+
 export interface SlashItem {
   type: SlashItemType;
   /** Slash name, e.g. "review", "devops/deploy", "ck:research" */
@@ -30,6 +33,8 @@ export interface SlashItem {
   model?: string;
   /** Agent-only: allowed tools (parsed from comma-separated string or YAML list) */
   tools?: string[];
+  /** Built-in only: which layer executes the command */
+  handler?: SlashHandler;
 }
 
 export interface SkillRoot {

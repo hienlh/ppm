@@ -7,7 +7,8 @@ import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
-import { upsertSlashRecent, getSlashRecents } from "../../services/db.service.ts";
+import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom } from "../../services/db.service.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
@@ -28,10 +29,13 @@ type Env = { Variables: { projectPath: string; projectName: string } };
 export const chatRoutes = new Hono<Env>();
 
 /** GET /chat/slash-items — list available slash commands and skills for the project */
-chatRoutes.get("/slash-items", (c) => {
+chatRoutes.get("/slash-items", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const q = c.req.query("q");
+    // Claude's own built-ins need a live SDK session to enumerate; cached 30 min,
+    // so only the first request per project pays for the CLI spawn.
+    await ensureSdkCommands(projectPath);
     let items = listSlashItems(projectPath);
     const recentNames = getSlashRecents(projectPath);
     if (q) items = searchSlashItems(items, q, 20, recentNames);
@@ -45,6 +49,7 @@ chatRoutes.get("/slash-items", (c) => {
 chatRoutes.delete("/slash-items/cache", (c) => {
   try {
     invalidateCache(c.get("projectPath"));
+    invalidateSdkCommands(c.get("projectPath"));
     return c.json(ok({ invalidated: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
@@ -287,12 +292,13 @@ chatRoutes.post("/sessions", async (c) => {
   try {
     const projectName = c.get("projectName");
     const projectPath = c.get("projectPath");
-    const body = await c.req.json<{ providerId?: string; title?: string }>();
+    const body = await c.req.json<{ providerId?: string; title?: string; clearedFrom?: string }>();
     const session = await chatService.createSession(body.providerId, {
       projectName,
       projectPath,
       title: body.title,
     });
+    if (body.clearedFrom) setSessionClearedFrom(session.id, body.clearedFrom);
     // Auto-assign default tag if project has one
     const defaultTagId = getProjectDefaultTagId(projectPath);
     if (defaultTagId) setSessionTag(session.id, defaultTagId, projectPath);
