@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.34] - 2026-08-28
+
+### Added
+- **Images the assistant reads now appear in the chat** — a `Read` on an image file shows the picture beside its dimensions, size and path, with actions to open it in the editor, copy the path, or view it full size. The card used to print the image's raw base64 instead, sending roughly 1.4MB of text per megabyte of image to the browser with nothing truncating it.
+
 ## [0.17.33] - 2026-08-27
 
 ### Added
