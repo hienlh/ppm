@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useBlobUrl } from "@/hooks/use-blob-url";
 import { useImageOverlay } from "@/stores/image-overlay-store";
+import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
 import { useTabStore } from "@/stores/tab-store";
 import { copyToClipboard } from "@/lib/clipboard";
 import { basename } from "@/lib/utils";
@@ -107,8 +108,8 @@ export function ToolImagePreview({
     void copyToClipboard(filePath).then(() => setCopied(true));
   }
 
-  function openFull() {
-    if (blobUrl) openOverlay(blobUrl, name);
+  function openFull(e: { currentTarget: Element }) {
+    if (blobUrl) openOverlay(blobUrl, name, collectGallery(e.currentTarget));
   }
 
   // Loading: the same box as the loaded state, so the transcript never shifts under the
@@ -155,6 +156,7 @@ export function ToolImagePreview({
     <img
       src={blobUrl}
       alt={name}
+      {...{ [GALLERY_ITEM_ATTR]: "" }}
       onLoad={(e) => measure(e.currentTarget)}
       onError={() => setDecodeFailed(true)}
       className={

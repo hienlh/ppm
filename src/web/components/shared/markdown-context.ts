@@ -14,7 +14,7 @@ export interface MdContextValue {
   /** True while the message is still streaming — defer async Shiki highlight until done. */
   isStreaming: boolean;
   openFileOrSearch: (path: string, line?: { start: number; end?: number }) => void;
-  openImageOverlay: (url: string, alt: string) => void;
+  openImageOverlay: (url: string, alt: string, gallery?: { src: string; alt: string }[]) => void;
   openDiagramOverlay: (svg: string) => void;
 }
 

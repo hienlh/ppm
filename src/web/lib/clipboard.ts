@@ -20,6 +20,47 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   return legacyCopy(text);
 }
 
+/**
+ * Whether an image can be placed on the clipboard at all on this origin.
+ *
+ * Unlike text there is no `execCommand` fallback for binary data, so on the plain-HTTP
+ * origins PPM is often reached from there is nothing to try — callers should disable the
+ * action and say why rather than offer a button that always fails.
+ */
+export function canCopyImage(): boolean {
+  return typeof ClipboardItem !== "undefined" && !!navigator.clipboard?.write;
+}
+
+/**
+ * Copy an image to the clipboard, converting to PNG first.
+ *
+ * Browsers accept a very short list of image types on the clipboard — PNG is the only one
+ * supported everywhere — so a JPEG or WebP has to be repainted through a canvas.
+ */
+export async function copyImageToClipboard(src: string): Promise<boolean> {
+  if (!canCopyImage()) return false;
+  try {
+    const blob = await fetch(src).then((r) => r.blob());
+    const png = blob.type === "image/png" ? blob : await toPng(blob);
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function toPng(blob: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("canvas produced no blob"))), "image/png");
+  });
+}
+
 function legacyCopy(text: string): boolean {
   const textarea = document.createElement("textarea");
   textarea.value = text;

@@ -24,7 +24,7 @@ export async function downloadFolder(projectName: string, folderPath: string): P
 }
 
 /** Hidden <a> tag download trigger — avoids popup blockers */
-function triggerDownload(url: string, filename: string): void {
+export function triggerDownload(url: string, filename: string): void {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;

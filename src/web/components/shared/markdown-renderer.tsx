@@ -8,6 +8,7 @@ import rehypeKatex from "rehype-katex";
 import { useTabStore } from "@/stores/tab-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
 import { useImageOverlay } from "@/stores/image-overlay-store";
+import { collectGallery, GALLERY_ITEM_ATTR } from "@/lib/image-gallery";
 import { useDiagramOverlay } from "@/stores/diagram-overlay-store";
 import { openCommandPalette } from "@/hooks/use-global-keybindings";
 import { useBackgroundOutputStore } from "@/stores/background-output-store";
@@ -162,7 +163,8 @@ function MdImage({ src, alt, node, ...props }: any) {
     <img
       src={displaySrc}
       alt={name}
-      onClick={() => displaySrc && openImageOverlay(displaySrc, name)}
+      {...{ [GALLERY_ITEM_ATTR]: "" }}
+      onClick={(e) => displaySrc && openImageOverlay(displaySrc, name, collectGallery(e.currentTarget))}
       className="max-h-[400px] max-w-full object-contain rounded-md border border-border cursor-pointer"
       style={{ opacity: loading ? 0.3 : 1, minHeight: loading ? 48 : undefined, minWidth: loading ? 48 : undefined }}
       {...props}

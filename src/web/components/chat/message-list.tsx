@@ -57,6 +57,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { api } from "@/lib/api-client";
 import { useProjectStore } from "@/stores/project-store";
 import { useImageOverlay } from "@/stores/image-overlay-store";
+import { collectGallery, GALLERY_ITEM_ATTR, GALLERY_ROOT_ATTR } from "@/lib/image-gallery";
 
 interface MessageListProps {
   messages: ChatMessage[];
@@ -359,6 +360,7 @@ export function MessageList({
       )}
       <div
         ref={setScrollRef}
+        {...{ [GALLERY_ROOT_ATTR]: "" }}
         className="flex-1 overflow-y-auto overflow-x-hidden [overflow-anchor:none]"
         style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}
       >
@@ -981,11 +983,16 @@ function AuthImage({ src, alt }: { src: string; alt: string }) {
   }
 
   return (
-    <button type="button" onClick={() => openOverlay(blobUrl, alt)} className="block text-left">
+    <button
+      type="button"
+      onClick={(e) => openOverlay(blobUrl, alt, collectGallery(e.currentTarget))}
+      className="block text-left"
+    >
       <img
         src={blobUrl}
         alt={alt}
         style={box}
+        {...{ [GALLERY_ITEM_ATTR]: "" }}
         onLoad={(e) => {
           const el = e.currentTarget;
           const c = imageBlobCache.get(src);
@@ -1007,11 +1014,11 @@ function AuthImageThumbnail({ filePath, projectName }: { filePath: string; proje
   return (
     <button
       type="button"
-      onClick={() => blobUrl && openOverlay(blobUrl, name)}
+      onClick={(e) => blobUrl && openOverlay(blobUrl, name, collectGallery(e.currentTarget))}
       className="flex items-center gap-1 rounded-md border border-border/60 bg-background/40 px-1.5 py-0.5 text-[11px] text-text-secondary hover:bg-surface transition-colors cursor-pointer"
     >
       {blobUrl ? (
-        <img src={blobUrl} alt={name} className="size-4 rounded-sm object-cover shrink-0" />
+        <img src={blobUrl} alt={name} {...{ [GALLERY_ITEM_ATTR]: "" }} className="size-4 rounded-sm object-cover shrink-0" />
       ) : error ? (
         <ImageIcon className="size-3 shrink-0" />
       ) : (
