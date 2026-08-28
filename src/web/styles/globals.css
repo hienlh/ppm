@@ -101,6 +101,78 @@
   --blur: 16px;
 }
 
+/*
+ * Ambient image stage (chat Read-tool image results). The panel floats a tile on a
+ * blurred copy of the image itself, so its surfaces are translucent veils rather than
+ * theme tokens. Declared per mode because the veil must stay contrast-safe over both a
+ * bright poster and a dark screenshot. Dark lives in :root, matching the default above.
+ */
+:root {
+  --img-veil: linear-gradient(100deg, rgba(10, 16, 32, 0.6), rgba(10, 16, 32, 0.84));
+  --img-backdrop: blur(40px) saturate(1.6);
+  --img-plate: rgba(255, 255, 255, 0.06);
+  --img-plate-border: rgba(148, 178, 255, 0.22);
+  --img-plate-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 16px 34px -20px rgba(0, 0, 0, 0.7);
+  --img-ghost: rgba(255, 255, 255, 0.08);
+  --img-ghost-border: rgba(255, 255, 255, 0.14);
+  --img-ghost-hover: rgba(255, 255, 255, 0.14);
+  --img-ghost-hover-border: rgba(148, 178, 255, 0.35);
+  --img-meta-label: #8b97b4;
+  --img-checker: rgba(255, 255, 255, 0.04);
+  /* Own values rather than a surface token: on flat light themes panel and panel-2 are
+     both #ffffff, which would make the skeleton invisible on the card. */
+  --img-skeleton: rgba(255, 255, 255, 0.09);
+  --img-skeleton-sweep: rgba(255, 255, 255, 0.14);
+}
+
+html.light {
+  --img-veil: linear-gradient(100deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.84));
+  --img-backdrop: blur(40px) saturate(1.6) brightness(0.95);
+  --img-plate: rgba(255, 255, 255, 0.5);
+  --img-plate-border: rgba(255, 255, 255, 0.7);
+  --img-plate-shadow: 0 2px 4px rgba(15, 23, 42, 0.14), 0 16px 34px -20px rgba(15, 23, 42, 0.55);
+  --img-ghost: rgba(255, 255, 255, 0.7);
+  --img-ghost-border: rgba(255, 255, 255, 0.85);
+  --img-ghost-hover: rgba(255, 255, 255, 0.95);
+  --img-ghost-hover-border: #cbd5e1;
+  --img-meta-label: #7c8899;
+  --img-checker: rgba(15, 23, 42, 0.03);
+  --img-skeleton: rgba(15, 23, 42, 0.07);
+  --img-skeleton-sweep: rgba(255, 255, 255, 0.75);
+}
+
+/* Backing for image tiles that letterbox: shows the transparent area without reading
+   as an empty box. Padding keeps the artwork off the tile edge. */
+.img-checkerboard {
+  background-image:
+    linear-gradient(45deg, var(--img-checker) 25%, transparent 25%, transparent 75%, var(--img-checker) 75%),
+    linear-gradient(45deg, var(--img-checker) 25%, transparent 25%, transparent 75%, var(--img-checker) 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 7px 7px;
+  padding: 6px;
+}
+
+/* Skeleton that occupies the loaded box exactly, so the row never grows after paint. */
+.img-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--img-skeleton);
+}
+.img-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, var(--img-skeleton-sweep) 50%, transparent 80%);
+  animation: img-skeleton-sweep 1.25s linear infinite;
+}
+@keyframes img-skeleton-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .img-skeleton::after { animation: none; }
+}
+
 /* Smooth theme transitions (~250ms) */
 html {
   transition: background-color 0.25s ease-out, color 0.25s ease-out;

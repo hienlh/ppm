@@ -11,11 +11,16 @@ export function useBlobUrl(
   refreshKey = 0,
 ) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [blob, setBlob] = useState<Blob | null>(null);
   const [error, setError] = useState(false);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const urlRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    // Reset so a retry (bumped refreshKey) leaves the error state.
+    setError(false);
+    setErrorCode(null);
     const isExternal = /^(\/|[A-Za-z]:[/\\])/.test(filePath);
     const url = isExternal
       ? `/api/fs/raw?path=${encodeURIComponent(filePath)}`
@@ -23,7 +28,7 @@ export function useBlobUrl(
     const token = getAuthToken();
     fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       .then((r) => {
-        if (!r.ok) throw new Error("Failed");
+        if (!r.ok) throw new Error(String(r.status));
         return r.blob();
       })
       .then((blob) => {
@@ -34,8 +39,13 @@ export function useBlobUrl(
         if (urlRef.current) URL.revokeObjectURL(urlRef.current);
         urlRef.current = u;
         setBlobUrl(u);
+        setBlob(final);
       })
-      .catch(() => { if (!cancelled) setError(true); });
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setError(true);
+        setErrorCode(/^\d+$/.test(e.message) ? e.message : "network");
+      });
     return () => { cancelled = true; };
   }, [filePath, projectName, mimeOverride, refreshKey]);
 
@@ -44,5 +54,6 @@ export function useBlobUrl(
     if (urlRef.current) URL.revokeObjectURL(urlRef.current);
   }, []);
 
-  return { blobUrl, error };
+  // `blob` is exposed so callers can read size and MIME type without a second request.
+  return { blobUrl, blob, error, errorCode };
 }
