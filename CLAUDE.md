@@ -66,6 +66,7 @@ Exceptions (intentionally use real `homedir()`):
 - **SDK .env poisoning**: Projects with `ANTHROPIC_API_KEY` in `.env` break SDK tool execution. Provider neutralizes these vars. See `docs/lessons-learned.md`.
 - **File watching**: never `fs.watch(dir, { recursive: true })` on a project root — on Linux that is one inotify watch per subdirectory, `node_modules` included (it once cost 359k watches). Ignored dirs must be pruned at registration time via `src/services/file-watcher/watch-tree.ts`.
 - **Project Claude settings**: `.claude/settings.local.json` can restrict tools even with `bypassPermissions`. Provider overrides with empty settings.
+- **Transcript images live in two places**: the base64 payload sits at `message.content[].content[]` inside a tool result, but Claude Code also writes an image-shaped record at the top-level `toolUseResult` field carrying no payload. An assertion like "no `"type":"image"` remains" must be scoped to the former, or it fails against correct code.
 
 ## UI Rules
 

@@ -29,11 +29,22 @@ function isImageBlock(block: unknown): block is { source?: { data?: unknown } } 
 
 function imagePlaceholder(block: { source?: { data?: unknown } }): string {
   const data = block.source?.data;
-  if (typeof data !== "string" || data.length === 0) return "[image]";
-  return `[image · ${formatBytes(base64ByteLength(data))}]`;
+  if (typeof data !== "string" || data.length === 0) return imagePlaceholderText();
+  return imagePlaceholderText(base64ByteLength(data));
 }
 
-function base64ByteLength(data: string): number {
+/**
+ * The exact text that stands in for an image block.
+ *
+ * Anything that removes an image from a transcript must use this, so that
+ * `resultHasImagePlaceholder` still recognises the result as having carried an image and the
+ * chat card keeps hiding the textual output in favour of the rendered file.
+ */
+export function imagePlaceholderText(bytes?: number): string {
+  return bytes == null ? "[image]" : `[image · ${formatBytes(bytes)}]`;
+}
+
+export function base64ByteLength(data: string): number {
   const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
 }
