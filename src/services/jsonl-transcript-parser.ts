@@ -7,6 +7,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 import type { ChatEvent, ChatMessage } from "../types/chat.ts";
+import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const TEAMMATE_MSG_RE = /<teammate-message[^>]*>[\s\S]*?<\/teammate-message>/g;
@@ -96,7 +97,7 @@ export function parseSessionMessage(
         const output = block.content ?? block.output ?? "";
         events.push({
           type: "tool_result",
-          output: typeof output === "string" ? output : JSON.stringify(output),
+          output: stringifyToolResultContent(output),
           isError: !!(block as Record<string, unknown>).is_error,
           toolUseId: block.tool_use_id as string | undefined,
           ...(parentId && { parentToolUseId: parentId }),

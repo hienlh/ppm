@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { existsSync, mkdirSync, rmSync, statSync } from "fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, statSync } from "fs";
 import { resolve } from "path";
 import { $ } from "bun";
 import mammoth from "mammoth";
@@ -11,6 +11,7 @@ import {
   isAllowedPath,
   resolvePath,
 } from "../../services/fs-browse.service.ts";
+import { isImageExtension } from "../../shared/image-extensions.ts";
 import { ok, err } from "../../types/api.ts";
 import { createDownloadToken } from "../../services/download-token.service.ts";
 
@@ -72,7 +73,17 @@ fsBrowseRoutes.get("/raw", (c) => {
     if (!filePath) return c.json(err("path is required"), 400);
 
     const resolved = resolvePath(filePath);
-    if (!isAllowedPath(resolved)) return c.json(err("Access denied"), 403);
+    // Images are streamed even from outside the browse whitelist: the chat UI renders images
+    // the assistant just read, and those live at arbitrary paths. Limiting the exception to
+    // image extensions stops it from becoming an arbitrary-file read. The extension is
+    // re-checked after resolving symlinks, so a link named *.png cannot hand out a
+    // non-image target.
+    if (!isAllowedPath(resolved)) {
+      const target = existsSync(resolved) ? realpathSync(resolved) : resolved;
+      if (!isImageExtension(resolved) || !isImageExtension(target)) {
+        return c.json(err("Access denied"), 403);
+      }
+    }
     if (!existsSync(resolved)) return c.json(err("File not found"), 404);
 
     const download = c.req.query("download") === "true";

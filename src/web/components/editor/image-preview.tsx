@@ -1,5 +1,5 @@
 import { Loader2, FileWarning } from "lucide-react";
-import { useBlobUrl } from "./use-blob-url";
+import { useBlobUrl } from "@/hooks/use-blob-url";
 
 export function ImagePreview({ filePath, projectName }: { filePath: string; projectName: string }) {
   const { blobUrl, error } = useBlobUrl(filePath, projectName);

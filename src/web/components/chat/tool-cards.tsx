@@ -67,6 +67,9 @@ import type { ChatEvent } from "../../../types/chat";
 import { useShallow } from "zustand/react/shallow";
 import { useTabStore } from "@/stores/tab-store";
 import { basename } from "@/lib/utils";
+import { isImageExtension } from "../../../shared/image-extensions";
+import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
+import { ToolImagePreview } from "./tool-image-preview";
 
 /** Extract tool name and input from a ChatEvent */
 function extractToolInfo(tool: ChatEvent): { toolName: string; input: Record<string, unknown> } {
@@ -82,6 +85,18 @@ function extractToolInfo(tool: ChatEvent): { toolName: string; input: Record<str
       ? ((tool as any).input as Record<string, unknown>) ?? {}
       : {};
   return { toolName, input };
+}
+
+/**
+ * Path of the image a Read call targeted, or null when it is not a displayable image read.
+ * Only absolute paths qualify, matching what useBlobUrl can resolve to the external
+ * raw-file endpoint — and what the Read tool always supplies.
+ */
+function imageReadPath(tool: ChatEvent): string | null {
+  if (tool.type !== "tool_use" || tool.tool !== "Read") return null;
+  const path = (tool.input as Record<string, unknown> | undefined)?.file_path;
+  if (typeof path !== "string" || !/^(\/|[A-Za-z]:[/\\])/.test(path)) return null;
+  return isImageExtension(path) ? path : null;
 }
 
 /** Unified tool card: shows tool-specific summary + expandable details */
@@ -103,7 +118,10 @@ export function ToolCard({
     // a click — unless the edit failed (diff was never applied, so it's noise).
     const t = tool.type === "tool_use" ? tool.tool : (tool as any).tool;
     const failed = result?.type === "tool_result" && !!(result as any).isError;
-    return (t === "Edit" || t === "MultiEdit") && !failed;
+    if ((t === "Edit" || t === "MultiEdit") && !failed) return true;
+    // Same reasoning for reading an image: the thumbnail is the point of the card,
+    // so show it without requiring a click.
+    return !!imageReadPath(tool);
   });
 
   if (tool.type === "error") {
@@ -127,6 +145,10 @@ export function ToolCard({
   // File-mutation tools show their change via the inline diff/content preview — the SDK's
   // "file updated successfully" boilerplate is noise, so suppress it (but keep error output).
   const isFileMutation = ["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(toolName);
+  const imagePath = imageReadPath(tool);
+  // Hide the text output only when the result really carried an image. Extension is not
+  // enough: an SVG or an undecodable format comes back as text that must stay visible.
+  const resultIsImage = hasResult && resultHasImagePlaceholder(String((result as any).output ?? ""));
 
   // Read partial output for streaming Bash/PowerShell tools
   const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
@@ -194,7 +216,10 @@ export function ToolCard({
           {hasChildren && (
             <SubagentChildren events={children!} projectName={projectName} />
           )}
-          {hasResult && !(isFileMutation && !isError) && (
+          {imagePath && (
+            <ToolImagePreview filePath={imagePath} projectName={projectName ?? ""} />
+          )}
+          {hasResult && !(isFileMutation && !isError) && !(resultIsImage && !isError) && (
             <ToolResultView toolName={toolName} output={(result as any).output} />
           )}
         </div>

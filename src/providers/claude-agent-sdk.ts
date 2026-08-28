@@ -22,6 +22,7 @@ import { getSessionProjectPath, setSessionMetadata, getSessionTitles } from "../
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { parseSessionMessage, nestChildEvents } from "../services/jsonl-transcript-parser.ts";
+import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
 import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
 import { resolve, dirname } from "node:path";
@@ -1283,7 +1284,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 const output = block.content ?? block.output ?? "";
                 yield {
                   type: "tool_result" as const,
-                  output: typeof output === "string" ? output : JSON.stringify(output),
+                  output: stringifyToolResultContent(output),
                   isError: !!block.is_error,
                   toolUseId: block.tool_use_id as string | undefined,
                   ...(parentId && { parentToolUseId: parentId }),
@@ -1312,7 +1313,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                   const output = block.content ?? block.output ?? "";
                   yield {
                     type: "tool_result" as const,
-                    output: typeof output === "string" ? output : JSON.stringify(output),
+                    output: stringifyToolResultContent(output),
                     isError: !!block.is_error,
                     toolUseId: block.tool_use_id as string | undefined,
                   };
@@ -1667,7 +1668,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                     const output = block.content ?? block.output ?? "";
                     yield {
                       type: "tool_result" as const,
-                      output: typeof output === "string" ? output : JSON.stringify(output),
+                      output: stringifyToolResultContent(output),
                       isError: !!block.is_error,
                       toolUseId: block.tool_use_id as string | undefined,
                     };

@@ -1,5 +1,5 @@
 import { Loader2, FileWarning, Music } from "lucide-react";
-import { useBlobUrl } from "./use-blob-url";
+import { useBlobUrl } from "@/hooks/use-blob-url";
 import { basename } from "@/lib/utils";
 
 export function AudioPreview({ filePath, projectName }: { filePath: string; projectName: string }) {
