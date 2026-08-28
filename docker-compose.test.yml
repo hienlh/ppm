@@ -1,7 +1,11 @@
 # Sandboxed test runner. Usage:
-#   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit
+#   docker compose -f docker-compose.test.yml up --build -V --abort-on-container-exit
 # Mounts the working tree for fast iteration; keeps the image's Linux node_modules
 # via an anonymous volume so host (Windows/macOS) node_modules never leak in.
+# `-V` (--renew-anon-volumes) is required: compose otherwise carries the previous
+# container's anonymous volume forward, so a node_modules snapshot from before a
+# dependency was added shadows the freshly built image and the package resolves
+# as missing.
 services:
   test:
     build:
