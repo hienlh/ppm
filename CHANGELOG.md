@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.35] - 2026-08-28
+
+### Added
+- **The image viewer zooms, pans, rotates and flips** — pinch on a trackpad or touch screen, wheel or drag with a mouse, plus fit, actual size, a zoom readout, download, copy, and arrows to walk the other images in the same conversation.
+- **Session debug can clear the images out of a transcript** — a conversation re-sends every image it holds each time it resumes. The dialog now counts them and removes either the oversized ones or all of them, warning when an image is past the 2000-pixel limit the API rejects anyway.
+
 ## [0.17.34] - 2026-08-28
 
 ### Added
