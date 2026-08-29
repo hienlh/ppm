@@ -17,8 +17,15 @@ import { useEffect, useState } from "react";
 export interface ViewportInsets {
   /** Height of the visible area, in px. */
   height: number;
-  /** Distance from the top of the layout viewport to the visible area. */
-  offsetTop: number;
+  /**
+   * Roughly how much the keyboard covers, in px.
+   *
+   * Approximate on purpose: `innerHeight` on iOS counts space behind browser
+   * chrome, so this can be off by a bar's height. Use it to inset content, never
+   * to place a background — an inset that is slightly wrong shifts content a
+   * little, whereas a background placed the same way leaves a visible hole.
+   */
+  keyboardInset: number;
   /** Whether the missing height is big enough to be a keyboard, not browser chrome. */
   keyboardOpen: boolean;
 }
@@ -27,13 +34,11 @@ export interface ViewportInsets {
 const KEYBOARD_MIN_INSET = 120;
 
 function measure(viewport: VisualViewport): ViewportInsets {
+  const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
   return {
     height: viewport.height,
-    offsetTop: viewport.offsetTop,
-    // Only a threshold, never a position: `innerHeight` on iOS counts space
-    // behind browser chrome that a `fixed` element cannot reach, so it is too
-    // unreliable to place anything with.
-    keyboardOpen: window.innerHeight - viewport.height - viewport.offsetTop >= KEYBOARD_MIN_INSET,
+    keyboardInset: inset,
+    keyboardOpen: inset >= KEYBOARD_MIN_INSET,
   };
 }
 
@@ -55,7 +60,7 @@ export function useVisualViewport(active: boolean): ViewportInsets | null {
       frame = null;
       setInsets((prev) => {
         const next = measure(viewport);
-        return prev && prev.height === next.height && prev.offsetTop === next.offsetTop
+        return prev && prev.height === next.height && prev.keyboardInset === next.keyboardInset
           ? prev
           : next;
       });

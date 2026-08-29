@@ -506,7 +506,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           className={cn(
             "flex flex-col",
             keyboardOpen
-              ? "h-[var(--sheet-vh,100dvh)]"
+              ? "h-[calc(var(--sheet-vh,100dvh)+var(--sheet-kb,0px))]"
               : dockExpanded
                 ? "h-[calc(var(--sheet-vh,100dvh)*0.92)]"
                 : "h-[calc(var(--sheet-vh,100dvh)*0.6)]",

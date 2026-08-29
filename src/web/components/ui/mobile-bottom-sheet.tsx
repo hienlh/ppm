@@ -42,55 +42,53 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
 
   if (!open) return null;
 
-  // The frame is the visible area itself, so a panel at its bottom edge lands on
-  // the keyboard by construction. Deriving that edge arithmetically instead —
-  // `innerHeight` minus the keyboard — reads a layout viewport that on iOS spans
-  // ground a `fixed` element cannot cover, and leaves the panel floating short
-  // of the keyboard.
+  // The panel keeps its footing on the bottom of the screen and only its
+  // *contents* are lifted clear of the keyboard, by padding. Moving the panel
+  // itself is what left a hole: the keyboard's height can only be estimated, and
+  // an estimate that is short drags the panel's background up with it, exposing
+  // the page. Padding an anchored panel degrades instead — a bad estimate puts
+  // the toolbar slightly off, over a background that still reaches the bottom.
   //
-  // `--sheet-vh` lets a panel size itself against what is actually visible;
-  // `vh` units measure the layout viewport, which ignores the keyboard entirely.
+  // `--sheet-vh` is what is visible and `--sheet-kb` what the keyboard covers,
+  // so a panel can ask for "the visible area" and still span to the screen edge.
   const frameStyle = {
     zIndex,
-    top: insets ? `${insets.offsetTop}px` : 0,
-    height: insets ? `${insets.height}px` : "100dvh",
     "--sheet-vh": insets ? `${insets.height}px` : "100dvh",
+    "--sheet-kb": insets ? `${insets.keyboardInset}px` : "0px",
   } as React.CSSProperties;
 
   return createPortal(
-    <>
-      {/* Backdrop, always the whole screen. Kept outside the frame so that any
-          disagreement between the frame and the real visible area shows as dim
-          backdrop rather than a bright strip of untouched page. */}
+    <div className="fixed inset-0" style={frameStyle} onClick={onClose}>
+      {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/40 animate-in fade-in-0 duration-200"
-        style={{ zIndex, ...(isDragging ? { opacity: backdropOpacity } : {}) }}
-        onClick={onClose}
+        className="absolute inset-0 bg-black/40 animate-in fade-in-0 duration-200"
+        style={isDragging ? { opacity: backdropOpacity } : undefined}
       />
-      <div className="fixed left-0 right-0" style={frameStyle} onClick={onClose}>
-        {/* Panel. The safe-area padding guards the home indicator, which the
-            keyboard covers while it is up — keeping it then would just push the
-            content a bar's height clear of the keyboard for no reason. */}
-        <div
-          className={cn(
-            "absolute bottom-0 left-0 right-0 rounded-t-2xl bg-popover text-popover-foreground border-t border-border",
-            insets?.keyboardOpen ? "pb-0" : "pb-[max(0.5rem,env(safe-area-inset-bottom))]",
-            !isDragging && "animate-in slide-in-from-bottom duration-200",
-            className,
-          )}
-          style={dragStyle}
-          onClick={(e) => e.stopPropagation()}
-          {...swipeHandlers}
-        >
-          {/* Drag handle. shrink-0 so a flex-column sheet gives it its own height
-              instead of letting `h-full`/`flex-1` content overflow past it. */}
-          <div className="flex justify-center pt-3 pb-1 shrink-0">
-            <div className="w-10 h-1 rounded-full bg-border" />
-          </div>
-          {children}
+      {/* Panel. Padding does double duty: it clears the home indicator when the
+          keyboard is down, and the keyboard itself when it is up. A panel sized
+          in `--sheet-vh` must add `--sheet-kb` back, since the padding is inside
+          that height. */}
+      <div
+        className={cn(
+          "absolute bottom-0 left-0 right-0 rounded-t-2xl bg-popover text-popover-foreground border-t border-border",
+          insets?.keyboardOpen
+            ? "pb-[var(--sheet-kb,0px)]"
+            : "pb-[max(0.5rem,env(safe-area-inset-bottom))]",
+          !isDragging && "animate-in slide-in-from-bottom duration-200",
+          className,
+        )}
+        style={dragStyle}
+        onClick={(e) => e.stopPropagation()}
+        {...swipeHandlers}
+      >
+        {/* Drag handle. shrink-0 so a flex-column sheet gives it its own height
+            instead of letting `h-full`/`flex-1` content overflow past it. */}
+        <div className="flex justify-center pt-3 pb-1 shrink-0">
+          <div className="w-10 h-1 rounded-full bg-border" />
         </div>
+        {children}
       </div>
-    </>,
+    </div>,
     sheetPortalTarget(),
   );
 }
