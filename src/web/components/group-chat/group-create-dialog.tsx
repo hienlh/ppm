@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { ModelSelector } from "@/components/chat/model-selector";
 import { createGroup, type CreateMemberInput } from "@/lib/api-group-chat";
+import { randomId } from "@/lib/utils";
 import type { Group } from "../../../types/group-chat";
 
 interface GroupCreateDialogProps {
@@ -27,7 +28,7 @@ interface DraftMember {
 const PALETTE = ["#6366f1", "#ec4899", "#14b8a6", "#f59e0b", "#8b5cf6", "#ef4444"];
 
 function newMember(): DraftMember {
-  return { key: crypto.randomUUID(), name: "", persona: "", model: null };
+  return { key: randomId(), name: "", persona: "", model: null };
 }
 
 export function GroupCreateDialog({
