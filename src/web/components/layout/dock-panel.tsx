@@ -53,7 +53,14 @@ export function DockPanel({ variant = "desktop", borderEdge = "top" }: DockPanel
   }, []);
 
   return (
-    <div className={cn("flex flex-col h-full overflow-hidden border-border bg-panel", BORDER_EDGE_CLASS[borderEdge])}>
+    // Mobile draws no edge border: the sheet already supplies the rounded top
+    // edge, and a second line lands right under the drag handle.
+    <div
+      className={cn(
+        "flex flex-col h-full overflow-hidden border-border bg-panel",
+        variant === "desktop" && BORDER_EDGE_CLASS[borderEdge],
+      )}
+    >
       {/* Header row */}
       <div className="flex items-center shrink-0">
         {variant === "mobile" ? (

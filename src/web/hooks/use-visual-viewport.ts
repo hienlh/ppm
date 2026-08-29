@@ -17,21 +17,23 @@ import { useEffect, useState } from "react";
 export interface ViewportInsets {
   /** Height of the visible area, in px. */
   height: number;
-  /** Distance from the bottom of the layout viewport to the visible area. */
-  keyboardInset: number;
-  /** Whether that gap is big enough to be a keyboard rather than browser chrome. */
+  /** Distance from the top of the layout viewport to the visible area. */
+  offsetTop: number;
+  /** Whether the missing height is big enough to be a keyboard, not browser chrome. */
   keyboardOpen: boolean;
 }
 
-/** Below this, the gap is a collapsed address bar rather than a keyboard. */
+/** Below this, the missing height is a collapsed address bar, not a keyboard. */
 const KEYBOARD_MIN_INSET = 120;
 
 function measure(viewport: VisualViewport): ViewportInsets {
-  const inset = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
   return {
     height: viewport.height,
-    keyboardInset: inset,
-    keyboardOpen: inset >= KEYBOARD_MIN_INSET,
+    offsetTop: viewport.offsetTop,
+    // Only a threshold, never a position: `innerHeight` on iOS counts space
+    // behind browser chrome that a `fixed` element cannot reach, so it is too
+    // unreliable to place anything with.
+    keyboardOpen: window.innerHeight - viewport.height - viewport.offsetTop >= KEYBOARD_MIN_INSET,
   };
 }
 
@@ -53,9 +55,7 @@ export function useVisualViewport(active: boolean): ViewportInsets | null {
       frame = null;
       setInsets((prev) => {
         const next = measure(viewport);
-        return prev &&
-          prev.height === next.height &&
-          prev.keyboardInset === next.keyboardInset
+        return prev && prev.height === next.height && prev.offsetTop === next.offsetTop
           ? prev
           : next;
       });
