@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.38] - 2026-08-29
+
+### Added
+- **The terminal can be selected and copied on a phone** — a Select button turns a one-finger drag into a real selection. Copy falls back to the last command's output when nothing is selected, and now says what it copied.
+- **Links printed by the terminal are tappable** — a Links button lists the URLs in the scrollback to open or copy, so an `aws sso login` code no longer has to be read off a screenshot.
+
+### Fixed
+- **Every button in a mobile dock tab did nothing** — the terminal toolbar, its keys and its clipboard actions were all inert because the tab's DOM sat outside the container React delivers events to. Typing still worked, which made it look like only the buttons were broken.
+- **The mobile terminal toolbar was cut off by the browser chrome** — the dock sheet handed its content the full sheet height while the drag handle sat above it, pushing the bottom row into the home-indicator band. The last two keys were also stranded off-screen with no hint the row scrolled.
+- **A toast covered the toolbar that raised it** — toasts sat bottom-left, over the mobile dock's key row, and ate the next tap. They now appear at the top on phones.
+
 ## [0.17.37] - 2026-08-29
 
 ### Fixed
