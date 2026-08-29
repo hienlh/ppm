@@ -44,6 +44,8 @@ const URL_TRAILING_PUNCT = /[).,;:'"\]}>]+$/;
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`]+/g;
 /** Cap the scan so a 50k-line scrollback never blocks the tap that triggered it. */
 const URL_SCAN_MAX_ROWS = 5000;
+/** Quiet period before refitting to a new container size, in ms. */
+const RESIZE_SETTLE_MS = 100;
 
 const RESIZE_PREFIX = "\x01RESIZE:";
 const PING_MSG = "\x01PING";
@@ -363,16 +365,24 @@ export function useTerminal(
     };
     document.addEventListener("visibilitychange", onVisibility);
 
-    // ResizeObserver for auto-fit — skip when tab is hidden (0 dimensions)
+    // ResizeObserver for auto-fit — skip when tab is hidden (0 dimensions).
+    // Debounced: an on-screen keyboard resizes the container many times as it
+    // slides, and refitting on each one sends the shell a burst of size changes
+    // that it answers by redrawing, so the output visibly churns. One fit once
+    // the size settles gives the same result without the churn.
+    let fitTimer: ReturnType<typeof setTimeout> | null = null;
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry || entry.contentRect.width === 0 || entry.contentRect.height === 0) return;
-      try {
-        fitAddon.fit();
-        sendResize();
-      } catch {
-        // Ignore fit errors during teardown
-      }
+      if (fitTimer) clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => {
+        try {
+          fitAddon.fit();
+          sendResize();
+        } catch {
+          // Ignore fit errors during teardown
+        }
+      }, RESIZE_SETTLE_MS);
     });
     resizeObserver.observe(container);
 
@@ -384,6 +394,7 @@ export function useTerminal(
 
     return () => {
       unsubTheme();
+      if (fitTimer) clearTimeout(fitTimer);
       resizeObserver.disconnect();
       clearInterval(heartbeatInterval);
       document.removeEventListener("visibilitychange", onVisibility);

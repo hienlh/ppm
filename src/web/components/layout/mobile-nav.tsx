@@ -496,7 +496,15 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           // Higher z-index than the default nav z-40 so the sheet covers the tab bar
           zIndex={60}
           // Expand/collapse toggles 60% ↔ 92% (dockExpanded, session-only); animate height.
-          className={cn("flex flex-col transition-[height] duration-200", dockExpanded ? "h-[92vh]" : "h-[60vh]")}
+          // Measured against `--sheet-vh` (what is visible) rather than `vh` (which
+          // ignores the keyboard), so opening the keyboard shrinks the terminal and
+          // leaves the toolbar sitting directly above it.
+          className={cn(
+            "flex flex-col transition-[height] duration-200",
+            dockExpanded
+              ? "h-[calc(var(--sheet-vh,100dvh)*0.92)]"
+              : "h-[calc(var(--sheet-vh,100dvh)*0.6)]",
+          )}
         >
           {/* Fixed height so xterm fitAddon.fit() receives a non-zero container.
               ResizeObserver in use-terminal.ts fires when this element gains dimensions,

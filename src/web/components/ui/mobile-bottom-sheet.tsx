@@ -15,6 +15,10 @@ import { useSwipeToDismiss } from "@/hooks/use-swipe-to-dismiss";
 /*  Core BottomSheet — reusable everywhere                             */
 /* ------------------------------------------------------------------ */
 
+/** Quiet period before a viewport change is committed, in ms. Long enough to
+ *  outlast the keyboard's slide, short enough not to read as lag. */
+const VIEWPORT_SETTLE_MS = 120;
+
 interface BottomSheetProps {
   open: boolean;
   onClose: () => void;
@@ -37,17 +41,30 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
   // A `fixed inset-0` container is anchored to the layout viewport, which does
   // not shrink when the keyboard opens — so `bottom-0` would sit behind it.
   // Constraining the container to the visual viewport keeps the panel visible.
+  //
+  // iOS reports a stream of intermediate sizes while the keyboard slides, and
+  // committing each one steps the panel up the screen a frame at a time and
+  // fires a resize at anything watching the content. Settling first turns that
+  // into one move, which the CSS height transition then animates smoothly.
   const [vv, setVv] = useState<{ top: number; height: number } | null>(null);
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!open || !viewport) return;
-    const update = () => setVv({ top: viewport.offsetTop, height: viewport.height });
-    update();
-    viewport.addEventListener("resize", update);
-    viewport.addEventListener("scroll", update);
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const commit = () => setVv({ top: viewport.offsetTop, height: viewport.height });
+    const settle = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(commit, VIEWPORT_SETTLE_MS);
+    };
+
+    commit(); // first paint must be correct, not deferred
+    viewport.addEventListener("resize", settle);
+    viewport.addEventListener("scroll", settle);
     return () => {
-      viewport.removeEventListener("resize", update);
-      viewport.removeEventListener("scroll", update);
+      if (timer) clearTimeout(timer);
+      viewport.removeEventListener("resize", settle);
+      viewport.removeEventListener("scroll", settle);
     };
   }, [open]);
 
@@ -55,9 +72,19 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
 
   // When tracking the visual viewport, pin the container to it (top + height,
   // bottom auto) instead of the full-page inset-0 default.
+  //
+  // `--sheet-vh` lets a panel size itself against what is actually visible.
+  // `vh` units resolve against the layout viewport, which ignores the keyboard,
+  // so a `60vh` panel inside a keyboard-shrunk container overflows its own top.
   const containerStyle = vv
-    ? { zIndex, top: `${vv.top}px`, height: `${vv.height}px`, bottom: "auto" as const }
-    : { zIndex };
+    ? {
+        zIndex,
+        top: `${vv.top}px`,
+        height: `${vv.height}px`,
+        bottom: "auto" as const,
+        "--sheet-vh": `${vv.height}px`,
+      } as React.CSSProperties
+    : ({ zIndex, "--sheet-vh": "100dvh" } as React.CSSProperties);
 
   return createPortal(
     <div className="fixed inset-0" style={containerStyle} onClick={onClose}>
