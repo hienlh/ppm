@@ -252,9 +252,11 @@ export const MessageInput = memo(function MessageInput({
     return () => window.removeEventListener("ppm:send-to-chat", handler);
   }, [getVisibleTextarea]);
 
-  // Apply initialValue when it changes (e.g. "Ask AI" from command palette)
+  // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
+  // A restored draft can land after the input is already on screen, so never
+  // write over text that is already there — what was typed wins.
   useEffect(() => {
-    if (initialValue) {
+    if (initialValue && !valueRef.current) {
       writeTextareas(initialValue);
       // Focus and move cursor to end
       setTimeout(() => {

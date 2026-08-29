@@ -11,6 +11,13 @@ interface DraftState {
   attachments: DraftAttachment[];
 }
 
+/**
+ * How long the chat composer may stay hidden waiting for a draft. The composer
+ * is gated on `draftLoading`, so a slow or stalled load must not leave the user
+ * with no way to type.
+ */
+const GATE_RELEASE_MS = 3_000;
+
 interface DraftResult {
   content: string;
   attachments: string; // JSON string
@@ -34,6 +41,11 @@ export function useDraft(projectName: string, sessionId: string | null) {
     }
     let cancelled = false;
     setLoading(true);
+    // Releasing the gate only reveals the composer; a draft arriving afterwards
+    // is still applied, and MessageInput refuses to overwrite typed text.
+    const releaseTimer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, GATE_RELEASE_MS);
     api
       .get<DraftResult | null>(
         `${projectUrl(projectName)}/chat/drafts/${encodeURIComponent(effectiveId)}`,
@@ -49,8 +61,11 @@ export function useDraft(projectName: string, sessionId: string | null) {
         }
       })
       .catch(() => { if (!cancelled) setDraft(null); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => {
+        clearTimeout(releaseTimer);
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; clearTimeout(releaseTimer); };
   }, [projectName, effectiveId]);
 
   // Debounced save (1s)

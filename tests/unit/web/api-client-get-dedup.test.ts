@@ -18,7 +18,7 @@ const store = new Map<string, string>();
   removeItem: (k: string) => void store.delete(k),
 };
 
-const { api } = await import("../../../src/web/lib/api-client");
+const { api, ApiClient } = await import("../../../src/web/lib/api-client");
 
 const realFetch = globalThis.fetch;
 let calls: string[] = [];
@@ -111,6 +111,73 @@ describe("ApiClient.get — in-flight sharing", () => {
     await expect(a).rejects.toThrow("boom");
     await expect(b).rejects.toThrow("boom");
     expect(calls).toHaveLength(1);
+  });
+
+  it("stops timing once headers arrive, so a slow body is never cut off", async () => {
+    const client = new ApiClient("", 20);
+    (globalThis as any).fetch = async (url: string) => {
+      calls.push(String(url));
+      return {
+        status: 200,
+        headers: { get: () => null },
+        ok: true,
+        // Body lands well after the response timeout would have fired.
+        json: async () => {
+          await Bun.sleep(120);
+          return { ok: true, data: "slow-body" };
+        },
+      } as unknown as Response;
+    };
+
+    expect(await client.get("/api/big-transcript")).toBe("slow-body");
+  });
+
+  it("times out a stalled GET rather than hanging forever", async () => {
+    const client = new ApiClient("", 20);
+    (globalThis as any).fetch = (url: string, init: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        calls.push(String(url));
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+      });
+
+    await expect(client.get("/api/stalled")).rejects.toThrow(/no response/i);
+  });
+
+  it("drops the in-flight entry after a timeout so a later caller is not stuck on the stalled request", async () => {
+    const client = new ApiClient("", 20);
+    let n = 0;
+    (globalThis as any).fetch = (url: string, init: RequestInit) => {
+      calls.push(String(url));
+      if (++n === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+        });
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, data: "fresh" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    };
+
+    await expect(client.get("/api/poisoned")).rejects.toThrow(/no response/i);
+    expect(await client.get("/api/poisoned")).toBe("fresh");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("forwards a caller's abort and stops timing once the request settles", async () => {
+    const client = new ApiClient("", 20);
+    (globalThis as any).fetch = (url: string, init: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        calls.push(String(url));
+        init.signal!.addEventListener("abort", () => reject(init.signal!.reason));
+      });
+
+    const ac = new AbortController();
+    const p = client.get("/api/caller-abort", { signal: ac.signal });
+    ac.abort(new Error("caller went away"));
+    await expect(p).rejects.toThrow("caller went away");
   });
 
   it("opts out when an AbortSignal is passed, so one abort cannot cancel another caller", async () => {

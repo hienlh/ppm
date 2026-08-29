@@ -16,11 +16,30 @@ function warnOnAuditFailure(res: Response): void {
 /** GETs currently awaiting a response, keyed by absolute URL. See ApiClient.get. */
 const pendingGets = new Map<string, Promise<unknown>>();
 
-class ApiClient {
-  private baseUrl: string;
+/**
+ * How long a GET may wait for response headers. Browsers do not time a stalled
+ * fetch out on their own, and a request that never settles keeps its
+ * `pendingGets` slot forever — every later caller of that URL then inherits the
+ * stall, and UI gated on the response stays hidden until a page reload.
+ *
+ * The clock stops once headers arrive, so transcripts, file reads and other
+ * large bodies may still take as long as the connection needs. Generous enough
+ * for endpoints that spawn a CLI or hit a registry before answering.
+ */
+const RESPONSE_TIMEOUT_MS = 30_000;
 
-  constructor(baseUrl = "") {
+/** `reason` is only guaranteed on newer engines; never propagate `undefined`. */
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("Aborted", "AbortError");
+}
+
+export class ApiClient {
+  private baseUrl: string;
+  private responseTimeoutMs: number;
+
+  constructor(baseUrl = "", responseTimeoutMs = RESPONSE_TIMEOUT_MS) {
     this.baseUrl = baseUrl;
+    this.responseTimeoutMs = responseTimeoutMs;
   }
 
   private getToken(): string | null {
@@ -61,11 +80,35 @@ class ApiClient {
   }
 
   private async rawGet<T>(path: string, signal?: AbortSignal): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: this.headers(),
-      signal,
-    });
-    return this.handleResponse<T>(res);
+    if (signal?.aborted) throw abortReason(signal);
+
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new DOMException(
+            `No response after ${this.responseTimeoutMs}ms: ${path}`,
+            "TimeoutError",
+          ),
+        ),
+      this.responseTimeoutMs,
+    );
+    const forwardAbort = () => controller.abort(abortReason(signal!));
+    signal?.addEventListener("abort", forwardAbort, { once: true });
+
+    try {
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        headers: this.headers(),
+        signal: controller.signal,
+      });
+      // Headers are in, so the connection answered — stop the clock before
+      // reading the body, which may legitimately be large and slow.
+      clearTimeout(timer);
+      return await this.handleResponse<T>(res);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", forwardAbort);
+    }
   }
 
   async post<T>(path: string, body?: unknown): Promise<T> {
