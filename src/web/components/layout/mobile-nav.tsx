@@ -496,12 +496,15 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           // Higher z-index than the default nav z-40 so the sheet covers the tab bar
           zIndex={60}
           // Expand/collapse toggles 60% ↔ 92% (dockExpanded, session-only); animate height.
-          className={cn("transition-[height] duration-200", dockExpanded ? "h-[92vh]" : "h-[60vh]")}
+          className={cn("flex flex-col transition-[height] duration-200", dockExpanded ? "h-[92vh]" : "h-[60vh]")}
         >
           {/* Fixed height so xterm fitAddon.fit() receives a non-zero container.
               ResizeObserver in use-terminal.ts fires when this element gains dimensions,
-              triggering a refit — no extra imperative call needed. */}
-          <div className="flex flex-col h-full overflow-hidden">
+              triggering a refit — no extra imperative call needed.
+              flex-1 (not h-full) so the drag handle's height is deducted; h-full
+              resolves against the full panel box and pushed the dock's bottom row
+              past the sheet, into the browser chrome / home-indicator band. */}
+          <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
             <DockPanel variant="mobile" />
           </div>
         </BottomSheet>

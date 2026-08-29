@@ -78,15 +78,32 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
         onClick={(e) => e.stopPropagation()}
         {...swipeHandlers}
       >
-        {/* Drag handle */}
-        <div className="flex justify-center pt-3 pb-1">
+        {/* Drag handle. shrink-0 so a flex-column sheet gives it its own height
+            instead of letting `h-full`/`flex-1` content overflow past it. */}
+        <div className="flex justify-center pt-3 pb-1 shrink-0">
           <div className="w-10 h-1 rounded-full bg-border" />
         </div>
         {children}
       </div>
     </div>,
-    document.body,
+    sheetPortalTarget(),
   );
+}
+
+/**
+ * Portal target for every sheet: the React root, never `document.body`.
+ *
+ * TabPool reparents live tab DOM into panel slots with `appendChild`, and on
+ * mobile the dock's slot lives inside a sheet. A body-level portal would put
+ * that node outside the root container React binds its delegated listeners to,
+ * so React resolves the node's root container (`#root`) against the container
+ * the event fired on (`body`), finds no match, and drops the event — every
+ * button inside a dock tab goes dead while native listeners still fire.
+ * `#root` carries no styles, so keeping the portal inside it leaves stacking
+ * order untouched.
+ */
+function sheetPortalTarget(): HTMLElement {
+  return document.getElementById("root") ?? document.body;
 }
 
 /* ------------------------------------------------------------------ */
