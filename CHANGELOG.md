@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.36] - 2026-08-29
+
+### Fixed
+- **The whole app went blank at a plain address whenever the Teams tab was the open one** — the group dialog asked for a random id that browsers only hand out over `https://` or `localhost`, and it asked on every render rather than when the dialog opened, so the failure took the entire page down instead of just the dialog.
+- **A split panel could be left blank with no way to close it** — a panel holding only a tab belonging to a project that no longer exists showed no tabs, no empty state and no close button. Affected layouts are now repaired on load, and an empty panel can be closed from a button or a middle-click.
+
 ## [0.17.35] - 2026-08-28
 
 ### Added
