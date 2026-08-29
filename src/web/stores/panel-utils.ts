@@ -111,9 +111,14 @@ export function gridRemovePanel(grid: string[][], panelId: string): string[][] {
  * tab bar hides those, so every other "is this panel empty?" check must agree —
  * otherwise the panel renders neither tabs nor the empty state, and since it has no
  * closable tab, the auto-close in closeTab can never fire and the panel is stuck.
+ *
+ * Callers spell "no active project" two ways: TabBar passes null, while the
+ * per-project layout key is the "__global__" sentinel. Both mean unfiltered, so
+ * they are normalized here — a split between them would resurrect the exact
+ * disagreement this helper exists to prevent.
  */
 export function visibleTabs(tabs: Tab[], projectName: string | null): Tab[] {
-  if (!projectName) return tabs;
+  if (!projectName || projectName === "__global__") return tabs;
   return tabs.filter((t) => !t.projectId || t.projectId === projectName);
 }
 

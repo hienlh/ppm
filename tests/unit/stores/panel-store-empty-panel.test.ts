@@ -173,4 +173,13 @@ describe("visibleTabs", () => {
 
     expect(visibleTabs(tabs, null).map((t) => t.id)).toEqual(["a", "b"]);
   });
+
+  it("treats the __global__ layout key the same as null", () => {
+    // TabBar passes null for "no active project" while the layout key is the
+    // "__global__" sentinel. If these disagreed, EditorPanel would call a panel
+    // empty while TabBar still rendered its chips — tabs above a blank body.
+    const tabs = makePanel("p", ["a"], PROJECT).tabs.concat(makePanel("p", ["b"], null).tabs);
+
+    expect(visibleTabs(tabs, "__global__").map((t) => t.id)).toEqual(["a", "b"]);
+  });
 });
