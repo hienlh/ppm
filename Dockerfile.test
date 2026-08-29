@@ -2,7 +2,11 @@
 # Purpose: run the suite in isolation from the host prod env (~/.ppm, real ports,
 # tunnels). Mounting host node_modules ships the wrong-platform native binaries,
 # so deps are installed inside the image instead.
-FROM oven/bun:1
+# Pinned, not `oven/bun:1` — a floating tag silently re-resolves on every rebuild,
+# so an upstream Bun regression turns into a green suite failing the next morning
+# with nothing in the diff. 1.3.14 cannot extract the mermaid tarball, and 1.3.10
+# fails to load ~300 of the suite's tests.
+FROM oven/bun:1.3.13
 
 # git: required by the git-graph package tests and gitignore-aware file indexing.
 RUN apt-get update \
