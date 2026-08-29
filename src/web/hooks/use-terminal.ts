@@ -34,8 +34,16 @@ interface UseTerminalReturn {
   getSelection: () => string;
   /** Read buffer from last command start to current cursor (for "Send to Chat"). */
   getLastCommandOutput: () => string;
+  /** URLs present in the scrollback, most recent first. */
+  getBufferUrls: () => string[];
   restart: () => void;
 }
+
+/** Trailing punctuation that ends a sentence rather than the URL itself. */
+const URL_TRAILING_PUNCT = /[).,;:'"\]}>]+$/;
+const URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`]+/g;
+/** Cap the scan so a 50k-line scrollback never blocks the tap that triggered it. */
+const URL_SCAN_MAX_ROWS = 5000;
 
 const RESIZE_PREFIX = "\x01RESIZE:";
 const PING_MSG = "\x01PING";
@@ -99,6 +107,50 @@ export function useTerminal(
     // Trim trailing empty lines
     while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
     return lines.join("\n");
+  }, []);
+
+  /**
+   * Collect URLs from the scrollback.
+   *
+   * xterm's link addon activates a link from a mouse hover followed by mouseup,
+   * neither of which a touch device produces, so on mobile this list is the only
+   * way to reach a URL the shell printed (an `aws sso login` code, for example).
+   * Wrapped lines are joined first — a URL long enough to matter is usually the
+   * one that got split across rows.
+   */
+  const getBufferUrls = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return [];
+    const buf = term.buffer.active;
+    const endRow = buf.baseY + buf.cursorY;
+    const startRow = Math.max(0, endRow - URL_SCAN_MAX_ROWS);
+
+    const logical: string[] = [];
+    let current = "";
+    for (let i = startRow; i <= endRow; i++) {
+      const line = buf.getLine(i);
+      if (!line) continue;
+      current += line.translateToString(true);
+      // isWrapped marks a row as the continuation of the previous one, so the
+      // break is a display artefact and must not split the URL.
+      const next = buf.getLine(i + 1);
+      if (next?.isWrapped) continue;
+      logical.push(current);
+      current = "";
+    }
+    if (current) logical.push(current);
+
+    const seen = new Set<string>();
+    const urls: string[] = [];
+    for (const text of logical) {
+      for (const match of text.match(URL_PATTERN) ?? []) {
+        const url = match.replace(URL_TRAILING_PUNCT, "");
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        urls.push(url);
+      }
+    }
+    return urls.reverse();
   }, []);
 
   const sendResize = useCallback(() => {
@@ -344,5 +396,5 @@ export function useTerminal(
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, restart };
+  return { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, getBufferUrls, restart };
 }

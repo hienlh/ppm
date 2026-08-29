@@ -1,51 +1,32 @@
 import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useTerminal } from "@/hooks/use-terminal";
+import { useTerminalTouchSelection } from "@/hooks/use-terminal-touch-selection";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
-import { Copy, ClipboardPaste, RotateCcw, MessageSquare } from "lucide-react";
+import { RotateCcw, MessageSquare } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 
 import { usePanelStore } from "@/stores/panel-store";
+import { TerminalMobileToolbar } from "./terminal-mobile-toolbar";
+import { TerminalLinksSheet } from "./terminal-links-sheet";
 
 interface TerminalTabProps {
   metadata?: Record<string, unknown>;
   tabId?: string;
 }
 
-const MOBILE_KEYS = [
-  { label: "Tab", value: "\t" },
-  { label: "Esc", value: "\x1b" },
-  { label: "Ctrl", value: null, isModifier: true },
-  { label: "\u2191", value: "\x1b[A" },
-  { label: "\u2193", value: "\x1b[B" },
-  { label: "\u2190", value: "\x1b[D" },
-  { label: "\u2192", value: "\x1b[C" },
-  { label: "^C", value: "\x03" },
-] as const;
-
 export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: TerminalTabProps) {
   const sessionId = (metadata?.sessionId as string) ?? "new";
   const projectName = metadata?.projectName as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, restart } = useTerminal({ sessionId, projectName, containerRef, tabId });
+  const { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, getBufferUrls, restart } = useTerminal({ sessionId, projectName, containerRef, tabId });
   const [ctrlMode, setCtrlMode] = useState(false);
-  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [linksOpen, setLinksOpen] = useState(false);
 
-  // Adjust height when mobile keyboard opens
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
-
-    function handleResize() {
-      if (!vv) return;
-      setViewportHeight(vv.height);
-    }
-
-    vv.addEventListener("resize", handleResize);
-    return () => vv.removeEventListener("resize", handleResize);
-  }, []);
+  useTerminalTouchSelection(containerRef, selectMode);
 
   const focusTerminal = useCallback(() => {
     const termElement = containerRef.current?.querySelector(
@@ -54,18 +35,19 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
     termElement?.focus();
   }, []);
 
-  // On touch devices xterm swallows the synthesized `click`, so an onClick
-  // handler never fires and the soft keyboard never opens. Bind `touchend` in
-  // the capture phase (runs before xterm's own handlers) and focus the hidden
-  // textarea there — this happens inside a real user gesture, so mobile
-  // browsers reliably raise the on-screen keyboard.
+  // Raising the soft keyboard needs focus() to run inside a gesture the browser
+  // recognises, and xterm's own mousedown handling does not reliably qualify.
+  // Capture-phase `touchend` runs before xterm's handlers and is unambiguously a
+  // gesture, so the keyboard opens even when the click path is unreliable.
+  // Skipped in select mode: a drag there is a selection gesture, and raising the
+  // keyboard would both shrink the viewport mid-drag and clear the selection.
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || selectMode) return;
     const onTouchEnd = () => focusTerminal();
     container.addEventListener("touchend", onTouchEnd, { capture: true });
     return () => container.removeEventListener("touchend", onTouchEnd, { capture: true });
-  }, [focusTerminal]);
+  }, [focusTerminal, selectMode]);
 
   const sendKey = useCallback(
     (value: string) => {
@@ -86,12 +68,22 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
     [ctrlMode, sendData, focusTerminal],
   );
 
+  // xterm starts a selection from mousedown and has no touch equivalent, so on a
+  // phone getSelection() is always empty. Falling back to the last command's
+  // output keeps the button useful instead of silently doing nothing.
   const handleCopy = useCallback(async () => {
     const selection = getSelection();
-    if (selection) {
-      await copyToClipboard(selection);
+    const text = selection || getLastCommandOutput();
+    if (!text.trim()) {
+      toast("Nothing to copy", { duration: 1500 });
+      return;
     }
-  }, [getSelection]);
+    const ok = await copyToClipboard(text);
+    toast[ok ? "success" : "error"](
+      ok ? (selection ? "Selection copied" : "Last output copied") : "Could not copy",
+      { duration: 1500 },
+    );
+  }, [getSelection, getLastCommandOutput]);
 
   const handlePaste = useCallback(async () => {
     try {
@@ -101,7 +93,10 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
         focusTerminal();
       }
     } catch {
-      // Clipboard permission denied
+      // readText() needs a secure context and an explicit permission grant, and
+      // Safari rejects it outright when the tap is not treated as a gesture.
+      // Say so — a silent catch reads as a dead button.
+      toast.error("Clipboard blocked — paste with the keyboard instead", { duration: 2500 });
     }
   }, [sendData, focusTerminal]);
 
@@ -136,10 +131,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const isMobile = typeof window !== "undefined" && "ontouchstart" in window;
 
   return (
-    <div
-      className="flex flex-col h-full"
-      style={viewportHeight ? { maxHeight: `${viewportHeight}px` } : undefined}
-    >
+    <div className="flex flex-col h-full min-h-0">
       {/* Status bar */}
       <div className="flex items-center gap-2 px-3 py-1 bg-surface border-b border-border text-xs">
         <span
@@ -180,52 +172,31 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
       {/* Terminal container. onClick focuses xterm's hidden textarea — on mobile
           the soft keyboard only opens when focus() runs inside a recognized tap
           gesture, which xterm's internal mousedown handling doesn't reliably do. */}
-      <div ref={containerRef} onClick={focusTerminal} className="flex-1 min-h-0 bg-background p-1" />
+      <div
+        ref={containerRef}
+        onClick={selectMode ? undefined : focusTerminal}
+        className={cn("flex-1 min-h-0 bg-background p-1", selectMode && "touch-none")}
+      />
 
-      {/* Mobile toolbar */}
       {isMobile && (
-        <div className="flex items-center gap-1 px-2 py-1.5 bg-surface border-t border-border overflow-x-auto">
-          <button
-            onClick={handleCopy}
-            className="px-2 py-1.5 rounded text-xs min-w-[36px] min-h-[32px] bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground transition-colors select-none"
-          >
-            <Copy size={14} />
-          </button>
-          <button
-            onClick={handlePaste}
-            className="px-2 py-1.5 rounded text-xs min-w-[36px] min-h-[32px] bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground transition-colors select-none"
-          >
-            <ClipboardPaste size={14} />
-          </button>
-          <button
-            onClick={handleSendToChat}
-            className="px-2 py-1.5 rounded text-xs min-w-[36px] min-h-[32px] bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground transition-colors select-none"
-            aria-label="Send to Chat"
-          >
-            <MessageSquare size={14} />
-          </button>
-          <div className="w-px h-5 bg-border mx-0.5" />
-          {MOBILE_KEYS.map((key) => (
-            <button
-              key={key.label}
-              onClick={() => {
-                if (key.label === "Ctrl") {
-                  setCtrlMode(!ctrlMode);
-                } else if (key.value) {
-                  sendKey(key.value);
-                }
-              }}
-              className={cn(
-                "px-3 py-1.5 rounded text-xs font-mono min-w-[36px] min-h-[32px]",
-                "bg-surface-elevated text-text-primary active:bg-primary active:text-primary-foreground",
-                "transition-colors select-none",
-                key.label === "Ctrl" && ctrlMode && "bg-primary text-primary-foreground",
-              )}
-            >
-              {key.label}
-            </button>
-          ))}
-        </div>
+        <>
+          <TerminalMobileToolbar
+            ctrlMode={ctrlMode}
+            onToggleCtrl={() => setCtrlMode(!ctrlMode)}
+            selectMode={selectMode}
+            onToggleSelect={() => setSelectMode(!selectMode)}
+            onKey={sendKey}
+            onCopy={() => void handleCopy()}
+            onPaste={() => void handlePaste()}
+            onSendToChat={handleSendToChat}
+            onOpenLinks={() => setLinksOpen(true)}
+          />
+          <TerminalLinksSheet
+            open={linksOpen}
+            onClose={() => setLinksOpen(false)}
+            urls={linksOpen ? getBufferUrls() : []}
+          />
+        </>
       )}
     </div>
   );
