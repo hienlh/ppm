@@ -130,7 +130,7 @@ function EmptyPanel({ panelId, canClose }: { panelId: string; canClose: boolean 
         {canClose && (
           <button
             onClick={() => usePanelStore.getState().closePanel(panelId)}
-            className="flex items-center gap-1.5 px-4 py-3 rounded-md text-xs text-text-subtle hover:text-foreground active:bg-surface-elevated transition-colors"
+            className="flex items-center gap-1.5 px-4 py-3.5 rounded-md text-xs text-text-subtle hover:text-foreground active:bg-surface-elevated transition-colors"
           >
             <X className="size-3.5" />
             Close Panel
