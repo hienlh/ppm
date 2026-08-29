@@ -153,6 +153,10 @@ app.route("/api/fs", fsBrowseRoutes);
 import { resourceRoutes } from "./routes/resources.ts";
 app.route("/api/system", resourceRoutes);
 
+// Finishes an OAuth loopback login started from another device
+import { loopbackRoutes } from "./routes/oauth-loopback.ts";
+app.route("/api/loopback", loopbackRoutes);
+
 // API routes
 app.route("/api/settings", settingsRoutes);
 app.route("/api/settings/mcp", mcpRoutes);
