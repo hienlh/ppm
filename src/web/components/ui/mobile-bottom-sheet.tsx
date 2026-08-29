@@ -6,18 +6,15 @@
  * Also exports context-menu-specific sub-components (BottomSheetItem, etc.)
  * used by adaptive-context-menu.tsx.
  */
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { useSwipeToDismiss } from "@/hooks/use-swipe-to-dismiss";
+import { useVisualViewport } from "@/hooks/use-visual-viewport";
 
 /* ------------------------------------------------------------------ */
 /*  Core BottomSheet — reusable everywhere                             */
 /* ------------------------------------------------------------------ */
-
-/** Quiet period before a viewport change is committed, in ms. Long enough to
- *  outlast the keyboard's slide, short enough not to read as lag. */
-const VIEWPORT_SETTLE_MS = 120;
 
 interface BottomSheetProps {
   open: boolean;
@@ -37,54 +34,24 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
   const { dragY, swipeHandlers, dragStyle, backdropOpacity, isDragging } =
     useSwipeToDismiss(onClose);
 
-  // Follow the visual viewport so the panel rides above the on-screen keyboard.
-  // A `fixed inset-0` container is anchored to the layout viewport, which does
-  // not shrink when the keyboard opens — so `bottom-0` would sit behind it.
-  // Constraining the container to the visual viewport keeps the panel visible.
-  //
-  // iOS reports a stream of intermediate sizes while the keyboard slides, and
-  // committing each one steps the panel up the screen a frame at a time and
-  // fires a resize at anything watching the content. Settling first turns that
-  // into one move, which the CSS height transition then animates smoothly.
-  const [vv, setVv] = useState<{ top: number; height: number } | null>(null);
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    if (!open || !viewport) return;
-
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const commit = () => setVv({ top: viewport.offsetTop, height: viewport.height });
-    const settle = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(commit, VIEWPORT_SETTLE_MS);
-    };
-
-    commit(); // first paint must be correct, not deferred
-    viewport.addEventListener("resize", settle);
-    viewport.addEventListener("scroll", settle);
-    return () => {
-      if (timer) clearTimeout(timer);
-      viewport.removeEventListener("resize", settle);
-      viewport.removeEventListener("scroll", settle);
-    };
-  }, [open]);
+  // Keyboard-aware geometry. The backdrop deliberately keeps covering the whole
+  // layout viewport while only the panel tracks the keyboard: if the two ever
+  // disagree by a few pixels, the seam shows as dimmed backdrop rather than a
+  // strip of untouched page.
+  const insets = useVisualViewport(open);
 
   if (!open) return null;
 
-  // When tracking the visual viewport, pin the container to it (top + height,
-  // bottom auto) instead of the full-page inset-0 default.
-  //
   // `--sheet-vh` lets a panel size itself against what is actually visible.
   // `vh` units resolve against the layout viewport, which ignores the keyboard,
-  // so a `60vh` panel inside a keyboard-shrunk container overflows its own top.
-  const containerStyle = vv
-    ? {
-        zIndex,
-        top: `${vv.top}px`,
-        height: `${vv.height}px`,
-        bottom: "auto" as const,
-        "--sheet-vh": `${vv.height}px`,
-      } as React.CSSProperties
-    : ({ zIndex, "--sheet-vh": "100dvh" } as React.CSSProperties);
+  // so a `60vh` panel measured that way overflows the space it really has.
+  const containerStyle = {
+    zIndex,
+    "--sheet-vh": insets ? `${insets.height}px` : "100dvh",
+  } as React.CSSProperties;
+
+  // Sitting the panel on top of the keyboard rather than the screen edge.
+  const panelStyle = { ...dragStyle, bottom: insets ? `${insets.keyboardInset}px` : undefined };
 
   return createPortal(
     <div className="fixed inset-0" style={containerStyle} onClick={onClose}>
@@ -101,7 +68,7 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
           !isDragging && "animate-in slide-in-from-bottom duration-200",
           className,
         )}
-        style={dragStyle}
+        style={panelStyle}
         onClick={(e) => e.stopPropagation()}
         {...swipeHandlers}
       >

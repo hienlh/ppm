@@ -22,6 +22,7 @@ import { downloadFile } from "@/lib/file-download";
 import { FileActions } from "@/components/explorer/file-actions";
 import { api, projectUrl } from "@/lib/api-client";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { useVisualViewport } from "@/hooks/use-visual-viewport";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { DockPanel } from "@/components/layout/dock-panel";
 import { MobileTabSwitcherSheet } from "@/components/layout/mobile-tab-switcher-sheet";
@@ -39,6 +40,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
   // Dock visibility — drives the toggle button active state and the bottom sheet.
   const dock = usePanelStore((s) => s.dock);
   const dockExpanded = usePanelStore((s) => s.dockExpanded);
+  const keyboardOpen = useVisualViewport(true)?.keyboardOpen ?? false;
   const isMobile = useIsMobile();
 
   const currentProject = usePanelStore((s) => s.currentProject);
@@ -495,15 +497,19 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
           onClose={() => usePanelStore.getState().setDockVisible(false)}
           // Higher z-index than the default nav z-40 so the sheet covers the tab bar
           zIndex={60}
-          // Expand/collapse toggles 60% ↔ 92% (dockExpanded, session-only); animate height.
-          // Measured against `--sheet-vh` (what is visible) rather than `vh` (which
-          // ignores the keyboard), so opening the keyboard shrinks the terminal and
-          // leaves the toolbar sitting directly above it.
+          // Expand/collapse toggles 60% ↔ 92% (dockExpanded, session-only), measured
+          // against `--sheet-vh` — what is visible — rather than `vh`, which ignores
+          // the keyboard. While the keyboard is up it takes the whole visible area:
+          // a fraction of an already-halved screen leaves the terminal too small to
+          // read what you are typing into. No height transition, because the height
+          // now tracks the keyboard and an animation would trail behind it.
           className={cn(
-            "flex flex-col transition-[height] duration-200",
-            dockExpanded
-              ? "h-[calc(var(--sheet-vh,100dvh)*0.92)]"
-              : "h-[calc(var(--sheet-vh,100dvh)*0.6)]",
+            "flex flex-col",
+            keyboardOpen
+              ? "h-[var(--sheet-vh,100dvh)]"
+              : dockExpanded
+                ? "h-[calc(var(--sheet-vh,100dvh)*0.92)]"
+                : "h-[calc(var(--sheet-vh,100dvh)*0.6)]",
           )}
         >
           {/* Fixed height so xterm fitAddon.fit() receives a non-zero container.
