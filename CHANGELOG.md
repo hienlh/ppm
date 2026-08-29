@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.37] - 2026-08-29
+
+### Fixed
+- **A new chat tab could open with no message box until you reloaded** — the input waited on the draft request, which on a stalled connection never answered and never failed. That one stalled request also held back every chat tab opened after it. Requests now give up after 30 seconds without a reply, and the input appears within 3 seconds either way.
+
 ## [0.17.36] - 2026-08-29
 
 ### Fixed
