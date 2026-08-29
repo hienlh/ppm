@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Terminal, MessageSquare, FilePlus } from "lucide-react";
+import { Terminal, MessageSquare, FilePlus, X } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";
@@ -8,6 +8,7 @@ import type { SessionInfo } from "../../../types/chat";
 import { TabBar } from "./tab-bar";
 import { SplitDropOverlay } from "./split-drop-overlay";
 import { registerPanelSlot } from "./tab-pool";
+import { visibleTabs } from "@/stores/panel-utils";
 import { cn } from "@/lib/utils";
 
 const QUICK_OPEN_TABS: { type: TabType; label: string; icon: React.ElementType }[] = [
@@ -40,6 +41,12 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
 
   if (!panel) return null;
 
+  // Judge emptiness the same way TabBar does. A panel holding only another
+  // project's tab shows no tab chips, so treating it as non-empty here would
+  // render neither tabs nor the empty state — a blank panel with nothing to
+  // close. See visibleTabs().
+  const isEmpty = visibleTabs(panel.tabs, projectName).length === 0;
+
   return (
     <div
       className={cn(
@@ -51,18 +58,27 @@ export function EditorPanel({ panelId, projectName }: EditorPanelProps) {
     >
       <TabBar panelId={panelId} />
 
-      <div className="flex-1 overflow-hidden relative" data-panel-drop-zone={panelId}>
-        {panel.tabs.length === 0 && <EmptyPanel panelId={panelId} />}
+      <div
+        className="flex-1 overflow-hidden relative"
+        data-panel-drop-zone={panelId}
+        // Middle-click an empty panel to close it (matches VS Code).
+        onAuxClick={(e) => {
+          if (e.button !== 1 || !isEmpty) return;
+          e.preventDefault();
+          usePanelStore.getState().closePanel(panelId);
+        }}
+      >
+        {isEmpty && <EmptyPanel panelId={panelId} canClose={panelCount > 1} />}
         {/* Always render the slot so TabPool can portal into it immediately.
             Hidden when empty to let EmptyPanel show through. */}
-        <div ref={slotCallbackRef} className="absolute inset-0" style={panel.tabs.length === 0 ? { display: "none" } : undefined} />
+        <div ref={slotCallbackRef} className="absolute inset-0" style={isEmpty ? { display: "none" } : undefined} />
         <SplitDropOverlay panelId={panelId} />
       </div>
     </div>
   );
 }
 
-function EmptyPanel({ panelId }: { panelId: string }) {
+function EmptyPanel({ panelId, canClose }: { panelId: string; canClose: boolean }) {
   const activeProject = useProjectStore((s) => s.activeProject);
 
   function openTab(type: TabType) {
@@ -110,6 +126,16 @@ function EmptyPanel({ panelId }: { panelId: string }) {
             );
           })}
         </div>
+
+        {canClose && (
+          <button
+            onClick={() => usePanelStore.getState().closePanel(panelId)}
+            className="flex items-center gap-1.5 px-4 py-3 rounded-md text-xs text-text-subtle hover:text-foreground active:bg-surface-elevated transition-colors"
+          >
+            <X className="size-3.5" />
+            Close Panel
+          </button>
+        )}
 
         <SessionListPanel
           projectName={activeProject?.name}
