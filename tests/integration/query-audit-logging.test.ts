@@ -13,6 +13,7 @@ import { listQueryLogs, countQueryLogs } from "../../src/services/query-audit/qu
 
 const tempDirs: string[] = [];
 let targetDbPath: string;
+const originalPpmHome = process.env.PPM_HOME;
 
 function isolatePpmHome(): void {
   const home = mkdtempSync(join(tmpdir(), "ppm-audit-home-"));
@@ -80,6 +81,11 @@ beforeEach(() => {
 
 afterAll(() => {
   closeAuditDb();
+  // PPM_HOME is process-wide: leaving it pointed at a temp home that is about to be
+  // deleted makes every later suite resolve ~/.ppm paths into a missing directory.
+  if (originalPpmHome === undefined) delete process.env.PPM_HOME;
+  else process.env.PPM_HOME = originalPpmHome;
+  _resetPpmDir();
   for (const dir of tempDirs) {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* windows keeps sqlite handles briefly */ }
   }

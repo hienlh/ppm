@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import "../../test-setup.ts"; // disable auth
 import { chatService } from "../../../src/services/chat.service.ts";
 import { getSessionEffort, getSessionThinking } from "../../../src/services/db.service.ts";
+import { THINKING_ADAPTIVE } from "../../../src/providers/claude-agent-sdk-query-options.ts";
 
 const PORT = 19879; // Unique port — avoid conflict with supervisor-resilience (19876)
 let server: ReturnType<typeof Bun.serve>;
@@ -711,7 +712,7 @@ describe("Chat WebSocket — per-session effort + thinking", () => {
     ws.send(JSON.stringify({ type: "set_thinking", enabled: true }));
     const on = await waitForNthType("session_state", 2);
     expect(on.thinking).toBe(true);
-    expect(getSessionThinking(session.id)).toBe(12000);
+    expect(getSessionThinking(session.id)).toBe(THINKING_ADAPTIVE);
 
     ws.send(JSON.stringify({ type: "set_thinking", enabled: false }));
     const off = await waitForNthType("session_state", 3);

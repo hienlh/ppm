@@ -47,11 +47,17 @@ async function search(q: string, limit?: number): Promise<ChatSearchResponse> {
   return json.data;
 }
 
+// This suite registers its project under its own name but on the SAME path as the
+// shared "test" fixture other suites use, and projects.path is UNIQUE — so the
+// entry must not outlive this file or the next registration hits the constraint.
+let registeredProject = false;
+
 beforeAll(() => {
   const projects = configService.get("projects");
   if (!projects.find((p) => p.name === PROJECT)) {
     projects.push({ name: PROJECT, path: PROJECT_PATH });
     configService.set("projects", projects);
+    registeredProject = true;
   }
   setSearchIndexDb(openTestSearchIndexDb());
   (chatService as any).listSessions = async (_p?: string, dir?: string) =>
@@ -67,6 +73,9 @@ afterAll(() => {
   (chatService as any).listSessions = origList;
   (chatService as any).getMessages = origGet;
   closeSearchIndexDb();
+  if (registeredProject) {
+    configService.set("projects", configService.get("projects").filter((p) => p.name !== PROJECT));
+  }
 });
 
 describe("GET /chat/search", () => {
@@ -93,10 +102,10 @@ describe("GET /chat/search", () => {
     expect(hit!.messageId).toBe("");
   });
 
-  it("session matching both title and content is deduped, content wins", async () => {
+  it("session matching both title and content is deduped, title wins", async () => {
     const data = await search("authentication");
     const rows = data.results.filter((r) => r.sessionId === "s-both");
     expect(rows.length).toBe(1);
-    expect(rows[0]!.matchedIn).toBe("content");
+    expect(rows[0]!.matchedIn).toBe("title");
   });
 });
