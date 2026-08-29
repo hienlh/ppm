@@ -30,7 +30,11 @@ export function NotificationBellPopover({ expanded }: { expanded: boolean }) {
 
   const handleGoToSession = (sessionId: string, projectName: string) => {
     const target = projects.find((p) => p.name === projectName);
-    if (target) setActiveProject(target);
+    // projectName is a grouping key, and notifications with no project fall into the
+    // "Unknown" bucket. Opening a tab stamped with a project that does not exist makes
+    // it invisible in every project — and unclosable, which wedges its panel forever.
+    if (!target) return;
+    setActiveProject(target);
     openTab({
       type: "chat",
       title: "Chat",

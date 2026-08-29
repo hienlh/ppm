@@ -103,6 +103,20 @@ export function gridRemovePanel(grid: string[][], panelId: string): string[][] {
     .filter((col) => col.length > 0);
 }
 
+/**
+ * The subset of `tabs` that the given project is allowed to see.
+ *
+ * A grid panel can end up holding another project's tab (a race in openTab during
+ * a project switch, or a tab stamped with a project name that does not exist). The
+ * tab bar hides those, so every other "is this panel empty?" check must agree —
+ * otherwise the panel renders neither tabs nor the empty state, and since it has no
+ * closable tab, the auto-close in closeTab can never fire and the panel is stuck.
+ */
+export function visibleTabs(tabs: Tab[], projectName: string | null): Tab[] {
+  if (!projectName) return tabs;
+  return tabs.filter((t) => !t.projectId || t.projectId === projectName);
+}
+
 export function findPanelPosition(grid: string[][], panelId: string): { row: number; col: number } | null {
   for (let r = 0; r < grid.length; r++) {
     const c = grid[r]!.indexOf(panelId);

@@ -15,6 +15,7 @@ import {
   savePanelLayout,
   loadPanelLayout,
   deriveTabId,
+  visibleTabs,
   DOCK_PANEL_ID,
 } from "./panel-utils";
 import {
@@ -248,10 +249,16 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       // Load from localStorage
       const loaded = loadPanelLayout(projectName);
       if (loaded && Object.keys(loaded.panels).length > 0) {
-        // Migrate: remove obsolete tab types from grid panels
+        // Migrate: drop obsolete tab types, and tabs belonging to another project.
+        // A foreign tab is filtered out of the tab bar, so it can never be closed —
+        // and closeTab is the only thing that removes an emptied panel, so leaving
+        // one behind wedges its panel permanently (it renders as a blank slot).
+        let healed = false;
         const migratedPanels: typeof loaded.panels = {};
         for (const [pid, panel] of Object.entries(loaded.panels)) {
-          const filteredTabs = panel.tabs.filter((t) => !OBSOLETE_TAB_TYPES.has(t.type));
+          const filteredTabs = visibleTabs(panel.tabs, projectName)
+            .filter((t) => !OBSOLETE_TAB_TYPES.has(t.type));
+          if (filteredTabs.length !== panel.tabs.length) healed = true;
           const filteredHistory = panel.tabHistory.filter(
             (id) => filteredTabs.some((t) => t.id === id),
           );
@@ -260,6 +267,22 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
             : (filteredHistory[filteredHistory.length - 1] ?? filteredTabs[0]?.id ?? null);
           migratedPanels[pid] = { ...panel, tabs: filteredTabs, tabHistory: filteredHistory, activeTabId };
         }
+
+        // Apply the "no empty panel" invariant on restore, not just in closeTab:
+        // the filtering above can empty a panel, and a grid id with no panel behind
+        // it renders nothing either. The last panel always stays — the grid needs
+        // something to render into.
+        let migratedGrid = loaded.grid;
+        for (const pid of migratedGrid.flat()) {
+          if ((migratedPanels[pid]?.tabs.length ?? 0) > 0) continue;
+          if (migratedGrid.flat().length <= 1) break;
+          migratedGrid = gridRemovePanel(migratedGrid, pid);
+          delete migratedPanels[pid];
+          healed = true;
+        }
+        const migratedFocused = migratedGrid.flat().includes(loaded.focusedPanelId)
+          ? loaded.focusedPanelId
+          : (migratedGrid.flat()[0] ?? loaded.focusedPanelId);
 
         // Merge into flat panels map (keep-alive: old panels stay).
         // The shared __dock__ panel holds live tabs from ALL projects — union the
@@ -283,8 +306,8 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // Focus the switched-to project's own dock tab (not another project's).
         mergedDockPanel.activeTabId = pickDockActiveTab(mergedDockPanel, projectName);
         const mergedPanels = { ...panels, ...migratedPanels, [DOCK_PANEL_ID]: mergedDockPanel };
-        newProjectGrids[projectName] = loaded.grid;
-        newProjectFocused[projectName] = loaded.focusedPanelId;
+        newProjectGrids[projectName] = migratedGrid;
+        newProjectFocused[projectName] = migratedFocused;
         const restoredDock = collapseRestoredDockOnMobile(
           loaded.dock ?? restoreDockForProject(projectName, newProjectDock),
           get().isMobile(),
@@ -292,13 +315,24 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         set({
           currentProject: projectName,
           panels: mergedPanels,
-          grid: loaded.grid,
-          focusedPanelId: loaded.focusedPanelId,
+          grid: migratedGrid,
+          focusedPanelId: migratedFocused,
           projectGrids: newProjectGrids,
           projectFocused: newProjectFocused,
           dock: restoredDock,
           projectDock: newProjectDock,
         });
+        // Write the healed layout back so the repair sticks (and reaches the server
+        // blob), instead of being redone on every load.
+        if (healed) {
+          savePanelLayout(projectName, {
+            panels: migratedPanels,
+            grid: migratedGrid,
+            focusedPanelId: migratedFocused,
+            dock: restoredDock,
+            dockPanel: mergedDockPanel,
+          });
+        }
       } else {
         // Create empty layout — EmptyPanel will show quick-open buttons
         const p = createPanel();

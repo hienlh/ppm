@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { usePanelStore } from "@/stores/panel-store";
-import { DOCK_PANEL_ID } from "@/stores/panel-utils";
+import { DOCK_PANEL_ID, visibleTabs } from "@/stores/panel-utils";
 import { PanelBottom, Grid2x2 } from "lucide-react";
 import { useProjectStore } from "@/stores/project-store";
 import { useFileStore, type FileNode } from "@/stores/file-store";
@@ -85,7 +85,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
   const panel = usePanelStore((s) => panelId ? s.panels[panelId] : s.panels[s.focusedPanelId]);
   const projectName = activeProject?.name ?? null;
   // Filter out cross-project tabs (race condition in openTab during project switch)
-  const tabs = (panel?.tabs ?? []).filter((t) => !t.projectId || !projectName || t.projectId === projectName);
+  const tabs = visibleTabs(panel?.tabs ?? [], projectName);
   const activeTabId = panel?.activeTabId ?? null;
   const effectivePanelId = panel?.id ?? usePanelStore.getState().focusedPanelId;
 
