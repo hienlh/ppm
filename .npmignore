@@ -8,9 +8,11 @@ codex-cli-poc.ts
 codex-sdk-poc.ts
 codex-junction-skill-probe.ts
 *-poc.ts
-spike-*.mjs
-spike-*.ts
+spike-*
 .out.txt
+
+# AgentKit tooling state, not part of PPM
+skills-lock.json
 
 # Dev files
 .claude/
