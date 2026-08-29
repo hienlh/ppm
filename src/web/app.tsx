@@ -34,12 +34,14 @@ import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overl
 import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
 import { useExtensionWs } from "@/hooks/use-extension-ws";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
 export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
+  const isMobileViewport = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "settings" | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
@@ -363,9 +365,11 @@ export function App() {
         {/* Connection lost overlay — shown when API unreachable for >15s */}
         <ConnectionLostOverlay />
 
-        {/* Toast notifications */}
+        {/* Toast notifications. Bottom-left collides with the mobile dock's
+            terminal toolbar — a toast lands directly on the buttons that raised
+            it — so phones get them out of the thumb zone instead. */}
         <Toaster
-          position="bottom-left"
+          position={isMobileViewport ? "top-center" : "bottom-left"}
           closeButton
           toastOptions={{
             className: "bg-surface border-border text-foreground",
