@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.39] - 2026-08-29
+
+### Added
+- **A login started in the terminal can be finished from your phone** — `aws sso login` and friends listen on a port of the machine, so signing in on another device leaves them waiting forever. The link list now says which port a login returns to, and takes the address the sign-in landed on so the machine can deliver it.
+
+### Fixed
+- **The terminal lurched every time the mobile keyboard opened** — the dock measured itself against a viewport that ignores the keyboard, then jumped and left the terminal a few rows tall. It now takes the whole visible area while you type, keeps the toolbar directly above the keyboard, and tells the shell about the new size once instead of on every frame of the animation.
+- **A see-through band sat under the mobile terminal toolbar** — the sheet was being lifted off the bottom of the screen, and its background went with it. The sheet stays put now and only its contents move.
+- **Dropped the stray divider between the dock's drag handle and its tab bar.**
+
 ## [0.17.38] - 2026-08-29
 
 ### Added
