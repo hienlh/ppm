@@ -3,7 +3,8 @@
  * Arrow keys, Enter, F2, Delete on focused tree items.
  */
 import { useMemo, type KeyboardEvent } from "react";
-import { useFileStore, type FileNode } from "@/stores/file-store";
+import { type FileNode } from "@/stores/file-store";
+import { visibleNodesOf } from "./flatten-visible-tree";
 
 interface UseTreeKeyboardNavOptions {
   tree: FileNode[];
@@ -27,35 +28,7 @@ export function useTreeKeyboardNav({
   onAction,
 }: UseTreeKeyboardNavOptions) {
   /** Flat list of visible nodes (respects expand state and compact folders) */
-  const visibleNodes = useMemo(() => {
-    const result: FileNode[] = [];
-    function walk(nodes: FileNode[]) {
-      const sorted = [...nodes].sort((a, b) => {
-        if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-      for (const n of sorted) {
-        // Skip compacted intermediate dirs (single-child chains rendered as one row)
-        let effective = n;
-        if (n.type === "directory" && expandedPaths.has(n.path) && n.children) {
-          while (
-            effective.children &&
-            effective.children.length === 1 &&
-            effective.children[0]!.type === "directory" &&
-            expandedPaths.has(effective.children[0]!.path)
-          ) {
-            effective = effective.children[0]!;
-          }
-        }
-        result.push(effective);
-        if (effective.type === "directory" && expandedPaths.has(effective.path) && effective.children) {
-          walk(effective.children);
-        }
-      }
-    }
-    walk(tree);
-    return result;
-  }, [tree, expandedPaths]);
+  const visibleNodes = useMemo(() => visibleNodesOf(tree, expandedPaths), [tree, expandedPaths]);
 
   const focusedNode = useMemo(
     () => visibleNodes.find((n) => n.path === focusedPath) ?? null,

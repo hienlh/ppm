@@ -15,6 +15,7 @@ import ignore, { type Ignore } from "ignore";
 import type { FileNode, FileEntry, FileDirEntry } from "../types/project.ts";
 import {
   listDir as listDirImpl,
+  listDirBatch as listDirBatchImpl,
   buildIndex as buildIndexImpl,
   invalidateIndexCache,
   clearIndexCache,
@@ -275,6 +276,11 @@ class FileService {
    */
   listDir(projectPath: string, relPath: string): FileDirEntry[] {
     return listDirImpl(projectPath, relPath);
+  }
+
+  /** List multiple directories in one call (filter/gitignore loaded once) */
+  listDirBatch(projectPath: string, paths: string[]): { path: string; entries?: FileDirEntry[]; error?: string }[] {
+    return listDirBatchImpl(projectPath, paths);
   }
 
   /**

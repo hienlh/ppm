@@ -2,7 +2,8 @@
  * FileTree — the main file explorer container.
  * Renders toolbar, tree nodes via TreeNode, root-level drag/drop, and file actions.
  */
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useCallback, useState, useRef, useMemo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   FilePlus,
   FolderPlus,
@@ -15,14 +16,14 @@ import {
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useShallow } from "zustand/react/shallow";
-import { useFileStore, type FileNode } from "@/stores/file-store";
+import { useFileStore, loadPersistedExpanded, savePersistedExpanded, type FileNode } from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { openCompareTab } from "@/lib/open-compare-tab";
 import { toast } from "sonner";
 import { cn, basename } from "@/lib/utils";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -31,8 +32,9 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/adaptive-context-menu";
 import { FileActions } from "./file-actions";
-import { TreeNode } from "./tree-node";
+import { TreeRow } from "./tree-node";
 import { InlineTreeInput } from "./inline-tree-input";
+import { flattenVisibleTree, type InputRow } from "./flatten-visible-tree";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
 import { api, projectUrl } from "@/lib/api-client";
 import { useFileUploadDrag } from "./use-file-upload-drag";
@@ -166,16 +168,28 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     onAction: handleAction,
   });
 
-  // On project switch: reset + load root + load index + auto-expand root
+  // On project switch: reset + restore expanded state + load all visible folders in ONE batch
   useEffect(() => {
     if (!activeProject) return;
     reset();
     const name = activeProject.name;
-    loadRoot(name).then(() => {
-      useFileStore.getState().setExpanded("", true);
-    });
+    const persisted = loadPersistedExpanded(name);
+    useFileStore.setState({ expandedPaths: new Set(["", ...persisted]) });
+    if (persisted.length > 0) {
+      useFileStore.getState().loadPathsBatch(name, ["", ...persisted]);
+    } else {
+      loadRoot(name);
+    }
     loadIndex(name);
   }, [activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist expanded state per project. Reads LIVE store state (not the captured
+  // render value): on project switch the captured set still belongs to the previous
+  // project, while live state was already reset+restored by the mount effect above.
+  useEffect(() => {
+    if (!activeProject) return;
+    savePersistedExpanded(activeProject.name, useFileStore.getState().expandedPaths);
+  }, [expandedPaths, activeProject?.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handle WS file:changed → invalidate folder + index
   useEffect(() => {
@@ -211,6 +225,56 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     uploadFiles, isRootDragOver,
     handleRootDragEnter, handleRootDragLeave, handleRootDragOver, handleRootDrop,
   } = useFileUploadDrag({ projectName: activeProject?.name, setExpanded });
+
+  // Virtualized flat rows: only visible rows are mounted (large dirs stay cheap)
+  const rows = useMemo(
+    () => flattenVisibleTree(tree, expandedPaths, inlineAction),
+    [tree, expandedPaths, inlineAction],
+  );
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => (isMobile ? 32 : 26),
+    overscan: 10,
+    paddingStart: 4,
+    paddingEnd: 4,
+  });
+
+  // Keep focused row in view even when it's not mounted (offscreen)
+  useEffect(() => {
+    if (focusedPath == null) return;
+    const idx = rows.findIndex(
+      (r) => r.kind === "node" && (r.node.path === focusedPath || r.effectiveNode.path === focusedPath),
+    );
+    if (idx >= 0) rowVirtualizer.scrollToIndex(idx, { align: "auto" });
+  }, [focusedPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Confirm inline create/rename input rows */
+  const handleInlineConfirm = useCallback(async (row: InputRow, value: string) => {
+    const projectName = activeProject!.name;
+    const store = useFileStore.getState();
+    if (row.inline.type === "rename") {
+      const node = row.inline.existingNode!;
+      if (value === node.name) { clearInlineAction(); return; }
+      const parentPath = node.path.includes("/") ? node.path.slice(0, node.path.lastIndexOf("/")) : "";
+      const newPath = parentPath ? `${parentPath}/${value}` : value;
+      await api.post(`${projectUrl(projectName)}/files/rename`, { oldPath: node.path, newPath });
+      clearInlineAction();
+      store.invalidateIndex();
+      store.loadIndex(projectName);
+      store.invalidateFolder(projectName, parentPath);
+    } else {
+      const type = row.inline.type === "new-file" ? "file" : "directory";
+      const fullPath = row.targetPath ? `${row.targetPath}/${value}` : value;
+      await api.post(`${projectUrl(projectName)}/files/create`, { path: fullPath, type });
+      clearInlineAction();
+      store.invalidateIndex();
+      store.loadIndex(projectName);
+      store.invalidateFolder(projectName, row.targetPath);
+    }
+  }, [activeProject, clearInlineAction]);
 
   async function handleAction(action: string, node: FileNode) {
     if (action === "toggle-expand" && node.type === "directory") {
@@ -348,11 +412,6 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     );
   }
 
-  const sorted = [...tree].sort((a, b) => {
-    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-
   const toolbarBtnClass = "flex size-6 items-center justify-center rounded text-text-subtle hover:bg-surface-elevated hover:text-foreground";
 
   return (
@@ -384,42 +443,54 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
         </button>
       </SidebarHeader>
 
-      {/* File tree with blank-area context menu */}
+      {/* File tree with blank-area context menu — virtualized flat rows */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <ScrollArea className="flex-1">
-            <div className="py-1">
-              {inlineAction && inlineAction.parentPath === "" && inlineAction.type !== "rename" && (
-                <InlineTreeInput
-                  defaultValue=""
-                  placeholder={inlineAction.type === "new-file" ? "filename.ts" : "folder-name"}
-                  depth={0}
-                  icon={inlineAction.type === "new-file" ? "file" : "folder"}
-                  onConfirm={async (name) => {
-                    const type = inlineAction.type === "new-file" ? "file" : "directory";
-                    await api.post(`${projectUrl(activeProject!.name)}/files/create`, { path: name, type });
-                    clearInlineAction();
-                    reloadTree();
-                  }}
-                  onCancel={clearInlineAction}
-                />
-              )}
-              {sorted.map((node) => (
-                <TreeNode
-                  key={node.path}
-                  node={node}
-                  depth={0}
-                  projectName={activeProject.name}
-                  onAction={handleAction}
-                  onFileDrop={uploadFiles}
-                  onFileOpen={onFileOpen}
-                />
-              ))}
-              {sorted.length === 0 && (
+          <div ref={scrollRef} className="flex-1 overflow-y-auto">
+            <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+              {rowVirtualizer.getVirtualItems().map((vi) => {
+                const row = rows[vi.index]!;
+                return (
+                  <div
+                    key={row.kind === "node" ? row.node.path : `input:${row.targetPath}:${row.inline.type}`}
+                    data-index={vi.index}
+                    ref={rowVirtualizer.measureElement}
+                    className="absolute left-0 top-0 w-full"
+                    style={{ transform: `translateY(${vi.start}px)` }}
+                  >
+                    {row.kind === "input" ? (
+                      <InlineTreeInput
+                        defaultValue={row.inline.type === "rename" ? row.inline.existingNode!.name : ""}
+                        placeholder={
+                          row.inline.type === "rename" ? row.inline.existingNode!.name
+                          : row.inline.type === "new-file" ? "filename.ts" : "folder-name"
+                        }
+                        depth={row.depth}
+                        icon={
+                          row.inline.type === "rename"
+                            ? (row.inline.existingNode!.type === "directory" ? "folder" : "file")
+                            : (row.inline.type === "new-file" ? "file" : "folder")
+                        }
+                        onConfirm={(value) => handleInlineConfirm(row, value)}
+                        onCancel={clearInlineAction}
+                      />
+                    ) : (
+                      <TreeRow
+                        row={row}
+                        projectName={activeProject.name}
+                        onAction={handleAction}
+                        onFileDrop={uploadFiles}
+                        onFileOpen={onFileOpen}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+              {rows.length === 0 && (
                 <p className="p-3 text-xs text-text-subtle">Empty project.</p>
               )}
             </div>
-          </ScrollArea>
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onClick={() => handleAction("new-file", ROOT_NODE)}>

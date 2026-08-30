@@ -59,19 +59,50 @@ function assertWithinProject(relPath: string, projectPath: string): void {
 // listDir — single directory level
 // ---------------------------------------------------------------------------
 
+/** Per-request listing context: filter + gitignore loaded once, reused across paths */
+interface ListContext {
+  filter: ReturnType<typeof resolveFilter>;
+  ig: Ignore | null;
+}
+
+function loadListContext(projectPath: string): ListContext {
+  const filter = resolveFilter(projectPath);
+  const ig = filter.useIgnoreFiles ? loadGitignore(projectPath) : null;
+  return { filter, ig };
+}
+
 /**
  * List one directory level for lazy-load file tree.
  * Applies filesExclude patterns from resolved filter.
  * Marks entries as isIgnored based on .gitignore (informational — still listed).
  */
 export function listDir(projectPath: string, relPath: string): FileDirEntry[] {
+  return listDirWithContext(projectPath, relPath, loadListContext(projectPath));
+}
+
+/**
+ * List multiple directory levels in one call (single filter/gitignore load).
+ * Per-path failures land in `error` without failing the whole batch.
+ */
+export function listDirBatch(
+  projectPath: string,
+  paths: string[],
+): { path: string; entries?: FileDirEntry[]; error?: string }[] {
+  const ctx = loadListContext(projectPath);
+  return paths.map((p) => {
+    try {
+      return { path: p, entries: listDirWithContext(projectPath, p, ctx) };
+    } catch (e) {
+      return { path: p, error: (e as Error).message };
+    }
+  });
+}
+
+function listDirWithContext(projectPath: string, relPath: string, { filter, ig }: ListContext): FileDirEntry[] {
   if (relPath) assertWithinProject(relPath, projectPath);
 
   const absDir = relPath ? resolve(projectPath, relPath) : projectPath;
   if (!existsSync(absDir)) throw new NotFoundError(`Directory not found: ${relPath || "/"}`);
-
-  const filter = resolveFilter(projectPath);
-  const ig = filter.useIgnoreFiles ? loadGitignore(projectPath) : null;
 
   let rawEntries;
   try { rawEntries = readdirSync(absDir, { withFileTypes: true }); }

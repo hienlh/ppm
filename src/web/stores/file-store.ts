@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { api, projectUrl } from "@/lib/api-client";
 import type { FileEntry, FileDirEntry } from "../../types/project";
 import { entriesToNodes, mergeChildren } from "./file-tree-merge-helpers";
+import { schedulePrefetch, cancelPrefetch } from "./file-tree-prefetch";
+import { visibleNodesOf } from "@/components/explorer/flatten-visible-tree";
 
 export type { FileEntry };
 
@@ -51,7 +53,9 @@ interface FileStore {
   setClipboard(clipboard: ClipboardState | null): void;
   setFocusedPath(path: string | null): void;
   loadRoot(projectName: string): Promise<void>;
-  loadChildren(projectName: string, folderPath: string): Promise<void>;
+  loadChildren(projectName: string, folderPath: string, opts?: { prefetch?: boolean }): Promise<void>;
+  /** Load many folders in one request (expanded-state restore, deep expand) */
+  loadPathsBatch(projectName: string, paths: string[]): Promise<void>;
   loadIndex(projectName: string): Promise<void>;
   invalidateIndex(): void;
   invalidateFolder(projectName: string, folderPath: string): Promise<void>;
@@ -64,6 +68,30 @@ interface FileStore {
   reset(): void;
   /** @deprecated Use loadRoot instead */
   fetchTree(projectName: string): Promise<void>;
+}
+
+/** Locate a node in the lazy tree by its project-relative path */
+function findNodeByPath(tree: FileNode[], path: string): FileNode | undefined {
+  let nodes = tree;
+  for (;;) {
+    const node = nodes.find((n) => n.path === path || path.startsWith(`${n.path}/`));
+    if (!node) return undefined;
+    if (node.path === path) return node;
+    nodes = node.children ?? [];
+  }
+}
+
+/** Enqueue idle prefetch of the given nodes' children (dirs only, skips ignored) */
+function queuePrefetchFor(
+  get: () => FileStore,
+  projectName: string,
+  children: FileNode[],
+): void {
+  schedulePrefetch(
+    children,
+    (path) => get().loadedPaths.has(path) || get().inflight.has(path),
+    (path) => get().loadChildren(projectName, path, { prefetch: true }),
+  );
 }
 
 export const useFileStore = create<FileStore>((set, get) => ({
@@ -95,6 +123,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
       const loadedPaths = new Set(get().loadedPaths);
       loadedPaths.add(""); // root is loaded
       set({ tree: rootNodes, loading: false, loadedPaths });
+      queuePrefetchFor(get, projectName, rootNodes);
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Failed to load files",
@@ -103,11 +132,13 @@ export const useFileStore = create<FileStore>((set, get) => ({
     }
   },
 
-  loadChildren: async (projectName: string, folderPath: string) => {
+  loadChildren: async (projectName: string, folderPath: string, opts?: { prefetch?: boolean }) => {
     const state = get();
 
     // Idempotent guard — skip if already loaded
     if (state.loadedPaths.has(folderPath)) return;
+    // Prefetch never preempts an in-flight user-initiated request
+    if (opts?.prefetch && state.inflight.has(folderPath)) return;
 
     // Abort any existing in-flight request for this path
     const existing = state.inflight.get(folderPath);
@@ -136,12 +167,52 @@ export const useFileStore = create<FileStore>((set, get) => ({
       const newInflight = new Map(currentState.inflight);
       newInflight.delete(folderPath);
       set({ tree: newTree, loadedPaths: newLoadedPaths, inflight: newInflight });
+      // One level ahead only: prefetched loads don't cascade further
+      if (!opts?.prefetch) queuePrefetchFor(get, projectName, children);
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
       // Remove from inflight on error
       const newInflight = new Map(get().inflight);
       newInflight.delete(folderPath);
       set({ inflight: newInflight });
+    }
+  },
+
+  loadPathsBatch: async (projectName: string, paths: string[]) => {
+    const state = get();
+    const toLoad = [...new Set(paths)].filter((p) => !state.loadedPaths.has(p));
+    if (toLoad.length === 0) return;
+    if (state.tree.length === 0) set({ loading: true, error: null });
+    try {
+      const results = await api.post<{ path: string; entries?: FileDirEntry[]; error?: string }[]>(
+        `${projectUrl(projectName)}/files/list-batch`,
+        { paths: toLoad },
+      );
+      const current = get();
+      let newTree = current.tree;
+      const newLoaded = new Set(current.loadedPaths);
+      const newExpanded = new Set(current.expandedPaths);
+      // Parents before children so mergeChildren always finds its target node
+      const ordered = [...results].sort((a, b) => a.path.split("/").length - b.path.split("/").length);
+      for (const r of ordered) {
+        if (r.error != null || !r.entries) {
+          // Stale persisted path (deleted folder) — drop from expanded state
+          newExpanded.delete(r.path);
+          continue;
+        }
+        const children = entriesToNodes(r.entries, r.path);
+        newTree = r.path === "" ? children : mergeChildren(newTree, r.path, children);
+        newLoaded.add(r.path);
+      }
+      set({ tree: newTree, loadedPaths: newLoaded, expandedPaths: newExpanded, loading: false });
+      // Stay one level ahead of the restored view
+      const rootChildren = newTree;
+      queuePrefetchFor(get, projectName, rootChildren);
+    } catch (err) {
+      set({
+        error: get().tree.length === 0 ? (err instanceof Error ? err.message : "Failed to load files") : null,
+        loading: false,
+      });
     }
   },
 
@@ -190,6 +261,10 @@ export const useFileStore = create<FileStore>((set, get) => ({
       // Lazy load children if not yet loaded
       if (!state.loadedPaths.has(path)) {
         get().loadChildren(projectName, path);
+      } else {
+        // Already loaded (e.g. by prefetch) — stay one level ahead of the user
+        const node = findNodeByPath(get().tree, path);
+        if (node?.children) queuePrefetchFor(get, projectName, node.children);
       }
     }
   },
@@ -220,6 +295,7 @@ export const useFileStore = create<FileStore>((set, get) => ({
   clearSelection: () => set({ selectedFiles: [] }),
 
   reset: () => {
+    cancelPrefetch();
     // Abort all in-flight requests
     for (const ctrl of get().inflight.values()) ctrl.abort();
     set({
@@ -245,34 +321,30 @@ export const useFileStore = create<FileStore>((set, get) => ({
   },
 }));
 
+// --- Expanded-state persistence (per project, localStorage) ---
+
+const EXPANDED_KEY_PREFIX = "ppm-explorer-expanded:";
+
+export function loadPersistedExpanded(projectName: string): string[] {
+  try {
+    const raw = localStorage.getItem(EXPANDED_KEY_PREFIX + projectName);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePersistedExpanded(projectName: string, expandedPaths: Set<string>): void {
+  try {
+    // Root ("") is always expanded — no need to persist it
+    const paths = [...expandedPaths].filter((p) => p !== "").slice(0, 50);
+    localStorage.setItem(EXPANDED_KEY_PREFIX + projectName, JSON.stringify(paths));
+  } catch { /* quota/unavailable — skip */ }
+}
+
 /** Compute flat visible path list from current tree state (for range selection) */
 export function getVisiblePaths(): string[] {
   const { tree, expandedPaths } = useFileStore.getState();
-  const result: string[] = [];
-  function walk(nodes: FileNode[]) {
-    const sorted = [...nodes].sort((a, b) => {
-      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const n of sorted) {
-      // Skip compacted intermediate dirs (matches compact folder rendering)
-      let effective = n;
-      if (n.type === "directory" && expandedPaths.has(n.path) && n.children) {
-        while (
-          effective.children &&
-          effective.children.length === 1 &&
-          effective.children[0]!.type === "directory" &&
-          expandedPaths.has(effective.children[0]!.path)
-        ) {
-          effective = effective.children[0]!;
-        }
-      }
-      result.push(effective.path);
-      if (effective.type === "directory" && expandedPaths.has(effective.path) && effective.children) {
-        walk(effective.children);
-      }
-    }
-  }
-  walk(tree);
-  return result;
+  return visibleNodesOf(tree, expandedPaths).map((n) => n.path);
 }

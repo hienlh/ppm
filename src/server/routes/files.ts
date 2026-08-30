@@ -36,6 +36,30 @@ fileRoutes.get("/list", (c) => {
 });
 
 /**
+ * POST /files/list-batch  body: { paths: string[] }  (max 50)
+ * Lists multiple directory levels in one round-trip (expanded-state restore,
+ * deep expand). Per-path errors are returned inline, not as request failures.
+ */
+fileRoutes.post("/list-batch", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const body = await c.req.json().catch(() => null) as { paths?: unknown } | null;
+    const paths = body?.paths;
+    if (!Array.isArray(paths) || paths.length === 0) {
+      return c.json(err("paths must be a non-empty array"), 400);
+    }
+    if (paths.length > 50) return c.json(err("paths: max 50 per request"), 400);
+    if (paths.some((p) => typeof p !== "string" || p.includes(".."))) {
+      return c.json(err("Invalid path in batch"), 400);
+    }
+    const results = fileService.listDirBatch(projectPath, (paths as string[]).map((p) => p.trim()));
+    return c.json(ok(results));
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/**
  * GET /files/index
  * Returns flat array of all project files {path, name} for palette/search.
  * Result is cached; cache is invalidated on file change events.
