@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.41] - 2026-08-30
+
+### Fixed
+- **Upgrading no longer changes the public tunnel URL when a leftover dev server is holding the port** — processes started from chat (like `bun run dev:web`) could keep the dead server's port reserved, forcing the new server onto another port and rotating the tunnel address. They are now cleaned up during startup.
+
 ## [0.17.40] - 2026-08-30
 
 ### Fixed
