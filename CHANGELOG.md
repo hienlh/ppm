@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.40] - 2026-08-30
+
+### Fixed
+- **A stalled connection could leave the usage readout and the chat transcript loading forever** — both waited on a request with no time limit, so on a connection that never answered they stayed stuck until a reload, the same way the message box did in 0.17.37. Requests that share an answer between components now stop sharing one that has gone quiet, so a single stalled connection can no longer hold back everything asking for the same thing.
+
 ## [0.17.39] - 2026-08-29
 
 ### Added
