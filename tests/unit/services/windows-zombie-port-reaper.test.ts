@@ -71,4 +71,26 @@ describe("isDebrisOrphan", () => {
       "C:\\Users\\PC\\.bun\\bin\\bun.exe run src/server/index.ts __serve__ 3210",
     )).toBe(false);
   });
+
+  test("matches orphaned dev-server root (bun run dev:web)", () => {
+    expect(isDebrisOrphan("bun.exe", "bun  run dev:web")).toBe(true);
+    expect(isDebrisOrphan("bun.exe", "bun run dev:server")).toBe(true);
+    expect(isDebrisOrphan("bun.exe", "bun run dev")).toBe(true);
+  });
+
+  test("matches vite middle/leaf of a dev-server tree", () => {
+    expect(isDebrisOrphan(
+      "bun.exe",
+      "C:\\Users\\PC\\.bun\\bin\\bun.exe run vite --config vite.config.ts",
+    )).toBe(true);
+    expect(isDebrisOrphan(
+      "node.exe",
+      'node "C:\\Users\\PC\\ppm\\node_modules\\vite\\bin\\vite.js" --config vite.config.ts',
+    )).toBe(true);
+  });
+
+  test("does NOT match bun run build or other non-dev scripts", () => {
+    expect(isDebrisOrphan("bun.exe", "bun run build")).toBe(false);
+    expect(isDebrisOrphan("bun.exe", "bun run test")).toBe(false);
+  });
 });

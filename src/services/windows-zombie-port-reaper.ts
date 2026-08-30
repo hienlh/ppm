@@ -51,6 +51,12 @@ export function isDebrisOrphan(name: string, cmd: string): boolean {
   if (c.includes("shell-snapshots")) return true;
   // Claude SDK node/bun children (chat tool subprocesses)
   if ((n === "node.exe" || n === "bun.exe") && c.includes("claude")) return true;
+  // Dev-server trees launched from chat bash sessions (`bun run dev:web` →
+  // `bun run vite` → `node vite.js`) inherit the server's listening-socket
+  // handle and outlive their bash parent — verified holder of a zombied prod
+  // port. `__serve__`/`__supervise__` processes never match these patterns.
+  if (n === "bun.exe" && /\brun\s+(dev\b|dev:|vite\b)/.test(c)) return true;
+  if (n === "node.exe" && c.includes("\\vite\\bin\\vite.js")) return true;
   return false;
 }
 
