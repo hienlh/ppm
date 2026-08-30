@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.42] - 2026-08-31
+
+### Changed
+- **The file explorer no longer freezes on huge folders** — opening a 700-entry folder like `node_modules` used to lock the page for half a second; only the rows on screen are drawn now, so it opens in a blink at any size.
+- **Folders open instantly when browsing remotely** — the explorer loads one level ahead of your clicks in the background, and a 4-level dive over a tunnel dropped from ~1.2s to ~0.2s by fetching the levels in one request.
+- **The explorer remembers which folders you had open** — reopening a project restores them in a single request instead of starting collapsed.
+
 ## [0.17.41] - 2026-08-30
 
 ### Fixed
