@@ -829,18 +829,19 @@ export function useChat(sessionId: string | null, providerId = "claude", project
 
     if (sessionId && projectName) {
       setMessagesLoading(true);
-      fetch(`${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`, {
-        headers: { Authorization: `Bearer ${getAuthToken()}` },
-      })
-        .then((r) => r.json())
-        .then((json: any) => {
+      // Via api.get, not raw fetch: the loading screen is gated on this settling,
+      // and a stalled request would otherwise hold the transcript hostage until
+      // a page reload.
+      api
+        .get<any>(
+          `${projectUrl(projectName)}/chat/sessions/${sessionId}/messages?providerId=${providerId}`,
+        )
+        .then((data: any) => {
           if (cancelled) return;
           // Tolerate the pre-versionMap shape (a bare array): a browser running a
           // cached bundle from before the upgrade would otherwise render an empty
           // history with no error.
-          const payload = json.ok
-            ? (Array.isArray(json.data) ? { messages: json.data, versionMap: {} } : json.data)
-            : null;
+          const payload = Array.isArray(data) ? { messages: data, versionMap: {} } : data;
           let history: ChatMessage[] = Array.isArray(payload?.messages) ? payload.messages : [];
           if (payload?.versionMap) setVersionMap(payload.versionMap);
           // If a live turn_events replay already owns the active (unfinished) turn,

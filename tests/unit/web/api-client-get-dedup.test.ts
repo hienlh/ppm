@@ -132,6 +132,31 @@ describe("ApiClient.get — in-flight sharing", () => {
     expect(await client.get("/api/big-transcript")).toBe("slow-body");
   });
 
+  it("stops sharing a request that answered but then stalled mid-body", async () => {
+    // Headers arriving stops the response timer, so this request never settles.
+    // A later caller must not inherit it.
+    const client = new ApiClient("", 30);
+    // Counted per URL, not via the shared `calls` array: this test spans a real
+    // sleep, and an unrelated request landing in that window would skew a
+    // whole-suite run while passing in isolation.
+    let hits = 0;
+    (globalThis as any).fetch = async (url: string) => {
+      if (String(url).includes("/api/stalled-body")) hits++;
+      return {
+        status: 200,
+        ok: true,
+        headers: { get: () => null },
+        json: () => new Promise(() => {}),
+      } as unknown as Response;
+    };
+
+    void client.get("/api/stalled-body");
+    await Bun.sleep(60);
+    void client.get("/api/stalled-body");
+
+    expect(hits).toBe(2);
+  });
+
   it("times out a stalled GET rather than hanging forever", async () => {
     const client = new ApiClient("", 20);
     (globalThis as any).fetch = (url: string, init: RequestInit) =>
@@ -147,6 +172,8 @@ describe("ApiClient.get — in-flight sharing", () => {
     const client = new ApiClient("", 20);
     let n = 0;
     (globalThis as any).fetch = (url: string, init: RequestInit) => {
+      // Scoped to this URL so a stray request from elsewhere cannot skew the count.
+      if (!String(url).includes("/api/poisoned")) return Promise.resolve(new Response("{}"));
       calls.push(String(url));
       if (++n === 1) {
         return new Promise<Response>((_resolve, reject) => {

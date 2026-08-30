@@ -14,7 +14,7 @@ function warnOnAuditFailure(res: Response): void {
 }
 
 /** GETs currently awaiting a response, keyed by absolute URL. See ApiClient.get. */
-const pendingGets = new Map<string, Promise<unknown>>();
+const pendingGets = new Map<string, { promise: Promise<unknown>; startedAt: number }>();
 
 /**
  * How long a GET may wait for response headers. Browsers do not time a stalled
@@ -64,6 +64,11 @@ export class ApiClient {
    * other on a single tab open. This is in-flight sharing only, NOT a response
    * cache: the entry is dropped as soon as it settles, so nothing goes stale.
    *
+   * Sharing is also capped in time. The response timer stops once headers
+   * arrive, so a request that stalls midway through its body never settles —
+   * and an unsettled entry must not hold back every later caller of that URL.
+   * Past that window a new caller starts its own request instead.
+   *
    * Requests carrying an AbortSignal opt out — one caller aborting must not cancel
    * another's request.
    */
@@ -71,12 +76,18 @@ export class ApiClient {
     if (options?.signal) return this.rawGet<T>(path, options.signal);
 
     const key = `${this.baseUrl}${path}`;
-    const inFlight = pendingGets.get(key);
-    if (inFlight) return inFlight as Promise<T>;
+    const entry = pendingGets.get(key);
+    if (entry && Date.now() - entry.startedAt < this.responseTimeoutMs) {
+      return entry.promise as Promise<T>;
+    }
 
-    const p = this.rawGet<T>(path).finally(() => pendingGets.delete(key));
-    pendingGets.set(key, p);
-    return p;
+    const promise = this.rawGet<T>(path).finally(() => {
+      // Drop only our own entry — an abandoned request settling late must not
+      // evict the newer one that replaced it.
+      if (pendingGets.get(key)?.promise === promise) pendingGets.delete(key);
+    });
+    pendingGets.set(key, { promise, startedAt: Date.now() });
+    return promise;
   }
 
   private async rawGet<T>(path: string, signal?: AbortSignal): Promise<T> {

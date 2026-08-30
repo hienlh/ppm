@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { getAuthToken, projectUrl } from "@/lib/api-client";
+import { api, projectUrl } from "@/lib/api-client";
 import type { UsageInfo } from "../../types/chat";
 
 const POLL_INTERVAL = 120_000; // read cache every 2min
@@ -22,15 +22,16 @@ export function useUsage(projectName: string, providerId = "claude"): UseUsageRe
     if (!projectName) return;
     setUsageLoading(true);
     const qs = forceRefresh ? "&refresh=1" : "";
-    fetch(`${projectUrl(projectName)}/chat/usage?providerId=${providerId}${qs}`, {
-      headers: { Authorization: `Bearer ${getAuthToken()}` },
-    })
-      .then((r) => r.json())
-      .then((json: any) => {
-        if (json.ok && json.data) {
-          setUsageInfo((prev) => ({ ...prev, ...json.data }));
-          if (json.data.lastFetchedAt) setLastFetchedAt(json.data.lastFetchedAt);
-        }
+    // Via api.get, not raw fetch: the toolbar's loading state is gated on this
+    // settling, and a raw fetch has no timeout to stop it stalling forever.
+    api
+      .get<(UsageInfo & { lastFetchedAt?: string }) | null>(
+        `${projectUrl(projectName)}/chat/usage?providerId=${providerId}${qs}`,
+      )
+      .then((data) => {
+        if (!data) return;
+        setUsageInfo((prev) => ({ ...prev, ...data }));
+        if (data.lastFetchedAt) setLastFetchedAt(data.lastFetchedAt);
       })
       .catch(() => {})
       .finally(() => setUsageLoading(false));
