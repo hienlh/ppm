@@ -399,6 +399,30 @@ describe("Chat WebSocket — New Protocol", () => {
     c2.close();
   });
 
+  it("echoes user_message to other clients but not the sender", async () => {
+    const session = await chatService.createSession("mock", {});
+
+    const c1 = await connectWs(session.id);
+    await c1.waitForType("session_state");
+    const c2 = await connectWs(session.id);
+    await c2.waitForType("session_state");
+
+    c1.ws.send(JSON.stringify({ type: "message", content: "hello from device A" }));
+
+    // Second device gets the user message echo with the original content
+    const echo = await c2.waitForType("user_message");
+    expect(echo.content).toBe("hello from device A");
+
+    await c1.waitForType("done");
+    await c2.waitForType("done");
+
+    // Sender rendered its message optimistically — no echo back to it
+    expect(c1.messages.filter((m) => m.type === "user_message").length).toBe(0);
+
+    c1.close();
+    c2.close();
+  });
+
   // ─── reconnect with session_state ───
 
   it("reconnecting client gets session_state with current phase", async () => {

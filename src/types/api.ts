@@ -70,6 +70,7 @@ export type ChatWsServerMessage =
   | { type: "phase_changed"; phase: SessionPhase; elapsed?: number }
   | { type: "session_state"; sessionId: string; phase: SessionPhase; pendingApproval: { requestId: string; tool: string; input: unknown } | null; sessionTitle: string | null; model?: string; effort?: string; thinking?: boolean }
   | { type: "turn_events"; events: unknown[] }
+  | { type: "user_message"; content: string; imageCount?: number; timestamp?: string }
   | { type: "title_updated"; title: string }
   | { type: "compact_status"; status: "compacting" | "done" }
   | { type: "ping" };

@@ -610,6 +610,26 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     // on the global bus (`use-global-events.ts`) instead of here — a chat socket is
     // not guaranteed to exist since chat tabs mount lazily.
 
+    // A user message sent from another device/tab of this session — render its
+    // bubble. The sender never receives this echo (server excludes the sender),
+    // so no dedupe against the optimistic append is needed.
+    if ((data as any).type === "user_message") {
+      const content = (data as any).content as string;
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        // Dedupe: a concurrent turn_events replay or REST refetch may already
+        // have appended this same turn's user message.
+        if (last?.role === "user" && last.content === content) return prev;
+        return [...prev, {
+          id: `user-remote-${Date.now()}`,
+          role: "user" as const,
+          content,
+          timestamp: (data as any).timestamp ?? new Date().toISOString(),
+        }];
+      });
+      return;
+    }
+
     // Handle title updates from SDK summary
     if ((data as any).type === "title_updated") {
       setSessionTitle((data as any).title ?? null);

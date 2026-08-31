@@ -947,6 +947,22 @@ export const chatWebSocket = {
         setSessionThinking(sessionId, parsed.thinking ? THINKING_ADAPTIVE : 0);
       }
 
+      // Echo the user message to OTHER connected clients (second device/tab).
+      // The sender renders it optimistically; without this echo a live-connected
+      // second device only sees the assistant stream for this turn.
+      if (entry.clients.size > 1) {
+        const echo = JSON.stringify({
+          type: "user_message",
+          content: parsed.content,
+          imageCount: parsed.images?.length ?? 0,
+          timestamp: new Date().toISOString(),
+        });
+        for (const client of entry.clients) {
+          if (client === ws) continue;
+          try { client.send(echo); } catch { evictClient(entry, client); }
+        }
+      }
+
       // Intercept PPM-handled built-in commands (e.g. /skills, /version)
       const content = parsed.content.trim();
       const slashMatch = content.match(/^\/(\S+)/);
