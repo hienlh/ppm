@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.44] - 2026-08-31
+
+### Fixed
+- **Background command logs open again on macOS** — the output panel showed "Access denied" because newer SDK builds write logs to `/tmp/claude-<uid>/…` and the server only allowed the old folder name.
+
 ## [0.17.43] - 2026-08-31
 
 ### Changed
