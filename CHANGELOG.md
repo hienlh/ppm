@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.43] - 2026-08-31
+
+### Changed
+- **Reloading on mobile no longer re-downloads the whole app** — app files are cached by the browser (~7MB → ~0 per reload) and API responses are gzip-compressed (~5-8× smaller), cutting a reload on 4G from ~9.5MB to ~130KB.
+- **Opening a chat no longer downloads its transcript twice** — the redundant refresh right after connecting is skipped when nothing changed, which also stops transcript images re-downloading.
+
 ## [0.17.42] - 2026-08-31
 
 ### Changed
