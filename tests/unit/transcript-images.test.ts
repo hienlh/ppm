@@ -84,17 +84,34 @@ describe("auditTranscriptImages", () => {
     expect(audit.largestSide).toBe(3000);
   });
 
-  test("the cap is a strict upper bound", () => {
+  // The cap is a maximum, so an image measuring exactly it is already over. Treating that as
+  // acceptable hid the one image the API was rejecting and made cleanups look like no-ops.
+  test("an image measuring exactly the cap counts as oversized", () => {
     const at = auditTranscriptImages(toolResultLine([imageBlock(pngBase64(MANY_IMAGE_DIMENSION_LIMIT, 10))]));
-    expect(at.oversized).toBe(0);
-    const over = auditTranscriptImages(toolResultLine([imageBlock(pngBase64(MANY_IMAGE_DIMENSION_LIMIT + 1, 10))]));
-    expect(over.oversized).toBe(1);
+    expect(at.oversized).toBe(1);
+    const under = auditTranscriptImages(toolResultLine([imageBlock(pngBase64(MANY_IMAGE_DIMENSION_LIMIT - 1, 10))]));
+    expect(under.oversized).toBe(0);
   });
 
-  // An attachment may not exist anywhere else, so it is outside this feature's remit.
-  test("ignores images the user attached to a message", () => {
+  // Attachments are reported but not removed by default — the user has to be told which
+  // images are blocking the session even when clearing them needs their say-so.
+  test("counts images the user attached, separately from tool results", () => {
     const audit = auditTranscriptImages(userAttachmentLine(pngBase64(4000, 3000)));
-    expect(audit.total).toBe(0);
+    expect(audit.total).toBe(1);
+    expect(audit.attachments).toBe(1);
+    expect(audit.oversized).toBe(1);
+    expect(audit.oversizedAttachments).toBe(1);
+  });
+
+  test("separates attachment counts from tool-result counts", () => {
+    const text = [
+      toolResultLine([imageBlock(pngBase64(2400, 100))]),
+      userAttachmentLine(pngBase64(4000, 3000)),
+    ].join("\n");
+    const audit = auditTranscriptImages(text);
+    expect(audit.total).toBe(2);
+    expect(audit.attachments).toBe(1);
+    expect(audit.oversizedAttachments).toBe(1);
   });
 
   test("survives malformed lines and empty input", () => {
@@ -110,22 +127,44 @@ describe("stripTranscriptImages", () => {
     userAttachmentLine(pngBase64(4000, 3000)),
   ].join("\n");
 
-  test("oversized mode removes only what exceeds the cap", () => {
+  test("oversized mode removes only what is at or over the cap", () => {
     const out = stripTranscriptImages(mixed, "oversized");
     expect(out.removed).toBe(1);
     expect(out.bytesFreed).toBeGreaterThan(0);
 
+    // The small tool image and the oversized attachment both survive.
     const after = auditTranscriptImages(out.text);
-    expect(after.total).toBe(1);
-    expect(after.oversized).toBe(0);
+    expect(after.total).toBe(2);
+    expect(after.oversized).toBe(1);
+    expect(after.oversizedAttachments).toBe(1);
   });
 
   test("all mode removes every tool-result image but keeps the attachment", () => {
     const out = stripTranscriptImages(mixed, "all");
     expect(out.removed).toBe(2);
-    expect(auditTranscriptImages(out.text).total).toBe(0);
+    const after = auditTranscriptImages(out.text);
+    expect(after.total).toBe(1);
+    expect(after.attachments).toBe(1);
     // The attachment line is still present, image and all.
     expect(out.text.includes(pngBase64(4000, 3000))).toBe(true);
+  });
+
+  // Opt-in, because the transcript is usually the only copy. It has to be reachable though:
+  // one oversized attachment makes every later turn of the session fail, and nothing else
+  // can remove it.
+  test("includeAttachments clears the attachment the API is refusing", () => {
+    const out = stripTranscriptImages(mixed, "oversized", { includeAttachments: true });
+    expect(out.removed).toBe(2);
+    const after = auditTranscriptImages(out.text);
+    expect(after.oversized).toBe(0);
+    expect(after.attachments).toBe(0);
+    expect(out.text.includes(pngBase64(4000, 3000))).toBe(false);
+  });
+
+  test("all mode with includeAttachments empties the transcript of images", () => {
+    const out = stripTranscriptImages(mixed, "all", { includeAttachments: true });
+    expect(out.removed).toBe(3);
+    expect(auditTranscriptImages(out.text).total).toBe(0);
   });
 
   test("record count and line order are preserved", () => {

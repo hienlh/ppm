@@ -9,16 +9,25 @@ import { base64ByteLength, imagePlaceholderText } from "../shared/tool-result-co
  * MANY_IMAGE_DIMENSION_LIMIT on a side and reports that it removed them — so those payloads
  * cost bandwidth and produce an error while contributing nothing to the model's context.
  *
- * Only images inside tool results are touched. An image the user attached to a message may
- * no longer exist anywhere else, whereas a tool result can be produced again by re-reading
- * the file it came from.
+ * Images live in two places, and they are not equally safe to remove. A tool result can be
+ * produced again by re-reading the file it came from, so those are removed by default. An
+ * image the user attached to a message usually exists nowhere else, so it is left alone
+ * unless the caller opts in — which it must be able to do, because a single oversized
+ * attachment is enough to make every later turn of the session fail outright.
  *
- * The payload lives at `message.content[].content[]`. A record also carries an image-shaped
- * echo at the top-level `toolUseResult` field, but that one holds no base64 and is not part
- * of an API request, so it is left as the CLI wrote it.
+ * A tool result's payload sits at `message.content[].content[]`; an attachment sits directly
+ * at `message.content[]`. A record also carries an image-shaped echo at the top-level
+ * `toolUseResult` field, but that one holds no base64 and is not part of an API request, so
+ * it is left as the CLI wrote it.
  */
 
-/** Per-image dimension cap the API applies once a request carries several images. */
+/**
+ * Per-image dimension cap the API applies once a request carries several images.
+ *
+ * The cap is a maximum, so an image measuring exactly this many pixels is already over it.
+ * Comparisons here are `>=` rather than `>` for that reason: treating 2000px as acceptable
+ * hides the one image the API is rejecting and makes a cleanup look like a no-op.
+ */
 export const MANY_IMAGE_DIMENSION_LIMIT = 2000;
 
 /** Base64 characters decoded to inspect a header — a JPEG frame can sit behind EXIF. */
@@ -26,10 +35,20 @@ const HEADER_CHARS = 4096;
 
 export type StripMode = "oversized" | "all";
 
+/** Which of the two image locations a scan or strip should cover. */
+export interface ImageScopeOpts {
+  /**
+   * Also cover images the user attached to their own messages. Off by default: the payload
+   * in the transcript is typically the only remaining copy, so removing it is lossy in a way
+   * removing a tool result is not.
+   */
+  includeAttachments?: boolean;
+}
+
 export interface TranscriptImageAudit {
-  /** Images found in tool results. */
+  /** Images found in scope. */
   total: number;
-  /** How many exceed the dimension cap and are therefore already being dropped. */
+  /** How many are at or over the dimension cap and are therefore already being rejected. */
   oversized: number;
   /** Decoded size of all of them. */
   bytes: number;
@@ -37,6 +56,10 @@ export interface TranscriptImageAudit {
   oversizedBytes: number;
   /** Longest side seen, or 0 when no dimensions could be read. */
   largestSide: number;
+  /** Of `total`, how many are user attachments rather than tool results. */
+  attachments: number;
+  /** Of `oversized`, how many are user attachments — these need `includeAttachments` to clear. */
+  oversizedAttachments: number;
 }
 
 export interface StripResult {
@@ -74,13 +97,26 @@ function visitImages(node: unknown, visit: Visitor): void {
   for (const value of Object.values(node)) visitImages(value, visit);
 }
 
-/** Images carried by tool results only — attachments on user messages are left alone. */
-function visitToolResultImages(record: unknown, visit: Visitor): void {
+/**
+ * Images carried by one record, in whichever of the two locations are in scope.
+ *
+ * The visitor is told which location an image came from so callers can count and report
+ * attachments separately — a user needs to know when the image blocking their session is one
+ * only they can authorise removing.
+ */
+function visitRecordImages(
+  record: unknown,
+  visit: (image: ImageBlock, replace: (block: unknown) => void, isAttachment: boolean) => void,
+): void {
   const content = (record as { message?: { content?: unknown } } | null)?.message?.content;
   if (!Array.isArray(content)) return;
-  for (const block of content) {
-    if ((block as { type?: unknown } | null)?.type !== "tool_result") continue;
-    visitImages((block as { content?: unknown }).content, visit);
+  for (let i = 0; i < content.length; i++) {
+    const block = content[i];
+    if ((block as { type?: unknown } | null)?.type === "tool_result") {
+      visitImages((block as { content?: unknown }).content, (img, replace) => visit(img, replace, false));
+    } else if (isImageBlock(block)) {
+      visit(block, (next) => { content[i] = next; }, true);
+    }
   }
 }
 
@@ -99,76 +135,103 @@ function longestSide(data: string): number {
   return size ? Math.max(size.w, size.h) : 0;
 }
 
-export function auditTranscriptImages(text: string): TranscriptImageAudit {
-  const audit: TranscriptImageAudit = {
+/** A zeroed audit, ready to accumulate records into. */
+export function emptyImageAudit(): TranscriptImageAudit {
+  return {
     total: 0,
     oversized: 0,
     bytes: 0,
     oversizedBytes: 0,
     largestSide: 0,
+    attachments: 0,
+    oversizedAttachments: 0,
   };
+}
 
-  for (const line of text.split("\n")) {
-    if (!line) continue;
-    let record: unknown;
-    try {
-      record = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    visitToolResultImages(record, (image) => {
-      const data = imageData(image);
-      const bytes = base64ByteLength(data);
-      const side = longestSide(data);
-      audit.total++;
-      audit.bytes += bytes;
-      if (side > audit.largestSide) audit.largestSide = side;
-      if (side > MANY_IMAGE_DIMENSION_LIMIT) {
-        audit.oversized++;
-        audit.oversizedBytes += bytes;
-      }
-    });
+/**
+ * Fold one JSONL record into a running audit.
+ *
+ * Exposed per line so a transcript can be measured while it streams; a session large enough
+ * to be worth auditing is exactly the one too large to hold in memory as a single string.
+ */
+export function auditImageLine(audit: TranscriptImageAudit, line: string): void {
+  if (!line) return;
+  let record: unknown;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    return;
   }
+  visitRecordImages(record, (image, _replace, isAttachment) => {
+    const data = imageData(image);
+    const bytes = base64ByteLength(data);
+    const side = longestSide(data);
+    audit.total++;
+    audit.bytes += bytes;
+    if (isAttachment) audit.attachments++;
+    if (side > audit.largestSide) audit.largestSide = side;
+    if (side >= MANY_IMAGE_DIMENSION_LIMIT) {
+      audit.oversized++;
+      audit.oversizedBytes += bytes;
+      if (isAttachment) audit.oversizedAttachments++;
+    }
+  });
+}
 
+export function auditTranscriptImages(text: string): TranscriptImageAudit {
+  const audit = emptyImageAudit();
+  for (const line of text.split("\n")) auditImageLine(audit, line);
   return audit;
 }
 
 /**
- * Replace image payloads with the standard placeholder text.
+ * Rewrite one JSONL record with its in-scope image payloads replaced by placeholder text.
  *
- * `oversized` leaves an image whose dimensions cannot be read, since removing something
- * that may well be within the cap would lose context for no benefit.
+ * `oversized` keeps an image whose dimensions cannot be read, since removing something that
+ * may well be within the cap would lose context for no benefit. Attachments are kept unless
+ * `includeAttachments` is set — see the note at the top of this file.
  */
-export function stripTranscriptImages(text: string, mode: StripMode): StripResult {
+export function stripImageLine(
+  line: string,
+  mode: StripMode,
+  opts: ImageScopeOpts = {},
+): { line: string; removed: number; bytesFreed: number } {
+  if (!line) return { line, removed: 0, bytesFreed: 0 };
+  let record: unknown;
+  try {
+    record = JSON.parse(line);
+  } catch {
+    // A line that does not parse is left byte-for-byte as it was found.
+    return { line, removed: 0, bytesFreed: 0 };
+  }
+
   let removed = 0;
   let bytesFreed = 0;
-  let changed = false;
-
-  const lines = text.split("\n").map((line) => {
-    if (!line) return line;
-    let record: unknown;
-    try {
-      record = JSON.parse(line);
-    } catch {
-      // A line that does not parse is left byte-for-byte as it was found.
-      return line;
-    }
-
-    let touched = false;
-    visitToolResultImages(record, (image, replace) => {
-      const data = imageData(image);
-      if (mode === "oversized" && longestSide(data) <= MANY_IMAGE_DIMENSION_LIMIT) return;
-      const bytes = base64ByteLength(data);
-      replace({ type: "text", text: imagePlaceholderText(bytes || undefined) });
-      removed++;
-      bytesFreed += bytes;
-      touched = true;
-    });
-
-    if (!touched) return line;
-    changed = true;
-    return JSON.stringify(record);
+  visitRecordImages(record, (image, replace, isAttachment) => {
+    if (isAttachment && !opts.includeAttachments) return;
+    const data = imageData(image);
+    if (mode === "oversized" && longestSide(data) < MANY_IMAGE_DIMENSION_LIMIT) return;
+    const bytes = base64ByteLength(data);
+    replace({ type: "text", text: imagePlaceholderText(bytes || undefined) });
+    removed++;
+    bytesFreed += bytes;
   });
 
-  return { text: changed ? lines.join("\n") : text, removed, bytesFreed };
+  return removed > 0 ? { line: JSON.stringify(record), removed, bytesFreed } : { line, removed: 0, bytesFreed: 0 };
+}
+
+export function stripTranscriptImages(
+  text: string,
+  mode: StripMode,
+  opts: ImageScopeOpts = {},
+): StripResult {
+  let removed = 0;
+  let bytesFreed = 0;
+  const lines = text.split("\n").map((line) => {
+    const r = stripImageLine(line, mode, opts);
+    removed += r.removed;
+    bytesFreed += r.bytesFreed;
+    return r.line;
+  });
+  return { text: removed > 0 ? lines.join("\n") : text, removed, bytesFreed };
 }

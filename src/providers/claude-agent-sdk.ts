@@ -332,6 +332,49 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     return null;
   }
 
+  /**
+   * Remove the image payloads the API is refusing from a session's transcript.
+   *
+   * Called mid-turn, with the CLI subprocess for this session already torn down by the retry
+   * path, so nothing is appending while the file is rewritten. The transcript is the only
+   * place these images live, and the CLI replays it verbatim, so editing the file is the only
+   * way to stop them being re-sent.
+   *
+   * `includeAttachments` is the second, lossier pass: images the user attached are normally
+   * left alone, but once they are what is failing every turn, keeping them costs the whole
+   * session.
+   */
+  private async stripSessionImages(
+    sessionId: string,
+    includeAttachments: boolean,
+  ): Promise<{ removed: number; bytesFreed: number; reason: string }> {
+    const dir = resolve(CLAUDE_PROJECTS_DIR);
+    if (!existsSync(dir)) return { removed: 0, bytesFreed: 0, reason: "no transcript directory" };
+    let jsonlPath = "";
+    for (const sub of readdirSync(dir)) {
+      const candidate = resolve(dir, sub, `${sessionId}.jsonl`);
+      if (existsSync(candidate)) { jsonlPath = candidate; break; }
+    }
+    if (!jsonlPath) return { removed: 0, bytesFreed: 0, reason: "transcript not found" };
+
+    try {
+      const { stripTranscriptImagesFile } = await import("../services/transcript-images-file.ts");
+      const r = await stripTranscriptImagesFile(jsonlPath, "oversized", { includeAttachments });
+      if (r.removed > 0) return { removed: r.removed, bytesFreed: r.bytesFreed, reason: "" };
+      // Nothing measured as oversized. When the API is still refusing, the cap it is applying
+      // is not the one we can see, so on the escalated pass take every attachment instead.
+      if (!includeAttachments) return { removed: 0, bytesFreed: 0, reason: "no oversized images found" };
+      const all = await stripTranscriptImagesFile(jsonlPath, "all", { includeAttachments: true });
+      return {
+        removed: all.removed,
+        bytesFreed: all.bytesFreed,
+        reason: all.removed > 0 ? "" : "transcript holds no images",
+      };
+    } catch (e) {
+      return { removed: 0, bytesFreed: 0, reason: (e as Error).message };
+    }
+  }
+
   private buildQueryEnv(
     _projectPath: string | undefined,
     account: { id: string; accessToken: string } | null,
@@ -1158,8 +1201,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Allow 2 refresh attempts per turn (token can rotate mid-conversation).
       // Counter resets on successful turn (see result handler) so next turn gets a fresh budget.
       const MAX_AUTH_RETRIES = 2;
+      // Two passes: oversized images first, then attachments. A third would have nothing left.
+      const MAX_IMAGE_RETRIES = 2;
       let retryCount = 0;
       let rateLimitRetryCount = 0;
+      let imageRetryCount = 0;
       let authRetryCount = 0;
       let hadAnyEvents = false;
       // Accounts that hit a hard usage/session limit this turn — never retried again here.
@@ -1435,6 +1481,19 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             }
           }
 
+          // An image the API refuses poisons every later turn: the transcript is replayed in
+          // full each time, so the same rejected payload comes back and the session can never
+          // make progress again. Checked even when `error` is already set (the API reports
+          // this as invalid_request), and keyed off the wording rather than the code, since
+          // invalid_request otherwise covers non-retryable faults that must surface as-is.
+          if (assistantError !== "image_limit") {
+            const text = this.extractAssistantText(msg);
+            if (text && /image[\s\S]{0,80}(dimension limit|could not be processed|too large)|fewer images/i.test(text)) {
+              assistantError = "image_limit";
+              console.warn(`[sdk] session=${sessionId} API rejected an image in the replayed transcript — will strip and retry`);
+            }
+          }
+
           if (assistantError) {
             // Dump full SDK message for debugging
             console.error(`[sdk] session=${sessionId} cwd=${effectiveCwd} assistant error: ${assistantError} (isFirst=${isFirstMessage} retry=${retryCount})`);
@@ -1551,6 +1610,49 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               console.warn(`[sdk] session=${sessionId} rate limited — all ${rateLimitedAccounts.size} account(s) exhausted, stopping`);
               yield { type: "error", message: "All accounts are rate limited right now. Add another account in Settings → Accounts, or wait for the limit to reset." };
               break;
+            }
+
+            // An image in the replayed transcript is being refused. Nothing about retrying the
+            // same bytes can succeed, and nothing else will ever remove them — the CLI keeps
+            // replaying the file — so the payload is taken out of the transcript and the turn
+            // is retried against the trimmed history.
+            //
+            // Escalates: first pass drops only images at or over the dimension cap, which is
+            // lossless because the API already refuses them. Only if that changed nothing does
+            // it take the attachments too, since by then the session is unusable either way and
+            // a lost screenshot beats a dead conversation.
+            if (assistantError === "image_limit") {
+              if (imageRetryCount >= MAX_IMAGE_RETRIES) {
+                console.warn(`[sdk] session=${sessionId} image limit persists after ${imageRetryCount} strip attempt(s) — stopping`);
+                yield { type: "error", message: "The API keeps refusing an image in this conversation, and removing the offending images did not clear it. Start a new session, or use /compact to summarise the history away." };
+                break;
+              }
+              const escalate = imageRetryCount > 0;
+              imageRetryCount++;
+              yield { type: "status_update", phase: "retrying", message: escalate ? "Removing attached images..." : "Removing oversized images..." };
+              // Close the subprocess before touching the file it appends to. Rewriting a
+              // transcript underneath a live CLI drops whatever it wrote in the meantime,
+              // which breaks the parentUuid chain and hides the history from that point back.
+              closeCurrentStream();
+              let stripped = await this.stripSessionImages(sessionId, escalate);
+              // Finding nothing oversized does not mean there is nothing to do: the cap the API
+              // is applying is not always the one measurable here, and the images are still what
+              // it is refusing. Go straight to the lossier pass rather than giving up on a
+              // session that cannot otherwise take another message.
+              if (stripped.removed === 0 && !escalate) {
+                console.warn(`[sdk] session=${sessionId} nothing oversized to strip — escalating to attachments`);
+                imageRetryCount++;
+                yield { type: "status_update", phase: "retrying", message: "Removing attached images..." };
+                stripped = await this.stripSessionImages(sessionId, true);
+              }
+              if (stripped.removed === 0) {
+                console.warn(`[sdk] session=${sessionId} nothing left to strip (${stripped.reason}) — stopping`);
+                yield { type: "error", message: `The API refused an image in this conversation, but there was nothing left to remove (${stripped.reason}). Start a new session, or use /compact to summarise the history away.` };
+                break;
+              }
+              console.warn(`[sdk] session=${sessionId} stripped ${stripped.removed} image(s), ${(stripped.bytesFreed / 1048576).toFixed(2)}MB — retrying turn`);
+              eventSource = rebuildQuery(account);
+              continue retryLoop;
             }
 
             const errorHints: Record<string, string> = {
@@ -1773,13 +1875,20 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           resultSubtype = subtype;
           resultNumTurns = result.num_turns as number | undefined;
 
-          // Extract context window usage from modelUsage
+          // Extract context window usage from modelUsage.
+          // Cached prefix tokens occupy the context window exactly like fresh ones — they are
+          // only cheaper, not absent. Leaving them out made a warm session, where most of the
+          // prefix arrives as a cache read, report a fraction of the context it truly holds,
+          // so the meter stayed low while the session grew past the point of being affordable.
           const modelUsage = (result.modelUsage ?? result.model_usage) as Record<string, any> | undefined;
           if (modelUsage) {
             for (const usage of Object.values(modelUsage)) {
               const cw = usage.contextWindow ?? 0;
               if (cw > 0) {
-                const total = (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+                const total = (usage.inputTokens ?? 0)
+                  + (usage.cacheReadInputTokens ?? 0)
+                  + (usage.cacheCreationInputTokens ?? 0)
+                  + (usage.outputTokens ?? 0);
                 resultContextWindowPct = Math.min(Math.round((total / cw) * 100), 100);
                 break;
               }
