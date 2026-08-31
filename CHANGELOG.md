@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.45] - 2026-08-31
+
+### Fixed
+- **Updating no longer leaves a second copy of PPM running** — each update started a replacement that the system service manager could not see, so it started one of its own as well. The abandoned copy kept its server, its chat agents and its own public tunnel alive, and the copies piled up with every release until the machine ran out of memory. Updates now hand back to the service manager, so exactly one copy survives.
+- **Chat agents are shut down with the server that owns them** — on macOS and Linux they were only reachable through a shortcut that never actually applied, so they outlived their server by days, holding memory and keeping its port occupied. They are now found and stopped properly.
+- **A port that is already taken is reported instead of quietly worked around** — PPM used to slide onto the next free port and keep running there as an extra instance. It now clears out its own leftovers and otherwise says what is holding the port.
+
 ## [0.17.44] - 2026-08-31
 
 ### Fixed
