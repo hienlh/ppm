@@ -23,9 +23,10 @@ import { startStoppedPage, stopStoppedPage } from "./supervisor-stopped-page.ts"
 import { sdNotify } from "./sd-notify.ts";
 import {
   killProcessTree, snapshotServerDescendants, reapTrackedDescendants,
-  findPortListenerPid, isPpmProcess,
+  findPortListenerPid, isPpmProcess, collectProcessTree, terminateTree,
 } from "./windows-process-tree.ts";
 import { reapZombiePortOrphans } from "./windows-zombie-port-reaper.ts";
+import { PLIST_LABEL } from "./autostart-generator.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
 const MAX_RESTARTS = 10;
@@ -157,14 +158,17 @@ function isPortBindable(port: number, host: string): Promise<boolean> {
 }
 
 /**
- * Resolve a port the next server child can actually bind. After a
- * hibernate/resume the previous server's orphaned child can keep the
- * listening socket open via an inherited handle that Windows will not release
- * (a "zombie port"). Binding the same port then fails forever and the child
- * crash-loops until max_restarts → paused. Instead: reap tracked orphans, kill
- * a live PPM holder if any, and — if the socket is still wedged — fall back to
- * the nearest free port so the backend stays up (the tunnel is re-pointed by
- * the caller). Returns `preferred` unchanged on the happy path.
+ * Resolve a port the next server child can actually bind. Returns `preferred`
+ * unchanged on the happy path.
+ *
+ * Windows: after a hibernate/resume the previous server's orphaned child can
+ * keep the listening socket open via an inherited handle the OS will not
+ * release (a "zombie port"). Binding the same port then fails forever, so we
+ * reap orphans and, as a last resort, fall back to a nearby port.
+ *
+ * POSIX: no such failure mode — a busy port means a live listener. We reclaim
+ * our own orphans but NEVER fall back, because a fallback turns a duplicate
+ * launch into a second full instance instead of a visible error.
  */
 async function ensureBindablePort(preferred: number, host: string): Promise<number> {
   if (await isPortBindable(preferred, host)) return preferred;
@@ -205,16 +209,39 @@ async function ensureBindablePort(preferred: number, host: string): Promise<numb
       }
     }
     if (await isPortBindable(preferred, host)) return preferred;
+
+    // Still blocked — a zombie socket Windows will not release. Pick a nearby
+    // port so the backend stays up; the caller re-points the tunnel.
+    for (let p = preferred + 1; p <= preferred + 20; p++) {
+      if (await isPortBindable(p, host)) {
+        log("WARN", `Port ${preferred} unbindable (zombie socket) — falling back to ${p}`);
+        return p;
+      }
+    }
+    log("ERROR", `No bindable port in [${preferred}, ${preferred + 20}] — keeping ${preferred}`);
+    return preferred;
   }
 
-  // Still blocked — zombie socket the OS will not release. Pick a nearby port.
-  for (let p = preferred + 1; p <= preferred + 20; p++) {
-    if (await isPortBindable(p, host)) {
-      log("WARN", `Port ${preferred} unbindable (zombie socket) — falling back to ${p}`);
-      return p;
-    }
+  // ── POSIX ────────────────────────────────────────────────────────────────
+  // There is no zombie-socket failure mode here: a busy port means something is
+  // genuinely listening. Never move to another port — that is what silently
+  // turned every extra supervisor into a full duplicate instance (7 of them,
+  // each with its own public tunnel) instead of failing visibly.
+  const holderPid = findPortListenerPid(preferred);
+  if (holderPid > 0 && holderPid !== process.pid && isPpmProcess(holderPid)) {
+    // Our own leaked server/agents from a previous generation. Reap and retry.
+    log("WARN", `Port ${preferred} held by orphaned PPM process (PID ${holderPid}) — reclaiming`);
+    killProcessTree(holderPid);
+    await Bun.sleep(800);
+    if (await isPortBindable(preferred, host)) return preferred;
   }
-  log("ERROR", `No bindable port in [${preferred}, ${preferred + 20}] — keeping ${preferred}`);
+
+  log(
+    "ERROR",
+    holderPid > 0
+      ? `Port ${preferred} is held by PID ${holderPid} and could not be reclaimed. Not falling back to another port — that would start a duplicate PPM. Run 'ppm stop', or free the port.`
+      : `Port ${preferred} is unbindable and no listener could be identified. Not falling back to another port.`,
+  );
   return preferred;
 }
 
@@ -251,12 +278,30 @@ function requestServerShutdown(child: Subprocess, timeoutMs: number = 2000): Pro
       // the inherited listening-socket handle open (zombie port).
       reapTrackedDescendants((m) => log("INFO", m)).finally(() => resolve());
     } else {
+      // Snapshot the tree BEFORE signalling: the Claude SDK grandchildren are
+      // not in their own process group, so once the server exits they reparent
+      // to init and become unfindable — while still holding the inherited
+      // listening socket. That leak is what wedged the port and let a second
+      // supervisor fall back to another port and run as a duplicate.
+      const tree = collectProcessTree(pid);
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; resolve(); } };
+
       try { child.kill("SIGTERM"); } catch {}
-      setTimeout(() => {
-        killProcessTree(pid);
-        resolve();
-      }, timeoutMs).unref();
-      resolve();
+
+      const timer = setTimeout(() => {
+        terminateTree(tree, 0).finally(finish);
+      }, timeoutMs);
+
+      child.exited
+        .catch(() => {})
+        .then(() => {
+          clearTimeout(timer);
+          // Even after a clean server exit the grandchildren can survive; reap
+          // the snapshot regardless of how the parent went down.
+          return terminateTree(tree, Math.min(timeoutMs, 2000));
+        })
+        .finally(finish);
     }
   });
 }
@@ -800,6 +845,12 @@ async function reapOrphanedTunnels(keepPid: number | null): Promise<void> {
 async function selfReplace(): Promise<{ success: boolean; error?: string }> {
   log("INFO", "Starting self-replace for upgrade");
   const underSystemd = !!process.env.INVOCATION_ID && process.platform === "linux";
+  // launchd sets XPC_SERVICE_NAME to the job label. Same situation as systemd:
+  // spawning a detached replacement is invisible to the service manager, so
+  // when we exit it respawns its OWN supervisor on top of the replacement —
+  // two live instances per upgrade, which is how 7 accumulated.
+  const underLaunchd =
+    process.platform === "darwin" && process.env.XPC_SERVICE_NAME === PLIST_LABEL;
   const currentSupervisorPid = process.pid;
 
   try {
@@ -838,33 +889,35 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // Kill server child to free the port; keep tunnel alive for domain continuity
     log("INFO", "Stopping server before upgrade (tunnel kept alive)");
     if (serverChild) {
-      const pid = serverChild.pid;
+      // requestServerShutdown reaps the whole descendant tree on both platforms.
+      // The old `kill(-pid)` here never worked: the server is not a process
+      // group leader, so the group kill hit ESRCH and the agents survived.
       await requestServerShutdown(serverChild, 2000);
-      // Process group kill on Unix (catches grandchildren like Claude SDK subprocesses)
-      if (process.platform !== "win32") {
-        try { process.kill(-pid, "SIGKILL"); } catch {}
-      }
       serverChild = null;
     }
     if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
 
-    // ── systemd path: exit cleanly, let Restart=always bring us back ────
-    // The old approach (Bun.spawn new supervisor + sd_notify MAINPID) causes
-    // systemd to lose track ("not our child"), leading to service death on
-    // daemon-reload. Instead, just exit — systemd restarts us with new code.
-    if (underSystemd) {
-      log("INFO", "Under systemd: exiting for automatic restart with updated code");
+    // ── Service-manager path: exit cleanly, let the manager bring us back ──
+    // The old approach (spawn a detached replacement + hand off) makes the
+    // manager lose track of us: systemd reports "not our child" and dies on
+    // daemon-reload, launchd's KeepAlive respawns a second supervisor on top of
+    // the replacement. Instead, just exit — the manager restarts us with the
+    // new code, as exactly one process.
+    if (underSystemd || underLaunchd) {
+      log("INFO", `Under ${underSystemd ? "systemd" : "launchd"}: exiting for automatic restart with updated code`);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (upgradeCheckTimer) clearInterval(upgradeCheckTimer);
       if (upgradeDelayTimer) clearTimeout(upgradeDelayTimer);
       if (cloudMonitorTimer) clearInterval(cloudMonitorTimer);
       // Disconnect Cloud WS so new supervisor can reconnect cleanly
       try { const { disconnect } = await import("./cloud-ws.service.ts"); disconnect(); } catch {}
-      // Don't kill tunnel — it lives in its own systemd-run scope and survives cgroup teardown
+      // Don't kill the tunnel — it lives in its own systemd-run scope / detached
+      // session, so it survives teardown and the restarted supervisor adopts it
+      // (status.json still says "upgrading", which preserves the public URL).
       process.exit(0);
     }
 
-    // ── Non-systemd path: spawn new supervisor directly (macOS/Windows) ─
+    // ── Unmanaged path: spawn new supervisor directly (bare `ppm start`) ─
     // Poll until port is actually free (max 10s) — never guess with fixed sleep.
     // The tree-kill above already reaped the server's grandchildren, so the
     // listening socket is released; this loop just waits for the OS to finish

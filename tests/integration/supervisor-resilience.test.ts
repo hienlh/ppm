@@ -326,9 +326,8 @@ describe("Port recovery", () => {
     cleanup();
   });
 
-  test("supervisor falls back to a free port when the preferred port is occupied", async () => {
-    // Occupy TEST_PORT so the supervisor cannot bind it — simulates the
-    // post-hibernate zombie socket (cross-platform stand-in: a live listener).
+  test("supervisor handles an occupied preferred port per-platform", async () => {
+    // Occupy TEST_PORT so the supervisor cannot bind it.
     const net = require("node:net") as typeof import("node:net");
     await new Promise<void>((res, rej) => {
       occupier = net.createServer(() => {})
@@ -338,27 +337,40 @@ describe("Port recovery", () => {
 
     await spawnTestSupervisor();
 
-    // Server should come up on a nearby fallback port, not crash-loop to paused.
-    const ok = await waitFor(() => {
-      const s = readStatus();
-      const p = s?.port as number | undefined;
-      return !!p && p > TEST_PORT && p <= TEST_PORT + 20;
-    }, TEST_TIMEOUT);
-    expect(ok).toBe(true);
+    if (process.platform === "win32") {
+      // Windows has a real zombie-socket mode the OS never releases, so moving
+      // to a nearby port is the only way to keep the backend up.
+      const ok = await waitFor(() => {
+        const s = readStatus();
+        const p = s?.port as number | undefined;
+        return !!p && p > TEST_PORT && p <= TEST_PORT + 20;
+      }, TEST_TIMEOUT);
+      expect(ok).toBe(true);
 
-    const fallbackPort = readStatus()!.port as number;
-    const reachable = await waitFor(async () => {
-      try {
-        const res = await fetch(`http://127.0.0.1:${fallbackPort}/api/health`, {
-          signal: AbortSignal.timeout(2000),
-        });
-        return res.ok;
-      } catch { return false; }
-    }, TEST_TIMEOUT);
-    expect(reachable).toBe(true);
+      const fallbackPort = readStatus()!.port as number;
+      const reachable = await waitFor(async () => {
+        try {
+          const res = await fetch(`http://127.0.0.1:${fallbackPort}/api/health`, {
+            signal: AbortSignal.timeout(2000),
+          });
+          return res.ok;
+        } catch { return false; }
+      }, TEST_TIMEOUT);
+      expect(reachable).toBe(true);
+      expect(readStatus()!.state).toBe("running");
+      return;
+    }
 
-    // Original occupied port must NOT be paused/abandoned — state stays running.
-    expect(readStatus()!.state).toBe("running");
+    // POSIX: an occupied port means a live listener, never a zombie socket.
+    // Moving to another port here is what silently turned each duplicate launch
+    // into a full extra instance (7 of them, each with its own public tunnel),
+    // so the supervisor must fail loudly on the configured port instead.
+    const logged = await waitFor(
+      () => readFileSync(LOG_FILE, "utf-8").includes("Not falling back to another port"),
+      TEST_TIMEOUT,
+    );
+    expect(logged).toBe(true);
+    expect(readStatus()?.port ?? TEST_PORT).toBe(TEST_PORT);
   }, TEST_TIMEOUT);
 });
 
@@ -370,9 +382,21 @@ describe("Supervisor self-heal patterns", () => {
     "utf-8",
   );
 
-  test("ensureBindablePort exists and falls back to a nearby port", () => {
+  test("ensureBindablePort only falls back to a nearby port on win32", () => {
     expect(supervisorCode).toContain("async function ensureBindablePort");
     expect(supervisorCode).toMatch(/for \(let p = preferred \+ 1; p <= preferred \+ 20; p\+\+\)/);
+
+    // The fallback loop must sit INSIDE the win32 branch. When it was reachable
+    // on POSIX, every duplicate launch silently became another full instance.
+    const body = supervisorCode.slice(
+      supervisorCode.indexOf("async function ensureBindablePort"),
+    );
+    const win32At = body.indexOf('process.platform === "win32"');
+    const fallbackAt = body.search(/for \(let p = preferred \+ 1/);
+    const posixAt = body.indexOf("// ── POSIX");
+    expect(win32At).toBeGreaterThan(-1);
+    expect(fallbackAt).toBeGreaterThan(win32At);
+    expect(posixAt).toBeGreaterThan(fallbackAt);
   });
 
   test("spawnServer resolves a bindable port and re-points the tunnel only on origin mismatch", () => {
@@ -432,10 +456,14 @@ describe("Autostart config improvements", () => {
     expect(plist).not.toContain("<key>SuccessfulExit</key>");
   });
 
-  test("macOS plist abandons the process group so upgrades survive", () => {
+  test("macOS plist keeps the process group so launchd reaps the server tree", () => {
+    // Upgrades used to spawn a detached replacement, which launchd could not
+    // see — so on exit KeepAlive started a SECOND supervisor on top of it, and
+    // AbandonProcessGroup kept the old server and its Claude SDK children alive
+    // holding the port. Upgrades now just exit and let KeepAlive restart us.
     const { generatePlist } = require("../../src/services/autostart-generator.ts");
     const plist = generatePlist({ port: 8080, host: "0.0.0.0", share: false });
-    expect(plist).toContain("<key>AbandonProcessGroup</key>");
+    expect(plist).not.toContain("<key>AbandonProcessGroup</key>");
   });
 
   test("Linux systemd uses Restart=always", () => {

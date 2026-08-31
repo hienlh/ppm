@@ -59,6 +59,15 @@ describe("generatePlist", () => {
     expect(plist).not.toContain("<key>SuccessfulExit</key>");
   });
 
+  test("does not abandon the process group", () => {
+    // AbandonProcessGroup let the server and its Claude SDK children outlive the
+    // supervisor holding the listening socket, so the next supervisor fell back
+    // to another port and ran as a duplicate. Upgrades now exit and let
+    // KeepAlive restart us, so there is nothing left to protect.
+    const plist = generatePlist(TEST_CONFIG);
+    expect(plist).not.toContain("<key>AbandonProcessGroup</key>");
+  });
+
   test("uses absolute paths for log files (no ~ or $HOME)", () => {
     const plist = generatePlist(TEST_CONFIG);
     expect(plist).not.toContain("$HOME");

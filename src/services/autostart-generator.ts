@@ -88,11 +88,11 @@ ${programArgs}
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <!-- Upgrades self-replace by spawning a new supervisor and exiting. Without
-         this, launchd tears down the whole process group when the old
-         supervisor exits and kills the replacement seconds after it started. -->
-    <key>AbandonProcessGroup</key>
-    <true/>
+    <!-- No AbandonProcessGroup: upgrades exit and let KeepAlive restart us, so
+         there is no replacement to protect. Letting launchd tear down the
+         process group is what reaps the server and its Claude SDK children —
+         abandoning it orphaned them holding the listening socket, which forced
+         the next supervisor onto a fallback port and left a duplicate behind. -->
     <key>StandardOutPath</key>
     <string>${escapeXml(logPath)}</string>
     <key>StandardErrorPath</key>

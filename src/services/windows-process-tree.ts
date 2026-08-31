@@ -1,5 +1,13 @@
 /**
- * Windows-only process-tree utilities shared by supervisor / stop / server.
+ * Process-tree utilities shared by supervisor / stop / server.
+ *
+ * Most of this file is Windows-specific (see below), but the kill/collect
+ * helpers are cross-platform: on POSIX the server's children are NOT in their
+ * own process group (Bun.spawn does not setsid), so a `kill(-pid)` group kill
+ * targets a group that does not exist and silently no-ops. Descendants must be
+ * enumerated from `ps` and signalled individually, and the enumeration has to
+ * happen BEFORE the parent dies — once it exits, its children reparent to init
+ * and the tree is unrecoverable.
  *
  * The server's listening socket handle is inheritable on Windows, so every
  * descendant the server spawns (Claude SDK node processes, their bash/python
@@ -24,7 +32,22 @@ import { getPpmDir } from "./ppm-dir.ts";
  * — the holder may bind a different address than the one we configured.
  */
 export function findPortListenerPid(port: number): number {
-  if (process.platform !== "win32") return 0;
+  if (process.platform !== "win32") {
+    // lsof, not pgrep/pkill: on a memory-pressured box `sysmond` can be
+    // jetsam-killed, after which pgrep/pkill fail with a misleading error.
+    try {
+      const out = execFileSync(
+        "lsof",
+        ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+      for (const line of out.split("\n")) {
+        const pid = parseInt(line.trim(), 10);
+        if (!isNaN(pid) && pid > 0) return pid;
+      }
+    } catch {}
+    return 0;
+  }
   try {
     const out = execFileSync("netstat", ["-ano"], {
       encoding: "utf-8",
@@ -50,7 +73,17 @@ export function findPortListenerPid(port: number): number {
  * (a stale PPM orphan) vs. an unrelated app we must not kill.
  */
 export function isPpmProcess(pid: number): boolean {
-  if (process.platform !== "win32") return false;
+  if (process.platform !== "win32") {
+    try {
+      const out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+        encoding: "utf-8",
+        timeout: 5000,
+      }).toLowerCase();
+      return out.includes("__serve__") || out.includes("__supervise__");
+    } catch {
+      return false;
+    }
+  }
   try {
     const out = execFileSync(
       "powershell.exe",
@@ -136,8 +169,89 @@ export function killProcessTree(pid: number): void {
       try { process.kill(pid, "SIGKILL"); } catch {}
     }
   } else {
-    try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch {} }
+    killPids(collectProcessTree(pid), "SIGKILL");
   }
+}
+
+/**
+ * POSIX: `pid` plus every descendant, parents before children. Windows: `[pid]`
+ * (taskkill /T walks the tree itself).
+ *
+ * Must be called while `pid` is still alive — descendants are found by walking
+ * ppid links, and a dead parent's children have already reparented to init.
+ */
+export function collectProcessTree(pid: number): number[] {
+  if (process.platform === "win32") return [pid];
+
+  const childrenOf = new Map<number, number[]>();
+  try {
+    const out = execFileSync("ps", ["-Ao", "pid=,ppid="], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    for (const line of out.split("\n")) {
+      const [pidStr, ppidStr] = line.trim().split(/\s+/);
+      const p = parseInt(pidStr ?? "", 10);
+      const pp = parseInt(ppidStr ?? "", 10);
+      if (isNaN(p) || isNaN(pp)) continue;
+      const arr = childrenOf.get(pp);
+      if (arr) arr.push(p);
+      else childrenOf.set(pp, [p]);
+    }
+  } catch {
+    return [pid];
+  }
+
+  // BFS with visited guard — PID reuse can produce bogus parent cycles.
+  const visited = new Set<number>([pid]);
+  const order = [pid];
+  const queue = [pid];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const child of childrenOf.get(cur) ?? []) {
+      if (visited.has(child)) continue;
+      visited.add(child);
+      order.push(child);
+      queue.push(child);
+    }
+  }
+  return order;
+}
+
+/** Never signal init or ourselves, whatever the caller passes in. */
+function killable(pids: number[]): number[] {
+  return pids.filter((p) => p > 1 && p !== process.pid);
+}
+
+function isAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/** Signal `pids` deepest-first so a parent cannot respawn a child mid-teardown. */
+export function killPids(pids: number[], signal: NodeJS.Signals = "SIGKILL"): void {
+  for (const p of killable(pids).reverse()) {
+    try { process.kill(p, signal); } catch {}
+  }
+}
+
+/**
+ * Graceful tree teardown: SIGTERM everything, wait up to `graceMs` for the tree
+ * to drain, then SIGKILL whatever is left. Callers must pass a tree collected
+ * before the root exited (see `collectProcessTree`).
+ */
+export async function terminateTree(pids: number[], graceMs: number = 2000): Promise<void> {
+  const targets = killable(pids);
+  if (targets.length === 0) return;
+
+  killPids(targets, "SIGTERM");
+
+  const deadline = Date.now() + graceMs;
+  while (Date.now() < deadline) {
+    if (!targets.some(isAlive)) return;
+    await Bun.sleep(100);
+  }
+
+  killPids(targets, "SIGKILL");
 }
 
 /**
