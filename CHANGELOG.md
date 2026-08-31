@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.48] - 2026-09-01
+
+### Fixed
+- **AgentKit skills work again** — `/ak:debug` and the rest stopped resolving after Claude Code changed how it names a plugin's skills, and every one of them was listed twice in the picker. PPM now uses the name the runtime actually registers (`ak-engineer:ak-debug`) and converts the old one for you, so what you already type keeps working.
+
+### Added
+- **A message sent from another device now appears** — with the same chat open on a phone and a laptop, a turn started on one showed only the reply on the other.
+
 ## [0.17.47] - 2026-08-31
 
 ### Fixed
