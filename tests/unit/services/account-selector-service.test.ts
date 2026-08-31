@@ -676,4 +676,56 @@ describe("AccountSelectorService — per-session binding", () => {
     accountService.setDisabled(a.id);
     expect(accountSelector.forSession("sess-1")!.id).toBe(b.id);
   });
+
+  it("holds the binding when every account is above the 5-hour skip threshold", () => {
+    // next() falls back to near-capped candidates rather than returning null, and round-robin
+    // hands back a different one each call. Rotating there pays a full cache write per turn
+    // to move between accounts that are equally out of room.
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    insertUsage(a.id, { fiveHour: 0.99, weekly: 0.2, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.99, weekly: 0.2, weeklyResetsAt: hoursFromNow(100) });
+
+    const picks = new Set([
+      accountSelector.forSession("sess-1")!.id,
+      accountSelector.forSession("sess-1")!.id,
+      accountSelector.forSession("sess-1")!.id,
+      accountSelector.forSession("sess-1")!.id,
+    ]);
+    expect(picks.size).toBe(1);
+  });
+
+  it("still moves off a near-capped binding when another account has room", () => {
+    // The guard above must not become a permanent pin — a healthy alternative still wins.
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    insertUsage(a.id, { fiveHour: 0.99, weekly: 0.2, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.10, weekly: 0.2, weeklyResetsAt: hoursFromNow(100) });
+
+    accountSelector.bindSession("sess-1", a.id);
+    expect(accountSelector.forSession("sess-1")!.id).toBe(b.id);
+  });
+
+  it("leaves a bound account whose weekly quota is spent", () => {
+    // lowest-usage scores weekly exhaustion but next()'s filter does not, so a binding that
+    // only checked five_hour would pin the session to an account with nothing left this week.
+    accountSelector.setStrategy("lowest-usage");
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    insertUsage(a.id, { fiveHour: 0.10, weekly: 1.0, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.10, weekly: 0.10, weeklyResetsAt: hoursFromNow(100) });
+
+    accountSelector.bindSession("sess-1", a.id);
+    expect(accountSelector.forSession("sess-1")!.id).toBe(b.id);
+  });
+
+  it("keeps a weekly-exhausted binding when it is the only account left", () => {
+    // Dropping it here would churn the cache without finding anything better.
+    const a = addAccount("a@test.com");
+    insertUsage(a.id, { fiveHour: 0.10, weekly: 1.0, weeklyResetsAt: hoursFromNow(100) });
+
+    accountSelector.bindSession("sess-1", a.id);
+    expect(accountSelector.forSession("sess-1")!.id).toBe(a.id);
+    expect(accountSelector.forSession("sess-1")!.id).toBe(a.id);
+  });
 });

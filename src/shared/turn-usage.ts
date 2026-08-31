@@ -39,6 +39,13 @@ export interface TurnUsage {
   coldStart: boolean;
   /** Why the previous subprocess went away, when PPM knows. */
   coldReason?: string;
+  /**
+   * Account that served the turn. The prompt cache is scoped per account, so a turn's cost
+   * is only comparable to turns on the same account — a session that moved accounts shows
+   * a cold prefix here for a reason that has nothing to do with the transcript.
+   */
+  accountId?: string;
+  accountLabel?: string;
 }
 
 /** Total prefix replayed to the API this turn, cached or not. */
@@ -59,7 +66,7 @@ export function uncachedPrefixTokens(u: TurnUsage): number {
  */
 export function buildTurnUsage(
   modelUsage: Record<string, ModelUsageLike> | undefined,
-  opts: { coldReason?: string } = {},
+  opts: { coldReason?: string; accountId?: string; accountLabel?: string } = {},
 ): TurnUsage | undefined {
   if (!modelUsage) return undefined;
   const entries = Object.entries(modelUsage);
@@ -104,6 +111,8 @@ export function buildTurnUsage(
     cacheHitRate: prefix > 0 ? cacheReadTokens / prefix : 0,
     coldStart: !!opts.coldReason,
     ...(opts.coldReason && { coldReason: opts.coldReason }),
+    ...(opts.accountId && { accountId: opts.accountId }),
+    ...(opts.accountLabel && { accountLabel: opts.accountLabel }),
   };
 }
 
@@ -129,7 +138,9 @@ export interface TurnCostVerdict {
 }
 
 const COLD_REASON_TEXT: Record<string, string> = {
+  cache_expired: "the session's prompt cache had already lapsed, so PPM released its subprocess",
   idle_timeout: "the session sat idle with no tab open long enough for PPM to release its subprocess",
+  warm_idle_cap: "too many idle sessions were holding a subprocess, so this one was released early",
   // Retained for turns recorded before the teardown moved to the idle timer.
   tab_closed: "PPM shut the session's subprocess down when the last tab disconnected",
   set_model: "the model was changed, which restarts the session",
@@ -206,6 +217,7 @@ export function formatTurnUsageLog(u: TurnUsage): string {
     : "";
   return [
     `model=${u.model}`,
+    ...(u.accountLabel || u.accountId ? [`account=${u.accountLabel ?? u.accountId}`] : []),
     `cold=${u.coldStart ? (u.coldReason ?? "yes") : "no"}`,
     `in=${fmtTokens(u.inputTokens)}`,
     `cacheRead=${fmtTokens(u.cacheReadTokens)}`,

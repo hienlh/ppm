@@ -18,6 +18,8 @@ const BACKOFF_MAX_MS = 30 * 60_000;
 const AUTH_BACKOFF_BASE_MS = 5 * 60_000; // 5min base for auth errors (longer than rate limits)
 /** Skip accounts whose 5-hour utilization >= this threshold (proactive avoidance) */
 const FIVE_HOUR_SKIP_THRESHOLD = 0.95;
+/** Weekly utilization at which an account has nothing left to give until its reset. */
+const WEEKLY_EXHAUSTED_UTIL = 1.0;
 
 class AccountSelectorService {
   private cursor = 0;
@@ -86,14 +88,42 @@ class AccountSelectorService {
     }
   }
 
-  /** Whether an account can serve a turn right now — same tests next() applies to candidates. */
-  private isUsable(accountId: string): boolean {
+  /** Status test from next()'s candidate filter — disabled and parked accounts are out. */
+  private isSelectable(accountId: string): boolean {
     const acc = accountService.list().find((a) => a.id === accountId);
     if (!acc) return false;
     const cooldownOn = this.isCooldownEnabled();
-    if (acc.status !== "active" && !(!cooldownOn && acc.status === "cooldown")) return false;
+    return acc.status === "active" || (!cooldownOn && acc.status === "cooldown");
+  }
+
+  /**
+   * Whether an account has quota left to serve a turn.
+   *
+   * Mirrors next()'s proactive 5-hour skip, and adds the weekly exhaustion that otherwise
+   * only the lowest-usage strategy scores. A binding has to respect both: on five-hour
+   * alone, a session stays pinned to an account whose weekly quota is spent the moment its
+   * 5-hour window resets, which is exactly the account next() would have avoided.
+   */
+  private hasQuotaRoom(accountId: string): boolean {
     const snap = getLatestSnapshotForAccount(accountId);
-    return !snap || (snap.five_hour_util ?? 0) < FIVE_HOUR_SKIP_THRESHOLD;
+    if (!snap) return true;
+    if ((snap.five_hour_util ?? 0) >= FIVE_HOUR_SKIP_THRESHOLD) return false;
+    return (snap.weekly_util ?? 0) < WEEKLY_EXHAUSTED_UTIL;
+  }
+
+  /**
+   * Whether any selectable account still has room.
+   *
+   * Tells the caller whether next() would be picking a real candidate or falling back to
+   * "everything is near the cap, take one anyway" — a distinction a binding must not ignore.
+   */
+  private anyAccountHasQuotaRoom(excludeIds?: Set<string>): boolean {
+    const cooldownOn = this.isCooldownEnabled();
+    return accountService.list().some((a) => {
+      if (excludeIds?.has(a.id)) return false;
+      if (!(a.status === "active" || (!cooldownOn && a.status === "cooldown"))) return false;
+      return this.hasQuotaRoom(a.id);
+    });
   }
 
   /**
@@ -111,12 +141,18 @@ class AccountSelectorService {
   forSession(sessionId: string, excludeIds?: Set<string>): AccountWithTokens | null {
     this.clearExpiredCooldowns();
     const boundId = getSessionAccount(sessionId);
-    if (boundId && !excludeIds?.has(boundId) && this.isUsable(boundId)) {
-      const bound = accountService.getWithTokens(boundId);
-      if (bound) {
-        this._lastPickedId = boundId;
-        this._lastFailReason = "none";
-        return bound;
+    if (boundId && !excludeIds?.has(boundId) && this.isSelectable(boundId)) {
+      // Hold the binding while it has room, and also when nothing else does. In that second
+      // case next() falls back to returning a near-capped account anyway, and round-robin
+      // would hand back a different one each turn — paying a full cache write per turn to
+      // move between accounts that are equally out of room.
+      if (this.hasQuotaRoom(boundId) || !this.anyAccountHasQuotaRoom(excludeIds)) {
+        const bound = accountService.getWithTokens(boundId);
+        if (bound) {
+          this._lastPickedId = boundId;
+          this._lastFailReason = "none";
+          return bound;
+        }
       }
     }
     const picked = this.next(excludeIds);

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 40;
+export const CURRENT_SCHEMA_VERSION = 41;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -890,6 +890,15 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN account_id TEXT"); } catch { /* column exists */ }
     database.exec("PRAGMA user_version = 40;");
   }
+
+  if (current < 41) {
+    // The prompt cache is per account, so a turn's cache hit rate only means something
+    // next to turns on the same account. Without this, a session that was moved between
+    // accounts shows unexplained cold turns.
+    try { database.exec("ALTER TABLE turn_usage ADD COLUMN account_id TEXT"); } catch { /* column exists */ }
+    try { database.exec("ALTER TABLE turn_usage ADD COLUMN account_label TEXT"); } catch { /* column exists */ }
+    database.exec("PRAGMA user_version = 41;");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1334,6 +1343,8 @@ export interface TurnUsageRow {
   cost_usd: number | null;
   cold_start: number;
   cold_reason: string | null;
+  account_id: string | null;
+  account_label: string | null;
   recorded_at: string;
 }
 
@@ -1348,18 +1359,22 @@ export function insertTurnUsage(record: {
   costUsd?: number;
   coldStart: boolean;
   coldReason?: string;
+  accountId?: string;
+  accountLabel?: string;
 }): void {
   getDb().query(
     `INSERT INTO turn_usage
        (session_id, model, input_tokens, output_tokens, cache_read_tokens,
-        cache_write_tokens, context_window, cost_usd, cold_start, cold_reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        cache_write_tokens, context_window, cost_usd, cold_start, cold_reason,
+        account_id, account_label)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     record.sessionId, record.model ?? null,
     record.inputTokens, record.outputTokens,
     record.cacheReadTokens, record.cacheWriteTokens,
     record.contextWindow ?? null, record.costUsd ?? null,
     record.coldStart ? 1 : 0, record.coldReason ?? null,
+    record.accountId ?? null, record.accountLabel ?? null,
   );
 }
 

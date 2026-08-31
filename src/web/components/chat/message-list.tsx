@@ -525,7 +525,6 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
         <TurnChangeRollup
           timestamp={message.timestamp}
           content={turnCopyText ?? assistantMessageText(message)}
-          accountLabel={message.accountLabel}
           changes={turnChanges}
           onJumpToEdit={onJumpToEdit}
         />

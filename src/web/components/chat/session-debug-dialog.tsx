@@ -210,6 +210,9 @@ function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; proje
   const cold = turns.filter((t) => t.usage.coldStart).length;
   const totalCost = turns.reduce((s, t) => s + t.usage.costUsd, 0);
   const wasted = turns.reduce((s, t) => s + uncachedPrefixTokens(t.usage), 0);
+  // More than one account over these turns explains cold prefixes on its own: the cache
+  // does not follow a session across accounts.
+  const accountsUsed = new Set(turns.map((t) => t.usage.accountId).filter(Boolean)).size;
 
   return (
     <div className="flex flex-col gap-2">
@@ -217,6 +220,7 @@ function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; proje
       <p className="text-[11px] text-text-secondary">
         Last {turns.length} turn{turns.length === 1 ? "" : "s"} · {cold} restarted the session ·{" "}
         {fmtTokens(wasted)} of transcript re-sent uncached · ${totalCost.toFixed(2)}
+        {accountsUsed > 1 && ` · spread over ${accountsUsed} accounts`}
       </p>
 
       <div className="max-h-[30vh] overflow-y-auto rounded-md border border-border">
@@ -224,6 +228,7 @@ function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; proje
           <thead className="sticky top-0 bg-surface text-text-subtle">
             <tr>
               <th className="px-2 py-1 text-left font-normal">When</th>
+              <th className="px-2 py-1 text-left font-normal">Account</th>
               <th className="px-2 py-1 text-right font-normal">Prefix</th>
               <th className="px-2 py-1 text-right font-normal">Cached</th>
               <th className="px-2 py-1 text-right font-normal">Cost</th>
@@ -238,6 +243,12 @@ function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; proje
                 <tr key={t.id} className="border-t border-border">
                   <td className="px-2 py-1 text-text-subtle">
                     {t.recordedAt.slice(11, 16) || t.recordedAt.slice(0, 10)}
+                  </td>
+                  <td
+                    className="max-w-24 truncate px-2 py-1 text-text-subtle"
+                    title={t.usage.accountLabel ?? t.usage.accountId ?? ""}
+                  >
+                    {t.usage.accountLabel ?? t.usage.accountId?.slice(0, 8) ?? "—"}
                   </td>
                   <td className="px-2 py-1 text-right text-text-secondary">
                     {fmtTokens(prefixTokens(t.usage))}
@@ -264,7 +275,8 @@ function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; proje
       <p className="text-[11px] text-text-subtle">
         A high "Cached" share is the cheap case. A turn marked <code>idle_timeout</code> paid for the
         whole transcript again because the session sat idle with no tab open long enough for PPM to
-        release its subprocess.
+        release its subprocess. The cache is scoped per account, so a turn on a different account
+        starts cold no matter how the session was resumed.
       </p>
     </div>
   );

@@ -1789,7 +1789,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           // Token split for this turn. The transcript is replayed on every turn, so whether
           // it came from cache is what separates a cheap turn from an expensive one — the
           // SDK reports it and nothing downstream could reconstruct it later.
-          const turnUsage = buildTurnUsage(modelUsage, { coldReason: coldReasonForNextResult });
+          // The account rides along because the prompt cache is scoped to it: a cold prefix
+          // on a turn that changed accounts has a different cause than one on a session that
+          // stayed put, and the two are indistinguishable without it.
+          const turnUsage = buildTurnUsage(modelUsage, {
+            coldReason: coldReasonForNextResult,
+            ...(account && {
+              accountId: account.id,
+              accountLabel: account.label ?? account.email ?? undefined,
+            }),
+          });
           coldReasonForNextResult = undefined;
           if (turnUsage) {
             console.log(`[usage] session=${sessionId} ${formatTurnUsageLog(turnUsage)}`);
@@ -1805,6 +1814,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 costUsd: turnUsage.costUsd,
                 coldStart: turnUsage.coldStart,
                 coldReason: turnUsage.coldReason,
+                accountId: turnUsage.accountId,
+                accountLabel: turnUsage.accountLabel,
               });
             } catch (err) {
               // Accounting must never break a turn that already succeeded.

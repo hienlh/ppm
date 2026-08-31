@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.17.46] - 2026-08-31
+
+### Fixed
+- **Continuing a long chat no longer costs several times more than it should** — a chat's whole history is re-sent to Claude on every message, and that is only cheap while it still matches a cached copy, which is held per account and expires after five minutes. Refreshing a tab, switching apps on a phone or letting a laptop sleep ended the chat's process, and the next message went to whichever account came next in the rotation — paying full price for the entire history again. A chat now stays on one account and keeps its process across a reconnect.
+- **A chat no longer hops between accounts when they are all near their 5-hour limit** — it used to swap accounts on every message in exactly the situation where swapping costs the most, since each swap re-sends the history uncached. It now stays put unless another account genuinely has room.
+- **A chat no longer stays stuck on an account whose weekly limit is spent** — the check only looked at the 5-hour window, so an account with nothing left for the week kept serving as soon as that window reset.
+- **The chat header shows the account serving *this* chat** — with two chats open on two accounts it named whichever one ran most recently, so at least one of them was wrong.
+- **Usage for a newly added account appears right away** — it used to stay blank until the next scheduled refresh.
+
+### Added
+- **A chat now tells you when a message cost more than it had to** — a note under the reply explains how much of the history was re-sent uncached, roughly how many times more that made the message cost, and what restarted the chat.
+- **Per-message token and cache history** — the session debug panel (bug icon) lists recent messages with how much of the history came from cache, what it cost and which account served it, so an expensive chat can be compared against its own cheaper messages.
+
+### Changed
+- **An idle chat releases its process once its cached history expires** — timed from its last message rather than from when the tab closed, so a process is never held alive protecting a cache that has already lapsed.
+- **At most five idle chats keep a process warm** — beyond that the longest-idle one is released first, which bounds memory when chats are left open across several devices.
+- **The account is no longer repeated under every reply** — it appears once in the header, for the chat it belongs to.
+
 ## [0.17.45] - 2026-08-31
 
 ### Fixed

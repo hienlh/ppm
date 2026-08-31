@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import { accountService } from "../../services/account.service.ts";
 import { accountSelector } from "../../services/account-selector.service.ts";
 import { updateAccount, getSnapshotHistory } from "../../services/db.service.ts";
-import { getAllAccountUsages, getUsageForAccount } from "../../services/claude-usage.service.ts";
+import { getAllAccountUsages, getUsageForAccount, refreshUsageForAccount, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 export const accountsRoutes = new Hono();
@@ -94,6 +94,7 @@ accountsRoutes.post("/", async (c) => {
       apiKey: body.apiKey.trim(),
       label: body.label?.trim() || null,
     });
+    await refreshUsageForAccount(account.id);
     return c.json(ok(account));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
@@ -127,6 +128,7 @@ accountsRoutes.post("/oauth/exchange", async (c) => {
   if (!body.code || !body.state) return c.json(err("code and state are required"), 400);
   try {
     const account = await accountService.completeOAuthCodeFlow(body.code.trim(), body.state);
+    await refreshUsageForAccount(account.id);
     return c.json(ok(account));
   } catch (e) {
     return c.json(err((e as Error).message), 400);
@@ -142,7 +144,8 @@ accountsRoutes.get("/oauth/callback", async (c) => {
     return c.redirect(`${successRedirect}?error=${encodeURIComponent(error ?? "missing_params")}`);
   }
   try {
-    await accountService.completeOAuthFlow(code, state, getCallbackUrl(c));
+    const account = await accountService.completeOAuthFlow(code, state, getCallbackUrl(c));
+    await refreshUsageForAccount(account.id);
     return c.redirect(`${successRedirect}?success=1`);
   } catch (e) {
     return c.redirect(`${successRedirect}?error=${encodeURIComponent((e as Error).message)}`);
@@ -184,6 +187,7 @@ accountsRoutes.post("/import", async (c) => {
     if (!data) return c.json(err("Backup data required"), 400);
     if (!password) return c.json(err("Password required"), 400);
     const result = await accountService.importEncrypted(data, password);
+    if (result.imported > 0) void refreshUsageNow();
     return c.json(ok(result));
   } catch (e) {
     return c.json(err((e as Error).message), 400);

@@ -14,6 +14,7 @@ import { backgroundShellRegistry } from "../../services/background-shell-registr
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
 import { formatTurnUsageLog } from "../../shared/turn-usage.ts";
+import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -46,6 +47,8 @@ function resolveSessionThinkingEnabled(sessionId: string): boolean {
 
 const PING_INTERVAL_MS = 15_000; // 15s keepalive
 const CLEANUP_TIMEOUT_MS = 5 * 60_000; // 5min after Claude done + no FE
+/** How many clientless sessions may hold a live SDK subprocess at once. */
+const MAX_WARM_IDLE_SESSIONS = 5;
 const MAX_TURN_EVENTS = 10_000; // memory safety cap
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
@@ -87,6 +90,76 @@ interface SessionEntry {
   compactStatus?: "compacting" | null;
   /** toolUseIds of Bash calls launched with run_in_background — spy is kept alive for these */
   backgroundToolUseIds?: Set<string>;
+  /** When the last client left, for evicting the least recently used warm subprocess */
+  idleSince?: number;
+  /** When the last turn completed — the moment this session's prompt cache was last written */
+  lastTurnEndedAt?: number;
+  /** Pending release of the subprocess once its prompt cache lapses */
+  cacheReleaseTimer?: ReturnType<typeof setTimeout>;
+}
+
+/** Sessions with no client attached, not mid-turn, still holding a live subprocess. */
+function listWarmIdleSessions(): { sessionId: string; entry: SessionEntry; idleSince?: number }[] {
+  const out: { sessionId: string; entry: SessionEntry; idleSince?: number }[] = [];
+  for (const [sessionId, entry] of activeSessions) {
+    if (entry.clients.size > 0 || entry.isStreamingActive) continue;
+    const provider = providerRegistry.get(entry.providerId);
+    if (!provider?.hasStreamingSession?.(sessionId)) continue;
+    out.push({ sessionId, entry, idleSince: entry.idleSince });
+  }
+  return out;
+}
+
+/** Release a session's subprocess, if it still has one and nobody is using it. */
+function releaseSubprocess(sessionId: string, reason: string, note: string): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.clients.size > 0 || entry.isStreamingActive) return;
+  const provider = providerRegistry.get(entry.providerId);
+  if (!provider?.hasStreamingSession?.(sessionId)) return;
+  provider.abortQuery?.(sessionId, reason);
+  console.log(`[chat] session=${sessionId} released subprocess (${reason})`);
+  logSessionEvent(sessionId, "INFO", note);
+}
+
+/** Tear down the longest-idle subprocesses once too many sessions are holding one. */
+function enforceWarmIdleCap(): void {
+  const warmIdle = listWarmIdleSessions();
+  for (const sessionId of selectWarmIdleEvictions(warmIdle, MAX_WARM_IDLE_SESSIONS)) {
+    releaseSubprocess(
+      sessionId,
+      "warm_idle_cap",
+      `Subprocess released early: more than ${MAX_WARM_IDLE_SESSIONS} idle sessions were holding one`,
+    );
+  }
+}
+
+/**
+ * Schedule the subprocess release for when this session's prompt cache lapses.
+ *
+ * Timed from the last completed turn rather than from the disconnect: the cache clock started
+ * when the turn was sent, so a session whose last turn is already older than the TTL has
+ * nothing left to protect and its subprocess goes at once.
+ */
+function scheduleSubprocessRelease(sessionId: string): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry) return;
+  if (entry.cacheReleaseTimer) clearTimeout(entry.cacheReleaseTimer);
+  entry.cacheReleaseTimer = undefined;
+
+  const provider = providerRegistry.get(entry.providerId);
+  if (!provider?.hasStreamingSession?.(sessionId)) return;
+
+  const note = "Subprocess released: its prompt cache has expired, so keeping it warm saves nothing";
+  const delay = cacheReleaseDelayMs(entry.lastTurnEndedAt, Date.now());
+  if (delay === 0) {
+    releaseSubprocess(sessionId, "cache_expired", note);
+    return;
+  }
+  entry.cacheReleaseTimer = setTimeout(() => {
+    const e = activeSessions.get(sessionId);
+    if (e) e.cacheReleaseTimer = undefined;
+    releaseSubprocess(sessionId, "cache_expired", note);
+  }, delay);
 }
 
 /** Push the current background-shell registry snapshot to a session's clients. */
@@ -252,14 +325,16 @@ function startCleanupTimer(sessionId: string): void {
     if (entry.isStreamingActive) return;
     console.log(`[chat] session=${sessionId} cleanup: idle with no FE for ${CLEANUP_TIMEOUT_MS / 1000}s`);
     logSessionEvent(sessionId, "INFO", "Session cleaned up (idle, no FE reconnected)");
-    // Tear the streaming query down here rather than the moment the last client left.
-    // Keeping the subprocess for the grace period lets a returning client resume into
-    // the live stream, which skips both the transcript replay and the account re-pick.
-    // Past the timeout the prompt cache has expired anyway, so the subprocess it would
-    // have kept warm is worth nothing — the RAM it holds is the only thing left to weigh.
+    // Backstop for the subprocess: scheduleSubprocessRelease normally gets there first,
+    // timed off the last turn rather than off this disconnect. It bails when a turn was in
+    // flight, so the session entry going away is the last chance to free the process.
     const provider = providerRegistry.get(entry.providerId);
     if (provider?.hasStreamingSession?.(sessionId)) {
       provider.abortQuery?.(sessionId, "idle_timeout");
+    }
+    if (entry.cacheReleaseTimer) {
+      clearTimeout(entry.cacheReleaseTimer);
+      entry.cacheReleaseTimer = undefined;
     }
     for (const interval of entry.pingIntervals.values()) clearInterval(interval);
     entry.pingIntervals.clear();
@@ -502,6 +577,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         // Turn complete — transition to idle, clear buffer for next turn
         logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%${ev.usage ? ` ${formatTurnUsageLog(ev.usage)}` : ""}`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
+        // The prompt cache was just written, which is what the retention window is measured
+        // from. A turn can complete with nobody watching (remote trigger, scheduler), and the
+        // release pending from the disconnect was timed against the previous turn — re-time it
+        // or it fires while the cache it was protecting is still fresh.
+        entry.lastTurnEndedAt = Date.now();
+        if (entry.clients.size === 0) scheduleSubprocessRelease(sessionId);
 
         // Fire-and-forget: fetch updated session title (DB title takes priority) + notification
         sdkListSessions({ dir: entry.projectPath, limit: 50 }).then((sessions) => {
@@ -666,6 +747,13 @@ export const chatWebSocket = {
       if (existing.cleanupTimer) {
         clearTimeout(existing.cleanupTimer);
         existing.cleanupTimer = undefined;
+      }
+      // No longer idle: not a candidate for warm-idle eviction, and its subprocess is in
+      // use again so the pending cache-expiry release must not fire under it.
+      existing.idleSince = undefined;
+      if (existing.cacheReleaseTimer) {
+        clearTimeout(existing.cacheReleaseTimer);
+        existing.cacheReleaseTimer = undefined;
       }
       if (projectPath) existing.projectPath = projectPath;
       if (projectName) existing.projectName = projectName;
@@ -1107,8 +1195,12 @@ export const chatWebSocket = {
       // the next message down the resume path, which replays the whole transcript and
       // re-picks an account — on a large session that turns a cache read into a full
       // cache write. The cleanup timer does the teardown once the session is genuinely
-      // abandoned (see startCleanupTimer).
+      // abandoned (see startCleanupTimer), and enforceWarmIdleCap bounds how many
+      // subprocesses may wait out that timer at once.
+      entry.idleSince = Date.now();
       startCleanupTimer(sessionId);
+      scheduleSubprocessRelease(sessionId);
+      enforceWarmIdleCap();
     }
   },
 };

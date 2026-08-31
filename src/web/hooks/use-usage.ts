@@ -12,7 +12,11 @@ interface UseUsageReturn {
   refreshUsage: () => void;
 }
 
-export function useUsage(projectName: string, providerId = "claude"): UseUsageReturn {
+/**
+ * `sessionId` scopes the reported account to this session's binding. Without it the header
+ * shows whichever account ran last across every open session, which is wrong for all but one.
+ */
+export function useUsage(projectName: string, providerId = "claude", sessionId?: string): UseUsageReturn {
   const [usageInfo, setUsageInfo] = useState<UsageInfo>({});
   const [usageLoading, setUsageLoading] = useState(false);
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
@@ -22,11 +26,12 @@ export function useUsage(projectName: string, providerId = "claude"): UseUsageRe
     if (!projectName) return;
     setUsageLoading(true);
     const qs = forceRefresh ? "&refresh=1" : "";
+    const sessionQs = sessionId ? `&session=${encodeURIComponent(sessionId)}` : "";
     // Via api.get, not raw fetch: the toolbar's loading state is gated on this
     // settling, and a raw fetch has no timeout to stop it stalling forever.
     api
       .get<(UsageInfo & { lastFetchedAt?: string }) | null>(
-        `${projectUrl(projectName)}/chat/usage?providerId=${providerId}${qs}`,
+        `${projectUrl(projectName)}/chat/usage?providerId=${providerId}${sessionQs}${qs}`,
       )
       .then((data) => {
         if (!data) return;
@@ -35,7 +40,7 @@ export function useUsage(projectName: string, providerId = "claude"): UseUsageRe
       })
       .catch(() => {})
       .finally(() => setUsageLoading(false));
-  }, [projectName, providerId]);
+  }, [projectName, providerId, sessionId]);
 
   // Read cache on mount + auto-read every POLL_INTERVAL
   useEffect(() => {

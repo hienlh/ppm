@@ -13,10 +13,9 @@ import { TurnChangePill, changeTotals } from "./turn-change-pill";
 import { TurnChangeTray } from "./turn-change-tray";
 import { TurnChangeSheet } from "./turn-change-sheet";
 
-export function TurnChangeRollup({ timestamp, content, accountLabel, changes, onJumpToEdit }: {
+export function TurnChangeRollup({ timestamp, content, changes, onJumpToEdit }: {
   timestamp: string;
   content: string;
-  accountLabel?: string;
   changes?: TurnFileChange[];
   onJumpToEdit?: (editRef: string) => void;
 }) {
@@ -35,7 +34,6 @@ export function TurnChangeRollup({ timestamp, content, accountLabel, changes, on
     <MessageActionBar
       timestamp={timestamp}
       content={content}
-      accountLabel={accountLabel}
       className="-mt-1.5"
     >
       {changes && changes.length > 0 && (

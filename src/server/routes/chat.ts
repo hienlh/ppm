@@ -8,7 +8,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
 import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
@@ -85,7 +85,11 @@ chatRoutes.get("/usage", async (c) => {
   if (c.req.query("refresh")) {
     try { await refreshUsageNow(); } catch { /* use stale cache */ }
   }
-  const usage = getCachedUsage();
+  // Accounts are bound per session, so the header must report the account serving THIS
+  // session rather than whichever one ran most recently across all of them.
+  const sessionId = c.req.query("session");
+  const boundAccountId = sessionId ? getSessionAccount(sessionId) : null;
+  const usage = getCachedUsage(boundAccountId ?? undefined);
   return c.json(ok({
     lastFetchedAt: usage.lastFetchedAt,
     fiveHour: usage.session?.utilization,
@@ -737,6 +741,8 @@ chatRoutes.get("/sessions/:id/usage", (c) => {
         cacheHitRate: cacheHitRateOf(r),
         coldStart: r.cold_start === 1,
         ...(r.cold_reason && { coldReason: r.cold_reason }),
+        ...(r.account_id && { accountId: r.account_id }),
+        ...(r.account_label && { accountLabel: r.account_label }),
       } satisfies TurnUsage,
     })),
   }));

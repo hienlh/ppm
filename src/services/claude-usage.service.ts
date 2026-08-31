@@ -296,9 +296,15 @@ export function getAllAccountUsages(): AccountUsageEntry[] {
   return result;
 }
 
-/** Get cached usage for active account (used by chat header) */
-export function getCachedUsage(): ClaudeUsage & { activeAccountId?: string; activeAccountLabel?: string } {
-  const activeId = accountSelector.lastPickedId;
+/**
+ * Cached usage for the account a caller cares about (used by chat header).
+ *
+ * `preferredAccountId` exists because accounts are bound per session: `lastPickedId` is a
+ * single global, so with two sessions on two accounts it names whichever ran last — the
+ * wrong account for at least one of the tabs displaying it.
+ */
+export function getCachedUsage(preferredAccountId?: string): ClaudeUsage & { activeAccountId?: string; activeAccountLabel?: string } {
+  const activeId = preferredAccountId ?? accountSelector.lastPickedId;
   if (activeId) {
     const usage = getUsageForAccount(activeId);
     const acc = accountService.list().find(a => a.id === activeId);
@@ -347,6 +353,26 @@ export function updateFromSdkEvent(_rateLimitType?: string, _utilization?: numbe
 export async function refreshUsageNow(): Promise<ClaudeUsage & { activeAccountId?: string; activeAccountLabel?: string }> {
   await pollOnce();
   return getCachedUsage();
+}
+
+/** Fetch + persist usage for a single account (used right after an account is added). */
+export async function refreshUsageForAccount(accountId: string): Promise<ClaudeUsage> {
+  const withTokens = await accountService.ensureFreshToken(accountId);
+  if (!withTokens) return {};
+  const token = withTokens.accessToken;
+  if (!token.startsWith("sk-ant-oat")) return {};
+  const cooldownKey = token.substring(0, 20);
+  const cooldownUntil = tokenCooldowns.get(cooldownKey);
+  if (cooldownUntil && Date.now() < cooldownUntil) return getUsageForAccount(accountId);
+  try {
+    const data = await fetchUsageForToken(token);
+    tokenCooldowns.delete(cooldownKey);
+    persistIfChanged(data, accountId);
+    return data;
+  } catch (e) {
+    console.error(`[usage] refreshUsageForAccount ${accountId}:`, (e as Error).message);
+    return getUsageForAccount(accountId);
+  }
 }
 
 /** @internal Test-only: reset module-level state between tests */

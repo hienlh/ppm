@@ -67,13 +67,11 @@ function CopyButton({ content }: { content: string }) {
 export function MessageActionBar({
   timestamp,
   content,
-  accountLabel,
   className,
   children,
 }: {
   timestamp: string;
   content: string;
-  accountLabel?: string;
   className?: string;
   children?: ReactNode;
 }) {
@@ -87,7 +85,6 @@ export function MessageActionBar({
       <time title={fullDate(timestamp)} className="pr-1 tabular-nums">
         {formatRelativeDate(timestamp)}
       </time>
-      {accountLabel && <span className="px-1 truncate max-w-40">via {accountLabel}</span>}
       <CopyButton content={content} />
       {children}
     </div>
