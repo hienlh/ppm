@@ -35,6 +35,8 @@ interface ImageAudit {
   bytes: number;
   oversizedBytes: number;
   largestSide: number;
+  attachments: number;
+  oversizedAttachments: number;
   limit: number;
 }
 
@@ -95,12 +97,12 @@ function TranscriptImages({ sessionId, projectName }: { sessionId: string; proje
     return () => { live = false; };
   }, [sessionId, projectName]);
 
-  const strip = (mode: "oversized" | "all") => {
+  const strip = (mode: "oversized" | "all", includeAttachments = false) => {
     setBusy(mode);
     setError(null);
     api.post<{ removed: number; bytesFreed: number; remaining: ImageAudit }>(
       `${projectUrl(projectName)}/chat/sessions/${sessionId}/images/strip?project=${encodeURIComponent(projectName)}`,
-      { mode },
+      { mode, includeAttachments },
     ).then((r) => {
       setAudit(r.remaining);
       setFreed({ removed: r.removed, bytes: r.bytesFreed });
@@ -116,12 +118,13 @@ function TranscriptImages({ sessionId, projectName }: { sessionId: string; proje
 
       {audit.total === 0 ? (
         <p className="text-[11px] text-text-subtle">
-          No images in tool results{freed ? " — transcript is clean." : "."}
+          No images in this transcript{freed ? " — it is clean." : "."}
         </p>
       ) : (
         <p className="text-[11px] text-text-secondary">
-          {audit.total} image{audit.total === 1 ? "" : "s"} in tool results · {fmtSize(audit.bytes)} of base64,
-          replayed on every turn.
+          {audit.total} image{audit.total === 1 ? "" : "s"} · {fmtSize(audit.bytes)} of base64, replayed on
+          every turn
+          {audit.attachments > 0 && ` · ${audit.attachments} attached by you`}.
         </p>
       )}
 
@@ -129,10 +132,33 @@ function TranscriptImages({ sessionId, projectName }: { sessionId: string; proje
         <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-text-secondary">
           <TriangleAlert className="mt-px size-3.5 shrink-0 text-warning" />
           <span>
-            {audit.oversized} image{audit.oversized === 1 ? " is" : "s are"} wider than {audit.limit}px
-            (largest {audit.largestSide}px). The API rejects those once a request carries several images,
-            so they already contribute nothing — removing them loses no context.
+            {audit.oversized} image{audit.oversized === 1 ? " reaches" : "s reach"} the {audit.limit}px
+            limit (largest {audit.largestSide}px). Once a request carries several images the API rejects
+            those outright, which fails the whole turn — removing them loses no context.
           </span>
+        </div>
+      )}
+
+      {audit.oversizedAttachments > 0 && (
+        <div className="flex flex-col gap-2 rounded-md border border-error/40 bg-error/10 p-2 text-[11px] text-text-secondary">
+          <div className="flex gap-2">
+            <TriangleAlert className="mt-px size-3.5 shrink-0 text-error" />
+            <span>
+              {audit.oversizedAttachments} of those {audit.oversizedAttachments === 1 ? "is an image you" : "are images you"}
+              {" "}attached yourself, so the buttons below leave {audit.oversizedAttachments === 1 ? "it" : "them"} in place.
+              While {audit.oversizedAttachments === 1 ? "it stays" : "they stay"}, every turn in this session keeps failing.
+              The transcript holds the only copy — removing {audit.oversizedAttachments === 1 ? "it" : "them"} cannot be undone.
+            </span>
+          </div>
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={busy !== null}
+            onClick={() => strip("oversized", true)}
+          >
+            {busy === "oversized" ? <Loader2 className="size-3.5 animate-spin" /> : <ImageOff className="size-3.5" />}
+            Remove oversized, attachments included
+          </Button>
         </div>
       )}
 
@@ -166,8 +192,8 @@ function TranscriptImages({ sessionId, projectName }: { sessionId: string; proje
         </Button>
       </div>
       <p className="text-[11px] text-text-subtle">
-        Images you attached to a message are never touched. A removed tool image is replaced by its
-        placeholder text; the chat still shows the file, re-read from disk.
+        These two buttons cover tool images only, and leave anything you attached alone. A removed tool
+        image is replaced by its placeholder text; the chat still shows the file, re-read from disk.
       </p>
     </div>
   );

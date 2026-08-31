@@ -14,7 +14,8 @@ import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.ser
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
 import { aggregateTasks } from "../../services/task-status-aggregator.ts";
-import { auditTranscriptImages, stripTranscriptImages, MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
+import { MANY_IMAGE_DIMENSION_LIMIT, type StripMode } from "../../services/transcript-images.ts";
+import { auditTranscriptImagesFile, stripTranscriptImagesFile } from "../../services/transcript-images-file.ts";
 import { getSessionProjectPath, setSessionMetadata, setSessionTitle, getSessionTitle, getPinnedSessionIds, pinSession, unpinSession, deleteSessionMapping, deleteSessionMetadata, deleteSessionTitle, getAllUnread, clearSessionUnread, setSessionUnread } from "../../services/db.service.ts";
 import { setSessionTag, bulkSetSessionTag, getTagById, getSessionTags, getProjectDefaultTagId } from "../../services/tag.service.ts";
 import { recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, deleteBranchesFor, getRootId } from "../../services/session-branch.service.ts";
@@ -754,31 +755,30 @@ function cacheHitRateOf(r: { input_tokens: number; cache_read_tokens: number; ca
   return prefix > 0 ? r.cache_read_tokens / prefix : 0;
 }
 
-/** Largest transcript the image routes will read into memory in one go. */
-const MAX_TRANSCRIPT_SCAN_BYTES = 64 * 1024 * 1024;
-
 /**
- * Locate a session transcript and read it, or explain why that was not possible.
+ * Locate a session transcript, or explain why that was not possible.
  *
  * The id becomes a filename, and the strip route writes to what this returns, so anything
  * that is not a plain session id is refused before it can reach into another directory.
+ *
+ * No size limit: both routes stream the file a record at a time, so a transcript costs one
+ * line of memory rather than its whole length. The cap that used to live here turned the
+ * cleanup off for exactly the transcripts big enough to need it.
  */
-function readTranscript(sessionId: string): { path: string; text: string } | { error: string; status: 400 | 404 | 413 } {
+function locateTranscript(sessionId: string): { path: string } | { error: string; status: 400 | 404 } {
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(sessionId)) return { error: "Invalid session id", status: 400 };
   const { jsonlPath, exists } = resolveSessionJsonlPath(sessionId);
   if (!exists || !jsonlPath) return { error: "Transcript not found for this session", status: 404 };
-  if (statSync(jsonlPath).size > MAX_TRANSCRIPT_SCAN_BYTES) {
-    return { error: "Transcript too large to scan", status: 413 };
-  }
-  return { path: jsonlPath, text: readFileSync(jsonlPath, "utf8") };
+  return { path: jsonlPath };
 }
 
 /** GET /chat/sessions/:id/images — count the image payloads the transcript replays every turn */
-chatRoutes.get("/sessions/:id/images", (c) => {
+chatRoutes.get("/sessions/:id/images", async (c) => {
   try {
-    const read = readTranscript(c.req.param("id"));
-    if ("error" in read) return c.json(err(read.error), read.status);
-    return c.json(ok({ ...auditTranscriptImages(read.text), limit: MANY_IMAGE_DIMENSION_LIMIT }));
+    const found = locateTranscript(c.req.param("id"));
+    if ("error" in found) return c.json(err(found.error), found.status);
+    const audit = await auditTranscriptImagesFile(found.path);
+    return c.json(ok({ ...audit, limit: MANY_IMAGE_DIMENSION_LIMIT }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
@@ -787,31 +787,34 @@ chatRoutes.get("/sessions/:id/images", (c) => {
 /**
  * POST /chat/sessions/:id/images/strip — replace image payloads with their placeholder text.
  *
- * Rewrites the transcript in place rather than swapping in a new file: the CLI holds the
- * original open in append mode, so a rename would leave it writing to an orphaned inode.
  * A turn in flight is refused outright, since the record it is midway through appending
  * would be lost by the rewrite.
+ *
+ * `includeAttachments` also clears images the user attached to their own messages. It is
+ * opt-in because the transcript usually holds the only copy, but it has to be reachable: one
+ * oversized attachment makes every later turn of the session fail, and nothing else can
+ * remove it.
  */
 chatRoutes.post("/sessions/:id/images/strip", async (c) => {
   try {
     const sessionId = c.req.param("id");
     const body = await c.req.json().catch(() => ({}));
     const mode: StripMode = (body as { mode?: unknown }).mode === "all" ? "all" : "oversized";
+    const includeAttachments = (body as { includeAttachments?: unknown }).includeAttachments === true;
 
     const { listRunningSessions } = await import("../ws/chat.ts");
     if (listRunningSessions().some((s) => s.sessionId === sessionId)) {
       return c.json(err("Session is running — wait for the turn to finish"), 409);
     }
 
-    const read = readTranscript(sessionId);
-    if ("error" in read) return c.json(err(read.error), read.status);
+    const found = locateTranscript(sessionId);
+    if ("error" in found) return c.json(err(found.error), found.status);
 
-    const result = stripTranscriptImages(read.text, mode);
-    if (result.removed > 0) writeFileSync(read.path, result.text);
+    const result = await stripTranscriptImagesFile(found.path, mode, { includeAttachments });
     return c.json(ok({
       removed: result.removed,
       bytesFreed: result.bytesFreed,
-      remaining: { ...auditTranscriptImages(result.text), limit: MANY_IMAGE_DIMENSION_LIMIT },
+      remaining: { ...result.remaining, limit: MANY_IMAGE_DIMENSION_LIMIT },
     }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
