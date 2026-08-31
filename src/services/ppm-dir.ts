@@ -12,3 +12,19 @@ export function getPpmDir(): string {
 export function _resetPpmDir(): void {
   _dir = undefined;
 }
+
+/**
+ * True when PPM_HOME points somewhere other than the real `~/.ppm` — i.e. an
+ * isolated run, in practice an integration test.
+ *
+ * Service-manager artifacts (launchd plist, systemd unit) deliberately resolve
+ * against the real `$HOME` and are machine-global, so PPM_HOME does NOT isolate
+ * them. Anything that registers, boots out, or sweeps processes machine-wide
+ * must bail out here — otherwise an "isolated" test running `ppm stop` tears
+ * down the user's live autostart job and production supervisor.
+ */
+export function isIsolatedPpmHome(): boolean {
+  const override = process.env.PPM_HOME;
+  if (!override) return false;
+  return resolve(override) !== resolve(homedir(), ".ppm");
+}

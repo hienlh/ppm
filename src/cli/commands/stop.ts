@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
-import { getPpmDir } from "../../services/ppm-dir.ts";
+import { getPpmDir, isIsolatedPpmHome } from "../../services/ppm-dir.ts";
 import { reapTrackedDescendants } from "../../services/windows-process-tree.ts";
 
 const pidFile = () => resolve(getPpmDir(), "ppm.pid");
@@ -44,6 +44,9 @@ function findPidsByName(name: string): number[] {
 }
 
 function killAllByName(name: string): number {
+  // Matches by command line across the whole machine, so it would take down the
+  // user's real tunnel from an isolated test run.
+  if (isIsolatedPpmHome()) return 0;
   const pids = findPidsByName(name);
   let killed = 0;
   for (const pid of pids) {
@@ -59,7 +62,7 @@ export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
     try {
       const { getAutoStartStatus } = await import("../../services/autostart-register.ts");
       const autoStatus = getAutoStartStatus();
-      if (autoStatus.enabled && autoStatus.running) {
+      if (autoStatus.enabled && autoStatus.running && !isIsolatedPpmHome()) {
         if (process.platform === "linux") {
           Bun.spawnSync({ cmd: ["systemctl", "--user", "stop", "ppm.service"], stdout: "ignore", stderr: "ignore" });
         } else if (process.platform === "darwin") {
@@ -163,7 +166,7 @@ async function hardStop() {
   try {
     const { getAutoStartStatus } = await import("../../services/autostart-register.ts");
     const autoStatus = getAutoStartStatus();
-    if (autoStatus.enabled && autoStatus.running) {
+    if (autoStatus.enabled && autoStatus.running && !isIsolatedPpmHome()) {
       if (process.platform === "linux") {
         Bun.spawnSync({ cmd: ["systemctl", "--user", "stop", "ppm.service"], stdout: "ignore", stderr: "ignore" });
         await Bun.sleep(2000);

@@ -16,6 +16,7 @@ import {
   buildSchtasksDeleteCommand,
   buildSchtasksQueryCommand,
 } from "./autostart-generator.ts";
+import { isIsolatedPpmHome } from "./ppm-dir.ts";
 
 export interface AutoStartStatus {
   enabled: boolean;
@@ -26,6 +27,17 @@ export interface AutoStartStatus {
 }
 
 const METADATA_FILE = resolve(homedir(), ".ppm", "autostart.json");
+
+/**
+ * The launchd plist / systemd unit live under the real `$HOME` and are
+ * machine-global, so PPM_HOME does not isolate them. Registering or removing
+ * one from an isolated run would hijack the user's live service.
+ */
+function skipIsolated(action: "enable" | "disable"): string {
+  const msg = `Auto-start ${action} skipped: PPM_HOME is isolated (${process.env.PPM_HOME}) — refusing to modify the real service manager`;
+  console.warn(`  ${msg}`);
+  return msg;
+}
 
 interface AutoStartMetadata {
   enabled: boolean;
@@ -325,6 +337,7 @@ function statusWindows(): AutoStartStatus {
 
 /** Enable auto-start for the current platform. skipStart=true registers without starting (when supervisor is already running). */
 export async function enableAutoStart(config: AutoStartConfig, opts?: { skipStart?: boolean }): Promise<string> {
+  if (isIsolatedPpmHome()) return skipIsolated("enable");
   const platform = process.platform;
   if (platform === "darwin") return enableMacOS(config, opts);
   if (platform === "linux") return enableLinux(config, opts);
@@ -334,6 +347,7 @@ export async function enableAutoStart(config: AutoStartConfig, opts?: { skipStar
 
 /** Disable auto-start for the current platform */
 export async function disableAutoStart(): Promise<void> {
+  if (isIsolatedPpmHome()) { skipIsolated("disable"); return; }
   const platform = process.platform;
   if (platform === "darwin") return disableMacOS();
   if (platform === "linux") return disableLinux();
