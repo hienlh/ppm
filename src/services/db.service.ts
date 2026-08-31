@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 39;
+export const CURRENT_SCHEMA_VERSION = 40;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -881,6 +881,15 @@ function runMigrations(database: Database): void {
       PRAGMA user_version = 39;
     `);
   }
+
+  if (current < 40) {
+    // Anthropic's prompt cache is scoped per account, so a session that rotates
+    // accounts re-sends its whole transcript as a cache write every time. Binding
+    // a session to one account keeps the prefix hitting the same cache; rotation
+    // moves to session assignment, where it costs nothing.
+    try { database.exec("ALTER TABLE session_metadata ADD COLUMN account_id TEXT"); } catch { /* column exists */ }
+    database.exec("PRAGMA user_version = 40;");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1073,6 +1082,25 @@ export function getSessionCodexAccount(sessionId: string): string | null {
 export function setSessionCodexAccount(sessionId: string, accountId: string): void {
   getDb().query(
     "INSERT INTO session_metadata (session_id, codex_account_id) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET codex_account_id = excluded.codex_account_id",
+  ).run(sessionId, accountId);
+}
+
+/**
+ * Claude account bound to a session (sticky across restarts).
+ *
+ * The prompt cache is scoped per account, so a session that switches accounts pays
+ * a full cache write of its entire transcript instead of a cache read. Binding keeps
+ * consecutive turns on one account; the rate-limit / usage-limit / auth paths rebind
+ * when they genuinely have to move.
+ */
+export function getSessionAccount(sessionId: string): string | null {
+  const row = getDb().query("SELECT account_id FROM session_metadata WHERE session_id = ?").get(sessionId) as { account_id: string | null } | null;
+  return row?.account_id ?? null;
+}
+
+export function setSessionAccount(sessionId: string, accountId: string): void {
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, account_id) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET account_id = excluded.account_id",
   ).run(sessionId, accountId);
 }
 

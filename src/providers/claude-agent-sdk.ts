@@ -298,6 +298,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       if (nextAcc && nextAcc.id !== account.id) {
         const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
         console.log(`[sdk] session=${sessionId} (${context}) switching to account ${nextAcc.id} (${label}) after auth failure`);
+        // The old binding cannot authenticate — move the session so later turns start here.
+        accountSelector.bindSession(sessionId, nextAcc.id);
         yield { type: "account_retry" as const, reason: "Switching account", accountId: nextAcc.id, accountLabel: label };
         return { account: nextAcc, newRetryCount: authRetryCount + 1 };
       }
@@ -322,6 +324,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     if (nextAcc && nextAcc.id !== current?.id) {
       const label = nextAcc.label ?? nextAcc.email ?? "Unknown";
       console.warn(`[sdk] session=${sessionId} rate limited — switching to account ${nextAcc.id} (${label})`);
+      // The bound account is rate limited — move the session rather than bounce back to it.
+      accountSelector.bindSession(sessionId, nextAcc.id);
       yield { type: "account_retry" as const, reason: `Rate limited — switching account`, accountId: nextAcc.id, accountLabel: label };
       return nextAcc;
     }
@@ -907,7 +911,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         // Pre-flight loop: select account → refresh token → retry with next if refresh fails
         while (true) {
           yield { type: "status_update" as const, phase: "routing" as const, message: "Selecting account..." };
-          account = accountSelector.next(excludeIds);
+          // Sticky: reuse the account this session is bound to so the transcript keeps
+          // hitting that account's prompt cache. Only an unusable binding falls through
+          // to a strategy pick, which then becomes the new binding.
+          account = accountSelector.forSession(sessionId, excludeIds);
 
           if (!account) {
             const reason = accountSelector.lastFailReason;
@@ -1478,6 +1485,8 @@ export class ClaudeAgentSdkProvider implements AIProvider {
                 account = nextAccount;
                 const label = nextAccount.label ?? nextAccount.email ?? "Unknown";
                 console.warn(`[sdk] session=${sessionId} usage limit — switching to fresh account ${nextAccount.id} (${label}), no backoff`);
+                // The bound account is exhausted until its reset — move the session.
+                accountSelector.bindSession(sessionId, nextAccount.id);
                 yield { type: "account_retry" as const, reason: `Usage limit reached — switching account`, accountId: nextAccount.id, accountLabel: label };
                 // Rebuild query with the fresh account env, no backoff delay.
                 const retryU = buildRetryMsg();

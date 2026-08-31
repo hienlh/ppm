@@ -129,6 +129,8 @@ export interface TurnCostVerdict {
 }
 
 const COLD_REASON_TEXT: Record<string, string> = {
+  idle_timeout: "the session sat idle with no tab open long enough for PPM to release its subprocess",
+  // Retained for turns recorded before the teardown moved to the idle timer.
   tab_closed: "PPM shut the session's subprocess down when the last tab disconnected",
   set_model: "the model was changed, which restarts the session",
   stream_ended: "the session's subprocess had already exited",

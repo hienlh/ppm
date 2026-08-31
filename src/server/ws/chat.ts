@@ -252,6 +252,15 @@ function startCleanupTimer(sessionId: string): void {
     if (entry.isStreamingActive) return;
     console.log(`[chat] session=${sessionId} cleanup: idle with no FE for ${CLEANUP_TIMEOUT_MS / 1000}s`);
     logSessionEvent(sessionId, "INFO", "Session cleaned up (idle, no FE reconnected)");
+    // Tear the streaming query down here rather than the moment the last client left.
+    // Keeping the subprocess for the grace period lets a returning client resume into
+    // the live stream, which skips both the transcript replay and the account re-pick.
+    // Past the timeout the prompt cache has expired anyway, so the subprocess it would
+    // have kept warm is worth nothing — the RAM it holds is the only thing left to weigh.
+    const provider = providerRegistry.get(entry.providerId);
+    if (provider?.hasStreamingSession?.(sessionId)) {
+      provider.abortQuery?.(sessionId, "idle_timeout");
+    }
     for (const interval of entry.pingIntervals.values()) clearInterval(interval);
     entry.pingIntervals.clear();
     for (const w of entry.teamWatchers.values()) w.cleanup();
@@ -1092,17 +1101,13 @@ export const chatWebSocket = {
     console.log(`[chat] session=${sessionId} FE disconnected (phase=${entry.phase}, clients=${entry.clients.size})`);
 
     if (entry.clients.size === 0) {
-      // No clients listening anymore. If Claude is idle (turn finished, no pending
-      // approval), tear down the persistent streaming query so the next message
-      // recreates it via the resume path — picking up fresh MCP/config while
-      // preserving context from JSONL, and freeing the idle subprocess (RAM).
-      const provider = providerRegistry.get(entry.providerId);
-      const idle = entry.phase === "idle" && !entry.isStreamingActive && !entry.pendingApprovalEvent;
-      const hasLiveStream = provider?.hasStreamingSession?.(sessionId) ?? false;
-      if (idle && hasLiveStream) {
-        provider?.abortQuery?.(sessionId, "tab_closed");
-        logSessionEvent(sessionId, "INFO", "Streaming query torn down (all clients gone, idle) — next message resumes with fresh config");
-      }
+      // No clients listening anymore. The streaming query is NOT torn down here: a
+      // disconnect is usually a refresh, a phone switching apps or a laptop sleeping,
+      // and the client is back within seconds. Killing the subprocess on the spot forces
+      // the next message down the resume path, which replays the whole transcript and
+      // re-picks an account — on a large session that turns a cache read into a full
+      // cache write. The cleanup timer does the teardown once the session is genuinely
+      // abandoned (see startCleanupTimer).
       startCleanupTimer(sessionId);
     }
   },

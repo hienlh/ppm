@@ -262,9 +262,9 @@ function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; proje
         </table>
       </div>
       <p className="text-[11px] text-text-subtle">
-        A high "Cached" share is the cheap case. A turn marked <code>tab_closed</code> paid for the
-        whole transcript again because PPM shut the session's subprocess down when the last tab
-        disconnected.
+        A high "Cached" share is the cheap case. A turn marked <code>idle_timeout</code> paid for the
+        whole transcript again because the session sat idle with no tab open long enough for PPM to
+        release its subprocess.
       </p>
     </div>
   );
