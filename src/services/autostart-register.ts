@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { homedir } from "node:os";
+import { getPpmDir } from "./ppm-dir.ts";
 import {
   type AutoStartConfig,
-  PLIST_LABEL,
-  TASK_NAME,
+  getPlistLabel,
+  getTaskName,
+  getServiceName,
   generatePlist,
   getPlistPath,
   generateSystemdService,
@@ -25,7 +26,9 @@ export interface AutoStartStatus {
   details: string;
 }
 
-const METADATA_FILE = resolve(homedir(), ".ppm", "autostart.json");
+// Test runs set PPM_HOME; writing to the real ~/.ppm here would clobber the
+// user's autostart metadata (see CLAUDE.md — always go through getPpmDir()).
+const METADATA_FILE = resolve(getPpmDir(), "autostart.json");
 
 interface AutoStartMetadata {
   enabled: boolean;
@@ -135,7 +138,7 @@ function statusMacOS(): AutoStartStatus {
     stdout: "pipe", stderr: "ignore",
   });
   const output = result.stdout.toString();
-  const isLoaded = output.includes(PLIST_LABEL);
+  const isLoaded = output.includes(getPlistLabel());
 
   return {
     enabled: fileExists && isLoaded,
@@ -168,7 +171,7 @@ async function enableLinux(config: AutoStartConfig, opts?: { skipStart?: boolean
 
   // Enable
   const enable = Bun.spawnSync({
-    cmd: ["systemctl", "--user", "enable", "ppm.service"],
+    cmd: ["systemctl", "--user", "enable", getServiceName()],
     stdout: "pipe", stderr: "pipe",
   });
   if (enable.exitCode !== 0) {
@@ -178,7 +181,7 @@ async function enableLinux(config: AutoStartConfig, opts?: { skipStart?: boolean
   // Start (skip if supervisor is already running from direct spawn)
   if (!opts?.skipStart) {
     Bun.spawnSync({
-      cmd: ["systemctl", "--user", "start", "ppm.service"],
+      cmd: ["systemctl", "--user", "start", getServiceName()],
       stdout: "ignore", stderr: "ignore",
     });
   }
@@ -203,11 +206,11 @@ async function enableLinux(config: AutoStartConfig, opts?: { skipStart?: boolean
 async function disableLinux(): Promise<void> {
   // Stop + disable
   Bun.spawnSync({
-    cmd: ["systemctl", "--user", "stop", "ppm.service"],
+    cmd: ["systemctl", "--user", "stop", getServiceName()],
     stdout: "ignore", stderr: "ignore",
   });
   Bun.spawnSync({
-    cmd: ["systemctl", "--user", "disable", "ppm.service"],
+    cmd: ["systemctl", "--user", "disable", getServiceName()],
     stdout: "ignore", stderr: "ignore",
   });
 
@@ -230,14 +233,14 @@ function statusLinux(): AutoStartStatus {
 
   // Check enabled
   const enabled = Bun.spawnSync({
-    cmd: ["systemctl", "--user", "is-enabled", "ppm.service"],
+    cmd: ["systemctl", "--user", "is-enabled", getServiceName()],
     stdout: "pipe", stderr: "ignore",
   });
   const isEnabled = enabled.stdout.toString().trim() === "enabled";
 
   // Check active
   const active = Bun.spawnSync({
-    cmd: ["systemctl", "--user", "is-active", "ppm.service"],
+    cmd: ["systemctl", "--user", "is-active", getServiceName()],
     stdout: "pipe", stderr: "ignore",
   });
   const isActive = active.stdout.toString().trim() === "active";
@@ -308,7 +311,7 @@ function statusWindows(): AutoStartStatus {
 
   // Check if the scheduled task exists
   const result = Bun.spawnSync({ cmd: buildSchtasksQueryCommand(), stdout: "pipe", stderr: "ignore" });
-  const taskExists = result.exitCode === 0 && result.stdout.toString().includes(TASK_NAME);
+  const taskExists = result.exitCode === 0 && result.stdout.toString().includes(getTaskName());
 
   return {
     enabled: taskExists,

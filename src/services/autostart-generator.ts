@@ -57,12 +57,35 @@ export function buildExecCommand(config: AutoStartConfig): string[] {
   return args;
 }
 
+// ─── Autostart identity ─────────────────────────────────────────────────
+// The service/plist/task identifiers all derive from one suffix so a test run
+// can register under its own name instead of clobbering the user's real
+// autostart entry. Mirrors PPM_HOME (see ppm-dir.ts); empty by default, so
+// production identifiers are unchanged.
+
+function autostartSuffix(): string {
+  return process.env.PPM_AUTOSTART_SUFFIX ?? "";
+}
+
+/** systemd user unit name, e.g. "ppm.service". */
+export function getServiceName(): string {
+  return `ppm${autostartSuffix()}.service`;
+}
+
+/** launchd label, e.g. "com.hienlh.ppm". */
+export function getPlistLabel(): string {
+  return `com.hienlh.ppm${autostartSuffix()}`;
+}
+
+/** Windows Task Scheduler task name, e.g. "PPM". */
+export function getTaskName(): string {
+  return `PPM${autostartSuffix()}`;
+}
+
 // ─── macOS launchd plist ────────────────────────────────────────────────
 
-const PLIST_LABEL = "com.hienlh.ppm";
-
 export function getPlistPath(): string {
-  return resolve(homedir(), "Library", "LaunchAgents", `${PLIST_LABEL}.plist`);
+  return resolve(homedir(), "Library", "LaunchAgents", `${getPlistLabel()}.plist`);
 }
 
 /** Generate macOS launchd plist XML content */
@@ -79,7 +102,7 @@ export function generatePlist(config: AutoStartConfig): string {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>${PLIST_LABEL}</string>
+    <string>${getPlistLabel()}</string>
     <key>ProgramArguments</key>
     <array>
 ${programArgs}
@@ -109,7 +132,7 @@ ${programArgs}
 // ─── Linux systemd service ──────────────────────────────────────────────
 
 export function getServicePath(): string {
-  return resolve(homedir(), ".config", "systemd", "user", "ppm.service");
+  return resolve(homedir(), ".config", "systemd", "user", getServiceName());
 }
 
 /** Generate Linux systemd user service file content */
@@ -149,7 +172,6 @@ WantedBy=default.target
 // ─── Windows Registry Run key ───────────────────────────────────────────
 // Uses HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run — no admin needed
 
-const TASK_NAME = "PPM";
 const WIN_REG_KEY = "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 /** Generate Windows VBScript wrapper content to run PPM hidden */
@@ -171,7 +193,7 @@ export function getVbsPath(): string {
 export function buildRegDeleteCommand(): string[] {
   return [
     "reg", "delete", WIN_REG_KEY,
-    "/v", TASK_NAME,
+    "/v", getTaskName(),
     "/f",
   ];
 }
@@ -190,7 +212,7 @@ function buildTaskRunString(vbsPath: string): string {
 export function buildSchtasksCreateCommand(vbsPath: string): string[] {
   return [
     "schtasks", "/Create",
-    "/TN", TASK_NAME,
+    "/TN", getTaskName(),
     "/TR", buildTaskRunString(vbsPath),
     "/SC", "ONLOGON",
     "/F",
@@ -199,12 +221,12 @@ export function buildSchtasksCreateCommand(vbsPath: string): string[] {
 
 /** Build schtasks command to delete the PPM task */
 export function buildSchtasksDeleteCommand(): string[] {
-  return ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"];
+  return ["schtasks", "/Delete", "/TN", getTaskName(), "/F"];
 }
 
 /** Build schtasks command to query the PPM task */
 export function buildSchtasksQueryCommand(): string[] {
-  return ["schtasks", "/Query", "/TN", TASK_NAME];
+  return ["schtasks", "/Query", "/TN", getTaskName()];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -225,4 +247,3 @@ function shellEscape(s: string): string {
   return s;
 }
 
-export { PLIST_LABEL, TASK_NAME };

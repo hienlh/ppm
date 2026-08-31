@@ -5,17 +5,17 @@
  * They are platform-specific — each test block only runs on its target OS.
  * Designed for GitHub Actions CI matrix (macOS/Linux/Windows runners).
  *
- * IMPORTANT: Tests clean up after themselves (disable in afterEach).
- * WARNING: On Linux/macOS, these tests overwrite the real ppm.service/plist file
- * and trigger daemon-reload. If PPM is already running as a system service,
- * this WILL kill it. Tests are skipped when PPM service is already active.
+ * They are safe to run on a machine with PPM installed: tests/test-setup.ts sets
+ * PPM_AUTOSTART_SUFFIX, so everything here registers under "ppm-test.service" /
+ * "com.hienlh.ppm-test" / task "PPM-test" and never touches the real entry.
+ *
+ * Tests clean up after themselves (disable in afterEach).
  */
 import { describe, test, expect, afterEach } from "bun:test";
 // Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — needs systemd/launchd/schtasks.
 // Folded into the per-OS describe.if conditions below (describe.skip has no .if).
 const skipLive = process.env.PPM_SKIP_LIVE === "1";
 import { existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import {
   enableAutoStart,
   disableAutoStart,
@@ -36,32 +36,16 @@ const isMac = process.platform === "darwin";
 const isLinux = process.platform === "linux";
 const isWindows = process.platform === "win32";
 
-// Skip autostart tests when PPM service is already running — these tests
-// overwrite the real service file + daemon-reload, which kills production PPM.
-function isPpmServiceActive(): boolean {
-  if (isLinux) {
-    const r = spawnSync("systemctl", ["--user", "is-active", "ppm.service"], { encoding: "utf-8" });
-    return r.stdout?.trim() === "active";
-  }
-  if (isMac) {
-    const r = spawnSync("launchctl", ["list"], { encoding: "utf-8" });
-    return r.stdout?.includes("com.ppm.agent") ?? false;
-  }
-  return false;
-}
-const ppmAlreadyRunning = isPpmServiceActive();
 
-// Always clean up after each test — but only if PPM wasn't already running,
-// because disableAutoStart() calls `systemctl --user stop ppm.service` which
-// would kill the real production PPM service.
+// Always clean up after each test — the suffix keeps this scoped to the
+// test-only unit, so it can no longer stop the real PPM service.
 afterEach(async () => {
-  if (ppmAlreadyRunning) return;
   try { await disableAutoStart(); } catch {}
 });
 
 // ─── macOS (launchd) ────────────────────────────────────────────────────
 
-describe.if(!skipLive && isMac && !ppmAlreadyRunning)("macOS autostart (launchd)", () => {
+describe.if(!skipLive && isMac)("macOS autostart (launchd)", () => {
   test("enable creates plist file", async () => {
     const servicePath = await enableAutoStart(TEST_CONFIG);
     expect(servicePath).toBe(getPlistPath());
@@ -107,7 +91,7 @@ describe.if(!skipLive && isMac && !ppmAlreadyRunning)("macOS autostart (launchd)
 
 // ─── Linux (systemd) ───────────────────────────────────────────────────
 
-describe.if(!skipLive && isLinux && !ppmAlreadyRunning)("Linux autostart (systemd)", () => {
+describe.if(!skipLive && isLinux)("Linux autostart (systemd)", () => {
   test("enable creates service file", async () => {
     const servicePath = await enableAutoStart(TEST_CONFIG);
     expect(servicePath).toBe(getServicePath());
@@ -207,7 +191,7 @@ describe.skipIf(skipLive)("cross-platform autostart", () => {
   });
 
   test("enable and disable round-trip works", async () => {
-    if ((!isMac && !isLinux && !isWindows) || ppmAlreadyRunning) {
+    if (!isMac && !isLinux && !isWindows) {
       // Skip on unsupported platforms or when PPM service is running
       return;
     }

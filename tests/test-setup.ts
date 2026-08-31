@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 const testPpmHome = mkdtempSync(resolve(tmpdir(), "ppm-test-"));
 process.env.PPM_HOME = testPpmHome;
 
+// Register autostart under a test-only identity. Without this the autostart
+// integration tests write, enable and delete the user's REAL ppm.service /
+// launchd plist / scheduled task — which kills a running PPM and leaves the
+// machine with no autostart entry at all.
+process.env.PPM_AUTOSTART_SUFFIX = "-test";
+
 // Create subdirectories that services expect
 mkdirSync(resolve(testPpmHome, "bin"), { recursive: true });
 mkdirSync(resolve(testPpmHome, "extensions"), { recursive: true });

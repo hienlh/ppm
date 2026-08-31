@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import {
   generatePlist,
   generateSystemdService,
@@ -11,8 +11,9 @@ import {
   getPlistPath,
   getServicePath,
   getVbsPath,
-  PLIST_LABEL,
-  TASK_NAME,
+  getPlistLabel,
+  getTaskName,
+  getServiceName,
   isCompiledBinary,
 } from "../../../src/services/autostart-generator.ts";
 
@@ -43,7 +44,7 @@ describe("generatePlist", () => {
 
   test("includes correct label", () => {
     const plist = generatePlist(TEST_CONFIG);
-    expect(plist).toContain(`<string>${PLIST_LABEL}</string>`);
+    expect(plist).toContain(`<string>${getPlistLabel()}</string>`);
   });
 
   test("includes RunAtLoad true", () => {
@@ -178,7 +179,7 @@ describe("buildSchtasksCreateCommand", () => {
     expect(cmd).toContain("/Create");
     const tnIdx = cmd.indexOf("/TN");
     expect(tnIdx).toBeGreaterThan(-1);
-    expect(cmd[tnIdx + 1]).toBe(TASK_NAME);
+    expect(cmd[tnIdx + 1]).toBe(getTaskName());
   });
 
   test("triggers at logon", () => {
@@ -202,7 +203,7 @@ describe("buildSchtasksDeleteCommand", () => {
     const cmd = buildSchtasksDeleteCommand();
     expect(cmd[0]).toBe("schtasks");
     expect(cmd).toContain("/Delete");
-    expect(cmd).toContain(TASK_NAME);
+    expect(cmd).toContain(getTaskName());
     expect(cmd).toContain("/F");
   });
 });
@@ -212,7 +213,7 @@ describe("buildSchtasksQueryCommand", () => {
     const cmd = buildSchtasksQueryCommand();
     expect(cmd[0]).toBe("schtasks");
     expect(cmd).toContain("/Query");
-    expect(cmd).toContain(TASK_NAME);
+    expect(cmd).toContain(getTaskName());
   });
 });
 
@@ -221,7 +222,7 @@ describe("buildRegDeleteCommand (legacy cleanup)", () => {
     const cmd = buildRegDeleteCommand();
     expect(cmd[0]).toBe("reg");
     expect(cmd[1]).toBe("delete");
-    expect(cmd).toContain(TASK_NAME);
+    expect(cmd).toContain(getTaskName());
     expect(cmd).toContain("/f");
   });
 });
@@ -282,7 +283,7 @@ describe("path helpers", () => {
   test("getPlistPath contains LaunchAgents and plist label", () => {
     const p = getPlistPath();
     expect(p).toContain("LaunchAgents");
-    expect(p).toContain(PLIST_LABEL);
+    expect(p).toContain(getPlistLabel());
     expect(p).toEndWith(".plist");
   });
 
@@ -290,7 +291,7 @@ describe("path helpers", () => {
     const p = getServicePath();
     expect(p).toContain("systemd");
     expect(p).toContain("user");
-    expect(p).toEndWith("ppm.service");
+    expect(p).toEndWith(getServiceName());
   });
 
   test("getVbsPath returns path in ~/.ppm/", () => {
@@ -316,12 +317,26 @@ describe("isCompiledBinary", () => {
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
-describe("constants", () => {
-  test("PLIST_LABEL follows reverse-DNS convention", () => {
-    expect(PLIST_LABEL).toMatch(/^[a-z]+\.[a-z]+\.[a-z]+$/);
+describe("autostart identity", () => {
+  // tests/test-setup.ts sets PPM_AUTOSTART_SUFFIX for the whole run; these two
+  // cases drive it explicitly, so save and restore it.
+  const saved = process.env.PPM_AUTOSTART_SUFFIX;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.PPM_AUTOSTART_SUFFIX;
+    else process.env.PPM_AUTOSTART_SUFFIX = saved;
   });
 
-  test("TASK_NAME is a simple string", () => {
-    expect(TASK_NAME).toBe("PPM");
+  test("no suffix yields the production identifiers", () => {
+    delete process.env.PPM_AUTOSTART_SUFFIX;
+    expect(getServiceName()).toBe("ppm.service");
+    expect(getPlistLabel()).toMatch(/^[a-z]+\.[a-z]+\.[a-z]+$/);
+    expect(getTaskName()).toBe("PPM");
+  });
+
+  test("a suffix scopes every identifier, so a test run cannot clobber the real entry", () => {
+    process.env.PPM_AUTOSTART_SUFFIX = "-test";
+    expect(getServiceName()).toBe("ppm-test.service");
+    expect(getPlistLabel()).toBe("com.hienlh.ppm-test");
+    expect(getTaskName()).toBe("PPM-test");
   });
 });

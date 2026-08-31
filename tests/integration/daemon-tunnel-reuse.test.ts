@@ -1,4 +1,5 @@
 import { describe as describeBase, it, expect, afterAll, setDefaultTimeout } from "bun:test";
+import { disableAutoStart } from "../../src/services/autostart-register.ts";
 // Skipped in the sandboxed Docker run (PPM_SKIP_LIVE=1) — spawns supervisor + cloudflared tunnel.
 const describe = process.env.PPM_SKIP_LIVE === "1" ? describeBase.skip : describeBase;
 
@@ -76,8 +77,12 @@ function cleanupAll() {
   } catch {}
 }
 
-afterAll(() => {
+afterAll(async () => {
   cleanupAll();
+  // `ppm start` registers autostart. PPM_AUTOSTART_SUFFIX scopes that to the
+  // test-only unit, but nothing unregisters it — without this the machine is
+  // left with an enabled ppm-test.service pointing at the checkout.
+  try { await disableAutoStart(); } catch {}
   // Clean up entire isolated test dir
   try { rmSync(PPM_DIR, { recursive: true, force: true }); } catch {}
 });
