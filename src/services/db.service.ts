@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 38;
+export const CURRENT_SCHEMA_VERSION = 39;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -857,6 +857,30 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE session_metadata ADD COLUMN cleared_from TEXT"); } catch { /* column exists */ }
     database.exec("PRAGMA user_version = 38;");
   }
+
+  if (current < 39) {
+    // usage_history records the account-wide quota snapshot polled from the API, which
+    // cannot answer why one turn cost more than the last. Cache hit rate is per turn and
+    // per session, so it needs its own row.
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS turn_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        model TEXT,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        context_window INTEGER,
+        cost_usd REAL,
+        cold_start INTEGER NOT NULL DEFAULT 0,
+        cold_reason TEXT,
+        recorded_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id, id);
+      PRAGMA user_version = 39;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1264,6 +1288,58 @@ export function getUsageSince(since: string): UsageRow[] {
   return getDb().query(
     "SELECT * FROM usage_history WHERE recorded_at >= ? ORDER BY recorded_at DESC",
   ).all(since) as UsageRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Per-turn token accounting
+// ---------------------------------------------------------------------------
+
+export interface TurnUsageRow {
+  id: number;
+  session_id: string;
+  model: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  context_window: number | null;
+  cost_usd: number | null;
+  cold_start: number;
+  cold_reason: string | null;
+  recorded_at: string;
+}
+
+export function insertTurnUsage(record: {
+  sessionId: string;
+  model?: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  contextWindow?: number;
+  costUsd?: number;
+  coldStart: boolean;
+  coldReason?: string;
+}): void {
+  getDb().query(
+    `INSERT INTO turn_usage
+       (session_id, model, input_tokens, output_tokens, cache_read_tokens,
+        cache_write_tokens, context_window, cost_usd, cold_start, cold_reason)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.sessionId, record.model ?? null,
+    record.inputTokens, record.outputTokens,
+    record.cacheReadTokens, record.cacheWriteTokens,
+    record.contextWindow ?? null, record.costUsd ?? null,
+    record.coldStart ? 1 : 0, record.coldReason ?? null,
+  );
+}
+
+/** Most recent turns first — the debug dialog shows the tail of a session. */
+export function listTurnUsage(sessionId: string, limit = 30): TurnUsageRow[] {
+  return getDb().query(
+    "SELECT * FROM turn_usage WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+  ).all(sessionId, limit) as TurnUsageRow[];
 }
 
 // ---------------------------------------------------------------------------

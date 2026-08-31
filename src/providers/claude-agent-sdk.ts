@@ -18,7 +18,8 @@ import { configService } from "../services/config.service.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionProjectPath, setSessionMetadata, getSessionTitles } from "../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, getSessionTitles, insertTurnUsage } from "../services/db.service.ts";
+import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { parseSessionMessage, nestChildEvents } from "../services/jsonl-transcript-parser.ts";
@@ -219,6 +220,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private forkSources = new Map<string, string>();
   /** Streaming sessions: persistent query + message channel per session */
   private streamingSessions = new Map<string, StreamingSession>();
+  /**
+   * Why a session's subprocess was last torn down, kept until the next turn reports its
+   * token split. A turn that resumes onto a fresh subprocess re-sends the whole transcript,
+   * and this is the only place that knows what made it do so.
+   */
+  private teardownReasons = new Map<string, string>();
 
   /** Auth-related env keys for diagnostic logging */
   private readonly AUTH_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
@@ -695,6 +702,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ss.controller.done();
       ss.query.close();
       this.streamingSessions.delete(sessionId);
+      this.teardownReasons.set(sessionId, "stream_ended");
       console.log(`[sdk] closeStreamingSession: session=${sessionId}`);
     }
   }
@@ -871,6 +879,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
     let resultCostUsd: number | undefined;
     let lastAssistantUuid: string | undefined;
     let yieldedDone = false;
+    /**
+     * Only the first turn of this query resumes onto a fresh subprocess and replays the
+     * transcript uncached, so the teardown reason is consumed once and later turns in the
+     * same query report warm. A brand-new session has no transcript to replay.
+     */
+    let coldReasonForNextResult: string | undefined =
+      isFirstMessage && !shouldFork ? undefined : (this.teardownReasons.get(sessionId) ?? "resume");
+    this.teardownReasons.delete(sessionId);
     try {
       // Session ID is the canonical ID for both PPM and SDK (no dual-ID mapping).
       // First message creates a new session; subsequent messages resume.
@@ -1761,6 +1777,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             }
           }
 
+          // Token split for this turn. The transcript is replayed on every turn, so whether
+          // it came from cache is what separates a cheap turn from an expensive one — the
+          // SDK reports it and nothing downstream could reconstruct it later.
+          const turnUsage = buildTurnUsage(modelUsage, { coldReason: coldReasonForNextResult });
+          coldReasonForNextResult = undefined;
+          if (turnUsage) {
+            console.log(`[usage] session=${sessionId} ${formatTurnUsageLog(turnUsage)}`);
+            try {
+              insertTurnUsage({
+                sessionId,
+                model: turnUsage.model,
+                inputTokens: turnUsage.inputTokens,
+                outputTokens: turnUsage.outputTokens,
+                cacheReadTokens: turnUsage.cacheReadTokens,
+                cacheWriteTokens: turnUsage.cacheWriteTokens,
+                contextWindow: turnUsage.contextWindow,
+                costUsd: turnUsage.costUsd,
+                coldStart: turnUsage.coldStart,
+                coldReason: turnUsage.coldReason,
+              });
+            } catch (err) {
+              // Accounting must never break a turn that already succeeded.
+              console.warn(`[usage] session=${sessionId} failed to persist turn usage: ${(err as Error).message}`);
+            }
+          }
+
           // Streaming input: yield done for this turn, then continue for next turn
           yieldedDone = true;
           yield {
@@ -1771,6 +1813,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             contextWindowPct: resultContextWindowPct,
             costUsd: resultCostUsd,
             lastMessageUuid: lastAssistantUuid,
+            ...(turnUsage && { usage: turnUsage }),
           };
 
           // Reset per-turn state for next turn
@@ -1871,6 +1914,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       ss.query.close();
       this.streamingSessions.delete(sessionId);
       this.activeQueries.delete(sessionId);
+      this.teardownReasons.set(sessionId, source);
       console.log(`[sdk] abortQuery: closed streaming session=${sessionId} source=${source} stack=${stack}`);
       return;
     }

@@ -13,6 +13,7 @@ import { bashOutputSpy } from "../../services/bash-output-spy.ts";
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
+import { formatTurnUsageLog } from "../../shared/turn-usage.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
  * Otherwise a non-default provider's chat (e.g. codex) would inherit claude's values. */
@@ -490,7 +491,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         logSessionEvent(sessionId, "ERROR", errorDetail);
       } else if (evType === "done") {
         // Turn complete — transition to idle, clear buffer for next turn
-        logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%`);
+        logSessionEvent(sessionId, "DONE", `subtype=${ev.resultSubtype ?? "none"} turns=${ev.numTurns ?? "?"} ctx=${ev.contextWindowPct ?? "?"}%${ev.usage ? ` ${formatTurnUsageLog(ev.usage)}` : ""}`);
         if (ev.contextWindowPct != null) lastContextWindowPct = ev.contextWindowPct;
 
         // Fire-and-forget: fetch updated session title (DB title takes priority) + notification

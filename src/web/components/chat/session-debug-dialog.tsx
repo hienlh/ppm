@@ -6,6 +6,19 @@ import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { copyToClipboard } from "@/lib/clipboard";
+import type { TurnUsage } from "../../../shared/turn-usage";
+import {
+  assessTurnCost,
+  fmtTokens,
+  prefixTokens,
+  uncachedPrefixTokens,
+} from "../../../shared/turn-usage";
+
+interface TurnRecord {
+  id: number;
+  recordedAt: string;
+  usage: TurnUsage;
+}
 
 interface DebugInfo {
   ppmSessionId: string;
@@ -160,6 +173,103 @@ function TranscriptImages({ sessionId, projectName }: { sessionId: string; proje
   );
 }
 
+/**
+ * Per-turn token history for the open session.
+ *
+ * Cost per turn is dominated by the replayed transcript, so a session that suddenly got
+ * expensive is diagnosed by comparing its turns against each other: the cheap ones read
+ * their prefix from cache, the expensive ones paid for it again.
+ */
+function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; projectName: string }) {
+  const [turns, setTurns] = useState<TurnRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api.get<{ turns: TurnRecord[] }>(
+      `${projectUrl(projectName)}/chat/sessions/${sessionId}/usage?project=${encodeURIComponent(projectName)}`,
+    ).then((r) => { if (live) setTurns(r.turns); })
+      .catch((e: Error) => { if (live) setError(e.message); });
+    return () => { live = false; };
+  }, [sessionId, projectName]);
+
+  if (error) return <p className="text-[11px] text-error">{error}</p>;
+  if (!turns) return <p className="text-[11px] text-text-subtle">Loading token history...</p>;
+
+  if (turns.length === 0) {
+    return (
+      <div className="flex flex-col gap-2">
+        <h3 className="text-xs font-semibold text-foreground">Token &amp; cache</h3>
+        <p className="text-[11px] text-text-subtle">
+          No turns recorded yet. Send a message and the token split for each turn shows up here.
+        </p>
+      </div>
+    );
+  }
+
+  const cold = turns.filter((t) => t.usage.coldStart).length;
+  const totalCost = turns.reduce((s, t) => s + t.usage.costUsd, 0);
+  const wasted = turns.reduce((s, t) => s + uncachedPrefixTokens(t.usage), 0);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-xs font-semibold text-foreground">Token &amp; cache</h3>
+      <p className="text-[11px] text-text-secondary">
+        Last {turns.length} turn{turns.length === 1 ? "" : "s"} · {cold} restarted the session ·{" "}
+        {fmtTokens(wasted)} of transcript re-sent uncached · ${totalCost.toFixed(2)}
+      </p>
+
+      <div className="max-h-[30vh] overflow-y-auto rounded-md border border-border">
+        <table className="w-full font-mono text-[10.5px]">
+          <thead className="sticky top-0 bg-surface text-text-subtle">
+            <tr>
+              <th className="px-2 py-1 text-left font-normal">When</th>
+              <th className="px-2 py-1 text-right font-normal">Prefix</th>
+              <th className="px-2 py-1 text-right font-normal">Cached</th>
+              <th className="px-2 py-1 text-right font-normal">Cost</th>
+              <th className="px-2 py-1 text-left font-normal">Start</th>
+            </tr>
+          </thead>
+          <tbody>
+            {turns.map((t) => {
+              const hit = Math.round(t.usage.cacheHitRate * 100);
+              const level = assessTurnCost(t.usage).level;
+              return (
+                <tr key={t.id} className="border-t border-border">
+                  <td className="px-2 py-1 text-text-subtle">
+                    {t.recordedAt.slice(11, 16) || t.recordedAt.slice(0, 10)}
+                  </td>
+                  <td className="px-2 py-1 text-right text-text-secondary">
+                    {fmtTokens(prefixTokens(t.usage))}
+                  </td>
+                  <td
+                    className={`px-2 py-1 text-right ${
+                      level === "bad" ? "text-warning" : level === "warn" ? "text-text-primary" : "text-success"
+                    }`}
+                  >
+                    {hit}%
+                  </td>
+                  <td className="px-2 py-1 text-right text-text-secondary">
+                    ${t.usage.costUsd.toFixed(3)}
+                  </td>
+                  <td className="px-2 py-1 text-text-subtle">
+                    {t.usage.coldStart ? (t.usage.coldReason ?? "cold") : "warm"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-text-subtle">
+        A high "Cached" share is the cheap case. A turn marked <code>tab_closed</code> paid for the
+        whole transcript again because PPM shut the session's subprocess down when the last tab
+        disconnected.
+      </p>
+    </div>
+  );
+}
+
 /** Toolbar button opening the session's debug facts and transcript maintenance. */
 export function SessionDebugButton({ sessionId, projectName }: { sessionId: string; projectName: string }) {
   const [open, setOpen] = useState(false);
@@ -208,6 +318,9 @@ export function SessionDebugButton({ sessionId, projectName }: { sessionId: stri
       <Button size="sm" onClick={copy} disabled={!info} className="w-full">
         {copied ? <><ClipboardCheck className="size-3.5" /> Copied!</> : <><Copy className="size-3.5" /> Copy</>}
       </Button>
+      <div className="border-t border-border pt-3">
+        {open && <TurnUsageHistory sessionId={sessionId} projectName={projectName} />}
+      </div>
       <div className="border-t border-border pt-3">
         {open && <TranscriptImages sessionId={sessionId} projectName={projectName} />}
       </div>

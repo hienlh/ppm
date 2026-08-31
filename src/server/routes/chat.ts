@@ -8,7 +8,8 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
 import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage } from "../../services/db.service.ts";
+import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
 import { parseJsonlTranscript, validateJsonlPath } from "../../services/jsonl-transcript-parser.ts";
@@ -710,6 +711,42 @@ chatRoutes.get("/sessions/:id/debug", (c) => {
     jsonlLines,
   }));
 });
+
+/**
+ * GET /chat/sessions/:id/usage — per-turn token split, newest first.
+ *
+ * The transcript is replayed every turn, so the cache hit rate on it is what separates a
+ * cheap turn from an expensive one. Serving the history lets a costly session be compared
+ * against its own cheaper turns instead of guessed at.
+ */
+chatRoutes.get("/sessions/:id/usage", (c) => {
+  const limit = Math.min(Number(c.req.query("limit")) || 30, 200);
+  const rows = listTurnUsage(c.req.param("id"), limit);
+  return c.json(ok({
+    turns: rows.map((r) => ({
+      id: r.id,
+      recordedAt: r.recorded_at,
+      usage: {
+        model: r.model ?? "unknown",
+        inputTokens: r.input_tokens,
+        outputTokens: r.output_tokens,
+        cacheReadTokens: r.cache_read_tokens,
+        cacheWriteTokens: r.cache_write_tokens,
+        contextWindow: r.context_window ?? 0,
+        costUsd: r.cost_usd ?? 0,
+        cacheHitRate: cacheHitRateOf(r),
+        coldStart: r.cold_start === 1,
+        ...(r.cold_reason && { coldReason: r.cold_reason }),
+      } satisfies TurnUsage,
+    })),
+  }));
+});
+
+/** Recompute from stored counts — the rate is derived, so it is never persisted. */
+function cacheHitRateOf(r: { input_tokens: number; cache_read_tokens: number; cache_write_tokens: number }): number {
+  const prefix = r.input_tokens + r.cache_read_tokens + r.cache_write_tokens;
+  return prefix > 0 ? r.cache_read_tokens / prefix : 0;
+}
 
 /** Largest transcript the image routes will read into memory in one go. */
 const MAX_TRANSCRIPT_SCAN_BYTES = 64 * 1024 * 1024;

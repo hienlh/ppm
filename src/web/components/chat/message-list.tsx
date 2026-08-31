@@ -12,6 +12,7 @@ import {
   type TurnFileChange,
 } from "@/lib/aggregate-turn-file-changes";
 import { TurnChangeRollup } from "./turn-change-rollup";
+import { TurnCostWarning } from "./turn-cost-warning";
 import { TaskTracker } from "./task-tracker";
 import { extractJsonlPath } from "./pre-compact-button";
 // Kick off the markdown chunk fetch at module load (not first render): Suspense
@@ -515,6 +516,10 @@ const MessageBubble = memo(function MessageBubble({ message, isStreaming, isLast
               <MarkdownContent content={message.content} projectName={projectName} />
             </div>
           )}
+      {/* Cost notice sits above the action bar so it reads as part of the finished turn */}
+      {!isStreaming && isLastAssistantInTurn && message.usage && (
+        <TurnCostWarning usage={message.usage} />
+      )}
       {/* Action bar: only on the last assistant message of the turn, after streaming ends */}
       {!isStreaming && isLastAssistantInTurn && (
         <TurnChangeRollup

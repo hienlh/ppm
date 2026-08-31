@@ -554,6 +554,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         const finalEvents = [...streamingEventsRef.current];
         const finalAccount = streamingAccountRef.current;
         const doneUuid = ev.lastMessageUuid as string | undefined;
+        const doneUsage = ev.usage;
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (last?.role === "assistant") {
@@ -563,6 +564,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
               content: finalContent || last.content,
               events: finalEvents.length > 0 ? finalEvents : last.events,
               ...(doneUuid && { sdkUuid: doneUuid }),
+              ...(doneUsage && { usage: doneUsage }),
             }];
           }
           // No assistant message flushed yet (rAF was still pending when cancelled).
@@ -575,6 +577,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
               events: finalEvents,
               timestamp: new Date().toISOString(),
               ...(doneUuid && { sdkUuid: doneUuid }),
+              ...(doneUsage && { usage: doneUsage }),
               ...finalAccount,
             }];
           }

@@ -162,7 +162,7 @@ export type ChatEvent =
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }
-  | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string }
+  | { type: "done"; sessionId: string; resultSubtype?: ResultSubtype; numTurns?: number; contextWindowPct?: number; costUsd?: number; lastMessageUuid?: string; usage?: import("../shared/turn-usage").TurnUsage }
   | { type: "account_info"; accountId: string; accountLabel: string }
   | { type: "account_retry"; reason: string; accountId?: string; accountLabel?: string }
   | { type: "status_update"; phase: "routing" | "refreshing" | "switching" | "retrying"; message: string; accountLabel?: string }
@@ -188,4 +188,6 @@ export interface ChatMessage {
   accountLabel?: string;
   /** SDK message UUID — used for fork/rewind (maps to JSONL message IDs) */
   sdkUuid?: string;
+  /** Token split for the turn that produced this message; drives the cost warning. */
+  usage?: import("../shared/turn-usage").TurnUsage;
 }
