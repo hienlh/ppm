@@ -947,6 +947,17 @@ export const chatWebSocket = {
         setSessionThinking(sessionId, parsed.thinking ? THINKING_ADAPTIVE : 0);
       }
 
+      // Kits that self-namespace their skills (AgentKit's `/ak:debug`) publish a
+      // name the runtime never registers — it names plugin items after the plugin
+      // and directory instead. Rewrite before the echo so every consumer (other
+      // devices, the stored transcript, the SDK) sees the name that actually ran.
+      const typedContent = parsed.content.trimStart();
+      if (typedContent.startsWith("/")) {
+        const { listSlashItems, rewriteSlashAlias } = await import("../../services/slash-discovery/index.ts");
+        const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
+        if (canonical !== typedContent) parsed.content = canonical;
+      }
+
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected
       // second device only sees the assistant stream for this turn.

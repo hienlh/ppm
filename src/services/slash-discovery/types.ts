@@ -41,6 +41,12 @@ export interface SkillRoot {
   path: string;              // Resolved absolute path
   source: DefinitionSource;
   origin: ItemOrigin;
+  /**
+   * Owning Claude Code plugin, set only for roots under ~/.claude/plugins/.
+   * Items below such a root are namespaced `<pluginName>:<path>`, matching how
+   * Claude Code itself registers them.
+   */
+  pluginName?: string;
 }
 
 /** Extends SlashItem with source metadata */

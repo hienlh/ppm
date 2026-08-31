@@ -53,6 +53,34 @@ function walkDir(dir: string, visitor: (filePath: string) => void, visited = new
   }
 }
 
+/**
+ * Resolve the invocable name for an item found under `root`.
+ *
+ * Plugin items are namespaced by their owning plugin, but the two kinds differ
+ * in what follows the prefix. A skill or command is named after where its file
+ * lives, so a kit that self-namespaces instead (AgentKit ships `name: ak:debug`)
+ * is not invocable under that declared name — it is kept as an alias so typed
+ * input can be rewritten to the canonical one. An agent is named after its
+ * frontmatter `name`, which is also how the runtime addresses it for delegation.
+ */
+function qualify(
+  root: SkillRoot,
+  pathName: string,
+  declared: string | undefined,
+  nameSource: "path" | "declared" = "path",
+): { name: string; aliases?: string[] } {
+  if (!root.pluginName) return { name: declared ?? pathName };
+  if (nameSource === "declared") {
+    const suffix = declared || pathName;
+    return { name: suffix ? `${root.pluginName}:${suffix}` : "" };
+  }
+  // A SKILL.md sitting at the plugin root has no directory to take a name from
+  const suffix = pathName || declared;
+  if (!suffix) return { name: "" };
+  const name = `${root.pluginName}:${suffix}`;
+  return { name, ...(declared && declared !== name && { aliases: [declared] }) };
+}
+
 /** Collect commands from a root with origin "commands" */
 function loadCommands(root: SkillRoot): SlashItemWithSource[] {
   const items: SlashItemWithSource[] = [];
@@ -66,10 +94,13 @@ function loadCommands(root: SkillRoot): SlashItemWithSource[] {
       const content = readFileSync(filePath, "utf-8");
       const { meta } = parseFrontmatter(content);
       const rel = relative(root.path, filePath);
-      const name = rel.replace(/\.md$/, "").split(sep).join("/");
+      const pathName = rel.replace(/\.md$/, "").split(sep).join("/");
+      const { name, aliases } = qualify(root, pathName, str(meta.name));
+      if (!name) return;
       items.push({
         type: "command",
-        name: str(meta.name) ?? name,
+        name,
+        ...(aliases && { aliases }),
         description: str(meta.description) ?? "",
         argumentHint: str(meta["argument-hint"]),
         scope,
@@ -106,11 +137,12 @@ function loadSkills(root: SkillRoot): SlashItemWithSource[] {
       dirsWithSkillMd.add(skillDir);
       const rel = relative(root.path, skillDir);
       const pathName = rel.split(sep).join("/");
-      const name = str(meta.name) ?? pathName;
+      const { name, aliases } = qualify(root, pathName, str(meta.name));
       if (!name) return;
       items.push({
         type: "skill",
         name,
+        ...(aliases && { aliases }),
         description: str(meta.description) ?? "",
         argumentHint: str(meta["argument-hint"]),
         scope,
@@ -136,11 +168,12 @@ function loadSkills(root: SkillRoot): SlashItemWithSource[] {
         const { meta } = parseFrontmatter(content);
         const rel = relative(root.path, filePath);
         const pathName = rel.replace(/\.md$/, "").split(sep).join("/");
-        const name = str(meta.name) ?? pathName;
+        const { name, aliases } = qualify(root, pathName, str(meta.name));
         if (!name) return;
         items.push({
           type: "skill",
           name,
+          ...(aliases && { aliases }),
           description: str(meta.description) ?? "",
           argumentHint: str(meta["argument-hint"]),
           scope,
@@ -168,7 +201,9 @@ function loadAgents(root: SkillRoot): SlashItemWithSource[] {
       const content = readFileSync(filePath, "utf-8");
       const { meta } = parseFrontmatter(content);
       const rel = relative(root.path, filePath);
-      const name = str(meta.name) ?? rel.replace(/\.md$/, "").split(sep).join("/");
+      const pathName = rel.replace(/\.md$/, "").split(sep).join("/");
+      const { name } = qualify(root, pathName, str(meta.name), "declared");
+      if (!name) return;
       items.push({
         type: "agent",
         name,

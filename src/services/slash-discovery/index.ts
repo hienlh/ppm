@@ -11,6 +11,7 @@ export { isPpmHandled, getBuiltinByName } from "./builtin-commands.ts";
 export { executeBuiltin } from "./builtin-handlers.ts";
 export { invalidateCache, invalidateAll } from "./cache.ts";
 export { ensureSdkCommands, invalidateSdkCommands } from "./sdk-commands.ts";
+export { rewriteSlashAlias } from "./rewrite-slash-alias.ts";
 export type { SlashItem, SlashItemWithSource, ShadowedItem, DiscoveryResult, SkillRoot, DefinitionSource } from "./types.ts";
 
 /**

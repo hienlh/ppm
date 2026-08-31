@@ -67,6 +67,7 @@ Exceptions (intentionally use real `homedir()`):
 - **File watching**: never `fs.watch(dir, { recursive: true })` on a project root — on Linux that is one inotify watch per subdirectory, `node_modules` included (it once cost 359k watches). Ignored dirs must be pruned at registration time via `src/services/file-watcher/watch-tree.ts`.
 - **Project Claude settings**: `.claude/settings.local.json` can restrict tools even with `bypassPermissions`. Provider overrides with empty settings.
 - **Transcript images live in two places**: the base64 payload sits at `message.content[].content[]` inside a tool result, but Claude Code also writes an image-shaped record at the top-level `toolUseResult` field carrying no payload. An assertion like "no `"type":"image"` remains" must be scoped to the former, or it fails against correct code.
+- **Plugin items are named by location, not frontmatter**: Claude Code registers a plugin's skills and commands as `<plugin>:<path>` (`ak-engineer:ak-debug`) and only honours the frontmatter `name` for agents. Kits that self-namespace instead — AgentKit ships `name: ak:debug` — publish a name nothing can resolve. `slash-discovery` mirrors that rule and keeps the declared name as an alias; `src/server/ws/chat.ts` rewrites the alias to the canonical name before the message reaches the SDK.
 
 ## UI Rules
 

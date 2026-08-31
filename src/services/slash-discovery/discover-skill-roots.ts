@@ -1,4 +1,4 @@
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, basename } from "node:path";
 import { existsSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -39,13 +39,14 @@ function addRoot(
   basePath: string,
   origin: ItemOrigin,
   source: DefinitionSource,
+  pluginName?: string,
 ): void {
   const full = resolve(basePath, origin);
   if (!isDir(full)) return;
   const resolved = resolve(full);
   if (seen.has(resolved)) return;
   seen.add(resolved);
-  roots.push({ path: resolved, source, origin });
+  roots.push({ path: resolved, source, origin, ...(pluginName && { pluginName }) });
 }
 
 /**
@@ -143,6 +144,23 @@ export function resolveInstalledPlugins(pluginsDir: string): InstalledPlugin[] {
   }
 }
 
+/**
+ * Plugin identifier used as the namespace prefix. The registry key is
+ * `plugin-id@marketplace-id`, so the id is everything before the `@`; scanned
+ * fallbacks read the manifest, and the directory name is the last resort.
+ */
+export function resolvePluginName(plugin: InstalledPlugin): string {
+  const fromKey = plugin.key?.split("@")[0]?.trim();
+  if (fromKey) return fromKey;
+  try {
+    const manifest = JSON.parse(
+      readFileSync(resolve(plugin.path, ".claude-plugin", "plugin.json"), "utf-8"),
+    ) as { name?: unknown };
+    if (typeof manifest.name === "string" && manifest.name.trim()) return manifest.name.trim();
+  } catch { /* manifest missing or malformed — fall through */ }
+  return basename(plugin.path);
+}
+
 /** Add roots for Claude Code plugins, which ship their own skills/commands/agents */
 function addPluginRoots(roots: SkillRoot[], seen: Set<string>, projectPath: string): void {
   const pluginsDir = resolve(homedir(), ".claude", "plugins");
@@ -150,8 +168,9 @@ function addPluginRoots(roots: SkillRoot[], seen: Set<string>, projectPath: stri
   const disabled = loadDisabledPluginKeys(projectPath);
   for (const plugin of resolveInstalledPlugins(pluginsDir)) {
     if (plugin.key && disabled.has(plugin.key)) continue;
+    const pluginName = resolvePluginName(plugin);
     for (const origin of ORIGINS) {
-      addRoot(roots, seen, plugin.path, origin, "user-plugin");
+      addRoot(roots, seen, plugin.path, origin, "user-plugin", pluginName);
     }
   }
 }
