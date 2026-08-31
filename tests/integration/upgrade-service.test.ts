@@ -21,6 +21,7 @@ import {
   checkForUpdate,
   applyUpgrade,
   buildUpgradeCommand,
+  createLatestVersionCheck,
 } from "../../src/services/upgrade.service.ts";
 import { app } from "../../src/server/index.ts";
 
@@ -160,6 +161,60 @@ describe("applyUpgrade regression (bun/npm)", () => {
     expect(r2.error).toMatch(/in progress/);
     release(0);
     expect((await p1).success).toBe(true);
+  });
+});
+
+// ─── createLatestVersionCheck ───────────────────────────────────────────
+
+describe("createLatestVersionCheck", () => {
+  const result = (latest: string | null) => ({ available: !!latest, current: "1.0.0", latest });
+
+  it("serves repeat calls from cache within the TTL", async () => {
+    let calls = 0;
+    const check = createLatestVersionCheck(async () => { calls++; return result("1.2.3"); }, 60_000);
+    expect(await check()).toBe("1.2.3");
+    expect(await check()).toBe("1.2.3");
+    expect(calls).toBe(1);
+  });
+
+  it("re-checks once the TTL expires", async () => {
+    let calls = 0;
+    const check = createLatestVersionCheck(async () => { calls++; return result("1.2.3"); }, 0);
+    await check();
+    await check();
+    expect(calls).toBe(2);
+  });
+
+  it("dedupes concurrent callers into one request", async () => {
+    let calls = 0;
+    const check = createLatestVersionCheck(async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 10));
+      return result("1.2.3");
+    }, 60_000);
+    expect(await Promise.all([check(), check(), check()])).toEqual(["1.2.3", "1.2.3", "1.2.3"]);
+    expect(calls).toBe(1);
+  });
+
+  it("keeps the last good answer when the registry becomes unreachable", async () => {
+    let latest: string | null = "1.2.3";
+    const check = createLatestVersionCheck(async () => result(latest), 0);
+    expect(await check()).toBe("1.2.3");
+    latest = null; // offline — checkForUpdate reports latest:null
+    expect(await check()).toBe("1.2.3");
+  });
+
+  it("returns null when the first check fails", async () => {
+    const check = createLatestVersionCheck(async () => result(null), 60_000);
+    expect(await check()).toBeNull();
+  });
+
+  it("throttles retries after a failure instead of refetching every call", async () => {
+    let calls = 0;
+    const check = createLatestVersionCheck(async () => { calls++; return result(null); }, 60_000);
+    await check();
+    await check();
+    expect(calls).toBe(1);
   });
 });
 

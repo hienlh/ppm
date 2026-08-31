@@ -57,6 +57,44 @@ export async function checkForUpdate(): Promise<{
   }
 }
 
+const LATEST_VERSION_CACHE_MS = 300_000; // 5min
+
+/**
+ * Build a cached, in-flight-deduped "what is the newest published version"
+ * check. Every open UI polls the upgrade status once a minute, so an uncached
+ * check would turn into one registry request per client per minute.
+ *
+ * The TTL throttles *attempts*, not just successes: a machine that is offline
+ * or being rate-limited would otherwise re-enter a doomed 10s fetch on every
+ * poll. A failed attempt keeps the last known good version rather than
+ * forgetting it.
+ */
+export function createLatestVersionCheck(
+  checkFn: typeof checkForUpdate = checkForUpdate,
+  ttlMs = LATEST_VERSION_CACHE_MS,
+): () => Promise<string | null> {
+  let cache: { at: number; version: string | null } | null = null;
+  let inflight: Promise<string | null> | null = null;
+
+  const remember = (version: string | null) => {
+    cache = { at: Date.now(), version: version ?? cache?.version ?? null };
+    return cache.version;
+  };
+
+  return function getLatestVersion() {
+    if (cache && Date.now() - cache.at < ttlMs) return Promise.resolve(cache.version);
+    if (inflight) return inflight;
+    inflight = checkFn()
+      .then((r) => remember(r.latest))
+      .catch(() => remember(null))
+      .finally(() => { inflight = null; });
+    return inflight;
+  };
+}
+
+/** Newest published version — shared cache for the upgrade status endpoint. */
+export const getLatestPublishedVersion = createLatestVersionCheck();
+
 /** Resolve npm binary next to the running node runtime, falling back to bare "npm".
  *  Same rationale as bun: autostart may not have npm's bin dir on $PATH. */
 function resolveNpmBin(): string {

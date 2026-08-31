@@ -7,25 +7,41 @@ import {
   compareSemver,
   applyUpgrade,
   signalSupervisorUpgrade,
+  getLatestPublishedVersion,
 } from "../../services/upgrade.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { getPpmDir } from "../../services/ppm-dir.ts";
 
 export const upgradeRoutes = new Hono();
 
-/** GET / — upgrade status (current version, available version, install method) */
-upgradeRoutes.get("/", (c) => {
-  let availableVersion: string | null = null;
+/** Last version the supervisor's periodic check recorded, if any. */
+function readRecordedVersion(): string | null {
   try {
-    if (existsSync(resolve(getPpmDir(), "status.json"))) {
-      const data = JSON.parse(readFileSync(resolve(getPpmDir(), "status.json"), "utf-8"));
-      const candidate = data.availableVersion ?? null;
-      // Only report if actually newer than current version
-      if (candidate && compareSemver(VERSION, candidate) < 0) {
-        availableVersion = candidate;
-      }
-    }
-  } catch {}
+    const path = resolve(getPpmDir(), "status.json");
+    if (!existsSync(path)) return null;
+    return JSON.parse(readFileSync(path, "utf-8")).availableVersion ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check the registry directly rather than only reading what the supervisor
+ * recorded: that record is written 5min after startup and every 15min after,
+ * so a UI opened inside that window would see no update and offer no upgrade.
+ * The supervisor's record is the offline fallback.
+ */
+export async function resolveAvailableVersion(
+  getLatest: () => Promise<string | null> = getLatestPublishedVersion,
+): Promise<string | null> {
+  const candidate = (await getLatest()) ?? readRecordedVersion();
+  // Only report if actually newer than current version
+  return candidate && compareSemver(VERSION, candidate) < 0 ? candidate : null;
+}
+
+/** GET / — upgrade status (current version, available version, install method) */
+upgradeRoutes.get("/", async (c) => {
+  const availableVersion = await resolveAvailableVersion();
 
   return c.json(ok({
     currentVersion: VERSION,
