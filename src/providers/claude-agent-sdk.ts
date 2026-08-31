@@ -5,6 +5,7 @@ import {
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import { buildModelQueryOptions } from "./claude-agent-sdk-query-options.ts";
+import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
   AIProvider,
   Session,
@@ -347,31 +348,38 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   private async stripSessionImages(
     sessionId: string,
     includeAttachments: boolean,
-  ): Promise<{ removed: number; bytesFreed: number; reason: string }> {
+  ): Promise<{ removed: number; bytesFreed: number; reason: string; failed: boolean }> {
     const dir = resolve(CLAUDE_PROJECTS_DIR);
-    if (!existsSync(dir)) return { removed: 0, bytesFreed: 0, reason: "no transcript directory" };
+    if (!existsSync(dir)) return { removed: 0, bytesFreed: 0, reason: "no transcript directory", failed: true };
     let jsonlPath = "";
     for (const sub of readdirSync(dir)) {
       const candidate = resolve(dir, sub, `${sessionId}.jsonl`);
       if (existsSync(candidate)) { jsonlPath = candidate; break; }
     }
-    if (!jsonlPath) return { removed: 0, bytesFreed: 0, reason: "transcript not found" };
+    if (!jsonlPath) return { removed: 0, bytesFreed: 0, reason: "transcript not found", failed: true };
 
     try {
       const { stripTranscriptImagesFile } = await import("../services/transcript-images-file.ts");
       const r = await stripTranscriptImagesFile(jsonlPath, "oversized", { includeAttachments });
-      if (r.removed > 0) return { removed: r.removed, bytesFreed: r.bytesFreed, reason: "" };
-      // Nothing measured as oversized. When the API is still refusing, the cap it is applying
-      // is not the one we can see, so on the escalated pass take every attachment instead.
-      if (!includeAttachments) return { removed: 0, bytesFreed: 0, reason: "no oversized images found" };
-      const all = await stripTranscriptImagesFile(jsonlPath, "all", { includeAttachments: true });
+      if (r.removed > 0) return { removed: r.removed, bytesFreed: r.bytesFreed, reason: "", failed: false };
+      // Only images at or over the measurable cap are ever removed automatically. Falling back
+      // to "all" here would delete in-range images too, on nothing better than a guess that the
+      // API is applying a cap we cannot see — and for an attachment the transcript holds the
+      // only copy. When no image measures oversized, stop and let the user decide from the
+      // session debug dialog, which still offers the unrestricted removal.
       return {
-        removed: all.removed,
-        bytesFreed: all.bytesFreed,
-        reason: all.removed > 0 ? "" : "transcript holds no images",
+        removed: 0,
+        bytesFreed: 0,
+        reason: includeAttachments
+          ? "no image measures over the dimension cap"
+          : "no oversized images found",
+        failed: false,
       };
     } catch (e) {
-      return { removed: 0, bytesFreed: 0, reason: (e as Error).message };
+      // A throw means the rewrite was refused, most often because the transcript grew while it
+      // was being read. That says nothing about whether images are there to remove, so the
+      // caller must not read it as "nothing found" and escalate to the lossy pass.
+      return { removed: 0, bytesFreed: 0, reason: (e as Error).message, failed: true };
     }
   }
 
@@ -1483,15 +1491,12 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
           // An image the API refuses poisons every later turn: the transcript is replayed in
           // full each time, so the same rejected payload comes back and the session can never
-          // make progress again. Checked even when `error` is already set (the API reports
-          // this as invalid_request), and keyed off the wording rather than the code, since
-          // invalid_request otherwise covers non-retryable faults that must surface as-is.
-          if (assistantError !== "image_limit") {
-            const text = this.extractAssistantText(msg);
-            if (text && /image[\s\S]{0,80}(dimension limit|could not be processed|too large)|fewer images/i.test(text)) {
-              assistantError = "image_limit";
-              console.warn(`[sdk] session=${sessionId} API rejected an image in the replayed transcript — will strip and retry`);
-            }
+          // make progress again. Recognised even when `error` is already set, since the API
+          // reports it as invalid_request — a code that also covers faults which must surface
+          // as-is. See image-limit-detection.ts for why wording alone is not enough.
+          if (isImageLimitRejection(msg)) {
+            assistantError = "image_limit";
+            console.warn(`[sdk] session=${sessionId} API rejected an image in the replayed transcript — will strip and retry`);
           }
 
           if (assistantError) {
@@ -1635,11 +1640,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               // which breaks the parentUuid chain and hides the history from that point back.
               closeCurrentStream();
               let stripped = await this.stripSessionImages(sessionId, escalate);
-              // Finding nothing oversized does not mean there is nothing to do: the cap the API
-              // is applying is not always the one measurable here, and the images are still what
-              // it is refusing. Go straight to the lossier pass rather than giving up on a
-              // session that cannot otherwise take another message.
-              if (stripped.removed === 0 && !escalate) {
+              // Nothing oversized among the tool results, but an attachment can be over the cap
+              // too and only the opt-in pass reaches those. Skipped when the strip failed rather
+              // than came up empty — a refused rewrite is not evidence that attachments are the
+              // problem, and this pass is the one that deletes the only copy of them.
+              if (stripped.removed === 0 && !escalate && !stripped.failed) {
                 console.warn(`[sdk] session=${sessionId} nothing oversized to strip — escalating to attachments`);
                 imageRetryCount++;
                 yield { type: "status_update", phase: "retrying", message: "Removing attached images..." };
@@ -1647,7 +1652,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
               }
               if (stripped.removed === 0) {
                 console.warn(`[sdk] session=${sessionId} nothing left to strip (${stripped.reason}) — stopping`);
-                yield { type: "error", message: `The API refused an image in this conversation, but there was nothing left to remove (${stripped.reason}). Start a new session, or use /compact to summarise the history away.` };
+                yield { type: "error", message: `The API refused an image in this conversation, but nothing could be removed automatically (${stripped.reason}). Open Session debug to remove images yourself, start a new session, or use /compact to summarise the history away.` };
                 break;
               }
               console.warn(`[sdk] session=${sessionId} stripped ${stripped.removed} image(s), ${(stripped.bytesFreed / 1048576).toFixed(2)}MB — retrying turn`);
