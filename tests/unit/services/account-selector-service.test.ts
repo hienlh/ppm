@@ -610,3 +610,70 @@ describe("cooldown disabled (default)", () => {
     }
   });
 });
+
+/**
+ * The prompt cache is scoped per account, so a session that hops accounts re-sends its
+ * whole transcript as a cache write every turn. These cover the binding that keeps a
+ * session on one account, and the cases where it is still allowed to move.
+ */
+describe("AccountSelectorService — per-session binding", () => {
+  it("forSession() returns the same account across repeated calls", () => {
+    addAccount("a@test.com");
+    addAccount("b@test.com");
+    addAccount("c@test.com");
+
+    const first = accountSelector.forSession("sess-1");
+    expect(first).not.toBeNull();
+    for (let i = 0; i < 5; i++) {
+      expect(accountSelector.forSession("sess-1")!.id).toBe(first!.id);
+    }
+  });
+
+  it("next() still rotates — binding is per session, not a global pin", () => {
+    addAccount("a@test.com");
+    addAccount("b@test.com");
+    const picked = new Set([accountSelector.next()!.id, accountSelector.next()!.id]);
+    expect(picked.size).toBe(2);
+  });
+
+  it("separate sessions spread across accounts via the strategy", () => {
+    addAccount("a@test.com");
+    addAccount("b@test.com");
+    const one = accountSelector.forSession("sess-1")!.id;
+    const two = accountSelector.forSession("sess-2")!.id;
+    expect(one).not.toBe(two);
+  });
+
+  it("moves off a bound account once it passes the 5-hour skip threshold", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    insertUsage(a.id, { fiveHour: 0.10, weekly: 0.10, weeklyResetsAt: hoursFromNow(100) });
+    insertUsage(b.id, { fiveHour: 0.10, weekly: 0.10, weeklyResetsAt: hoursFromNow(100) });
+
+    accountSelector.bindSession("sess-1", a.id);
+    expect(accountSelector.forSession("sess-1")!.id).toBe(a.id);
+
+    // a is now exhausted — the session must not keep hammering it
+    insertUsage(a.id, { fiveHour: 0.99, weekly: 0.30, weeklyResetsAt: hoursFromNow(100) });
+    expect(accountSelector.forSession("sess-1")!.id).toBe(b.id);
+  });
+
+  it("a bound account named in excludeIds is skipped, and the fallback rebinds", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    accountSelector.bindSession("sess-1", a.id);
+
+    const picked = accountSelector.forSession("sess-1", new Set([a.id]));
+    expect(picked!.id).toBe(b.id);
+    // The rebind sticks, so the next turn starts from b rather than falling back to a
+    expect(accountSelector.forSession("sess-1")!.id).toBe(b.id);
+  });
+
+  it("bindSession() survives a disabled account by falling through to a fresh pick", () => {
+    const a = addAccount("a@test.com");
+    const b = addAccount("b@test.com");
+    accountSelector.bindSession("sess-1", a.id);
+    accountService.setDisabled(a.id);
+    expect(accountSelector.forSession("sess-1")!.id).toBe(b.id);
+  });
+});

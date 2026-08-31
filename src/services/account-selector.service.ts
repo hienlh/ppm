@@ -1,5 +1,11 @@
 import { accountService, type AccountWithTokens } from "./account.service.ts";
-import { getConfigValue, setConfigValue, getLatestSnapshotForAccount } from "./db.service.ts";
+import {
+  getConfigValue,
+  setConfigValue,
+  getLatestSnapshotForAccount,
+  getSessionAccount,
+  setSessionAccount,
+} from "./db.service.ts";
 
 export type AccountStrategy = "round-robin" | "fill-first" | "lowest-usage";
 
@@ -63,17 +69,10 @@ class AccountSelectorService {
     return this._lastFailReason;
   }
 
-  /**
-   * Pick next available account (skips cooldown/disabled).
-   * Returns null if no active accounts available.
-   */
-  next(excludeIds?: Set<string>): AccountWithTokens | null {
-    this._lastFailReason = "none";
+  /** Re-enable accounts whose cooldown has elapsed, so they rejoin the candidate pool. */
+  private clearExpiredCooldowns(): void {
     const now = Math.floor(Date.now() / 1000);
-    const allAccounts = accountService.list();
-
-    // Clear expired cooldowns
-    for (const acc of allAccounts) {
+    for (const acc of accountService.list()) {
       if (acc.status === "cooldown" && acc.cooldownUntil && acc.cooldownUntil <= now) {
         try {
           accountService.setEnabled(acc.id);
@@ -85,6 +84,58 @@ class AccountSelectorService {
         }
       }
     }
+  }
+
+  /** Whether an account can serve a turn right now — same tests next() applies to candidates. */
+  private isUsable(accountId: string): boolean {
+    const acc = accountService.list().find((a) => a.id === accountId);
+    if (!acc) return false;
+    const cooldownOn = this.isCooldownEnabled();
+    if (acc.status !== "active" && !(!cooldownOn && acc.status === "cooldown")) return false;
+    const snap = getLatestSnapshotForAccount(accountId);
+    return !snap || (snap.five_hour_util ?? 0) < FIVE_HOUR_SKIP_THRESHOLD;
+  }
+
+  /**
+   * Account bound to a session, falling back to a strategy pick that then becomes the binding.
+   *
+   * Anthropic's prompt cache is scoped per account, so moving a session to a different
+   * account re-sends its entire transcript as a cache write (1.25x) instead of a cache
+   * read (0.1x). On a long session that is the difference between a cheap turn and a
+   * very expensive one, which is why the binding exists at all.
+   *
+   * Rotation is not abandoned, only relocated: a session with no binding yet still goes
+   * through the configured strategy, so load still spreads — just per session rather than
+   * per turn. `bindSession` moves a session when an account genuinely cannot serve it.
+   */
+  forSession(sessionId: string, excludeIds?: Set<string>): AccountWithTokens | null {
+    this.clearExpiredCooldowns();
+    const boundId = getSessionAccount(sessionId);
+    if (boundId && !excludeIds?.has(boundId) && this.isUsable(boundId)) {
+      const bound = accountService.getWithTokens(boundId);
+      if (bound) {
+        this._lastPickedId = boundId;
+        this._lastFailReason = "none";
+        return bound;
+      }
+    }
+    const picked = this.next(excludeIds);
+    if (picked) this.bindSession(sessionId, picked.id);
+    return picked;
+  }
+
+  /** Move a session onto an account — used when a switch is forced (rate/usage limit, auth). */
+  bindSession(sessionId: string, accountId: string): void {
+    setSessionAccount(sessionId, accountId);
+  }
+
+  /**
+   * Pick next available account (skips cooldown/disabled).
+   * Returns null if no active accounts available.
+   */
+  next(excludeIds?: Set<string>): AccountWithTokens | null {
+    this._lastFailReason = "none";
+    this.clearExpiredCooldowns();
 
     // When cooldown is disabled, treat parked (cooldown) accounts as selectable too —
     // any leftover cooldown from before the flag flip shouldn't lock an account out.
