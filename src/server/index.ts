@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { configService } from "../services/config.service.ts";
 import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
+import { gzipJson } from "./middleware/gzip-json.ts";
 import { projectRoutes } from "./routes/projects.ts";
 import { settingsRoutes } from "./routes/settings.ts";
 import { settingsThemesRoutes } from "./routes/settings-themes.ts";
@@ -137,6 +138,7 @@ app.route("/proxy", proxyRoutes);
 
 // Auth check endpoint (behind auth middleware)
 app.use("/api/*", authMiddleware);
+app.use("/api/*", gzipJson);
 app.get("/api/auth/check", (c) => c.json(ok(true)));
 
 // Port forwarding — starts per-port Cloudflare tunnels

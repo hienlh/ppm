@@ -168,6 +168,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
    *  replay, cleared on turn done. On reload of an unfinished turn the REST history
    *  ALSO contains this turn, so the REST merge trims it to avoid a double render. */
   const replayTurnUserMsgRef = useRef<string | null>(null);
+  /** When the last full-transcript fetch completed — guards redundant idle refetches */
+  const historyLoadedAtRef = useRef(0);
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
   // Mirror of `messages` for synchronous reads (e.g. snapshotting the previous
@@ -648,6 +650,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       setConnectedSessionId((data as any).sessionId ?? sessionIdRef.current);
       const state = data as any;
       const p = state.phase as SessionPhase;
+      const wasIdle = phaseRef.current === "idle";
       setPhase(p);
       phaseRef.current = p;
       if (state.sessionTitle) setSessionTitle(state.sessionTitle);
@@ -682,9 +685,14 @@ export function useChat(sessionId: string | null, providerId = "claude", project
       // Sync compact indicator from authoritative server state (covers reconnect).
       // state.compactStatus is "compacting" | null — treat undefined as null for back-compat.
       setCompactStatus(state.compactStatus === "compacting" ? "compacting" : null);
-      // If idle, refetch history (completed turns) and hide overlay
+      // If idle, refetch history (completed turns) and hide overlay.
+      // Skip when nothing could have changed: the phase was already idle locally
+      // and the full transcript finished loading moments ago — on boot the WS
+      // connects right after the mount fetch and this refetch would re-download
+      // the entire history (and remount every transcript image) for no reason.
       if (p === "idle") {
-        refetchRef.current?.();
+        const historyFresh = Date.now() - historyLoadedAtRef.current < 5000;
+        if (!(wasIdle && historyFresh)) refetchRef.current?.();
         setIsReconnecting(false);
       }
       // If streaming, turn_events message will follow
@@ -809,6 +817,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     streamingContentRef.current = "";
     streamingEventsRef.current = [];
     replayTurnUserMsgRef.current = null;
+    historyLoadedAtRef.current = 0;
     bashOutputRef.current.clear();
     if (syncRafRef.current) { clearTimeout(syncRafRef.current); syncRafRef.current = 0; }
     setIsConnected(false);
@@ -860,6 +869,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
             const pending = prev.filter((m) => !staleIds.has(m.id));
             return [...history, ...pending];
           });
+          historyLoadedAtRef.current = Date.now();
         })
         .catch(() => {
           if (!cancelled) setMessages((prev) => prev.filter((m) => !staleIds.has(m.id)));
@@ -1096,6 +1106,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           streamingContentRef.current = "";
           streamingEventsRef.current = [];
         }
+        historyLoadedAtRef.current = Date.now();
       })
       .catch(() => {});
   }, [sessionId, providerId, projectName]);

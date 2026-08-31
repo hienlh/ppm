@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { resolve, join, extname, dirname } from "node:path";
 import { isCompiledBinary } from "../../services/autostart-generator.ts";
 
@@ -54,13 +54,34 @@ staticRoutes.get("*", async (c) => {
     // Only serve if it's actually a file (not directory)
     if (file.size > 0 || extname(filePath)) {
       const mime = MIME_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream";
-      return new Response(file, { headers: { "Content-Type": mime } });
+      const headers: Record<string, string> = { "Content-Type": mime };
+      // Vite emits content-hashed filenames under /assets/ — safe to cache forever.
+      // Everything else gets revalidation via ETag so upgrades propagate.
+      if (urlPath.startsWith("/assets/")) {
+        headers["Cache-Control"] = "public, max-age=31536000, immutable";
+      } else {
+        const stat = statSync(filePath);
+        const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+        headers["Cache-Control"] = "no-cache";
+        headers["ETag"] = etag;
+        if (c.req.header("If-None-Match") === etag) {
+          return new Response(null, { status: 304, headers });
+        }
+      }
+      return new Response(file, { headers });
     }
   }
 
-  // SPA fallback: serve index.html
+  // SPA fallback: serve index.html with revalidation so new asset hashes propagate
   const indexPath = resolve(DIST_DIR, "index.html");
   if (existsSync(indexPath)) {
+    const stat = statSync(indexPath);
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    if (c.req.header("If-None-Match") === etag) {
+      return new Response(null, { status: 304, headers: { "Cache-Control": "no-cache", ETag: etag } });
+    }
+    c.header("Cache-Control", "no-cache");
+    c.header("ETag", etag);
     return c.html(await Bun.file(indexPath).text());
   }
   return c.text("Frontend not built. Run: bun run build:web", 404);
