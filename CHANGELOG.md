@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.17.47] - 2026-08-31
+
+### Fixed
+- **A chat no longer dies for good on an image the API will not accept** — the bundled Claude Code SDK was 105 releases behind, and on that build a single oversized image in the history failed every later message, plain text ones included. Updating it clears the whole class of failure.
+- **A chat that still hits a refused image now repairs itself** — the offending image is dropped from the history and the message retried, instead of repeating "Invalid request sent to the API" with no way out from inside PPM.
+- **The update button appears as soon as you open the app** — the check only replayed what the background service last recorded, and that lands five minutes after startup, so a window opened before then offered no update while the release notes beside it already listed the newer version.
+
+### Changed
+- **Image cleanup now works on the chats that need it** — the session debug panel refused any history over 64MB, which was exactly the ones worth cleaning. It streams the file instead, and counts images you attached separately from ones a tool read, since only the first have no copy elsewhere.
+
 ## [0.17.46] - 2026-08-31
 
 ### Fixed
