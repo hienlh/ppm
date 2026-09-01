@@ -11,6 +11,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
+    # Run under an init process: bun as PID 1 never reaps orphans, so a killed
+    # descendant lingers as a zombie and process-liveness checks read it as alive.
+    init: true
     environment:
       PPM_SKIP_LIVE: "1"
     volumes:
