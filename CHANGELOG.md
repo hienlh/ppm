@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.50] - 2026-09-01
+
+### Fixed
+- **The public share URL survives an upgrade** — it rotated whenever a leftover background process from a chat kept the old server port open, because the tunnel is tied to one port and had to be recreated when the server moved. A small forwarder now owns the public port and passes traffic to the server wherever it lands, so upgrades, restarts and crashed servers no longer change the link you shared. A dead `cloudflared`, a reboot or resuming from sleep still can.
+- **The port stops creeping upward** — each time this happened the server took the next port (3212 → 3213 → 3214) and never went back. It no longer needs a fixed port at all.
+
 ## [0.17.49] - 2026-09-01
 
 ### Fixed
