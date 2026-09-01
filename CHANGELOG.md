@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.49] - 2026-09-01
+
+### Fixed
+- **Subagent tool activity no longer spills into the main chat** — since the SDK upgrade a background agent keeps running after the turn ends, and its tool calls rendered as loose top-level entries; they now stay nested under the Agent card, both live and after reload.
+
 ## [0.17.48] - 2026-09-01
 
 ### Fixed
