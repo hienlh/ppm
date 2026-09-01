@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.52] - 2026-09-02
+
+### Added
+- **Claude Fable 5.1 is selectable** — Anthropic's new flagship model (`claude-fable-5-1`), released 1 September, is now in the model picker, `ppm init` and the proxy test dialog.
+
 ## [0.17.51] - 2026-09-01
 
 ### Fixed
