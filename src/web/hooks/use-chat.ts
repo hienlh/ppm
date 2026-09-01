@@ -239,6 +239,46 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     return true;
   }, []);
 
+  /**
+   * Fallback for child events arriving after their parent Agent/Task card was
+   * finalized: a backgrounded subagent keeps streaming past the turn's `done`
+   * (the SDK ends the turn at the boundary while the agent runs on), so the
+   * parent tool_use now lives in a finalized message, not the streaming buffer.
+   * Nest the child there instead of letting it render flat in the transcript.
+   */
+  const routeToFinalizedParent = useCallback((childEvent: ChatEvent, parentToolUseId: string): boolean => {
+    const isParent = (e: ChatEvent) =>
+      e.type === "tool_use" && (e.tool === "Agent" || e.tool === "Task") && (e as any).toolUseId === parentToolUseId;
+    const msgs = messagesRef.current;
+    let msgIdx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i]!.events?.some(isParent)) { msgIdx = i; break; }
+    }
+    if (msgIdx === -1) return false;
+
+    setMessages((prev) => {
+      // Re-locate in prev — state may have shifted since the ref snapshot
+      let idx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i]!.events?.some(isParent)) { idx = i; break; }
+      }
+      if (idx === -1) return prev;
+      const msg = prev[idx]!;
+      const events = msg.events!.map((e) => {
+        if (!isParent(e) || e.type !== "tool_use") return e;
+        const children = [...(e.children ?? [])];
+        // Replays can redeliver id-bearing children — upsert instead of duplicating
+        const cid = (childEvent as any).toolUseId as string | undefined;
+        const dup = cid ? children.findIndex((c) => c.type === childEvent.type && (c as any).toolUseId === cid) : -1;
+        if (dup !== -1) children[dup] = childEvent;
+        else children.push(childEvent);
+        return { ...e, children };
+      });
+      return [...prev.slice(0, idx), { ...msg, events }, ...prev.slice(idx + 1)];
+    });
+    return true;
+  }, []);
+
   /** Flush refs into React state (called from throttled timer or directly) */
   const flushMessages = useCallback(() => {
     syncRafRef.current = 0;
@@ -323,6 +363,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
+        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
         streamingContentRef.current += ev.content;
         streamingEventsRef.current.push(ev as ChatEvent);
         syncMessages();
@@ -335,6 +376,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
+        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
         streamingEventsRef.current.push(ev as ChatEvent);
         syncMessages();
         break;
@@ -352,6 +394,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
+        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
         const tuId = ev.toolUseId as string | undefined;
         upsertStreamingEvent((e) => !!tuId && e.type === "tool_use" && (e as any).toolUseId === tuId);
         syncMessages();
@@ -372,6 +415,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
+        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
         upsertStreamingEvent((e) => !!trId && e.type === "tool_result" && (e as any).toolUseId === trId);
         syncMessages();
         break;
@@ -593,7 +637,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         break;
       }
     }
-  }, [routeToParent, syncMessages]);
+  }, [routeToParent, routeToFinalizedParent, syncMessages]);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;

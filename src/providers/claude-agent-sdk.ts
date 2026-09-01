@@ -23,7 +23,7 @@ import { getSessionProjectPath, setSessionMetadata, getSessionTitles, insertTurn
 import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
-import { parseSessionMessage, nestChildEvents } from "../services/jsonl-transcript-parser.ts";
+import { parseSessionMessage, nestChildEventsAcrossMessages } from "../services/jsonl-transcript-parser.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
 import { resolveClaudeCliPath } from "../services/claude-cli-resolver.ts";
@@ -2080,11 +2080,10 @@ export class ClaudeAgentSdkProvider implements AIProvider {
         merged.push(msg);
       }
 
-      // Nest child events under their parent Agent/Task tool_use's children array
-      for (const msg of merged) {
-        if (!msg.events) continue;
-        nestChildEvents(msg.events);
-      }
+      // Nest child events under their parent Agent/Task tool_use's children array.
+      // Cross-message: a backgrounded subagent's events land in later messages
+      // than the Agent tool_use that spawned it.
+      nestChildEventsAcrossMessages(merged);
 
       return merged.filter(
         (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),

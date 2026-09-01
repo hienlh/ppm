@@ -7,6 +7,7 @@ import {
   stripTeammateXml,
   parseSessionMessage,
   nestChildEvents,
+  nestChildEventsAcrossMessages,
   validateJsonlPath,
   parseJsonlTranscript,
 } from "../../../src/services/jsonl-transcript-parser";
@@ -117,6 +118,68 @@ describe("nestChildEvents", () => {
     const events: ChatEvent[] = [{ type: "text", content: "x" }];
     nestChildEvents(events);
     expect(events.length).toBe(1);
+  });
+});
+
+describe("nestChildEventsAcrossMessages", () => {
+  test("nests background-subagent events from later messages into the Agent card", () => {
+    const messages = [
+      {
+        content: "spawning",
+        events: [{ type: "tool_use", tool: "Agent", toolUseId: "p1", input: {} }] as ChatEvent[],
+      },
+      {
+        content: "",
+        events: [
+          { type: "tool_use", tool: "Bash", toolUseId: "c1", input: {}, parentToolUseId: "p1" },
+          { type: "tool_result", output: "ok", toolUseId: "c1", parentToolUseId: "p1" },
+        ] as ChatEvent[],
+      },
+    ];
+    nestChildEventsAcrossMessages(messages);
+    const parent = messages[0]!.events![0] as any;
+    expect(parent.children?.length).toBe(2);
+    expect(messages[1]!.events).toBeUndefined();
+  });
+
+  test("blanks content of messages that were purely subagent output", () => {
+    const messages = [
+      {
+        content: "",
+        events: [{ type: "tool_use", tool: "Task", toolUseId: "p1", input: {} }] as ChatEvent[],
+      },
+      {
+        content: "subagent says hi",
+        events: [{ type: "text", content: "subagent says hi", parentToolUseId: "p1" }] as ChatEvent[],
+      },
+    ];
+    nestChildEventsAcrossMessages(messages);
+    expect(messages[1]!.content).toBe("");
+    expect(messages[1]!.events).toBeUndefined();
+  });
+
+  test("keeps top-level events and content of mixed messages", () => {
+    const messages = [
+      {
+        content: "main text",
+        events: [
+          { type: "tool_use", tool: "Agent", toolUseId: "p1", input: {} },
+          { type: "text", content: "child", parentToolUseId: "p1" },
+          { type: "text", content: "main text" },
+        ] as ChatEvent[],
+      },
+    ];
+    nestChildEventsAcrossMessages(messages);
+    expect(messages[0]!.content).toBe("main text");
+    expect(messages[0]!.events!.length).toBe(2);
+    const parent = messages[0]!.events![0] as any;
+    expect(parent.children?.length).toBe(1);
+  });
+
+  test("no-op when no parents exist", () => {
+    const messages = [{ content: "x", events: [{ type: "text", content: "x", parentToolUseId: "ghost" }] as ChatEvent[] }];
+    nestChildEventsAcrossMessages(messages);
+    expect(messages[0]!.events!.length).toBe(1);
   });
 });
 

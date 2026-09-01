@@ -155,6 +155,48 @@ export function nestChildEvents(events: ChatEvent[]): void {
 }
 
 /**
+ * Nest child events across message boundaries. A backgrounded subagent keeps
+ * running after its turn ends, so its events land in later messages than the
+ * Agent/Task tool_use that spawned it. Collects parents globally, moves each
+ * child event into its parent's children array, and blanks out messages left
+ * with nothing but moved child content (callers filter empty messages).
+ * Mutates messages in-place.
+ */
+export function nestChildEventsAcrossMessages(messages: { content: string; events?: ChatEvent[] }[]): void {
+  const parentMap = new Map<string, ChatEvent & { type: "tool_use" }>();
+  for (const msg of messages) {
+    for (const ev of msg.events ?? []) {
+      if (ev.type === "tool_use" && (ev.tool === "Agent" || ev.tool === "Task") && ev.toolUseId) {
+        parentMap.set(ev.toolUseId, ev);
+      }
+    }
+  }
+  if (parentMap.size === 0) return;
+
+  for (const msg of messages) {
+    if (!msg.events?.length) continue;
+    const kept: ChatEvent[] = [];
+    let moved = 0;
+    for (const ev of msg.events) {
+      const pid = (ev as any).parentToolUseId as string | undefined;
+      const parent = pid ? parentMap.get(pid) : undefined;
+      if (parent && parent !== ev) {
+        if (!parent.children) parent.children = [];
+        parent.children.push(ev);
+        moved++;
+      } else {
+        kept.push(ev);
+      }
+    }
+    if (moved === 0) continue;
+    msg.events = kept.length > 0 ? kept : undefined;
+    // A message that was purely subagent output duplicates its (now nested)
+    // text via `content` — blank it so the empty-message filter drops it.
+    if (kept.length === 0) msg.content = "";
+  }
+}
+
+/**
  * Validate JSONL path — must be under ~/.claude/ (prevents arbitrary file reads).
  * Throws Error with descriptive message. Returns resolved realpath on success.
  */
@@ -233,9 +275,9 @@ export async function parseJsonlTranscript(
     merged.push(msg);
   }
 
-  for (const msg of merged) {
-    if (msg.events) nestChildEvents(msg.events);
-  }
+  // Nest across messages: a backgrounded subagent's events land in later
+  // messages than the Agent tool_use that spawned it.
+  nestChildEventsAcrossMessages(merged);
 
   return merged.filter(
     (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),
