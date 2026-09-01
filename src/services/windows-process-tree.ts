@@ -22,7 +22,7 @@
  * reaped whenever the server is stopped or a new supervisor starts.
  */
 import { resolve } from "node:path";
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { getPpmDir } from "./ppm-dir.ts";
 
@@ -67,6 +67,51 @@ export function findPortListenerPid(port: number): number {
   return 0;
 }
 
+// ─── /proc readers (Linux) ─────────────────────────────────────────────
+// `ps` is NOT guaranteed to exist: it ships in `procps`, which slim Debian
+// images (including the one PPM's own test suite runs in) leave out. Every
+// caller here swallows the spawn error and reports "no descendants" / "not a
+// PPM process", so a missing binary silently disables orphan reaping instead of
+// failing loudly. Linux exposes the same data through /proc with no subprocess
+// at all, so prefer it and keep `ps` only for macOS.
+
+/** Lowercased argv of `pid`, or null when /proc is unavailable/unreadable. */
+function readProcCmdline(pid: number): string | null {
+  if (process.platform !== "linux") return null;
+  try {
+    // NUL-separated argv; join with spaces so substring checks behave like `ps`.
+    return readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0").join(" ").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** pid → ppid for every visible process, or null when /proc is unavailable. */
+function readProcPpidMap(): Map<number, number> | null {
+  if (process.platform !== "linux") return null;
+  let entries: string[];
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return null;
+  }
+  const ppidOf = new Map<number, number>();
+  for (const name of entries) {
+    if (!/^\d+$/.test(name)) continue;
+    try {
+      const stat = readFileSync(`/proc/${name}/stat`, "utf-8");
+      // Format: `pid (comm) state ppid ...`. comm can contain spaces AND
+      // parentheses, so anchor on the LAST ')' rather than splitting naively.
+      const rest = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
+      const ppid = parseInt(rest[1] ?? "", 10); // [0] = state, [1] = ppid
+      if (!isNaN(ppid)) ppidOf.set(parseInt(name, 10), ppid);
+    } catch {
+      // Process exited between readdir and read — normal, skip it.
+    }
+  }
+  return ppidOf.size > 0 ? ppidOf : null;
+}
+
 /**
  * Heuristic: does `pid`'s command line look like a PPM-owned process?
  * Used to decide whether reclaiming a port held by an alive process is safe
@@ -74,6 +119,10 @@ export function findPortListenerPid(port: number): number {
  */
 export function isPpmProcess(pid: number): boolean {
   if (process.platform !== "win32") {
+    const cmdline = readProcCmdline(pid);
+    if (cmdline !== null) {
+      return cmdline.includes("__serve__") || cmdline.includes("__supervise__");
+    }
     try {
       const out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
         encoding: "utf-8",
@@ -184,22 +233,31 @@ export function collectProcessTree(pid: number): number[] {
   if (process.platform === "win32") return [pid];
 
   const childrenOf = new Map<number, number[]>();
-  try {
-    const out = execFileSync("ps", ["-Ao", "pid=,ppid="], {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-    for (const line of out.split("\n")) {
-      const [pidStr, ppidStr] = line.trim().split(/\s+/);
-      const p = parseInt(pidStr ?? "", 10);
-      const pp = parseInt(ppidStr ?? "", 10);
-      if (isNaN(p) || isNaN(pp)) continue;
-      const arr = childrenOf.get(pp);
-      if (arr) arr.push(p);
-      else childrenOf.set(pp, [p]);
+  const addEdge = (child: number, parent: number) => {
+    const arr = childrenOf.get(parent);
+    if (arr) arr.push(child);
+    else childrenOf.set(parent, [child]);
+  };
+
+  const fromProc = readProcPpidMap();
+  if (fromProc) {
+    for (const [p, pp] of fromProc) addEdge(p, pp);
+  } else {
+    try {
+      const out = execFileSync("ps", ["-Ao", "pid=,ppid="], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      for (const line of out.split("\n")) {
+        const [pidStr, ppidStr] = line.trim().split(/\s+/);
+        const p = parseInt(pidStr ?? "", 10);
+        const pp = parseInt(ppidStr ?? "", 10);
+        if (isNaN(p) || isNaN(pp)) continue;
+        addEdge(p, pp);
+      }
+    } catch {
+      return [pid];
     }
-  } catch {
-    return [pid];
   }
 
   // BFS with visited guard — PID reuse can produce bogus parent cycles.

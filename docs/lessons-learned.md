@@ -222,3 +222,44 @@ Adopt first; probe only when there is nothing to adopt.
 Related: `findPortListenerPid` needs `netstat` on Windows and `lsof` on POSIX, and returns `0` when
 the tool is missing. Treating "cannot tell" as "does not match" refused every adoption on such a
 box and spawned a duplicate edge that then could not bind.
+
+---
+
+## Process enumeration must not depend on `ps`
+
+**Problem**: `collectProcessTree` and `isPpmProcess` shelled out to `ps`, which ships in `procps` —
+a package slim Debian images leave out, including the one PPM's own suite runs in. Both functions
+swallow the spawn error and return "no descendants" / "not a PPM process", so a missing binary
+**silently disables orphan reaping** rather than failing loudly. Two tests had been timing out for
+weeks and were written off as environmental.
+
+**Fix**: read `/proc` directly on Linux (`/proc/<pid>/stat` for the pid→ppid map,
+`/proc/<pid>/cmdline` for argv) and keep `ps` only as the macOS path. No subprocess, no hidden
+dependency, and much faster — the two tests went from 5s timeouts to ~100ms.
+
+Parsing note: `/proc/<pid>/stat` is `pid (comm) state ppid …` and `comm` may contain spaces **and
+parentheses**, so anchor on the last `)` instead of splitting the line naively.
+
+Still unconverted for the same reason (`ps` may be absent): `resource-monitor.service.ts` and
+`tunnel-registry.service.ts`. Both degrade rather than corrupt, but they are the same latent bug.
+
+## Bun on Linux cannot re-watch a deleted-and-recreated directory
+
+**Problem**: `WatchTree` releases a watcher when a directory disappears and re-covers it when it
+comes back. On Bun 1.3.13 + Linux the new watcher is silent forever: Bun keys its `fs.watch`
+registry by the literal path string and reuses the dead inotify watch. Closing the old handle
+first, or waiting seconds before re-watching, makes no difference.
+
+**Evidence** (`spike-bun-recursive-watch-probe.mjs`): plain recursive and non-recursive watches
+both deliver; both go silent for a recreated directory. On **Windows** (bun 1.3.10) every case
+delivers, so the defect is Linux-only.
+
+**No clean workaround.** A trailing separator is a different key and works exactly once; `//` and
+`///` normalise to the same key, so a rotating-spelling scheme fails from the second cycle.
+
+**Consequence**: on Linux, changes inside a directory that was deleted and recreated (a `git
+checkout` across branches, `rm -rf build && mkdir build`) stop being reported until the server
+restarts. The test asserting re-attachment is skipped on Linux with this reason and still runs
+elsewhere. Fixing it properly needs a different watch mechanism (or a polling fallback) for
+re-covered directories — deliberately not added, given the file watcher's history with watch-count
+blowups.
