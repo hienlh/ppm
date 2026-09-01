@@ -179,9 +179,12 @@ export async function buildProgram(): Promise<Command> {
  * which would reject them as unknown commands. Source installs spawn the
  * `.ts` files directly and never reach this entry with a sentinel.
  */
-export function resolveEntryMode(argv: string[]): "supervise" | "serve" | "cli" {
+export function resolveEntryMode(
+  argv: string[],
+): "supervise" | "serve" | "edge" | "cli" {
   if (argv.includes("__supervise__")) return "supervise";
   if (argv.includes("__serve__")) return "serve";
+  if (argv.includes("__edge__")) return "edge";
   return "cli";
 }
 
@@ -192,6 +195,9 @@ if (import.meta.main) {
       break;
     case "serve":
       await import("./server/index.ts");
+      break;
+    case "edge":
+      await import("./services/edge-forwarder.ts");
       break;
     default: {
       const program = await buildProgram();

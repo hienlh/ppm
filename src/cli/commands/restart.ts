@@ -177,6 +177,12 @@ export async function restartServer(options: { force?: boolean }) {
   // terminal (and its process group) to receive SIGHUP.
   const params = JSON.stringify({
     serverPid, port, host, serverScript,
+    // The server's own loopback port, distinct from `port` (the PUBLIC port,
+    // owned by the edge forwarder). The worker must only ever reclaim this one:
+    // force-killing whatever listens on the public port would kill the edge,
+    // which is detached and legitimately still running even with no supervisor.
+    serverPort: (status.serverPort as number | undefined) ?? null,
+    serverPortFile: resolve(getPpmDir(), ".server-port"),
     statusFile: statusFile(),
     pidFile: pidFile(),
     restartingFlag: restartingFlag(),
@@ -210,16 +216,20 @@ async function main() {
   try { process.kill(P.serverPid); log("INFO", "Restart: killed old server PID " + P.serverPid); } catch {}
   await Bun.sleep(500);
 
-  // Force-kill any process still holding the port (handles orphan/zombie processes)
+  // Force-kill anything still holding the OLD SERVER's loopback port (orphaned
+  // grandchildren keep its inherited socket open). Never P.port: that is the
+  // public port and the edge forwarder is listening there — it is detached, so
+  // it is alive and correct even when no supervisor is.
   const killByPort = () => {
+    if (!P.serverPort) return;
     try {
       if (process.platform === "win32") {
-        const r = Bun.spawnSync(["cmd", "/c", "netstat -ano | findstr :" + P.port + " | findstr LISTENING"]);
+        const r = Bun.spawnSync(["cmd", "/c", "netstat -ano | findstr :" + P.serverPort + " | findstr LISTENING"]);
         const lines = r.stdout.toString().trim().split("\\n");
         const pids = new Set(lines.map((l: string) => l.trim().split(/\\s+/).pop()).filter(Boolean));
         for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
       } else {
-        const r = Bun.spawnSync(["lsof", "-t", "-i", ":" + P.port]);
+        const r = Bun.spawnSync(["lsof", "-t", "-i", ":" + P.serverPort]);
         const pids = r.stdout.toString().trim().split("\\n").filter(Boolean);
         for (const pid of pids) { try { process.kill(Number(pid)); } catch {} }
       }
@@ -227,28 +237,21 @@ async function main() {
   };
   killByPort();
 
-  // Wait for port to be free (up to 5s)
-  const start = Date.now();
-  while (Date.now() - start < 5000) {
-    const inUse: boolean = await new Promise((res) => {
-      const t = createServer()
-        .once("error", () => res(true))
-        .once("listening", () => { t.close(() => res(false)); })
-        .listen(P.port, P.host);
-    });
-    if (!inUse) break;
-    killByPort();
-    await Bun.sleep(200);
-  }
+  // No wait-for-free loop: the replacement server asks for port 0, so a wedged
+  // old port cannot block it. That loop existed only because the server used to
+  // need one specific port back.
+  try { unlinkSync(P.serverPortFile); } catch {}
 
   // Spawn new server — on Windows use PowerShell Start-Process for true detach
   // (Bun.spawn + unref on Windows keeps child in same job object → dies when worker exits)
   let childPid: number;
   // Compiled binary: execPath IS the server, no "run script" needed
   const isCompiled = !process.execPath.includes("bun");
+  // Port 0 / loopback, matching how the supervisor spawns it: the edge owns the
+  // public port and forwards to whatever the server ends up binding.
   const serverArgs = isCompiled
-    ? ["__serve__", String(P.port), P.host]
-    : ["run", P.serverScript, "__serve__", String(P.port), P.host];
+    ? ["__serve__", "0", "127.0.0.1"]
+    : ["run", P.serverScript, "__serve__", "0", "127.0.0.1"];
 
   if (process.platform === "win32") {
     const bunExe = process.execPath.replace(/\\\\/g, "\\\\\\\\");
@@ -293,15 +296,28 @@ async function main() {
   // Remove restarting flag
   try { unlinkSync(P.restartingFlag); } catch {}
 
-  // Health check (up to 10s)
+  // Health check (up to 10s). Probe the PUBLIC port first — that is the whole
+  // chain (edge → server) and what a user actually hits. Fall back to the
+  // server's own loopback port so a dead edge is reported as "server up, public
+  // access down" instead of a blanket restart failure.
   let ready = false;
+  let edgeUp = false;
+  const probe = async (p: number) => {
+    try {
+      const res = await fetch("http://127.0.0.1:" + p + "/api/health", { signal: AbortSignal.timeout(1000) });
+      return res.ok;
+    } catch { return false; }
+  };
   const hStart = Date.now();
   while (Date.now() - hStart < 10000) {
-    try {
-      const res = await fetch("http://127.0.0.1:" + P.port + "/api/health", { signal: AbortSignal.timeout(1000) });
-      if (res.ok) { ready = true; break; }
-    } catch {}
+    if (await probe(P.port)) { ready = true; edgeUp = true; break; }
+    let direct = 0;
+    try { direct = parseInt(readFileSync(P.serverPortFile, "utf-8").trim(), 10); } catch {}
+    if (direct > 0 && await probe(direct)) { ready = true; break; }
     await Bun.sleep(300);
+  }
+  if (ready && !edgeUp) {
+    log("WARN", "Server is up but the public port is not being served — edge forwarder is down. Run 'ppm stop --kill' then 'ppm start'.");
   }
 
   // Check tunnel

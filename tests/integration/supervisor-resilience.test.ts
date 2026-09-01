@@ -376,7 +376,11 @@ describe("Port recovery", () => {
 
 // ─── Supervisor self-heal: source patterns ──────────────────────────────
 
-describe("Supervisor self-heal patterns", () => {
+// describeBase, not the live-gated `describe`: every test here reads source
+// text and needs no supervisor, port, or network. Gating them behind
+// PPM_SKIP_LIVE meant these regression guards never ran in the canonical
+// Docker suite — which is exactly where a design invariant should be enforced.
+describeBase("Supervisor self-heal patterns", () => {
   const supervisorCode = readFileSync(
     resolve(import.meta.dir, "../../src/services/supervisor.ts"),
     "utf-8",
@@ -399,12 +403,48 @@ describe("Supervisor self-heal patterns", () => {
     expect(posixAt).toBeGreaterThan(fallbackAt);
   });
 
-  test("spawnServer resolves a bindable port and re-points the tunnel only on origin mismatch", () => {
-    // Prefers the live tunnel's origin port so an upgrade never rotates the URL
-    expect(supervisorCode).toContain("const preferred = tunnelAlive && tunnelPort !== null ? tunnelPort : _opts.port");
-    expect(supervisorCode).toContain("const boundPort = await ensureBindablePort(preferred, _opts.host)");
-    // Tunnel restarts only when its origin differs from the bound port
-    expect(supervisorCode).toMatch(/if \(tunnelAlive && tunnelPort !== null && tunnelPort !== boundPort\) \{\s*\n\s*restartTunnel\(boundPort\);/);
+  test("the server needs no particular port, so a port move cannot rotate the URL", () => {
+    // Superseded design: spawnServer used to prefer the live tunnel's origin
+    // port and re-point the tunnel when it had to bind elsewhere. That
+    // re-point is what rotated the public URL on every upgrade. The server now
+    // takes an OS-assigned loopback port and the edge owns the public one.
+    expect(supervisorCode).toContain('"__serve__", "0", "127.0.0.1"');
+    expect(supervisorCode).not.toContain("const preferred = tunnelAlive && tunnelPort !== null");
+    expect(supervisorCode).not.toMatch(/restartTunnel\(boundPort\)/);
+    expect(supervisorCode).not.toContain("Server port moved to");
+  });
+
+  test("adoption is attempted before any bind probe on the public port", () => {
+    // ensureBindablePort tree-kills a PPM process holding the port. Probing
+    // first would therefore kill a healthy adopted edge — the one thing keeping
+    // the public URL alive across an upgrade.
+    const boot = supervisorCode.slice(supervisorCode.indexOf("const publicPort = tunnelAdopted"));
+    const adoptAt = boot.indexOf("adoptEdge(publicPort");
+    const probeAt = boot.indexOf("ensureBindablePort(publicPort");
+    expect(adoptAt).toBeGreaterThan(-1);
+    expect(probeAt).toBeGreaterThan(adoptAt);
+  });
+
+  test("the edge is spawned detached so it survives self-replace", () => {
+    const spawnEdge = supervisorCode.slice(
+      supervisorCode.indexOf("async function spawnEdge"),
+      supervisorCode.indexOf("async function spawnEdge") + 1200,
+    );
+    expect(spawnEdge).toContain("detached: true");
+    expect(spawnEdge).toContain("withProbeSpawnGate");
+    // Bun.spawn would tie it to the supervisor's job object on Windows and kill
+    // it the moment the old supervisor exits during an upgrade.
+    expect(spawnEdge).not.toContain("Bun.spawn");
+  });
+
+  test("the edge forwarder never spawns a child process", () => {
+    // The whole design rests on this: a child would inherit the listening
+    // socket handle and could zombie the public port.
+    const edgeCode = readFileSync(
+      resolve(import.meta.dir, "../../src/services/edge-forwarder.ts"),
+      "utf-8",
+    ).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ""); // strip comments, which discuss spawning
+    expect(edgeCode).not.toMatch(/spawn|child_process|execFile|exec\(/);
   });
 
   test("spawnServer hunts zombie-port orphans before falling back to another port", () => {

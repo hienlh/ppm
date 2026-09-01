@@ -1,10 +1,16 @@
 /**
  * Minimal HTTP server that serves a "stopped" page when the PPM server child is down.
- * Binds to the same port so the tunnel URL still works.
+ *
+ * It stands in for the server, so it binds an OS-assigned loopback port and
+ * publishes it to `.server-port` exactly as the real server does. The edge
+ * forwarder then routes the public port here and the tunnel URL keeps working —
+ * which is the whole point of the page. Binding the public port directly would
+ * collide with the edge, which owns it.
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getPpmDir } from "./ppm-dir.ts";
+import { SERVER_PORT_FILE } from "./edge-target-resolver.ts";
 
 function log(level: string, msg: string) {
   const ts = new Date().toISOString();
@@ -36,6 +42,11 @@ const STOPPED_HTML = `<!DOCTYPE html>
 
 let stoppedServer: ReturnType<typeof Bun.serve> | null = null;
 
+/**
+ * @param port  0 in normal operation — the edge finds this page via
+ *              `.server-port`, so it needs no fixed port of its own.
+ * @param host  loopback; the edge is the only public listener.
+ */
 export function startStoppedPage(port: number, host: string) {
   if (stoppedServer) return;
 
@@ -56,7 +67,13 @@ export function startStoppedPage(port: number, host: string) {
         });
       },
     });
-    log("INFO", `Stopped page serving on port ${port}`);
+    // Take over as the edge's target so the public URL shows this page.
+    try {
+      writeFileSync(SERVER_PORT_FILE(), String(stoppedServer.port));
+    } catch (e) {
+      log("WARN", `Failed to publish stopped-page port: ${e}`);
+    }
+    log("INFO", `Stopped page serving on ${host}:${stoppedServer.port}`);
   } catch (e) {
     log("WARN", `Failed to start stopped page: ${e}`);
   }

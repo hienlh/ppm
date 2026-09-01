@@ -2075,12 +2075,22 @@ The supervisor is a long-lived parent process that manages server + tunnel child
 **Architecture:**
 ```
 Supervisor Process (parent)
-  ├── Server Child (Hono HTTP server)
-  │   ├── Health checks every 30s (/api/health)
+  ├── Edge Forwarder (detached; owns the PUBLIC port)
+  │   ├── Raw TCP pipe → server's loopback port (no HTTP parsing, so WS/SSE pass through)
+  │   ├── Target read per connection from ~/.ppm/.server-port
+  │   ├── SPAWNS NO CHILDREN — that is why its socket can never be inherited
+  │   │   and its port can never zombie; cloudflared stays pinned to it forever
+  │   ├── Liveness probe every 10s → respawn
+  │   └── Adopted by PID across a self-replace upgrade (adopt BEFORE any bind probe)
+  │
+  ├── Server Child (Hono HTTP server, 127.0.0.1:0 — OS-assigned)
+  │   ├── Publishes its bound port to ~/.ppm/.server-port (single writer)
+  │   ├── Health checks every 30s against that port, never the public one
   │   ├── Auto-restart on crash (exponential backoff, max 10 restarts)
   │   └── If in "stopped" state, serves minimal 503 page instead of restarting
   │
   ├── Tunnel Child (Cloudflare Quick Tunnel, always enabled)
+  │   ├── Origin is the EDGE port, so a server port move cannot rotate the URL
   │   ├── URL probe every 2min
   │   ├── Auto-reconnect on failure
   │   └── URL persisted to status.json
@@ -2095,7 +2105,8 @@ Supervisor Process (parent)
   │   └── npm registry poll → availableVersion written to status.json
   │
   ├── Stopped Page Server
-  │   ├── Lightweight HTTP handler on same port as server
+  │   ├── Lightweight HTTP handler on a loopback port, published to .server-port
+  │   │   so the edge routes the public URL to it (it stands in for the server)
   │   ├── Returns 503 on /api/health
   │   └── Tunnels Cloud WS calls through to PPM Cloud
   │

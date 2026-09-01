@@ -153,3 +153,72 @@ the handle count low also keeps `fs.inotify.max_user_instances` (default 128) ou
 
 Raising the sysctl limit is not a fix — each watch pins ~1KB of kernel memory, so a 2M ceiling
 reserves ~2GB to paper over waste.
+
+---
+
+## Public tunnel URL stability
+
+### Why the public URL used to rotate on every upgrade
+
+**Problem**: a quick trycloudflare tunnel dies with its `cloudflared` process and the URL cannot be
+recovered. The supervisor kept that process alive across a self-replace upgrade, but a tunnel is
+pinned to one *origin port*. When the server could not rebind that port it moved to a nearby one,
+the supervisor re-pointed the tunnel, and the URL changed. The port moved because of a zombie port.
+
+**Zombie port**: on Windows a child spawned with fd stdio inherits every inheritable handle,
+including a listening socket. The server spawns chat/tool/MCP subprocesses constantly; when one is
+orphaned it keeps the server's socket open, so the port stays in LISTEN under a dead PID and can
+never be rebound. Three different debris shapes caused this within two weeks — `nohup` coreutils,
+a `bun run dev:web` tree, and orphaned `mcp-remote` MCP-connector processes. Whitelisting each new
+shape was a losing game.
+
+**Fix**: the server no longer needs a stable port. A dedicated **edge forwarder** owns the public
+port and pipes raw TCP to whatever loopback port the server happened to bind, so `cloudflared`
+stays pinned to the edge forever.
+
+What makes it work: **the edge spawns no child processes**, so its socket can never be inherited
+and its port can never zombie. A test enforces that invariant (`supervisor-resilience.test.ts` →
+"the edge forwarder never spawns a child process"). Any subprocess call added to
+`src/services/edge-forwarder.ts` reintroduces the original bug.
+
+**Files**: `src/services/edge-forwarder.ts`, `src/services/edge-target-resolver.ts`,
+`src/services/supervisor.ts`
+
+### Bun drops socket data that arrives while a socket is paused
+
+Forwarding means resolving the upstream first, so the client's first bytes usually arrive before
+there is anywhere to send them. The obvious guard — `socket.pause()` until `.pipe()` is wired —
+silently loses them on Bun 1.3.13. So does leaving the socket with no `data` listener. Both
+variants swallowed the first HTTP request and the connection simply hung.
+
+A standalone repro compared four variants (`pause`→`pipe`, `pause`→`pipe`→`resume`, no pause, and
+buffering). Only buffering worked: attach a `data` listener synchronously on the connection tick,
+buffer the chunks (bounded — an unbounded buffer is a memory DoS during an upgrade window), then
+replay them into the upstream and pipe. Removing the listener and piping must happen in the same
+tick so no chunk slips through the gap.
+
+### `_opts.port` in the supervisor means the PUBLIC port, not the server's
+
+After the edge took over the public port, three call sites still read that value as the server's,
+and none of them failed a test:
+
+- the **server health probe** — a dead edge looks like a dead server, so the supervisor would kill
+  a healthy one every third cycle;
+- the **pre-self-replace port wait**, which tree-kills whatever holds the port — that is the edge,
+  during an upgrade, which is exactly the URL rotation being fixed;
+- the **stopped page**, which bound the public port directly and collided with the edge.
+
+The health probe now reads the server's own `.server-port`, the self-replace wait is skipped when
+an edge is running, and the stopped page binds loopback and publishes itself so the edge routes to
+it. **When you change what a widely-read variable means, audit every reader — tests will not find
+these.**
+
+### Adoption must come before any bind probe
+
+`ensureBindablePort` treats a live PPM process holding the port as debris and tree-kills it, so
+probing the public port before adopting the edge kills the healthy edge it was about to adopt.
+Adopt first; probe only when there is nothing to adopt.
+
+Related: `findPortListenerPid` needs `netstat` on Windows and `lsof` on POSIX, and returns `0` when
+the tool is missing. Treating "cannot tell" as "does not match" refused every adoption on such a
+box and spawned a duplicate edge that then could not bind.

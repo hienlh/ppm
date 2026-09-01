@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { writeFileSync } from "node:fs";
+import { SERVER_PORT_FILE } from "../services/edge-target-resolver.ts";
 import { configService } from "../services/config.service.ts";
 import { VERSION } from "../version.ts";
 import { authMiddleware } from "./middleware/auth.ts";
@@ -940,5 +942,16 @@ if (process.argv.includes("__serve__")) {
     }, 200);
   }
 
-  console.log(`Server child ready on port ${port}`);
+  // Publish the port we actually bound. With `port: 0` the OS picks it, so this
+  // file is the only way anything else can find the server — the edge forwarder
+  // reads it to know where to send traffic, and the supervisor mirrors it into
+  // status.json. The server is the single writer; see edge-target-resolver.ts
+  // for why this is not status.json.
+  try {
+    writeFileSync(SERVER_PORT_FILE(), String(server.port));
+  } catch (e) {
+    console.error(`[serve] Failed to publish server port: ${e}`);
+  }
+
+  console.log(`Server child ready on port ${server.port}`);
 }

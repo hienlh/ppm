@@ -81,6 +81,11 @@ export async function stopServer(options?: { all?: boolean; kill?: boolean }) {
         if (data.supervisorPid) { killPid(data.supervisorPid, "supervisor"); killed++; }
         if (data.pid) { killPid(data.pid, "server"); killed++; }
         if (data.tunnelPid) { killPid(data.tunnelPid, "tunnel"); killed++; }
+        // The edge forwarder is spawned detached so it survives an upgrade's
+        // self-replace — which means killing the supervisor does NOT take it
+        // down. Left running it keeps holding the public port and the next
+        // `ppm start` collides with it.
+        if (data.edgePid) { killPid(data.edgePid, "edge"); killed++; }
       } catch {}
     }
     if (existsSync(pidFile())) {

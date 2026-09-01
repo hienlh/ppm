@@ -26,6 +26,9 @@ import {
   findPortListenerPid, isPpmProcess, collectProcessTree, terminateTree,
 } from "./windows-process-tree.ts";
 import { reapZombiePortOrphans } from "./windows-zombie-port-reaper.ts";
+import {
+  SERVER_PORT_FILE, resolveTargetPort, _resetTargetCache,
+} from "./edge-target-resolver.ts";
 import { PLIST_LABEL } from "./autostart-generator.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────────
@@ -43,6 +46,8 @@ const TUNNEL_URL_REGEX = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
 const UPGRADE_CHECK_INTERVAL_MS = 900_000;  // 15min
 const UPGRADE_SKIP_INITIAL_MS = 300_000;    // 5min delay before first check
 const SELF_REPLACE_TIMEOUT_MS = 30_000;     // 30s to wait for new supervisor
+const EDGE_PROBE_INTERVAL_MS = 10_000;      // the public port is dark while the edge is down — check often
+const SERVER_PORT_MIRROR_TIMEOUT_MS = 30_000; // how long to wait for the server to publish its port
 
 const logFile = () => resolve(getPpmDir(), "ppm.log");
 const restartingFlag = () => resolve(getPpmDir(), ".restarting");
@@ -54,6 +59,10 @@ let tunnelChild: Subprocess | null = null;
 let tunnelUrl: string | null = null;
 let tunnelPort: number | null = null; // origin port the live tunnel targets
 let adoptedTunnelPid: number | null = null; // PID of tunnel kept alive across upgrade
+// PID of the edge forwarder. Like the tunnel it is spawned detached so it
+// survives self-replace, so a new supervisor adopts it rather than respawning.
+let edgePid: number | null = null;
+let edgeProbeTimer: ReturnType<typeof setInterval> | null = null;
 let shuttingDown = false;
 // Monotonic token for the authoritative tunnel loop. Every EXTERNAL (re)start
 // bumps it; a loop whose captured generation is stale must exit instead of
@@ -306,6 +315,123 @@ function requestServerShutdown(child: Subprocess, timeoutMs: number = 2000): Pro
   });
 }
 
+// ─── Edge forwarder management ─────────────────────────────────────────
+// The edge owns the PUBLIC port and forwards to the server's loopback port.
+// It exists so the server never needs a stable port: cloudflared stays pinned
+// to the edge, so a server port move can no longer rotate the public URL.
+// The edge spawns no children, so unlike the server its listening socket can
+// never be inherited and its port can never zombie.
+
+/** Argv for re-invoking this binary (or source tree) as the edge process. */
+function edgeCmd(publicPort: number, host: string): string[] {
+  const args = ["__edge__", String(publicPort), host];
+  return isCompiledBinary()
+    ? [process.execPath, ...args]
+    : [process.execPath, "run", resolve(import.meta.dir, "edge-forwarder.ts"), ...args];
+}
+
+/**
+ * Spawn the edge detached so it outlives this supervisor's self-replace.
+ *
+ * `Bun.spawn` would tie it to the supervisor's job object on Windows and kill
+ * it the moment the old supervisor exits during an upgrade — the same reason
+ * spawnTunnel uses node's detached spawn. Gated on the probe mutex: fd stdio
+ * enables handle inheritance, and spawning while a port probe is open would
+ * hand the edge a listener handle.
+ */
+async function spawnEdge(publicPort: number, host: string, logFd: number): Promise<void> {
+  const [bin, ...args] = edgeCmd(publicPort, host);
+  const { spawn: nodeSpawn } = require("node:child_process") as typeof import("node:child_process");
+  const proc = await withProbeSpawnGate(() => nodeSpawn(bin!, args, {
+    detached: true,
+    windowsHide: true,
+    stdio: ["ignore", "ignore", logFd] as ["ignore", "ignore", number],
+  }));
+  proc.unref();
+  edgePid = proc.pid ?? null;
+  updateStatus({ edgePid });
+  log("INFO", `Edge forwarder started on ${host}:${publicPort} (PID: ${edgePid}, detached)`);
+}
+
+/**
+ * Adopt an edge kept alive across an upgrade.
+ *
+ * Liveness alone is not proof of identity — Windows reuses PIDs, and adopting a
+ * recycled PID would leave the public port unserved with the supervisor
+ * believing all is well. Require that the PID is the one actually listening on
+ * the public port.
+ */
+async function adoptEdge(publicPort: number, host: string): Promise<boolean> {
+  const pid = readStatus().edgePid as number | undefined;
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0); // throws if dead
+  } catch {
+    log("INFO", `adoptEdge: recorded edge PID ${pid} is dead`);
+    return false;
+  }
+
+  const listener = findPortListenerPid(publicPort);
+  if (listener > 0 && listener !== pid) {
+    log("WARN", `adoptEdge: PID ${pid} alive but port ${publicPort} is held by PID ${listener} — not adopting`);
+    return false;
+  }
+  if (listener === 0) {
+    // Listener unknown, not "absent": findPortListenerPid needs netstat on
+    // Windows and lsof on POSIX, and returns 0 when the tool is missing or the
+    // lookup fails. Treating that as a mismatch would refuse every adoption on
+    // such a box and spawn a duplicate edge that then cannot bind. Fall back to
+    // the weaker but decisive question: is anything holding the port at all?
+    if (await isPortBindable(publicPort, host)) {
+      log("INFO", `adoptEdge: PID ${pid} alive but port ${publicPort} is free — stale record, not adopting`);
+      return false;
+    }
+    log("DEBUG", `adoptEdge: cannot identify the listener on ${publicPort}; port is occupied and PID ${pid} is alive — adopting`);
+  }
+
+  edgePid = pid;
+  log("INFO", `Adopted existing edge forwarder (PID: ${pid}, port: ${publicPort})`);
+  return true;
+}
+
+/** Respawn the edge if it dies. Without it the public port simply goes dark. */
+function startEdgeProbe(publicPort: number, host: string, logFd: number) {
+  if (edgeProbeTimer) return;
+  edgeProbeTimer = setInterval(() => {
+    if (shuttingDown || getState() === "upgrading" || !edgePid) return;
+    try {
+      process.kill(edgePid, 0);
+    } catch {
+      log("WARN", `Edge forwarder (PID: ${edgePid}) died — respawning`);
+      edgePid = null;
+      void spawnEdge(publicPort, host, logFd).catch((e) =>
+        log("ERROR", `Edge respawn failed: ${e}`));
+    }
+  }, EDGE_PROBE_INTERVAL_MS);
+}
+
+/**
+ * Copy the port the server published into status.json.
+ *
+ * Observability only — `ppm status` and the CLI health probe read it. The edge
+ * reads `.server-port` directly so it never depends on this, or on the
+ * supervisor being alive at all.
+ */
+async function mirrorServerPort(): Promise<void> {
+  const deadline = Date.now() + SERVER_PORT_MIRROR_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    _resetTargetCache(); // the memo is for the forwarder's hot path, not this poll
+    const port = resolveTargetPort();
+    if (port !== null) {
+      updateStatus({ serverPort: port });
+      log("INFO", `Server bound loopback port ${port}`);
+      return;
+    }
+    await Bun.sleep(200);
+  }
+  log("WARN", "Server never published its port — status.serverPort left stale");
+}
+
 // ─── Server management ─────────────────────────────────────────────────
 export async function spawnServer(
   serverArgs: string[],
@@ -319,34 +445,19 @@ export async function spawnServer(
     await reapTrackedDescendants((m) => log("INFO", m)).catch(() => {});
   }
 
-  // Guarantee a bindable port before spawning. If the preferred port is held by
-  // a zombie socket (common after hibernate/resume), fall back to a free port
-  // and re-point the tunnel at the new origin — otherwise the child would
-  // crash-loop on EADDRINUSE until max_restarts and the supervisor would pause.
-  // Prefer the port a LIVE tunnel already targets (may differ from the
-  // configured port after an earlier zombie-port fallback): binding anywhere
-  // else forces a tunnel restart, which rotates the public trycloudflare URL.
-  const tunnelAlive = !!(tunnelUrl || tunnelChild || adoptedTunnelPid);
-  const preferred = tunnelAlive && tunnelPort !== null ? tunnelPort : _opts.port;
-  if (preferred !== _opts.port) {
-    log("INFO", `Preferring tunnel origin port ${preferred} over configured ${_opts.port} (public URL continuity)`);
-  }
-  const boundPort = await ensureBindablePort(preferred, _opts.host);
-  if (boundPort !== _opts.port) {
-    _opts.port = boundPort;
-    serverArgs[1] = String(boundPort); // serverArgs = ["__serve__", <port>, <host>, ...]
-    updateStatus({ port: boundPort });
-    log("WARN", `Server port moved to ${boundPort}`);
-  }
-  // Re-point the tunnel only when its origin differs from the port we bound.
-  // (tunnelPort === null means an old-format adoption without origin info —
-  // fall back to restarting whenever the bind moved off the preferred port.)
-  if (tunnelAlive && tunnelPort !== null && tunnelPort !== boundPort) {
-    restartTunnel(boundPort);
-  } else if (tunnelAlive && tunnelPort === null && boundPort !== preferred) {
-    restartTunnel(boundPort);
-  }
-
+  // The server binds an OS-assigned loopback port (`__serve__ 0 127.0.0.1`) and
+  // publishes it to `.server-port`; the edge forwards the public port to it.
+  //
+  // There is deliberately no port negotiation here any more. The old code
+  // preferred the live tunnel's origin port and fell back to a nearby port when
+  // a zombie socket held it — and that fallback re-pointed the tunnel, which is
+  // what rotated the public URL on every upgrade. A server that needs no
+  // particular port cannot trigger that, and cannot drift 3212→3213→3214.
+  // Zombie-port handling now applies only to the edge's public port.
+  //
+  // Clear the stale port file so the mirror below cannot publish the previous
+  // generation's port to `ppm status`.
+  try { unlinkSync(SERVER_PORT_FILE()); } catch {}
   const cmd = isCompiledBinary()
     ? [process.execPath, ...serverArgs]
     : [process.execPath, "run", resolve(import.meta.dir, "..", "server", "index.ts"), ...serverArgs];
@@ -366,6 +477,7 @@ export async function spawnServer(
   updateStatus({ pid: childPid });
   writeFileSync(PID_FILE(), String(process.pid)); // supervisor PID for stop
   log("INFO", `Server started (PID: ${childPid})`);
+  void mirrorServerPort();
 
   const exitCode = await serverChild.exited;
   serverChild = null;
@@ -672,15 +784,18 @@ function startServerHealthCheck() {
       return;
     }
     noServerChildCycles = 0;
-    // _opts.port tracks the server's real port (spawnServer updates it on
-    // zombie-port fallback). status.json can override, but never trust a
-    // startup-time closure value — a stale port here makes the health check
-    // kill a healthy server every cycle.
-    let checkPort = _opts.port;
-    try {
-      const status = readStatus();
-      if (status.port && typeof status.port === "number") checkPort = status.port;
-    } catch {}
+    // Probe the SERVER's own loopback port, never `_opts.port` — that is the
+    // public port and belongs to the edge. Probing through the edge would make
+    // a dead edge look like a dead server and kill a perfectly healthy one
+    // every third cycle. Edge liveness is startEdgeProbe's job.
+    _resetTargetCache();
+    const checkPort = resolveTargetPort();
+    if (checkPort === null) {
+      // Server has not published a port yet (still booting, or just respawned).
+      // Absence of a port is not evidence of ill health.
+      healthFailCount = 0;
+      return;
+    }
     try {
       const res = await fetch(`http://127.0.0.1:${checkPort}/api/health`, {
         signal: AbortSignal.timeout(5000),
@@ -922,30 +1037,40 @@ async function selfReplace(): Promise<{ success: boolean; error?: string }> {
     // The tree-kill above already reaped the server's grandchildren, so the
     // listening socket is released; this loop just waits for the OS to finish
     // tearing it down before the new supervisor binds.
-    const portFreeStart = Date.now();
-    const portTimeout = process.platform === "win32" ? 3_000 : 10_000;
-    while (Date.now() - portFreeStart < portTimeout) {
-      const inUse = !(await isPortBindable(_opts.port, _opts.host));
-      if (!inUse) break;
-      log("DEBUG", `Port ${_opts.port} still in use, waiting...`);
-      await Bun.sleep(200);
-    }
+    // Only relevant when NO edge is running — i.e. migrating from a pre-edge
+    // build where the server itself held the public port. With an edge alive
+    // the port is legitimately occupied by it and the new supervisor adopts it;
+    // waiting for the port to free would time out, and the tree-kill below
+    // would murder the edge and rotate the public URL — the exact failure this
+    // whole design removes.
+    if (!edgePid) {
+      const portFreeStart = Date.now();
+      const portTimeout = process.platform === "win32" ? 3_000 : 10_000;
+      while (Date.now() - portFreeStart < portTimeout) {
+        const inUse = !(await isPortBindable(_opts.port, _opts.host));
+        if (!inUse) break;
+        log("DEBUG", `Port ${_opts.port} still in use, waiting...`);
+        await Bun.sleep(200);
+      }
 
-    // Windows: the tracked-descendant snapshot can miss an orphan (an SDK
-    // grandchild spawned after the last snapshot, or whose parent chain already
-    // broke). If it still holds the inherited listening socket, the new
-    // supervisor can never bind. Resolve the real holder via netstat and
-    // tree-kill it so the handoff doesn't dead-end on a zombie port.
-    if (process.platform === "win32") {
-      const stillInUse = !(await isPortBindable(_opts.port, _opts.host));
-      if (stillInUse) {
-        const holderPid = findPortListenerPid(_opts.port);
-        if (holderPid > 0) {
-          log("WARN", `Port ${_opts.port} still held by PID ${holderPid} before self-replace — tree-killing`);
-          killProcessTree(holderPid);
-          await Bun.sleep(500);
+      // Windows: the tracked-descendant snapshot can miss an orphan (an SDK
+      // grandchild spawned after the last snapshot, or whose parent chain already
+      // broke). If it still holds the inherited listening socket, the new
+      // supervisor can never bind. Resolve the real holder via netstat and
+      // tree-kill it so the handoff doesn't dead-end on a zombie port.
+      if (process.platform === "win32") {
+        const stillInUse = !(await isPortBindable(_opts.port, _opts.host));
+        if (stillInUse) {
+          const holderPid = findPortListenerPid(_opts.port);
+          if (holderPid > 0) {
+            log("WARN", `Port ${_opts.port} still held by PID ${holderPid} before self-replace — tree-killing`);
+            killProcessTree(holderPid);
+            await Bun.sleep(500);
+          }
         }
       }
+    } else {
+      log("INFO", `Edge forwarder (PID: ${edgePid}) holds port ${_opts.port} — leaving it for the new supervisor to adopt`);
     }
 
     // Spawn new supervisor using saved argv
@@ -1226,7 +1351,9 @@ export async function softStop() {
 
   // Keep: tunnel, Cloud WS, upgrade checks, tunnel probe
   updateStatus({ state: "stopped", pid: null, stoppedAt: new Date().toISOString() });
-  startStoppedPage(_opts.port, _opts.host);
+  // Loopback + OS-assigned: it publishes itself to `.server-port` and the edge
+  // routes the public port to it, so the tunnel URL keeps serving.
+  startStoppedPage(0, "127.0.0.1");
 
   // Wait for resume signal
   await waitForResume();
@@ -1282,6 +1409,15 @@ export function shutdown() {
   if (adoptedTunnelPid) {
     log("INFO", `Killing adopted tunnel (PID: ${adoptedTunnelPid})`);
     try { process.kill(adoptedTunnelPid, "SIGKILL"); } catch {}
+  }
+  // Same treatment as the tunnel: the edge is detached, so a plain supervisor
+  // exit would leave it holding the public port. The self-replace upgrade path
+  // exits without calling shutdown(), which is exactly why the edge survives
+  // an upgrade but not a stop.
+  if (edgePid) {
+    log("INFO", `Killing edge forwarder (PID: ${edgePid})`);
+    try { process.kill(edgePid, "SIGKILL"); } catch {}
+    edgePid = null;
   }
 }
 
@@ -1363,15 +1499,22 @@ export async function runSupervisor(opts: {
     tunnelPid: isUpgrade ? (prevStatus.tunnelPid ?? null) : null,
     shareUrl: isUpgrade ? (prevStatus.shareUrl ?? null) : null,
     tunnelPort: isUpgrade ? (prevStatus.tunnelPort ?? null) : null,
+    // The edge is detached and survives self-replace exactly like the tunnel,
+    // so its PID must survive this wholesale rewrite or the new supervisor
+    // would spawn a second edge and collide on the public port.
+    edgePid: isUpgrade ? (prevStatus.edgePid ?? null) : null,
+    serverPort: null, // republished by the server on every spawn
   });
   // Diagnostic: a cold start (isUpgrade=false) always nulls the tunnel and forces
   // a fresh URL. A genuine upgrade must arrive here with state "upgrading" AND a
   // live tunnelPid for the public URL to survive — log both to catch which path ran.
   log("INFO", `Startup: isUpgrade=${isUpgrade} prevState=${prevStatus.state} prevTunnelPid=${prevStatus.tunnelPid ?? null} prevShareUrl=${prevStatus.shareUrl ?? null}`);
 
-  // Build __serve__ args
+  // Build __serve__ args. Port 0 = OS-assigned, bound to loopback only: the
+  // edge is the sole public listener, and the server publishes whatever port it
+  // got to `.server-port`.
   const serverArgs = [
-    "__serve__", String(opts.port), opts.host,
+    "__serve__", "0", "127.0.0.1",
     opts.profile ?? "",
   ];
   // Strip trailing empty args
@@ -1568,6 +1711,50 @@ export async function runSupervisor(opts: {
     // Sweep leftover cloudflared orphans (crashed supervisors / pre-fix stale
     // loops) so they don't saturate the network and false-trigger regeneration.
     await reapOrphanedTunnels(tunnelAdopted ? adoptedTunnelPid : null);
+  }
+
+  // The edge owns the public port, so it must exist before anything else tries
+  // to use that port — and it must be started BEFORE the server child. The
+  // edge's listening socket lives in the edge process, so a server spawned
+  // afterwards cannot inherit it; reversing this order would put the socket in
+  // reach of the server's chat/tool/MCP descendants and reintroduce the very
+  // zombie-port failure the edge exists to prevent.
+  //
+  // Prefer the port the adopted tunnel already points at: binding anywhere else
+  // would strand cloudflared on a dead origin and force a URL rotation.
+  const publicPort = tunnelAdopted && tunnelPort !== null ? tunnelPort : opts.port;
+  if (publicPort !== opts.port) {
+    log("INFO", `Edge takes tunnel origin port ${publicPort} over configured ${opts.port} (public URL continuity)`);
+  }
+
+  // Adoption MUST be attempted before any bind probe. `ensureBindablePort`
+  // treats a PPM process holding the port as debris to reclaim and tree-kills
+  // it — which, for a healthy adopted edge, would destroy the one thing keeping
+  // the public URL alive across the upgrade. Probe only when there is no edge.
+  let boundPublicPort = publicPort;
+  if (!(await adoptEdge(publicPort, opts.host))) {
+    boundPublicPort = await ensureBindablePort(publicPort, opts.host);
+    if (boundPublicPort !== publicPort) {
+      log("WARN", `Public port ${publicPort} unbindable — edge moved to ${boundPublicPort}. This is now the ONLY thing that can rotate the public URL.`);
+    }
+    await spawnEdge(boundPublicPort, opts.host, logFd);
+  }
+  _opts.port = boundPublicPort;
+  updateStatus({ port: boundPublicPort });
+  startEdgeProbe(boundPublicPort, opts.host, logFd);
+
+  // Sanity check, not a port-move trigger: if the edge could not take the port
+  // the adopted tunnel points at, that tunnel is now aimed at a dead origin and
+  // would serve nothing. Drop it so the fresh-tunnel path below replaces it.
+  // Unreachable in normal operation — reaching it means a zombie held the
+  // public port, which is the one remaining way the public URL can rotate.
+  if (tunnelAdopted && tunnelPort !== null && tunnelPort !== boundPublicPort) {
+    log("WARN", `Adopted tunnel targets origin ${tunnelPort} but the edge bound ${boundPublicPort} — the public URL cannot be preserved, replacing the tunnel`);
+    if (adoptedTunnelPid) { try { process.kill(adoptedTunnelPid, "SIGTERM"); } catch {} adoptedTunnelPid = null; }
+    tunnelUrl = null;
+    tunnelPort = null;
+    updateStatus({ shareUrl: null, tunnelPid: null, tunnelPort: null });
+    tunnelAdopted = false;
   }
 
   // Spawn server + (fresh) tunnel in parallel
