@@ -22,9 +22,12 @@
  * reaped whenever the server is stopped or a new supervisor starts.
  */
 import { resolve } from "node:path";
-import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { getPpmDir } from "./ppm-dir.ts";
+// `ps` ships in `procps` and is absent from slim images; /proc gives the same
+// data with no subprocess. See proc-table-linux.ts for why this matters.
+import { readProcCmdline, readProcPpidMap } from "./proc-table-linux.ts";
 
 /**
  * Return the PID that owns the LISTENING socket for `port`, or 0 if none /
@@ -65,51 +68,6 @@ export function findPortListenerPid(port: number): number {
     }
   } catch {}
   return 0;
-}
-
-// ─── /proc readers (Linux) ─────────────────────────────────────────────
-// `ps` is NOT guaranteed to exist: it ships in `procps`, which slim Debian
-// images (including the one PPM's own test suite runs in) leave out. Every
-// caller here swallows the spawn error and reports "no descendants" / "not a
-// PPM process", so a missing binary silently disables orphan reaping instead of
-// failing loudly. Linux exposes the same data through /proc with no subprocess
-// at all, so prefer it and keep `ps` only for macOS.
-
-/** Lowercased argv of `pid`, or null when /proc is unavailable/unreadable. */
-function readProcCmdline(pid: number): string | null {
-  if (process.platform !== "linux") return null;
-  try {
-    // NUL-separated argv; join with spaces so substring checks behave like `ps`.
-    return readFileSync(`/proc/${pid}/cmdline`, "utf-8").split("\0").join(" ").toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-/** pid → ppid for every visible process, or null when /proc is unavailable. */
-function readProcPpidMap(): Map<number, number> | null {
-  if (process.platform !== "linux") return null;
-  let entries: string[];
-  try {
-    entries = readdirSync("/proc");
-  } catch {
-    return null;
-  }
-  const ppidOf = new Map<number, number>();
-  for (const name of entries) {
-    if (!/^\d+$/.test(name)) continue;
-    try {
-      const stat = readFileSync(`/proc/${name}/stat`, "utf-8");
-      // Format: `pid (comm) state ppid ...`. comm can contain spaces AND
-      // parentheses, so anchor on the LAST ')' rather than splitting naively.
-      const rest = stat.slice(stat.lastIndexOf(")") + 1).trim().split(/\s+/);
-      const ppid = parseInt(rest[1] ?? "", 10); // [0] = state, [1] = ppid
-      if (!isNaN(ppid)) ppidOf.set(parseInt(name, 10), ppid);
-    } catch {
-      // Process exited between readdir and read — normal, skip it.
-    }
-  }
-  return ppidOf.size > 0 ? ppidOf : null;
 }
 
 /**

@@ -240,8 +240,21 @@ dependency, and much faster — the two tests went from 5s timeouts to ~100ms.
 Parsing note: `/proc/<pid>/stat` is `pid (comm) state ppid …` and `comm` may contain spaces **and
 parentheses**, so anchor on the last `)` instead of splitting the line naively.
 
-Still unconverted for the same reason (`ps` may be absent): `resource-monitor.service.ts` and
-`tunnel-registry.service.ts`. Both degrade rather than corrupt, but they are the same latent bug.
+All call sites now go through `src/services/proc-table-linux.ts`, which reads the table once per
+call and derives what each caller used to ask `ps` for:
+
+| `ps` column | `/proc` source |
+|---|---|
+| `pid`, `ppid` | `/proc/<pid>/stat` fields 1 and 4 |
+| `%cpu` | `(utime+stime)/HZ / elapsed` — fields 14, 15, 22 plus `/proc/uptime` |
+| `rss` | field 24 (pages) × page size |
+| `etimes` | `uptime − starttime/HZ` |
+| `lstart` | `btime` from `/proc/stat` + `starttime/HZ` |
+| `args` | `/proc/<pid>/cmdline` (NUL-separated) |
+| `comm` | `/proc/<pid>/comm` |
+
+`HZ` is assumed to be 100 — `sysconf(_SC_CLK_TCK)` is unreachable from JS, and every mainstream
+Linux ships 100. A wrong value would skew a CPU percentage, nothing more.
 
 ## Bun on Linux cannot re-watch a deleted-and-recreated directory
 
@@ -257,9 +270,17 @@ delivers, so the defect is Linux-only.
 **No clean workaround.** A trailing separator is a different key and works exactly once; `//` and
 `///` normalise to the same key, so a rotating-spelling scheme fails from the second cycle.
 
-**Consequence**: on Linux, changes inside a directory that was deleted and recreated (a `git
-checkout` across branches, `rm -rf build && mkdir build`) stop being reported until the server
-restarts. The test asserting re-attachment is skipped on Linux with this reason and still runs
-elsewhere. Fixing it properly needs a different watch mechanism (or a polling fallback) for
-re-covered directories — deliberately not added, given the file watcher's history with watch-count
-blowups.
+**The poisoning does not spread**, and that is what made a fix affordable: a directory Bun has
+never watched works normally even inside a recreated parent
+(`spike-bun-watch-poison-scope-probe.mjs`). So only paths that were actually re-attached are dead.
+
+**Fix**: `WatchTree` remembers every path it has handed to `fs.watch`. Re-attaching one of them
+means that directory was deleted and recreated, so on Linux it hands the directory to
+`RecreatedDirPoller` (readdir + mtime diff, 1s interval, hard cap of 64 directories) and covers the
+subtree non-recursively so each child gets a watcher on a path the runtime still honours. Windows
+and macOS never construct the poller.
+
+`WatchTreeStats.polledDirs` reports how many directories are on the degraded path, and the cap
+being hit sets `truncated` — so a churn storm shows up in stats instead of silently growing the
+poll set. Given this watcher once reached ~360k inotify watches, refusing to grow without limit
+matters more than perfect coverage.

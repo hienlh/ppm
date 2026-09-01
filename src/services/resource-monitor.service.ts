@@ -5,6 +5,7 @@
  */
 
 import { parseProcessList, buildTree, groupProcesses } from "./resource-monitor-utils.ts";
+import { readProcTable } from "./proc-table-linux.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -76,17 +77,40 @@ class ResourceMonitorService {
     }
   }
 
+  /**
+   * Prefer `/proc` and fall back to `ps`. `ps` is not installed on slim Linux
+   * images, and the old code let the failed spawn surface as an empty process
+   * list — the resource panel just showed zeros with no hint why.
+   */
+  private async listProcesses(): Promise<ProcessEntry[]> {
+    const table = readProcTable();
+    if (table) {
+      const now = Date.now();
+      return table
+        .filter((p) => p.pid !== 0 && p.args)
+        .map((p) => ({
+          pid: p.pid,
+          ppid: p.ppid,
+          cpu: Math.round(p.cpuPercent * 10) / 10,
+          ramMB: Math.round((p.rssKB / 1024) * 10) / 10,
+          startedAt: Math.min(p.startedAtMs, now),
+          command: p.args,
+        }));
+    }
+
+    const proc = Bun.spawn({
+      cmd: ["ps", "-e", "-o", "pid,ppid,%cpu,rss,etimes,args"],
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    return parseProcessList(stdout);
+  }
+
   private async poll() {
     try {
-      const proc = Bun.spawn({
-        cmd: ["ps", "-e", "-o", "pid,ppid,%cpu,rss,etimes,args"],
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      const stdout = await new Response(proc.stdout).text();
-      await proc.exited;
-
-      const entries = parseProcessList(stdout);
+      const entries = await this.listProcesses();
       const rootPid = process.pid;
       const serverEntry = entries.find((e) => e.pid === rootPid);
       const children = buildTree(entries, rootPid);

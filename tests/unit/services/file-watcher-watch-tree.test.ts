@@ -82,7 +82,7 @@ describe("WatchTree coverage", () => {
 
     const { tree } = open(root);
     // root + src + 5 mods + 5 nested, all under one recursive watch on the root.
-    expect(tree.stats()).toEqual({ dirs: 12, watchers: 1, truncated: false });
+    expect(tree.stats()).toEqual({ dirs: 12, watchers: 1, truncated: false, polledDirs: 0 });
   });
 
   it("splits into per-directory watchers only where an ignored directory sits", () => {
@@ -92,7 +92,7 @@ describe("WatchTree coverage", () => {
 
     const { tree } = open(root);
     // root must be non-recursive (it holds node_modules); src is clean so it takes one recursive watch.
-    expect(tree.stats()).toEqual({ dirs: 4, watchers: 2, truncated: false });
+    expect(tree.stats()).toEqual({ dirs: 4, watchers: 2, truncated: false, polledDirs: 0 });
   });
 
   it("stops at the directory budget and reports truncation", () => {
@@ -113,7 +113,7 @@ describe("WatchTree coverage", () => {
     const { tree } = open(root);
     expect(tree.stats().watchers).toBeGreaterThan(0);
     tree.close();
-    expect(tree.stats()).toEqual({ dirs: 0, watchers: 0, truncated: false });
+    expect(tree.stats()).toEqual({ dirs: 0, watchers: 0, truncated: false, polledDirs: 0 });
   });
 });
 
@@ -166,16 +166,11 @@ describe("WatchTree events", () => {
     expect(await waitFor(() => tree.stats().dirs < before)).toBe(true);
   });
 
-  // Skipped on Linux only, and not because WatchTree is wrong: Bun 1.3.13 keys its
-  // fs.watch registry by the literal path string, so watching a directory that was
-  // deleted and recreated reuses the dead inotify watch and delivers nothing. Verified
-  // with `spike-bun-recursive-watch-probe.mjs`: plain recursive and non-recursive
-  // watches both deliver, and both go silent for a recreated directory. There is no
-  // clean workaround — a trailing separator works exactly once, and `//`/`///` are
-  // normalised to the same key. The same probe on Windows (bun 1.3.10) delivers every
-  // case, so the assertion below is real coverage there and on macOS.
-  const itUnlessBunLinux = process.platform === "linux" ? it.skip : it;
-  itUnlessBunLinux("re-attaches after a watched directory is deleted and recreated", async () => {
+  // On Bun + Linux the re-attached watcher is silent forever (the runtime keys
+  // fs.watch by path string and reuses the dead inotify watch), so this passes
+  // there only because RecreatedDirPoller stands in. Windows and macOS re-watch
+  // correctly and never reach the poller.
+  it("re-attaches after a watched directory is deleted and recreated", async () => {
     const root = makeRoot();
     mkdirSync(join(root, "swap"), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });

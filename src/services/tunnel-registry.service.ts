@@ -14,6 +14,7 @@ import { basename } from "node:path";
 import { resolve } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
+import { readProcTable, readProcComm } from "./proc-table-linux.ts";
 import { configService } from "./config.service.ts";
 import {
   parseCloudflaredCmdline,
@@ -74,6 +75,21 @@ function enumerateWindows(): RawProc[] {
 }
 
 function enumerateUnix(): RawProc[] {
+  // /proc first: `ps` lives in `procps` and slim Linux images omit it, which
+  // used to make cloudflared discovery come back empty with no error.
+  const table = readProcTable();
+  if (table) {
+    return table
+      .filter((p) => /(^|\/)cloudflared(\s|$)/.test(p.args))
+      .map((p) => ({
+        pid: p.pid,
+        // Same role as ps `lstart`: a start-time identity that survives PID reuse.
+        identity: new Date(p.startedAtMs).toISOString(),
+        imagePath: p.args.split(/\s+/)[0] ?? "",
+        cmdline: p.args,
+      }));
+  }
+
   // pid, lstart (identity), full args. Filter to cloudflared, excluding the grep.
   const out = execFileSync("ps", ["-eo", "pid=,lstart=,args="], { encoding: "utf-8", timeout: 6000 });
   const procs: RawProc[] = [];
@@ -190,6 +206,8 @@ export function isCloudflaredPid(pid: number): boolean {
       );
       return basename(out.trim()).toLowerCase() === "cloudflared.exe";
     }
+    const comm = readProcComm(pid);
+    if (comm !== null) return basename(comm) === "cloudflared";
     const out = execFileSync("ps", ["-o", "comm=", "-p", String(pid)], { encoding: "utf-8", timeout: 5000 });
     return basename(out.trim()) === "cloudflared";
   } catch {

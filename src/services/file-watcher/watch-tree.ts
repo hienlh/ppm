@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, watch, type FSWatcher } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { hasIgnoredDirSegment, isIgnoredDirName, isIgnoredPath } from "./ignore-rules.ts";
+import { RecreatedDirPoller } from "./recreated-dir-poller.ts";
 
 /**
  * Watches a project directory while keeping the number of watched directories
@@ -54,18 +55,36 @@ export interface WatchTreeStats {
   dirs: number;
   /** `fs.watch` handles held. */
   watchers: number;
-  /** Coverage was cut short by `maxDirs`, so part of the tree is unwatched. */
+  /** Coverage was cut short by a budget, so part of the tree is unwatched. */
   truncated: boolean;
+  /**
+   * Directories covered by the polling fallback instead of a watcher, because
+   * the runtime cannot re-watch a recreated path. Linux only; 0 elsewhere.
+   */
+  polledDirs: number;
 }
 
 export class WatchTree {
   private readonly attached = new Map<string, AttachedWatcher>();
   private readonly rebuildTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Every path we have ever handed to `fs.watch`. On Bun + Linux a second watch
+   * on the same path after a delete/recreate is silent forever, so this set is
+   * what tells us a watcher cannot be trusted and the poller has to stand in.
+   */
+  private readonly everAttached = new Set<string>();
+  private readonly poller: RecreatedDirPoller | null;
   private covered = 0;
   private truncated = false;
   private closed = false;
 
-  constructor(private readonly options: WatchTreeOptions) {}
+  constructor(private readonly options: WatchTreeOptions) {
+    // Only Bun on Linux has the stale-watch defect; elsewhere re-watching works
+    // and paying for polling would be pure waste.
+    this.poller = process.platform === "linux"
+      ? new RecreatedDirPoller({ onChange: (abs) => this.reportAbs(abs) })
+      : null;
+  }
 
   start(): void {
     this.cover(this.options.root);
@@ -79,12 +98,19 @@ export class WatchTree {
       try { watcher.close(); } catch { /* already gone */ }
     }
     this.attached.clear();
+    this.everAttached.clear();
+    this.poller?.close();
     this.covered = 0;
     this.truncated = false;
   }
 
   stats(): WatchTreeStats {
-    return { dirs: this.covered, watchers: this.attached.size, truncated: this.truncated };
+    return {
+      dirs: this.covered,
+      watchers: this.attached.size,
+      truncated: this.truncated || (this.poller?.truncated ?? false),
+      polledDirs: this.poller?.size ?? 0,
+    };
   }
 
   /** Walk `absDir` and attach the fewest watchers that cover it without touching ignored dirs. */
@@ -134,6 +160,22 @@ export class WatchTree {
 
   private attach(node: ScanNode): void {
     const fitsWholeSubtree = this.covered + node.size <= this.options.maxDirs;
+
+    // A path we have watched before is being re-attached, so this directory was
+    // deleted and recreated. On Bun + Linux its watcher will never fire again:
+    // poll its own entries, and cover the subtree non-recursively so each child
+    // gets a watcher on a path the runtime still honours.
+    if (this.poller && this.everAttached.has(node.path)) {
+      this.poller.add(node.path);
+      if (this.covered + 1 > this.options.maxDirs) {
+        this.truncated = true;
+        return;
+      }
+      this.addWatcher(node.path, false, 1);
+      for (const child of node.dirs) this.attach(child);
+      return;
+    }
+
     // One recursive watch for a subtree the runtime can safely expand on its own.
     if (!node.hasIgnored && fitsWholeSubtree && this.addWatcher(node.path, true, node.size)) return;
 
@@ -158,6 +200,7 @@ export class WatchTree {
       // server down; drop the handle instead and record the lost coverage.
       watcher.on("error", () => this.dropWatcher(absDir));
       this.attached.set(absDir, { watcher, covers, recursive });
+      this.everAttached.add(absDir);
       this.covered += covers;
       return true;
     } catch {
@@ -203,6 +246,17 @@ export class WatchTree {
     if (!isIgnoredPath(relPath)) this.options.onChange(relPath);
   }
 
+  /**
+   * Report an absolute path the poller noticed, applying the same root-scoping
+   * and ignore rules a watcher event goes through.
+   */
+  private reportAbs(abs: string): void {
+    if (this.closed) return;
+    const relPath = relative(this.options.root, abs).replaceAll("\\", "/");
+    if (!relPath || relPath === ".." || relPath.startsWith("../")) return;
+    if (!isIgnoredPath(relPath)) this.options.onChange(relPath);
+  }
+
   /** Extend or release coverage after a directory under a non-recursive watch appeared or vanished. */
   private syncChildDir(abs: string): void {
     let isDir = false;
@@ -233,6 +287,7 @@ export class WatchTree {
   }
 
   private closeSubtree(absPath: string): void {
+    this.poller?.remove(absPath);
     const prefix = absPath + sep;
     for (const [dir, entry] of this.attached) {
       if (dir !== absPath && !dir.startsWith(prefix)) continue;
