@@ -5,6 +5,7 @@ import {
   getSessionMessages,
 } from "@anthropic-ai/claude-agent-sdk";
 import { buildModelQueryOptions } from "./claude-agent-sdk-query-options.ts";
+import { CLAUDE_MODELS } from "../types/claude-models.ts";
 import { isImageLimitRejection } from "./image-limit-detection.ts";
 import type {
   AIProvider,
@@ -702,16 +703,7 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   }
 
   async listModels(): Promise<ModelOption[]> {
-    return [
-      { value: "claude-opus-5", label: "Claude Opus 5" },
-      { value: "claude-fable-5", label: "Claude Fable 5 (flagship)" },
-      { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
-      { value: "claude-opus-4-7", label: "Claude Opus 4.7" },
-      { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
-      { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-      { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-      { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    ];
+    return CLAUDE_MODELS.map(({ value, label }) => ({ value, label }));
   }
 
   /**

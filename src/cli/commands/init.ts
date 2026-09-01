@@ -4,6 +4,7 @@ import { input, confirm, select, password } from "@inquirer/prompts";
 import { configService } from "../../services/config.service.ts";
 import { projectService } from "../../services/project.service.ts";
 import { getAllConfig } from "../../services/db.service.ts";
+import { CLAUDE_MODELS, claudeModelInitName } from "../../types/claude-models.ts";
 
 const DEFAULT_PORT = 3210;
 
@@ -118,16 +119,7 @@ export async function initProject(options: InitOptions = {}) {
     if (wantAdvanced) {
       aiModel = await select({
         message: "AI model:",
-        choices: [
-          { value: "claude-opus-5", name: "Claude Opus 5 (most powerful)" },
-          { value: "claude-fable-5", name: "Claude Fable 5 (flagship)" },
-          { value: "claude-opus-4-8", name: "Claude Opus 4.8 (powerful)" },
-          { value: "claude-opus-4-7", name: "Claude Opus 4.7 (powerful)" },
-          { value: "claude-opus-4-6", name: "Claude Opus 4.6 (powerful)" },
-          { value: "claude-sonnet-5", name: "Claude Sonnet 5 (fast)" },
-          { value: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (fast)" },
-          { value: "claude-haiku-4-5", name: "Claude Haiku 4.5 (cheap)" },
-        ],
+        choices: CLAUDE_MODELS.map((m) => ({ value: m.value, name: claudeModelInitName(m) })),
         default: "claude-opus-5",
       });
 

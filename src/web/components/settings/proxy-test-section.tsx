@@ -3,6 +3,7 @@ import { Play, Loader2, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CLAUDE_MODELS } from "../../../types/claude-models";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger,
 } from "@/components/ui/dialog";
@@ -159,14 +160,9 @@ function ProxyTestForm({ authKey, baseUrl }: ProxyTestDialogProps) {
           onChange={(e) => setModel(e.target.value)}
           className="h-8 w-full rounded-md border bg-background px-2 text-[11px]"
         >
-          <option value="claude-opus-5">claude-opus-5</option>
-          <option value="claude-fable-5">claude-fable-5</option>
-          <option value="claude-opus-4-8">claude-opus-4-8</option>
-          <option value="claude-opus-4-7">claude-opus-4-7</option>
-          <option value="claude-opus-4-6">claude-opus-4-6</option>
-          <option value="claude-sonnet-5">claude-sonnet-5</option>
-          <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-          <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+          {CLAUDE_MODELS.map((m) => (
+            <option key={m.value} value={m.value}>{m.value}</option>
+          ))}
         </select>
       </div>
 

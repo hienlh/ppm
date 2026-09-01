@@ -1,3 +1,5 @@
+import { CLAUDE_MODEL_IDS } from "./claude-models.ts";
+
 export interface TelegramConfig {
   bot_token: string;
 }
@@ -133,7 +135,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
 
 const VALID_TYPES = ["agent-sdk", "cli", "mock"] as const;
 const VALID_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-const VALID_MODELS = ["claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"] as const;
+const VALID_MODELS = CLAUDE_MODEL_IDS;
 /** Allowed CLI commands for CLI providers (prevents command injection) */
 const VALID_CLI_COMMANDS = ["cursor-agent", "codex", "gemini"] as const;
 /** Only these values are allowed for default_provider in config */
