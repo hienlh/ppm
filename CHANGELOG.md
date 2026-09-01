@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.51] - 2026-09-01
+
+### Fixed
+- **File changes are reported again after a directory is deleted and recreated (Linux)** — switching git branches, or any `rm -rf x && mkdir x`, left everything under that directory silently unwatched until a restart. The runtime cannot revive a watch on such a path, so PPM now falls back to polling just those directories.
+- **The resource panel and tunnel list no longer come back empty on slim Linux images** — both read the process table through `ps`, which minimal containers do not ship, and treated the missing command as "no processes". They read the kernel directly now.
+
 ## [0.17.50] - 2026-09-01
 
 ### Fixed
