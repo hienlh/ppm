@@ -8,7 +8,7 @@
  * writing to the store.
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { fsApi, FsError } from "@/lib/fs-api";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { onFsChanged, useExplorerStore, type ExplorerSlice } from "./explorer-store";
@@ -143,13 +143,13 @@ export function useExplorerNavigation(
     if (pathRef.current) void load(pathRef.current);
   }, [load]);
 
-  return {
-    go,
-    back,
-    forward,
-    up,
-    refresh,
-    canGoBack: (slice?.historyIndex ?? 0) > 0,
-    canGoForward: slice ? slice.historyIndex < slice.history.length - 1 : false,
-  };
+  const canGoBack = (slice?.historyIndex ?? 0) > 0;
+  const canGoForward = slice ? slice.historyIndex < slice.history.length - 1 : false;
+
+  // A fresh object every render would defeat memo(ListRow) (it receives this as a prop
+  // several levels down) even though the callbacks themselves are already stable.
+  return useMemo(
+    () => ({ go, back, forward, up, refresh, canGoBack, canGoForward }),
+    [go, back, forward, up, refresh, canGoBack, canGoForward],
+  );
 }

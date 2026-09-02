@@ -24,6 +24,7 @@ import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/adaptive-context-menu";
+import { fsChanged } from "@/components/os-explorer/explorer-store";
 import { getFileIcon } from "./file-icon-map";
 import { TreeNodeContextMenu } from "./tree-node-context-menu";
 import type { NodeRow } from "./flatten-visible-tree";
@@ -191,6 +192,10 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
         store.loadIndex(projectName);
         store.invalidateFolder(projectName, sourceParent);
         store.invalidateFolder(projectName, dropTargetDir);
+        // An explorer window showing either folder must refresh too.
+        if (projectRoot) {
+          fsChanged(absoluteProjectPath(projectRoot, sourceParent), absoluteProjectPath(projectRoot, dropTargetDir));
+        }
       })
       .catch((err) => {
         toast.error(err instanceof Error ? err.message : "Move failed");

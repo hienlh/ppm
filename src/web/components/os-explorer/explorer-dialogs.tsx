@@ -19,7 +19,7 @@ export interface ExplorerDialogsProps {
 }
 
 export function ExplorerDialogs({ dialogs, platform, sep }: ExplorerDialogsProps) {
-  const { collision, pendingDelete, properties } = dialogs;
+  const { collision, pendingDelete, permanentOverwrite, properties } = dialogs;
 
   return (
     <>
@@ -66,6 +66,27 @@ export function ExplorerDialogs({ dialogs, platform, sep }: ExplorerDialogsProps
               <li className="text-text-subtle">and {pendingDelete.names.length - 10} more…</li>
             )}
           </ul>
+        </ExplorerModalShell>
+      )}
+
+      {permanentOverwrite && (
+        <ExplorerModalShell
+          open
+          // Dismissing without choosing must not silently delete anything.
+          onClose={() => permanentOverwrite.resolve(false)}
+          title="This host has no Trash"
+          description={permanentOverwrite.name}
+          footer={
+            <>
+              <Button variant="outline" onClick={() => permanentOverwrite.resolve(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={() => permanentOverwrite.resolve(true)}>Delete permanently</Button>
+            </>
+          }
+        >
+          <p className="py-1 text-sm text-text-2">
+            Replacing this item cannot go through the Trash on this host. Deleting it
+            permanently cannot be undone.
+          </p>
         </ExplorerModalShell>
       )}
 

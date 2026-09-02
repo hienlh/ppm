@@ -99,7 +99,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
 
       <div className="flex min-h-0 flex-1">
         <ExplorerSidebar host={host} currentPath={slice.path} onNavigate={nav.go} />
-        <div className="min-w-0 flex-1" onKeyDown={onKeyDown} {...backgroundLongPress}>
+        <div className="min-w-0 flex-1" onKeyDown={onKeyDown}>
           <View
             windowId={windowId}
             slice={slice}
@@ -110,6 +110,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
             hasClipboard={hasClipboard}
             isPinned={isPinned}
             rowHeight={coarse ? ROW_HEIGHT_COARSE : ROW_HEIGHT_FINE}
+            backgroundLongPress={backgroundLongPress}
           />
         </div>
       </div>

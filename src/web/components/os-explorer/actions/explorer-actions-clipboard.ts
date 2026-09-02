@@ -10,8 +10,9 @@
 import { toast } from "sonner";
 import { fsApi, FsError } from "@/lib/fs-api";
 import { useFileStore, type ClipboardState } from "@/stores/file-store";
-import { dirnameOf, joinPath, suffixName } from "../format-file-meta";
+import { dirnameOf, errorDescription, joinPath } from "../format-file-meta";
 import { fsChanged } from "../explorer-store";
+import { freeName, runOne } from "./explorer-actions-transfer-helpers";
 
 export type CollisionChoice = "replace" | "keep-both" | "skip";
 
@@ -26,39 +27,18 @@ export type CollisionResolver = (request: CollisionRequest) => Promise<Collision
 export interface TransferContext {
   sep: string;
   resolve: CollisionResolver;
+  /**
+   * Asked only when "Replace" cannot trash the existing entry (`NO_TRASH`) — the dialog copy
+   * promises a recoverable trash-first replace, so silently falling back to a permanent
+   * delete would contradict what the user just agreed to. Returning false skips the item.
+   */
+  confirmPermanentOverwrite(name: string): Promise<boolean>;
 }
 
 export interface TransferResult {
   succeeded: number;
   skipped: number;
   failed: number;
-}
-
-/** Highest "name (n)" suffix tried before giving up on a free name. */
-const MAX_KEEP_BOTH_ATTEMPTS = 99;
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await fsApi.stat(path);
-    return true;
-  } catch (e) {
-    if (e instanceof FsError && e.code === "ENOENT") return false;
-    // Anything else (permission, protected root) is not a free name either.
-    return true;
-  }
-}
-
-async function freeName(dir: string, name: string, sep: string): Promise<string | null> {
-  for (let n = 2; n <= MAX_KEEP_BOTH_ATTEMPTS; n++) {
-    const candidate = suffixName(name, n);
-    if (!(await pathExists(joinPath(dir, candidate, sep)))) return candidate;
-  }
-  return null;
-}
-
-async function runOne(source: string, destination: string, op: "copy" | "move"): Promise<void> {
-  if (op === "copy") await fsApi.copy(source, destination);
-  else await fsApi.move(source, destination);
 }
 
 /**
@@ -87,6 +67,27 @@ export async function transfer(
     }
 
     let destination = joinPath(dstDir, name, ctx.sep);
+    // A copy into the same folder always collides with itself (destination === source),
+    // which the server refuses as self-nesting (EINVAL), not EEXIST — so the collision
+    // prompt would never open. Every OS instead makes this "name (2)" directly.
+    if (op === "copy" && sourceDir === dstDir) {
+      const alternative = await freeName(dstDir, name, ctx.sep);
+      if (!alternative) {
+        result.failed++;
+        toast.error(`Copy failed: ${name}`, { description: "No free name available" });
+        continue;
+      }
+      destination = joinPath(dstDir, alternative, ctx.sep);
+      try {
+        await runOne(source, destination, op);
+        result.succeeded++;
+      } catch (e) {
+        result.failed++;
+        toast.error(`Copy failed: ${name}`, { description: errorDescription(e) });
+      }
+      continue;
+    }
+
     try {
       await runOne(source, destination, op);
       result.succeeded++;
@@ -94,9 +95,7 @@ export async function transfer(
     } catch (e) {
       if (!(e instanceof FsError) || e.code !== "EEXIST") {
         result.failed++;
-        toast.error(`${op === "copy" ? "Copy" : "Move"} failed: ${name}`, {
-          description: e instanceof Error ? e.message : undefined,
-        });
+        toast.error(`${op === "copy" ? "Copy" : "Move"} failed: ${name}`, { description: errorDescription(e) });
         continue;
       }
     }
@@ -106,23 +105,54 @@ export async function transfer(
       result.skipped++;
       continue;
     }
-    try {
-      if (choice === "keep-both") {
+    if (choice === "keep-both") {
+      try {
         const alternative = await freeName(dstDir, name, ctx.sep);
         if (!alternative) throw new Error("No free name available");
         destination = joinPath(dstDir, alternative, ctx.sep);
-      } else {
-        // Replace: the existing entry goes to the trash first, so an overwrite stays
-        // recoverable and the server never has to force a destructive copy.
-        await fsApi.remove(destination, false);
+        await runOne(source, destination, op);
+        result.succeeded++;
+      } catch (e) {
+        result.failed++;
+        toast.error(`${op === "copy" ? "Copy" : "Move"} failed: ${name}`, { description: errorDescription(e) });
       }
+      continue;
+    }
+
+    // Replace: trash the existing entry first so the overwrite stays recoverable, matching
+    // the collision dialog's own copy.
+    try {
+      await fsApi.remove(destination, false);
+    } catch (e) {
+      if (!(e instanceof FsError) || e.code !== "NO_TRASH") {
+        result.failed++;
+        toast.error(`Could not remove existing ${name}`, { description: errorDescription(e) });
+        continue;
+      }
+      // No trash backend on this host — the dialog's "moves to Trash" promise cannot be
+      // kept, so ask explicitly before doing something permanent instead of silently
+      // downgrading to it.
+      const proceed = await ctx.confirmPermanentOverwrite(name);
+      if (!proceed) {
+        result.skipped++;
+        continue;
+      }
+      try {
+        await fsApi.remove(destination, true);
+      } catch (removeErr) {
+        result.failed++;
+        toast.error(`Could not remove existing ${name}`, { description: errorDescription(removeErr) });
+        continue;
+      }
+    }
+    try {
       await runOne(source, destination, op);
       result.succeeded++;
     } catch (e) {
       result.failed++;
-      toast.error(`${op === "copy" ? "Copy" : "Move"} failed: ${name}`, {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      // The existing entry is already gone (trashed or deleted above) but the replacement
+      // was never written — say so explicitly rather than a generic "Copy/Move failed".
+      toast.error(`${name} was removed but the replacement could not be written`, { description: errorDescription(e) });
     }
   }
 

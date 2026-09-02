@@ -43,9 +43,22 @@ export interface ClipboardState {
   origin?: { projectName: string; root: string };
 }
 
-/** Absolute host path for a project-relative path. */
+/**
+ * Absolute host path for a project-relative path.
+ *
+ * The project API always returns relative segments joined with "/", but the composed
+ * result must use the *host's* separator — a hardcoded "/" on a Windows root produced a
+ * mixed-separator path (`C:\Users\PC\ppm/src/a.ts`) that neither matched an explorer
+ * window's own absolute paths (cut-row highlight) nor split correctly under
+ * `lastIndexOf(sep)` (source-directory derivation for cross-window refresh). The
+ * separator is read straight off `root` — a Windows root always contains at least one
+ * backslash — rather than threading host-info through every caller.
+ */
 export function absoluteProjectPath(root: string, relative: string): string {
-  return relative ? `${root}/${relative}` : root;
+  if (!relative) return root;
+  const sep = root.includes("\\") ? "\\" : "/";
+  const relativeNative = sep === "\\" ? relative.replace(/\//g, "\\") : relative;
+  return root.endsWith(sep) ? `${root}${relativeNative}` : `${root}${sep}${relativeNative}`;
 }
 
 /** Project-relative path for an absolute one, or null when it lies outside the project. */

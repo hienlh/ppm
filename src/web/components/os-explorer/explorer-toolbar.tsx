@@ -14,14 +14,24 @@ import {
 import { cn } from "@/lib/utils";
 import { ExplorerBreadcrumb } from "./explorer-breadcrumb";
 import { useExplorerStore, type ExplorerSlice, type ViewMode } from "./explorer-store";
+import { usePrefersCoarsePointer } from "./use-coarse-long-press";
 import type { ExplorerNavigation } from "./use-explorer-navigation";
 import { AVAILABLE_VIEW_MODES } from "./views/explorer-view-registry";
 
 const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: List, columns: List };
 const VIEW_LABEL: Record<ViewMode, string> = { list: "List view", icons: "Icons view", columns: "Column view" };
 
-const buttonClass =
-  "flex size-7 shrink-0 items-center justify-center rounded text-text-subtle can-hover:hover:bg-surface-elevated can-hover:hover:text-text disabled:opacity-30";
+/**
+ * The visible box stays `size-7` (28px) on every pointer type — only the tap-registering
+ * area grows to the 44px minimum on a coarse pointer, via an invisible expanded `::before`
+ * (a click anywhere in it still hits this element; nothing about the button's look moves).
+ */
+function buttonClass(coarse: boolean): string {
+  return cn(
+    "relative flex size-7 shrink-0 items-center justify-center rounded text-text-subtle can-hover:hover:bg-surface-elevated can-hover:hover:text-text disabled:opacity-30",
+    coarse && "before:absolute before:-inset-2 before:content-['']",
+  );
+}
 
 export interface ExplorerToolbarProps {
   windowId: string;
@@ -38,19 +48,20 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
   const [editingPath, setEditingPath] = useState(false);
   const [draftPath, setDraftPath] = useState(slice.path);
   useEffect(() => setDraftPath(slice.path), [slice.path]);
+  const coarse = usePrefersCoarsePointer();
 
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-panel-2 px-1.5 py-1">
-      <button type="button" aria-label="Back" title="Back" disabled={!nav.canGoBack} onClick={nav.back} className={buttonClass}>
+      <button type="button" aria-label="Back" title="Back" disabled={!nav.canGoBack} onClick={nav.back} className={buttonClass(coarse)}>
         <ArrowLeft className="size-4" />
       </button>
-      <button type="button" aria-label="Forward" title="Forward" disabled={!nav.canGoForward} onClick={nav.forward} className={buttonClass}>
+      <button type="button" aria-label="Forward" title="Forward" disabled={!nav.canGoForward} onClick={nav.forward} className={buttonClass(coarse)}>
         <ArrowRight className="size-4" />
       </button>
-      <button type="button" aria-label="Up one level" title="Up" disabled={!slice.parent} onClick={nav.up} className={buttonClass}>
+      <button type="button" aria-label="Up one level" title="Up" disabled={!slice.parent} onClick={nav.up} className={buttonClass(coarse)}>
         <ArrowUp className="size-4" />
       </button>
-      <button type="button" aria-label="Refresh" title="Refresh" onClick={nav.refresh} className={buttonClass}>
+      <button type="button" aria-label="Refresh" title="Refresh" onClick={nav.refresh} className={buttonClass(coarse)}>
         <RefreshCw className={cn("size-4", slice.loading && "animate-spin")} />
       </button>
 
@@ -77,7 +88,7 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
           aria-label={editingPath ? "Show breadcrumb" : "Edit path"}
           title={editingPath ? "Show breadcrumb" : "Edit path"}
           onClick={() => setEditingPath((v) => !v)}
-          className={buttonClass}
+          className={buttonClass(coarse)}
         >
           <PencilLine className="size-3.5" />
         </button>
@@ -97,7 +108,7 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
           className="w-24 min-w-0 bg-transparent py-1 text-xs text-text outline-none placeholder:text-text-subtle"
         />
         {slice.filter && (
-          <button type="button" aria-label="Clear filter" onClick={() => patch(windowId, { filter: "" })} className={buttonClass}>
+          <button type="button" aria-label="Clear filter" onClick={() => patch(windowId, { filter: "" })} className={buttonClass(coarse)}>
             <X className="size-3.5" />
           </button>
         )}
@@ -114,7 +125,7 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
               title={VIEW_LABEL[mode]}
               aria-pressed={viewMode === mode}
               onClick={() => setPrefs({ viewMode: mode })}
-              className={cn(buttonClass, viewMode === mode && "bg-accent-wash text-primary")}
+              className={cn(buttonClass(coarse), viewMode === mode && "bg-accent-wash text-primary")}
             >
               <Icon className="size-4" />
             </button>
@@ -127,7 +138,7 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
         title={showHidden ? "Hide hidden files" : "Show hidden files"}
         aria-pressed={showHidden}
         onClick={() => setPrefs({ showHidden: !showHidden })}
-        className={cn(buttonClass, showHidden && "bg-accent-wash text-primary")}
+        className={cn(buttonClass(coarse), showHidden && "bg-accent-wash text-primary")}
       >
         {showHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
       </button>
