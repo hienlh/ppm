@@ -1,6 +1,17 @@
 /** Presentation helpers for file metadata, shared by the explorer views, the
  *  properties dialog and the directory picker. */
 
+import { FsError } from "@/lib/fs-api";
+
+/**
+ * Description for a failure toast: the server's remediation hint (`EPROTECTED`/`EDENIED`)
+ * beats the raw message, matching the inline banner shown for a failed directory listing.
+ */
+export function errorDescription(e: unknown): string | undefined {
+  if (e instanceof FsError) return e.hint ?? e.message;
+  return e instanceof Error ? e.message : undefined;
+}
+
 /** Human-readable byte count. Undefined size renders as an empty cell. */
 export function formatSize(bytes?: number): string {
   if (bytes == null) return "";
