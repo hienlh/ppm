@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.53] - 2026-09-02
+
+### Fixed
+- **Starting the dev server no longer takes over the public URL** — since 0.17.50 the shared link is served by a small forwarder that looks up the running server's port in a file, and `bun dev:server` wrote its own port there, so the public URL quietly served the dev instance instead. Only the server the supervisor started publishes that now, and the supervisor puts it back if anything else overwrites it.
+- **A background task finishing no longer ends your turn** — the notification was treated as the turn's result, so the assistant stopped mid-work.
+
 ## [0.17.52] - 2026-09-02
 
 ### Added
