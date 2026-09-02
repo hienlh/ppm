@@ -1,20 +1,30 @@
-import {
-  existsSync,
-  readdirSync,
-  statSync,
-  lstatSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
-import { resolve, basename, dirname, normalize } from "node:path";
+import { lstat, readdir, stat } from "node:fs/promises";
+import { basename, dirname, resolve, sep } from "node:path";
 import { homedir } from "node:os";
+import {
+  assertAllowed,
+  isAllowedPath,
+  resolvePath,
+} from "./fs-path-guard.service.ts";
+import { isHiddenName } from "./fs-ops/fs-hidden-names.ts";
+import { kindOfStats, type EntryKind } from "./fs-ops/fs-ops-stat.service.ts";
+
+// Re-exported so existing importers keep a single filesystem entry point.
+export { isAllowedPath, resolvePath };
+export {
+  readSystemFileSync as readSystemFile,
+  writeSystemFile,
+} from "./fs-ops/fs-ops-read-write.service.ts";
+export { list } from "./fs-ops/fs-list-files.service.ts";
 
 // ── Types ──────────────────────────────────────────────────────────
 
 export interface BrowseEntry {
   name: string;
   path: string;
+  /** Coarse type kept for existing consumers; `kind` carries the detail. */
   type: "file" | "directory";
+  kind: EntryKind;
   size?: number;
   modified: string;
 }
@@ -24,6 +34,10 @@ export interface BrowseResult {
   current: string;
   parent: string | null;
   breadcrumbs: { name: string; path: string }[];
+  /** Platform path separator, so the client can render native paths. */
+  sep: string;
+  /** True when the directory held more entries than the listing cap. */
+  truncated?: boolean;
 }
 
 export interface BrowseOptions {
@@ -32,86 +46,84 @@ export interface BrowseOptions {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const SKIP_NAMES = new Set([".git", "node_modules", ".DS_Store"]);
-const LIST_MAX_FILES = 200;
-const LIST_MAX_DEPTH = 4;
-const READ_MAX_SIZE = 5 * 1024 * 1024; // 5 MB
+/** Listing cap — beyond this the UI is unusable and the scan gets expensive. */
+const BROWSE_MAX_ENTRIES = 5_000;
+/** Parallel stat calls; enough to hide latency, few enough to stay polite. */
+const STAT_CONCURRENCY = 16;
+/**
+ * A dead SMB share, sleeping USB disk or OneDrive placeholder can make a
+ * single stat hang for minutes. The browse answer must still arrive, so a
+ * slow entry is reported with an unknown kind instead of holding the request.
+ */
+const STAT_TIMEOUT_MS = 1_500;
 
-/** Roots allowed for system-level browsing (outside project scope). */
-const ALLOWED_ROOTS_POSIX = ["/Volumes", "/mnt", "/media", "/tmp", "/home"];
+// ── Browse ─────────────────────────────────────────────────────────
 
-// ── Shared helpers ─────────────────────────────────────────────────
+async function statEntry(fullPath: string, name: string): Promise<BrowseEntry | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((r) => {
+    timer = setTimeout(() => r("timeout"), STAT_TIMEOUT_MS);
+  });
+  const stats = await Promise.race([lstat(fullPath).catch(() => "error" as const), timeout]);
+  // Clearing matters: a listing of thousands of entries would otherwise hold
+  // thousands of live timers until they each fire.
+  clearTimeout(timer);
 
-/** Resolve a path, expanding leading `~` to home directory. */
-export function resolvePath(input: string): string {
-  const home = homedir();
-  return input.startsWith("~")
-    ? resolve(home, input.slice(2))
-    : resolve(input);
+  if (stats === "error") return null; // unreadable — skipped, never fatal
+  if (stats === "timeout") {
+    return {
+      name,
+      path: fullPath,
+      type: "file",
+      kind: "unknown",
+      modified: new Date(0).toISOString(),
+    };
+  }
+  const kind = kindOfStats(stats);
+  return {
+    name,
+    path: fullPath,
+    type: kind === "directory" ? "directory" : "file",
+    kind,
+    size: kind === "file" ? stats.size : undefined,
+    modified: stats.mtime.toISOString(),
+  };
 }
 
-/** Check if an absolute path is within the allowed whitelist. */
-export function isAllowedPath(resolved: string): boolean {
-  const home = homedir();
-  if (resolved === home || resolved.startsWith(home + "/")) return true;
-
-  // SDK background-command output lives under the OS temp dir, outside the
-  // home/posix-root whitelist. Allow reading those specific files so the chat
-  // output panel works. The claude dir name varies by platform/CLI version:
-  // "claude" (Windows Temp, older macOS /var/folders/.../T) or "claude-<uid>"
-  // (macOS /tmp/claude-501, reported by lsof as /private/tmp/...). Matched by
-  // structure (claude*/…/tasks/*.output) to be symlink-agnostic.
-  if (/[\\/]claude[^\\/]*[\\/].+[\\/]tasks[\\/][^\\/]+\.output$/.test(resolved)) return true;
-
-  if (process.platform === "win32") {
-    return /^[A-Z]:\\/i.test(resolved);
-  }
-
-  return ALLOWED_ROOTS_POSIX.some(
-    (r) => resolved === r || resolved.startsWith(r + "/"),
-  );
-}
-
-// ── Browse (new) ───────────────────────────────────────────────────
-
-/** List entries of a single directory (1-level, structured). */
-export function browse(
-  dirPath?: string,
-  options?: BrowseOptions,
-): BrowseResult {
-  const resolved = dirPath ? resolvePath(dirPath) : homedir();
-
-  if (!isAllowedPath(resolved)) {
-    throw Object.assign(new Error("Access denied"), { status: 403 });
-  }
-  if (!existsSync(resolved)) {
-    throw Object.assign(new Error("Directory not found"), { status: 404 });
-  }
-  if (!statSync(resolved).isDirectory()) {
-    throw Object.assign(new Error("Not a directory"), { status: 400 });
-  }
-
-  const raw = readdirSync(resolved, { withFileTypes: true });
-  const entries: BrowseEntry[] = [];
-
-  for (const entry of raw) {
-    if (!options?.showHidden && entry.name.startsWith(".")) continue;
-
-    const fullPath = resolve(resolved, entry.name);
-    try {
-      if (lstatSync(fullPath).isSymbolicLink()) continue;
-      const st = statSync(fullPath);
-      entries.push({
-        name: entry.name,
-        path: fullPath,
-        type: st.isDirectory() ? "directory" : "file",
-        size: st.isFile() ? st.size : undefined,
-        modified: st.mtime.toISOString(),
-      });
-    } catch {
-      /* permission denied — skip */
+/** Run `worker` over `items` with a fixed number of workers in flight. */
+async function mapBounded<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await worker(items[index]!);
     }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+/** List entries of a single directory (1 level, no symlink descent). */
+export async function browse(dirPath?: string, options?: BrowseOptions): Promise<BrowseResult> {
+  const resolved = dirPath ? resolvePath(dirPath) : homedir();
+  assertAllowed(resolved);
+
+  const st = await stat(resolved);
+  if (!st.isDirectory()) {
+    throw Object.assign(new Error("Not a directory"), { status: 400, code: "ENOTDIR" });
   }
+
+  const names = (await readdir(resolved)).filter(
+    (name) => options?.showHidden || !isHiddenName(name),
+  );
+  const truncated = names.length > BROWSE_MAX_ENTRIES;
+  const visible = truncated ? names.slice(0, BROWSE_MAX_ENTRIES) : names;
+
+  const statted = await mapBounded(visible, STAT_CONCURRENCY, (name) =>
+    statEntry(resolve(resolved, name), name),
+  );
+  const entries = statted.filter((e): e is BrowseEntry => e !== null);
 
   entries.sort((a, b) => {
     if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
@@ -124,12 +136,18 @@ export function browse(
     current: resolved,
     parent: parentDir !== resolved ? parentDir : null,
     breadcrumbs: buildBreadcrumbs(resolved),
+    sep,
+    ...(truncated ? { truncated: true } : {}),
   };
 }
 
-function buildBreadcrumbs(
-  absPath: string,
-): { name: string; path: string }[] {
+/** Label of a filesystem root: `C:` on Windows, `/` on POSIX. */
+function rootLabel(rootPath: string): string {
+  const trimmed = rootPath.replace(/[\\/]+$/, "");
+  return trimmed || "/";
+}
+
+function buildBreadcrumbs(absPath: string): { name: string; path: string }[] {
   const home = homedir();
   const parts: { name: string; path: string }[] = [];
   let current = absPath;
@@ -143,84 +161,9 @@ function buildBreadcrumbs(
     current = dirname(current);
   }
 
-  // Reached filesystem root
+  // Reached a filesystem root (drive root on Windows, `/` on POSIX)
   if (!parts.length || parts[0]!.path !== current) {
-    parts.unshift({ name: basename(current) || "/", path: current });
+    parts.unshift({ name: rootLabel(current), path: current });
   }
   return parts;
-}
-
-// ── List (moved from index.ts inline) ──────────────────────────────
-
-/** Breadth-first file listing for command palette.
- *  Lists all files at each level before descending into subdirectories,
- *  so root-level files (e.g. ~/.npmrc) are always found before the limit. */
-export function list(dir: string): string[] {
-  const resolved = resolvePath(dir);
-  if (!isAllowedPath(resolved)) {
-    throw Object.assign(new Error("Access denied"), { status: 403 });
-  }
-
-  const files: string[] = [];
-  const queue: { path: string; depth: number }[] = [{ path: resolved, depth: 0 }];
-
-  while (queue.length > 0 && files.length < LIST_MAX_FILES) {
-    const { path: dirPath, depth } = queue.shift()!;
-    if (depth > LIST_MAX_DEPTH) continue;
-    let entries: import("node:fs").Dirent[];
-    try {
-      entries = readdirSync(dirPath, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (SKIP_NAMES.has(entry.name)) continue;
-      const full = resolve(dirPath, entry.name);
-      if (entry.isFile()) {
-        files.push(full);
-        if (files.length >= LIST_MAX_FILES) return files;
-      } else if (entry.isDirectory()) {
-        queue.push({ path: full, depth: depth + 1 });
-      }
-    }
-  }
-
-  return files;
-}
-
-// ── Read (moved from index.ts inline) ──────────────────────────────
-
-/** Read a file outside project scope. */
-export function readSystemFile(
-  filePath: string,
-): { content: string; path: string } {
-  const resolved = resolvePath(filePath);
-  if (!isAllowedPath(resolved)) {
-    throw Object.assign(new Error("Access denied"), { status: 403 });
-  }
-  if (!existsSync(resolved)) {
-    throw Object.assign(new Error("File not found"), { status: 404 });
-  }
-
-  const st = statSync(resolved);
-  if (!st.isFile()) {
-    throw Object.assign(new Error("Not a file"), { status: 400 });
-  }
-  if (st.size > READ_MAX_SIZE) {
-    throw Object.assign(new Error("File too large (>5MB)"), { status: 400 });
-  }
-
-  const content = readFileSync(resolved, "utf-8");
-  return { content, path: resolved };
-}
-
-// ── Write (moved from index.ts inline) ─────────────────────────────
-
-/** Write a file outside project scope. */
-export function writeSystemFile(filePath: string, content: string): void {
-  const resolved = resolvePath(filePath);
-  if (!isAllowedPath(resolved)) {
-    throw Object.assign(new Error("Access denied"), { status: 403 });
-  }
-  writeFileSync(resolved, content, "utf-8");
 }

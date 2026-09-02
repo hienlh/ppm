@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { isPpmDirPath } from "./fs-path-guard.service.ts";
 
 export interface TableInfo {
   name: string;
@@ -41,6 +42,10 @@ class SqliteService {
     const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(dbRelPath);
     const abs = isAbsolute ? dbRelPath : resolve(projectPath, dbRelPath);
     if (!isAbsolute && !abs.startsWith(projectPath)) throw new Error("Access denied: path outside project");
+    // The PPM directory holds the config database with provider credentials and
+    // the auth token. Absolute paths are accepted here, so this door has to
+    // refuse it explicitly or a viewer could read the whole secret store.
+    if (isPpmDirPath(resolve(abs))) throw new Error("Access denied: PPM directory is not browsable");
     if (!existsSync(abs)) throw new Error(`Database not found: ${dbRelPath}`);
     return abs;
   }
