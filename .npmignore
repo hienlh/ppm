@@ -14,6 +14,10 @@ spike-*
 # AgentKit tooling state, not part of PPM
 skills-lock.json
 
+# Local runtime state a running instance writes into its own project dir —
+# carries this machine's port and public tunnel URL, so it must never ship.
+.rollout-mark
+
 # Dev files
 .claude/
 .github/
