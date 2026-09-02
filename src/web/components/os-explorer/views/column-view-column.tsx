@@ -6,7 +6,7 @@
  * shows" with no extra state.
  */
 
-import { useContext, useRef } from "react";
+import { forwardRef, useContext, useRef, type MouseEventHandler } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { BottomSheetCtx } from "@/components/ui/mobile-bottom-sheet";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
@@ -139,10 +139,18 @@ function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, action
  * a directory already navigates on tap via `onSelect`; the only mobile addition is opening a
  * viewable file immediately (no double-click on touch) and surfacing the actions sheet for
  * one that has no viewer, instead of a tap that silently does nothing.
+ *
+ * `forwardRef` plus explicitly accepting `onContextMenu` is required here: `asChild` clones
+ * this element and merges its own `onContextMenu` (which actually opens the row's menu) plus
+ * a `ref` onto it, but a plain function component that doesn't accept and forward those two
+ * silently drops them — the row still ran its own selection logic, but no menu ever opened.
  */
-function ColumnRowInteractive({
-  entry, selected, rowHeight, onSelect, onOpen,
-}: Pick<ColumnRowProps, "entry" | "selected" | "rowHeight" | "onSelect" | "onOpen">) {
+export const ColumnRowInteractive = forwardRef<
+  HTMLDivElement,
+  Pick<ColumnRowProps, "entry" | "selected" | "rowHeight" | "onSelect" | "onOpen"> & {
+    onContextMenu?: MouseEventHandler<HTMLDivElement>;
+  }
+>(function ColumnRowInteractive({ entry, selected, rowHeight, onSelect, onOpen, onContextMenu }, ref) {
   const longPress = useCoarseLongPress(onSelect);
   const isMobile = useIsMobile();
   const { setOpen } = useContext(BottomSheetCtx);
@@ -156,6 +164,7 @@ function ColumnRowInteractive({
 
   return (
     <div
+      ref={ref}
       role="option"
       aria-selected={selected}
       data-testid="explorer-column-row"
@@ -164,11 +173,11 @@ function ColumnRowInteractive({
       style={{ height: rowHeight }}
       {...longPress}
       onContextMenu={(e) => {
-        // Without this the bubbling contextmenu (real right-click or the synthetic one
-        // `useCoarseLongPress` dispatches) reaches the background trigger too and opens
-        // both menus at once.
-        e.stopPropagation();
+        // Run Radix's own handler first (it opens this row's menu); only afterwards stop
+        // the event from also reaching the background trigger further up the DOM.
+        onContextMenu?.(e);
         onSelect();
+        e.stopPropagation();
       }}
       onClick={handleClick}
       onDoubleClick={onOpen}
@@ -183,4 +192,4 @@ function ColumnRowInteractive({
       {entry.type === "directory" && <span className="text-text-subtle">›</span>}
     </div>
   );
-}
+});

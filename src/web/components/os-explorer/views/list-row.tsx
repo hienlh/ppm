@@ -10,7 +10,7 @@
  * `useMobileRowTap`), and "Select" mode swaps the tap for a checkbox toggle.
  */
 
-import { memo } from "react";
+import { forwardRef, memo, type MouseEventHandler } from "react";
 import { Check } from "lucide-react";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import type { FsEntry } from "@/lib/fs-api";
@@ -57,74 +57,87 @@ export const ListRow = memo(function ListRow(props: ListRowProps) {
 /**
  * Rendered inside the row's own `<ContextMenu>` (not by the memo above, which renders that
  * provider) — the position `useMobileRowTap` needs to reach this row's own sheet state.
+ *
+ * `ContextMenuTrigger asChild` clones its child and merges its own `onContextMenu` (the
+ * handler that actually opens the row's menu) plus a `ref` onto it — but `cloneElement`
+ * only reaches a plain function component's *props*, and a component that doesn't accept
+ * and forward those two keeps them from ever touching the real DOM node. That was the bug:
+ * the row still ran its own local selection logic, but Radix's own trigger handler was
+ * silently dropped, so no menu ever opened. `forwardRef` plus explicitly accepting and
+ * composing `onContextMenu` is what lets a wrapping component sit under `asChild` at all.
  */
-function ListRowInteractive({
-  entry, selected, focused, cut, renaming, height, actions, selection, inlineError,
-}: ListRowProps) {
-  const longPress = useCoarseLongPress(() => {
-    if (!selected) selection.selectOnly(entry.path);
-  });
-  const { isMobile, selectMode, handleTap } = useMobileRowTap(actions, selection);
+export const ListRowInteractive = forwardRef<HTMLDivElement, ListRowProps & { onContextMenu?: MouseEventHandler<HTMLDivElement> }>(
+  function ListRowInteractive(
+    { entry, selected, focused, cut, renaming, height, actions, selection, inlineError, onContextMenu },
+    ref,
+  ) {
+    const longPress = useCoarseLongPress(() => {
+      if (!selected) selection.selectOnly(entry.path);
+    });
+    const { isMobile, selectMode, handleTap } = useMobileRowTap(actions, selection);
 
-  return (
-    <div
-      role="row"
-      aria-selected={selected}
-      data-testid="explorer-row"
-      data-path={entry.path}
-      title={entry.name}
-      style={{ height }}
-      {...longPress}
-      onContextMenu={(e) => {
-        // Without this the bubbling contextmenu (real right-click or the synthetic one
-        // `useCoarseLongPress` dispatches) reaches the background trigger too and opens
-        // both menus at once.
-        e.stopPropagation();
-        if (!selected) selection.selectOnly(entry.path);
-      }}
-      onClick={(e) => { if (!handleTap(entry, selected)) selection.onRowClick(entry.path, e); }}
-      onDoubleClick={() => actions.openEntry(entry)}
-      className={cn(
-        "flex w-full items-center gap-2 px-2 text-[13px] select-none",
-        "can-hover:hover:bg-surface-elevated",
-        focused && !selected && "bg-surface-elevated",
-        selected && "bg-accent-wash",
-        cut && "opacity-40",
-      )}
-    >
-      {isMobile && selectMode && (
-        <span
-          aria-hidden
-          className={cn(
-            "flex size-5 shrink-0 items-center justify-center rounded border",
-            selected ? "border-primary bg-primary text-primary-foreground" : "border-border",
-          )}
-        >
-          {selected && <Check className="size-3.5" />}
+    return (
+      <div
+        ref={ref}
+        role="row"
+        aria-selected={selected}
+        data-testid="explorer-row"
+        data-path={entry.path}
+        title={entry.name}
+        style={{ height }}
+        {...longPress}
+        onContextMenu={(e) => {
+          // Run Radix's own handler first (it opens this row's menu); only afterwards stop
+          // the event from also reaching the background trigger further up the DOM — two
+          // independent `<ContextMenu>` roots would otherwise both react to one right-click.
+          onContextMenu?.(e);
+          if (!selected) selection.selectOnly(entry.path);
+          e.stopPropagation();
+        }}
+        onClick={(e) => { if (!handleTap(entry, selected)) selection.onRowClick(entry.path, e); }}
+        onDoubleClick={() => actions.openEntry(entry)}
+        className={cn(
+          "flex w-full items-center gap-2 px-2 text-[13px] select-none",
+          "can-hover:hover:bg-surface-elevated",
+          focused && !selected && "bg-surface-elevated",
+          selected && "bg-accent-wash",
+          cut && "opacity-40",
+        )}
+      >
+        {isMobile && selectMode && (
+          <span
+            aria-hidden
+            className={cn(
+              "flex size-5 shrink-0 items-center justify-center rounded border",
+              selected ? "border-primary bg-primary text-primary-foreground" : "border-border",
+            )}
+          >
+            {selected && <Check className="size-3.5" />}
+          </span>
+        )}
+        <FileTypeIcon name={entry.name} kind={entry.kind} className="size-4" />
+        {renaming ? (
+          <InlineNameInput
+            initial={entry.name}
+            error={inlineError}
+            onCommit={(value) => void actions.commitInline(value)}
+            onCancel={actions.cancelInline}
+          />
+        ) : (
+          <span className={cn("flex-1 truncate", selected ? "text-text" : "text-text-2")}>
+            {entry.name}
+          </span>
+        )}
+        <span className="w-20 shrink-0 text-right tabular-nums text-text-subtle">
+          {entry.type === "directory" ? "" : formatSize(entry.size)}
         </span>
-      )}
-      <FileTypeIcon name={entry.name} kind={entry.kind} className="size-4" />
-      {renaming ? (
-        <InlineNameInput
-          initial={entry.name}
-          error={inlineError}
-          onCommit={(value) => void actions.commitInline(value)}
-          onCancel={actions.cancelInline}
-        />
-      ) : (
-        <span className={cn("flex-1 truncate", selected ? "text-text" : "text-text-2")}>
-          {entry.name}
+        <span className="hidden w-24 shrink-0 text-right text-text-subtle sm:inline">
+          {formatRelativeTime(entry.modified)}
         </span>
-      )}
-      <span className="w-20 shrink-0 text-right tabular-nums text-text-subtle">
-        {entry.type === "directory" ? "" : formatSize(entry.size)}
-      </span>
-      <span className="hidden w-24 shrink-0 text-right text-text-subtle sm:inline">
-        {formatRelativeTime(entry.modified)}
-      </span>
-      <span className="hidden w-16 shrink-0 truncate text-right text-text-subtle md:inline">
-        {entry.type === "directory" ? "Folder" : (extensionOf(entry.name) || "File")}
-      </span>
-    </div>
-  );
-}
+        <span className="hidden w-16 shrink-0 truncate text-right text-text-subtle md:inline">
+          {entry.type === "directory" ? "Folder" : (extensionOf(entry.name) || "File")}
+        </span>
+      </div>
+    );
+  },
+);
