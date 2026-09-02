@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { setAuthToken } from "@/lib/api-client";
@@ -17,6 +17,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { openBugReportPopup } from "@/lib/report-bug";
 import { SupportDialog } from "@/components/auth/support-dialog";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
+import { ThemeModeMenu } from "@/components/shared/theme-mode-menu";
 import { cn } from "@/lib/utils";
 
 interface LoginScreenProps {
@@ -25,15 +26,17 @@ interface LoginScreenProps {
 
 const REPO_URL = "https://github.com/hienlh/ppm";
 
-// Decorative, one-off background layers (blue glow + faint dot grid). Not part
-// of the theme token set, so kept inline rather than introducing new tokens.
+// Decorative, one-off background layers (accent glow + faint dot grid). Both
+// derive from theme tokens so they invert with the mode -- the dot grid mixes
+// off --text, which is near-white on dark themes and near-navy on light ones.
+// Kept inline rather than introducing decoration-only tokens.
 const GLOW_STYLE: React.CSSProperties = {
   background:
     "radial-gradient(80% 60% at 50% -10%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 60%)",
 };
 const DOTS_STYLE: React.CSSProperties = {
   backgroundImage:
-    "radial-gradient(circle at 1px 1px, rgba(255,255,255,.035) 1px, transparent 0)",
+    "radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 5%, transparent) 1px, transparent 0)",
   backgroundSize: "26px 26px",
 };
 
@@ -47,6 +50,11 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
   const [loading, setLoading] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const isMobile = useIsMobile();
+  const themeMode = useSettingsStore((s) => s.themeMode);
+  const syncThemeToServer = useSettingsStore((s) => s.syncThemeToServer);
+  // Only a mode the user actually chose here should overwrite the stored one.
+  const initialThemeMode = useRef(themeMode);
+  const themeModeTouched = themeMode !== initialThemeMode.current;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +78,11 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
         throw new Error(json.error ?? "Invalid password");
       }
 
+      // The token is valid now, so a mode chosen on this screen can finally be
+      // persisted server-side. Must complete before onSuccess(): that flips auth
+      // state, which refetches the server theme and would otherwise win the race.
+      if (themeModeTouched) await syncThemeToServer();
+
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
@@ -87,6 +100,11 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
       {/* Background overlays */}
       <div className="pointer-events-none absolute inset-0" style={GLOW_STYLE} />
       <div className="pointer-events-none absolute inset-0" style={DOTS_STYLE} />
+
+      {/* Appearance switch. The theme endpoint is auth-gated, so a fresh origin
+          has no stored preference to read — without this the login screen would
+          be stuck on whatever the OS reports. */}
+      <ThemeModeMenu className="absolute right-[max(1rem,env(safe-area-inset-right))] top-[max(1rem,env(safe-area-inset-top))]" />
 
       <div className="relative flex w-full max-w-[392px] flex-col items-center gap-[22px] text-center">
         {/* Brand mark */}

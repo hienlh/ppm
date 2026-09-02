@@ -98,7 +98,7 @@ export const DEFAULT_CONFIG: PpmConfig = {
   device_name: "",
   port: 8080,
   host: "0.0.0.0",
-  theme: { style: "aurora", mode: "dark" },
+  theme: { style: "aurora", mode: "system" },
   auth: { enabled: true, token: "" },
   projects: [],
   ai: {
@@ -145,24 +145,25 @@ const VALID_THEME_MODES: ThemeMode[] = ["light", "dark", "system"];
 /**
  * Coerce a persisted theme value into the `{style, mode}` object shape.
  * Migrates the legacy string form (`"dark"` → `{style:"aurora", mode:"dark"}`).
+ * Anything unrecognised falls back to `mode: "system"`, matching DEFAULT_CONFIG.
  * Returns null if the input is already a valid object (no change needed).
  */
 function migrateThemeValue(theme: unknown): ThemeConfig | null {
   if (typeof theme === "string") {
-    const mode = (VALID_THEME_MODES as string[]).includes(theme) ? (theme as ThemeMode) : "dark";
+    const mode = (VALID_THEME_MODES as string[]).includes(theme) ? (theme as ThemeMode) : "system";
     return { style: "aurora", mode };
   }
   if (theme && typeof theme === "object") {
     const t = theme as Partial<ThemeConfig>;
     const style = typeof t.style === "string" && t.style ? t.style : "aurora";
-    const mode = (VALID_THEME_MODES as string[]).includes(t.mode as string) ? (t.mode as ThemeMode) : "dark";
+    const mode = (VALID_THEME_MODES as string[]).includes(t.mode as string) ? (t.mode as ThemeMode) : "system";
     const next: ThemeConfig = { style, mode };
     if (typeof t.customThemeId === "string") next.customThemeId = t.customThemeId;
     // Signal change only when the incoming object was malformed.
     if (t.style === style && t.mode === mode && t.customThemeId === next.customThemeId) return null;
     return next;
   }
-  return { style: "aurora", mode: "dark" };
+  return { style: "aurora", mode: "system" };
 }
 
 /** Validate AI provider config fields. Returns array of error messages (empty = valid). */

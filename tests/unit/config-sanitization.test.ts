@@ -83,7 +83,7 @@ describe("sanitizeConfig — multi-provider", () => {
     (config as any).theme = "neon"; // invalid legacy string
     const dirty = sanitizeConfig(config);
     expect(dirty).toBe(true);
-    expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
+    expect(config.theme).toEqual({ style: "aurora", mode: "system" });
   });
 
   it("migrates legacy 'dark' string to {aurora, dark}", () => {

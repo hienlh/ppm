@@ -28,7 +28,7 @@ describe("ConfigService (SQLite-backed)", () => {
       const config = configService.load();
       expect(config.port).toBe(8080);
       expect(config.host).toBe("0.0.0.0");
-      expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
+      expect(config.theme).toEqual({ style: "aurora", mode: "system" });
       expect(config.auth.enabled).toBe(true);
       expect(config.auth.token).toBeTruthy(); // auto-generated
       expect(config.projects).toEqual([]);
@@ -62,7 +62,7 @@ describe("ConfigService (SQLite-backed)", () => {
       setConfigValue("theme", JSON.stringify("invalid-theme"));
 
       const config = configService.load();
-      expect(config.theme).toEqual({ style: "aurora", mode: "dark" });
+      expect(config.theme).toEqual({ style: "aurora", mode: "system" });
     });
   });
 

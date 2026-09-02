@@ -60,6 +60,8 @@ interface SettingsState {
   setDockPosition: (position: DockPosition) => void;
   setDbSidebarExpanded: (next: DbSidebarExpanded) => void;
   fetchServerInfo: () => Promise<void>;
+  /** Re-push the in-memory theme selection to the server (see the action for why). */
+  syncThemeToServer: () => Promise<void>;
 }
 
 interface PersistedSettings {
@@ -103,7 +105,8 @@ function initialTheme(p: PersistedSettings): { style: PpmThemeStyle; mode: PpmTh
   if (p.theme && VALID_MODES.includes(p.theme as PpmThemeMode)) {
     return { style: "aurora", mode: p.theme as PpmThemeMode };
   }
-  return { style: "aurora", mode: "dark" };
+  // No stored selection: follow the OS rather than forcing dark.
+  return { style: "aurora", mode: "system" };
 }
 
 function isValidSidebarTab(tab: unknown): tab is SidebarActiveTab {
@@ -185,14 +188,25 @@ function persistUiPref(update: Partial<PersistedSettings>) {
   pushUiPrefsToServer(update);
 }
 
-/** Push the current theme selection to the dedicated server endpoint (fire-and-forget). */
-function pushThemeToServer(style: PpmThemeStyle, mode: PpmThemeMode, customThemeId?: string) {
+/**
+ * Push the current theme selection to the dedicated server endpoint.
+ * Errors are swallowed, so callers may ignore the promise; awaiting it only
+ * matters when a following request must observe the write (see
+ * `syncThemeToServer`).
+ */
+function pushThemeToServer(
+  style: PpmThemeStyle,
+  mode: PpmThemeMode,
+  customThemeId?: string,
+): Promise<void> {
   const token = getAuthToken();
-  fetch("/api/settings/theme", {
+  return fetch("/api/settings/theme", {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ style, mode, ...(customThemeId ? { customThemeId } : {}) }),
-  }).catch(() => {});
+  })
+    .then(() => {})
+    .catch(() => {});
 }
 
 /** Apply server-stored UI prefs to the store + localStorage (no re-push). */
@@ -268,7 +282,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setThemeFromPayload: ({ style, mode, customThemeId }) => {
     const resolvedStyle = VALID_STYLES.includes(style as PpmThemeStyle) ? (style as PpmThemeStyle) : "aurora";
-    const resolvedMode = VALID_MODES.includes(mode) ? mode : "dark";
+    const resolvedMode = VALID_MODES.includes(mode) ? mode : "system";
     persistSettings({ themeStyle: resolvedStyle, themeMode: resolvedMode, customThemeId });
     set({ themeStyle: resolvedStyle, themeMode: resolvedMode, customThemeId });
   },
@@ -416,5 +430,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // Load imported themes (auth-gated; safe to call when authenticated).
       void get().fetchThemes();
     } catch {}
+  },
+
+  // A theme picked before authenticating cannot reach the server: the endpoint
+  // is auth-gated, so that PUT 401s and is dropped. `fetchServerInfo` then lets
+  // the *server* theme win and re-runs the moment auth state flips, which would
+  // discard the pre-auth choice. Callers that have just obtained a valid token
+  // await this first so the PUT lands before that GET reads it back.
+  syncThemeToServer: async () => {
+    await pushThemeToServer(get().themeStyle, get().themeMode, get().customThemeId);
   },
 }));

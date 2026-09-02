@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import {
-  Moon, Sun, Monitor, Bell, Check, ChevronRight, ArrowLeft,
+  Bell, Check, ChevronRight, ArrowLeft,
   Bot, BellRing, Keyboard, Globe, Puzzle, Bug, FolderSearch, WrapText, CalendarClock, DatabaseZap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore, type EditorTabStyle } from "@/stores/settings-store";
-import type { PpmThemeMode } from "@/theme/types";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
@@ -23,11 +22,7 @@ import { SchedulesSettingsSection } from "./schedules/schedules-settings-section
 import { ThemeManagerSection } from "./theme-manager-section";
 import { QueryAuditSection } from "./query-audit-section";
 import { ThemeGrid } from "./theme-grid";
-const THEME_OPTIONS: { value: PpmThemeMode; label: string; icon: React.ElementType }[] = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: Monitor },
-];
+import { THEME_MODE_OPTIONS } from "@/theme/theme-mode-options";
 
 const TAB_STYLE_OPTIONS: { value: EditorTabStyle; label: string }[] = [
   { value: "default", label: "Default" },
@@ -155,7 +150,7 @@ export function SettingsTab() {
             <ThemeGrid />
             {/* Mode override (applies within the selected style; System follows OS) */}
             <div className="flex gap-1.5 pt-1">
-              {THEME_OPTIONS.map((opt) => {
+              {THEME_MODE_OPTIONS.map((opt) => {
                 const Icon = opt.icon;
                 return (
                   <Button

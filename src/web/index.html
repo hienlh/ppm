@@ -18,7 +18,7 @@
         try {
           var raw = localStorage.getItem("ppm-settings");
           var s = raw ? JSON.parse(raw) : {};
-          var mode = s.themeMode || s.theme || "dark";
+          var mode = s.themeMode || s.theme || "system";
           if (mode === "system") {
             mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
           }

@@ -79,7 +79,7 @@ settingsRoutes.put("/device-name", async (c) => {
 
 /** GET /settings/theme — returns the {style, mode, customThemeId?} object */
 settingsRoutes.get("/theme", (c) => {
-  const theme = configService.get("theme") ?? { style: "aurora", mode: "dark" };
+  const theme = configService.get("theme") ?? { style: "aurora", mode: "system" };
   return c.json(ok({ theme }));
 });
 
