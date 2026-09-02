@@ -86,7 +86,10 @@ export function MobileMoreSheet({ open, onClose, slice, actions, entries }: Mobi
               onClose();
             }}
             className={cn(
-              "rounded-full border px-3 py-1.5 text-xs active:bg-surface-elevated",
+              // min-h-11 (44px) keeps the tap target compliant without inflating the pill's
+              // padding to match — inline-flex + items-center re-centers the small text
+              // inside the taller box.
+              "inline-flex min-h-11 items-center justify-center rounded-full border px-3 py-1.5 text-xs active:bg-surface-elevated",
               sort.key === key ? "border-primary bg-accent-wash text-text" : "border-border text-text-2",
             )}
           >
