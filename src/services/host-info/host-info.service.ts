@@ -20,8 +20,16 @@ import { getMacosFinderFavoritesPinned } from "./pinned-macos-finder-favorites.t
 
 const CACHE_TTL_MS = 60_000;
 const PROVIDER_TIMEOUT_MS = 5_000;
+/** Floors how often an explicit `?refresh=true` can actually trigger a rebuild — without
+ *  this, N concurrent refresh requests (or a trigger-happy client) each spawn their own
+ *  round of PowerShell/plutil/findmnt processes. */
+const REFRESH_FLOOR_MS = 5_000;
 
 let cached: { info: HostInfo; expiresAt: number } | null = null;
+let lastBuildAt = 0;
+/** Shared by all callers while a build is running — concurrent calls (refresh or not)
+ *  await the same build instead of each starting their own. */
+let inFlight: Promise<HostInfo> | null = null;
 
 async function getPinnedByPlatform(
   platform: NodeJS.Platform,
@@ -130,20 +138,34 @@ export async function buildHostInfo(
   };
 }
 
-/** Cached singleton entrypoint for the route. Pass `refresh: true` to bypass the 60s cache. */
+/** Cached singleton entrypoint for the route. Pass `refresh: true` to bypass the 60s
+ *  cache — floored to one rebuild per `REFRESH_FLOOR_MS`, and de-duped against any
+ *  build already in flight, so concurrent/rapid-fire refreshes share one process spawn. */
 export async function getHostInfo(
   opts: { refresh?: boolean } = {},
   overrides: Partial<HostInfoDeps> = {},
 ): Promise<HostInfo> {
   const now = Date.now();
   if (!opts.refresh && cached && cached.expiresAt > now) return cached.info;
+  if (opts.refresh && cached && now - lastBuildAt < REFRESH_FLOOR_MS) return cached.info;
+  if (inFlight) return inFlight;
 
-  const info = await buildHostInfo(process.platform, osHomedir(), osHostname(), overrides);
-  cached = { info, expiresAt: now + CACHE_TTL_MS };
-  return info;
+  inFlight = (async () => {
+    try {
+      const info = await buildHostInfo(process.platform, osHomedir(), osHostname(), overrides);
+      lastBuildAt = Date.now();
+      cached = { info, expiresAt: lastBuildAt + CACHE_TTL_MS };
+      return info;
+    } finally {
+      inFlight = null;
+    }
+  })();
+  return inFlight;
 }
 
 /** Test-only: force the next `getHostInfo()` call to rebuild instead of serving the cache. */
 export function _resetHostInfoCache(): void {
   cached = null;
+  lastBuildAt = 0;
+  inFlight = null;
 }
