@@ -447,6 +447,34 @@ describeBase("Supervisor self-heal patterns", () => {
     expect(edgeCode).not.toMatch(/spawn|child_process|execFile|exec\(/);
   });
 
+  test("only a supervisor-spawned server publishes .server-port", () => {
+    // `.server-port` is the edge's routing table and lives in the shared
+    // ~/.ppm, so any process running the __serve__ entry can clobber it.
+    // `bun dev:server` is not PPM_HOME-isolated — it only differs by DB
+    // profile — so without this guard starting the dev server silently
+    // repointed the PRODUCTION tunnel at the dev instance.
+    const serverCode = readFileSync(
+      resolve(import.meta.dir, "../../src/server/index.ts"),
+      "utf-8",
+    );
+    const idx = serverCode.indexOf("SERVER_PORT_FILE()");
+    expect(idx).toBeGreaterThan(-1);
+    // The write must sit inside a port-0 guard: only the OS-assigned port a
+    // supervisor asked for belongs to the edge.
+    const before = serverCode.slice(Math.max(0, idx - 400), idx);
+    expect(before).toMatch(/if \(port === 0\)/);
+  });
+
+  test("the supervisor repairs a hijacked .server-port instead of killing the server", () => {
+    // Before this, a value left behind by another instance made the health
+    // probe check the wrong process, then kill a perfectly healthy server.
+    expect(supervisorCode).toContain("function repairServerPortFile");
+    expect(supervisorCode).toContain("repairServerPortFile();");
+    // The captured port must be dropped on respawn, or the repair would
+    // restore a port that just died.
+    expect(supervisorCode).toMatch(/serverPublishedPort = null;\s*\n\s*try \{ unlinkSync\(SERVER_PORT_FILE\(\)\)/);
+  });
+
   test("spawnServer hunts zombie-port orphans before falling back to another port", () => {
     expect(supervisorCode).toContain("reapZombiePortOrphans");
     // Only hunts when the LISTEN owner is dead (zombie socket), never a live app

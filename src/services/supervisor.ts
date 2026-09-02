@@ -63,6 +63,10 @@ let adoptedTunnelPid: number | null = null; // PID of tunnel kept alive across u
 // survives self-replace, so a new supervisor adopts it rather than respawning.
 let edgePid: number | null = null;
 let edgeProbeTimer: ReturnType<typeof setInterval> | null = null;
+// The loopback port our own server child published. Cleared on every respawn so
+// a stale value never fights the incoming generation. Once set, it makes the
+// supervisor the authority on what `.server-port` should contain.
+let serverPublishedPort: number | null = null;
 let shuttingDown = false;
 // Monotonic token for the authoritative tunnel loop. Every EXTERNAL (re)start
 // bumps it; a loop whose captured generation is stale must exit instead of
@@ -423,6 +427,7 @@ async function mirrorServerPort(): Promise<void> {
     _resetTargetCache(); // the memo is for the forwarder's hot path, not this poll
     const port = resolveTargetPort();
     if (port !== null) {
+      serverPublishedPort = port;
       updateStatus({ serverPort: port });
       log("INFO", `Server bound loopback port ${port}`);
       return;
@@ -430,6 +435,38 @@ async function mirrorServerPort(): Promise<void> {
     await Bun.sleep(200);
   }
   log("WARN", "Server never published its port — status.serverPort left stale");
+}
+
+/**
+ * Repair `.server-port` when another process overwrites it.
+ *
+ * The file is the edge's routing table and lives in the shared `~/.ppm`, so
+ * ANY process running the `__serve__` entry can clobber it — most easily
+ * `bun dev:server`, which is not PPM_HOME-isolated and only differs by DB
+ * profile. When that happens the production tunnel silently serves the dev
+ * instance. The server-side guard (only a port-0, supervisor-spawned server
+ * publishes) stops new writes, but a value left behind by an older build would
+ * otherwise persist until the server restarts.
+ *
+ * After the initial handshake the supervisor knows the port its own child
+ * published, so it is the authority. It still does not write the file on the
+ * happy path — only to undo someone else's write.
+ */
+function repairServerPortFile(): void {
+  if (serverPublishedPort === null || !serverChild) return;
+  _resetTargetCache();
+  const onDisk = resolveTargetPort();
+  if (onDisk === serverPublishedPort) return;
+  log(
+    "WARN",
+    `.server-port says ${onDisk ?? "nothing"} but our server child is on ${serverPublishedPort} — another process (a dev server?) hijacked the edge's target; restoring`,
+  );
+  try {
+    writeFileSync(SERVER_PORT_FILE(), String(serverPublishedPort));
+    _resetTargetCache();
+  } catch (e) {
+    log("ERROR", `Failed to restore .server-port: ${e}`);
+  }
 }
 
 // ─── Server management ─────────────────────────────────────────────────
@@ -456,7 +493,9 @@ export async function spawnServer(
   // Zombie-port handling now applies only to the edge's public port.
   //
   // Clear the stale port file so the mirror below cannot publish the previous
-  // generation's port to `ppm status`.
+  // generation's port to `ppm status`, and drop our record of it so
+  // repairServerPortFile does not restore a port that just died.
+  serverPublishedPort = null;
   try { unlinkSync(SERVER_PORT_FILE()); } catch {}
   const cmd = isCompiledBinary()
     ? [process.execPath, ...serverArgs]
@@ -784,6 +823,10 @@ function startServerHealthCheck() {
       return;
     }
     noServerChildCycles = 0;
+    // Undo any foreign write to `.server-port` before reading it, or the probe
+    // below would health-check a dev server and report our own as fine while
+    // the public tunnel serves the wrong instance.
+    repairServerPortFile();
     // Probe the SERVER's own loopback port, never `_opts.port` — that is the
     // public port and belongs to the edge. Probing through the edge would make
     // a dead edge look like a dead server and kill a perfectly healthy one

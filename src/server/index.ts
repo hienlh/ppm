@@ -942,15 +942,17 @@ if (process.argv.includes("__serve__")) {
     }, 200);
   }
 
-  // Publish the port we actually bound. With `port: 0` the OS picks it, so this
-  // file is the only way anything else can find the server — the edge forwarder
-  // reads it to know where to send traffic, and the supervisor mirrors it into
-  // status.json. The server is the single writer; see edge-target-resolver.ts
-  // for why this is not status.json.
-  try {
-    writeFileSync(SERVER_PORT_FILE(), String(server.port));
-  } catch (e) {
-    console.error(`[serve] Failed to publish server port: ${e}`);
+  // Publish the port we actually bound so the edge forwarder knows where to
+  // send traffic. Only meaningful when the supervisor spawned us with port 0
+  // (OS-assigned); a dev server on a fixed port (e.g. `bun dev:server` on 8081)
+  // serves directly and must NOT overwrite this file — doing so redirects all
+  // production tunnel traffic to the dev instance.
+  if (port === 0) {
+    try {
+      writeFileSync(SERVER_PORT_FILE(), String(server.port));
+    } catch (e) {
+      console.error(`[serve] Failed to publish server port: ${e}`);
+    }
   }
 
   console.log(`Server child ready on port ${server.port}`);
