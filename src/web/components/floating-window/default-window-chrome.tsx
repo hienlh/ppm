@@ -1,6 +1,9 @@
 /**
  * Neutral titlebar used until an OS skin supplies its own chrome. Uses PPM semantic tokens
  * so it inherits the active theme instead of hard-coding a platform look.
+ *
+ * A chrome is a component, not a render callback: a skin is free to hold its own hover,
+ * focus or animation state without entangling itself with the window frame's hooks.
  */
 
 import { Minus, Square, Copy, X } from "lucide-react";

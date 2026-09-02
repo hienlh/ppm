@@ -25,11 +25,20 @@ export const WINDOW_DRAG_CONFIG = {
   pointer: { capture: true },
 } as const;
 
-/** Scale-corrected movement for the current gesture frame. */
-export function scaledMovement(
-  movement: [number, number],
+/**
+ * Pointer displacement since the gesture started, corrected for layer scale.
+ *
+ * Derived from the raw pointer coordinates (`xy` minus `initial`) rather than the
+ * recogniser's `movement`: with a tap threshold in play, `movement` has those first pixels
+ * subtracted, which would leave the window trailing the pointer by the threshold for the
+ * rest of the gesture. Both values are cumulative from the gesture's start, so applying
+ * them to the rect captured at that moment can never drift the way per-frame deltas do.
+ */
+export function gestureDisplacement(
+  xy: readonly [number, number],
+  initial: readonly [number, number],
   scale: number,
 ): { dx: number; dy: number } {
   const s = scale > 0 ? scale : 1;
-  return { dx: movement[0] / s, dy: movement[1] / s };
+  return { dx: (xy[0] - initial[0]) / s, dy: (xy[1] - initial[1]) / s };
 }

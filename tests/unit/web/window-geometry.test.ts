@@ -13,6 +13,7 @@ import {
   Z_BASE,
   type Rect,
 } from "../../../src/web/components/floating-window/window-geometry.ts";
+import { gestureDisplacement } from "../../../src/web/components/floating-window/use-window-gesture-context.ts";
 
 const BOUNDS = { w: 1600, h: 900 };
 const R = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h });
@@ -131,6 +132,50 @@ describe("cascadeSpawnRect", () => {
     expect(r.w).toBeGreaterThanOrEqual(MIN_SIZE.w);
     expect(r.h).toBeGreaterThanOrEqual(MIN_SIZE.h);
     expect(r.w).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("gestureDisplacement", () => {
+  // The recogniser filters taps, which subtracts the tap threshold from its own `movement`.
+  // Deriving the displacement from raw pointer coordinates keeps the window exactly under
+  // the pointer instead of trailing it by those pixels for the rest of the gesture.
+  const initial: [number, number] = [400, 300];
+  const THRESHOLD = 3;
+
+  it("returns the full pointer travel, not the threshold-reduced movement", () => {
+    const xy: [number, number] = [initial[0] + 50, initial[1] + 20];
+    expect(gestureDisplacement(xy, initial, 1)).toEqual({ dx: 50, dy: 20 });
+  });
+
+  it("a dragged window lands exactly where the pointer did", () => {
+    const start = R(200, 150, 800, 500);
+    const xy: [number, number] = [initial[0] + 50, initial[1] + 20];
+    const { dx, dy } = gestureDisplacement(xy, initial, 1);
+    expect(clampRect({ ...start, x: start.x + dx, y: start.y + dy }, BOUNDS)).toEqual(
+      R(250, 170, 800, 500),
+    );
+    // The threshold-reduced movement the recogniser reports would land 3 px short.
+    const reduced = clampRect(
+      { ...start, x: start.x + (dx - THRESHOLD), y: start.y + dy },
+      BOUNDS,
+    );
+    expect(reduced.x).toBe(247);
+  });
+
+  it("a resize ends on the pointer too, for every handle", () => {
+    const start = R(200, 150, 800, 500);
+    const xy: [number, number] = [initial[0] + 50, initial[1] + 20];
+    const { dx, dy } = gestureDisplacement(xy, initial, 1);
+    expect(applyResize(start, "se", dx, dy)).toEqual(R(200, 150, 850, 520));
+    expect(applyResize(start, "nw", dx, dy)).toEqual(R(250, 170, 750, 480));
+  });
+
+  it("divides by the layer scale when an ancestor is transformed", () => {
+    expect(gestureDisplacement([initial[0] + 100, initial[1] + 50], initial, 2)).toEqual({
+      dx: 50,
+      dy: 25,
+    });
+    expect(gestureDisplacement([initial[0] + 10, initial[1]], initial, 0)).toEqual({ dx: 10, dy: 0 });
   });
 });
 

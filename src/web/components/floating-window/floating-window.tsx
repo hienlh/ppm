@@ -10,7 +10,7 @@
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { DefaultWindowChrome } from "./default-window-chrome";
-import { TITLEBAR_HEIGHT, type WindowChromeRenderer } from "./window-chrome-contract";
+import { TITLEBAR_HEIGHT, type WindowChrome } from "./window-chrome-contract";
 import { windowZIndex, type Bounds, type Rect } from "./window-geometry";
 import { useWindowStore, type WindowRuntimeState } from "./window-store";
 import { useWindowDrag } from "./use-window-drag";
@@ -28,7 +28,8 @@ export interface FloatingWindowProps {
   getScale: () => number;
   /** Told when a gesture starts/ends so the layer can raise its capture overlay. */
   onGestureActive: (active: boolean) => void;
-  chrome?: WindowChromeRenderer;
+  /** Skin component for the titlebar; owns its own hooks and state. */
+  chrome?: WindowChrome;
   children: ReactNode;
 }
 
@@ -111,7 +112,7 @@ export function FloatingWindow({
     movable: !maximized,
   });
 
-  const renderChrome = chrome ?? DefaultWindowChrome;
+  const Chrome = chrome ?? DefaultWindowChrome;
 
   return (
     <div
@@ -130,13 +131,13 @@ export function FloatingWindow({
         gesturing ? "transition-none" : "transition-[transform,width,height] duration-150 motion-reduce:transition-none",
       )}
     >
-      {renderChrome({
-        id: win.id,
-        kind: win.kind,
-        title,
-        state: win.state,
-        focused,
-        titlebarProps: {
+      <Chrome
+        id={win.id}
+        kind={win.kind}
+        title={title}
+        state={win.state}
+        focused={focused}
+        titlebarProps={{
           ...(bindDrag() as Record<string, unknown>),
           onKeyDown,
           tabIndex: 0,
@@ -145,11 +146,12 @@ export function FloatingWindow({
           // Scoped here rather than on document: a global user-select hack leaks into
           // unrelated panels and survives a gesture that ends outside the window.
           style: { touchAction: "none", userSelect: "none" },
-        },
-        onMinimize: minimize,
-        onToggleMaximize: toggleMaximize,
-        onClose: close,
-      })}
+        }}
+        onMinimize={minimize}
+        onToggleMaximize={toggleMaximize}
+        onClose={close}
+      />
+
 
       {!minimized && (
         <div className="relative flex-1 min-h-0 overflow-hidden rounded-b-[8px] bg-panel">

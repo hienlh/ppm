@@ -6,19 +6,19 @@
 import { useDrag } from "@use-gesture/react";
 import { applyResize, clampRect, type Rect, type ResizeHandle } from "./window-geometry";
 import {
-  scaledMovement,
+  gestureDisplacement,
   WINDOW_DRAG_CONFIG,
   type WindowGestureContext,
 } from "./use-window-gesture-context";
 
 export function useWindowResize(ctx: WindowGestureContext) {
   return useDrag(
-    ({ args, movement, first, last, memo }) => {
+    ({ args, xy, initial, first, last, memo }) => {
       const handle = args[0] as ResizeHandle;
       const base: Rect = first ? { ...ctx.getRect() } : (memo as Rect);
       if (first) ctx.onGestureActive(true);
 
-      const { dx, dy } = scaledMovement(movement as [number, number], ctx.getScale());
+      const { dx, dy } = gestureDisplacement(xy, initial, ctx.getScale());
       const next = clampRect(applyResize(base, handle, dx, dy), ctx.getBounds());
       ctx.onChange(next, last);
 
