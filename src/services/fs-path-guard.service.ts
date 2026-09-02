@@ -1,0 +1,135 @@
+import { resolve, sep } from "node:path";
+import { realpath } from "node:fs/promises";
+import { homedir } from "node:os";
+import { getPpmDir } from "./ppm-dir.ts";
+
+/**
+ * Central guard for every filesystem route that works outside project scope.
+ * The whole disk is browsable behind PPM auth, so the remaining defences are:
+ * a normalized resolve, a platform allowlist that still rejects UNC shares,
+ * a refusal for the PPM directory (holds the credentials DB) and a protected
+ * root list so a stray rename cannot take out `$HOME` or a drive root.
+ */
+
+/** Structured mapping of an FS failure to an HTTP answer. */
+export interface FsErrorInfo {
+  status: number;
+  code: string;
+  message: string;
+  hint?: string;
+}
+
+/** Resolve a path, expanding a leading `~` to the home directory. */
+export function resolvePath(input: string): string {
+  const home = homedir();
+  return input.startsWith("~") ? resolve(home, input.slice(2)) : resolve(input);
+}
+
+/** Case-insensitive prefix test on Windows/macOS-style paths. */
+function isInside(child: string, parent: string): boolean {
+  const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+  const c = norm(child);
+  const p = norm(parent);
+  return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
+}
+
+/**
+ * Whitelist for system-level access. POSIX exposes the whole tree; Windows
+ * requires a drive letter, which keeps UNC shares (`\\server\share`) out —
+ * they are unsupported in this version because they can block indefinitely.
+ */
+export function isAllowedPath(resolved: string): boolean {
+  // SDK background-command output lives under the OS temp dir; the chat output
+  // panel reads those files directly. Matched by structure so it survives the
+  // per-platform claude dir naming ("claude" vs "claude-<uid>").
+  if (/[\\/]claude[^\\/]*[\\/].+[\\/]tasks[\\/][^\\/]+\.output$/.test(resolved)) return true;
+
+  if (process.platform === "win32") return /^[A-Za-z]:\\/.test(resolved);
+  return resolved.startsWith("/");
+}
+
+/** Throw a 403 when a path is outside the allowlist. */
+export function assertAllowed(resolved: string): void {
+  if (!isAllowedPath(resolved)) {
+    throw Object.assign(new Error("Access denied"), { status: 403, code: "EACCES" });
+  }
+}
+
+/** True when the path is the PPM directory or anything inside it. */
+export function isPpmDirPath(resolved: string): boolean {
+  return isInside(resolved, getPpmDir());
+}
+
+/**
+ * Refuse the PPM directory subtree on read-style doors. It stores the config
+ * database with provider credentials and auth tokens, which must never be
+ * downloadable through a generic file route.
+ */
+export function assertNotPpmDir(resolved: string): void {
+  if (isPpmDirPath(resolved)) {
+    throw Object.assign(new Error("Access denied"), { status: 403, code: "EACCES" });
+  }
+}
+
+/** Paths whose removal or rename would break the host or PPM itself. */
+export function isProtectedRoot(candidate: string): boolean {
+  const p = resolve(candidate);
+  if (p === "/" ) return true;
+  if (/^[A-Za-z]:\\?$/.test(p)) return true;
+  const norm = (v: string) => (process.platform === "win32" ? v.toLowerCase() : v);
+  return norm(p) === norm(homedir()) || norm(p) === norm(getPpmDir());
+}
+
+/**
+ * Reject destructive operations on protected roots. The realpath is checked
+ * too, so a symlink pointing at `$HOME` cannot be used as a proxy target.
+ */
+export async function assertNotProtected(candidate: string): Promise<void> {
+  const deny = () => {
+    throw Object.assign(new Error(`Refusing to modify a protected path: ${candidate}`), {
+      status: 403,
+      code: "EPROTECTED",
+    });
+  };
+  if (isProtectedRoot(candidate)) deny();
+  try {
+    if (isProtectedRoot(await realpath(candidate))) deny();
+  } catch (e) {
+    if ((e as { status?: number }).status === 403) throw e;
+    // Unresolvable path (missing or broken link) — the plain check already ran.
+  }
+}
+
+const HINT_EPERM =
+  process.platform === "darwin"
+    ? "grant Full Disk Access to the process running ppm"
+    : "the process running ppm lacks permission for this path";
+
+/** Map a Node FS error (or a guard error carrying `status`) to an HTTP answer. */
+export function mapFsError(e: unknown): FsErrorInfo {
+  const err = e as { status?: number; code?: string; message?: string };
+  const message = err?.message || "Filesystem error";
+  if (typeof err?.status === "number") {
+    return { status: err.status, code: err.code || "EFAIL", message, hint: err.status === 403 ? HINT_EPERM : undefined };
+  }
+  switch (err?.code) {
+    case "ENOENT":
+      return { status: 404, code: "ENOENT", message };
+    case "EEXIST":
+    case "ERR_FS_CP_EEXIST":
+      return { status: 409, code: "EEXIST", message };
+    case "ENOTEMPTY":
+      return { status: 409, code: "ENOTEMPTY", message };
+    case "EPERM":
+    case "EACCES":
+      return { status: 403, code: err.code, message, hint: HINT_EPERM };
+    case "ENOTDIR":
+    case "EISDIR":
+    case "EINVAL":
+      return { status: 400, code: err.code, message };
+    case "EBUSY":
+      return { status: 409, code: "EBUSY", message };
+    default:
+      return { status: 500, code: err?.code || "EFAIL", message };
+  }
+}

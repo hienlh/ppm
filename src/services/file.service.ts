@@ -5,13 +5,14 @@ import {
   readFileSync,
   writeFileSync,
   mkdirSync,
-  unlinkSync,
-  rmSync,
-  renameSync,
-  cpSync,
 } from "node:fs";
 import { resolve, relative, dirname, join, normalize, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
+import {
+  copyEntrySync,
+  removeEntrySync,
+  renameEntrySync,
+} from "./fs-ops/fs-core-ops.ts";
 import type { FileNode, FileEntry, FileDirEntry } from "../types/project.ts";
 import {
   listDir as listDirImpl,
@@ -227,12 +228,7 @@ class FileService {
 
     if (!existsSync(absPath)) throw new NotFoundError(`Not found: ${filePath}`);
 
-    const stat = statSync(absPath);
-    if (stat.isDirectory()) {
-      rmSync(absPath, { recursive: true, force: true });
-    } else {
-      unlinkSync(absPath);
-    }
+    removeEntrySync(absPath);
   }
 
   /** Rename a file or directory */
@@ -248,7 +244,7 @@ class FileService {
     const dir = dirname(absNew);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
-    renameSync(absOld, absNew);
+    renameEntrySync(absOld, absNew);
   }
 
   /** Move a file or directory to a new location */
@@ -267,7 +263,7 @@ class FileService {
 
     const dir = dirname(absDest);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    cpSync(absSrc, absDest, { recursive: true });
+    copyEntrySync(absSrc, absDest);
   }
 
   /**
