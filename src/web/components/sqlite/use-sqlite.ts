@@ -19,9 +19,14 @@ export function useSqlite(projectName: string, dbPath: string, connectionId?: nu
   const [queryError, setQueryError] = useState<string | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
 
-  // When connectionId present, use unified API; otherwise use project-scoped API
+  // Three sources, in order of specificity:
+  //  - a saved connection      → the unified /api/db routes, no path in the query
+  //  - a file inside a project → the project-scoped route, path relative to the project
+  //  - an absolute path with no project (opened from a file-explorer window)
+  //                            → the host filesystem route, path absolute
   const unifiedBase = connectionId ? `/api/db/connections/${connectionId}` : null;
-  const base = unifiedBase ?? `${projectUrl(projectName)}/sqlite`;
+  const isExternalPath = !connectionId && !projectName && /^(\/|[A-Za-z]:[/\\])/.test(dbPath);
+  const base = unifiedBase ?? (isExternalPath ? "/api/fs/sqlite" : `${projectUrl(projectName)}/sqlite`);
   const qs = unifiedBase ? "" : `path=${encodeURIComponent(dbPath)}`;
 
   // Fetch tables on mount — use cache when connectionId (sidebar handles live sync)
