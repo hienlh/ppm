@@ -3,11 +3,10 @@ import { access, lstat, opendir, readlink } from "node:fs/promises";
 import { basename } from "node:path";
 import {
   assertAllowed,
-  assertNotPpmSubtree,
+  assertNotPpmSubtreeDeep,
   resolvePath,
 } from "../fs-path-guard.service.ts";
 import { isHiddenName } from "./fs-hidden-names.ts";
-import { realPathOrSelf } from "./fs-ops-read-write.service.ts";
 
 export type EntryKind = "file" | "directory" | "symlink" | "unknown";
 
@@ -77,8 +76,7 @@ export async function statPath(input: string): Promise<StatResult> {
   assertAllowed(path);
   // Sizes and timestamps of the credentials store are metadata the explorer
   // has no business exposing; `browse` still lists the names.
-  assertNotPpmSubtree(path);
-  assertNotPpmSubtree(await realPathOrSelf(path));
+  await assertNotPpmSubtreeDeep(path);
 
   const st = await lstat(path);
   const kind = kindOfStats(st);

@@ -52,6 +52,7 @@ describe("renamePath", () => {
       status: 403,
       code: "EPROTECTED",
     });
+    expect(existsSync(join(getPpmDir(), "ppm-copy.db"))).toBe(false);
   });
 });
 
@@ -99,6 +100,32 @@ describe("touchFile / makeDir", () => {
     expect(existsSync(join(dir, "folder"))).toBe(true);
     await expect(makeDir(join(dir, "folder"))).rejects.toMatchObject({ code: "EEXIST" });
   });
+
+  it("refuses to create a file inside the PPM directory", async () => {
+    const target = join(getPpmDir(), "planted.txt");
+    await expect(touchFile(target)).rejects.toMatchObject({ status: 403, code: "EPROTECTED" });
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("refuses to create a directory inside the PPM directory", async () => {
+    const target = join(getPpmDir(), "planted-dir");
+    await expect(makeDir(target)).rejects.toMatchObject({ status: 403, code: "EPROTECTED" });
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("refuses a write through a symlink pointing at the PPM directory", async () => {
+    const link = join(dir, "ppm-link");
+    try {
+      symlinkSync(getPpmDir(), link, "junction");
+    } catch {
+      return; // link creation needs privileges on some hosts
+    }
+    await expect(touchFile(join(link, "planted.txt"))).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(join(getPpmDir(), "planted.txt"))).toBe(false);
+  });
 });
 
 describe("copyPath / movePath", () => {
@@ -142,6 +169,25 @@ describe("copyPath / movePath", () => {
       status: 403,
       code: "EPROTECTED",
     });
+  });
+
+  it("refuses to copy into the PPM directory", async () => {
+    writeFileSync(join(dir, "evil.db"), "payload");
+    const target = join(getPpmDir(), "ppm.db");
+    writeFileSync(target, "original");
+    await expect(copyPath(join(dir, "evil.db"), target)).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(readFileSync(target, "utf-8")).toBe("original");
+  });
+
+  it("refuses to move into the PPM directory", async () => {
+    writeFileSync(join(dir, "evil.db"), "payload");
+    await expect(
+      movePath(join(dir, "evil.db"), join(getPpmDir(), "moved.db")),
+    ).rejects.toMatchObject({ status: 403, code: "EPROTECTED" });
+    expect(existsSync(join(getPpmDir(), "moved.db"))).toBe(false);
   });
 
   it.if(process.platform === "win32")("refuses a UNC destination, which is unsupported", async () => {

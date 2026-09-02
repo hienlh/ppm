@@ -2,6 +2,11 @@ import { resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { getPpmDir } from "./ppm-dir.ts";
+import { realPathOrSelf, realPathOrSelfSync } from "./fs-ops/fs-real-path.ts";
+
+// Re-exported so callers reach both the guards and the resolver they build on
+// through one import.
+export { realPathOrSelf, realPathOrSelfSync };
 
 /**
  * Central guard for every filesystem route that works outside project scope.
@@ -84,6 +89,16 @@ export function assertNotPpmSubtree(candidate: string): void {
       code: "EPROTECTED",
     });
   }
+}
+
+/**
+ * Same refusal, applied to the real path as well. A path that does not exist
+ * yet is still resolved through its parents, so a symlinked directory cannot
+ * be used to reach — or create something inside — the PPM directory.
+ */
+export async function assertNotPpmSubtreeDeep(candidate: string): Promise<void> {
+  assertNotPpmSubtree(candidate);
+  assertNotPpmSubtree(await realPathOrSelf(candidate));
 }
 
 /** Paths whose removal or rename would break the host or PPM itself. */
