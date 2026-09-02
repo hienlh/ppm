@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { useExplorerStore, type SortKey } from "../explorer-store";
 import { activeEntries } from "../use-explorer-keyboard";
+import { usePrefersCoarsePointer } from "../use-coarse-long-press";
 import type { ExplorerViewProps } from "./explorer-view-registry";
 import { InlineNameInput } from "./inline-name-input";
 import { ListRow } from "./list-row";
@@ -27,12 +28,13 @@ const COLUMNS: { key: SortKey; label: string; className: string }[] = [
 ];
 
 export function ListView({
-  slice, entries, actions, selection, inlineError, hasClipboard, isPinned, rowHeight,
+  slice, entries, actions, selection, inlineError, hasClipboard, isPinned, rowHeight, backgroundLongPress,
 }: ExplorerViewProps) {
   const sort = useExplorerStore((s) => s.sort);
   const setPrefs = useExplorerStore((s) => s.setPrefs);
   const cutPaths = useFileStore((s) => (s.clipboard?.operation === "cut" ? s.clipboard.paths : null));
   const scrollRef = useRef<HTMLDivElement>(null);
+  const coarse = usePrefersCoarsePointer();
 
   const virtualizer = useVirtualizer({
     count: entries.length,
@@ -63,9 +65,12 @@ export function ListView({
             aria-label={`Sort by ${column.label}`}
             onClick={() => toggleSort(column.key)}
             className={cn(
-              "flex items-center gap-0.5 can-hover:hover:text-text",
+              "relative flex items-center gap-0.5 can-hover:hover:text-text",
               column.className,
               column.key !== "name" && "justify-end",
+              // Header row stays visually unchanged — only the tap-registering area grows
+              // to the 44px minimum on a coarse pointer, via an invisible expanded hit box.
+              coarse && "before:absolute before:-inset-x-2 before:-inset-y-3 before:content-['']",
             )}
           >
             {column.label}
@@ -86,6 +91,7 @@ export function ListView({
             // Clicking the empty area below the rows clears the selection, as in the OS.
             onMouseDown={(e) => { if (e.target === e.currentTarget) selection.clear(); }}
             className="flex-1 overflow-auto outline-none"
+            {...backgroundLongPress}
           >
             {creating && (
               <div className="flex items-center gap-2 px-2" style={{ height: rowHeight }}>
