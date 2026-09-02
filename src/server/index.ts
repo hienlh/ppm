@@ -161,6 +161,10 @@ app.route("/api/fs/sqlite", fsSqliteRoutes);
 import { resourceRoutes } from "./routes/resources.ts";
 app.route("/api/system", resourceRoutes);
 
+// Host OS facts for the file explorer (platform, drives, known + pinned folders)
+import { hostInfoRoutes } from "./routes/host-info.ts";
+app.route("/api/system", hostInfoRoutes);
+
 // Finishes an OAuth loopback login started from another device
 import { loopbackRoutes } from "./routes/oauth-loopback.ts";
 app.route("/api/loopback", loopbackRoutes);
