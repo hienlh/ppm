@@ -1,14 +1,24 @@
 /**
- * The eight invisible grab strips around a window. Edges are 6 px, corners 12 px and sit on
- * top of the edges, matching the hit areas desktop window managers use.
+ * The eight invisible grab strips around a window. Corners sit on top of the edges, matching
+ * the hit areas desktop window managers use.
+ *
+ * A window at this size can be reached with a finger — a tablet past the `md` breakpoint gets
+ * the desktop layer — and a 6 px strip is far below any touch target, so the grab areas grow
+ * on coarse pointers. They are transparent, so nothing about the window's look changes.
  */
 
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { RESIZE_HANDLES, type ResizeHandle } from "./window-geometry";
 
 type HandleBinder = (handle: ResizeHandle) => Record<string, unknown>;
 
-const EDGE = 6;
-const CORNER = 12;
+interface HandleSizes {
+  edge: number;
+  corner: number;
+}
+
+const MOUSE_SIZES: HandleSizes = { edge: 6, corner: 12 };
+const TOUCH_SIZES: HandleSizes = { edge: 12, corner: 20 };
 
 const CURSORS: Record<ResizeHandle, string> = {
   n: "cursor-n-resize",
@@ -21,33 +31,39 @@ const CURSORS: Record<ResizeHandle, string> = {
   sw: "cursor-sw-resize",
 };
 
-/** Absolute placement per handle, expressed in the same units the frame uses. */
-function styleFor(handle: ResizeHandle): React.CSSProperties {
+/**
+ * Absolute placement per handle, expressed in the same units the frame uses. Each strip is
+ * centred on its border, so half of the extra width grows outwards and half inwards — the
+ * window's own border never moves.
+ */
+function styleFor(handle: ResizeHandle, sizes: HandleSizes): React.CSSProperties {
   const corner = handle.length === 2;
-  const size = corner ? CORNER : EDGE;
   const s: React.CSSProperties = { position: "absolute", touchAction: "none", zIndex: 1 };
-  if (handle.includes("n")) s.top = -EDGE / 2;
-  if (handle.includes("s")) s.bottom = -EDGE / 2;
-  if (handle.includes("w")) s.left = -EDGE / 2;
-  if (handle.includes("e")) s.right = -EDGE / 2;
+  if (handle.includes("n")) s.top = -sizes.edge / 2;
+  if (handle.includes("s")) s.bottom = -sizes.edge / 2;
+  if (handle.includes("w")) s.left = -sizes.edge / 2;
+  if (handle.includes("e")) s.right = -sizes.edge / 2;
   if (corner) {
-    s.width = size;
-    s.height = size;
+    s.width = sizes.corner;
+    s.height = sizes.corner;
     return s;
   }
+  // Edge strips stop short of the corners so the corner handles keep their full hit area.
   if (handle === "n" || handle === "s") {
-    s.left = CORNER;
-    s.right = CORNER;
-    s.height = size;
+    s.left = sizes.corner;
+    s.right = sizes.corner;
+    s.height = sizes.edge;
   } else {
-    s.top = CORNER;
-    s.bottom = CORNER;
-    s.width = size;
+    s.top = sizes.corner;
+    s.bottom = sizes.corner;
+    s.width = sizes.edge;
   }
   return s;
 }
 
 export function WindowResizeHandles({ bind }: { bind: HandleBinder }) {
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
+  const sizes = coarsePointer ? TOUCH_SIZES : MOUSE_SIZES;
   return (
     <>
       {RESIZE_HANDLES.map((handle) => (
@@ -57,7 +73,7 @@ export function WindowResizeHandles({ bind }: { bind: HandleBinder }) {
           data-resize-handle={handle}
           aria-hidden
           className={CURSORS[handle]}
-          style={styleFor(handle)}
+          style={styleFor(handle, sizes)}
         />
       ))}
     </>
