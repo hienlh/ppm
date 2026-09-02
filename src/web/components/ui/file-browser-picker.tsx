@@ -11,6 +11,7 @@ import {
   Download, ChevronRight, ArrowLeft, Search, Loader2, Clock, Eye, EyeOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatRelativeTime, formatSize } from "@/components/os-explorer/format-file-meta";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -58,24 +59,6 @@ function getRecent(): string[] {
 function saveRecent(dirPath: string): void {
   const updated = [dirPath, ...getRecent().filter((p) => p !== dirPath)].slice(0, MAX_RECENT);
   localStorage.setItem(RECENT_KEY, JSON.stringify(updated));
-}
-
-function formatSize(bytes?: number): string {
-  if (bytes == null) return "";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
 }
 
 function fileIcon(entry: BrowseEntry): React.ReactNode {
