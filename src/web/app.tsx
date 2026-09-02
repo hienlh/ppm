@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { PanelLayout } from "@/components/layout/panel-layout";
@@ -37,6 +37,13 @@ import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
 import { useExtensionWs } from "@/hooks/use-extension-ws";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
+
+// Lazy: the explorer feature (views, actions, skins, icon map) is the same heavy bundle the
+// desktop floating window already keeps out of the initial chunk (see `WINDOW_CONTENT`) —
+// a static import here would pull all of it into every user's boot, mobile or not.
+const MobileExplorerSheet = lazy(() =>
+  import("@/components/os-explorer/mobile/mobile-explorer-sheet").then((m) => ({ default: m.MobileExplorerSheet })),
+);
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
@@ -349,6 +356,11 @@ export function App() {
 
         {/* Compare Files picker (Mod+Alt+D, palette, context menus) — singleton */}
         <ComparePicker />
+
+        {/* Mobile full-screen file explorer sheet — lazy + self-gated, loads nothing until opened */}
+        <Suspense fallback={null}>
+          <MobileExplorerSheet />
+        </Suspense>
 
         {/* Global bug report popup */}
         <BugReportPopup />
