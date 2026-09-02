@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.54] - 2026-09-02
+
+### Added
+- **Light or dark can be chosen on the login screen** — the saved theme sits behind the password, so a new browser or a fresh share link had no way to reach light mode before signing in.
+
+### Changed
+- **A client that has never picked a theme follows the system appearance** — it used to come up dark whatever the OS was set to. An existing choice is untouched.
+
+### Fixed
+- **The login screen's dotted backdrop shows up in light mode** — the dots were a hard-coded white, so they disappeared against a pale background.
+
 ## [0.17.53] - 2026-09-02
 
 ### Fixed
