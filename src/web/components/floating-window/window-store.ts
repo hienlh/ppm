@@ -35,6 +35,8 @@ interface WindowStore {
   move(id: string, position: { x: number; y: number }): void;
   resize(id: string, rect: Rect): void;
   setState(id: string, state: WindowVisualState): void;
+  /** Merge into a window's payload; persisted so a reload restores the latest state. */
+  setPayload(id: string, payload: Record<string, unknown>): void;
   setBounds(bounds: Bounds): void;
   /** Re-hydrate persisted windows into the layer (no-op after the first call). */
   restoreAll(bounds: Bounds): void;
@@ -131,6 +133,22 @@ export const useWindowStore = create<WindowStore>((set, get) => ({
     const win = windows[id];
     if (!win || win.state === state) return;
     const next = { ...windows, [id]: { ...win, state } };
+    set({ windows: next });
+    persist(next);
+  },
+
+  setPayload: (id, payload) => {
+    const { windows } = get();
+    const win = windows[id];
+    if (!win) return;
+    const merged = { ...win.payload, ...payload };
+    // Content re-renders on every keystroke in some bodies; skip the write when the
+    // payload is unchanged so persistence is not hit for nothing.
+    const unchanged = Object.entries(merged).every(
+      ([key, value]) => win.payload?.[key] === value,
+    );
+    if (unchanged && Object.keys(merged).length === Object.keys(win.payload ?? {}).length) return;
+    const next = { ...windows, [id]: { ...win, payload: merged } };
     set({ windows: next });
     persist(next);
   },

@@ -19,6 +19,9 @@ import { useConnections, type Connection } from "../database/use-connections";
 import { GlideDataGrid } from "../database/glide-data-grid";
 import type { GridColumnSchema } from "../database/glide-grid-types";
 import type { DbQueryResult } from "../database/use-database";
+// Single source of truth: the explorer decides whether a double-click can open a file at
+// all from these very sets, so they must not be redeclared here.
+import { AUDIO_EXTS, IMAGE_EXTS, SQLITE_EXTS, VIDEO_EXTS } from "@/components/os-explorer/can-open-in-ppm";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -29,15 +32,6 @@ const PdfPreview = lazy(() => import("./pdf-preview").then((m) => ({ default: m.
 const VideoPreview = lazy(() => import("./video-preview").then((m) => ({ default: m.VideoPreview })));
 const AudioPreview = lazy(() => import("./audio-preview").then((m) => ({ default: m.AudioPreview })));
 const DocxPreview = lazy(() => import("./docx-preview").then((m) => ({ default: m.DocxPreview })));
-
-/** Image extensions renderable inline */
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "ico"]);
-/** Video extensions playable inline */
-const VIDEO_EXTS = new Set(["mp4", "webm", "mov", "ogg", "avi", "mkv"]);
-/** Audio extensions playable inline */
-const AUDIO_EXTS = new Set(["mp3", "wav", "flac", "aac", "m4a", "wma"]);
-/** SQLite extensions — redirect to sqlite viewer */
-const SQLITE_EXTS = new Set(["db", "sqlite", "sqlite3"]);
 
 function getFileExt(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";

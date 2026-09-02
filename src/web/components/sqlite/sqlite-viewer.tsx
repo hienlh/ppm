@@ -33,7 +33,10 @@ export function SqliteViewer({ metadata }: SqliteViewerProps) {
     );
   }
 
-  if (!filePath || !projectName) {
+  // A database opened from a file-explorer window has no project; its absolute path is
+  // enough for the host filesystem SQLite routes, so only a missing path is fatal.
+  const isExternalPath = !!filePath && !projectName && /^(\/|[A-Za-z]:[/\\])/.test(filePath);
+  if (!filePath || (!projectName && !isExternalPath)) {
     return (
       <div className="flex items-center justify-center h-full text-text-secondary text-sm">
         <Database className="size-5 mr-2" /> No database file selected.
@@ -43,7 +46,7 @@ export function SqliteViewer({ metadata }: SqliteViewerProps) {
 
   return (
     <SqliteViewerInner
-      projectName={projectName}
+      projectName={projectName ?? ""}
       dbPath={filePath}
       queryPanelOpen={queryPanelOpen}
       onToggleQueryPanel={() => setQueryPanelOpen((v) => !v)}

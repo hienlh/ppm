@@ -16,7 +16,10 @@ import {
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useShallow } from "zustand/react/shallow";
-import { useFileStore, loadPersistedExpanded, savePersistedExpanded, type FileNode } from "@/stores/file-store";
+import {
+  useFileStore, loadPersistedExpanded, savePersistedExpanded,
+  absoluteProjectPath, relativeProjectPath, type FileNode,
+} from "@/stores/file-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useCompareStore } from "@/stores/compare-store";
@@ -37,11 +40,17 @@ import { InlineTreeInput } from "./inline-tree-input";
 import { flattenVisibleTree, type InputRow } from "./flatten-visible-tree";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
 import { api, projectUrl } from "@/lib/api-client";
+import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useFileUploadDrag } from "./use-file-upload-drag";
 import { useTreeKeyboardNav } from "./use-tree-keyboard-nav";
 
 /** Synthetic root node for creating files/folders at project root */
 const ROOT_NODE: FileNode = { name: "", path: "", type: "directory" };
+
+/** Parent directory of a project-relative path; "" is the project root. */
+function parentDirOfRelative(path: string): string {
+  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+}
 
 interface FileTreeProps {
   onFileOpen?: () => void;
@@ -116,16 +125,30 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     setFocusedPath(filePath);
   }, [activeProject, setExpanded, loadChildren, setFocusedPath]);
 
-  /** Paste clipboard files into a target directory */
+  /**
+   * Paste clipboard entries into a target directory.
+   *
+   * The clipboard holds absolute paths and may have been filled by an explorer window, so
+   * the source decides the route: entries that live inside this project keep the
+   * project-scoped endpoints (relative paths, gitignore-aware), anything else goes through
+   * the host filesystem API with a fully-composed destination.
+   */
   const pasteFiles = useCallback(async (targetDir: string) => {
     if (!activeProject || !clipboard) return;
     const projectName = activeProject.name;
+    const root = activeProject.path;
     const endpoint = clipboard.operation === "cut" ? "move" : "copy";
     for (const source of clipboard.paths) {
-      const name = source.includes("/") ? source.slice(source.lastIndexOf("/") + 1) : source;
-      const destination = targetDir ? `${targetDir}/${name}` : name;
+      const name = source.split(/[/\\]/).filter(Boolean).pop() ?? source;
+      const relativeSource = relativeProjectPath(root, source);
       try {
-        await api.post(`${projectUrl(projectName)}/files/${endpoint}`, { source, destination });
+        if (relativeSource != null) {
+          const destination = targetDir ? `${targetDir}/${name}` : name;
+          await api.post(`${projectUrl(projectName)}/files/${endpoint}`, { source: relativeSource, destination });
+        } else {
+          const destination = absoluteProjectPath(root, targetDir ? `${targetDir}/${name}` : name);
+          await api.post(`/api/fs/${endpoint}`, { source, destination });
+        }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : `Failed to ${endpoint}`);
       }
@@ -136,6 +159,17 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
 
   const treeContainerRef = useRef<HTMLDivElement>(null);
 
+  /** Absolutise before publishing: the clipboard is shared with the explorer windows. */
+  const copyToTreeClipboard = useCallback((relativePaths: string[], operation: "cut" | "copy") => {
+    if (!activeProject) return;
+    const root = activeProject.path;
+    setClipboard({
+      paths: relativePaths.map((p) => absoluteProjectPath(root, p)),
+      operation,
+      origin: { projectName: activeProject.name, root },
+    });
+  }, [activeProject, setClipboard]);
+
   /** Ctrl+X / Ctrl+C / Ctrl+V — scoped to file tree container focus */
   const handleClipboardKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!activeProject) return;
@@ -145,12 +179,9 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     const mod = e.metaKey || e.ctrlKey;
     if (!mod) return;
 
-    if (e.key === "x" && selectedFiles.length > 0) {
+    if ((e.key === "x" || e.key === "c") && selectedFiles.length > 0) {
       e.preventDefault();
-      setClipboard({ paths: [...selectedFiles], operation: "cut" });
-    } else if (e.key === "c" && selectedFiles.length > 0) {
-      e.preventDefault();
-      setClipboard({ paths: [...selectedFiles], operation: "copy" });
+      copyToTreeClipboard(selectedFiles, e.key === "x" ? "cut" : "copy");
     } else if (e.key === "v" && clipboard) {
       e.preventDefault();
       pasteFiles("");
@@ -294,14 +325,14 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       onFileOpen?.();
       return;
     }
-    if (action === "cut") {
+    if (action === "cut" || action === "copy-file") {
       const paths = selectedFiles.length > 0 && selectedFiles.includes(node.path) ? [...selectedFiles] : [node.path];
-      setClipboard({ paths, operation: "cut" });
+      copyToTreeClipboard(paths, action === "cut" ? "cut" : "copy");
       return;
     }
-    if (action === "copy-file") {
-      const paths = selectedFiles.length > 0 && selectedFiles.includes(node.path) ? [...selectedFiles] : [node.path];
-      setClipboard({ paths, operation: "copy" });
+    if (action === "open-in-file-explorer") {
+      const target = node.type === "directory" ? node.path : parentDirOfRelative(node.path);
+      void openExplorer(absoluteProjectPath(activeProject!.path, target));
       return;
     }
     if (action === "paste" && node.type === "directory") {

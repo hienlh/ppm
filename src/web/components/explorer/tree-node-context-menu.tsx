@@ -1,7 +1,7 @@
 /**
  * Context menu items for a tree node (file or folder).
  */
-import { Download } from "lucide-react";
+import { Download, FolderOpen } from "lucide-react";
 import type { FileNode, ClipboardState } from "@/stores/file-store";
 import {
   ContextMenuContent,
@@ -37,6 +37,11 @@ export function TreeNodeContextMenu({
           </ContextMenuItem>
           <ContextMenuItem onClick={() => onAction("new-folder", node)}>
             New Folder
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => onAction("open-in-file-explorer", node)}>
+            <FolderOpen className="size-3.5 mr-2" />
+            Open in File Explorer
           </ContextMenuItem>
           <ContextMenuSeparator />
         </>
