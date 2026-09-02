@@ -12,6 +12,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import { useFileStore } from "@/stores/file-store";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { cn } from "@/lib/utils";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { activeEntries } from "../use-explorer-keyboard";
 import type { ExplorerViewProps } from "./explorer-view-registry";
@@ -24,17 +26,24 @@ const TILE_HEIGHT = 88;
 /** Matches the grid's own `gap-1` and `p-2`, so a row of tiles never overflows or shrinks. */
 const TILE_GAP = 4;
 const GRID_PADDING = 16;
+/** Fixed column count on the mobile sheet — a grid (not fixed-width tiles) fills the row. */
+const MOBILE_COLUMNS = 3;
 
 export function IconsView({
   slice, entries, actions, selection, inlineError, hasClipboard, isPinned, backgroundLongPress,
 }: ExplorerViewProps) {
   const cutPaths = useFileStore((s) => (s.clipboard?.operation === "cut" ? s.clipboard.paths : null));
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [columns, setColumns] = useState(1);
+  const isMobile = useIsMobile();
+  const [columns, setColumns] = useState(isMobile ? MOBILE_COLUMNS : 1);
 
   useEffect(() => {
+    if (isMobile) { setColumns(MOBILE_COLUMNS); return; }
     const el = scrollRef.current;
     if (!el) return;
+    // Subtract the grid's own p-2 padding and one gap-1 (n columns need n-1 gaps, so adding
+    // one gap back before dividing accounts for exactly that) — a bare clientWidth / TILE_WIDTH
+    // let tiles shrink below 96px or overflow the row at some container widths.
     const measure = () => {
       const usable = el.clientWidth - GRID_PADDING + TILE_GAP;
       setColumns(Math.max(1, Math.floor(usable / (TILE_WIDTH + TILE_GAP))));
@@ -43,7 +52,7 @@ export function IconsView({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [isMobile]);
 
   const rowCount = Math.ceil(entries.length / columns);
   const virtualizer = useVirtualizer({
@@ -105,7 +114,10 @@ export function IconsView({
           {...backgroundLongPress}
         >
           {creating && (
-            <div className="mb-2 flex flex-col items-center gap-1 p-2" style={{ width: TILE_WIDTH }}>
+            <div
+              className="mb-2 flex flex-col items-center gap-1 p-2"
+              style={isMobile ? undefined : { width: TILE_WIDTH }}
+            >
               <InlineNameInput
                 initial=""
                 error={inlineError}
@@ -122,7 +134,7 @@ export function IconsView({
                 <div
                   key={row.index}
                   role="row"
-                  className="absolute left-0 top-0 flex w-full gap-1"
+                  className={cn("absolute left-0 top-0 w-full gap-1", isMobile ? "grid grid-cols-3" : "flex")}
                   style={{ transform: `translateY(${row.start}px)` }}
                 >
                   {rowEntries.map((entry) => (
@@ -134,7 +146,9 @@ export function IconsView({
                       focused={slice.anchor === entry.path}
                       cut={cutPaths?.includes(entry.path) === true}
                       renaming={slice.inlineEdit?.kind === "rename" && slice.inlineEdit.path === entry.path}
-                      tileWidth={TILE_WIDTH}
+                      // On mobile the grid column itself sizes the tile — a fixed pixel
+                      // width would either overflow 3-across or leave the row half-empty.
+                      tileWidth={isMobile ? undefined : TILE_WIDTH}
                       menuTargets={slice.selection.has(entry.path) ? menuTargets : [entry]}
                       actions={actions}
                       selection={selection}

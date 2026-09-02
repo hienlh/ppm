@@ -8,7 +8,6 @@
 import { useEffect, useMemo } from "react";
 import { AlertTriangle, Home } from "lucide-react";
 import { useFileStore } from "@/stores/file-store";
-import { cn } from "@/lib/utils";
 import { useExplorerActions } from "./actions/use-explorer-actions";
 import { ExplorerDialogs } from "./explorer-dialogs";
 import { ExplorerSidebar } from "./explorer-sidebar";
@@ -17,18 +16,24 @@ import { useExplorerStore } from "./explorer-store";
 import { ExplorerToolbar } from "./explorer-toolbar";
 import { useExplorerPinsStore } from "./explorer-pins-store";
 import { FolderIconProvider } from "./icons/file-type-icon";
+import { MobileBottomToolbar } from "./mobile/mobile-bottom-toolbar";
+import { MobileExplorerTopBar } from "./mobile/mobile-explorer-top-bar";
+import { MobilePlacesStrip } from "./mobile/mobile-places-strip";
 import { useExplorerSkin } from "./skins/use-explorer-skin";
 import { sortAndFilterEntries } from "./sort-and-filter-entries";
 import { useCoarseLongPress, usePrefersCoarsePointer } from "./use-coarse-long-press";
 import { useExplorerKeyboard } from "./use-explorer-keyboard";
 import { useExplorerNavigation } from "./use-explorer-navigation";
 import { useHostInfo } from "./use-host-info";
+import { useMobileExplorerOpenState } from "./use-explorer-open-state";
 import { useEntrySelection } from "./views/use-entry-selection";
 import { viewComponentFor } from "./views/explorer-view-registry";
 
-/** Row heights: comfortable for a mouse, ≥ 36 px for a finger. */
+/** Row heights: comfortable for a mouse, ≥ 36 px for a finger, 48 px for the mobile sheet
+ *  (design-guidelines' touch-target minimum plus a little breathing room over 44). */
 const ROW_HEIGHT_FINE = 28;
 const ROW_HEIGHT_COARSE = 36;
+const ROW_HEIGHT_SHEET = 48;
 
 export interface ExplorerBodyProps {
   windowId: string;
@@ -72,18 +77,30 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
   });
   // The background menu needs a press target on touch just as the rows do.
   const backgroundLongPress = useCoarseLongPress();
+  const closeSheet = useMobileExplorerOpenState((s) => s.close);
 
   if (!slice) return null;
 
   const View = viewComponentFor(viewMode);
+  const isSheet = variant === "sheet";
+  const rowHeight = isSheet ? ROW_HEIGHT_SHEET : coarse ? ROW_HEIGHT_COARSE : ROW_HEIGHT_FINE;
 
   return (
     <div
       data-skin={skin.id}
       style={{ fontFamily: "var(--x-font)" }}
-      className={cn("flex h-full min-h-0 w-full flex-col bg-panel text-text", variant === "sheet" && "rounded-t-xl")}
+      className="flex h-full min-h-0 w-full flex-col bg-panel text-text"
     >
-      <ExplorerToolbar windowId={windowId} slice={slice} nav={nav} />
+      {/* Mobile: title + a places chip strip replace the desktop toolbar/sidebar — every
+          frequent action moves to the bottom toolbar (thumb zone) below instead. */}
+      {isSheet ? (
+        <>
+          <MobileExplorerTopBar slice={slice} onClose={closeSheet} />
+          <MobilePlacesStrip host={host} currentPath={slice.path} onNavigate={nav.go} vocab={skin.vocab} />
+        </>
+      ) : (
+        <ExplorerToolbar windowId={windowId} slice={slice} nav={nav} />
+      )}
 
       {slice.error && (
         <div className="flex items-start gap-2 border-b border-border bg-error/10 px-2 py-1.5 text-xs text-error">
@@ -106,7 +123,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
 
       <FolderIconProvider value={{ closed: skin.FolderIcon, open: skin.FolderOpenIcon }}>
         <div className="flex min-h-0 flex-1">
-          <ExplorerSidebar host={host} currentPath={slice.path} onNavigate={nav.go} vocab={skin.vocab} />
+          {!isSheet && <ExplorerSidebar host={host} currentPath={slice.path} onNavigate={nav.go} vocab={skin.vocab} />}
           <div className="min-w-0 flex-1" onKeyDown={onKeyDown}>
             <View
               windowId={windowId}
@@ -117,7 +134,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
               inlineError={dialogs.inlineError}
               hasClipboard={hasClipboard}
               isPinned={isPinned}
-              rowHeight={coarse ? ROW_HEIGHT_COARSE : ROW_HEIGHT_FINE}
+              rowHeight={rowHeight}
               nav={nav}
               backgroundLongPress={backgroundLongPress}
             />
@@ -125,7 +142,11 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
         </div>
       </FolderIconProvider>
 
-      <ExplorerStatusBar entries={entries} selection={slice.selection} truncated={slice.truncated} />
+      {isSheet ? (
+        <MobileBottomToolbar slice={slice} nav={nav} actions={actions} entries={entries} hasClipboard={hasClipboard} />
+      ) : (
+        <ExplorerStatusBar entries={entries} selection={slice.selection} truncated={slice.truncated} />
+      )}
       <ExplorerDialogs dialogs={dialogs} platform={host?.platform} sep={slice.sep} />
     </div>
   );

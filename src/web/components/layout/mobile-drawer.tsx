@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { X, Bug as BugIcon, Cloud } from "lucide-react";
+import { X, Bug as BugIcon, Cloud, FolderTree } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -22,6 +22,7 @@ import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { CloudSharePopover } from "@/components/layout/cloud-share-popover";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
+import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { cn } from "@/lib/utils";
 
 // Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
@@ -136,10 +137,18 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
             onReorder={setSidebarTabOrder}
           />
 
-          {/* Report Bug + Cloud & Share + Version / Upgrade */}
+          {/* Files (OS explorer) + Report Bug + Cloud & Share + Version / Upgrade */}
           <div className="flex items-center justify-between px-4 py-2 border-t border-border text-[11px]">
             <UpgradeButton align="left" />
             <div className="flex items-center gap-3">
+              {/* Not a sidebar tab — the explorer opens as its own full-screen sheet. */}
+              <button
+                onClick={() => { onClose(); void openExplorer(); }}
+                className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
+              >
+                <FolderTree className="size-3" />
+                <span>Files</span>
+              </button>
               <button
                 onClick={() => setCloudOpen(true)}
                 className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
