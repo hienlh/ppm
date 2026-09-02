@@ -18,7 +18,9 @@ import {
   Plus,
   Columns2,
   Cloud,
+  AppWindow,
 } from "lucide-react";
+import { useWindowStore } from "@/components/floating-window/window-store";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -232,6 +234,17 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
         group: "action",
         shortcut: formatShortcut(getBinding("open-settings")),
       },
+      // Dev-only harness for the floating window layer — stripped from production builds.
+      ...(import.meta.env.DEV
+        ? [{
+            id: "open-test-window", label: "Open Test Window", icon: AppWindow, group: "action" as const,
+            keywords: "open test window floating drag resize debug",
+            action: () => {
+              useWindowStore.getState().open("explorer", { title: "Test Window", path: "/" });
+              onClose();
+            },
+          }]
+        : []),
     ];
 
     // Append extension-contributed commands (with keybinding shortcuts, respecting user overrides)

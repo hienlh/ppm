@@ -5,6 +5,7 @@ import { PanelLayout } from "@/components/layout/panel-layout";
 import { TabPool } from "@/components/layout/tab-pool";
 import { Sidebar } from "@/components/layout/sidebar";
 import { StatusBar } from "@/components/layout/status-bar";
+import { WindowLayer } from "@/components/floating-window/window-layer";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { MobileDrawer } from "@/components/layout/mobile-drawer";
 import { ProjectBottomSheet } from "@/components/layout/project-bottom-sheet";
@@ -299,8 +300,9 @@ export function App() {
           {/* Desktop unified nav rail (wordmark + project switcher + section rail + panel) */}
           <Sidebar />
 
-          {/* Content area — keep-alive per project */}
-          <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Content area — keep-alive per project. `relative` is the positioning context
+              the floating window layer measures and clamps its windows against. */}
+          <div className="relative flex-1 flex flex-col overflow-hidden">
             {[...mountedProjects].map((projectName) => (
               <div
                 key={projectName}
@@ -318,6 +320,8 @@ export function App() {
             {/* Desktop status bar — spans the working area only (not under the sidebar).
                 Self-gated to desktop via `hidden md:flex`. */}
             <StatusBar />
+            {/* Floating windows — desktop only, self-gated; covers the working area. */}
+            <WindowLayer />
           </div>
         </div>
 
