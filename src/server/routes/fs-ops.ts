@@ -16,6 +16,11 @@ import { trashPath } from "../../services/fs-ops/fs-ops-trash.service.ts";
  * `/api/fs` prefix as the browse routes; every handler resolves and whitelists
  * its paths inside the service layer and reports failures through one mapper
  * so the client always gets `{ error, code }`.
+ *
+ * Path contract for `/copy` and `/move`: `destination` is the FULL target
+ * path. Dropping an entry onto a folder is a client-side compose —
+ * `join(targetDir, basename(source))` — because a destination that already
+ * exists (a folder included) answers 409 EEXIST rather than merging.
  */
 export const fsOpsRoutes = new Hono();
 
@@ -35,7 +40,7 @@ fsOpsRoutes.get("/stat", async (c) => {
   }
 });
 
-/** POST /api/fs/copy — body: { source, destination } */
+/** POST /api/fs/copy — body: { source, destination } (destination = full target path) */
 fsOpsRoutes.post("/copy", async (c) => {
   try {
     const body = await c.req.json<{ source?: string; destination?: string }>();
@@ -48,7 +53,7 @@ fsOpsRoutes.post("/copy", async (c) => {
   }
 });
 
-/** POST /api/fs/move — body: { source, destination } */
+/** POST /api/fs/move — body: { source, destination } (destination = full target path) */
 fsOpsRoutes.post("/move", async (c) => {
   try {
     const body = await c.req.json<{ source?: string; destination?: string }>();

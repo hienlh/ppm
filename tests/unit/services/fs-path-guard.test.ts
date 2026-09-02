@@ -32,6 +32,20 @@ describe("isAllowedPath — whole-disk scope", () => {
     expect(isAllowedPath("\\\\server\\share\\file.txt")).toBe(false);
   });
 
+  it("rejects a UNC path that mimics the SDK output layout", () => {
+    // Allowing it would turn a read into an outbound SMB fetch to a host the
+    // caller picked, which can hang the request or leak credentials.
+    expect(
+      isAllowedPath("\\\\attacker\\claude\\proj\\sess\\tasks\\payload.output"),
+    ).toBe(false);
+  });
+
+  it.if(isWin)("rejects the forward-slash UNC spelling too", () => {
+    // On POSIX a leading `//` is just an absolute path, so this only applies
+    // where `\\host\share` semantics exist.
+    expect(isAllowedPath("//attacker/claude/proj/sess/tasks/payload.output")).toBe(false);
+  });
+
   it("keeps allowing SDK background-command output files", () => {
     expect(
       isAllowedPath("/private/tmp/claude-501/-Users-x-app/3ef19f1d/tasks/b1fel903t.output"),
@@ -45,6 +59,17 @@ describe("isAllowedPath — whole-disk scope", () => {
 describe("resolvePath", () => {
   it("expands a leading ~ to the home directory", () => {
     expect(resolvePath("~/sub")).toBe(resolve(homedir(), "sub"));
+  });
+
+  it("does not expand a bare ~ prefix that is part of a name", () => {
+    // `~foo` is user-home shorthand this code does not implement; slicing two
+    // characters off it would silently resolve to `$HOME/oo`.
+    expect(resolvePath("~foo")).toBe(resolve("~foo"));
+    expect(resolvePath("~foo")).not.toBe(resolve(homedir(), "oo"));
+  });
+
+  it("expands a bare ~ to the home directory", () => {
+    expect(resolvePath("~")).toBe(homedir());
   });
 
   it("normalizes traversal segments", () => {

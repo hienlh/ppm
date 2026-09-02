@@ -16,6 +16,8 @@ import {
   writeSystemFile,
 } from "../../services/fs-ops/fs-ops-read-write.service.ts";
 import { makeDir } from "../../services/fs-ops/fs-ops-mutate.service.ts";
+import { runGitInit } from "../../services/fs-ops/fs-git-init.service.ts";
+import { attachmentDisposition } from "../../services/fs-ops/fs-content-disposition.ts";
 import { fsErrorBody } from "../../services/fs-ops/fs-error-response.ts";
 import { isImageExtension } from "../../shared/image-extensions.ts";
 import { ok, err } from "../../types/api.ts";
@@ -43,11 +45,11 @@ fsBrowseRoutes.get("/browse", async (c) => {
 });
 
 /** GET /api/fs/list?dir=/some/dir — recursive file listing (command palette) */
-fsBrowseRoutes.get("/list", (c) => {
+fsBrowseRoutes.get("/list", async (c) => {
   try {
     const dir = c.req.query("dir");
     if (!dir) return c.json(err("dir is required"), 400);
-    return c.json(ok(list(dir)));
+    return c.json(ok(await list(dir)));
   } catch (e) {
     const { body, status } = fail(e);
     return c.json(body, status);
@@ -123,11 +125,10 @@ fsBrowseRoutes.get("/raw", async (c) => {
     return new Response(file.stream(), {
       headers: {
         "Content-Type": download ? "application/octet-stream" : (file.type || "application/octet-stream"),
-        // RFC 5987 form keeps non-ASCII names (and quotes) intact.
-        "Content-Disposition": download
-          ? `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`
-          : "inline",
-        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": download ? attachmentDisposition(filename) : "inline",
+        // A download is a one-shot transfer of a file the user may edit right
+        // after; caching it would hand out stale bytes on the next download.
+        "Cache-Control": download ? "no-store" : "private, max-age=3600",
       },
     });
   } catch (e) {
@@ -168,10 +169,7 @@ fsBrowseRoutes.post("/mkdir", async (c) => {
 
     const { path } = await makeDir(body.path);
     const gitInit = body.gitInit !== false;
-    if (gitInit) {
-      const git = Bun.spawn(["git", "init", path], { stdout: "ignore", stderr: "ignore" });
-      await git.exited;
-    }
+    if (gitInit) await runGitInit(path);
     return c.json(ok({ path, gitInitialized: gitInit }), 201);
   } catch (e) {
     const { body, status } = fail(e);

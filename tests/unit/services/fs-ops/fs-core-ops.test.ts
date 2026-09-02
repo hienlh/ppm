@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -112,6 +122,28 @@ describe("moveEntry", () => {
     expect(result.crossDevice).toBe(true);
     expect(readFileSync(join(dir, "moved", "f.txt"), "utf-8")).toBe("x");
     expect(existsSync(join(dir, "tree"))).toBe(false);
+  });
+
+  it("reports sourceRemoved:false when the cross-device cleanup fails", async () => {
+    // The copy landed, so the data is safe — but the caller must not be told
+    // the move finished while the original is still sitting there.
+    mkdirSync(join(dir, "tree"));
+    writeFileSync(join(dir, "tree", "f.txt"), "x");
+    const exdev = async () => {
+      throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+    };
+    const holder = openSync(join(dir, "tree", "f.txt"), "r");
+    let result;
+    try {
+      result = await moveEntry(join(dir, "tree"), join(dir, "moved"), exdev);
+    } finally {
+      closeSync(holder);
+    }
+    expect(result.crossDevice).toBe(true);
+    expect(readFileSync(join(dir, "moved", "f.txt"), "utf-8")).toBe("x");
+    // Windows refuses to delete an open file; on POSIX the unlink succeeds, so
+    // only the reported flag is asserted against the observable state.
+    expect(result.sourceRemoved).toBe(!existsSync(join(dir, "tree")));
   });
 
   it("propagates a non-EXDEV rename failure", async () => {

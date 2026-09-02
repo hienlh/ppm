@@ -125,9 +125,23 @@ describe("DELETE /fs/delete", () => {
     expect((await del("/fs/delete", {})).status).toBe(400);
   });
 
-  it("refuses the PPM directory", async () => {
-    const res = await del("/fs/delete", { path: getPpmDir(), permanent: true });
+  it("refuses a file inside the PPM directory", async () => {
+    // The credentials database, not the directory itself — the directory alone
+    // is already covered by the protected-root check.
+    const secret = join(getPpmDir(), "ppm.db");
+    writeFileSync(secret, "secret");
+    const res = await del("/fs/delete", { path: secret, permanent: true });
     expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("EPROTECTED");
+    expect(existsSync(secret)).toBe(true);
+  });
+
+  it("refuses to move a file inside the PPM directory to the trash", async () => {
+    const secret = join(getPpmDir(), "ppm.db");
+    writeFileSync(secret, "secret");
+    const res = await del("/fs/delete", { path: secret });
+    expect(res.status).toBe(403);
+    expect(existsSync(secret)).toBe(true);
   });
 
   it("refuses a drive or filesystem root", async () => {

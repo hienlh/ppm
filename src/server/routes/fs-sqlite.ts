@@ -2,9 +2,10 @@ import { Hono } from "hono";
 import { sqliteService } from "../../services/sqlite.service.ts";
 import { detectOperation } from "../../services/query-audit/query-audit.service.ts";
 import { logQuery, type AuditFields } from "./query-audit-hook.ts";
+import { stat } from "node:fs/promises";
 import {
   assertAllowed,
-  assertNotPpmDir,
+  assertNotPpmSubtreeDeep,
   resolvePath,
 } from "../../services/fs-path-guard.service.ts";
 import { fsErrorBody } from "../../services/fs-ops/fs-error-response.ts";
@@ -18,13 +19,25 @@ import { ok, err } from "../../types/api.ts";
  */
 export const fsSqliteRoutes = new Hono();
 
-/** Guard an absolute db path; the service is addressed with no project root. */
-function guardDbPath(input: string): string {
+/**
+ * Guard an absolute db path; the service is addressed with no project root.
+ * The PPM refusal follows symlinks like every other read door, and existence
+ * is probed here — asynchronously — so the service never runs a blocking
+ * `existsSync` against a path the caller chose.
+ */
+async function guardDbPath(input: string): Promise<string> {
   const resolved = resolvePath(input);
   assertAllowed(resolved);
-  assertNotPpmDir(resolved);
+  await assertNotPpmSubtreeDeep(resolved);
+  const info = await stat(resolved);
+  if (!info.isFile()) {
+    throw Object.assign(new Error("Not a database file"), { status: 400, code: "EINVAL" });
+  }
   return resolved;
 }
+
+/** Row cap for a foreign database of unknown size. */
+const MAX_QUERY_ROWS = 1_000;
 
 /** These routes address a database by file path, so there is no connection id. */
 function fileAudit(dbPath: string): Pick<AuditFields, "connectionId" | "connectionName" | "dbType"> {
@@ -36,11 +49,11 @@ function fail(e: unknown) {
 }
 
 /** GET /api/fs/sqlite/tables?path=/abs/file.db */
-fsSqliteRoutes.get("/tables", (c) => {
+fsSqliteRoutes.get("/tables", async (c) => {
   try {
     const path = c.req.query("path");
     if (!path) return c.json(err("Missing query parameter: path"), 400);
-    return c.json(ok(sqliteService.getTables("", guardDbPath(path))));
+    return c.json(ok(sqliteService.getTables("", await guardDbPath(path))));
   } catch (e) {
     const { body, status } = fail(e);
     return c.json(body, status);
@@ -48,12 +61,12 @@ fsSqliteRoutes.get("/tables", (c) => {
 });
 
 /** GET /api/fs/sqlite/schema?path=...&table=... */
-fsSqliteRoutes.get("/schema", (c) => {
+fsSqliteRoutes.get("/schema", async (c) => {
   try {
     const path = c.req.query("path");
     const table = c.req.query("table");
     if (!path || !table) return c.json(err("Missing query parameters: path, table"), 400);
-    return c.json(ok(sqliteService.getTableSchema("", guardDbPath(path), table)));
+    return c.json(ok(sqliteService.getTableSchema("", await guardDbPath(path), table)));
   } catch (e) {
     const { body, status } = fail(e);
     return c.json(body, status);
@@ -61,7 +74,7 @@ fsSqliteRoutes.get("/schema", (c) => {
 });
 
 /** GET /api/fs/sqlite/data?path=...&table=...&page=1&limit=100&orderBy=...&orderDir=ASC */
-fsSqliteRoutes.get("/data", (c) => {
+fsSqliteRoutes.get("/data", async (c) => {
   try {
     const path = c.req.query("path");
     const table = c.req.query("table");
@@ -71,7 +84,7 @@ fsSqliteRoutes.get("/data", (c) => {
     const orderBy = c.req.query("orderBy");
     const orderDir = c.req.query("orderDir") === "DESC" ? "DESC" : "ASC";
     const data = sqliteService.getTableData(
-      "", guardDbPath(path), table, page, limit, orderBy, orderDir as "ASC" | "DESC",
+      "", await guardDbPath(path), table, page, limit, orderBy, orderDir as "ASC" | "DESC",
     );
     return c.json(ok(data));
   } catch (e) {
@@ -86,7 +99,7 @@ fsSqliteRoutes.post("/query", async (c) => {
   try {
     const body = await c.req.json<{ path?: string; sql?: string }>();
     if (!body.path || !body.sql) return c.json(err("Missing required fields: path, sql"), 400);
-    const dbPath = guardDbPath(body.path);
+    const dbPath = await guardDbPath(body.path);
 
     const audit = {
       ...fileAudit(dbPath),
@@ -96,7 +109,7 @@ fsSqliteRoutes.post("/query", async (c) => {
     };
 
     try {
-      const result = sqliteService.executeQuery("", dbPath, body.sql);
+      const result = sqliteService.executeQuery("", dbPath, body.sql, MAX_QUERY_ROWS);
       logQuery(c, {
         ...audit,
         status: "ok",

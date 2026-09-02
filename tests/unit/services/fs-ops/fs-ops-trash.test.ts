@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { trashPath, type TrashRunner } from "../../../../src/services/fs-ops/fs-ops-trash.service.ts";
+import { getPpmDir } from "../../../../src/services/ppm-dir.ts";
 
 let dir: string;
 
@@ -62,6 +63,23 @@ describe("trashPath", () => {
 
   it("refuses a protected root", async () => {
     await expect(trashPath(homedir(), { run: okRunner })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("refuses a file inside the PPM directory", async () => {
+    const secret = join(getPpmDir(), "ppm.db");
+    mkdirSync(getPpmDir(), { recursive: true });
+    writeFileSync(secret, "secret");
+    let ran = false;
+    const spy: TrashRunner = async () => {
+      ran = true;
+      return { exitCode: 0, stderr: "" };
+    };
+    await expect(trashPath(secret, { run: spy })).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(ran).toBe(false);
+    expect(existsSync(secret)).toBe(true);
   });
 
   it("refuses a missing path", async () => {

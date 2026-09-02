@@ -1,6 +1,7 @@
 import { lstat, stat } from "node:fs/promises";
 import {
   assertAllowed,
+  assertNotPpmSubtreeDeep,
   assertNotProtected,
   resolvePath,
 } from "../fs-path-guard.service.ts";
@@ -88,6 +89,8 @@ export async function trashPath(
 ): Promise<{ trashed: true; path: string }> {
   const target = resolvePath(path);
   assertAllowed(target);
+  // Same shield as the permanent delete: the Recycle Bin is still a removal.
+  await assertNotPpmSubtreeDeep(target);
   await assertNotProtected(target);
   const isDir = await isDirectoryTarget(target);
 

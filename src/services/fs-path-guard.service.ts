@@ -1,5 +1,5 @@
 import { resolve, sep } from "node:path";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { getPpmDir } from "./ppm-dir.ts";
 import { realPathOrSelf, realPathOrSelfSync } from "./fs-ops/fs-real-path.ts";
@@ -24,10 +24,17 @@ export interface FsErrorInfo {
   hint?: string;
 }
 
-/** Resolve a path, expanding a leading `~` to the home directory. */
+/**
+ * Resolve a path, expanding a leading `~` to the home directory. Only a bare
+ * `~` or `~/`…`~\` expands: `~foo` is a user-home shorthand this code does not
+ * implement, and slicing it blindly would silently resolve to `$HOME/oo`.
+ */
 export function resolvePath(input: string): string {
-  const home = homedir();
-  return input.startsWith("~") ? resolve(home, input.slice(2)) : resolve(input);
+  if (input === "~") return homedir();
+  if (input.startsWith("~/") || input.startsWith("~\\")) {
+    return resolve(homedir(), input.slice(2));
+  }
+  return resolve(input);
 }
 
 /** Case-insensitive prefix test on Windows/macOS-style paths. */
@@ -44,13 +51,25 @@ function isInside(child: string, parent: string): boolean {
  * they are unsupported in this version because they can block indefinitely.
  */
 export function isAllowedPath(resolved: string): boolean {
+  // The platform shape is decided first: a UNC path must stay rejected even
+  // when it also matches the exception below, or an attacker-named share
+  // (\\host\claude\x\tasks\y.output) would turn a read into an outbound SMB
+  // fetch to their server.
+  const shapeAllowed =
+    process.platform === "win32" ? /^[A-Za-z]:\\/.test(resolved) : resolved.startsWith("/");
+  if (shapeAllowed) return true;
+
   // SDK background-command output lives under the OS temp dir; the chat output
   // panel reads those files directly. Matched by structure so it survives the
-  // per-platform claude dir naming ("claude" vs "claude-<uid>").
-  if (/[\\/]claude[^\\/]*[\\/].+[\\/]tasks[\\/][^\\/]+\.output$/.test(resolved)) return true;
+  // per-platform claude dir naming ("claude" vs "claude-<uid>"), but never for
+  // a UNC path.
+  if (isUncPath(resolved)) return false;
+  return /[\\/]claude[^\\/]*[\\/].+[\\/]tasks[\\/][^\\/]+\.output$/.test(resolved);
+}
 
-  if (process.platform === "win32") return /^[A-Za-z]:\\/.test(resolved);
-  return resolved.startsWith("/");
+/** `\\server\share\…` (or the forward-slash spelling). */
+function isUncPath(candidate: string): boolean {
+  return /^[\\/]{2}[^\\/]/.test(candidate);
 }
 
 /** Throw a 403 when a path is outside the allowlist. */
@@ -111,8 +130,11 @@ export function isProtectedRoot(candidate: string): boolean {
 }
 
 /**
- * Reject destructive operations on protected roots. The realpath is checked
- * too, so a symlink pointing at `$HOME` cannot be used as a proxy target.
+ * Reject destructive operations on protected roots. For a real entry the
+ * realpath is checked too, so a symlinked *directory* cannot be used as a
+ * proxy for `$HOME`. A symlink is exempt from that second check: every
+ * operation here acts on the link itself, and deleting a shortcut that points
+ * at the home directory removes the shortcut, not the home directory.
  */
 export async function assertNotProtected(candidate: string): Promise<void> {
   const deny = () => {
@@ -123,6 +145,7 @@ export async function assertNotProtected(candidate: string): Promise<void> {
   };
   if (isProtectedRoot(candidate)) deny();
   try {
+    if ((await lstat(candidate)).isSymbolicLink()) return;
     if (isProtectedRoot(await realpath(candidate))) deny();
   } catch (e) {
     if ((e as { status?: number }).status === 403) throw e;
