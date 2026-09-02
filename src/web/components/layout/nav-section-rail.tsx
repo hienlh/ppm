@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Bug, Cloud } from "lucide-react";
+import { Settings, Bug, Cloud, FolderTree } from "lucide-react";
+import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { getAvailableTabs } from "@/lib/sidebar-tabs/tab-registry";
 import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
@@ -71,6 +72,9 @@ function FooterUtil({ icon: Icon, label, onClick, active }: {
 }) {
   return (
     <button
+      type="button"
+      aria-label={label}
+      title={label}
       onClick={onClick}
       className={cn(
         "group relative flex items-center justify-center size-8 rounded-[7px] transition-colors shrink-0",
@@ -206,6 +210,8 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           </>,
           document.body,
         )}
+        {/* Not a sidebar tab — the explorer lives in its own floating window. */}
+        <FooterUtil icon={FolderTree} label="File Explorer" onClick={() => void openExplorer()} />
         <FooterUtil icon={Bug} label="Report Bug" onClick={handleReportBug} />
         <FooterUtil icon={Settings} label="Settings" active={sidebarActiveTab === "settings"} onClick={() => handleTabClick("settings")} />
       </div>

@@ -18,7 +18,7 @@ export interface WindowContentProps {
 }
 
 export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentType<WindowContentProps>>> = {
-  explorer: lazy(() => import("./explorer-window-placeholder")),
+  explorer: lazy(() => import("@/components/os-explorer/explorer-window-content")),
 };
 
 /** Titlebar text for a window. Falls back to the kind's generic name. */
@@ -28,6 +28,7 @@ export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>)
   const path = payload?.path;
   if (kind === "explorer" && typeof path === "string" && path) {
     const segments = path.split(/[\\/]/).filter(Boolean);
+    // A drive or POSIX root has no last segment worth showing; the raw path is the name.
     return segments[segments.length - 1] ?? path;
   }
   return "Explorer";
