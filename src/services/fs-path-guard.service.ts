@@ -51,7 +51,7 @@ export function isAllowedPath(resolved: string): boolean {
 /** Throw a 403 when a path is outside the allowlist. */
 export function assertAllowed(resolved: string): void {
   if (!isAllowedPath(resolved)) {
-    throw Object.assign(new Error("Access denied"), { status: 403, code: "EACCES" });
+    throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
 }
 
@@ -67,7 +67,7 @@ export function isPpmDirPath(resolved: string): boolean {
  */
 export function assertNotPpmDir(resolved: string): void {
   if (isPpmDirPath(resolved)) {
-    throw Object.assign(new Error("Access denied"), { status: 403, code: "EACCES" });
+    throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
 }
 
@@ -110,7 +110,15 @@ export function mapFsError(e: unknown): FsErrorInfo {
   const err = e as { status?: number; code?: string; message?: string };
   const message = err?.message || "Filesystem error";
   if (typeof err?.status === "number") {
-    return { status: err.status, code: err.code || "EFAIL", message, hint: err.status === 403 ? HINT_EPERM : undefined };
+    // A refusal we decided ourselves is not a permission problem the user can
+    // fix, so the OS-permission hint only rides along on real EPERM/EACCES.
+    const osDenied = err.code === "EPERM" || err.code === "EACCES";
+    return {
+      status: err.status,
+      code: err.code || "EFAIL",
+      message,
+      hint: osDenied ? HINT_EPERM : undefined,
+    };
   }
   switch (err?.code) {
     case "ENOENT":
