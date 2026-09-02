@@ -53,6 +53,7 @@
     "@inquirer/prompts": "^8.3.0",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-switch": "^1.2.6",
+    "@react-symbols/icons": "^1.4.1",
     "@skitee3000/bun-pty": "^0.3.3",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.5",
