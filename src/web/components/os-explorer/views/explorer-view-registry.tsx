@@ -11,6 +11,7 @@ import type { ComponentType } from "react";
 import type { FsEntry } from "@/lib/fs-api";
 import type { ExplorerActions } from "../actions/use-explorer-actions";
 import type { ExplorerSlice, ViewMode } from "../explorer-store";
+import type { LongPressHandlers } from "../use-coarse-long-press";
 import type { ExplorerNavigation } from "../use-explorer-navigation";
 import type { EntrySelection } from "./use-entry-selection";
 import { ColumnView } from "./column-view";
@@ -32,6 +33,13 @@ export interface ExplorerViewProps {
   rowHeight: number;
   /** Column view drills by navigating like every other entry point (history/breadcrumb stay in sync). */
   nav: ExplorerNavigation;
+  /**
+   * Long-press handlers for the empty-space background menu. Must land on the same element
+   * the view's background `ContextMenuTrigger` wraps — a wrapper further up the tree fires
+   * the synthetic `contextmenu` event on itself, and it never bubbles down to a descendant
+   * trigger.
+   */
+  backgroundLongPress: LongPressHandlers;
 }
 
 export const EXPLORER_VIEWS: Partial<Record<ViewMode, ComponentType<ExplorerViewProps>>> = {

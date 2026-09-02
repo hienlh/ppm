@@ -153,11 +153,11 @@ export function FloatingWindow({
       />
 
 
-      {!minimized && (
-        <div className="relative flex-1 min-h-0 overflow-hidden rounded-b-[8px] bg-panel">
-          {children}
-        </div>
-      )}
+      {/* Always mounted, even minimized — content owns per-window state (explorer history,
+          selection, filter) that a remount would wipe. Hidden via CSS, not unmounted. */}
+      <div className={cn("relative flex-1 min-h-0 overflow-hidden rounded-b-[8px] bg-panel", minimized && "hidden")}>
+        {children}
+      </div>
 
       {!maximized && !minimized && (
         <WindowResizeHandles bind={(handle) => bindResize(handle) as Record<string, unknown>} />

@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { useExplorerPinsStore } from "./explorer-pins-store";
 import { FileTypeIcon } from "./icons/file-type-icon";
 import type { SkinVocab } from "./skins/skin-types";
+import { usePrefersCoarsePointer } from "./use-coarse-long-press";
 
 /** A folder-type place row draws the current skin's folder glyph via `FileTypeIcon`'s context. */
 function FolderPlaceIcon({ className }: { className?: string }) {
@@ -39,6 +40,9 @@ interface PlaceProps {
 }
 
 function Place({ label, path, active, icon: Icon, onNavigate, onUnpin }: PlaceProps) {
+  // Gated on real pointer coarseness, not a `md:` breakpoint — an iPad is ≥768px but has no
+  // mouse, so a breakpoint-only rule was silently dropping the 44px minimum for it.
+  const coarse = usePrefersCoarsePointer();
   return (
     <div className="group/place relative flex items-center">
       <button
@@ -46,7 +50,8 @@ function Place({ label, path, active, icon: Icon, onNavigate, onUnpin }: PlacePr
         title={path}
         onClick={() => onNavigate(path)}
         className={cn(
-          "flex min-h-[36px] w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px] md:min-h-0",
+          "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px]",
+          coarse ? "min-h-[44px]" : "min-h-0",
           "can-hover:hover:bg-surface-elevated",
           active ? "bg-accent-wash text-text" : "text-text-2",
         )}

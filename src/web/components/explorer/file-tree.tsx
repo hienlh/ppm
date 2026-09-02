@@ -41,6 +41,8 @@ import { flattenVisibleTree, type InputRow } from "./flatten-visible-tree";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
 import { api, projectUrl } from "@/lib/api-client";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
+import { fsChanged, onFsChanged } from "@/components/os-explorer/explorer-store";
+import { dirnameOf } from "@/components/os-explorer/format-file-meta";
 import { useFileUploadDrag } from "./use-file-upload-drag";
 import { useTreeKeyboardNav } from "./use-tree-keyboard-nav";
 
@@ -137,10 +139,15 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     if (!activeProject || !clipboard) return;
     const projectName = activeProject.name;
     const root = activeProject.path;
+    // Every source path is an absolute host path (the clipboard is shared with explorer
+    // windows), so the host separator implied by the project root also splits them correctly.
+    const sep = root.includes("\\") ? "\\" : "/";
     const endpoint = clipboard.operation === "cut" ? "move" : "copy";
+    const touched = new Set<string>([absoluteProjectPath(root, targetDir)]);
     for (const source of clipboard.paths) {
       const name = source.split(/[/\\]/).filter(Boolean).pop() ?? source;
       const relativeSource = relativeProjectPath(root, source);
+      touched.add(dirnameOf(source, sep));
       try {
         if (relativeSource != null) {
           const destination = targetDir ? `${targetDir}/${name}` : name;
@@ -154,6 +161,8 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       }
     }
     if (clipboard.operation === "cut") setClipboard(null);
+    // Any explorer window showing the source or destination directory must refresh too.
+    fsChanged(...touched);
     reloadTree();
   }, [activeProject, clipboard, setClipboard, reloadTree]);
 
@@ -252,6 +261,23 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     };
   }, [activeProject]);
 
+  // Symmetric with the fsChanged(...) calls this file emits after its own mutations: an
+  // explorer window mutating a directory inside this project must invalidate the matching
+  // tree node too.
+  useEffect(() => {
+    if (!activeProject) return;
+    const projectName = activeProject.name;
+    const root = activeProject.path;
+    return onFsChanged((absoluteDir) => {
+      const relative = relativeProjectPath(root, absoluteDir);
+      if (relative == null) return; // outside this project — not the tree's concern
+      const store = useFileStore.getState();
+      store.invalidateIndex();
+      store.loadIndex(projectName);
+      store.invalidateFolder(projectName, relative);
+    });
+  }, [activeProject]);
+
   const {
     uploadFiles, isRootDragOver,
     handleRootDragEnter, handleRootDragLeave, handleRootDragOver, handleRootDrop,
@@ -296,6 +322,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       store.invalidateIndex();
       store.loadIndex(projectName);
       store.invalidateFolder(projectName, parentPath);
+      fsChanged(absoluteProjectPath(activeProject!.path, parentPath));
     } else {
       const type = row.inline.type === "new-file" ? "file" : "directory";
       const fullPath = row.targetPath ? `${row.targetPath}/${value}` : value;
@@ -304,6 +331,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       store.invalidateIndex();
       store.loadIndex(projectName);
       store.invalidateFolder(projectName, row.targetPath);
+      fsChanged(absoluteProjectPath(activeProject!.path, row.targetPath));
     }
   }, [activeProject, clearInlineAction]);
 
@@ -545,7 +573,10 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
           node={actionState.node}
           projectName={activeProject.name}
           onClose={() => setActionState(null)}
-          onRefresh={reloadTree}
+          onRefresh={() => {
+            fsChanged(absoluteProjectPath(activeProject.path, parentDirOfRelative(actionState.node.path)));
+            reloadTree();
+          }}
         />
       )}
     </div>

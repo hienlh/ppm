@@ -43,6 +43,8 @@ export interface ExplorerActions {
 export interface ExplorerDialogState {
   collision: (CollisionRequest & { resolve(choice: CollisionChoice): void }) | null;
   pendingDelete: { paths: string[]; names: string[] } | null;
+  /** "Replace" hit a host with no trash backend — confirm a permanent overwrite instead. */
+  permanentOverwrite: { name: string; resolve(proceed: boolean): void } | null;
   properties: FsEntry | null;
   inlineError: string | null;
   closeDelete(): void;
@@ -59,6 +61,7 @@ export function useExplorerActions(
   const patch = useExplorerStore((s) => s.patch);
   const [collision, setCollision] = useState<ExplorerDialogState["collision"]>(null);
   const [pendingDelete, setPendingDelete] = useState<ExplorerDialogState["pendingDelete"]>(null);
+  const [permanentOverwrite, setPermanentOverwrite] = useState<ExplorerDialogState["permanentOverwrite"]>(null);
   const [properties, setProperties] = useState<FsEntry | null>(null);
   const [inlineError, setInlineError] = useState<string | null>(null);
 
@@ -77,6 +80,16 @@ export function useExplorerActions(
             resolve: (choice) => {
               setCollision(null);
               resolve(choice);
+            },
+          });
+        }),
+      confirmPermanentOverwrite: (name: string) =>
+        new Promise<boolean>((resolve) => {
+          setPermanentOverwrite({
+            name,
+            resolve: (proceed) => {
+              setPermanentOverwrite(null);
+              resolve(proceed);
             },
           });
         }),
@@ -174,6 +187,7 @@ export function useExplorerActions(
     dialogs: {
       collision,
       pendingDelete,
+      permanentOverwrite,
       properties,
       inlineError,
       closeDelete: () => setPendingDelete(null),

@@ -7,7 +7,9 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import type { FsEntry } from "@/lib/fs-api";
+import { ExplorerContextMenu } from "../explorer-context-menu";
 import { ColumnViewColumn } from "./column-view-column";
 import { ColumnViewPreview } from "./column-view-preview";
 import type { ExplorerViewProps } from "./explorer-view-registry";
@@ -16,7 +18,9 @@ import { useColumnViewState } from "./use-column-view-state";
 /** Below this window width the preview pane would leave no room for the columns themselves. */
 const NARROW_PREVIEW_THRESHOLD = 720;
 
-export function ColumnView({ slice, entries, actions, selection, hasClipboard, isPinned, nav }: ExplorerViewProps) {
+export function ColumnView({
+  slice, entries, actions, selection, hasClipboard, isPinned, nav, backgroundLongPress,
+}: ExplorerViewProps) {
   const paths = useMemo(
     () => (slice.breadcrumbs.length > 0 ? slice.breadcrumbs.map((b) => b.path) : [slice.path]),
     [slice.breadcrumbs, slice.path],
@@ -120,37 +124,49 @@ export function ColumnView({ slice, entries, actions, selection, hasClipboard, i
   const showPreview = containerWidth === 0 || containerWidth >= NARROW_PREVIEW_THRESHOLD;
 
   return (
-    <div
-      ref={containerRef}
-      tabIndex={0}
-      data-testid="explorer-columns"
-      aria-label="Column view"
-      onKeyDown={onKeyDown}
-      className="flex h-full min-h-0 w-full overflow-x-auto outline-none"
-    >
-      {columns.map((column, index) => (
-        <ColumnViewColumn
-          key={column.path}
-          path={column.path}
-          entries={column.entries}
-          loading={column.loading}
-          error={column.error}
-          selectedPath={selectedPathFor(index)}
-          isFocused={index === focusedIndex}
-          currentDir={slice.path}
-          hasClipboard={hasClipboard}
-          isPinned={isPinned}
-          actions={actions}
-          onSelect={(entry) => handleSelect(index, entry)}
-          onOpen={handleOpen}
-          onFocus={() => setFocusedIndex(index)}
-        />
-      ))}
-      {showPreview && (
-        <div className="min-w-[240px] flex-1 border-l border-border bg-panel-2/30">
-          <ColumnViewPreview entry={previewEntry} onOpen={handleOpen} />
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={containerRef}
+          tabIndex={0}
+          data-testid="explorer-columns"
+          aria-label="Column view"
+          onKeyDown={onKeyDown}
+          className="flex h-full min-h-0 w-full overflow-x-auto outline-none"
+          {...backgroundLongPress}
+        >
+          {columns.map((column, index) => (
+            <ColumnViewColumn
+              key={column.path}
+              path={column.path}
+              entries={column.entries}
+              loading={column.loading}
+              error={column.error}
+              selectedPath={selectedPathFor(index)}
+              isFocused={index === focusedIndex}
+              currentDir={slice.path}
+              hasClipboard={hasClipboard}
+              isPinned={isPinned}
+              actions={actions}
+              onSelect={(entry) => handleSelect(index, entry)}
+              onOpen={handleOpen}
+              onFocus={() => setFocusedIndex(index)}
+            />
+          ))}
+          {showPreview && (
+            <div className="min-w-[240px] flex-1 border-l border-border bg-panel-2/30">
+              <ColumnViewPreview entry={previewEntry} onOpen={handleOpen} />
+            </div>
+          )}
         </div>
-      )}
-    </div>
+      </ContextMenuTrigger>
+      <ExplorerContextMenu
+        targets={[]}
+        currentDir={slice.path}
+        hasClipboard={hasClipboard}
+        isPinned={isPinned}
+        actions={actions}
+      />
+    </ContextMenu>
   );
 }

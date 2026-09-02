@@ -8,7 +8,7 @@
 
 import { toast } from "sonner";
 import { fsApi, FsError } from "@/lib/fs-api";
-import { dirnameOf, joinPath } from "../format-file-meta";
+import { dirnameOf, errorDescription, joinPath } from "../format-file-meta";
 import { fsChanged } from "../explorer-store";
 
 /** Characters Windows refuses in a file name. */
@@ -51,7 +51,7 @@ export async function createEntry(
     return true;
   } catch (e) {
     toast.error(kind === "folder" ? "Could not create folder" : "Could not create file", {
-      description: e instanceof Error ? e.message : undefined,
+      description: errorDescription(e),
     });
     return false;
   }
@@ -63,7 +63,7 @@ export async function renameEntry(path: string, newName: string, sep: string): P
     fsChanged(dirnameOf(path, sep));
     return true;
   } catch (e) {
-    toast.error("Rename failed", { description: e instanceof Error ? e.message : undefined });
+    toast.error("Rename failed", { description: errorDescription(e) });
     return false;
   }
 }
@@ -96,7 +96,7 @@ export async function deleteEntries(
         outcome.needsPermanent.push(path);
         continue;
       }
-      toast.error("Delete failed", { description: e instanceof Error ? e.message : undefined });
+      toast.error("Delete failed", { description: errorDescription(e) });
     }
   }
 

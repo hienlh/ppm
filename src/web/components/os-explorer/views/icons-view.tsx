@@ -23,7 +23,7 @@ const TILE_WIDTH = 96;
 const TILE_HEIGHT = 88;
 
 export function IconsView({
-  slice, entries, actions, selection, inlineError, hasClipboard, isPinned,
+  slice, entries, actions, selection, inlineError, hasClipboard, isPinned, backgroundLongPress,
 }: ExplorerViewProps) {
   const cutPaths = useFileStore((s) => (s.clipboard?.operation === "cut" ? s.clipboard.paths : null));
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -96,6 +96,7 @@ export function IconsView({
             if (e.target === e.currentTarget) selection.clear();
           }}
           className="h-full flex-1 overflow-auto p-2 outline-none"
+          {...backgroundLongPress}
         >
           {creating && (
             <div className="mb-2 flex flex-col items-center gap-1 p-2" style={{ width: TILE_WIDTH }}>

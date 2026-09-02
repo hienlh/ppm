@@ -107,7 +107,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
       <FolderIconProvider value={{ closed: skin.FolderIcon, open: skin.FolderOpenIcon }}>
         <div className="flex min-h-0 flex-1">
           <ExplorerSidebar host={host} currentPath={slice.path} onNavigate={nav.go} vocab={skin.vocab} />
-          <div className="min-w-0 flex-1" onKeyDown={onKeyDown} {...backgroundLongPress}>
+          <div className="min-w-0 flex-1" onKeyDown={onKeyDown}>
             <View
               windowId={windowId}
               slice={slice}
@@ -119,6 +119,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
               isPinned={isPinned}
               rowHeight={coarse ? ROW_HEIGHT_COARSE : ROW_HEIGHT_FINE}
               nav={nav}
+              backgroundLongPress={backgroundLongPress}
             />
           </div>
         </div>

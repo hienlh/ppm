@@ -7,7 +7,7 @@
  * without a DOM.
  */
 
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useExplorerStore } from "../explorer-store";
 
 export interface SelectionState {
@@ -156,14 +156,23 @@ export function useEntrySelection(windowId: string, order: string[]): EntrySelec
     [windowId, dispatch],
   );
 
-  return {
-    onRowClick: (path, event) =>
+  const onRowClick = useCallback(
+    (path: string, event: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) =>
       dispatch({ type: "click", path, shift: event.shiftKey, ctrl: event.ctrlKey || event.metaKey }),
-    selectOnly: (path) => dispatch({ type: "click", path }),
-    selectAll: () => dispatch({ type: "select-all" }),
-    clear: () => dispatch({ type: "clear" }),
-    setSelection: (paths, anchor) => dispatch({ type: "set", paths, anchor }),
-    moveTo,
-    typeAhead,
-  };
+    [dispatch],
+  );
+  const selectOnly = useCallback((path: string) => dispatch({ type: "click", path }), [dispatch]);
+  const selectAll = useCallback(() => dispatch({ type: "select-all" }), [dispatch]);
+  const clear = useCallback(() => dispatch({ type: "clear" }), [dispatch]);
+  const setSelection = useCallback(
+    (paths: string[], anchor?: string | null) => dispatch({ type: "set", paths, anchor }),
+    [dispatch],
+  );
+
+  // A fresh object every render would defeat memo(ListRow) (this is a prop several levels
+  // down) even though every method here is already a stable useCallback.
+  return useMemo(
+    () => ({ onRowClick, selectOnly, selectAll, clear, setSelection, moveTo, typeAhead }),
+    [onRowClick, selectOnly, selectAll, clear, setSelection, moveTo, typeAhead],
+  );
 }
