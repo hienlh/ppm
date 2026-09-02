@@ -8,6 +8,7 @@ import {
   buildSchtasksDeleteCommand,
   buildSchtasksQueryCommand,
   buildExecCommand,
+  buildLaunchdPath,
   getPlistPath,
   getServicePath,
   getVbsPath,
@@ -102,6 +103,35 @@ describe("generatePlist", () => {
     expect(plist).toContain(".ppm</string>");
   });
 
+  test("carries the invoking shell's PATH into the launchd job", () => {
+    // launchd's default PATH lacks bun/homebrew; every macOS `ppm start` runs
+    // under launchd now, so the plist must hand over what the shell had.
+    const plist = generatePlist(TEST_CONFIG);
+    expect(plist).toContain("<key>EnvironmentVariables</key>");
+    expect(plist).toContain("<key>PATH</key>");
+    expect(plist).toContain("/usr/bin:/bin");
+  });
+
+});
+
+describe("buildLaunchdPath", () => {
+  test("prepends bun dir, keeps shell PATH order, appends defaults, dedupes", () => {
+    const path = buildLaunchdPath("/opt/homebrew/bin:/Users/me/.nvm/bin:/usr/bin");
+    const parts = path.split(":");
+    expect(parts.indexOf("/opt/homebrew/bin")).toBeLessThan(parts.indexOf("/Users/me/.nvm/bin"));
+    expect(parts).toContain("/usr/sbin");
+    expect(parts.filter((p) => p === "/opt/homebrew/bin")).toHaveLength(1);
+    expect(parts.filter((p) => p === "/usr/bin")).toHaveLength(1);
+    expect(parts).not.toContain("");
+  });
+
+  test("falls back to the standard dirs when the shell has no PATH", () => {
+    const parts = buildLaunchdPath(undefined).split(":");
+    for (const dir of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]) {
+      expect(parts).toContain(dir);
+    }
+    expect(parts).not.toContain("");
+  });
 });
 
 // ─── Systemd (Linux) ───────────────────────────────────────────────────

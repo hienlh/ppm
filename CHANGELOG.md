@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **PPM no longer dies when you close the Terminal window you started it from (macOS)** — Terminal.app terminates every process that originated from a window when the window closes, even ones that detached from it, and `ppm start` had been spawning the supervisor directly from your shell. It was meant to hand off to launchd but a status check made that path unreachable, so the "Auto-restart enabled" message was never true. `ppm start` now runs the supervisor under launchd on macOS, which Terminal cannot reach and which restarts it after a crash; the job inherits your shell's `PATH` so chat tools still find `bun`, `node` and Homebrew binaries. If launchd refuses, it says so instead of claiming auto-restart. An instance started by an older version stays terminal-owned until you `ppm stop && ppm start` once.
+
 ## [0.17.55] - 2026-09-02
 
 ### Fixed

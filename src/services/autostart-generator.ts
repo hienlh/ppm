@@ -65,6 +65,21 @@ export function getPlistPath(): string {
   return resolve(homedir(), "Library", "LaunchAgents", `${PLIST_LABEL}.plist`);
 }
 
+/**
+ * PATH for the launchd job: bun's directory first, then whatever the shell
+ * running `ppm start` / `ppm autostart enable` had, then the standard dirs.
+ * Deduplicated, order preserved. Exported for tests.
+ */
+export function buildLaunchdPath(shellPath: string | undefined = process.env.PATH): string {
+  const bunDir = isCompiledBinary() ? "" : resolve(resolveBunPath(), "..");
+  const candidates = [
+    bunDir,
+    ...(shellPath ?? "").split(":"),
+    "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+  ];
+  return [...new Set(candidates.filter(Boolean))].join(":");
+}
+
 /** Generate macOS launchd plist XML content */
 export function generatePlist(config: AutoStartConfig): string {
   const cmd = buildExecCommand(config);
@@ -84,6 +99,15 @@ export function generatePlist(config: AutoStartConfig): string {
     <array>
 ${programArgs}
     </array>
+    <!-- launchd's GUI domain PATH is /usr/bin:/bin:/usr/sbin:/sbin. Every
+         \`ppm start\` on macOS now runs here, so carry the invoking shell's PATH
+         (bun, homebrew, node) or chat Bash tools and the tunnel binary lookup
+         lose what the user has in their terminal. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${escapeXml(buildLaunchdPath())}</string>
+    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

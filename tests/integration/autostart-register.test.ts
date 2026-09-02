@@ -21,7 +21,7 @@ import {
   disableAutoStart,
   getAutoStartStatus,
 } from "../../src/services/autostart-register.ts";
-import { getPlistPath, getServicePath, getVbsPath } from "../../src/services/autostart-generator.ts";
+import { getPlistPath, getServicePath, getVbsPath, PLIST_LABEL } from "../../src/services/autostart-generator.ts";
 
 // Increase timeout for OS operations (systemctl can be slow)
 const TEST_TIMEOUT = 15_000;
@@ -45,7 +45,9 @@ function isPpmServiceActive(): boolean {
   }
   if (isMac) {
     const r = spawnSync("launchctl", ["list"], { encoding: "utf-8" });
-    return r.stdout?.includes("com.ppm.agent") ?? false;
+    // Must be the real label — a stale one made this guard always false, so the
+    // afterEach bootout killed the developer's live PPM on every macOS run.
+    return r.stdout?.includes(PLIST_LABEL) ?? false;
   }
   return false;
 }
@@ -74,6 +76,16 @@ describe.if(!skipLive && isMac && !ppmAlreadyRunning)("macOS autostart (launchd)
     expect(status.enabled).toBe(true);
     expect(status.platform).toContain("darwin");
     expect(status.servicePath).toBe(getPlistPath());
+  });
+
+  test("status separates registration (plist) from running (loaded job)", async () => {
+    // skipStart writes the plist without bootstrapping it: registered, not running.
+    // Both flags used to mirror "loaded", which hid the unloaded state from `ppm start`.
+    await enableAutoStart(TEST_CONFIG, { skipStart: true });
+    const status = getAutoStartStatus();
+    expect(status.enabled).toBe(true);
+    expect(status.running).toBe(false);
+    expect(status.details).toBe("Plist exists but not loaded");
   });
 
   test("disable removes plist file", async () => {
