@@ -19,7 +19,9 @@ import {
   BottomSheetSubContent,
 } from "./mobile-bottom-sheet";
 
-const LONG_PRESS_MS = 500;
+// Shared with the desktop-width coarse-pointer path (use-coarse-long-press.ts) — both must
+// agree so a synthetic contextmenu fired early isn't swallowed by this trigger's own timer.
+const LONG_PRESS_MS = 400;
 
 const IsMobileCtx = React.createContext(false);
 
