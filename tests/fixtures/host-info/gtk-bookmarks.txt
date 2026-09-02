@@ -1,0 +1,5 @@
+file:///home/victor/Projects Projects
+file:///home/victor/Downloads
+smb://server/share Not a file:// bookmark, must be skipped
+
+file:///home/victor/My%20Docs My Docs

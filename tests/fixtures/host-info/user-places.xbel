@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xbel>
+<xbel version="1.0">
+ <bookmark href="file:///home/victor/Documents">
+  <title>Documents</title>
+  <info>
+   <metadata owner="http://freedesktop.org">
+    <bookmark:icon name="folder-documents" xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks"/>
+   </metadata>
+  </info>
+ </bookmark>
+ <bookmark href="file:///home/victor/Projects">
+  <title>Projects (KDE)</title>
+ </bookmark>
+</xbel>
