@@ -11,7 +11,10 @@ import type { ComponentType } from "react";
 import type { FsEntry } from "@/lib/fs-api";
 import type { ExplorerActions } from "../actions/use-explorer-actions";
 import type { ExplorerSlice, ViewMode } from "../explorer-store";
+import type { ExplorerNavigation } from "../use-explorer-navigation";
 import type { EntrySelection } from "./use-entry-selection";
+import { ColumnView } from "./column-view";
+import { IconsView } from "./icons-view";
 import { ListView } from "./list-view";
 
 export interface ExplorerViewProps {
@@ -27,10 +30,14 @@ export interface ExplorerViewProps {
   isPinned(path: string): boolean;
   /** Row height in px; larger on coarse-pointer devices. */
   rowHeight: number;
+  /** Column view drills by navigating like every other entry point (history/breadcrumb stay in sync). */
+  nav: ExplorerNavigation;
 }
 
 export const EXPLORER_VIEWS: Partial<Record<ViewMode, ComponentType<ExplorerViewProps>>> = {
   list: ListView,
+  icons: IconsView,
+  columns: ColumnView,
 };
 
 export const AVAILABLE_VIEW_MODES = Object.keys(EXPLORER_VIEWS) as ViewMode[];

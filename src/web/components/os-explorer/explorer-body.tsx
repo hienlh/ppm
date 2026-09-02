@@ -110,6 +110,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
             hasClipboard={hasClipboard}
             isPinned={isPinned}
             rowHeight={coarse ? ROW_HEIGHT_COARSE : ROW_HEIGHT_FINE}
+            nav={nav}
           />
         </div>
       </div>

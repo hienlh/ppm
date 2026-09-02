@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, ArrowUp, Eye, EyeOff, List, PencilLine, RefreshCw, Search, X,
+  ArrowLeft, ArrowRight, ArrowUp, Columns3, Eye, EyeOff, LayoutGrid, List, PencilLine, RefreshCw, Search, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ExplorerBreadcrumb } from "./explorer-breadcrumb";
@@ -17,7 +17,7 @@ import { useExplorerStore, type ExplorerSlice, type ViewMode } from "./explorer-
 import type { ExplorerNavigation } from "./use-explorer-navigation";
 import { AVAILABLE_VIEW_MODES } from "./views/explorer-view-registry";
 
-const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: List, columns: List };
+const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: LayoutGrid, columns: Columns3 };
 const VIEW_LABEL: Record<ViewMode, string> = { list: "List view", icons: "Icons view", columns: "Column view" };
 
 const buttonClass =
