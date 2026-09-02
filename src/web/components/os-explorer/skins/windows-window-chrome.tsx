@@ -1,16 +1,21 @@
 /**
  * Windows 11 File Explorer-flavoured titlebar: window icon + title left, caption buttons
- * right (46×32, close hover red). The toolbar row (back/forward/breadcrumb/search) is the
- * existing `ExplorerToolbar` in the window body, tinted by `skins.css` — the chrome slot is
- * only the titlebar itself.
+ * right (46px wide, close hover red). Height matches the shared `TITLEBAR_HEIGHT` contract
+ * constant (not the real Win11 32px) so a minimised window's collapsed height agrees with
+ * what `FloatingWindow` reserves for it. The toolbar row (back/forward/breadcrumb/search) is
+ * the existing `ExplorerToolbar` in the window body, tinted by `skins.css` — the chrome slot
+ * is only the titlebar itself.
+ *
+ * `data-skin` is set here (not only on the explorer body) because this titlebar is a
+ * sibling of the body in the window tree — the `--x-*` vars it reads (`--x-titlebar-bg`,
+ * `--x-radius`, `--x-font`) only resolve on an element that itself carries the attribute.
  */
 
 import { Minus, Square, Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
+import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
 import { WindowsFolderIcon } from "./folder-icon-windows";
 
-const TITLEBAR_HEIGHT = 32;
 /** Windows metric: 46px wide caption buttons, full titlebar height. */
 const CAPTION_BUTTON =
   "grid place-items-center w-[46px] self-stretch text-text-2 can-hover:hover:bg-surface-elevated can-hover:hover:text-text transition-colors";
@@ -24,6 +29,7 @@ export function WindowsWindowChrome({
   return (
     <div
       {...rest}
+      data-skin="windows"
       style={{ height: TITLEBAR_HEIGHT, fontFamily: "var(--x-font)", ...style }}
       className={cn(
         "flex items-stretch shrink-0 rounded-t-[var(--x-radius)] overflow-hidden",
