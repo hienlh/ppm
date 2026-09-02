@@ -177,6 +177,16 @@ describe("createLatestVersionCheck", () => {
     expect(calls).toBe(1);
   });
 
+  it("bypasses a live cache entry when the caller forces a check", async () => {
+    let calls = 0;
+    let latest = "1.2.3";
+    const check = createLatestVersionCheck(async () => { calls++; return result(latest); }, 60_000);
+    expect(await check()).toBe("1.2.3");
+    latest = "1.2.4"; // published moments after the cached answer was taken
+    expect(await check({ force: true })).toBe("1.2.4");
+    expect(calls).toBe(2);
+  });
+
   it("re-checks once the TTL expires", async () => {
     let calls = 0;
     const check = createLatestVersionCheck(async () => { calls++; return result("1.2.3"); }, 0);

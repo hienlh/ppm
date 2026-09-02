@@ -8,6 +8,7 @@ import {
   applyUpgrade,
   signalSupervisorUpgrade,
   getLatestPublishedVersion,
+  type LatestVersionCheck,
 } from "../../services/upgrade.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { getPpmDir } from "../../services/ppm-dir.ts";
@@ -25,23 +26,40 @@ function readRecordedVersion(): string | null {
   }
 }
 
+/** Newer of two versions, tolerating either being absent. */
+function newerOf(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return compareSemver(a, b) < 0 ? b : a;
+}
+
 /**
  * Check the registry directly rather than only reading what the supervisor
  * recorded: that record is written 5min after startup and every 15min after,
  * so a UI opened inside that window would see no update and offer no upgrade.
- * The supervisor's record is the offline fallback.
+ *
+ * Take the newer of the two signals rather than "registry, else record". They
+ * are produced by different processes on different clocks — the supervisor
+ * checks the registry uncached every 15min, the server answers from a cache —
+ * so either one can be the fresher of the pair, and preferring the registry
+ * answer unconditionally withheld an update the supervisor had already found.
+ *
+ * `force` bypasses the server's cache for user-initiated checks.
  */
 export async function resolveAvailableVersion(
-  getLatest: () => Promise<string | null> = getLatestPublishedVersion,
+  getLatest: LatestVersionCheck = getLatestPublishedVersion,
+  opts?: { force?: boolean },
 ): Promise<string | null> {
-  const candidate = (await getLatest()) ?? readRecordedVersion();
+  const candidate = newerOf(await getLatest(opts), readRecordedVersion());
   // Only report if actually newer than current version
   return candidate && compareSemver(VERSION, candidate) < 0 ? candidate : null;
 }
 
-/** GET / — upgrade status (current version, available version, install method) */
+/** GET / — upgrade status (current version, available version, install method).
+ *  `?refresh=1` forces a live registry check, bypassing the status cache. */
 upgradeRoutes.get("/", async (c) => {
-  const availableVersion = await resolveAvailableVersion();
+  const force = c.req.query("refresh") === "1";
+  const availableVersion = await resolveAvailableVersion(getLatestPublishedVersion, { force });
 
   return c.json(ok({
     currentVersion: VERSION,

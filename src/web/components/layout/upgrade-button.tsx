@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/lib/api-client";
 import { toast } from "sonner";
 import { Loader2, ArrowUpCircle, RefreshCw, Download, ExternalLink, History } from "lucide-react";
 import { useSettingsStore } from "@/stores/settings-store";
-import { fetchChangelogSince, fetchRecentChangelog, compareSemver, type ChangelogSection } from "@/lib/changelog";
+import { fetchRecentChangelog, newestSectionVersion, compareSemver, type ChangelogSection } from "@/lib/changelog";
 import { cn } from "@/lib/utils";
 
 const POLL_INTERVAL_MS = 60_000;
@@ -113,26 +113,36 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
   const [notes, setNotes] = useState<ChangelogSection[] | null>(null);
   const [notesLoading, setNotesLoading] = useState(false);
 
-  useEffect(() => {
-    let timer: ReturnType<typeof setInterval>;
-    async function check() {
-      try {
-        const data = await api.get<UpgradeStatus>("/api/upgrade");
-        setCurrentVersion(data.currentVersion);
-        if (data.availableVersion) {
-          setAvailableVersion(data.availableVersion);
-          setDismissed(!!sessionStorage.getItem(DISMISS_KEY_PREFIX + data.availableVersion));
-        } else {
-          setAvailableVersion(null);
-        }
-      } catch {
-        // ignore — chip just shows the known version
+  // `force` asks the server to bypass its registry cache. The background poll
+  // stays cached (one request per client per minute must not hit the registry),
+  // but a user opening the popover is asking "is there one *now*" and must not
+  // be answered from an answer taken up to five minutes ago.
+  const check = useCallback(async (force = false) => {
+    try {
+      const data = await api.get<UpgradeStatus>(force ? "/api/upgrade?refresh=1" : "/api/upgrade");
+      setCurrentVersion(data.currentVersion);
+      if (data.availableVersion) {
+        setAvailableVersion(data.availableVersion);
+        setDismissed(!!sessionStorage.getItem(DISMISS_KEY_PREFIX + data.availableVersion));
+      } else {
+        setAvailableVersion(null);
       }
+    } catch {
+      // ignore — chip just shows the known version
     }
-    check();
-    timer = setInterval(check, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    check();
+    const timer = setInterval(() => check(), POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [check]);
+
+  // Opening the popover re-checks immediately, so the panel never disagrees
+  // with itself: release notes and the Update button are resolved together.
+  useEffect(() => {
+    if (open) check(true);
+  }, [open, check]);
 
   const current = currentVersion ?? version;
   // QA hook (latched in sessionStorage — see getTestTarget). Forces the update
@@ -145,25 +155,44 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
   const realUpdate = !!availableVersion && !!current && compareSemver(availableVersion, current) > 0
     ? availableVersion
     : null;
-  const effectiveAvailable = realUpdate ?? (isTest ? testTarget : null);
-  const hasUpdate = !!effectiveAvailable && !dismissed;
 
   // Load release notes each time the popover opens. Refetching (not caching for
   // the session) avoids latching a stale/empty result from a transient fetch:
   // the changelog source can briefly lag the version signal after a release.
+  // Always the recent list, unfiltered — the sections themselves are what tell
+  // us whether a newer release exists, so filtering here would hide the signal.
   useEffect(() => {
     if (!open || !current) return;
     setNotesLoading(true);
-    // Update mode → sections newer than installed (test hook shows all).
-    // No update → recent releases so clicking the version chip still shows notes.
-    const load = hasUpdate
-      ? fetchChangelogSince(isTest ? "0.0.0" : current)
-      : fetchRecentChangelog();
-    load
+    fetchRecentChangelog()
       .then(setNotes)
       .catch(() => setNotes([]))
       .finally(() => setNotesLoading(false));
-  }, [open, current, hasUpdate, isTest]);
+  }, [open, current]);
+
+  // The published CHANGELOG is the earliest signal of a release: it updates the
+  // moment the release is pushed, while the registry only flips once the
+  // package is published. Whenever the notes name a version newer than the
+  // installed one, offer the upgrade — seeing a release in this panel and not
+  // being able to take it is never the right outcome, so the panel's own
+  // content is a first-class update signal, not decoration.
+  const changelogUpdate = useMemo(() => {
+    if (!notes || !current) return null;
+    const newest = newestSectionVersion(notes);
+    return newest && compareSemver(newest, current) > 0 ? newest : null;
+  }, [notes, current]);
+
+  const effectiveAvailable = realUpdate ?? changelogUpdate ?? (isTest ? testTarget : null);
+  const hasUpdate = !!effectiveAvailable && !dismissed;
+
+  // In update mode the list answers "what am I about to get", so drop anything
+  // already installed. If that leaves nothing (registry ahead of the changelog)
+  // keep the full list rather than an empty panel.
+  const visibleNotes = useMemo(() => {
+    if (!notes || !hasUpdate || isTest || !current) return notes;
+    const newer = notes.filter((s) => compareSemver(s.version, current) > 0);
+    return newer.length > 0 ? newer : notes;
+  }, [notes, hasUpdate, isTest, current]);
 
   // The server is restarting into the new version — stop showing "Updating…",
   // switch to the reconnect state, and auto-reload once it's listening again
@@ -185,7 +214,7 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
       } else {
         toast.info(data.message || "Upgrade installed. Restart PPM manually.");
         setUpgrading(false);
-        if (availableVersion) sessionStorage.setItem(DISMISS_KEY_PREFIX + availableVersion, "1");
+        if (effectiveAvailable) sessionStorage.setItem(DISMISS_KEY_PREFIX + effectiveAvailable, "1");
         setDismissed(true);
       }
     } catch (e) {
@@ -193,18 +222,26 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
         // Expected: self-replace killed the server before the response flushed.
         // The upgrade is in progress — wait for it, don't report a failure.
         enterRestartWait();
+      } else if (/already on latest/i.test((e as Error).message)) {
+        // Offered from the changelog, but the package registry has not caught up
+        // yet — the release is announced and not yet installable. Say so, and
+        // leave the offer standing so the next attempt can succeed.
+        toast.info(`v${effectiveAvailable} is announced but not published yet — try again shortly.`);
+        setUpgrading(false);
       } else {
         toast.error(`Upgrade failed: ${(e as Error).message}`);
         setUpgrading(false);
       }
     }
-  }, [availableVersion, enterRestartWait]);
+  }, [effectiveAvailable, enterRestartWait]);
 
   const handleDismiss = useCallback(() => {
-    if (availableVersion) sessionStorage.setItem(DISMISS_KEY_PREFIX + availableVersion, "1");
+    // Key on the offered version, not just the server-reported one: an update
+    // known only from the changelog must be dismissable too.
+    if (effectiveAvailable) sessionStorage.setItem(DISMISS_KEY_PREFIX + effectiveAvailable, "1");
     setDismissed(true);
     setOpen(false);
-  }, [availableVersion]);
+  }, [effectiveAvailable]);
 
   if (!current && !hasUpdate) return null;
 
@@ -277,9 +314,9 @@ export function UpgradeButton({ align = "right" }: { align?: "left" | "right" })
                 <span className="flex items-center gap-2 text-text-3">
                   <Loader2 className="size-3.5 animate-spin" /> Loading release notes…
                 </span>
-              ) : notes && notes.length > 0 ? (
+              ) : visibleNotes && visibleNotes.length > 0 ? (
                 <div className="space-y-2.5">
-                  {notes.map((s) => (
+                  {visibleNotes.map((s) => (
                     <ChangelogEntry key={s.version} version={s.version} body={s.body} />
                   ))}
                 </div>

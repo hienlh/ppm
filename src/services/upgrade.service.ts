@@ -59,6 +59,9 @@ export async function checkForUpdate(): Promise<{
 
 const LATEST_VERSION_CACHE_MS = 300_000; // 5min
 
+/** A cached registry check; `force` skips the TTL and asks the registry now. */
+export type LatestVersionCheck = (opts?: { force?: boolean }) => Promise<string | null>;
+
 /**
  * Build a cached, in-flight-deduped "what is the newest published version"
  * check. Every open UI polls the upgrade status once a minute, so an uncached
@@ -68,11 +71,16 @@ const LATEST_VERSION_CACHE_MS = 300_000; // 5min
  * or being rate-limited would otherwise re-enter a doomed 10s fetch on every
  * poll. A failed attempt keeps the last known good version rather than
  * forgetting it.
+ *
+ * `force` exists because the TTL is a cost control, not a correctness rule: a
+ * cached answer taken seconds before a release is published would otherwise
+ * withhold that release for up to the full TTL. A user-initiated check (opening
+ * the upgrade popover) is rare and must see the registry as it is right now.
  */
 export function createLatestVersionCheck(
   checkFn: typeof checkForUpdate = checkForUpdate,
   ttlMs = LATEST_VERSION_CACHE_MS,
-): () => Promise<string | null> {
+): LatestVersionCheck {
   let cache: { at: number; version: string | null } | null = null;
   let inflight: Promise<string | null> | null = null;
 
@@ -81,8 +89,10 @@ export function createLatestVersionCheck(
     return cache.version;
   };
 
-  return function getLatestVersion() {
-    if (cache && Date.now() - cache.at < ttlMs) return Promise.resolve(cache.version);
+  return function getLatestVersion(opts) {
+    if (!opts?.force && cache && Date.now() - cache.at < ttlMs) return Promise.resolve(cache.version);
+    // A forced check still joins a request already on the wire — that request
+    // is itself live, so waiting for it is fresher than starting a second one.
     if (inflight) return inflight;
     inflight = checkFn()
       .then((r) => remember(r.latest))

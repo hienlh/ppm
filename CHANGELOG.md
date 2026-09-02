@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.17.55] - 2026-09-02
+
+### Fixed
+- **A new release can be installed the moment it is announced** — opening the version chip now asks the registry directly instead of reusing an answer up to five minutes old, and a version named in the release notes is enough to offer the update. The panel used to list a new version while refusing to install it.
+- **An update found by the background check is no longer withheld** — the two version checks ran on separate clocks and the fresher of the pair could be ignored.
+
 ## [0.17.54] - 2026-09-02
 
 ### Added

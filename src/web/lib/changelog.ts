@@ -51,6 +51,19 @@ export function parseChangelog(md: string): ChangelogSection[] {
   return sections;
 }
 
+/**
+ * Newest version among the given sections, or null when there are none.
+ * Order-independent on purpose: the file is authored newest-first by
+ * convention, and a release that lands out of order must not read as "no newer
+ * version" to the upgrade check that consumes this.
+ */
+export function newestSectionVersion(sections: ChangelogSection[]): string | null {
+  return sections.reduce<string | null>(
+    (best, s) => (best && compareSemver(s.version, best) <= 0 ? best : s.version),
+    null,
+  );
+}
+
 /** Parse CHANGELOG markdown into version sections strictly newer than `since`. */
 export function parseChangelogSince(md: string, since: string): ChangelogSection[] {
   return parseChangelog(md).filter((s) => compareSemver(s.version, since) > 0);

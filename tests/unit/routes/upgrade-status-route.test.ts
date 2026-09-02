@@ -3,6 +3,11 @@
  * version the supervisor recorded — that record lands 5min after startup and
  * every 15min after, so a UI opened inside that window saw no update and
  * rendered no upgrade button.
+ *
+ * The two signals are also combined by recency, not by rank: whichever names
+ * the newer version wins. The server answers its own check from a cache while
+ * the supervisor checks uncached on its own timer, so a recorded version can
+ * legitimately be newer than the live answer just returned.
  */
 import { describe, it, expect, beforeEach, afterAll } from "bun:test";
 import { resolve } from "node:path";
@@ -44,9 +49,20 @@ describe("resolveAvailableVersion", () => {
     expect(await resolveAvailableVersion(offline)).toBe(NEWER);
   });
 
-  it("prefers the live check over a stale recorded version", async () => {
+  it("takes the recorded version when the live check is behind it", async () => {
     recordVersion(NEWER);
-    expect(await resolveAvailableVersion(async () => VERSION)).toBeNull();
+    expect(await resolveAvailableVersion(async () => VERSION)).toBe(NEWER);
+  });
+
+  it("takes the live check when the recorded version is behind it", async () => {
+    recordVersion(VERSION);
+    expect(await resolveAvailableVersion(async () => NEWER)).toBe(NEWER);
+  });
+
+  it("forwards a forced check to the underlying version check", async () => {
+    let seen: { force?: boolean } | undefined;
+    await resolveAvailableVersion(async (o) => { seen = o; return null; }, { force: true });
+    expect(seen?.force).toBe(true);
   });
 
   it("reports no update when the live version is not newer", async () => {
