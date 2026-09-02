@@ -2,6 +2,11 @@ import { resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { getPpmDir } from "./ppm-dir.ts";
+import { realPathOrSelf, realPathOrSelfSync } from "./fs-ops/fs-real-path.ts";
+
+// Re-exported so callers reach both the guards and the resolver they build on
+// through one import.
+export { realPathOrSelf, realPathOrSelfSync };
 
 /**
  * Central guard for every filesystem route that works outside project scope.
@@ -69,6 +74,31 @@ export function assertNotPpmDir(resolved: string): void {
   if (isPpmDirPath(resolved)) {
     throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
+}
+
+/**
+ * Refuse operations that would take the PPM directory's contents anywhere
+ * else. Reading that subtree is already blocked, so without this a copy to a
+ * public path followed by an ordinary read would still hand out the
+ * credentials database.
+ */
+export function assertNotPpmSubtree(candidate: string): void {
+  if (isPpmDirPath(candidate)) {
+    throw Object.assign(new Error(`Refusing to operate on the PPM directory: ${candidate}`), {
+      status: 403,
+      code: "EPROTECTED",
+    });
+  }
+}
+
+/**
+ * Same refusal, applied to the real path as well. A path that does not exist
+ * yet is still resolved through its parents, so a symlinked directory cannot
+ * be used to reach — or create something inside — the PPM directory.
+ */
+export async function assertNotPpmSubtreeDeep(candidate: string): Promise<void> {
+  assertNotPpmSubtree(candidate);
+  assertNotPpmSubtree(await realPathOrSelf(candidate));
 }
 
 /** Paths whose removal or rename would break the host or PPM itself. */

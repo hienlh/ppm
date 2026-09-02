@@ -9,8 +9,17 @@ import {
   touchFile,
 } from "../../../../src/services/fs-ops/fs-ops-mutate.service.ts";
 import { copyPath, movePath } from "../../../../src/services/fs-ops/fs-ops-copy-move.service.ts";
+import { getPpmDir } from "../../../../src/services/ppm-dir.ts";
 
 let dir: string;
+
+/** Stand-in for the credentials store; PPM_HOME is an isolated temp dir here. */
+function ppmSecret(): string {
+  const secret = join(getPpmDir(), "ppm.db");
+  mkdirSync(getPpmDir(), { recursive: true });
+  writeFileSync(secret, "secret");
+  return secret;
+}
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "fs-mutate-"));
@@ -36,6 +45,14 @@ describe("renamePath", () => {
 
   it("refuses to rename a protected root", async () => {
     await expect(renamePath(homedir(), "somewhere-else")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("refuses to rename inside the PPM directory", async () => {
+    await expect(renamePath(ppmSecret(), "ppm-copy.db")).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(join(getPpmDir(), "ppm-copy.db"))).toBe(false);
   });
 });
 
@@ -83,6 +100,32 @@ describe("touchFile / makeDir", () => {
     expect(existsSync(join(dir, "folder"))).toBe(true);
     await expect(makeDir(join(dir, "folder"))).rejects.toMatchObject({ code: "EEXIST" });
   });
+
+  it("refuses to create a file inside the PPM directory", async () => {
+    const target = join(getPpmDir(), "planted.txt");
+    await expect(touchFile(target)).rejects.toMatchObject({ status: 403, code: "EPROTECTED" });
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("refuses to create a directory inside the PPM directory", async () => {
+    const target = join(getPpmDir(), "planted-dir");
+    await expect(makeDir(target)).rejects.toMatchObject({ status: 403, code: "EPROTECTED" });
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("refuses a write through a symlink pointing at the PPM directory", async () => {
+    const link = join(dir, "ppm-link");
+    try {
+      symlinkSync(getPpmDir(), link, "junction");
+    } catch {
+      return; // link creation needs privileges on some hosts
+    }
+    await expect(touchFile(join(link, "planted.txt"))).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(join(getPpmDir(), "planted.txt"))).toBe(false);
+  });
 });
 
 describe("copyPath / movePath", () => {
@@ -111,6 +154,40 @@ describe("copyPath / movePath", () => {
     await expect(movePath(homedir(), join(dir, "home-copy"))).rejects.toMatchObject({
       status: 403,
     });
+  });
+
+  it("refuses to copy the credentials store out of the PPM directory", async () => {
+    await expect(copyPath(ppmSecret(), join(dir, "stolen.db"))).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(join(dir, "stolen.db"))).toBe(false);
+  });
+
+  it("refuses to move anything out of the PPM directory", async () => {
+    await expect(movePath(ppmSecret(), join(dir, "stolen.db"))).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+  });
+
+  it("refuses to copy into the PPM directory", async () => {
+    writeFileSync(join(dir, "evil.db"), "payload");
+    const target = join(getPpmDir(), "ppm.db");
+    writeFileSync(target, "original");
+    await expect(copyPath(join(dir, "evil.db"), target)).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(readFileSync(target, "utf-8")).toBe("original");
+  });
+
+  it("refuses to move into the PPM directory", async () => {
+    writeFileSync(join(dir, "evil.db"), "payload");
+    await expect(
+      movePath(join(dir, "evil.db"), join(getPpmDir(), "moved.db")),
+    ).rejects.toMatchObject({ status: 403, code: "EPROTECTED" });
+    expect(existsSync(join(getPpmDir(), "moved.db"))).toBe(false);
   });
 
   it.if(process.platform === "win32")("refuses a UNC destination, which is unsupported", async () => {

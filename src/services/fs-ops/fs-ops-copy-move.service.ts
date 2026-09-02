@@ -1,6 +1,7 @@
 import { lstat } from "node:fs/promises";
 import {
   assertAllowed,
+  assertNotPpmSubtreeDeep,
   assertNotProtected,
   resolvePath,
 } from "../fs-path-guard.service.ts";
@@ -12,12 +13,20 @@ export interface CopyMoveResult {
   crossDevice?: boolean;
 }
 
-/** Resolve and whitelist both sides of a two-path operation. */
+/**
+ * Resolve and whitelist both sides of a two-path operation. Neither side may
+ * touch the PPM directory: reading that subtree is blocked, so copying out of
+ * it would work around the shield, and writing into it could overwrite the
+ * running server's own state. Real paths are checked too, so a symlink cannot
+ * stand in for either end.
+ */
 async function resolvePair(source: string, destination: string): Promise<[string, string]> {
   const src = resolvePath(source);
   const dst = resolvePath(destination);
   assertAllowed(src);
   assertAllowed(dst);
+  await assertNotPpmSubtreeDeep(src);
+  await assertNotPpmSubtreeDeep(dst);
   // Fail early with 404 instead of a confusing copy error.
   await lstat(src);
   return [src, dst];

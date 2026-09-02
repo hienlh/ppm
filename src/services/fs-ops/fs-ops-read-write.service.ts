@@ -1,11 +1,15 @@
-import { readFileSync, realpathSync, statSync } from "node:fs";
-import { readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import {
   assertAllowed,
   assertNotPpmDir,
+  realPathOrSelf,
+  realPathOrSelfSync,
   resolvePath,
 } from "../fs-path-guard.service.ts";
+
+// Re-exported because the raw/docx routes resolve a path before serving it.
+export { realPathOrSelf };
 
 /** Refuse to page a huge file into memory as a string. */
 const READ_MAX_SIZE = 5 * 1024 * 1024;
@@ -34,43 +38,6 @@ function assertReadable(isFile: boolean, size: number): void {
   }
   if (size > READ_MAX_SIZE) {
     throw Object.assign(new Error("File too large (>5MB)"), { status: 400, code: "EFBIG" });
-  }
-}
-
-/**
- * Real path of an entry. A path that does not exist yet still has to be
- * resolved through its parents, otherwise a symlinked directory would let a
- * *new* file be created inside the shielded PPM directory.
- */
-export async function realPathOrSelf(resolved: string): Promise<string> {
-  let current = resolved;
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      const real = await realpath(current);
-      return tail.length ? join(real, ...tail) : real;
-    } catch {
-      const parent = dirname(current);
-      if (parent === current) return resolved;
-      tail.unshift(basename(current));
-      current = parent;
-    }
-  }
-}
-
-function realPathOrSelfSync(resolved: string): string {
-  let current = resolved;
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      const real = realpathSync(current);
-      return tail.length ? join(real, ...tail) : real;
-    } catch {
-      const parent = dirname(current);
-      if (parent === current) return resolved;
-      tail.unshift(basename(current));
-      current = parent;
-    }
   }
 }
 

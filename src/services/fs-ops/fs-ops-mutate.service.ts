@@ -2,6 +2,7 @@ import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   assertAllowed,
+  assertNotPpmSubtreeDeep,
   assertNotProtected,
   resolvePath,
 } from "../fs-path-guard.service.ts";
@@ -14,10 +15,13 @@ export async function renamePath(path: string, newName: string): Promise<{ from:
   }
   const src = resolvePath(path);
   assertAllowed(src);
+  // Renaming inside the PPM directory would break the running server's own state.
+  await assertNotPpmSubtreeDeep(src);
   await assertNotProtected(src);
   await lstat(src);
   const dst = join(dirname(src), newName);
   assertAllowed(dst);
+  await assertNotPpmSubtreeDeep(dst);
   await renameEntry(src, dst);
   return { from: src, to: dst };
 }
@@ -36,6 +40,7 @@ export async function deletePath(path: string): Promise<{ removed: string }> {
 export async function touchFile(path: string): Promise<{ path: string }> {
   const target = resolvePath(path);
   assertAllowed(target);
+  await assertNotPpmSubtreeDeep(target);
   // `wx` makes the create-or-fail decision atomic at the syscall level.
   await writeFile(target, "", { flag: "wx" });
   return { path: target };
@@ -45,6 +50,7 @@ export async function touchFile(path: string): Promise<{ path: string }> {
 export async function makeDir(path: string): Promise<{ path: string }> {
   const target = resolvePath(path);
   assertAllowed(target);
+  await assertNotPpmSubtreeDeep(target);
   await mkdir(target, { recursive: false });
   return { path: target };
 }

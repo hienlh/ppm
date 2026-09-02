@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { statPath } from "../../../../src/services/fs-ops/fs-ops-stat.service.ts";
+import { getPpmDir } from "../../../../src/services/ppm-dir.ts";
 
 let dir: string;
 
@@ -49,6 +50,12 @@ describe("statPath", () => {
     const st = await statPath(link);
     expect(st.kind).toBe("symlink");
     expect(st.target).toContain("file.txt");
+  });
+
+  it("refuses to describe an entry in the PPM directory", async () => {
+    const secret = join(getPpmDir(), "ppm.db");
+    writeFileSync(secret, "secret");
+    await expect(statPath(secret)).rejects.toMatchObject({ status: 403, code: "EPROTECTED" });
   });
 
   it("fails with ENOENT for a missing path", async () => {
