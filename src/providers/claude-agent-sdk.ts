@@ -1806,6 +1806,23 @@ export class ClaudeAgentSdkProvider implements AIProvider {
           const result = msg as any;
           const subtype = result.subtype as string | undefined;
 
+          // The SDK closes out background deliveries with a result of their own —
+          // notably the orphaned-task notifications it replays on resume. Those carry
+          // origin 'task-notification' with no turns, no usage and duration_api_ms 0:
+          // no request ever reached the API. Treating one as the end of the user's turn
+          // raised a bogus "Claude returned no response (0 turns)", yielded `done`, and
+          // flipped the session to idle while the real turn was still streaming.
+          // Only the empty ones are ignored: a scheduled-trigger delivery shares this
+          // origin but does run a real turn, and must still be allowed to finish.
+          if (
+            result.origin?.kind === "task-notification"
+            && (result.num_turns ?? 0) === 0
+            && !assistantContent
+          ) {
+            console.log(`[sdk] session=${sessionId} ignoring empty task-notification result (no turn ran)`);
+            continue;
+          }
+
           // Write cost to shared usage cache
           if (result.total_cost_usd != null) {
             updateFromSdkEvent(undefined, undefined, result.total_cost_usd);

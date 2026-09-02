@@ -366,6 +366,71 @@ describe("ClaudeAgentSdkProvider", () => {
       const done = events.find((e) => e.type === "done") as any;
       expect(done.numTurns).toBe(5);
     });
+
+    // The SDK closes out background deliveries with a result of their own. On resume it
+    // replays notifications for tasks orphaned by a previous process exit, and the result
+    // that closes that delivery has origin 'task-notification', 0 turns and no API call.
+    // Treating it as the user's turn raised a bogus "no response" error and ended the turn
+    // while the real answer was still streaming.
+    it("ignores an empty task-notification result and completes on the real one", async () => {
+      const iter = createMockQueryIterator([
+        { type: "result", subtype: "success", num_turns: 0, total_cost_usd: 0, origin: { kind: "task-notification" } },
+        { type: "result", subtype: "success", num_turns: 2 },
+      ]);
+      mockQueryFn.mockReturnValue(iter);
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) {
+        events.push(event);
+      }
+
+      expect(events.filter((e) => e.type === "error")).toHaveLength(0);
+
+      // Exactly one turn ended — the notification result must not have yielded its own done.
+      const dones = events.filter((e) => e.type === "done") as any[];
+      expect(dones).toHaveLength(1);
+      expect(dones[0].numTurns).toBe(2);
+    });
+
+    it("still completes a task-notification result that ran a real turn", async () => {
+      // A scheduled-trigger delivery shares the origin but does produce a turn, so
+      // suppressing it would leave the session streaming forever.
+      const iter = createMockQueryIterator([
+        {
+          type: "result", subtype: "success", num_turns: 1,
+          origin: { kind: "task-notification", subkind: "scheduled-trigger" },
+        },
+      ]);
+      mockQueryFn.mockReturnValue(iter);
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) {
+        events.push(event);
+      }
+
+      expect(events.filter((e) => e.type === "error")).toHaveLength(0);
+      const done = events.find((e) => e.type === "done") as any;
+      expect(done.numTurns).toBe(1);
+    });
+
+    it("still reports an empty result that has no background origin", async () => {
+      const iter = createMockQueryIterator([
+        { type: "result", subtype: "success", num_turns: 0 },
+      ]);
+      mockQueryFn.mockReturnValue(iter);
+
+      const session = await provider.createSession({});
+      const events: ChatEvent[] = [];
+      for await (const event of provider.sendMessage(session.id, "hi")) {
+        events.push(event);
+      }
+
+      const error = events.find((e) => e.type === "error") as any;
+      expect(error).toBeTruthy();
+      expect(error.message).toContain("0 turns");
+    });
   });
 
   describe("SystemMessage init handling", () => {
