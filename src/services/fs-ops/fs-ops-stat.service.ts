@@ -55,8 +55,13 @@ async function countChildren(path: string): Promise<{ childCount: number; trunca
       if (childCount >= CHILD_COUNT_CAP) return { childCount, truncated: true };
     }
   } finally {
-    // `for await` closes the handle on completion; closing twice throws.
-    await dir.close().catch(() => {});
+    // The async iterator already closes the handle when it drains, and a
+    // second close reports differently per runtime — ignore whatever it says.
+    try {
+      await dir.close();
+    } catch {
+      /* already closed */
+    }
   }
   return { childCount, truncated: false };
 }

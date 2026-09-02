@@ -104,11 +104,16 @@ export async function removeEntry(path: string): Promise<void> {
  * volumes (C: → D:, /home → /mnt), where a copy followed by a delete is the
  * only way to keep the operation looking atomic to the caller.
  */
-export async function moveEntry(src: string, dst: string): Promise<{ crossDevice: boolean }> {
+export async function moveEntry(
+  src: string,
+  dst: string,
+  /** Injectable so the cross-device branch is testable on a single volume. */
+  renameImpl: (from: string, to: string) => Promise<void> = rename,
+): Promise<{ crossDevice: boolean }> {
   assertNotNested(src, dst);
   await assertFreeDestination(src, dst, true);
   try {
-    await rename(src, dst);
+    await renameImpl(src, dst);
     return { crossDevice: false };
   } catch (e) {
     if ((e as { code?: string }).code !== "EXDEV") throw e;

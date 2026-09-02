@@ -1,5 +1,6 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
   assertAllowed,
   assertNotPpmDir,
@@ -36,16 +37,40 @@ function assertReadable(isFile: boolean, size: number): void {
   }
 }
 
-/** Real path of an entry, or the entry itself when it does not exist yet. */
+/**
+ * Real path of an entry. A path that does not exist yet still has to be
+ * resolved through its parents, otherwise a symlinked directory would let a
+ * *new* file be created inside the shielded PPM directory.
+ */
 export async function realPathOrSelf(resolved: string): Promise<string> {
-  return realpath(resolved).catch(() => resolved);
+  let current = resolved;
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = await realpath(current);
+      return tail.length ? join(real, ...tail) : real;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolved;
+      tail.unshift(basename(current));
+      current = parent;
+    }
+  }
 }
 
 function realPathOrSelfSync(resolved: string): string {
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
+  let current = resolved;
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = realpathSync(current);
+      return tail.length ? join(real, ...tail) : real;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolved;
+      tail.unshift(basename(current));
+      current = parent;
+    }
   }
 }
 

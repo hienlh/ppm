@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 import mammoth from "mammoth";
-import { browse, list } from "../../services/fs-browse.service.ts";
+import { browse } from "../../services/fs-browse.service.ts";
+import { list } from "../../services/fs-ops/fs-list-files.service.ts";
 import {
   assertAllowed,
   assertNotPpmDir,
