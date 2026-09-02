@@ -14,6 +14,7 @@ import { useFileStore } from "@/stores/file-store";
 import { cn } from "@/lib/utils";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { useExplorerStore, type SortKey } from "../explorer-store";
+import { useExplorerSkin } from "../skins/use-explorer-skin";
 import { activeEntries } from "../use-explorer-keyboard";
 import type { ExplorerViewProps } from "./explorer-view-registry";
 import { InlineNameInput } from "./inline-name-input";
@@ -33,6 +34,7 @@ export function ListView({
   const setPrefs = useExplorerStore((s) => s.setPrefs);
   const cutPaths = useFileStore((s) => (s.clipboard?.operation === "cut" ? s.clipboard.paths : null));
   const scrollRef = useRef<HTMLDivElement>(null);
+  const skin = useExplorerSkin();
 
   const virtualizer = useVirtualizer({
     count: entries.length,
@@ -55,7 +57,14 @@ export function ListView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div role="row" className="flex shrink-0 items-center gap-2 border-b border-border bg-panel-2 px-2 py-1 text-[11px] font-medium text-text-subtle">
+      <div
+        role="row"
+        className={cn(
+          "flex shrink-0 items-center gap-2 border-b border-border bg-[var(--x-toolbar-bg,var(--panel-2))] px-2 py-1 text-[11px] font-medium text-text-subtle",
+          // Windows Explorer's details header separates columns with a thin divider.
+          skin.id === "windows" && "divide-x divide-border",
+        )}
+      >
         {COLUMNS.map((column) => (
           <button
             key={column.key}
@@ -64,6 +73,7 @@ export function ListView({
             onClick={() => toggleSort(column.key)}
             className={cn(
               "flex items-center gap-0.5 can-hover:hover:text-text",
+              skin.id === "windows" && column.key !== "name" && "pl-2",
               column.className,
               column.key !== "name" && "justify-end",
             )}
@@ -104,7 +114,11 @@ export function ListView({
                 return (
                   <div
                     key={entry.path}
-                    className="absolute left-0 top-0 w-full"
+                    className={cn(
+                      "absolute left-0 top-0 w-full",
+                      // Finder's list view alternates row shading instead of a hover-only cue.
+                      skin.id === "macos" && item.index % 2 === 1 && "bg-panel-2/40",
+                    )}
                     style={{ transform: `translateY(${item.start}px)` }}
                   >
                     <ListRow

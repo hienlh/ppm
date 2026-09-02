@@ -1,0 +1,25 @@
+/*
+ * OS Explorer skin tokens, scoped to `[data-skin]` set on the explorer root
+ * (`ExplorerBody`). Colours stay derived from PPM's existing semantic tokens
+ * (`--panel-2`, `--border`, `--accent-2`, …) via `color-mix()` rather than a second
+ * light/dark table, so both PPM themes stay legible without duplicating that logic here.
+ * Layout metrics (radius, font stack) are the only skin-owned constants.
+ */
+
+[data-skin="windows"] {
+  --x-radius: 8px;
+  --x-font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --x-titlebar-bg: var(--panel-2);
+  --x-toolbar-bg: var(--panel-2);
+  /* A flat "Mica-ish" wash: a touch lighter than the base panel, same on any theme. */
+  --x-sidebar-bg: color-mix(in srgb, var(--panel-2) 90%, white 10%);
+}
+
+[data-skin="macos"] {
+  --x-radius: 10px;
+  --x-font: -apple-system, "SF Pro Text", "SF Pro", system-ui, sans-serif;
+  --x-titlebar-bg: var(--panel-2);
+  --x-toolbar-bg: var(--panel-2);
+  /* Finder's sidebar reads a hair cooler than its content pane. */
+  --x-sidebar-bg: color-mix(in srgb, var(--panel-2) 85%, var(--accent-2) 6%);
+}

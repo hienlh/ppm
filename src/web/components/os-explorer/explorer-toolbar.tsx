@@ -40,7 +40,7 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
   useEffect(() => setDraftPath(slice.path), [slice.path]);
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-panel-2 px-1.5 py-1">
+    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-[var(--x-toolbar-bg,var(--panel-2))] px-1.5 py-1">
       <button type="button" aria-label="Back" title="Back" disabled={!nav.canGoBack} onClick={nav.back} className={buttonClass}>
         <ArrowLeft className="size-4" />
       </button>

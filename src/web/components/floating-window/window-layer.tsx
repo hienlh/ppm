@@ -13,7 +13,7 @@
 import { Suspense, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { FloatingWindow } from "./floating-window";
-import { WINDOW_CONTENT, windowTitle } from "./window-content-registry";
+import { chromeFor, WINDOW_CONTENT, windowTitle } from "./window-content-registry";
 import { Z_BASE, MAX_WINDOWS } from "./window-geometry";
 import { useWindowStore, windowsInRankOrder } from "./window-store";
 
@@ -72,6 +72,7 @@ function DesktopWindowLayer() {
             focused={win.id === frontId}
             getScale={getScale}
             onGestureActive={setCapturing}
+            chrome={chromeFor(win.kind)}
           >
             <Suspense fallback={<div className="p-3 text-xs text-text-2">Loading…</div>}>
               <Content id={win.id} payload={win.payload} />
