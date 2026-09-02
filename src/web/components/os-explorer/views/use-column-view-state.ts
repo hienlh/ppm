@@ -1,0 +1,128 @@
+/**
+ * Column (Miller) view fetch state: one entry per breadcrumb ancestor, each cached and
+ * fetched independently so drilling one level deeper never re-fetches the columns already
+ * on screen. The deepest column always mirrors the window's own (already fetched, sorted,
+ * filtered) entries instead of fetching a second time.
+ *
+ * The reducer is a plain function — given the same paths/state it does the same thing —
+ * so "selecting a divergent branch truncates and aborts every column after it" is
+ * unit-testable without a DOM or a real network call. The hook is the only thing that
+ * actually calls `fsApi.browse`.
+ */
+
+import { useEffect, useReducer, useRef } from "react";
+import { fsApi, type FsEntry } from "@/lib/fs-api";
+
+export interface ColumnState {
+  path: string;
+  entries: FsEntry[];
+  loading: boolean;
+  error: string | null;
+  abort: AbortController;
+}
+
+interface ColumnsState {
+  columns: ColumnState[];
+}
+
+type ColumnsAction =
+  | { type: "sync"; paths: string[]; lastEntries: FsEntry[]; lastLoading: boolean; makeAbort(): AbortController }
+  | { type: "loaded"; path: string; entries: FsEntry[] }
+  | { type: "error"; path: string; message: string };
+
+export function reduceColumns(state: ColumnsState, action: ColumnsAction): ColumnsState {
+  switch (action.type) {
+    case "sync": {
+      const { paths, lastEntries, lastLoading, makeAbort } = action;
+      const lastIndex = paths.length - 1;
+      const next: ColumnState[] = paths.map((path, index) => {
+        const existing = state.columns[index];
+        const isLast = index === lastIndex;
+        if (existing && existing.path === path) {
+          // Unchanged column: keep its cache. The deepest column still mirrors the
+          // caller's live copy since sort/filter/hidden-toggle may have changed it.
+          return isLast ? { ...existing, entries: lastEntries, loading: lastLoading, error: null } : existing;
+        }
+        return isLast
+          ? { path, entries: lastEntries, loading: lastLoading, error: null, abort: makeAbort() }
+          : { path, entries: [], loading: true, error: null, abort: makeAbort() };
+      });
+      // Anything at an index whose path changed — including a truncated tail, where there
+      // is no replacement at all — had its own fetch in flight and must stop.
+      for (let i = 0; i < state.columns.length; i++) {
+        const stale = state.columns[i]!;
+        const replacement = next[i];
+        if (!replacement || replacement.path !== stale.path) stale.abort.abort();
+      }
+      return { columns: next };
+    }
+    case "loaded": {
+      return {
+        columns: state.columns.map((c) =>
+          c.path === action.path ? { ...c, entries: action.entries, loading: false, error: null } : c,
+        ),
+      };
+    }
+    case "error": {
+      return {
+        columns: state.columns.map((c) =>
+          c.path === action.path ? { ...c, loading: false, error: action.message } : c,
+        ),
+      };
+    }
+  }
+}
+
+export interface UseColumnViewState {
+  columns: ColumnState[];
+}
+
+/**
+ * Ties the reducer to real fetches. `paths` is the breadcrumb chain (root … current); the
+ * last path's entries always come from `lastEntries`/`lastLoading`, already owned by the
+ * window's own navigation hook.
+ */
+export function useColumnViewState(
+  paths: string[],
+  lastEntries: FsEntry[],
+  lastLoading: boolean,
+): UseColumnViewState {
+  const [state, dispatch] = useReducer(reduceColumns, { columns: [] });
+  const fetching = useRef(new Set<string>());
+
+  const pathsKey = paths.join("\u0000");
+  useEffect(() => {
+    dispatch({ type: "sync", paths, lastEntries, lastLoading, makeAbort: () => new AbortController() });
+    // `pathsKey` is the real dependency for `paths`; `lastEntries`/`lastLoading` are objects
+    // that change on every fetch tick, which is exactly when this should re-run too.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathsKey, lastEntries, lastLoading]);
+
+  useEffect(() => {
+    const lastIndex = state.columns.length - 1;
+    state.columns.forEach((column, index) => {
+      // The deepest column is never fetched here — it mirrors the window's own listing.
+      if (index === lastIndex) return;
+      if (!column.loading || fetching.current.has(column.path)) return;
+      fetching.current.add(column.path);
+      fsApi
+        .browse(column.path, { signal: column.abort.signal })
+        .then((result) => {
+          fetching.current.delete(column.path);
+          if (column.abort.signal.aborted) return;
+          dispatch({ type: "loaded", path: column.path, entries: result.entries });
+        })
+        .catch((e: unknown) => {
+          fetching.current.delete(column.path);
+          if (column.abort.signal.aborted || (e instanceof DOMException && e.name === "AbortError")) return;
+          dispatch({
+            type: "error",
+            path: column.path,
+            message: e instanceof Error ? e.message : "Failed to read directory",
+          });
+        });
+    });
+  }, [state.columns]);
+
+  return { columns: state.columns };
+}

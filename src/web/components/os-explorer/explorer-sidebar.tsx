@@ -7,11 +7,19 @@
  * hint row instead of replacing the sidebar.
  */
 
-import { AlertTriangle, Folder, HardDrive, Pin, Usb, Network } from "lucide-react";
+import type { ComponentType } from "react";
+import { AlertTriangle, HardDrive, Pin, Usb, Network } from "lucide-react";
 import type { HostInfo, Drive } from "../../../types/system";
 import { cn } from "@/lib/utils";
 import { useExplorerPinsStore } from "./explorer-pins-store";
+import { FileTypeIcon } from "./icons/file-type-icon";
+import type { SkinVocab } from "./skins/skin-types";
 import { usePrefersCoarsePointer } from "./use-coarse-long-press";
+
+/** A folder-type place row draws the current skin's folder glyph via `FileTypeIcon`'s context. */
+function FolderPlaceIcon({ className }: { className?: string }) {
+  return <FileTypeIcon name="" kind="directory" className={cn("size-4 shrink-0", className)} />;
+}
 
 const DRIVE_ICON: Record<Drive["kind"], typeof HardDrive> = {
   fixed: HardDrive,
@@ -20,11 +28,13 @@ const DRIVE_ICON: Record<Drive["kind"], typeof HardDrive> = {
   unknown: HardDrive,
 };
 
+type PlaceIcon = ComponentType<{ className?: string }>;
+
 interface PlaceProps {
   label: string;
   path: string;
   active: boolean;
-  icon: typeof Folder;
+  icon: PlaceIcon;
   onNavigate(path: string): void;
   onUnpin?(): void;
 }
@@ -76,13 +86,18 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** Used when a caller renders the sidebar without a resolved skin (defensive default). */
+const DEFAULT_VOCAB: SkinVocab = { home: "Home", pinned: "Quick access", known: "Folders", drives: "Drives" };
+
 export interface ExplorerSidebarProps {
   host: HostInfo | null;
   currentPath: string;
   onNavigate(path: string): void;
+  /** Section labels for the current OS skin — Finder says "Favorites"/"Locations". */
+  vocab?: SkinVocab;
 }
 
-export function ExplorerSidebar({ host, currentPath, onNavigate }: ExplorerSidebarProps) {
+export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT_VOCAB }: ExplorerSidebarProps) {
   const pins = useExplorerPinsStore((s) => s.pins);
   const unpin = useExplorerPinsStore((s) => s.unpin);
   const isActive = (path: string) => path === currentPath;
@@ -91,7 +106,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate }: ExplorerSideb
     <aside
       aria-label="Places"
       data-testid="explorer-sidebar"
-      className="hidden w-44 shrink-0 overflow-y-auto border-r border-border bg-panel-2 px-1 py-1 sm:block"
+      className="hidden w-44 shrink-0 overflow-y-auto border-r border-border bg-[var(--x-sidebar-bg,var(--panel-2))] px-1 py-1 sm:block"
     >
       {pins.length > 0 && (
         <Section title="Pinned">
@@ -110,13 +125,13 @@ export function ExplorerSidebar({ host, currentPath, onNavigate }: ExplorerSideb
       )}
 
       {host && host.pinned.length > 0 && (
-        <Section title="Quick access">
+        <Section title={vocab.pinned}>
           {host.pinned.map((entry) => (
             <Place
               key={entry.path}
               label={entry.name}
               path={entry.path}
-              icon={Folder}
+              icon={FolderPlaceIcon}
               active={isActive(entry.path)}
               onNavigate={onNavigate}
             />
@@ -125,14 +140,14 @@ export function ExplorerSidebar({ host, currentPath, onNavigate }: ExplorerSideb
       )}
 
       {host && (
-        <Section title="Folders">
-          <Place label="Home" path={host.homedir} icon={Folder} active={isActive(host.homedir)} onNavigate={onNavigate} />
+        <Section title={vocab.known}>
+          <Place label={vocab.home} path={host.homedir} icon={FolderPlaceIcon} active={isActive(host.homedir)} onNavigate={onNavigate} />
           {host.knownFolders.map((folder) => (
             <Place
               key={folder.path}
               label={folder.name}
               path={folder.path}
-              icon={Folder}
+              icon={FolderPlaceIcon}
               active={isActive(folder.path)}
               onNavigate={onNavigate}
             />
@@ -141,7 +156,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate }: ExplorerSideb
       )}
 
       {host && host.drives.length > 0 && (
-        <Section title={host.platform === "win32" ? "Drives" : "Volumes"}>
+        <Section title={vocab.drives}>
           {host.drives.map((drive) => (
             <Place
               key={drive.path}

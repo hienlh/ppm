@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../components/os-explorer/skins/skins.css";
 
 /* Only apply hover-dependent styles when device has real pointer (mouse/trackpad) */
 @custom-variant can-hover (@media (hover: hover) and (pointer: fine));

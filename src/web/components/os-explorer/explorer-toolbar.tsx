@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, ArrowUp, Eye, EyeOff, List, PencilLine, RefreshCw, Search, X,
+  ArrowLeft, ArrowRight, ArrowUp, Columns3, Eye, EyeOff, LayoutGrid, List, PencilLine, RefreshCw, Search, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ExplorerBreadcrumb } from "./explorer-breadcrumb";
@@ -18,7 +18,7 @@ import { usePrefersCoarsePointer } from "./use-coarse-long-press";
 import type { ExplorerNavigation } from "./use-explorer-navigation";
 import { AVAILABLE_VIEW_MODES } from "./views/explorer-view-registry";
 
-const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: List, columns: List };
+const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: LayoutGrid, columns: Columns3 };
 const VIEW_LABEL: Record<ViewMode, string> = { list: "List view", icons: "Icons view", columns: "Column view" };
 
 /**
@@ -51,7 +51,7 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
   const coarse = usePrefersCoarsePointer();
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-panel-2 px-1.5 py-1">
+    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border bg-[var(--x-toolbar-bg,var(--panel-2))] px-1.5 py-1">
       <button type="button" aria-label="Back" title="Back" disabled={!nav.canGoBack} onClick={nav.back} className={buttonClass(coarse)}>
         <ArrowLeft className="size-4" />
       </button>

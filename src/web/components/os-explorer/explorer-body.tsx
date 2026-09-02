@@ -16,6 +16,8 @@ import { ExplorerStatusBar } from "./explorer-status-bar";
 import { useExplorerStore } from "./explorer-store";
 import { ExplorerToolbar } from "./explorer-toolbar";
 import { useExplorerPinsStore } from "./explorer-pins-store";
+import { FolderIconProvider } from "./icons/file-type-icon";
+import { useExplorerSkin } from "./skins/use-explorer-skin";
 import { sortAndFilterEntries } from "./sort-and-filter-entries";
 import { useCoarseLongPress, usePrefersCoarsePointer } from "./use-coarse-long-press";
 import { useExplorerKeyboard } from "./use-explorer-keyboard";
@@ -50,6 +52,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
   const hasClipboard = useFileStore((s) => (s.clipboard?.paths.length ?? 0) > 0);
   const isPinned = useExplorerPinsStore((s) => s.isPinned);
   const coarse = usePrefersCoarsePointer();
+  const skin = useExplorerSkin();
 
   const nav = useExplorerNavigation(windowId, slice, showHidden);
   const { actions, dialogs } = useExplorerActions(windowId, slice, nav, host?.platform);
@@ -75,7 +78,11 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
   const View = viewComponentFor(viewMode);
 
   return (
-    <div className={cn("flex h-full min-h-0 w-full flex-col bg-panel text-text", variant === "sheet" && "rounded-t-xl")}>
+    <div
+      data-skin={skin.id}
+      style={{ fontFamily: "var(--x-font)" }}
+      className={cn("flex h-full min-h-0 w-full flex-col bg-panel text-text", variant === "sheet" && "rounded-t-xl")}
+    >
       <ExplorerToolbar windowId={windowId} slice={slice} nav={nav} />
 
       {slice.error && (
@@ -97,23 +104,26 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
-        <ExplorerSidebar host={host} currentPath={slice.path} onNavigate={nav.go} />
-        <div className="min-w-0 flex-1" onKeyDown={onKeyDown}>
-          <View
-            windowId={windowId}
-            slice={slice}
-            entries={entries}
-            actions={actions}
-            selection={selection}
-            inlineError={dialogs.inlineError}
-            hasClipboard={hasClipboard}
-            isPinned={isPinned}
-            rowHeight={coarse ? ROW_HEIGHT_COARSE : ROW_HEIGHT_FINE}
-            backgroundLongPress={backgroundLongPress}
-          />
+      <FolderIconProvider value={{ closed: skin.FolderIcon, open: skin.FolderOpenIcon }}>
+        <div className="flex min-h-0 flex-1">
+          <ExplorerSidebar host={host} currentPath={slice.path} onNavigate={nav.go} vocab={skin.vocab} />
+          <div className="min-w-0 flex-1" onKeyDown={onKeyDown}>
+            <View
+              windowId={windowId}
+              slice={slice}
+              entries={entries}
+              actions={actions}
+              selection={selection}
+              inlineError={dialogs.inlineError}
+              hasClipboard={hasClipboard}
+              isPinned={isPinned}
+              rowHeight={coarse ? ROW_HEIGHT_COARSE : ROW_HEIGHT_FINE}
+              nav={nav}
+              backgroundLongPress={backgroundLongPress}
+            />
+          </div>
         </div>
-      </div>
+      </FolderIconProvider>
 
       <ExplorerStatusBar entries={entries} selection={slice.selection} truncated={slice.truncated} />
       <ExplorerDialogs dialogs={dialogs} platform={host?.platform} sep={slice.sep} />

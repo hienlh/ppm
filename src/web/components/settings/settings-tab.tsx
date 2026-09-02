@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useShallow } from "zustand/react/shallow";
-import { useSettingsStore, type EditorTabStyle } from "@/stores/settings-store";
+import { useSettingsStore, type EditorTabStyle, type ExplorerSkinPref } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { AISettingsSection } from "./ai-settings-section";
 import { KeyboardShortcutsSection } from "./keyboard-shortcuts-section";
@@ -30,6 +30,12 @@ const TAB_STYLE_OPTIONS: { value: EditorTabStyle; label: string }[] = [
   { value: "pill", label: "Pill" },
 ];
 
+const EXPLORER_SKIN_OPTIONS: { value: ExplorerSkinPref; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "windows", label: "Windows" },
+  { value: "macos", label: "macOS" },
+];
+
 type SettingsCategory = "ai" | "notifications" | "clawbot" | "schedules" | "jira" | "proxy" | "shortcuts" | "extensions" | "files" | "queryAudit";
 
 const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; icon: React.ElementType }[] = [
@@ -46,7 +52,7 @@ const CATEGORIES: { value: SettingsCategory; label: string; subtitle: string; ic
 ];
 
 export function SettingsTab() {
-  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled, tabWrap, toggleTabWrap, editorTabStyle, setEditorTabStyle } = useSettingsStore(useShallow((s) => ({ theme: s.themeMode, setTheme: s.setThemeMode, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled, tabWrap: s.tabWrap, toggleTabWrap: s.toggleTabWrap, editorTabStyle: s.editorTabStyle, setEditorTabStyle: s.setEditorTabStyle })));
+  const { theme, setTheme, deviceName, setDeviceName, version, jiraEnabled, setJiraEnabled, tabWrap, toggleTabWrap, editorTabStyle, setEditorTabStyle, explorerSkin, setExplorerSkin } = useSettingsStore(useShallow((s) => ({ theme: s.themeMode, setTheme: s.setThemeMode, deviceName: s.deviceName, setDeviceName: s.setDeviceName, version: s.version, jiraEnabled: s.jiraEnabled, setJiraEnabled: s.setJiraEnabled, tabWrap: s.tabWrap, toggleTabWrap: s.toggleTabWrap, editorTabStyle: s.editorTabStyle, setEditorTabStyle: s.setEditorTabStyle, explorerSkin: s.explorerSkin, setExplorerSkin: s.setExplorerSkin })));
   const [activeCategory, setActiveCategory] = useState<SettingsCategory | null>(null);
   const [nameInput, setNameInput] = useState(deviceName ?? "");
   const [nameSaving, setNameSaving] = useState(false);
@@ -215,6 +221,27 @@ export function SettingsTab() {
                   className={cn(
                     "flex-1 text-xs h-8 cursor-pointer",
                     editorTabStyle === opt.value && "ring-2 ring-primary",
+                  )}
+                >
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+          </section>
+
+          {/* Explorer Skin — chrome the OS File Explorer window wears; Auto follows platform */}
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-muted-foreground">Explorer Skin</h3>
+            <div className="flex gap-1.5">
+              {EXPLORER_SKIN_OPTIONS.map((opt) => (
+                <Button
+                  key={opt.value}
+                  variant={explorerSkin === opt.value ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setExplorerSkin(opt.value)}
+                  className={cn(
+                    "flex-1 text-xs h-8 cursor-pointer",
+                    explorerSkin === opt.value && "ring-2 ring-primary",
                   )}
                 >
                   {opt.label}
