@@ -50,7 +50,11 @@ export const IconsViewTile = memo(function IconsViewTile({
           title={entry.name}
           style={{ width: tileWidth }}
           {...longPress}
-          onContextMenu={() => {
+          onContextMenu={(e) => {
+            // Without this the bubbling contextmenu (real right-click or the synthetic one
+            // `useCoarseLongPress` dispatches) reaches the background trigger too and opens
+            // both menus at once.
+            e.stopPropagation();
             if (!selected) selection.selectOnly(entry.path);
           }}
           onClick={(e) => selection.onRowClick(entry.path, e)}
