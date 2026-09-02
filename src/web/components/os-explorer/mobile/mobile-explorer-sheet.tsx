@@ -8,7 +8,7 @@
  * (`ComparePicker`, `ImageOverlay`, …) — renders nothing until `openMobileExplorer` is called.
  */
 
-import { type TouchEvent } from "react";
+import { useEffect, type TouchEvent } from "react";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { ExplorerBody } from "../explorer-body";
 import { useExplorerStore } from "../explorer-store";
@@ -17,10 +17,18 @@ import { MOBILE_EXPLORER_WINDOW_ID, useMobileExplorerOpenState } from "../use-ex
 export function MobileExplorerSheet() {
   const isOpen = useMobileExplorerOpenState((s) => s.isOpen);
   const close = useMobileExplorerOpenState((s) => s.close);
+  const setSelectMode = useMobileExplorerOpenState((s) => s.setSelectMode);
   const path = useExplorerStore((s) => s.slices[MOBILE_EXPLORER_WINDOW_ID]?.path);
   const renaming = useExplorerStore(
     (s) => s.slices[MOBILE_EXPLORER_WINDOW_ID]?.inlineEdit?.kind === "rename",
   );
+
+  // Navigating (forward, back, or via a place/breadcrumb) already clears the shared
+  // selection — Select mode's own checkbox/bottom-bar state must follow it, or the toolbar
+  // is left on Cut/Copy/Trash with 0 items and no way back short of the explicit Cancel.
+  useEffect(() => {
+    setSelectMode(false);
+  }, [path, setSelectMode]);
 
   // Swallowed only while an inline rename is active: a drag meant to clear the soft keyboard
   // (or just reach a field below it) would otherwise also read as a swipe-to-dismiss, since

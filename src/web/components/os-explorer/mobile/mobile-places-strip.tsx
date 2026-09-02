@@ -43,7 +43,7 @@ function Chip({ chip, active, onNavigate }: { chip: Chip; active: boolean; onNav
       onClick={() => onNavigate(chip.path)}
       title={chip.path}
       className={cn(
-        "flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] active:bg-surface-elevated",
+        "flex h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] active:bg-surface-elevated",
         active ? "border-primary bg-accent-wash text-text" : "border-border text-text-2",
       )}
     >
@@ -87,7 +87,7 @@ export function MobilePlacesStrip({ host, currentPath, onNavigate, vocab }: Mobi
           aria-label="All places"
           title="All places"
           onClick={() => setPlacesOpen(true)}
-          className="flex h-10 shrink-0 items-center gap-1 rounded-full border border-border px-3 text-[13px] text-text-2 active:bg-surface-elevated"
+          className="flex h-11 shrink-0 items-center gap-1 rounded-full border border-border px-3 text-[13px] text-text-2 active:bg-surface-elevated"
         >
           <MoreHorizontal className="size-4" />
         </button>

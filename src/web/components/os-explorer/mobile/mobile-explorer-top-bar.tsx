@@ -32,7 +32,7 @@ export function MobileExplorerTopBar({ slice, onClose }: MobileExplorerTopBarPro
         aria-label="Close file explorer"
         title="Close"
         onClick={onClose}
-        className="flex size-10 shrink-0 items-center justify-center rounded-full text-text-2 active:bg-surface-elevated"
+        className="flex size-11 shrink-0 items-center justify-center rounded-full text-text-2 active:bg-surface-elevated"
       >
         <X className="size-5" />
       </button>
