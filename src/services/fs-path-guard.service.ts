@@ -71,6 +71,21 @@ export function assertNotPpmDir(resolved: string): void {
   }
 }
 
+/**
+ * Refuse operations that would take the PPM directory's contents anywhere
+ * else. Reading that subtree is already blocked, so without this a copy to a
+ * public path followed by an ordinary read would still hand out the
+ * credentials database.
+ */
+export function assertNotPpmSubtree(candidate: string): void {
+  if (isPpmDirPath(candidate)) {
+    throw Object.assign(new Error(`Refusing to operate on the PPM directory: ${candidate}`), {
+      status: 403,
+      code: "EPROTECTED",
+    });
+  }
+}
+
 /** Paths whose removal or rename would break the host or PPM itself. */
 export function isProtectedRoot(candidate: string): boolean {
   const p = resolve(candidate);

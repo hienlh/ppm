@@ -1,8 +1,13 @@
 import { constants } from "node:fs";
 import { access, lstat, opendir, readlink } from "node:fs/promises";
 import { basename } from "node:path";
-import { assertAllowed, resolvePath } from "../fs-path-guard.service.ts";
+import {
+  assertAllowed,
+  assertNotPpmSubtree,
+  resolvePath,
+} from "../fs-path-guard.service.ts";
 import { isHiddenName } from "./fs-hidden-names.ts";
+import { realPathOrSelf } from "./fs-ops-read-write.service.ts";
 
 export type EntryKind = "file" | "directory" | "symlink" | "unknown";
 
@@ -70,6 +75,10 @@ async function countChildren(path: string): Promise<{ childCount: number; trunca
 export async function statPath(input: string): Promise<StatResult> {
   const path = resolvePath(input);
   assertAllowed(path);
+  // Sizes and timestamps of the credentials store are metadata the explorer
+  // has no business exposing; `browse` still lists the names.
+  assertNotPpmSubtree(path);
+  assertNotPpmSubtree(await realPathOrSelf(path));
 
   const st = await lstat(path);
   const kind = kindOfStats(st);

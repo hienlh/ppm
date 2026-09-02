@@ -2,10 +2,12 @@ import { lstat, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   assertAllowed,
+  assertNotPpmSubtree,
   assertNotProtected,
   resolvePath,
 } from "../fs-path-guard.service.ts";
 import { removeEntry, renameEntry } from "./fs-core-ops.ts";
+import { realPathOrSelf } from "./fs-ops-read-write.service.ts";
 
 /** Rename in place: the new name is joined onto the source's own directory. */
 export async function renamePath(path: string, newName: string): Promise<{ from: string; to: string }> {
@@ -14,6 +16,10 @@ export async function renamePath(path: string, newName: string): Promise<{ from:
   }
   const src = resolvePath(path);
   assertAllowed(src);
+  // Renaming inside the PPM directory would break the running server's own
+  // state, and the destination lands in that same directory by construction.
+  assertNotPpmSubtree(src);
+  assertNotPpmSubtree(await realPathOrSelf(src));
   await assertNotProtected(src);
   await lstat(src);
   const dst = join(dirname(src), newName);

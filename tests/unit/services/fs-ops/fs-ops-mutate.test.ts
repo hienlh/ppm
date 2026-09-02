@@ -9,8 +9,17 @@ import {
   touchFile,
 } from "../../../../src/services/fs-ops/fs-ops-mutate.service.ts";
 import { copyPath, movePath } from "../../../../src/services/fs-ops/fs-ops-copy-move.service.ts";
+import { getPpmDir } from "../../../../src/services/ppm-dir.ts";
 
 let dir: string;
+
+/** Stand-in for the credentials store; PPM_HOME is an isolated temp dir here. */
+function ppmSecret(): string {
+  const secret = join(getPpmDir(), "ppm.db");
+  mkdirSync(getPpmDir(), { recursive: true });
+  writeFileSync(secret, "secret");
+  return secret;
+}
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "fs-mutate-"));
@@ -36,6 +45,13 @@ describe("renamePath", () => {
 
   it("refuses to rename a protected root", async () => {
     await expect(renamePath(homedir(), "somewhere-else")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("refuses to rename inside the PPM directory", async () => {
+    await expect(renamePath(ppmSecret(), "ppm-copy.db")).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
   });
 });
 
@@ -110,6 +126,21 @@ describe("copyPath / movePath", () => {
   it("refuses to move a protected root", async () => {
     await expect(movePath(homedir(), join(dir, "home-copy"))).rejects.toMatchObject({
       status: 403,
+    });
+  });
+
+  it("refuses to copy the credentials store out of the PPM directory", async () => {
+    await expect(copyPath(ppmSecret(), join(dir, "stolen.db"))).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(join(dir, "stolen.db"))).toBe(false);
+  });
+
+  it("refuses to move anything out of the PPM directory", async () => {
+    await expect(movePath(ppmSecret(), join(dir, "stolen.db"))).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
     });
   });
 

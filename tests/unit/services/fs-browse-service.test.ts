@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { browse } from "../../../src/services/fs-browse.service.ts";
+import { getPpmDir } from "../../../src/services/ppm-dir.ts";
 
 const isWin = process.platform === "win32";
 let dir: string;
@@ -65,6 +66,12 @@ describe("browse", () => {
     const result = await browse(root);
     expect(result.parent).toBeNull();
     expect(result.breadcrumbs[0]!.name).toBe(isWin ? dir.slice(0, 2) : "/");
+  });
+
+  it("still lists the PPM directory so the sidebar is not confused", async () => {
+    writeFileSync(join(getPpmDir(), "ppm.db"), "secret");
+    const result = await browse(getPpmDir());
+    expect(result.entries.some((e) => e.name === "ppm.db")).toBe(true);
   });
 
   it("fails with 404 for a missing directory", async () => {
