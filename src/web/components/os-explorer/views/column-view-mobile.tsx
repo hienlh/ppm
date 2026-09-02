@@ -13,7 +13,7 @@ import type { ExplorerActions } from "../actions/use-explorer-actions";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import type { ExplorerSlice } from "../explorer-store";
 import type { LongPressHandlers } from "../use-coarse-long-press";
-import { ColumnViewColumn } from "./column-view-column";
+import { ColumnViewColumn, ROW_HEIGHT_MOBILE } from "./column-view-column";
 import type { ColumnState } from "./use-column-view-state";
 
 export interface ColumnViewMobileProps {
@@ -73,6 +73,7 @@ export function ColumnViewMobile({
                 selectedPath={selectedPathFor(focusedIndex)}
                 isFocused
                 fullWidth
+                rowHeight={ROW_HEIGHT_MOBILE}
                 currentDir={slice.path}
                 hasClipboard={hasClipboard}
                 isPinned={isPinned}

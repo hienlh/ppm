@@ -20,9 +20,11 @@ import { mobileTapAction } from "../mobile/mobile-tap-action";
 import { useCoarseLongPress } from "../use-coarse-long-press";
 
 export const COLUMN_WIDTH = 220;
-const ROW_HEIGHT = 30;
-/** Mobile's single full-width column needs a 44px+ touch target, not the desktop density. */
-const ROW_HEIGHT_MOBILE = 48;
+/** Mobile's single full-width column needs a 44px+ touch target, bigger than the desktop
+ *  (fine/coarse-pointer) `rowHeight` threaded in from `ExplorerBody`. Exported so
+ *  `column-view-mobile.tsx` can pass a real value instead of a duplicated magic number —
+ *  the `fullWidth` branch here always wins over whatever `rowHeight` prop it receives. */
+export const ROW_HEIGHT_MOBILE = 48;
 
 export interface ColumnViewColumnProps {
   path: string;
@@ -35,6 +37,8 @@ export interface ColumnViewColumnProps {
   hasClipboard: boolean;
   isPinned(path: string): boolean;
   actions: ExplorerActions;
+  /** Row height in px; larger on coarse-pointer devices, same as List/Icons. */
+  rowHeight: number;
   onSelect(entry: FsEntry): void;
   onOpen(entry: FsEntry): void;
   onFocus(): void;
@@ -44,14 +48,16 @@ export interface ColumnViewColumnProps {
 
 export function ColumnViewColumn({
   path, entries, loading, error, selectedPath, isFocused, currentDir,
-  hasClipboard, isPinned, actions, onSelect, onOpen, onFocus, fullWidth,
+  hasClipboard, isPinned, actions, rowHeight, onSelect, onOpen, onFocus, fullWidth,
 }: ColumnViewColumnProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const rowHeight = fullWidth ? ROW_HEIGHT_MOBILE : ROW_HEIGHT;
+  // Mobile's single full-width column always wants the bigger touch target, regardless of
+  // whatever fine/coarse-pointer density the caller threaded in for the desktop Miller strip.
+  const effectiveRowHeight = fullWidth ? ROW_HEIGHT_MOBILE : rowHeight;
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => rowHeight,
+    estimateSize: () => effectiveRowHeight,
     overscan: 8,
   });
 
@@ -81,7 +87,7 @@ export function ColumnViewColumn({
                   hasClipboard={hasClipboard}
                   isPinned={isPinned}
                   actions={actions}
-                  rowHeight={rowHeight}
+                  rowHeight={effectiveRowHeight}
                   onSelect={() => {
                     onFocus();
                     onSelect(entry);
@@ -157,7 +163,13 @@ function ColumnRowInteractive({
       title={entry.name}
       style={{ height: rowHeight }}
       {...longPress}
-      onContextMenu={onSelect}
+      onContextMenu={(e) => {
+        // Without this the bubbling contextmenu (real right-click or the synthetic one
+        // `useCoarseLongPress` dispatches) reaches the background trigger too and opens
+        // both menus at once.
+        e.stopPropagation();
+        onSelect();
+      }}
       onClick={handleClick}
       onDoubleClick={onOpen}
       className={cn(

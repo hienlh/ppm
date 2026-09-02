@@ -1,16 +1,21 @@
 /**
  * Finder-flavoured unified titlebar: traffic lights left (grey when unfocused, hover
- * reveals the glyph), title centred. The toolbar row (back/forward/view-switch/search) is
- * the existing `ExplorerToolbar` in the window body, tinted by `skins.css` — the chrome
+ * reveals the glyph), title centred. Height matches the shared `TITLEBAR_HEIGHT` contract
+ * constant (not the real Finder 38px) so a minimised window's collapsed height agrees with
+ * what `FloatingWindow` reserves for it. The toolbar row (back/forward/view-switch/search)
+ * is the existing `ExplorerToolbar` in the window body, tinted by `skins.css` — the chrome
  * slot is only the titlebar itself.
+ *
+ * `data-skin` is set here (not only on the explorer body) because this titlebar is a
+ * sibling of the body in the window tree — the `--x-*` vars it reads only resolve on an
+ * element that itself carries the attribute.
  */
 
 import { Minus, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
+import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
 
-const TITLEBAR_HEIGHT = 38;
-/** The three documented hardcoded hexes: the traffic-light colours themselves. */
+/** The traffic-light colours, plus the unfocused grey — the documented hardcoded hexes. */
 const LIGHTS = [
   { color: "#FF5F57", label: "Close window", Icon: X },
   { color: "#FEBC2E", label: "Minimize window", Icon: Minus },
@@ -25,6 +30,7 @@ export function MacosWindowChrome({
   return (
     <div
       {...rest}
+      data-skin="macos"
       style={{ height: TITLEBAR_HEIGHT, fontFamily: "var(--x-font)", ...style }}
       className={cn(
         "group/titlebar relative flex items-center shrink-0 rounded-t-[var(--x-radius)] overflow-hidden",
@@ -44,7 +50,7 @@ export function MacosWindowChrome({
             style={{ backgroundColor: focused ? color : "#8E8E93" }}
           >
             <Icon
-              className="size-2 text-black/60 opacity-0 group-hover/titlebar:opacity-100"
+              className="size-2 text-black/60 can-hover:opacity-0 can-hover:group-hover/titlebar:opacity-100"
               strokeWidth={3}
             />
           </button>
