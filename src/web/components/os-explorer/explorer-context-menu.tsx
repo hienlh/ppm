@@ -12,6 +12,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
 } from "@/components/ui/adaptive-context-menu";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { FsEntry } from "@/lib/fs-api";
 import { canOpenInPpm } from "./can-open-in-ppm";
 import type { ExplorerActions } from "./actions/use-explorer-actions";
@@ -28,6 +29,9 @@ export interface ExplorerContextMenuProps {
 export function ExplorerContextMenu({
   targets, currentDir, hasClipboard, isPinned, actions,
 }: ExplorerContextMenuProps) {
+  // The mobile sheet is a single instance — "Open in New Window" would spawn a desktop
+  // floating window that `WindowLayer` never renders below `md`, a silent no-op there.
+  const isMobile = useIsMobile();
   const single = targets.length === 1 ? targets[0]! : null;
   const onlyDirs = targets.length > 0 && targets.every((e) => e.type === "directory");
   const count = targets.length;
@@ -51,7 +55,7 @@ export function ExplorerContextMenu({
       {single && (single.type === "directory" || canOpenInPpm(single.name)) && (
         <ContextMenuItem onClick={() => actions.openEntry(single)}>Open</ContextMenuItem>
       )}
-      {onlyDirs && single && (
+      {onlyDirs && single && !isMobile && (
         <ContextMenuItem onClick={() => actions.openInNewWindow(single)}>
           Open in New Window
         </ContextMenuItem>
