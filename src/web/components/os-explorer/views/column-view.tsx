@@ -8,9 +8,11 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { FsEntry } from "@/lib/fs-api";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { ColumnViewColumn } from "./column-view-column";
+import { ColumnViewMobile } from "./column-view-mobile";
 import { ColumnViewPreview } from "./column-view-preview";
 import type { ExplorerViewProps } from "./explorer-view-registry";
 import { useColumnViewState } from "./use-column-view-state";
@@ -26,6 +28,7 @@ export function ColumnView({
     [slice.breadcrumbs, slice.path],
   );
   const { columns } = useColumnViewState(paths, entries, slice.loading);
+  const isMobile = useIsMobile();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [focusedIndex, setFocusedIndex] = useState(columns.length - 1);
@@ -122,6 +125,27 @@ export function ColumnView({
   };
 
   const showPreview = containerWidth === 0 || containerWidth >= NARROW_PREVIEW_THRESHOLD;
+
+  // Mobile has no room for a side-by-side Miller strip — see `column-view-mobile.tsx`.
+  if (isMobile) {
+    return (
+      <ColumnViewMobile
+        containerRef={containerRef}
+        onKeyDown={onKeyDown}
+        backgroundLongPress={backgroundLongPress}
+        columns={columns}
+        focusedIndex={focusedIndex}
+        setFocusedIndex={setFocusedIndex}
+        selectedPathFor={selectedPathFor}
+        slice={slice}
+        hasClipboard={hasClipboard}
+        isPinned={isPinned}
+        actions={actions}
+        onSelect={handleSelect}
+        onOpen={handleOpen}
+      />
+    );
+  }
 
   return (
     <ContextMenu>

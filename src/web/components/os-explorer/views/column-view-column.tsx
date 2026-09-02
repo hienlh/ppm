@@ -6,18 +6,23 @@
  * shows" with no extra state.
  */
 
-import { useRef } from "react";
+import { useContext, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { BottomSheetCtx } from "@/components/ui/mobile-bottom-sheet";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { FsEntry } from "@/lib/fs-api";
 import { cn } from "@/lib/utils";
 import type { ExplorerActions } from "../actions/use-explorer-actions";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { FileTypeIcon } from "../icons/file-type-icon";
+import { mobileTapAction } from "../mobile/mobile-tap-action";
 import { useCoarseLongPress } from "../use-coarse-long-press";
 
 export const COLUMN_WIDTH = 220;
 const ROW_HEIGHT = 30;
+/** Mobile's single full-width column needs a 44px+ touch target, not the desktop density. */
+const ROW_HEIGHT_MOBILE = 48;
 
 export interface ColumnViewColumnProps {
   path: string;
@@ -33,24 +38,27 @@ export interface ColumnViewColumnProps {
   onSelect(entry: FsEntry): void;
   onOpen(entry: FsEntry): void;
   onFocus(): void;
+  /** Mobile's single-column mode: fill the container instead of the fixed desktop width. */
+  fullWidth?: boolean;
 }
 
 export function ColumnViewColumn({
   path, entries, loading, error, selectedPath, isFocused, currentDir,
-  hasClipboard, isPinned, actions, onSelect, onOpen, onFocus,
+  hasClipboard, isPinned, actions, onSelect, onOpen, onFocus, fullWidth,
 }: ColumnViewColumnProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rowHeight = fullWidth ? ROW_HEIGHT_MOBILE : ROW_HEIGHT;
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 8,
   });
 
   return (
     <div
-      className={cn("flex h-full shrink-0 flex-col border-r border-border", isFocused && "bg-panel-2/40")}
-      style={{ width: COLUMN_WIDTH }}
+      className={cn("flex h-full shrink-0 flex-col", !fullWidth && "border-r border-border", isFocused && "bg-panel-2/40")}
+      style={fullWidth ? undefined : { width: COLUMN_WIDTH }}
     >
       <div ref={scrollRef} className="flex-1 overflow-y-auto outline-none" role="listbox" aria-label={path}>
         {loading && entries.length === 0 && <p className="p-2 text-xs text-text-subtle">Loading…</p>}
@@ -73,6 +81,7 @@ export function ColumnViewColumn({
                   hasClipboard={hasClipboard}
                   isPinned={isPinned}
                   actions={actions}
+                  rowHeight={rowHeight}
                   onSelect={() => {
                     onFocus();
                     onSelect(entry);
@@ -95,36 +104,16 @@ interface ColumnRowProps {
   hasClipboard: boolean;
   isPinned(path: string): boolean;
   actions: ExplorerActions;
+  rowHeight: number;
   onSelect(): void;
   onOpen(): void;
 }
 
-function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, actions, onSelect, onOpen }: ColumnRowProps) {
-  const longPress = useCoarseLongPress(onSelect);
+function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, actions, rowHeight, onSelect, onOpen }: ColumnRowProps) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div
-          role="option"
-          aria-selected={selected}
-          data-testid="explorer-column-row"
-          data-path={entry.path}
-          title={entry.name}
-          style={{ height: ROW_HEIGHT }}
-          {...longPress}
-          onContextMenu={onSelect}
-          onClick={onSelect}
-          onDoubleClick={onOpen}
-          className={cn(
-            "flex w-full items-center gap-1.5 px-2 text-[13px] select-none",
-            "can-hover:hover:bg-surface-elevated",
-            selected && "bg-accent-wash text-text",
-          )}
-        >
-          <FileTypeIcon name={entry.name} kind={entry.kind} className="size-4 shrink-0" />
-          <span className={cn("flex-1 truncate", selected ? "text-text" : "text-text-2")}>{entry.name}</span>
-          {entry.type === "directory" && <span className="text-text-subtle">›</span>}
-        </div>
+        <ColumnRowInteractive entry={entry} selected={selected} rowHeight={rowHeight} onSelect={onSelect} onOpen={onOpen} />
       </ContextMenuTrigger>
       <ExplorerContextMenu
         targets={[entry]}
@@ -134,5 +123,52 @@ function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, action
         actions={actions}
       />
     </ContextMenu>
+  );
+}
+
+/**
+ * Rendered inside the row's own `<ContextMenu>` — the position `useContext(BottomSheetCtx)`
+ * needs to reach this row's own sheet state (see `use-mobile-row-tap.ts` for the same
+ * pattern in List/Icons). Column view keeps its existing single-select semantics on mobile —
+ * a directory already navigates on tap via `onSelect`; the only mobile addition is opening a
+ * viewable file immediately (no double-click on touch) and surfacing the actions sheet for
+ * one that has no viewer, instead of a tap that silently does nothing.
+ */
+function ColumnRowInteractive({
+  entry, selected, rowHeight, onSelect, onOpen,
+}: Pick<ColumnRowProps, "entry" | "selected" | "rowHeight" | "onSelect" | "onOpen">) {
+  const longPress = useCoarseLongPress(onSelect);
+  const isMobile = useIsMobile();
+  const { setOpen } = useContext(BottomSheetCtx);
+
+  const handleClick = () => {
+    onSelect();
+    if (!isMobile || entry.type === "directory") return;
+    if (mobileTapAction(entry) === "open") onOpen();
+    else setOpen(true);
+  };
+
+  return (
+    <div
+      role="option"
+      aria-selected={selected}
+      data-testid="explorer-column-row"
+      data-path={entry.path}
+      title={entry.name}
+      style={{ height: rowHeight }}
+      {...longPress}
+      onContextMenu={onSelect}
+      onClick={handleClick}
+      onDoubleClick={onOpen}
+      className={cn(
+        "flex w-full items-center gap-1.5 px-2 text-[13px] select-none",
+        "can-hover:hover:bg-surface-elevated",
+        selected && "bg-accent-wash text-text",
+      )}
+    >
+      <FileTypeIcon name={entry.name} kind={entry.kind} className="size-4 shrink-0" />
+      <span className={cn("flex-1 truncate", selected ? "text-text" : "text-text-2")}>{entry.name}</span>
+      {entry.type === "directory" && <span className="text-text-subtle">›</span>}
+    </div>
   );
 }
