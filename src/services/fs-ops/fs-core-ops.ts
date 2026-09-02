@@ -109,17 +109,24 @@ export async function moveEntry(
   dst: string,
   /** Injectable so the cross-device branch is testable on a single volume. */
   renameImpl: (from: string, to: string) => Promise<void> = rename,
-): Promise<{ crossDevice: boolean }> {
+): Promise<{ crossDevice: boolean; sourceRemoved: boolean }> {
   assertNotNested(src, dst);
   await assertFreeDestination(src, dst, true);
   try {
     await renameImpl(src, dst);
-    return { crossDevice: false };
+    return { crossDevice: false, sourceRemoved: true };
   } catch (e) {
     if ((e as { code?: string }).code !== "EXDEV") throw e;
     await cp(src, dst, { recursive: true, force: false, errorOnExist: true, verbatimSymlinks: true });
-    await rm(src, { recursive: true, force: false });
-    return { crossDevice: true };
+    // The copy succeeded, so the data is safe either way. If the source cannot
+    // be removed (locked file, read-only mount) the caller must learn that two
+    // copies now exist rather than be told the move completed.
+    try {
+      await rm(src, { recursive: true, force: false });
+    } catch {
+      return { crossDevice: true, sourceRemoved: false };
+    }
+    return { crossDevice: true, sourceRemoved: true };
   }
 }
 

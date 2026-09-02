@@ -110,6 +110,29 @@ describe("GET /fs/raw and download tokens", () => {
     expect(await res.text()).toBe("test content");
   });
 
+  it("percent-encodes characters that are not RFC 5987 attr-chars", async () => {
+    // `*` is illegal in a Windows filename, so it is only part of the fixture
+    // where the filesystem accepts it.
+    const name = process.platform === "win32" ? "re'port (v2).txt" : "re'port (v2)*.txt";
+    const file = join(dir, name);
+    writeFileSync(file, "x");
+    const res = await createApp().request(`/fs/raw?path=${q(file)}&download=true`);
+    const disposition = res.headers.get("Content-Disposition")!;
+    const encodedName = disposition.split("UTF-8''")[1]!;
+    expect(encodedName).not.toMatch(/['()*]/);
+    expect(encodedName).toContain("%27");
+  });
+
+  it("does not let the browser cache a download", async () => {
+    const file = join(dir, "doc.txt");
+    writeFileSync(file, "v1");
+    const app = createApp();
+    const download = await app.request(`/fs/raw?path=${q(file)}&download=true`);
+    expect(download.headers.get("Cache-Control")).toBe("no-store");
+    const inline = await app.request(`/fs/raw?path=${q(file)}`);
+    expect(inline.headers.get("Cache-Control")).toContain("max-age");
+  });
+
   it("refuses the PPM directory", async () => {
     const res = await createApp().request(`/fs/raw?path=${q(resolve(getPpmDir(), "ppm.db"))}`);
     expect(res.status).toBe(403);

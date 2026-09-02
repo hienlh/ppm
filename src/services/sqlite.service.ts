@@ -2,29 +2,13 @@ import { Database } from "bun:sqlite";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { isPpmDirPath } from "./fs-path-guard.service.ts";
+import { assertNoAttachStatement } from "./fs-ops/sql-statement-guard.ts";
+import { readRows } from "./fs-ops/sql-row-reader.ts";
 
-export interface TableInfo {
-  name: string;
-  rowCount: number;
-}
+import type { ColumnInfo, QueryResult, TableInfo } from "./sqlite-types.ts";
 
-export interface ColumnInfo {
-  cid: number;
-  name: string;
-  type: string;
-  notnull: boolean;
-  pk: boolean;
-  dflt_value: string | null;
-  fk: { table: string; column: string } | null;
-}
-
-export interface QueryResult {
-  columns: string[];
-  rows: Record<string, unknown>[];
-  rowsAffected: number;
-  changeType: "select" | "modify";
-  executionTimeMs: number;
-}
+// Re-exported so existing importers keep using the service as one entry point.
+export type { ColumnInfo, QueryResult, TableInfo };
 
 /** Auto-close idle databases after 5 minutes */
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -37,7 +21,15 @@ interface CachedDb {
 class SqliteService {
   private cache = new Map<string, CachedDb>();
 
-  /** Resolve db path — supports both project-relative and absolute paths */
+  /**
+   * Resolve db path — supports both project-relative and absolute paths.
+   *
+   * Absolute paths are not probed with `existsSync`: they come from the
+   * filesystem door, which can point at a dead network mount and would block
+   * the event loop here. That door stats the file asynchronously before
+   * calling in, and `open()` refuses to create a missing database, so nothing
+   * is silently brought into existence either way.
+   */
   private resolvePath(projectPath: string, dbRelPath: string): string {
     const isAbsolute = /^(\/|[A-Za-z]:[/\\])/.test(dbRelPath);
     const abs = isAbsolute ? dbRelPath : resolve(projectPath, dbRelPath);
@@ -46,7 +38,7 @@ class SqliteService {
     // the auth token. Absolute paths are accepted here, so this door has to
     // refuse it explicitly or a viewer could read the whole secret store.
     if (isPpmDirPath(resolve(abs))) throw new Error("Access denied: PPM directory is not browsable");
-    if (!existsSync(abs)) throw new Error(`Database not found: ${dbRelPath}`);
+    if (!isAbsolute && !existsSync(abs)) throw new Error(`Database not found: ${dbRelPath}`);
     return abs;
   }
 
@@ -58,7 +50,11 @@ class SqliteService {
       cached.timer = setTimeout(() => this.close(absPath), IDLE_TIMEOUT_MS);
       return cached.db;
     }
-    const db = new Database(absPath);
+    // `create: false` — a viewer must never bring a database file into
+    // existence, least of all at a path the caller chose. `readwrite` has to
+    // be spelled out alongside it: the two flags are passed straight to
+    // sqlite3_open_v2, which rejects the combination that omits it.
+    const db = new Database(absPath, { readwrite: true, create: false });
     db.exec("PRAGMA journal_mode = WAL");
     // SQLite defaults FK enforcement off per connection, which would let the
     // viewer delete rows other clients reject and leave orphaned children.
@@ -127,8 +123,13 @@ class SqliteService {
     return { columns, rows, total, page, limit };
   }
 
-  /** Execute arbitrary SQL */
-  executeQuery(projectPath: string, dbPath: string, sql: string): QueryResult {
+  /**
+   * Execute arbitrary SQL. `maxRows` caps a SELECT result — a foreign database
+   * opened through the filesystem door can be arbitrarily large, and reading
+   * every row into memory to answer one request is a denial of service.
+   */
+  executeQuery(projectPath: string, dbPath: string, sql: string, maxRows?: number): QueryResult {
+    assertNoAttachStatement(sql);
     const abs = this.resolvePath(projectPath, dbPath);
     const db = this.open(abs);
     const trimmed = sql.trim().toUpperCase();
@@ -137,11 +138,13 @@ class SqliteService {
 
     const start = performance.now();
     if (isSelect) {
-      const stmt = db.query(sql);
-      const rows = stmt.all() as Record<string, unknown>[];
+      const { rows, truncated } = readRows(db.query(sql), maxRows);
       const executionTimeMs = Math.round(performance.now() - start);
       const columns = rows.length > 0 ? Object.keys(rows[0]!) : [];
-      return { columns, rows, rowsAffected: 0, changeType: "select", executionTimeMs };
+      return {
+        columns, rows, rowsAffected: 0, changeType: "select", executionTimeMs,
+        ...(truncated ? { truncated: true } : {}),
+      };
     }
 
     const result = db.run(sql);
@@ -151,6 +154,7 @@ class SqliteService {
 
   /** Execute multi-statement SQL script (no result rows returned) */
   executeScript(projectPath: string, dbPath: string, sql: string): { executionTimeMs: number } {
+    assertNoAttachStatement(sql);
     const abs = this.resolvePath(projectPath, dbPath);
     const db = this.open(abs);
     const start = performance.now();

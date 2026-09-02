@@ -30,6 +30,9 @@ export async function renamePath(path: string, newName: string): Promise<{ from:
 export async function deletePath(path: string): Promise<{ removed: string }> {
   const target = resolvePath(path);
   assertAllowed(target);
+  // Deleting inside the PPM directory would destroy the config database, the
+  // auth token and the stored provider credentials.
+  await assertNotPpmSubtreeDeep(target);
   await assertNotProtected(target);
   await lstat(target);
   await removeEntry(target);

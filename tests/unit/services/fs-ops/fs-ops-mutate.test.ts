@@ -81,6 +81,29 @@ describe("deletePath", () => {
   it("refuses a protected root", async () => {
     await expect(deletePath(homedir())).rejects.toMatchObject({ status: 403 });
   });
+
+  it("removes a symlink that points at a protected root", async () => {
+    // The operation acts on the link, so deleting a shortcut to the home
+    // directory removes the shortcut and nothing else.
+    const link = join(dir, "home-link");
+    try {
+      symlinkSync(homedir(), link, "junction");
+    } catch {
+      return; // link creation needs privileges on some hosts
+    }
+    await deletePath(link);
+    expect(existsSync(link)).toBe(false);
+    expect(existsSync(homedir())).toBe(true);
+  });
+
+  it("refuses to delete a file inside the PPM directory", async () => {
+    const secret = ppmSecret();
+    await expect(deletePath(secret)).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(secret)).toBe(true);
+  });
 });
 
 describe("touchFile / makeDir", () => {
