@@ -13,26 +13,7 @@ import { getAuthToken } from "@/lib/api-client";
 import type { FsEntry } from "@/lib/fs-api";
 import { cn } from "@/lib/utils";
 import { FileTypeIcon } from "./file-type-icon";
-
-/** In-flight `/api/fs/raw` thumbnail fetches allowed at once, across every tile on screen. */
-const MAX_CONCURRENT = 24;
-let active = 0;
-const queue: (() => void)[] = [];
-
-function acquire(): Promise<() => void> {
-  return new Promise((resolve) => {
-    const run = () => {
-      active++;
-      resolve(() => {
-        active--;
-        const next = queue.shift();
-        if (next) next();
-      });
-    };
-    if (active < MAX_CONCURRENT) run();
-    else queue.push(run);
-  });
-}
+import { acquireSlot } from "./thumbnail-fetch-semaphore";
 
 export interface ThumbnailImageProps {
   entry: Pick<FsEntry, "name" | "path" | "kind">;
@@ -56,7 +37,10 @@ export function ThumbnailImage({ entry, size, className }: ThumbnailImageProps) 
   useEffect(() => {
     const el = rootRef.current;
     if (!el || src || failed) return;
-    let cancelled = false;
+    // A scrolled-past tile must stop downloading (the server has no thumbnail endpoint —
+    // `/api/fs/raw` streams the whole original file) and give its semaphore slot back
+    // immediately rather than waiting for a fetch nobody will render.
+    const controller = new AbortController();
     let release: (() => void) | null = null;
 
     const observer = new IntersectionObserver(
@@ -64,8 +48,8 @@ export function ThumbnailImage({ entry, size, className }: ThumbnailImageProps) 
         if (!observed[0]?.isIntersecting) return;
         observer.disconnect();
         void (async () => {
-          release = await acquire();
-          if (cancelled) {
+          release = await acquireSlot();
+          if (controller.signal.aborted) {
             release();
             return;
           }
@@ -73,16 +57,19 @@ export function ThumbnailImage({ entry, size, className }: ThumbnailImageProps) 
             const token = getAuthToken();
             const res = await fetch(`/api/fs/raw?path=${encodeURIComponent(entry.path)}`, {
               headers: token ? { Authorization: `Bearer ${token}` } : {},
+              signal: controller.signal,
             });
             if (!res.ok) throw new Error(String(res.status));
             const blob = await res.blob();
-            if (cancelled) return;
+            if (controller.signal.aborted) return;
             const url = URL.createObjectURL(blob);
             urlRef.current = url;
             setSrc(url);
           } catch {
-            if (!cancelled) setFailed(true);
+            if (!controller.signal.aborted) setFailed(true);
           } finally {
+            // Idempotent: harmless if this fires again from the cleanup below for the same
+            // completed acquisition.
             release?.();
           }
         })();
@@ -93,7 +80,7 @@ export function ThumbnailImage({ entry, size, className }: ThumbnailImageProps) 
     );
     observer.observe(el);
     return () => {
-      cancelled = true;
+      controller.abort();
       observer.disconnect();
       release?.();
     };

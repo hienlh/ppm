@@ -19,7 +19,7 @@ import { useColumnViewState } from "./use-column-view-state";
 const NARROW_PREVIEW_THRESHOLD = 720;
 
 export function ColumnView({
-  slice, entries, actions, selection, hasClipboard, isPinned, nav, backgroundLongPress,
+  slice, entries, actions, selection, hasClipboard, isPinned, nav, backgroundLongPress, rowHeight,
 }: ExplorerViewProps) {
   const paths = useMemo(
     () => (slice.breadcrumbs.length > 0 ? slice.breadcrumbs.map((b) => b.path) : [slice.path]),
@@ -121,7 +121,9 @@ export function ColumnView({
     }
   };
 
-  const showPreview = containerWidth === 0 || containerWidth >= NARROW_PREVIEW_THRESHOLD;
+  // Defaults hidden (not shown) before the ResizeObserver's first report — showing it then
+  // hiding it a frame later on a narrow window is a worse flash than the reverse.
+  const showPreview = containerWidth >= NARROW_PREVIEW_THRESHOLD;
 
   return (
     <ContextMenu>
@@ -148,6 +150,7 @@ export function ColumnView({
               hasClipboard={hasClipboard}
               isPinned={isPinned}
               actions={actions}
+              rowHeight={rowHeight}
               onSelect={(entry) => handleSelect(index, entry)}
               onOpen={handleOpen}
               onFocus={() => setFocusedIndex(index)}

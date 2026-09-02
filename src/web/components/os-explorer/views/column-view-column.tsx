@@ -17,7 +17,6 @@ import { FileTypeIcon } from "../icons/file-type-icon";
 import { useCoarseLongPress } from "../use-coarse-long-press";
 
 export const COLUMN_WIDTH = 220;
-const ROW_HEIGHT = 30;
 
 export interface ColumnViewColumnProps {
   path: string;
@@ -30,6 +29,8 @@ export interface ColumnViewColumnProps {
   hasClipboard: boolean;
   isPinned(path: string): boolean;
   actions: ExplorerActions;
+  /** Row height in px; larger on coarse-pointer devices, same as List/Icons. */
+  rowHeight: number;
   onSelect(entry: FsEntry): void;
   onOpen(entry: FsEntry): void;
   onFocus(): void;
@@ -37,13 +38,13 @@ export interface ColumnViewColumnProps {
 
 export function ColumnViewColumn({
   path, entries, loading, error, selectedPath, isFocused, currentDir,
-  hasClipboard, isPinned, actions, onSelect, onOpen, onFocus,
+  hasClipboard, isPinned, actions, rowHeight, onSelect, onOpen, onFocus,
 }: ColumnViewColumnProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => rowHeight,
     overscan: 8,
   });
 
@@ -73,6 +74,7 @@ export function ColumnViewColumn({
                   hasClipboard={hasClipboard}
                   isPinned={isPinned}
                   actions={actions}
+                  rowHeight={rowHeight}
                   onSelect={() => {
                     onFocus();
                     onSelect(entry);
@@ -95,11 +97,12 @@ interface ColumnRowProps {
   hasClipboard: boolean;
   isPinned(path: string): boolean;
   actions: ExplorerActions;
+  rowHeight: number;
   onSelect(): void;
   onOpen(): void;
 }
 
-function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, actions, onSelect, onOpen }: ColumnRowProps) {
+function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, actions, rowHeight, onSelect, onOpen }: ColumnRowProps) {
   const longPress = useCoarseLongPress(onSelect);
   return (
     <ContextMenu>
@@ -110,9 +113,15 @@ function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, action
           data-testid="explorer-column-row"
           data-path={entry.path}
           title={entry.name}
-          style={{ height: ROW_HEIGHT }}
+          style={{ height: rowHeight }}
           {...longPress}
-          onContextMenu={onSelect}
+          onContextMenu={(e) => {
+            // Without this the bubbling contextmenu (real right-click or the synthetic one
+            // `useCoarseLongPress` dispatches) reaches the background trigger too and opens
+            // both menus at once.
+            e.stopPropagation();
+            onSelect();
+          }}
           onClick={onSelect}
           onDoubleClick={onOpen}
           className={cn(
