@@ -131,6 +131,8 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
       strList(groups, 200) && strList(tables, 500)
     );
   },
+  // OS Explorer window chrome override — "auto" follows the host platform
+  explorerSkin: (v) => v === "auto" || v === "windows" || v === "macos",
   // Project switcher prefs
   projectSortMode: (v) => v === "recent" || v === "priority" || v === "name",
   recentOpen: (v) =>

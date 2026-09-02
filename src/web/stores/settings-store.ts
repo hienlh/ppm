@@ -6,6 +6,8 @@ export type GitStatusViewMode = "flat" | "tree";
 export type EditorTabStyle = "default" | "boxed" | "pill";
 /** Where the panel dock sits relative to the main content (VS Code-style). Per-user pref. */
 export type DockPosition = "left" | "bottom" | "right";
+/** OS Explorer window chrome — "auto" follows the host `platform` (Linux → macOS look). */
+export type ExplorerSkinPref = "auto" | "windows" | "macos";
 export type SidebarActiveTab = "explorer" | "git" | "settings" | "database" | "search" | "jira" | "ai-resources" | "history" | "tunnels" | "teams" | `ext:${string}`;
 
 /** Expanded nodes of the Database sidebar tree. Table keys are `${connId}:${schema}.${table}`. */
@@ -36,6 +38,7 @@ interface SettingsState {
   jiraEnabled: boolean;
   dockPosition: DockPosition;
   dbSidebarExpanded: DbSidebarExpanded;
+  explorerSkin: ExplorerSkinPref;
   deviceName: string | null;
   version: string | null;
   tunnelActive: boolean;
@@ -59,6 +62,7 @@ interface SettingsState {
   setSidebarTabOrder: (order: SidebarActiveTab[]) => void;
   setDockPosition: (position: DockPosition) => void;
   setDbSidebarExpanded: (next: DbSidebarExpanded) => void;
+  setExplorerSkin: (pref: ExplorerSkinPref) => void;
   fetchServerInfo: () => Promise<void>;
   /** Re-push the in-memory theme selection to the server (see the action for why). */
   syncThemeToServer: () => Promise<void>;
@@ -81,6 +85,7 @@ interface PersistedSettings {
   jiraEnabled?: boolean;
   dockPosition?: DockPosition;
   dbSidebarExpanded?: DbSidebarExpanded;
+  explorerSkin?: ExplorerSkinPref;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -230,6 +235,9 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (data.dockPosition === "left" || data.dockPosition === "bottom" || data.dockPosition === "right") {
     patch.dockPosition = data.dockPosition;
   }
+  if (data.explorerSkin === "auto" || data.explorerSkin === "windows" || data.explorerSkin === "macos") {
+    patch.explorerSkin = data.explorerSkin;
+  }
   const dbExpanded = sanitizeDbExpanded(data.dbSidebarExpanded);
   if (dbExpanded) patch.dbSidebarExpanded = dbExpanded;
   if (Object.keys(patch).length === 0) return;
@@ -256,6 +264,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   jiraEnabled: _initial.jiraEnabled ?? false,
   dockPosition: (_initial.dockPosition === "left" || _initial.dockPosition === "right") ? _initial.dockPosition : "bottom",
   dbSidebarExpanded: sanitizeDbExpanded(_initial.dbSidebarExpanded) ?? DEFAULT_DB_EXPANDED,
+  explorerSkin: (_initial.explorerSkin === "windows" || _initial.explorerSkin === "macos") ? _initial.explorerSkin : "auto",
   deviceName: null,
   version: null,
   tunnelActive: false,
@@ -394,6 +403,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const clean = sanitizeDbExpanded(next) ?? DEFAULT_DB_EXPANDED;
     persistUiPref({ dbSidebarExpanded: clean });
     set({ dbSidebarExpanded: clean });
+  },
+
+  setExplorerSkin: (pref) => {
+    persistUiPref({ explorerSkin: pref });
+    set({ explorerSkin: pref });
   },
 
   fetchServerInfo: async () => {
