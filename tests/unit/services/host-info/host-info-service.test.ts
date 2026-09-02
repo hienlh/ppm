@@ -106,7 +106,7 @@ describe("getHostInfo cache", () => {
     expect(calls).toBe(1);
   });
 
-  test("refresh:true bypasses the cache and re-invokes providers", async () => {
+  test("refresh:true within the floor window is served from cache, no new spawn", async () => {
     _resetHostInfoCache();
     let calls = 0;
     const overrides = {
@@ -119,7 +119,65 @@ describe("getHostInfo cache", () => {
       isDirectory: async () => true,
     };
     await getHostInfo({}, overrides);
+    await getHostInfo({ refresh: true }, overrides); // fires well within the 5s floor
+    expect(calls).toBe(1);
+  });
+
+  test("refresh:true past the floor re-invokes providers", async () => {
+    _resetHostInfoCache();
+    let calls = 0;
+    const overrides = {
+      getDrives: async () => {
+        calls++;
+        return [];
+      },
+      getKnownFolders: noKnownFolders,
+      getPinned: noPinned,
+      isDirectory: async () => true,
+    };
+    await getHostInfo({}, overrides);
+    await new Promise((r) => setTimeout(r, 5100)); // clear the 5s refresh floor
     await getHostInfo({ refresh: true }, overrides);
     expect(calls).toBe(2);
+  }, 8000);
+
+  test("3 concurrent refresh:true calls share one in-flight build (1 spawn, not 3)", async () => {
+    _resetHostInfoCache();
+    let calls = 0;
+    const overrides = {
+      getDrives: async () => {
+        calls++;
+        await new Promise((r) => setTimeout(r, 30)); // simulates a slow PowerShell/plutil/findmnt spawn
+        return [];
+      },
+      getKnownFolders: noKnownFolders,
+      getPinned: noPinned,
+      isDirectory: async () => true,
+    };
+    const [a, b, c] = await Promise.all([
+      getHostInfo({ refresh: true }, overrides),
+      getHostInfo({ refresh: true }, overrides),
+      getHostInfo({ refresh: true }, overrides),
+    ]);
+    expect(calls).toBe(1);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+  });
+
+  test("concurrent calls on an expired (non-refresh) cache also share one in-flight build", async () => {
+    _resetHostInfoCache();
+    let calls = 0;
+    const overrides = {
+      getDrives: async () => {
+        calls++;
+        await new Promise((r) => setTimeout(r, 30));
+        return [];
+      },
+      getKnownFolders: noKnownFolders,
+      getPinned: noPinned,
+      isDirectory: async () => true,
+    };
+    await Promise.all([getHostInfo({}, overrides), getHostInfo({}, overrides), getHostInfo({}, overrides)]);
+    expect(calls).toBe(1);
   });
 });

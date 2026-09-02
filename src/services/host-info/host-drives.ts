@@ -7,6 +7,7 @@
 import * as fsp from "node:fs/promises";
 import type { Drive, DriveKind } from "../../types/system.ts";
 import { defaultRunner, type Runner } from "./spawn-runner.ts";
+import { mapWithConcurrency } from "./concurrency-limit.ts";
 
 export interface DriveDeps {
   run: Runner;
@@ -27,6 +28,7 @@ const defaultDeps: DriveDeps = {
 };
 
 const WIN_LETTER_TIMEOUT_MS = 1500;
+const WIN_PROBE_CONCURRENCY = 4; // bounds fs.stat fan-out so hung drives can't park the threadpool
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const CIM_SCRIPT =
   "Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,DriveType,VolumeName | ConvertTo-Json -Compress";
@@ -44,29 +46,26 @@ function driveKindFromCimType(t: number): DriveKind {
   return "unknown";
 }
 
-async function probeWindowsLetters(deps: DriveDeps): Promise<string[]> {
-  const checks = LETTERS.map(async (letter) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("timeout")), WIN_LETTER_TIMEOUT_MS);
-    });
-    try {
-      await Promise.race([deps.stat(`${letter}:\\`), timeout]);
-      return letter;
-    } catch {
-      return null; // no drive at this letter, or the mapped drive is unreachable (timed out)
-    } finally {
-      clearTimeout(timer); // avoid leaving up to 26 pending timers alive per scan
-    }
+async function probeWindowsLetter(deps: DriveDeps, letter: string): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timeout")), WIN_LETTER_TIMEOUT_MS);
   });
-  return (await Promise.all(checks)).filter((l): l is string => l !== null);
+  try {
+    await Promise.race([deps.stat(`${letter}:\\`), timeout]);
+    return letter;
+  } catch {
+    return null; // no drive at this letter, or the mapped drive is unreachable (timed out)
+  } finally {
+    clearTimeout(timer); // avoid leaving a pending timer alive per scan
+  }
 }
 
+// CIM runs first: when it succeeds it's authoritative for which letters exist, so those
+// letters skip the fs.stat probe (avoids redundantly re-checking a hung mapped drive).
 async function getWindowsDrives(deps: DriveDeps, warnings: string[]): Promise<Drive[]> {
-  const letters = await probeWindowsLetters(deps);
-  const drives: Drive[] = letters.map((l) => ({ name: `${l}:`, path: `${l}:\\`, kind: "unknown" }));
-
   let cimRows: CimRow[] = [];
+  let cimOk = false;
   try {
     const res = await deps.run(
       ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", CIM_SCRIPT],
@@ -77,19 +76,30 @@ async function getWindowsDrives(deps: DriveDeps, warnings: string[]): Promise<Dr
     } else {
       const parsed = JSON.parse(res.stdout.trim() || "[]");
       cimRows = Array.isArray(parsed) ? parsed : [parsed];
+      cimOk = true;
     }
   } catch (e) {
     warnings.push(`drives: Get-CimInstance Win32_LogicalDisk failed (${(e as Error)?.message ?? e}), drive kind unknown`);
   }
 
   const cimByLetter = new Map(cimRows.map((r) => [r.DeviceID, r]));
-  for (const drive of drives) {
-    const row = cimByLetter.get(drive.name);
-    if (!row) continue;
-    drive.kind = driveKindFromCimType(row.DriveType);
-    if (row.VolumeName) drive.label = row.VolumeName;
-  }
-  return drives;
+  const cimDrives: Drive[] = cimRows.map((r) => ({
+    name: r.DeviceID,
+    path: `${r.DeviceID}\\`,
+    kind: driveKindFromCimType(r.DriveType),
+    ...(r.VolumeName ? { label: r.VolumeName } : {}),
+  }));
+
+  // Only probe letters CIM didn't already confirm (all 26, when CIM failed/timed out).
+  const lettersToProbe = LETTERS.filter((l) => !cimOk || !cimByLetter.has(`${l}:`));
+  const probed = await mapWithConcurrency(lettersToProbe, WIN_PROBE_CONCURRENCY, (letter) =>
+    probeWindowsLetter(deps, letter),
+  );
+  const probedDrives: Drive[] = probed
+    .filter((l): l is string => l !== null)
+    .map((l) => ({ name: `${l}:`, path: `${l}:\\`, kind: "unknown" as const }));
+
+  return [...cimDrives, ...probedDrives];
 }
 
 async function getDarwinDrives(deps: DriveDeps, warnings: string[]): Promise<Drive[]> {
