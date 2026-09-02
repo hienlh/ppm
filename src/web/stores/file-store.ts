@@ -27,10 +27,34 @@ export interface InlineAction {
   existingNode?: FileNode;
 }
 
-/** Clipboard state for cut/copy/paste */
+/**
+ * Clipboard state for cut/copy/paste, shared by the project tree and the file explorer
+ * windows.
+ *
+ * Paths are absolute. The two surfaces address files differently — the tree uses
+ * project-relative paths, the explorer host-absolute ones — and a clipboard that spoke
+ * either dialect could not be pasted across. Absolute is the only representation both can
+ * always resolve. `origin` lets the tree recognise its own entries and keep using the
+ * project-scoped routes for a purely internal paste.
+ */
 export interface ClipboardState {
   paths: string[];
   operation: "cut" | "copy";
+  origin?: { projectName: string; root: string };
+}
+
+/** Absolute host path for a project-relative path. */
+export function absoluteProjectPath(root: string, relative: string): string {
+  return relative ? `${root}/${relative}` : root;
+}
+
+/** Project-relative path for an absolute one, or null when it lies outside the project. */
+export function relativeProjectPath(root: string, absolute: string): string | null {
+  const normalise = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+  const base = normalise(root);
+  const target = normalise(absolute);
+  if (target === base) return "";
+  return target.startsWith(`${base}/`) ? target.slice(base.length + 1) : null;
 }
 
 interface FileStore {

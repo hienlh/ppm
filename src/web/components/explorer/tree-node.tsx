@@ -12,7 +12,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useFileStore, getVisiblePaths, type FileNode } from "@/stores/file-store";
+import { useFileStore, getVisiblePaths, absoluteProjectPath, type FileNode } from "@/stores/file-store";
+import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { useGitStatusStore, GIT_STATUS_COLORS, type GitFileStatus } from "@/stores/git-status-store";
@@ -60,6 +61,7 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
     })),
   );
   const openTab = useTabStore((s) => s.openTab);
+  const projectRoot = useProjectStore((s) => s.activeProject?.path);
   const compareSelection = useCompareStore((s) => s.selection);
   const isDir = node.type === "directory";
   // Git decoration: per-file and per-folder status
@@ -71,7 +73,12 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
   const isExpanded = expandedPaths.has(node.path);
   const isSelected = selectedFiles.includes(node.path);
   const isIgnored = node.ignored === true;
-  const isCut = clipboard?.operation === "cut" && clipboard.paths.includes(node.path);
+  // The clipboard is shared with the explorer windows and therefore absolute; compare in
+  // that space so a tree cut still greys its own row out.
+  const isCut =
+    clipboard?.operation === "cut" &&
+    projectRoot != null &&
+    clipboard.paths.includes(absoluteProjectPath(projectRoot, node.path));
   const isFocused = focusedPath === node.path || focusedPath === effectiveNode.path;
   const isLoadingChildren = isDir && isExpanded && !loadedPaths.has(effectiveNode.path) && inflight.has(effectiveNode.path);
   const [isDragOver, setIsDragOver] = useState(false);
