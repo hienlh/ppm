@@ -496,7 +496,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
       // a cross-surface entry drag (backgroundDrop, gated on its own MIME) — each ignores
       // the other's kind, so calling both in sequence is safe.
       onDragEnter={(e) => { handleRootDragEnter(e); backgroundDrop.handlers.onDragEnter(e); }}
-      onDragLeave={(e) => { handleRootDragLeave(); backgroundDrop.handlers.onDragLeave(e); }}
+      onDragLeave={(e) => { handleRootDragLeave(e); backgroundDrop.handlers.onDragLeave(e); }}
       onDragOver={(e) => { handleRootDragOver(e); backgroundDrop.handlers.onDragOver(e); }}
       onDrop={(e) => { handleRootDrop(e); backgroundDrop.handlers.onDrop(e); }}
     >
