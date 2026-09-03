@@ -116,6 +116,22 @@ describe("sortAndFilterEntries", () => {
       .toEqual(["file10.txt", "file9.txt", "banana.txt", "apple.md"]);
   });
 
+  it("reverses size and modified time when descending", () => {
+    expect(names(sortAndFilterEntries(entries, "", { key: "size", dir: "desc" })).slice(2))
+      .toEqual(["banana.txt", "file10.txt", "apple.md", "file9.txt"]);
+    expect(names(sortAndFilterEntries(entries, "", { key: "modified", dir: "desc" })).slice(2))
+      .toEqual(["apple.md", "banana.txt", "file9.txt", "file10.txt"]);
+  });
+
+  it("sorts by kind (extension), falling back to natural name order within the same extension", () => {
+    // Extensions: apple.md < banana.txt == file9.txt == file10.txt ("txt"); "txt" files then
+    // break the tie by name, numerically ("file9" before "file10", as in the name-sort test).
+    expect(names(sortAndFilterEntries(entries, "", { key: "kind", dir: "asc" })).slice(2))
+      .toEqual(["apple.md", "banana.txt", "file9.txt", "file10.txt"]);
+    expect(names(sortAndFilterEntries(entries, "", { key: "kind", dir: "desc" })).slice(2))
+      .toEqual(["file10.txt", "file9.txt", "banana.txt", "apple.md"]);
+  });
+
   it("filters case-insensitively on a substring and leaves the input untouched", () => {
     const before = names(entries);
     // Only "alpha" contains the substring "al" — "banana.txt" and "apple.md" do not.

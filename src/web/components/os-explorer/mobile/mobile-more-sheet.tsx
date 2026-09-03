@@ -13,19 +13,14 @@ import {
 import type { FsEntry } from "@/lib/fs-api";
 import { BottomSheet, BottomSheetItem, BottomSheetSeparator, BottomSheetSubLabel } from "@/components/ui/mobile-bottom-sheet";
 import type { ExplorerActions } from "../actions/use-explorer-actions";
-import { useExplorerStore, type ExplorerSlice, type SortKey, type ViewMode } from "../explorer-store";
+import { useExplorerStore, type ExplorerSlice, type ViewMode } from "../explorer-store";
+import { SORT_KEY_OPTIONS } from "../sort-options";
 import { activeEntries } from "../use-explorer-keyboard";
 import { AVAILABLE_VIEW_MODES } from "../views/explorer-view-registry";
 import { cn } from "@/lib/utils";
 
 const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: LayoutGrid, columns: Columns3 };
 const VIEW_LABEL: Record<ViewMode, string> = { list: "List", icons: "Icons", columns: "Columns" };
-const SORT_KEYS: { key: SortKey; label: string }[] = [
-  { key: "name", label: "Name" },
-  { key: "size", label: "Size" },
-  { key: "modified", label: "Modified" },
-  { key: "kind", label: "Kind" },
-];
 
 /** The current folder, in the shape `showProperties`/`PropertiesDialog` need — the dialog
  *  fetches everything else itself from `/api/fs/stat`. */
@@ -76,7 +71,7 @@ export function MobileMoreSheet({ open, onClose, slice, actions, entries }: Mobi
       <BottomSheetSeparator />
       <BottomSheetSubLabel>Sort by</BottomSheetSubLabel>
       <div className="flex flex-wrap gap-1 px-2 pb-2">
-        {SORT_KEYS.map(({ key, label }) => (
+        {SORT_KEY_OPTIONS.map(({ key, label }) => (
           <button
             key={key}
             type="button"

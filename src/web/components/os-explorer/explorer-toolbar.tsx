@@ -13,25 +13,15 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ExplorerBreadcrumb } from "./explorer-breadcrumb";
+import { ExplorerSortMenu } from "./explorer-sort-menu";
 import { useExplorerStore, type ExplorerSlice, type ViewMode } from "./explorer-store";
+import { toolbarButtonClass as buttonClass } from "./toolbar-icon-button";
 import { usePrefersCoarsePointer } from "./use-coarse-long-press";
 import type { ExplorerNavigation } from "./use-explorer-navigation";
 import { AVAILABLE_VIEW_MODES } from "./views/explorer-view-registry";
 
 const VIEW_ICON: Record<ViewMode, typeof List> = { list: List, icons: LayoutGrid, columns: Columns3 };
 const VIEW_LABEL: Record<ViewMode, string> = { list: "List view", icons: "Icons view", columns: "Column view" };
-
-/**
- * The visible box stays `size-7` (28px) on every pointer type — only the tap-registering
- * area grows to the 44px minimum on a coarse pointer, via an invisible expanded `::before`
- * (a click anywhere in it still hits this element; nothing about the button's look moves).
- */
-function buttonClass(coarse: boolean): string {
-  return cn(
-    "relative flex size-7 shrink-0 items-center justify-center rounded text-text-subtle can-hover:hover:bg-surface-elevated can-hover:hover:text-text disabled:opacity-30",
-    coarse && "before:absolute before:-inset-2 before:content-['']",
-  );
-}
 
 export interface ExplorerToolbarProps {
   windowId: string;
@@ -131,6 +121,8 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
             </button>
           );
         })}
+
+      <ExplorerSortMenu coarse={coarse} />
 
       <button
         type="button"

@@ -17,6 +17,7 @@ import { useDragAutoScroll } from "../dnd/use-drag-auto-scroll";
 import { usePathDropTarget } from "../dnd/use-path-drop-target";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { useExplorerStore, type SortKey } from "../explorer-store";
+import { SORT_KEY_OPTIONS } from "../sort-options";
 import { useExplorerSkin } from "../skins/use-explorer-skin";
 import { activeEntries } from "../use-explorer-keyboard";
 import { usePrefersCoarsePointer } from "../use-coarse-long-press";
@@ -24,12 +25,14 @@ import type { ExplorerViewProps } from "./explorer-view-registry";
 import { InlineNameInput } from "./inline-name-input";
 import { ListRow } from "./list-row";
 
-const COLUMNS: { key: SortKey; label: string; className: string }[] = [
-  { key: "name", label: "Name", className: "flex-1 text-left" },
-  { key: "size", label: "Size", className: "w-20 text-right" },
-  { key: "modified", label: "Modified", className: "hidden w-24 text-right sm:block" },
-  { key: "kind", label: "Kind", className: "hidden w-16 text-right md:block" },
-];
+/** Layout per column; labels/keys come from the shared sort vocabulary. */
+const COLUMN_CLASSNAME: Record<SortKey, string> = {
+  name: "flex-1 text-left",
+  size: "w-20 text-right",
+  modified: "hidden w-24 text-right sm:block",
+  kind: "hidden w-16 text-right md:block",
+};
+const COLUMNS = SORT_KEY_OPTIONS.map((option) => ({ ...option, className: COLUMN_CLASSNAME[option.key] }));
 
 export function ListView({
   slice, entries, actions, selection, inlineError, hasClipboard, isPinned, rowHeight, backgroundLongPress,

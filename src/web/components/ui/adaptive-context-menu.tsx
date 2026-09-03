@@ -7,6 +7,7 @@
  * Same component names, same API — behavior adapts automatically.
  */
 import React, { useState, useRef, useCallback, type ReactNode } from "react";
+import { CircleIcon } from "lucide-react";
 import * as Radix from "./context-menu";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,9 @@ import {
 const LONG_PRESS_MS = 400;
 
 const IsMobileCtx = React.createContext(false);
+
+/** Carries a radio group's active value/setter down to its flattened mobile items. */
+const RadioGroupCtx = React.createContext<{ value?: string; onValueChange?(value: string): void }>({});
 
 /* ------------------------------------------------------------------ */
 /*  Root                                                               */
@@ -190,6 +194,54 @@ function ContextMenuSeparator({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Radio group / item (flattened to a checkable list on mobile)      */
+/* ------------------------------------------------------------------ */
+
+function ContextMenuRadioGroup({
+  value,
+  onValueChange,
+  children,
+  ...props
+}: React.ComponentProps<typeof Radix.ContextMenuRadioGroup>) {
+  const isMobile = React.useContext(IsMobileCtx);
+  if (!isMobile) {
+    return (
+      <Radix.ContextMenuRadioGroup value={value} onValueChange={onValueChange} {...props}>
+        {children}
+      </Radix.ContextMenuRadioGroup>
+    );
+  }
+  return <RadioGroupCtx.Provider value={{ value, onValueChange }}>{children}</RadioGroupCtx.Provider>;
+}
+
+function ContextMenuRadioItem({
+  value,
+  children,
+  className,
+  ...props
+}: React.ComponentProps<typeof Radix.ContextMenuRadioItem>) {
+  const isMobile = React.useContext(IsMobileCtx);
+  // Both contexts are read unconditionally so the hook order stays stable when
+  // the viewport crosses the mobile breakpoint while a menu is mounted.
+  const { value: active, onValueChange } = React.useContext(RadioGroupCtx);
+  if (!isMobile) {
+    return (
+      <Radix.ContextMenuRadioItem value={value} className={className} {...props}>
+        {children}
+      </Radix.ContextMenuRadioItem>
+    );
+  }
+  return (
+    <BottomSheetItem className={className} onClick={() => onValueChange?.(value)}>
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        {active === value && <CircleIcon className="size-2 fill-current" />}
+      </span>
+      {children}
+    </BottomSheetItem>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Sub-menu (flattened on mobile)                                     */
 /* ------------------------------------------------------------------ */
 
@@ -241,6 +293,8 @@ export {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
   ContextMenuSub,
   ContextMenuSubTrigger,
   ContextMenuSubContent,

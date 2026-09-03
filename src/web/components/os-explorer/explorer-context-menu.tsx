@@ -10,12 +10,19 @@
 import {
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
 } from "@/components/ui/adaptive-context-menu";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { FsEntry } from "@/lib/fs-api";
 import { canOpenInPpm } from "./can-open-in-ppm";
 import type { ExplorerActions } from "./actions/use-explorer-actions";
+import { useExplorerStore, type SortDir, type SortKey } from "./explorer-store";
+import { SORT_DIR_OPTIONS, SORT_KEY_OPTIONS } from "./sort-options";
 
 export interface ExplorerContextMenuProps {
   /** Entries the menu acts on; empty means the folder background. */
@@ -36,6 +43,8 @@ export function ExplorerContextMenu({
   const onlyDirs = targets.length > 0 && targets.every((e) => e.type === "directory");
   const count = targets.length;
   const suffix = count > 1 ? ` ${count} items` : "";
+  const sort = useExplorerStore((s) => s.sort);
+  const setPrefs = useExplorerStore((s) => s.setPrefs);
 
   if (count === 0) {
     return (
@@ -44,6 +53,29 @@ export function ExplorerContextMenu({
         <ContextMenuItem onClick={() => actions.startCreate("new-folder")}>New Folder</ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem disabled={!hasClipboard} onClick={() => actions.paste()}>Paste</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuSub>
+          <ContextMenuSubTrigger>Sort by</ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuRadioGroup
+              value={sort.key}
+              onValueChange={(key) => setPrefs({ sort: { key: key as SortKey, dir: sort.dir } })}
+            >
+              {SORT_KEY_OPTIONS.map(({ key, label }) => (
+                <ContextMenuRadioItem key={key} value={key}>{label}</ContextMenuRadioItem>
+              ))}
+            </ContextMenuRadioGroup>
+            <ContextMenuSeparator />
+            <ContextMenuRadioGroup
+              value={sort.dir}
+              onValueChange={(dir) => setPrefs({ sort: { key: sort.key, dir: dir as SortDir } })}
+            >
+              {SORT_DIR_OPTIONS.map(({ dir, label }) => (
+                <ContextMenuRadioItem key={dir} value={dir}>{label}</ContextMenuRadioItem>
+              ))}
+            </ContextMenuRadioGroup>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => actions.copyPath([currentDir])}>Copy Path</ContextMenuItem>
       </ContextMenuContent>
