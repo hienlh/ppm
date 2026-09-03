@@ -69,6 +69,12 @@ async function uploadResolvingCollisions(
   try {
     await fsApi.remove(destination, false);
   } catch (e) {
+    // The entry vanished between the collision and the confirmation — nothing to trash, and
+    // the upload below is exactly what the user asked for.
+    if (e instanceof FsError && e.code === "ENOENT") {
+      await uploadFileXhr(destination, entry.file, true, (p) => onProgress(p.loaded), signal);
+      return "done";
+    }
     if (!(e instanceof FsError) || e.code !== "NO_TRASH") throw e;
     // No trash backend on this host — ask before doing something permanent instead of
     // silently downgrading to it (mirrors `transfer()`'s own NO_TRASH handling).

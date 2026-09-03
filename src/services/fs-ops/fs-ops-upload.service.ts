@@ -21,6 +21,22 @@ export interface UploadResult {
  */
 const TMP_SUFFIX = ".ppm-upload-tmp";
 
+/**
+ * Create the target's parent only when it is actually missing. On Windows, Bun's recursive
+ * `mkdir` throws `EEXIST` for a directory that exists with the ReadOnly attribute — which is
+ * how Windows marks Desktop, Documents and Downloads — and that `EEXIST` would surface to the
+ * client as a "file already exists" collision for a file that was never there. An `EEXIST`
+ * from the create itself (the directory appeared meanwhile) is equally not a collision.
+ */
+async function ensureParentDir(parent: string, alreadyExists: boolean): Promise<void> {
+  if (alreadyExists) return;
+  try {
+    await mkdir(parent, { recursive: true });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+  }
+}
+
 async function lstatOrNull(path: string): Promise<Stats | null> {
   try {
     return await lstat(path);
@@ -97,7 +113,7 @@ export async function uploadFile(
   }
 
   const tmpPath = `${target}${TMP_SUFFIX}`;
-  await mkdir(dirname(tmpPath), { recursive: true });
+  await ensureParentDir(dirname(tmpPath), parentStat != null);
 
   let size: number;
   try {

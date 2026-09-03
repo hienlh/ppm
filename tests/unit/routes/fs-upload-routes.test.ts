@@ -50,6 +50,18 @@ describe("PUT /fs/upload", () => {
     expect(readFileSync(target, "utf-8")).toBe("nested");
   });
 
+  it("uploads into an existing read-only-flagged directory (Windows Desktop/Documents)", async () => {
+    // Windows marks its known folders with the ReadOnly attribute; Bun's recursive mkdir
+    // reports EEXIST for such an existing directory, which must never read as a collision.
+    const readOnlyDir = join(dir, "Desktop");
+    mkdirSync(readOnlyDir);
+    if (process.platform === "win32") Bun.spawnSync(["attrib", "+R", readOnlyDir]);
+    const target = join(readOnlyDir, "fresh.7z");
+    const res = await put(uploadUrl(target), "payload");
+    expect(res.status).toBe(201);
+    expect(readFileSync(target, "utf-8")).toBe("payload");
+  });
+
   it("answers 409 EEXIST when the target exists and overwrite is not set", async () => {
     const target = join(dir, "a.txt");
     writeFileSync(target, "original");
