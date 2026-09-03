@@ -341,6 +341,7 @@ src/
   - **FileService** — File ops with path validation
   - **fs-ops/** (ADDED) — Whole-disk filesystem ops for the OS Explorer window (`fs-path-guard.service.ts`, `fs-core-ops.ts`, `fs-ops-{stat,copy-move,mutate,trash,read-write}.service.ts`) — every route refuses the PPM dir/protected roots, `lstat`s links (never follows), async + bounded concurrency
   - **host-info/** (ADDED) — Per-OS drives/known-folders/pinned-folders providers behind a 60s in-flight-deduped cache (`host-info.service.ts`), backing `/api/system/host`
+  - **media-transcode/** — Optional ffmpeg integration for the video viewer: `ffmpeg-capabilities.ts` (detect binaries + test-encode to pick `h264_nvenc`/`qsv`/`amf`/`videotoolbox`/`libx264`, cached), `media-probe.ts` (ffprobe duration/codecs), `transcode-stream.ts` (spawn → fragmented-MP4 pipe, `-ss` seek, max 3 concurrent, PID-scoped kill on client disconnect). Exposed as `…/files/{probe,transcode}` and `/api/fs/{probe,transcode}` via `src/server/helpers/media-route-handlers.ts`. `/files/raw` and `/api/fs/raw` serve HTTP Range (206) through `src/server/helpers/range-file-response.ts` so `<video>`/`<audio>` stream and seek without a blob. Player UI: `src/web/components/editor/video-player/` (native + transcode modes, rotate/flip, speed, volume, keyboard shortcuts).
   - **ProjectService** — Project CRUD, scanning, resolution
   - **TerminalService** — PTY lifecycle, shell spawning
   - **ClaudeUsageService** — Token tracking, cost calculation
