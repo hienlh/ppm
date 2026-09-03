@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.6] - 2026-09-04
+
+### Added
+- **Working teammates show under the conversation** — a bar lists whoever is still running, with the step they are on and how long they have been at it; tap one to open its session. A teammate only produced a card when it was first spawned, so later rounds of work were invisible unless you opened the team panel.
+
+### Fixed
+- **Opening a team member works on mobile** — the tap did nothing, because the window it opened is desktop-only; it now opens a full-screen sheet.
+
 ## [0.18.5] - 2026-09-04
 
 ### Added
