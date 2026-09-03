@@ -167,7 +167,14 @@ src/
     │   │       └── jira-ticket-detail.tsx
     │   ├── database/
     │   ├── editor/
-    │   ├── explorer/
+    │   ├── explorer/                # Project file tree (sidebar)
+    │   ├── floating-window/         # ADDED: Desktop window manager — drag/8-handle resize, z-band 30..38, persisted rects
+    │   ├── os-explorer/              # ADDED: OS File Explorer window body
+    │   │   ├── views/                # List / Icons (thumbnails) / Column (Miller) view components
+    │   │   ├── skins/                 # Windows 11 + macOS Finder chrome, folder icons, [data-skin] CSS vars
+    │   │   ├── mobile/                # Full-screen bottom-sheet variant (top bar, places strip, bottom toolbar)
+    │   │   ├── dnd/                   # Entry drag-and-drop (explorer ↔ explorer ↔ project tree)
+    │   │   └── actions/                # Disk mutations (cut/copy/paste/rename/trash/delete), collision prompt
     │   ├── git/
     │   ├── layout/
     │   ├── terminal/
@@ -332,6 +339,8 @@ src/
   - **AccountSelectorService** — Select active account based on config
   - **GitService** — Git commands via simple-git
   - **FileService** — File ops with path validation
+  - **fs-ops/** (ADDED) — Whole-disk filesystem ops for the OS Explorer window (`fs-path-guard.service.ts`, `fs-core-ops.ts`, `fs-ops-{stat,copy-move,mutate,trash,read-write}.service.ts`) — every route refuses the PPM dir/protected roots, `lstat`s links (never follows), async + bounded concurrency
+  - **host-info/** (ADDED) — Per-OS drives/known-folders/pinned-folders providers behind a 60s in-flight-deduped cache (`host-info.service.ts`), backing `/api/system/host`
   - **ProjectService** — Project CRUD, scanning, resolution
   - **TerminalService** — PTY lifecycle, shell spawning
   - **ClaudeUsageService** — Token tracking, cost calculation

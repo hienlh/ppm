@@ -2212,3 +2212,62 @@ Would require:
 | **API** | No sensitive data in logs | Token masked in debug output |
 | **CORS** | Same-origin only | WS on same host as HTTP API |
 
+---
+
+## OS File Explorer Window
+
+A floating, OS-skinned window (Windows 11 / macOS Finder chrome, Linux → macOS skin) that browses
+the **whole host filesystem** — not just registered project directories — through the widened
+`/api/fs` family. This is a deliberate scope change from every other file-facing route in PPM
+(project-scoped, path-validated against one repo root): the explorer's authorization boundary is
+"the whole disk, behind PPM's existing session auth", not "one project".
+
+### FS scope = auth boundary
+
+Every `/api/fs` route — including `docx-html`, `read`, `raw`, both SQLite doors — passes through
+one shared guard chain (`src/services/fs-path-guard.service.ts`) before touching disk:
+
+| Protection | Mechanism |
+|---|---|
+| PPM-dir shield | `assertNotPpmDir` refuses `getPpmDir()` (config, auth token, credentials) as a source **or** destination of any read or mutation, checked at both the given path and its resolved realpath (defeats a symlink pointed at the PPM dir) |
+| Protected roots | `/`, drive roots (`C:\`), `$HOME` and the PPM dir itself refuse delete/rename/move as a source |
+| Download tokens | `/api/fs/download/token` issues a single-use, path-bound token; `/api/fs/raw` spends it on first use, rejects replay and any path mismatch |
+| Symlink safety | every op `lstat`s the entry itself (never follows to the target) so a link *to* a protected path can itself still be deleted, but nothing can read/write *through* one into the PPM dir |
+| SQL injection surface | the external-DB doors (`/api/fs/sqlite/*`) block `ATTACH`/`DETACH` by keyword scan (after stripping comments/string literals) before executing any query — the same class of guard the project-scoped `/sqlite` route also needed |
+| No event-loop blocking | every op is `fs.promises`-based with bounded concurrency and a per-entry timeout — a dead network mount or sleeping USB drive cannot stall unrelated requests, which matters once scope is the whole disk instead of one project |
+
+### API surface
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/system/host` | `HostInfo`: platform, path separator, homedir, drives, known folders, OS-pinned folders (Quick Access / Finder Favorites / GTK+KDE bookmarks), warnings |
+| GET | `/api/fs/browse` | Directory listing (existing route, whitelist widened to `/`) |
+| GET | `/api/fs/stat` | Single-entry metadata |
+| POST | `/api/fs/copy` \| `/move` \| `/rename` \| `/touch` \| `/mkdir` | Mutations, collision (`EEXIST`)/self-nesting (`EINVAL`) reported for the client to resolve |
+| DELETE | `/api/fs/delete` \| `/rmdir` | `{permanent?}` — OS trash (Recycle Bin / Trash / gio) by default, permanent on request |
+| POST/GET | `/api/fs/download/token` / `/api/fs/raw` | Single-use, path-bound download |
+| GET/POST | `/api/fs/sqlite/{tables,schema,data,query}` | External `.db` viewer — same shape as the project-scoped `/sqlite` route, `path` absolute, PPM dir refused |
+
+`host-info.service.ts` orchestrates three OS-specific provider sets (`src/services/host-info/`)
+behind a 60s cache with in-flight de-duplication (concurrent `?refresh=true` calls share one
+rebuild rather than spawning N PowerShell/plutil/findmnt processes).
+
+### Floating window layer
+
+`src/web/components/floating-window/` — a content-agnostic window manager (zustand store):
+drag/8-handle-resize gestures write geometry straight to the DOM element (no React re-render per
+pointermove), committing to the store only on gesture end; rect + open windows persist to
+`localStorage["ppm-windows"]`, restored once per app load and re-clamped to the current viewport.
+
+Windows render in a portal at **z-30..38** (`30 + rank`, capped at an 8-window dense-rank limit) —
+below the app's existing `z-40` click-away backdrops and `z-50` Radix layers, so command palette,
+dropdowns and dialogs always stay reachable above any number of open explorer windows. Below the
+`md` breakpoint the layer never mounts at all; `src/web/components/os-explorer/mobile/` renders the
+same `ExplorerBody` component inside a full-screen bottom sheet instead (`variant="sheet"`).
+
+A window's titlebar is a swappable `chrome` component (`WindowChromeProps` contract) — the OS skin
+picks Windows caption buttons or macOS traffic lights from `src/web/components/os-explorer/skins/`,
+scoped entirely through `[data-skin="windows"|"macos"]` CSS variables layered over PPM's existing
+semantic theme tokens, so both PPM dark and light mode render correctly under either skin with no
+second color table.
+
