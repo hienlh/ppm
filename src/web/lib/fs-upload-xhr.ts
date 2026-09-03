@@ -29,8 +29,14 @@ export function uploadFileXhr(
   file: File,
   overwrite: boolean,
   onProgress: (progress: UploadProgress) => void,
+  signal?: AbortSignal,
 ): Promise<{ path: string; size: number }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Upload aborted", "AbortError"));
+      return;
+    }
+
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", fsApi.uploadUrl(path, overwrite));
     const token = getAuthToken();
@@ -41,7 +47,12 @@ export function uploadFileXhr(
       if (e.lengthComputable) onProgress({ loaded: e.loaded, total: e.total });
     };
 
+    const onAbortSignal = () => xhr.abort();
+    signal?.addEventListener("abort", onAbortSignal);
+    const detach = () => signal?.removeEventListener("abort", onAbortSignal);
+
     xhr.onload = () => {
+      detach();
       let json: UploadResponseBody = {};
       try {
         json = JSON.parse(xhr.responseText);
@@ -54,8 +65,8 @@ export function uploadFileXhr(
       }
       reject(new FsError(json.error ?? `HTTP ${xhr.status}`, json.code ?? "EUNKNOWN", xhr.status));
     };
-    xhr.onerror = () => reject(new Error("Network error during upload"));
-    xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
+    xhr.onerror = () => { detach(); reject(new Error("Network error during upload")); };
+    xhr.onabort = () => { detach(); reject(new DOMException("Upload aborted", "AbortError")); };
 
     xhr.send(file);
   });

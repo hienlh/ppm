@@ -35,6 +35,7 @@ import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick"
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
 import { useExtensionWs } from "@/hooks/use-extension-ws";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { UploadProgressPanel } from "@/components/os-explorer/upload/upload-progress-panel";
 import { cn } from "@/lib/utils";
 
 // Lazy: the explorer feature (views, actions, skins, icon map) is the same heavy bundle the
@@ -365,6 +366,9 @@ export function App() {
 
         {/* Connection lost overlay — shown when API unreachable for >15s */}
         <ConnectionLostOverlay />
+
+        {/* Explorer upload progress — bottom-right card (desktop) or pill + sheet (mobile) */}
+        <UploadProgressPanel />
 
         {/* Toast notifications. Bottom-left collides with the mobile dock's
             terminal toolbar — a toast lands directly on the buttons that raised

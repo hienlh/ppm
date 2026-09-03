@@ -55,6 +55,31 @@ describe("runUploadQueue", () => {
     expect(results.filter((r) => r.ok).map((r) => r.id).sort()).toEqual(["ok-1", "ok-2"]);
   });
 
+  it("a job cancelled before it starts rejects immediately without blocking the rest of the queue", async () => {
+    // Mirrors how `explorer-actions-upload.ts` cancels a still-queued file: the job's own
+    // `run` checks an already-aborted signal and rejects synchronously, instead of ever
+    // reaching `uploadFileXhr` — the queue must not stall waiting on it.
+    const controller = new AbortController();
+    controller.abort();
+    const jobs: UploadJob<string>[] = [
+      {
+        id: "cancelled",
+        size: 10,
+        run: () => {
+          if (controller.signal.aborted) return Promise.reject(new DOMException("Upload aborted", "AbortError"));
+          return Promise.resolve("should not run");
+        },
+      },
+      delayedJob("ok", 10, 5),
+    ];
+    const results = await runUploadQueue(jobs, 2, () => {});
+    const cancelled = results.find((r) => r.id === "cancelled");
+    expect(cancelled?.ok).toBe(false);
+    expect(cancelled?.error).toBeInstanceOf(DOMException);
+    expect((cancelled?.error as DOMException).name).toBe("AbortError");
+    expect(results.find((r) => r.id === "ok")?.ok).toBe(true);
+  });
+
   it("aggregates byte progress across every in-flight job, and reaches full total at the end", async () => {
     const jobs = [delayedJob("a", 100, 20), delayedJob("b", 100, 5)];
     const snapshots: UploadQueueProgress[] = [];
