@@ -8,6 +8,7 @@
  */
 
 import { useRef, type ChangeEvent, type ReactNode } from "react";
+import { capturePickedFiles } from "./capture-picked-files";
 import type { DroppedEntry } from "./collect-dropped-entries";
 
 export interface UploadPicker {
@@ -30,11 +31,12 @@ export function useUploadPicker(onFiles: (entries: DroppedEntry[]) => void): Upl
     typeof document !== "undefined" && "webkitdirectory" in document.createElement("input");
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    // Clears the value so picking the exact same file/folder again still fires `onChange`.
-    e.target.value = "";
-    if (!files || files.length === 0) return;
-    const entries: DroppedEntry[] = Array.from(files).map((file) => ({
+    // Captures the live FileList into a plain array BEFORE clearing `value` (see
+    // `capture-picked-files.ts`) — clearing first, so picking the exact same file/folder
+    // again still fires `onChange`, would otherwise race Chromium emptying the list itself.
+    const picked = capturePickedFiles(e.target.files, () => { e.target.value = ""; });
+    if (picked.length === 0) return;
+    const entries: DroppedEntry[] = picked.map((file) => ({
       file,
       // The folder picker sets `webkitRelativePath` ("folder/sub/file.txt"); a plain file
       // picker leaves it empty, so the bare name is the relative path.
