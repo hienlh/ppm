@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.18.4] - 2026-09-04
+
+### Changed
+- **Team members stand out from one-off agents in chat** — a named teammate now leads its card with its handle and gets its own icon, so it is no longer mistaken for a scout that answers once.
+
 ## [0.18.3] - 2026-09-04
 
 ### Added
