@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.18.7] - 2026-09-04
+
+### Fixed
+- **Uploading into Desktop, Documents or Downloads on a Windows host no longer claims the file already exists** — those folders carry Windows' ReadOnly flag, which the upload path misread as a name collision; Replace then failed on a file that was never there.
+
 ## [0.18.6] - 2026-09-04
 
 ### Added
