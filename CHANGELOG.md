@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **OS File Explorer window** — a floating, resizable, multi-instance window that browses your whole computer, not just registered projects.
+- **Windows / macOS chrome, matching your OS** — Linux gets the macOS look; a Settings override lets you pick either regardless of platform.
+- **List, Icons (with thumbnails) and Column (Finder-style) views**, remembered per preference, with keyboard navigation in every view.
+- **Sidebar with drives, known folders (Desktop/Documents/Downloads/…) and your OS's pinned folders** (Quick Access, Finder Favorites, GTK/KDE bookmarks), plus PPM's own pins.
+- **Double-click opens the right thing** — code/markdown/images/PDF/CSV/video open in PPM's existing tabs; an external `.db`/`.sqlite` file opens in the same table/query viewer projects use.
+- **Full OS-style file actions**: Cut/Copy/Paste (including between explorer windows and the project tree), Rename, Move to Trash (with a "Delete permanently" fallback where there's no trash), New file/folder, Copy path, Download, Properties.
+- **Drag and drop entries** between explorer windows, onto sidebar places, and onto the project tree — hold Ctrl to copy instead of move.
+- **Mobile**: the same explorer opens as a full-screen sheet with long-press actions, multi-select, and a single-column Finder view.
+
 ## [0.17.55] - 2026-09-02
 
 ### Fixed
