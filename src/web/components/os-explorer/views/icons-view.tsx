@@ -14,6 +14,8 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-contex
 import { useFileStore } from "@/stores/file-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
+import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { usePathDropTarget } from "../dnd/use-path-drop-target";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { activeEntries } from "../use-explorer-keyboard";
 import type { ExplorerViewProps } from "./explorer-view-registry";
@@ -70,6 +72,9 @@ export function IconsView({
 
   const menuTargets = useMemo(() => activeEntries(slice, entries), [slice, entries]);
   const creating = slice.inlineEdit?.kind === "new-file" || slice.inlineEdit?.kind === "new-folder";
+  // The view background is the current directory itself — a tile already claims the drop
+  // (and stops the event) when it is a directory, so this only ever fires over empty space.
+  const backgroundDrop = usePathDropTarget({ targetDir: slice.path, run: actions.transferInto });
 
   const onGridKeyDown = (event: KeyboardEvent) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
@@ -110,8 +115,9 @@ export function IconsView({
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) selection.clear();
           }}
-          className="h-full flex-1 overflow-auto p-2 outline-none"
+          className={cn("h-full flex-1 overflow-auto p-2 outline-none", backgroundDrop.isOver && DROP_TARGET_CLASS)}
           {...backgroundLongPress}
+          {...backgroundDrop.handlers}
         >
           {creating && (
             <div
