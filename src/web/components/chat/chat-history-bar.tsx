@@ -598,12 +598,14 @@ export function ChatHistoryBar({
         </div>
       )}
 
-      {/* Team activity panel */}
+      {/* Team activity panel — its tabs each scroll on their own, so no outer scroll */}
       {activePanel === "team" && teamActivity?.hasTeams && (
-        <div className="border-t border-border/30 bg-surface px-3 py-2 max-h-[280px] overflow-y-auto">
+        <div className="border-t border-border/30 bg-surface px-3 py-2">
           <TeamActivityPanel
             teamNames={teamActivity.teamNames}
             messages={teamMessages ?? []}
+            sessionId={sessionId}
+            projectName={projectName}
           />
         </div>
       )}

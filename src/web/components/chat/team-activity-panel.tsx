@@ -1,27 +1,43 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+/**
+ * Agent-team panel: the team's roster and its conversation, as two tabs.
+ *
+ * They are deliberately not one scroll. A team runs ~20 members and produces a
+ * long conversation, so a single list pushed the roster — the part that answers
+ * "who is working right now" — off screen the moment messages accumulated.
+ */
+
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api-client";
 import type { TeamMessageItem } from "@/hooks/use-chat";
-import { TYPE_BADGES } from "./team-message-badges";
+import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
+import { useWindowStore } from "@/components/floating-window/window-store";
+import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
+import { TeamMemberList } from "./team-member-list";
+import { TeamMessageList } from "./team-message-list";
+
+type TeamTab = "members" | "messages";
 
 interface TeamActivityPanelProps {
   teamNames: string[];
   messages: TeamMessageItem[];
+  /** Current session id — the implicit team is named after it */
+  sessionId?: string | null;
+  /** Passed to a member window so its steps resolve project-relative paths. */
+  projectName?: string;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  active: "bg-success",
-  idle: "bg-warning",
-  shutdown: "bg-text-3",
-};
+/** Implicit teams are named after the session, which is an unreadable uuid. */
+function teamLabel(name: string, sessionId?: string | null): string {
+  return name === sessionId ? "Team (current session)" : name;
+}
 
-
-export function TeamActivityPanel({ teamNames, messages }: TeamActivityPanelProps) {
+export function TeamActivityPanel({ teamNames, messages, sessionId, projectName }: TeamActivityPanelProps) {
   const [selectedTeam, setSelectedTeam] = useState(teamNames[0] ?? "");
-  const [members, setMembers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [tab, setTab] = useState<TeamTab>("members");
+  const openWindow = useWindowStore((s) => s.open);
+  // Touch needs the 44px minimum even at desktop width; a mouse does not.
+  const coarse = usePrefersCoarsePointer();
 
   // Sync selected team when teamNames changes
   useEffect(() => {
@@ -30,32 +46,48 @@ export function TeamActivityPanel({ teamNames, messages }: TeamActivityPanelProp
     }
   }, [teamNames, selectedTeam]);
 
-  const fetchTeamDetail = useCallback(async (name: string) => {
-    setLoading(true);
-    try {
-      const detail = await api.get<any>(`/api/teams/${encodeURIComponent(name)}`);
-      setMembers(detail?.members ?? []);
-    } catch { setMembers([]); }
-    setLoading(false);
-  }, []);
+  // The panel only renders while open, so mounting is the right poll gate.
+  const { members, outbound, loading, refresh } = useTeamActivityFeed(selectedTeam, Boolean(selectedTeam));
 
-  // Fetch members on mount and tab switch
-  useEffect(() => {
-    if (selectedTeam) fetchTeamDetail(selectedTeam);
-  }, [selectedTeam, fetchTeamDetail]);
+  const openMemberSession = useCallback(
+    (memberName: string) => {
+      openWindow("team-member", { teamName: selectedTeam, memberName, projectName });
+    },
+    [openWindow, selectedTeam, projectName],
+  );
 
-  // Auto-scroll messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  /**
+   * Inbox messages are lead → member only. A teammate's own reports live in its
+   * transcript as SendMessage calls, so both directions are merged here — without
+   * it the panel shows tasks going out and nothing ever coming back.
+   */
+  const displayMessages = useMemo(() => {
+    const replies = outbound.map((m) => ({
+      from: m.from,
+      to: m.to,
+      text: m.text,
+      timestamp: m.timestamp,
+      ...(m.summary ? { summary: m.summary } : {}),
+    })) as TeamMessageItem[];
+    return [...messages, ...replies]
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .slice(-200);
+  }, [messages, outbound]);
 
-  const displayMessages = messages.slice(-200);
+  const workingCount = members.filter((m) => m.workState === "working").length;
+
+  const tabClass = (active: boolean) =>
+    cn(
+      "flex items-center gap-1.5 px-2.5 rounded-md text-[11px] whitespace-nowrap transition-colors",
+      coarse ? "min-h-[44px]" : "py-1",
+      active ? "bg-primary/10 text-primary font-medium" : "text-text-subtle hover:text-text-primary",
+    );
 
   return (
-    <div className="space-y-0">
-      {/* Team tabs + refresh */}
-      <div className="flex items-center gap-1 mb-2">
-        <div className="flex items-center gap-1 overflow-x-auto min-w-0 flex-1">
+    <div className="flex flex-col min-h-0">
+      {/* Team selector — only meaningful when a session tracks more than one team */}
+      {teamNames.length > 1 && (
+        <div className="flex items-center gap-1 overflow-x-auto min-w-0 mb-1.5">
           {teamNames.map((name) => (
             <button
               key={name}
@@ -64,100 +96,60 @@ export function TeamActivityPanel({ teamNames, messages }: TeamActivityPanelProp
                 "px-2 py-0.5 text-[11px] rounded-md whitespace-nowrap transition-colors",
                 selectedTeam === name
                   ? "bg-primary/10 text-primary font-medium"
-                  : "text-text-subtle hover:text-text-primary"
+                  : "text-text-subtle hover:text-text-primary",
               )}
             >
-              {name}
+              {teamLabel(name, sessionId)}
             </button>
           ))}
         </div>
+      )}
+
+      {/* Members / Messages tabs + refresh */}
+      <div className="flex items-center gap-1 mb-1.5 shrink-0" role="tablist">
         <button
-          onClick={() => selectedTeam && fetchTeamDetail(selectedTeam)}
-          className="text-text-subtle hover:text-foreground p-1 shrink-0"
+          role="tab"
+          aria-selected={tab === "members"}
+          onClick={() => setTab("members")}
+          className={tabClass(tab === "members")}
+        >
+          <span>Members</span>
+          <span className="text-text-subtle">{members.length}</span>
+          {workingCount > 0 && (
+            <span className="flex items-center gap-1 text-success">
+              <span className="size-1.5 rounded-full bg-success animate-pulse" />
+              {workingCount}
+            </span>
+          )}
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === "messages"}
+          onClick={() => setTab("messages")}
+          className={tabClass(tab === "messages")}
+        >
+          <span>Messages</span>
+          <span className="text-text-subtle">{displayMessages.length}</span>
+        </button>
+        <button
+          onClick={refresh}
+          className={cn("ml-auto text-text-subtle hover:text-foreground shrink-0", coarse ? "p-3" : "p-1")}
           aria-label="Refresh"
         >
           <RefreshCw className={cn("size-3", loading && "animate-spin")} />
         </button>
       </div>
 
-      {/* Members */}
-      {members.length > 0 && (
-        <div className="pb-2 mb-2 border-b border-border/30">
-          <div className="text-[10px] text-text-subtle uppercase tracking-wider mb-1">Members</div>
-          <div className="space-y-1">
-            {members.map((m: any) => (
-              <div key={m.name} className="flex items-center gap-2 text-xs">
-                <span className={cn("size-1.5 rounded-full shrink-0", STATUS_COLORS[m.status] ?? "bg-text-3")} />
-                <span className="font-medium truncate">{m.name}</span>
-                {m.model && m.model !== "unknown" && (
-                  <span className="text-text-subtle text-[10px]">({m.model})</span>
-                )}
-                <span className="ml-auto text-text-subtle text-[10px]">{m.status}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      {tab === "members" ? (
+        <TeamMemberList
+          members={members}
+          loading={loading}
+          onOpenMember={openMemberSession}
+          className="max-h-56"
+        />
+      ) : (
+        <TeamMessageList messages={displayMessages} className="max-h-56" />
       )}
-
-      {/* Messages */}
-      <div className="max-h-40 overflow-y-auto">
-        {displayMessages.length === 0 ? (
-          <p className="text-xs text-text-subtle text-center py-2">No messages yet</p>
-        ) : (
-          <div className="space-y-2">
-            {displayMessages.map((msg, i) => {
-              const badge = msg.parsedType ? TYPE_BADGES[msg.parsedType] : null;
-              const time = formatTime(msg.timestamp);
-              return (
-                <div key={`${msg.timestamp}-${i}`} className="text-xs">
-                  <div className="flex items-center gap-1 text-text-subtle">
-                    <span className="font-medium" style={safeColor(msg.color)}>
-                      {msg.from}
-                    </span>
-                    <span>→</span>
-                    <span>{msg.to}</span>
-                    <span className="ml-auto text-[10px]">{time}</span>
-                  </div>
-                  <div className="mt-0.5 text-foreground/90 break-words">
-                    {badge && (
-                      <span className={cn("inline-block px-1 py-0 rounded text-[9px] mr-1", badge.className)}>
-                        {badge.label}
-                      </span>
-                    )}
-                    {msg.summary ?? truncateText(msg.text)}
-                  </div>
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </div>
-        )}
-      </div>
     </div>
   );
-}
-
-function formatTime(timestamp: string): string {
-  try {
-    const d = new Date(timestamp);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  } catch { return ""; }
-}
-
-/** Sanitize color value to prevent CSS injection */
-function safeColor(color?: string): React.CSSProperties | undefined {
-  if (!color) return undefined;
-  if (/^#[0-9a-fA-F]{3,8}$/.test(color) || /^[a-zA-Z]{3,20}$/.test(color)) {
-    return { color };
-  }
-  return undefined;
-}
-
-function truncateText(text: string, max = 120): string {
-  if (!text) return "";
-  try {
-    const parsed = JSON.parse(text);
-    return parsed.summary ?? parsed.text ?? text.slice(0, max);
-  } catch {}
-  return text.length > max ? text.slice(0, max) + "..." : text;
 }

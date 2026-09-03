@@ -78,7 +78,7 @@ function indexAgentTranscripts(subagentsDir: string): Map<string, string> {
 }
 
 /** Parse one agent transcript into a flat children event list (stream order). */
-function parseAgentTranscript(filePath: string): ChatEvent[] {
+export function parseAgentTranscript(filePath: string): ChatEvent[] {
   const children: ChatEvent[] = [];
   let text: string;
   try {

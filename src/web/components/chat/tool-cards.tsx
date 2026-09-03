@@ -644,8 +644,12 @@ function CollapsibleOutput({ output }: { output: string }) {
   );
 }
 
-/** Render subagent child events — nested tool_use/tool_result + text */
-function SubagentChildren({ events, projectName }: { events: ChatEvent[]; projectName?: string }) {
+/** Render subagent child events — nested tool_use/tool_result + text.
+ *  Exported so the team member window can replay a teammate's whole work
+ *  session with the same step rendering the inline Agent card uses.
+ *  `className` overrides the container so a full-height surface can drop the
+ *  card's fixed max-height. */
+export function SubagentChildren({ events, projectName, className }: { events: ChatEvent[]; projectName?: string; className?: string }) {
   // Group children similar to InterleavedEvents: pair tool_use + tool_result, merge text
   type ChildGroup =
     | { kind: "text"; content: string }
@@ -688,7 +692,7 @@ function SubagentChildren({ events, projectName }: { events: ChatEvent[]; projec
         const el = e.currentTarget;
         userScrolledRef.current = el.scrollTop + el.clientHeight < el.scrollHeight - 20;
       }}
-      className="border-l-2 border-accent/20 pl-2 space-y-1 mt-1 max-h-64 md:max-h-96 overflow-y-auto"
+      className={className ?? "border-l-2 border-accent/20 pl-2 space-y-1 mt-1 max-h-64 md:max-h-96 overflow-y-auto"}
     >
       {groups.map((g, i) => {
         if (g.kind === "text") {

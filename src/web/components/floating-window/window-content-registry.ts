@@ -21,6 +21,7 @@ export interface WindowContentProps {
 
 export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentType<WindowContentProps>>> = {
   explorer: lazy(() => import("@/components/os-explorer/explorer-window-content")),
+  "team-member": lazy(() => import("@/components/chat/team-member-window-content")),
 };
 
 /**
@@ -41,6 +42,10 @@ export function chromeFor(kind: WindowKind): WindowChrome | undefined {
 export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>): string {
   const explicit = payload?.title;
   if (typeof explicit === "string" && explicit.trim()) return explicit;
+  if (kind === "team-member") {
+    const member = payload?.memberName;
+    return typeof member === "string" && member ? `Session — ${member}` : "Team member";
+  }
   const path = payload?.path;
   if (kind === "explorer" && typeof path === "string" && path) {
     const segments = path.split(/[\\/]/).filter(Boolean);

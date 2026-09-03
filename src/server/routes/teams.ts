@@ -25,6 +25,40 @@ teamRoutes.get("/:name", async (c) => {
   return c.json(ok(detail));
 });
 
+/**
+ * Live per-member activity. Separate from `/:name` because it is polled while the
+ * panel is open, and because its source is the agent transcripts rather than the
+ * team inboxes — the inboxes cannot say who is working right now.
+ */
+teamRoutes.get("/:name/activity", async (c) => {
+  const name = c.req.param("name");
+  if (!VALID_TEAM_NAME.test(name)) return c.json(err("Invalid team name"), 400);
+  const { readTeamMemberActivity, readTeamOutboundMessages } = await import(
+    "../../services/team-member-activity/member-activity.service.ts"
+  );
+  const projectPath = c.req.query("projectPath") ?? null;
+  const [members, outbound] = await Promise.all([
+    readTeamMemberActivity(name, projectPath),
+    readTeamOutboundMessages(name, projectPath),
+  ]);
+  return c.json(ok({ members, outbound }));
+});
+
+/** Full transcript of one teammate's work session, for the member window. */
+teamRoutes.get("/:name/members/:member/transcript", async (c) => {
+  const name = c.req.param("name");
+  const member = c.req.param("member");
+  if (!VALID_TEAM_NAME.test(name)) return c.json(err("Invalid team name"), 400);
+  if (!VALID_TEAM_NAME.test(member)) return c.json(err("Invalid member name"), 400);
+  const { resolveMemberTranscript } = await import(
+    "../../services/team-member-activity/member-activity.service.ts"
+  );
+  const path = resolveMemberTranscript(name, member, c.req.query("projectPath") ?? null);
+  if (!path) return c.json(err("Member transcript not found"), 404);
+  const { parseAgentTranscript } = await import("../../services/subagent-transcript-merger.ts");
+  return c.json(ok({ member, events: parseAgentTranscript(path) }));
+});
+
 teamRoutes.delete("/:name", async (c) => {
   const name = c.req.param("name");
   if (!VALID_TEAM_NAME.test(name)) {
