@@ -17,6 +17,7 @@ import { postgresRoutes } from "./routes/postgres.ts";
 import { databaseRoutes } from "./routes/database.ts";
 import { fsBrowseRoutes } from "./routes/fs-browse.ts";
 import { fsOpsRoutes } from "./routes/fs-ops.ts";
+import { fsUploadRoutes } from "./routes/fs-upload.ts";
 import { fsSqliteRoutes } from "./routes/fs-sqlite.ts";
 import { accountsRoutes } from "./routes/accounts.ts";
 import { proxyRoutes } from "./routes/proxy.ts";
@@ -165,6 +166,7 @@ app.route("/api/tunnels", tunnelRegistryRoutes);
 // Filesystem operations (browse, list, read, write) — consolidated in fs-browse route
 app.route("/api/fs", fsBrowseRoutes);
 app.route("/api/fs", fsOpsRoutes);
+app.route("/api/fs", fsUploadRoutes);
 app.route("/api/fs/sqlite", fsSqliteRoutes);
 
 // System resource monitoring (SSE + JSON)
