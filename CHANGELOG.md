@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.18.3] - 2026-09-04
+
+### Added
+- **Agent team panel shows who is working and how far along** — each member's live status, current step, model and elapsed time, split into Members and Messages tabs.
+- **Click a team member to replay its whole work session** in a floating window.
+- **Team conversation now shows both directions** — teammates' replies were only ever recorded in their own session, so the panel used to show tasks going out and nothing coming back.
+- **Upload files into the File Explorer** — toolbar button on desktop, mobile picker, and drag files from your OS straight onto a folder.
+- **Video player with rotate/flip, playback speed, volume and keyboard shortcuts**; unsupported formats are transcoded on the fly and video seeks properly on slow connections.
+- **Open a folder in a dock terminal** from the explorer or the project tree.
+- **Send a code block from chat to a terminal, and terminal output back to chat.**
+
+### Fixed
+- **Agent teams appear again** — the current AI engine no longer announces team creation the way PPM listened for, so the Team button never showed even with a team running.
+- **Team messages are readable** — a task assignment rendered as a wall of raw JSON instead of its subject and description.
+- **A backgrounded agent card stays running** until the agent reports back, instead of going idle while it is still working.
+- **The session token is now required on every WebSocket connection.**
+
 ## [0.18.2] - 2026-09-03
 
 ### Fixed
