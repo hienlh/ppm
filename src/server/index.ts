@@ -482,23 +482,32 @@ export async function startServer(options: {
       await ensureCloudflared();
     }
 
-    // ── Try starting via system service manager (crash recovery) ────────
-    // If autostart was previously enabled, start via systemd/launchd so the OS
-    // monitors the supervisor and restarts it on crash (Restart=always).
+    // ── Try starting via system service manager ──────────────────────────
+    // Linux: when autostart was previously enabled, start via systemd so it
+    // restarts the supervisor on crash (Restart=always). macOS: always via
+    // launchd — a supervisor spawned directly from a Terminal window is
+    // SIGTERMed by Terminal.app when that window closes, even after setsid.
+    // See shouldStartViaService().
     let startedViaService = false;
+    let serviceStartError: string | null = null;
+    // A previous run's status.json still names its (dead) supervisor. The
+    // service-start poll below must wait for a *new* supervisorPid, or it
+    // accepts the stale entry before launchd/systemd has spawned anything.
+    let prevSupervisorPid: number | null = null;
+    try {
+      prevSupervisorPid = JSON.parse(readFileSync(statusFile, "utf-8")).supervisorPid ?? null;
+    } catch {}
     {
-      const { getAutoStartStatus } = await import("../services/autostart-register.ts");
-      const autoStatus = getAutoStartStatus();
-      if (autoStatus.enabled && !autoStatus.running) {
-        if (process.platform === "linux") {
-          // Update service file in case config changed (port, share, etc.)
-          const { enableAutoStart } = await import("../services/autostart-register.ts");
+      const { getAutoStartStatus, enableAutoStart, shouldStartViaService } =
+        await import("../services/autostart-register.ts");
+      const { isIsolatedPpmHome } = await import("../services/ppm-dir.ts");
+      if (shouldStartViaService(process.platform, getAutoStartStatus(), isIsolatedPpmHome())) {
+        try {
+          // Regenerates the unit/plist in case config changed (port, share, …)
           await enableAutoStart({ port, host, share: !!options.share, profile: options.profile });
           startedViaService = true;
-        } else if (process.platform === "darwin") {
-          const { enableAutoStart } = await import("../services/autostart-register.ts");
-          await enableAutoStart({ port, host, share: !!options.share, profile: options.profile });
-          startedViaService = true;
+        } catch (err) {
+          serviceStartError = err instanceof Error ? err.message : String(err);
         }
       }
     }
@@ -573,7 +582,12 @@ export async function startServer(options: {
       // Check if server PID appeared in status.json
       try {
         const data = JSON.parse(readFileSync(statusFile, "utf-8"));
-        if (data.pid && data.supervisorPid) {
+        // Ignore the previous run's stale entry (see prevSupervisorPid): a service
+        // start must see a new supervisorPid, a direct spawn must see its own.
+        const fresh = startedViaService
+          ? data.supervisorPid !== prevSupervisorPid
+          : data.supervisorPid === supervisorPid;
+        if (data.pid && data.supervisorPid && fresh) {
           // Update supervisorPid if started via service (was 0 initially)
           if (!supervisorPid) supervisorPid = data.supervisorPid;
           serverPid = data.pid;
@@ -593,6 +607,9 @@ export async function startServer(options: {
     if (!serverPid) {
       console.error("  ✗  Server did not start within 10 seconds.");
       console.error("     Check logs: ppm logs");
+      if (startedViaService) {
+        console.error("     launchd/systemd is still supervising it — check 'ppm status' shortly.");
+      }
       if (supervisorPid) { try { process.kill(supervisorPid); } catch {} }
       process.exit(1);
     }
@@ -639,7 +656,16 @@ export async function startServer(options: {
       const { getAutoStartStatus, enableAutoStart, isAutoStartUnitStale } = await import("../services/autostart-register.ts");
       const status = getAutoStartStatus();
       const stale = status.enabled && isAutoStartUnitStale();
-      if (!status.enabled || stale) {
+      if (startedViaService) {
+        console.log(`  ✓  Running under ${status.platform} — survives terminal close, restarts on crash. Disable: ppm autostart disable`);
+      } else if (serviceStartError) {
+        // Fell back to a direct spawn (enableAutoStart removed its plist on
+        // failure): do not claim auto-restart — the supervisor is owned by
+        // this shell and dies with it.
+        console.warn(`  ⚠  Could not start via service manager: ${serviceStartError}`);
+        console.warn(`     Started directly instead — PPM will stop when this terminal window closes.`);
+        console.warn(`     Fix: ppm stop && ppm autostart enable`);
+      } else if (!status.enabled || stale) {
         const autoConfig = {
           port, host,
           share: !!options.share,

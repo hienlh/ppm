@@ -101,8 +101,11 @@ async function enableMacOS(config: AutoStartConfig, opts?: { skipStart?: boolean
         stdout: "pipe", stderr: "pipe",
       });
       if (legacy.exitCode !== 0) {
-        const err = legacy.stderr.toString().trim();
-        throw new Error(`launchctl load failed: ${err}`);
+        // Leave nothing registered: a plist that never loaded would still fire
+        // RunAtLoad at next login, on top of whatever the caller fell back to.
+        try { unlinkSync(plistPath); } catch {}
+        const err = legacy.stderr.toString().trim() || result.stderr.toString().trim();
+        throw new Error(`launchctl bootstrap failed: ${err}`);
       }
     }
   }
@@ -149,15 +152,41 @@ function statusMacOS(): AutoStartStatus {
   const output = result.stdout.toString();
   const isLoaded = output.includes(PLIST_LABEL);
 
+  // Mirror systemd's is-enabled / is-active split: the plist on disk is the
+  // registration, the loaded job is the running state. Tying `enabled` to
+  // `isLoaded` made "enabled && !running" unsatisfiable, so `ppm start` could
+  // never take the launchd path and always spawned the supervisor directly.
   return {
-    enabled: fileExists && isLoaded,
+    enabled: fileExists,
     running: isLoaded,
     platform: "darwin (launchd)",
     servicePath: fileExists ? plistPath : null,
     details: fileExists
-      ? isLoaded ? "Loaded and enabled" : "Plist exists but not loaded"
+      ? isLoaded ? "Loaded and running" : "Plist exists but not loaded"
       : "Not configured",
   };
+}
+
+/**
+ * Decide whether `ppm start` should hand the supervisor to the OS service
+ * manager instead of spawning it directly from the CLI.
+ *
+ * Linux: only when the unit is registered but inactive (crash recovery).
+ * macOS: always. Terminal.app SIGTERMs every process that originated from a
+ * window when that window closes — setsid/detached does not escape it (verified
+ * 2026-09-02) — so a directly spawned supervisor dies with the shell that ran
+ * `ppm start`. launchd is the only parent Terminal cannot reach.
+ * Isolated PPM_HOME never touches the real service manager.
+ */
+export function shouldStartViaService(
+  platform: NodeJS.Platform,
+  status: Pick<AutoStartStatus, "enabled" | "running">,
+  isolated: boolean,
+): boolean {
+  if (isolated) return false;
+  if (platform === "darwin") return true;
+  if (platform === "linux") return status.enabled && !status.running;
+  return false;
 }
 
 // ─── Linux ──────────────────────────────────────────────────────────────

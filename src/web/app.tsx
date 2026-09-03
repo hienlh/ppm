@@ -17,8 +17,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useTheme } from "@/theme/use-theme";
 import { initShikiThemeSync, warmShiki } from "@/theme/adapters/shiki-adapter";
 import { initMonacoThemeSync } from "@/theme/adapters/monaco-adapter";
-import { getAuthToken, api, projectUrl } from "@/lib/api-client";
-import { useStreamingStore } from "@/stores/streaming-store";
+import { getAuthToken } from "@/lib/api-client";
 import { useUrlSync, parseUrlState, autoOpenFromUrl } from "@/hooks/use-url-sync";
 import { useGlobalKeybindings } from "@/hooks/use-global-keybindings";
 import { useNotificationBadge } from "@/hooks/use-notification-badge";
@@ -233,20 +232,6 @@ export function App() {
     import("@/stores/notification-store").then(({ useNotificationStore }) => {
       useNotificationStore.getState().loadFromServer(activeProject.name);
     });
-  }, [authState, activeProject?.name]);
-
-  // Seed which sessions are mid-turn. Chat tabs mount lazily, and a session's
-  // phase otherwise only arrives over that tab's WebSocket — so without this a
-  // background turn shows no tab-strip spinner and no title indicator.
-  useEffect(() => {
-    if (authState !== "authenticated" || !activeProject?.name) return;
-    api
-      .get<{ sessionId: string }[]>(`${projectUrl(activeProject.name)}/chat/sessions/running`)
-      .then((running) => {
-        const { setStreaming } = useStreamingStore.getState();
-        for (const s of running) setStreaming(s.sessionId, true);
-      })
-      .catch(() => {}); // never block boot on the indicator
   }, [authState, activeProject?.name]);
 
   // Keep-alive: mount workspace on first visit, never unmount

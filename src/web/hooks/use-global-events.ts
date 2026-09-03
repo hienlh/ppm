@@ -3,6 +3,7 @@ import { WsClient } from "@/lib/ws-client";
 import { getAuthToken } from "@/lib/api-client";
 import { useNotificationStore } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
+import { syncRunningSessions } from "@/lib/sync-running-sessions";
 
 /**
  * App-wide event bus client (`/ws/global`).
@@ -18,6 +19,9 @@ import { useStreamingStore } from "@/stores/streaming-store";
  * - `session:phase_changed` → keeps the tab-strip spinner and title indicator
  *   correct for sessions whose tab is not mounted, and — critically — clears them
  *   when the turn ends. Nothing else can: `useChat` only runs while mounted.
+ *   On every (re)connect the indicators are also reconciled against the server
+ *   registry, since a phase change that happened while this socket was down was
+ *   never delivered and would otherwise stick until a full reload.
  * - `jira:*` → re-dispatched as window events.
  *
  * Also tells the server which project to watch, so file watching follows the
@@ -53,6 +57,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         if (projectRef.current) {
           client.send(JSON.stringify({ type: "watch", projectName: projectRef.current }));
         }
+        void syncRunningSessions(projectRef.current);
         return;
       }
 
@@ -73,8 +78,8 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
       }
 
       if (type === "session:phase_changed") {
-        const d = data as unknown as { sessionId: string; phase: string };
-        useStreamingStore.getState().setStreaming(d.sessionId, d.phase !== "idle");
+        const d = data as unknown as { sessionId: string; phase: string; projectName?: string };
+        useStreamingStore.getState().setStreaming(d.sessionId, d.phase !== "idle", d.projectName);
         return;
       }
 
@@ -97,5 +102,6 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
   useEffect(() => {
     if (!enabled || !projectName) return;
     clientRef.current?.send(JSON.stringify({ type: "watch", projectName }));
+    void syncRunningSessions(projectName);
   }, [enabled, projectName]);
 }

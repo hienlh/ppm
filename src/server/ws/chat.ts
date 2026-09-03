@@ -456,7 +456,14 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
             }
           }
         }
-        if (!firstEventReceived) {
+        // Promote connecting → thinking only while a turn is actually in flight.
+        // The provider subprocess outlives a turn and keeps emitting system events
+        // between turns (`commands_changed` when skills/commands change on disk,
+        // status pings, ...). Every turn leaves `idle` before its first event
+        // arrives, so an idle phase here means no turn is running — promoting it
+        // would strand the session non-idle forever: no `done` follows to reset it,
+        // and the FE spinner (tab strip + `/sessions/running` seed) never clears.
+        if (!firstEventReceived && entry.phase !== "idle") {
           if (heartbeat) clearInterval(heartbeat);
           setPhase(sessionId, "thinking");
         }
