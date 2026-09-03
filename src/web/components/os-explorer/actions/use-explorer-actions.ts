@@ -17,6 +17,7 @@ import { pasteInto, setClipboardPaths, transfer } from "./explorer-actions-clipb
 import { createEntry, deleteEntries, renameEntry, validateEntryName } from "./explorer-actions-mutate";
 import { useExplorerUploadActions } from "./use-explorer-upload-actions";
 import { useCollisionPrompt, type CollisionPromptState } from "./use-collision-prompt";
+import { usePermanentOverwritePrompt, type PermanentOverwritePromptState } from "./use-permanent-overwrite-prompt";
 import type { DroppedEntry } from "../upload/collect-dropped-entries";
 
 export interface ExplorerActions {
@@ -51,7 +52,7 @@ export interface ExplorerDialogState {
   collision: CollisionPromptState | null;
   pendingDelete: { paths: string[]; names: string[] } | null;
   /** "Replace" hit a host with no trash backend — confirm a permanent overwrite instead. */
-  permanentOverwrite: { name: string; resolve(proceed: boolean): void } | null;
+  permanentOverwrite: PermanentOverwritePromptState | null;
   properties: FsEntry | null;
   inlineError: string | null;
   closeDelete(): void;
@@ -69,18 +70,20 @@ export function useExplorerActions(
 ): { actions: ExplorerActions; dialogs: ExplorerDialogState } {
   const patch = useExplorerStore((s) => s.patch);
   const collisionPrompt = useCollisionPrompt();
+  const permanentOverwritePrompt = usePermanentOverwritePrompt();
   const [pendingDelete, setPendingDelete] = useState<ExplorerDialogState["pendingDelete"]>(null);
-  const [permanentOverwrite, setPermanentOverwrite] = useState<ExplorerDialogState["permanentOverwrite"]>(null);
   const [properties, setProperties] = useState<FsEntry | null>(null);
   const [inlineError, setInlineError] = useState<string | null>(null);
 
   const sliceRef = useRef(slice);
   sliceRef.current = slice;
 
-  // Read through a ref so `context` keeps a stable identity ([]-deps) even though
-  // `collisionPrompt`'s own functions change identity on every queued/resolved collision.
+  // Read through refs so `context` keeps a stable identity ([]-deps) even though both
+  // prompts' own functions change identity on every queued/resolved request.
   const collisionPromptRef = useRef(collisionPrompt);
   collisionPromptRef.current = collisionPrompt;
+  const permanentOverwritePromptRef = useRef(permanentOverwritePrompt);
+  permanentOverwritePromptRef.current = permanentOverwritePrompt;
 
   const context = useMemo(() => ({
     get sep() {
@@ -89,13 +92,7 @@ export function useExplorerActions(
     resolve: (request: Parameters<typeof collisionPrompt.resolve>[0]) => collisionPromptRef.current.resolve(request),
     startBatch: () => collisionPromptRef.current.startBatch(),
     endBatch: () => collisionPromptRef.current.endBatch(),
-    confirmPermanentOverwrite: (name: string) =>
-      new Promise<boolean>((resolve) => {
-        setPermanentOverwrite({
-          name,
-          resolve: (proceed) => { setPermanentOverwrite(null); resolve(proceed); },
-        });
-      }),
+    confirmPermanentOverwrite: (name: string) => permanentOverwritePromptRef.current.confirm(name),
   }), []);
 
   const currentDir = () => sliceRef.current?.path ?? "";
@@ -202,7 +199,7 @@ export function useExplorerActions(
     dialogs: {
       collision: collisionPrompt.state,
       pendingDelete,
-      permanentOverwrite,
+      permanentOverwrite: permanentOverwritePrompt.state,
       properties,
       inlineError,
       closeDelete: () => setPendingDelete(null),

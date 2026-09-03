@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { CollisionPromptQueue } from "../../../src/web/components/os-explorer/actions/collision-prompt-queue.ts";
+import { CollisionPromptQueue, SerialPromptQueue } from "../../../src/web/components/os-explorer/actions/collision-prompt-queue.ts";
 
 describe("CollisionPromptQueue", () => {
   it("serializes concurrent requests: only one shows at a time, in arrival order", () => {
@@ -85,6 +85,51 @@ describe("CollisionPromptQueue", () => {
   it("choose() on an empty queue is a no-op", () => {
     const queue = new CollisionPromptQueue(() => {});
     expect(() => queue.choose("skip", false)).not.toThrow();
+    expect(queue.snapshot()).toBeNull();
+  });
+});
+
+describe("SerialPromptQueue", () => {
+  // Named after the permanent-overwrite ("no Trash on this host") confirm this backs —
+  // `usePermanentOverwritePrompt` is a thin React wrapper around exactly this class, so
+  // proving the serialization here covers that prompt without needing a React renderer.
+  it("two concurrent confirms are answered sequentially, never overwriting each other", () => {
+    const queue = new SerialPromptQueue<string, boolean>(() => {});
+    const results: string[] = [];
+
+    // Two "no Trash" confirms raised back-to-back, e.g. two Replace jobs hitting NO_TRASH at
+    // once — before this shared queue, both used the same single `useState` slot and the
+    // second call silently replaced the first's still-unanswered prompt.
+    const first = queue.request("alpha.txt").then((proceed) => results.push(`alpha:${proceed}`));
+    const second = queue.request("beta.txt").then((proceed) => results.push(`beta:${proceed}`));
+
+    expect(queue.snapshot()?.request).toBe("alpha.txt");
+    expect(queue.snapshot()?.remaining).toBe(1);
+
+    queue.choose(true);
+    expect(queue.snapshot()?.request).toBe("beta.txt");
+    expect(queue.snapshot()?.remaining).toBe(0);
+
+    queue.choose(false);
+    expect(queue.snapshot()).toBeNull();
+
+    return Promise.all([first, second]).then(() => {
+      expect(results).toEqual(["alpha:true", "beta:false"]);
+    });
+  });
+
+  it("drain() answers every queued request (including the head) with one choice", async () => {
+    const queue = new SerialPromptQueue<string, boolean>(() => {});
+    const promises = ["a", "b", "c"].map((name) => queue.request(name));
+    queue.drain(true);
+    expect(await Promise.all(promises)).toEqual([true, true, true]);
+    expect(queue.snapshot()).toBeNull();
+  });
+
+  it("choose() and drain() on an empty queue are no-ops", () => {
+    const queue = new SerialPromptQueue<string, boolean>(() => {});
+    expect(() => queue.choose(true)).not.toThrow();
+    expect(() => queue.drain(true)).not.toThrow();
     expect(queue.snapshot()).toBeNull();
   });
 });

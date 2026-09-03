@@ -8,11 +8,11 @@
  * only the promise wiring is local — so a collision looks identical wherever the drop landed.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { TransferContext } from "../actions/explorer-actions-clipboard";
 import { uploadEntries } from "../actions/explorer-actions-upload";
 import { useCollisionPrompt } from "../actions/use-collision-prompt";
-import type { ExplorerDialogState } from "../actions/use-explorer-actions";
+import { usePermanentOverwritePrompt } from "../actions/use-permanent-overwrite-prompt";
 import { ExplorerDialogs } from "../explorer-dialogs";
 import type { DroppedEntry } from "../upload/collect-dropped-entries";
 import { transferRunner, type DropRunner } from "./entry-drop-executor";
@@ -27,7 +27,7 @@ export interface DropTransfer {
 
 export function useDropTransfer(sep: string, platform?: string): DropTransfer {
   const collisionPrompt = useCollisionPrompt();
-  const [permanentOverwrite, setPermanentOverwrite] = useState<ExplorerDialogState["permanentOverwrite"]>(null);
+  const permanentOverwritePrompt = usePermanentOverwritePrompt();
 
   // The separator can change under a long-lived surface (the tree follows the active
   // project), so the context reads it live rather than closing over the first value.
@@ -35,10 +35,12 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
   const sepRef = useRef(sep);
   useEffect(() => { sepRef.current = sep; }, [sep]);
 
-  // Read through a ref so `context`'s identity stays stable across renders — see the same
+  // Read through refs so `context`'s identity stays stable across renders — see the same
   // pattern in `use-explorer-actions.ts`.
   const collisionPromptRef = useRef(collisionPrompt);
   collisionPromptRef.current = collisionPrompt;
+  const permanentOverwritePromptRef = useRef(permanentOverwritePrompt);
+  permanentOverwritePromptRef.current = permanentOverwritePrompt;
 
   const context = useMemo<TransferContext>(
     () => ({
@@ -48,16 +50,7 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
       resolve: (request) => collisionPromptRef.current.resolve(request),
       startBatch: () => collisionPromptRef.current.startBatch(),
       endBatch: () => collisionPromptRef.current.endBatch(),
-      confirmPermanentOverwrite: (name: string) =>
-        new Promise<boolean>((resolve) => {
-          setPermanentOverwrite({
-            name,
-            resolve: (proceed) => {
-              setPermanentOverwrite(null);
-              resolve(proceed);
-            },
-          });
-        }),
+      confirmPermanentOverwrite: (name: string) => permanentOverwritePromptRef.current.confirm(name),
     }),
     [],
   );
@@ -72,7 +65,7 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
     <ExplorerDialogs
       dialogs={{
         collision: collisionPrompt.state,
-        permanentOverwrite,
+        permanentOverwrite: permanentOverwritePrompt.state,
         pendingDelete: null,
         properties: null,
         inlineError: null,
