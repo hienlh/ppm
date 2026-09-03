@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.57] - 2026-09-03
+
+### Fixed
+- **Agent cards keep their tool calls after leaving and reopening a session** — newer AI engines store each agent's activity in a separate transcript file, so reopening showed empty Agent cards and stray agent tool calls in the main chat; the separate transcripts are now merged back into their cards, and an agent event that can't find its card is no longer shown loose.
+
 ## [0.17.56] - 2026-09-03
 
 ### Fixed
