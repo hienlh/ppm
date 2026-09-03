@@ -107,9 +107,22 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `POST   /api/fs/download/token`
 - `GET    /api/fs/raw`
 - `GET    /api/fs/docx-html`
-- `DELETE /api/fs/rmdir`
 - `POST   /api/fs/mkdir`
 - `PUT    /api/fs/write`
+- `GET    /api/fs/stat`
+- `POST   /api/fs/copy`
+- `POST   /api/fs/move`
+- `POST   /api/fs/rename`
+- `POST   /api/fs/touch`
+- `DELETE /api/fs/delete`
+- `DELETE /api/fs/rmdir`
+
+## /api/fs/sqlite
+
+- `GET    /api/fs/sqlite/tables`
+- `GET    /api/fs/sqlite/schema`
+- `GET    /api/fs/sqlite/data`
+- `POST   /api/fs/sqlite/query`
 
 ## /api/group-chat
 
@@ -249,6 +262,7 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `GET    /api/system/resources/history`
 - `POST   /api/system/resources/kill/:pid`
 - `GET    /api/system/resources/stream`
+- `GET    /api/system/host`
 
 ## /api/teams
 
@@ -288,4 +302,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.17.57 -->
+<!-- Generated from src/server/routes/ for PPM v0.18.0 -->
