@@ -4,6 +4,7 @@ import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
 import { randomId } from "@/lib/utils";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
+import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatDetail } from "@/lib/send-to-chat";
 import { isImageFile } from "@/lib/file-support";
 import { AttachmentChips } from "./attachment-chips";
 import { stepHistory } from "./message-history-recall";
@@ -32,6 +33,8 @@ export interface ChatAttachment {
 export type MessagePriority = 'now' | 'next' | 'later';
 
 interface MessageInputProps {
+  /** Tab id of the owning chat tab — addresses "Send to Chat" at this tab only. */
+  tabId?: string;
   onSend: (content: string, attachments: ChatAttachment[], priority?: MessagePriority) => void;
   isStreaming?: boolean;
   onCancel?: () => void;
@@ -86,6 +89,7 @@ interface MessageInputProps {
 }
 
 export const MessageInput = memo(function MessageInput({
+  tabId,
   onSend,
   isStreaming,
   onCancel,
@@ -231,12 +235,15 @@ export const MessageInput = memo(function MessageInput({
     return () => window.removeEventListener("toggle-voice-input", handler);
   }, [voice.supported, handleVoiceToggle, getVisibleTextarea]);
 
-  // Listen for "Send to Chat" from terminal or other tabs — add as attachment chip
+  // "Send to Chat" (terminal output, other tabs) — add as an attachment chip.
+  // Every chat tab stays mounted, so the event is addressed: only the tab it names
+  // may consume it, or the same output lands in every open chat at once.
   useEffect(() => {
     const handler = (e: Event) => {
-      const { text, label } = (e as CustomEvent).detail ?? {};
+      const { text, label, targetTabId } = ((e as CustomEvent).detail ?? {}) as SendToChatDetail;
       if (!text) return;
-      window.dispatchEvent(new Event("ppm:send-to-chat:ack"));
+      if (targetTabId ? targetTabId !== tabId : !ownsGlobalShortcut(getVisibleTextarea())) return;
+      window.dispatchEvent(new Event(SEND_TO_CHAT_ACK_EVENT));
       const att: ChatAttachment = {
         id: randomId(),
         name: label ?? "Terminal output",
@@ -248,9 +255,9 @@ export const MessageInput = memo(function MessageInput({
       setAttachments((prev) => [...prev, att]);
       getVisibleTextarea()?.focus();
     };
-    window.addEventListener("ppm:send-to-chat", handler);
-    return () => window.removeEventListener("ppm:send-to-chat", handler);
-  }, [getVisibleTextarea]);
+    window.addEventListener(SEND_TO_CHAT_EVENT, handler);
+    return () => window.removeEventListener(SEND_TO_CHAT_EVENT, handler);
+  }, [getVisibleTextarea, tabId]);
 
   // Apply initialValue when it changes (e.g. "Ask AI" from command palette).
   // A restored draft can land after the input is already on screen, so never

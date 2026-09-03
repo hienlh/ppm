@@ -16,3 +16,7 @@ test-claude-oauth*.mjs
 test-verify-oat.mjs
 plans/
 marketing/
+
+# Throwaway investigation probes and runtime rollout state
+spike-*
+.rollout-mark

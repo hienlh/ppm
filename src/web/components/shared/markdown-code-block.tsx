@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import { useMdContext, FILE_EXT_RE, GLOB_CHARS_RE } from "./markdown-context";
-import { useTabStore } from "@/stores/tab-store";
 import { highlightToHtml, highlightSync, getActiveShikiTheme } from "@/theme/adapters/shiki-adapter";
 import { copyToClipboard } from "@/lib/clipboard";
+import { runInTerminal } from "@/lib/run-in-terminal";
 
 /**
  * Shiki-highlighted HTML for a code block. Returns null while streaming or
@@ -64,7 +64,6 @@ function hastToText(node: any): string {
 /** Pre — code block wrapper with mermaid detection, Shiki highlighting, action buttons */
 export function MdPre({ children, node, ...rest }: any) {
   const { codeActions, projectName, isStreaming } = useMdContext();
-  const openTab = useTabStore((s) => s.openTab);
 
   const codeNode = node?.children?.[0];
   const langClass = (codeNode?.properties?.className ?? []).find((c: string) => c.startsWith("language-"));
@@ -92,12 +91,9 @@ export function MdPre({ children, node, ...rest }: any) {
           <ActionBtn title="Copy" icon={<CopyIcon />} activeIcon={<CheckIcon />} onClick={() => void copyToClipboard(text)} />
           {isBash && projectName && (
             <ActionBtn
-              title="Run in terminal"
+              title="Send to terminal"
               icon={<PlayIcon />}
-              onClick={() => {
-                void copyToClipboard(text.replace(/^\$\s*/gm, ""));
-                openTab({ type: "terminal", title: "Terminal", metadata: { projectName }, projectId: projectName, closable: true });
-              }}
+              onClick={() => runInTerminal(text, projectName)}
             />
           )}
         </div>

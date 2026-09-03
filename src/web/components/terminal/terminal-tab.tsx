@@ -1,13 +1,14 @@
 import { useRef, useEffect, useState, useCallback, memo } from "react";
 import { useTerminal } from "@/hooks/use-terminal";
 import { useTerminalTouchSelection } from "@/hooks/use-terminal-touch-selection";
+import { useTerminalCommandQueue } from "@/hooks/use-terminal-command-queue";
+import { sendToChat } from "@/lib/send-to-chat";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { RotateCcw, MessageSquare } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { toast } from "sonner";
 
-import { usePanelStore } from "@/stores/panel-store";
 import { TerminalMobileToolbar } from "./terminal-mobile-toolbar";
 import { TerminalLinksSheet } from "./terminal-links-sheet";
 
@@ -22,7 +23,7 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
   const cwd = metadata?.cwd as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, getBufferUrls, restart } = useTerminal({ sessionId, projectName, cwd, containerRef, tabId });
+  const { connected, reconnecting, exited, shellReady, sendData, getSelection, getLastCommandOutput, getLastCommand, getBufferUrls, restart } = useTerminal({ sessionId, projectName, cwd, containerRef, tabId });
   const [ctrlMode, setCtrlMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
@@ -35,6 +36,10 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
     ) as HTMLTextAreaElement | null;
     termElement?.focus();
   }, []);
+
+  // "Run in terminal" (chat code blocks) types its command in here, waiting for
+  // the shell to finish booting first.
+  useTerminalCommandQueue({ tabId, metadata, shellReady, sendData, focusTerminal, containerRef });
 
   // Raising the soft keyboard needs focus() to run inside a gesture the browser
   // recognises, and xterm's own mousedown handling does not reliably qualify.
@@ -101,33 +106,21 @@ export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: Termin
     }
   }, [sendData, focusTerminal]);
 
+  // Output without the command that produced it reads as an orphan in chat, so the
+  // prompt line goes along with it. A selection is sent verbatim — the user already
+  // picked exactly what they meant.
   const handleSendToChat = useCallback(() => {
     const selection = getSelection();
-    const text = selection || getLastCommandOutput();
-    if (!text.trim()) return;
-    const codeBlock = "```bash\n" + text + "\n```";
+    const body = selection || getLastCommandOutput();
+    if (!body.trim()) return;
+    const command = selection ? "" : getLastCommand();
+    const transcript = command ? `${command}\n${body}` : body;
+    const codeBlock = "```bash\n" + transcript + "\n```";
     const label = selection ? "Terminal selection" : "Terminal output";
 
-    // Try to inject into an already-open chat tab as attachment chip
-    let handled = false;
-    const handler = () => { handled = true; };
-    window.addEventListener("ppm:send-to-chat:ack", handler, { once: true });
-    window.dispatchEvent(new CustomEvent("ppm:send-to-chat", { detail: { text: codeBlock, label, projectName } }));
-    window.removeEventListener("ppm:send-to-chat:ack", handler);
-
-    if (handled) {
-      toast.success("Sent to chat", { duration: 1500 });
-    } else {
-      // No chat tab mounted — open a new one with the content as initialValue
-      usePanelStore.getState().openTab({
-        type: "chat",
-        title: "Chat",
-        projectId: null,
-        metadata: { projectName, pendingMessage: codeBlock },
-        closable: true,
-      });
-    }
-  }, [getSelection, getLastCommandOutput, projectName]);
+    sendToChat({ text: codeBlock, label, projectName });
+    toast.success("Sent to chat", { duration: 1500 });
+  }, [getSelection, getLastCommandOutput, getLastCommand, projectName]);
 
   const isMobile = typeof window !== "undefined" && "ontouchstart" in window;
 

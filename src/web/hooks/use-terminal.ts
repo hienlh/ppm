@@ -33,10 +33,14 @@ interface UseTerminalReturn {
   connected: boolean;
   reconnecting: boolean;
   exited: boolean;
+  /** True once the shell has printed its prompt and stopped writing — safe to inject input. */
+  shellReady: boolean;
   sendData: (data: string) => void;
   getSelection: () => string;
   /** Read buffer from last command start to current cursor (for "Send to Chat"). */
   getLastCommandOutput: () => string;
+  /** The prompt line the last command was typed on, empty until one is entered. */
+  getLastCommand: () => string;
   /** URLs present in the scrollback, most recent first. */
   getBufferUrls: () => string[];
   restart: () => void;
@@ -49,6 +53,11 @@ const URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`]+/g;
 const URL_SCAN_MAX_ROWS = 5000;
 /** Quiet period before refitting to a new container size, in ms. */
 const RESIZE_SETTLE_MS = 100;
+
+/** Quiet period after the last PTY output that means the prompt is printed and the shell is idle. */
+const SHELL_READY_QUIET_MS = 250;
+/** Upper bound on waiting for that prompt — a shell that prints nothing must not block input forever. */
+const SHELL_READY_MAX_MS = 3000;
 
 const RESIZE_PREFIX = "\x01RESIZE:";
 const PING_MSG = "\x01PING";
@@ -75,6 +84,10 @@ export function useTerminal(
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [exited, setExited] = useState(false);
+  /** A brand-new shell needs to finish booting before it accepts injected input. */
+  const [shellReady, setShellReady] = useState(false);
+  const readyQuietTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const readyMaxTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Restore persisted session ID from localStorage (survives page reload)
   const storageKey = options.tabId ? `ppm:terminal-session:${options.tabId}` : null;
   const initialSessionId = (() => {
@@ -86,12 +99,21 @@ export function useTerminal(
   const actualSessionId = useRef(initialSessionId);
   /** Absolute row where last command output starts (set when user presses Enter) */
   const commandStartRow = useRef(0);
+  /** Absolute row of the prompt line that command was typed on, -1 before any Enter.
+   *  Output alone reads as an orphan in chat — the command is what gives it meaning. */
+  const commandRow = useRef(-1);
 
   const sendData = useCallback((data: string) => {
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(data);
     }
+  }, []);
+
+  /** Debounce PTY output: the shell counts as booted once it goes quiet. */
+  const noteOutput = useCallback(() => {
+    if (readyQuietTimer.current) clearTimeout(readyQuietTimer.current);
+    readyQuietTimer.current = setTimeout(() => setShellReady(true), SHELL_READY_QUIET_MS);
   }, []);
 
   const getSelection = useCallback(() => {
@@ -112,6 +134,12 @@ export function useTerminal(
     // Trim trailing empty lines
     while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
     return lines.join("\n");
+  }, []);
+
+  const getLastCommand = useCallback(() => {
+    const term = termRef.current;
+    if (!term || commandRow.current < 0) return "";
+    return term.buffer.active.getLine(commandRow.current)?.translateToString(true).trimEnd() ?? "";
   }, []);
 
   /**
@@ -175,6 +203,7 @@ export function useTerminal(
     if (storageKey) { try { localStorage.removeItem(storageKey); } catch { /* */ } }
     reconnectAttempts.current = 0;
     setExited(false);
+    setShellReady(false);
     setConnected(false);
     setReconnecting(false);
     // connectWs will be called after this via setTimeout to allow state to settle
@@ -224,6 +253,11 @@ export function useTerminal(
       setConnected(true);
       setReconnecting(false);
       reconnectAttempts.current = 0;
+      // A re-attach lands on a shell that booted long ago; only a fresh session
+      // has to wait for a prompt.
+      if (actualSessionId.current === "new") setShellReady(false);
+      if (readyMaxTimer.current) clearTimeout(readyMaxTimer.current);
+      readyMaxTimer.current = setTimeout(() => setShellReady(true), SHELL_READY_MAX_MS);
       sendResize();
     };
 
@@ -259,6 +293,7 @@ export function useTerminal(
             // Not JSON, write as terminal output
           }
         }
+        noteOutput();
         term.write(event.data);
       }
     };
@@ -351,7 +386,8 @@ export function useTerminal(
       // When user presses Enter, mark next row as command output start
       if (data.includes("\r") || data.includes("\n")) {
         const buf = term.buffer.active;
-        commandStartRow.current = buf.baseY + buf.cursorY + 1;
+        commandRow.current = buf.baseY + buf.cursorY;
+        commandStartRow.current = commandRow.current + 1;
       }
       const ws = wsRef.current;
       if (ws?.readyState === WebSocket.OPEN) {
@@ -403,6 +439,8 @@ export function useTerminal(
       clearInterval(heartbeatInterval);
       document.removeEventListener("visibilitychange", onVisibility);
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
+      if (readyQuietTimer.current) clearTimeout(readyQuietTimer.current);
+      if (readyMaxTimer.current) clearTimeout(readyMaxTimer.current);
       wsRef.current?.close();
       wsRef.current = null;
       term.dispose();
@@ -411,5 +449,5 @@ export function useTerminal(
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, getBufferUrls, restart };
+  return { connected, reconnecting, exited, shellReady, sendData, getSelection, getLastCommandOutput, getLastCommand, getBufferUrls, restart };
 }

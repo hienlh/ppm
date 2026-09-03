@@ -696,6 +696,7 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         {/* Input — gate on first draft load to avoid empty→filled flash, then keep mounted */}
         {(inputReady || !draftLoading) && (
           <MessageInput
+            tabId={tabId}
             onSend={handleInputSend}
             isStreaming={isStreaming}
             onCancel={cancelStreaming}
