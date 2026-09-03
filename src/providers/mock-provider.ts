@@ -156,6 +156,16 @@ export class MockProvider implements AIProvider {
 
     this.activeAborts.delete(sessionId);
     yield { type: "done", sessionId };
+
+    // Simulate out-of-turn SDK chatter: the real subprocess outlives a turn and
+    // keeps emitting system events after `done` (e.g. `commands_changed` when
+    // skills change on disk), with no further `done` behind them. Opt-in per
+    // message so existing mock-driven tests are unaffected.
+    if (lowerMsg.includes("trailing-system")) {
+      await sleep(100);
+      yield { type: "system" as any, subtype: "commands_changed" } as any;
+      await sleep(100);
+    }
   }
 
   /** Abort an active query for a session (for cancel support) */

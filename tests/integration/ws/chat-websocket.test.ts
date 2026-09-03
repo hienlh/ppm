@@ -194,6 +194,34 @@ describe("Chat WebSocket — New Protocol", () => {
     close();
   });
 
+  it("keeps phase idle when a system event arrives after the turn ended", async () => {
+    const session = await chatService.createSession("mock", {});
+    const { ws, messages, waitForType, close } = await connectWs(session.id);
+
+    await waitForType("session_state");
+    // Mock emits a stray `system/commands_changed` ~100ms after `done`, mirroring
+    // the live SDK subprocess that outlives the turn.
+    ws.send(JSON.stringify({ type: "message", content: "trailing-system" }));
+
+    await waitForType("done");
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Nothing after `done` may move the session out of idle: no `done` would
+    // follow to reset it, leaving the FE spinner stuck forever.
+    const doneIdx = messages.findIndex((m) => m.type === "done");
+    const afterDone = messages
+      .slice(doneIdx + 1)
+      .filter((m) => m.type === "phase_changed")
+      .map((m: any) => m.phase);
+    expect(afterDone.filter((p) => p !== "idle")).toEqual([]);
+
+    // Same state the tab-strip seed endpoint reads
+    const { listRunningSessions } = await import("../../../src/server/ws/chat.ts");
+    expect(listRunningSessions().some((s) => s.sessionId === session.id)).toBe(false);
+
+    close();
+  });
+
   // ─── text streaming ───
 
   it("streams text events for a message", async () => {
