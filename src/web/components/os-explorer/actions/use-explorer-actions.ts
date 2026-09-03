@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { FsEntry } from "@/lib/fs-api";
 import { useExplorerPinsStore } from "../explorer-pins-store";
 import { useExplorerStore, type ExplorerSlice } from "../explorer-store";
@@ -111,7 +112,13 @@ export function useExplorerActions(
     copy: (entries) => setClipboardPaths(entries.map((e) => e.path), "copy"),
     paste: (targetDir) => void pasteInto(targetDir ?? currentDir(), context),
     transferInto: async (paths, dstDir, op) => {
-      await transfer(paths, dstDir, op, context);
+      // Paste toasts its own result; a drag-move/copy silently completing otherwise gives no
+      // feedback at all for a long multi-file drag.
+      const result = await transfer(paths, dstDir, op, context);
+      if (result.succeeded > 0) {
+        const verb = op === "copy" ? "Copied" : "Moved";
+        toast.success(`${verb} ${result.succeeded} item${result.succeeded === 1 ? "" : "s"}`);
+      }
     },
 
     startRename: (entry) => {

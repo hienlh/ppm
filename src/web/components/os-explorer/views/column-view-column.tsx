@@ -12,6 +12,7 @@ import type { FsEntry } from "@/lib/fs-api";
 import { cn } from "@/lib/utils";
 import type { ExplorerActions } from "../actions/use-explorer-actions";
 import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { useDragAutoScroll } from "../dnd/use-drag-auto-scroll";
 import { usePathDropTarget } from "../dnd/use-path-drop-target";
 import { ColumnRow } from "./column-row";
 
@@ -47,6 +48,7 @@ export function ColumnViewColumn({
   hasClipboard, isPinned, actions, rowHeight, onSelect, onOpen, onFocus, fullWidth,
 }: ColumnViewColumnProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(scrollRef);
   // Mobile's single full-width column always wants the bigger touch target, regardless of
   // whatever fine/coarse-pointer density the caller threaded in for the desktop Miller strip.
   const effectiveRowHeight = fullWidth ? ROW_HEIGHT_MOBILE : rowHeight;

@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { decideDrop, type DropDecision } from "./drop-target-decision";
-import { getInFlightDrag } from "./entry-drag-state";
+import { clearInFlightDrag, getInFlightDrag } from "./entry-drag-state";
 import { decodeEntryDrag, ENTRY_DRAG_MIME, type DropOperation, type EntryDragPayload } from "./entry-drag-payload";
 
 const HIGHLIGHT_DELAY_MS = 120;
@@ -69,11 +69,19 @@ export function useEntryDropTarget(options: EntryDropTargetOptions): EntryDropTa
   const onDragEnter = useCallback(
     (event: DragEvent) => {
       if (disabled) return;
-      if (!decisionFor(event, targetDir, getInFlightDrag()).accept) return;
-      event.preventDefault();
-      event.stopPropagation();
+      // Count this row's own entry drags unconditionally, even when the current decision
+      // rejects (e.g. same-directory move) — a modifier held later (Ctrl → copy) can flip
+      // that same hover to an accept without a matching enter/leave pair, so counting must
+      // not depend on the decision or a later dragleave over the same subtree desyncs the
+      // balance and clears the highlight while the pointer is still over the target.
+      if (!event.dataTransfer.types.includes(ENTRY_DRAG_MIME)) return;
+      const decision = decisionFor(event, targetDir, getInFlightDrag());
+      if (decision.accept) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       depth.current++;
-      if (depth.current > 1) return;
+      if (depth.current > 1 || !decision.accept) return;
       timers.current.push(setTimeout(() => setIsOver(true), HIGHLIGHT_DELAY_MS));
       if (springLoad) timers.current.push(setTimeout(springLoad, SPRING_LOAD_MS));
     },
@@ -111,7 +119,10 @@ export function useEntryDropTarget(options: EntryDropTargetOptions): EntryDropTa
     (event: DragEvent) => {
       if (disabled) return;
       // The real payload is readable now; the module ref is only the hover-time stand-in.
+      // Clear it here too — `dragend` is not guaranteed to reach a source that unmounted
+      // mid-drag (e.g. a spring-load navigation), and a stale ref must never outlive a drop.
       const payload = decodeEntryDrag(event.dataTransfer.getData(ENTRY_DRAG_MIME)) ?? getInFlightDrag();
+      clearInFlightDrag();
       const decision = decisionFor(event, targetDir, payload);
       if (!decision.accept) {
         // A rejected PPM drag is still consumed here, so the browser does not fall back to

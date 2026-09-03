@@ -12,7 +12,7 @@ import { kindOfStats, type EntryKind } from "./fs-ops/fs-ops-stat.service.ts";
 // Re-exported so existing importers keep a single filesystem entry point.
 export { isAllowedPath, resolvePath };
 export {
-  readSystemFileSync as readSystemFile,
+  readSystemFileSync,
   writeSystemFile,
 } from "./fs-ops/fs-ops-read-write.service.ts";
 export { list } from "./fs-ops/fs-list-files.service.ts";

@@ -4,6 +4,7 @@
 import { useCallback, useState, useRef } from "react";
 import { useFileStore } from "@/stores/file-store";
 import { getAuthToken, projectUrl } from "@/lib/api-client";
+import { enterDragDepth, leaveDragDepth, resetDragDepth, type DragDepthCounter } from "@/components/os-explorer/dnd/drag-depth-counter";
 import { isExternalFileDrag } from "./use-tree-row-dnd";
 import { toast } from "sonner";
 
@@ -14,7 +15,8 @@ interface UseFileUploadDragOptions {
 
 export function useFileUploadDrag({ projectName, setExpanded }: UseFileUploadDragOptions) {
   const [isRootDragOver, setIsRootDragOver] = useState(false);
-  const rootDragCounter = useRef(0);
+  // `useRef<number>`'s `{ current }` shape already matches `DragDepthCounter` structurally.
+  const rootDragCounter: DragDepthCounter = useRef(0);
 
   const uploadFiles = useCallback(async (targetDir: string, files: FileList) => {
     if (!projectName) return;
@@ -51,14 +53,17 @@ export function useFileUploadDrag({ projectName, setExpanded }: UseFileUploadDra
   }, [projectName, setExpanded]);
 
   function handleRootDragEnter(e: React.DragEvent) {
-    if (!isExternalFileDrag(e)) return;
+    const accepted = isExternalFileDrag(e);
+    if (!accepted) return;
     e.preventDefault();
-    rootDragCounter.current++;
-    if (rootDragCounter.current === 1) setIsRootDragOver(true);
+    if (enterDragDepth(rootDragCounter, accepted)) setIsRootDragOver(true);
   }
-  function handleRootDragLeave() {
-    rootDragCounter.current--;
-    if (rootDragCounter.current === 0) setIsRootDragOver(false);
+  function handleRootDragLeave(e: React.DragEvent) {
+    // `leaveDragDepth` takes the *same* gate `handleRootDragEnter` used — an entry drag
+    // never incremented this counter, so letting every entry-drag leave decrement it
+    // unconditionally drove it negative, after which the OS-file-upload highlight could
+    // never reach a positive count again.
+    if (leaveDragDepth(rootDragCounter, isExternalFileDrag(e))) setIsRootDragOver(false);
   }
   function handleRootDragOver(e: React.DragEvent) {
     if (!isExternalFileDrag(e)) return;
@@ -68,7 +73,7 @@ export function useFileUploadDrag({ projectName, setExpanded }: UseFileUploadDra
   function handleRootDrop(e: React.DragEvent) {
     if (!isExternalFileDrag(e)) return;
     e.preventDefault();
-    rootDragCounter.current = 0;
+    resetDragDepth(rootDragCounter);
     setIsRootDragOver(false);
     if (e.dataTransfer.files.length > 0) uploadFiles("", e.dataTransfer.files);
   }
