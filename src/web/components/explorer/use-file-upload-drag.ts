@@ -4,7 +4,7 @@
 import { useCallback, useState, useRef } from "react";
 import { useFileStore } from "@/stores/file-store";
 import { getAuthToken, projectUrl } from "@/lib/api-client";
-import { isExternalFileDrag } from "./tree-node";
+import { isExternalFileDrag } from "./use-tree-row-dnd";
 import { toast } from "sonner";
 
 interface UseFileUploadDragOptions {

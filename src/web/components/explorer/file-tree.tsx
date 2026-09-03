@@ -43,6 +43,8 @@ import { api, projectUrl } from "@/lib/api-client";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { fsChanged, onFsChanged } from "@/components/os-explorer/explorer-store";
 import { dirnameOf } from "@/components/os-explorer/format-file-meta";
+import { useDropTransfer } from "@/components/os-explorer/dnd/use-drop-transfer";
+import { usePathDropTarget } from "@/components/os-explorer/dnd/use-path-drop-target";
 import { useFileUploadDrag } from "./use-file-upload-drag";
 import { useTreeKeyboardNav } from "./use-tree-keyboard-nav";
 
@@ -283,6 +285,17 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     handleRootDragEnter, handleRootDragLeave, handleRootDragOver, handleRootDrop,
   } = useFileUploadDrag({ projectName: activeProject?.name, setExpanded });
 
+  // Cross-surface entry drops (from an explorer window, or another project's tree) onto the
+  // tree's own empty background — the project root. Uses the same collision-prompt transfer
+  // as a paste; separate from `useFileUploadDrag` above, which only ever reacts to OS files.
+  const treeRootSep = activeProject?.path.includes("\\") ? "\\" : "/";
+  const { run: transferRun, prompts: transferPrompts } = useDropTransfer(treeRootSep);
+  const backgroundDrop = usePathDropTarget({
+    targetDir: activeProject?.path ?? null,
+    run: transferRun,
+    disabled: !activeProject,
+  });
+
   // Virtualized flat rows: only visible rows are mounted (large dirs stay cheap)
   const rows = useMemo(
     () => flattenVisibleTree(tree, expandedPaths, inlineAction),
@@ -476,13 +489,16 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
   return (
     <div
       ref={treeContainerRef}
-      className={cn("flex flex-col h-full outline-none", isRootDragOver && "bg-primary/5")}
+      className={cn("flex flex-col h-full outline-none", (isRootDragOver || backgroundDrop.isOver) && "bg-primary/5")}
       tabIndex={0}
       onKeyDown={(e) => { handleClipboardKeyDown(e); handleTreeKeyDown(e); }}
-      onDragEnter={handleRootDragEnter}
-      onDragLeave={handleRootDragLeave}
-      onDragOver={handleRootDragOver}
-      onDrop={handleRootDrop}
+      // Two independent drags share this background: OS files (handleRoot*, unchanged) and
+      // a cross-surface entry drag (backgroundDrop, gated on its own MIME) — each ignores
+      // the other's kind, so calling both in sequence is safe.
+      onDragEnter={(e) => { handleRootDragEnter(e); backgroundDrop.handlers.onDragEnter(e); }}
+      onDragLeave={(e) => { handleRootDragLeave(); backgroundDrop.handlers.onDragLeave(e); }}
+      onDragOver={(e) => { handleRootDragOver(e); backgroundDrop.handlers.onDragOver(e); }}
+      onDrop={(e) => { handleRootDrop(e); backgroundDrop.handlers.onDrop(e); }}
     >
       <SidebarHeader icon={FolderOpen} title="Explorer">
         <button onClick={() => handleAction("new-file", ROOT_NODE)} title="New File" className={toolbarBtnClass}>
@@ -540,6 +556,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
                         onAction={handleAction}
                         onFileDrop={uploadFiles}
                         onFileOpen={onFileOpen}
+                        transferRun={transferRun}
                       />
                     )}
                   </div>
@@ -579,6 +596,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
           }}
         />
       )}
+      {transferPrompts}
     </div>
   );
 }
