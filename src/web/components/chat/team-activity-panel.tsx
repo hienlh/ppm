@@ -11,7 +11,7 @@ import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
-import { useWindowStore } from "@/components/floating-window/window-store";
+import { useOpenTeamMember } from "./use-open-team-member";
 import { usePrefersCoarsePointer } from "@/components/os-explorer/use-coarse-long-press";
 import { TeamMemberList } from "./team-member-list";
 import { TeamMessageList } from "./team-message-list";
@@ -35,7 +35,7 @@ function teamLabel(name: string, sessionId?: string | null): string {
 export function TeamActivityPanel({ teamNames, messages, sessionId, projectName }: TeamActivityPanelProps) {
   const [selectedTeam, setSelectedTeam] = useState(teamNames[0] ?? "");
   const [tab, setTab] = useState<TeamTab>("members");
-  const openWindow = useWindowStore((s) => s.open);
+  const openMember = useOpenTeamMember();
   // Touch needs the 44px minimum even at desktop width; a mouse does not.
   const coarse = usePrefersCoarsePointer();
 
@@ -51,9 +51,9 @@ export function TeamActivityPanel({ teamNames, messages, sessionId, projectName 
 
   const openMemberSession = useCallback(
     (memberName: string) => {
-      openWindow("team-member", { teamName: selectedTeam, memberName, projectName });
+      openMember({ teamName: selectedTeam, memberName, projectName });
     },
-    [openWindow, selectedTeam, projectName],
+    [openMember, selectedTeam, projectName],
   );
 
   /**

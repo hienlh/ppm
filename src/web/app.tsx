@@ -44,6 +44,9 @@ import { cn } from "@/lib/utils";
 const MobileExplorerSheet = lazy(() =>
   import("@/components/os-explorer/mobile/mobile-explorer-sheet").then((m) => ({ default: m.MobileExplorerSheet })),
 );
+const TeamMemberSheet = lazy(() =>
+  import("@/components/chat/team-member-sheet").then((m) => ({ default: m.TeamMemberSheet })),
+);
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
@@ -346,6 +349,11 @@ export function App() {
         {/* Mobile full-screen file explorer sheet — lazy + self-gated, loads nothing until opened */}
         <Suspense fallback={null}>
           <MobileExplorerSheet />
+        </Suspense>
+
+        {/* Mobile stand-in for the team-member window, which WindowLayer never renders below md */}
+        <Suspense fallback={null}>
+          <TeamMemberSheet />
         </Suspense>
 
         {/* Global bug report popup */}

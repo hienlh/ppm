@@ -12,6 +12,8 @@ import { openBugReportPopup } from "@/lib/report-bug";
 import { getAISettings } from "@/lib/api-settings";
 import { MessageList } from "./message-list";
 import { BackgroundCommandBar } from "./background-command-bar";
+import { TeamWorkingBar } from "./team-working-bar";
+import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";
 import { MessageInput, type ChatAttachment, type MessagePriority } from "./message-input";
 import { SlashCommandPicker, type SlashItem } from "./slash-command-picker";
 import { FilePicker } from "./file-picker";
@@ -130,6 +132,12 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
     backgroundShells,
     killBackgroundShell,
   } = useChat(sessionId, providerId, projectName);
+
+  // Teammates keep working long after their spawn card scrolled away — a resume
+  // arrives by SendMessage and writes no card at all. Poll the roster whenever this
+  // session has a team so the working bar below the conversation stays truthful.
+  const primaryTeam = teamActivity?.teamNames?.[0] ?? "";
+  const { members: teamMembers } = useTeamActivityFeed(primaryTeam, !!primaryTeam);
 
   // Flush pending message once WS connects (replaces unreliable setTimeout)
   useEffect(() => {
@@ -626,6 +634,9 @@ export function ChatTab({ metadata, tabId }: ChatTabProps) {
         onClearErrors={clearErrors}
         bashPartialOutput={bashPartialOutput}
       />
+
+      {/* Teammates still working — pinned here so it is the last thing under the conversation */}
+      <TeamWorkingBar teamName={primaryTeam} members={teamMembers} projectName={projectName} />
 
       {/* Bottom toolbar */}
       <div className="border-t border-border bg-panel shrink-0">
