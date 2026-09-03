@@ -33,6 +33,13 @@ export interface TransferContext {
    * delete would contradict what the user just agreed to. Returning false skips the item.
    */
   confirmPermanentOverwrite(name: string): Promise<boolean>;
+  /**
+   * Brackets one batch of parallel `resolve()` calls sharing this context's collision prompt
+   * (one paste, one drag, one upload), so "Apply to all" scopes to just that batch. Optional —
+   * a caller with no concurrent collisions (or a test building a bare context) can omit them.
+   */
+  startBatch?(): void;
+  endBatch?(): void;
 }
 
 export interface TransferResult {
@@ -56,6 +63,28 @@ export async function transfer(
   const result: TransferResult = { succeeded: 0, skipped: 0, failed: 0 };
   const touched = new Set<string>([dstDir]);
 
+  // `transfer()` itself resolves collisions one source at a time, but two *calls* to it can
+  // overlap (a paste fired while a drag-drop transfer is still resolving) sharing the same
+  // dialog — bracket this call so "Apply to all" only ever covers its own sources.
+  ctx.startBatch?.();
+  try {
+    await transferSources(sources, dstDir, op, ctx, result, touched);
+  } finally {
+    ctx.endBatch?.();
+  }
+
+  fsChanged(...touched);
+  return result;
+}
+
+async function transferSources(
+  sources: string[],
+  dstDir: string,
+  op: "copy" | "move",
+  ctx: TransferContext,
+  result: TransferResult,
+  touched: Set<string>,
+): Promise<void> {
   for (const source of sources) {
     const name = source.split(/[/\\]/).filter(Boolean).pop() ?? source;
     const sourceDir = dirnameOf(source, ctx.sep);
@@ -155,9 +184,6 @@ export async function transfer(
       toast.error(`${name} was removed but the replacement could not be written`, { description: errorDescription(e) });
     }
   }
-
-  fsChanged(...touched);
-  return result;
 }
 
 /** Put absolute paths on the shared clipboard. `origin` lets the tree keep its own routes. */

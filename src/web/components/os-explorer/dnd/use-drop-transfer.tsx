@@ -9,8 +9,9 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { CollisionChoice, CollisionRequest, TransferContext } from "../actions/explorer-actions-clipboard";
+import type { TransferContext } from "../actions/explorer-actions-clipboard";
 import { uploadEntries } from "../actions/explorer-actions-upload";
+import { useCollisionPrompt } from "../actions/use-collision-prompt";
 import type { ExplorerDialogState } from "../actions/use-explorer-actions";
 import { ExplorerDialogs } from "../explorer-dialogs";
 import type { DroppedEntry } from "../upload/collect-dropped-entries";
@@ -25,7 +26,7 @@ export interface DropTransfer {
 }
 
 export function useDropTransfer(sep: string, platform?: string): DropTransfer {
-  const [collision, setCollision] = useState<ExplorerDialogState["collision"]>(null);
+  const collisionPrompt = useCollisionPrompt();
   const [permanentOverwrite, setPermanentOverwrite] = useState<ExplorerDialogState["permanentOverwrite"]>(null);
 
   // The separator can change under a long-lived surface (the tree follows the active
@@ -34,21 +35,19 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
   const sepRef = useRef(sep);
   useEffect(() => { sepRef.current = sep; }, [sep]);
 
+  // Read through a ref so `context`'s identity stays stable across renders — see the same
+  // pattern in `use-explorer-actions.ts`.
+  const collisionPromptRef = useRef(collisionPrompt);
+  collisionPromptRef.current = collisionPrompt;
+
   const context = useMemo<TransferContext>(
     () => ({
       get sep() {
         return sepRef.current;
       },
-      resolve: (request: CollisionRequest) =>
-        new Promise<CollisionChoice>((resolve) => {
-          setCollision({
-            ...request,
-            resolve: (choice) => {
-              setCollision(null);
-              resolve(choice);
-            },
-          });
-        }),
+      resolve: (request) => collisionPromptRef.current.resolve(request),
+      startBatch: () => collisionPromptRef.current.startBatch(),
+      endBatch: () => collisionPromptRef.current.endBatch(),
       confirmPermanentOverwrite: (name: string) =>
         new Promise<boolean>((resolve) => {
           setPermanentOverwrite({
@@ -72,7 +71,7 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
   const prompts = (
     <ExplorerDialogs
       dialogs={{
-        collision,
+        collision: collisionPrompt.state,
         permanentOverwrite,
         pendingDelete: null,
         properties: null,

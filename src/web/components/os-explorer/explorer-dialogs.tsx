@@ -31,7 +31,7 @@ export function ExplorerDialogs({ dialogs, platform, sep }: ExplorerDialogsProps
           // Dismissing without choosing must not silently overwrite anything.
           onClose={() => collision.resolve("skip")}
           title="An item with that name already exists"
-          description={collision.name}
+          description={collision.remaining > 0 ? `${collision.name} — and ${collision.remaining} more` : collision.name}
           footer={
             <>
               <Button variant="outline" onClick={() => collision.resolve("skip")}>Skip</Button>
@@ -44,6 +44,17 @@ export function ExplorerDialogs({ dialogs, platform, sep }: ExplorerDialogsProps
             Replacing moves the existing item to the Trash first, so it stays recoverable.
             Keep both adds a numbered suffix.
           </p>
+          {collision.remaining > 0 && (
+            <label className="flex min-h-11 items-center gap-2 text-sm text-text-2">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={collision.applyToAll}
+                onChange={(e) => collision.setApplyToAll(e.target.checked)}
+              />
+              Apply to all {collision.remaining} remaining item{collision.remaining === 1 ? "" : "s"}
+            </label>
+          )}
         </ExplorerModalShell>
       )}
 

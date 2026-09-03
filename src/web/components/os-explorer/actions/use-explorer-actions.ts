@@ -1,10 +1,8 @@
 /**
- * Binds the action modules to one window's slice and owns the state of the three
- * interruptions they need: the collision prompt, the permanent-delete confirmation and
- * the properties dialog.
- *
- * Prompts are modelled as promises resolved by the dialog, so the action modules stay
- * plain async functions with no React inside them.
+ * Binds the action modules to one window's slice and owns the state of its interruptions:
+ * the collision prompt (`use-collision-prompt.ts`), the permanent-delete confirmation and the
+ * properties dialog. Prompts are modelled as promises resolved by the dialog, so the action
+ * modules stay plain async functions with no React inside them.
  */
 
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
@@ -15,12 +13,10 @@ import { useExplorerPinsStore } from "../explorer-pins-store";
 import { useExplorerStore, type ExplorerSlice } from "../explorer-store";
 import type { ExplorerNavigation } from "../use-explorer-navigation";
 import { copyTextLines, downloadEntries, openEntryInPpm, openPathInNewWindow } from "./explorer-actions-open";
-import {
-  pasteInto, setClipboardPaths, transfer,
-  type CollisionChoice, type CollisionRequest,
-} from "./explorer-actions-clipboard";
+import { pasteInto, setClipboardPaths, transfer } from "./explorer-actions-clipboard";
 import { createEntry, deleteEntries, renameEntry, validateEntryName } from "./explorer-actions-mutate";
 import { useExplorerUploadActions } from "./use-explorer-upload-actions";
+import { useCollisionPrompt, type CollisionPromptState } from "./use-collision-prompt";
 import type { DroppedEntry } from "../upload/collect-dropped-entries";
 
 export interface ExplorerActions {
@@ -52,7 +48,7 @@ export interface ExplorerActions {
 }
 
 export interface ExplorerDialogState {
-  collision: (CollisionRequest & { resolve(choice: CollisionChoice): void }) | null;
+  collision: CollisionPromptState | null;
   pendingDelete: { paths: string[]; names: string[] } | null;
   /** "Replace" hit a host with no trash backend — confirm a permanent overwrite instead. */
   permanentOverwrite: { name: string; resolve(proceed: boolean): void } | null;
@@ -72,7 +68,7 @@ export function useExplorerActions(
   platform: string | undefined,
 ): { actions: ExplorerActions; dialogs: ExplorerDialogState } {
   const patch = useExplorerStore((s) => s.patch);
-  const [collision, setCollision] = useState<ExplorerDialogState["collision"]>(null);
+  const collisionPrompt = useCollisionPrompt();
   const [pendingDelete, setPendingDelete] = useState<ExplorerDialogState["pendingDelete"]>(null);
   const [permanentOverwrite, setPermanentOverwrite] = useState<ExplorerDialogState["permanentOverwrite"]>(null);
   const [properties, setProperties] = useState<FsEntry | null>(null);
@@ -81,34 +77,26 @@ export function useExplorerActions(
   const sliceRef = useRef(slice);
   sliceRef.current = slice;
 
-  const context = useMemo(
-    () => ({
-      get sep() {
-        return sliceRef.current?.sep ?? "/";
-      },
-      resolve: (request: CollisionRequest) =>
-        new Promise<CollisionChoice>((resolve) => {
-          setCollision({
-            ...request,
-            resolve: (choice) => {
-              setCollision(null);
-              resolve(choice);
-            },
-          });
-        }),
-      confirmPermanentOverwrite: (name: string) =>
-        new Promise<boolean>((resolve) => {
-          setPermanentOverwrite({
-            name,
-            resolve: (proceed) => {
-              setPermanentOverwrite(null);
-              resolve(proceed);
-            },
-          });
-        }),
-    }),
-    [],
-  );
+  // Read through a ref so `context` keeps a stable identity ([]-deps) even though
+  // `collisionPrompt`'s own functions change identity on every queued/resolved collision.
+  const collisionPromptRef = useRef(collisionPrompt);
+  collisionPromptRef.current = collisionPrompt;
+
+  const context = useMemo(() => ({
+    get sep() {
+      return sliceRef.current?.sep ?? "/";
+    },
+    resolve: (request: Parameters<typeof collisionPrompt.resolve>[0]) => collisionPromptRef.current.resolve(request),
+    startBatch: () => collisionPromptRef.current.startBatch(),
+    endBatch: () => collisionPromptRef.current.endBatch(),
+    confirmPermanentOverwrite: (name: string) =>
+      new Promise<boolean>((resolve) => {
+        setPermanentOverwrite({
+          name,
+          resolve: (proceed) => { setPermanentOverwrite(null); resolve(proceed); },
+        });
+      }),
+  }), []);
 
   const currentDir = () => sliceRef.current?.path ?? "";
   const upload = useExplorerUploadActions(context, currentDir);
@@ -212,7 +200,7 @@ export function useExplorerActions(
   return {
     actions,
     dialogs: {
-      collision,
+      collision: collisionPrompt.state,
       pendingDelete,
       permanentOverwrite,
       properties,
