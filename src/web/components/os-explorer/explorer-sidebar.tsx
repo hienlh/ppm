@@ -11,6 +11,10 @@ import type { ComponentType } from "react";
 import { AlertTriangle, HardDrive, Pin, Usb, Network } from "lucide-react";
 import type { HostInfo, Drive } from "../../../types/system";
 import { cn } from "@/lib/utils";
+import { DROP_TARGET_CLASS } from "./dnd/drop-target-style";
+import type { DropRunner } from "./dnd/entry-drop-executor";
+import { usePathDropTarget } from "./dnd/use-path-drop-target";
+import { useDropTransfer } from "./dnd/use-drop-transfer";
 import { useExplorerPinsStore } from "./explorer-pins-store";
 import { FileTypeIcon } from "./icons/file-type-icon";
 import type { SkinVocab } from "./skins/skin-types";
@@ -37,12 +41,15 @@ interface PlaceProps {
   icon: PlaceIcon;
   onNavigate(path: string): void;
   onUnpin?(): void;
+  /** Every place is a directory, so a drop always has somewhere valid to land. */
+  run: DropRunner;
 }
 
-function Place({ label, path, active, icon: Icon, onNavigate, onUnpin }: PlaceProps) {
+function Place({ label, path, active, icon: Icon, onNavigate, onUnpin, run }: PlaceProps) {
   // Gated on real pointer coarseness, not a `md:` breakpoint — an iPad is ≥768px but has no
   // mouse, so a breakpoint-only rule was silently dropping the 44px minimum for it.
   const coarse = usePrefersCoarsePointer();
+  const drop = usePathDropTarget({ targetDir: path, run });
   return (
     <div className="group/place relative flex items-center">
       <button
@@ -54,7 +61,9 @@ function Place({ label, path, active, icon: Icon, onNavigate, onUnpin }: PlacePr
           coarse ? "min-h-[44px]" : "min-h-0",
           "can-hover:hover:bg-surface-elevated",
           active ? "bg-accent-wash text-text" : "text-text-2",
+          drop.isOver && DROP_TARGET_CLASS,
         )}
+        {...drop.handlers}
       >
         <Icon className="size-4 shrink-0 text-text-subtle" />
         <span className="truncate">{label}</span>
@@ -101,6 +110,9 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
   const pins = useExplorerPinsStore((s) => s.pins);
   const unpin = useExplorerPinsStore((s) => s.unpin);
   const isActive = (path: string) => path === currentPath;
+  // One drop-transfer context for the whole sidebar — every place lands through the same
+  // collision prompt rather than each row owning its own dialog state.
+  const { run, prompts } = useDropTransfer(host?.sep ?? "/", host?.platform);
 
   return (
     <aside
@@ -119,6 +131,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               active={isActive(pin.path)}
               onNavigate={onNavigate}
               onUnpin={() => unpin(pin.path)}
+              run={run}
             />
           ))}
         </Section>
@@ -134,6 +147,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               icon={FolderPlaceIcon}
               active={isActive(entry.path)}
               onNavigate={onNavigate}
+              run={run}
             />
           ))}
         </Section>
@@ -141,7 +155,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
 
       {host && (
         <Section title={vocab.known}>
-          <Place label={vocab.home} path={host.homedir} icon={FolderPlaceIcon} active={isActive(host.homedir)} onNavigate={onNavigate} />
+          <Place label={vocab.home} path={host.homedir} icon={FolderPlaceIcon} active={isActive(host.homedir)} onNavigate={onNavigate} run={run} />
           {host.knownFolders.map((folder) => (
             <Place
               key={folder.path}
@@ -150,6 +164,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               icon={FolderPlaceIcon}
               active={isActive(folder.path)}
               onNavigate={onNavigate}
+              run={run}
             />
           ))}
         </Section>
@@ -165,6 +180,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               icon={DRIVE_ICON[drive.kind]}
               active={isActive(drive.path)}
               onNavigate={onNavigate}
+              run={run}
             />
           ))}
         </Section>
@@ -176,6 +192,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
           <span>{warning}</span>
         </p>
       ))}
+      {prompts}
     </aside>
   );
 }
