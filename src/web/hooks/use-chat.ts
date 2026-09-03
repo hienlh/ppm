@@ -216,9 +216,10 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   // Sync streaming state to global store (for favicon + tab icon indicators)
   useEffect(() => {
     if (!sessionId) return;
-    useStreamingStore.getState().setStreaming(sessionId, phase !== "idle");
+    // projectName tags the entry so a project-scoped sync can reconcile it.
+    useStreamingStore.getState().setStreaming(sessionId, phase !== "idle", projectName);
     return () => { useStreamingStore.getState().setStreaming(sessionId, false); };
-  }, [sessionId, phase]);
+  }, [sessionId, phase, projectName]);
 
   /**
    * Route a child event to its parent Agent/Task tool_use's children array.
