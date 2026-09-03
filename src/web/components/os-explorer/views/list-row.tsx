@@ -44,7 +44,7 @@ export const ListRow = memo(function ListRow(props: ListRowProps) {
   // A drag carries whatever a context menu would act on: the selection when this row is part
   // of it, otherwise just this row.
   const dragPaths = useMemo(() => menuTargets.map((target) => target.path), [menuTargets]);
-  const dnd = useEntryRowDnd({ entry, dragPaths, run: actions.transferInto });
+  const dnd = useEntryRowDnd({ entry, dragPaths, run: actions.transferInto, onFiles: actions.uploadInto });
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>

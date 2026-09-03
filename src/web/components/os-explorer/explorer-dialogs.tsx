@@ -23,6 +23,8 @@ export function ExplorerDialogs({ dialogs, platform, sep }: ExplorerDialogsProps
 
   return (
     <>
+      {dialogs.uploadInputs}
+
       {collision && (
         <ExplorerModalShell
           open

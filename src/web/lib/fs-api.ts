@@ -182,4 +182,13 @@ export const fsApi = {
     });
     return `/api/fs/raw?path=${q(path)}&download=true&dl_token=${q(token)}`;
   },
+
+  /**
+   * Target for a streamed `PUT` upload — `path` is the full destination file path. Not used
+   * through `request()`: the upload helper needs `XMLHttpRequest` for progress events, which
+   * `fetch` cannot give.
+   */
+  uploadUrl(path: string, overwrite: boolean): string {
+    return `/api/fs/upload?path=${q(path)}&overwrite=${overwrite ? "1" : "0"}`;
+  },
 };

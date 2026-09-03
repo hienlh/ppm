@@ -10,12 +10,16 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CollisionChoice, CollisionRequest, TransferContext } from "../actions/explorer-actions-clipboard";
+import { uploadEntries } from "../actions/explorer-actions-upload";
 import type { ExplorerDialogState } from "../actions/use-explorer-actions";
 import { ExplorerDialogs } from "../explorer-dialogs";
+import type { DroppedEntry } from "../upload/collect-dropped-entries";
 import { transferRunner, type DropRunner } from "./entry-drop-executor";
 
 export interface DropTransfer {
   run: DropRunner;
+  /** Upload dropped OS files into a directory, through the same collision prompt as `run`. */
+  uploadRun: (entries: DroppedEntry[], dstDir: string) => Promise<void>;
   /** Render this somewhere inside the surface — it is empty until a prompt is raised. */
   prompts: ReactNode;
 }
@@ -60,6 +64,10 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
   );
 
   const run = useMemo<DropRunner>(() => transferRunner(context), [context]);
+  const uploadRun = useMemo(
+    () => (entries: DroppedEntry[], dstDir: string) => uploadEntries(entries, dstDir, sepRef.current, context),
+    [context],
+  );
 
   const prompts = (
     <ExplorerDialogs
@@ -72,11 +80,12 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
         closeDelete: () => {},
         runPermanentDelete: () => {},
         closeProperties: () => {},
+        uploadInputs: null,
       }}
       platform={platform}
       sep={sep}
     />
   );
 
-  return { run, prompts };
+  return { run, uploadRun, prompts };
 }

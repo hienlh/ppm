@@ -61,7 +61,12 @@ export function ColumnViewColumn({
   // The column's own empty area is a drop target for its own directory — dropping below the
   // last row of an ancestor column moves/copies into that ancestor, not just the deepest one.
   // Mobile's single full-width column never gets one: no drag source can ever start on touch.
-  const backgroundDrop = usePathDropTarget({ targetDir: path, run: actions.transferInto, disabled: fullWidth });
+  const backgroundDrop = usePathDropTarget({
+    targetDir: path,
+    run: actions.transferInto,
+    onFiles: actions.uploadInto,
+    disabled: fullWidth,
+  });
 
   return (
     <div

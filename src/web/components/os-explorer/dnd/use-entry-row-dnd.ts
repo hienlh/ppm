@@ -10,6 +10,7 @@
 
 import { useMemo, type DragEvent } from "react";
 import type { FsEntry } from "@/lib/fs-api";
+import type { DroppedEntry } from "../upload/collect-dropped-entries";
 import type { DropRunner } from "./entry-drop-executor";
 import type { EntryDragOrigin } from "./entry-drag-payload";
 import { useEntryDragSource } from "./use-entry-drag-source";
@@ -36,6 +37,9 @@ export interface EntryRowDndOptions {
   projectName?: string;
   extraData?: Record<string, string>;
   onDragStarted?(): void;
+  /** Also accept a native OS file drag onto this row when it is a directory. Omitted where
+   *  the caller has no upload destination (e.g. a surface with no window action set). */
+  onFiles?: (entries: DroppedEntry[], targetDir: string) => void;
 }
 
 export interface EntryRowDnd {
@@ -45,7 +49,9 @@ export interface EntryRowDnd {
 }
 
 export function useEntryRowDnd(options: EntryRowDndOptions): EntryRowDnd {
-  const { entry, dragPaths, run, springLoad, origin = "explorer", projectName, extraData, onDragStarted } = options;
+  const {
+    entry, dragPaths, run, springLoad, origin = "explorer", projectName, extraData, onDragStarted, onFiles,
+  } = options;
 
   const source = useEntryDragSource({ paths: dragPaths, origin, projectName, extraData, onDragStarted });
 
@@ -55,6 +61,7 @@ export function useEntryRowDnd(options: EntryRowDndOptions): EntryRowDnd {
     targetDir: entry.type === "directory" ? entry.path : null,
     run,
     springLoad: entry.type === "directory" ? springLoad : undefined,
+    onFiles,
   });
 
   const props = useMemo<EntryRowDndProps>(

@@ -36,7 +36,9 @@ export function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned,
   // Column view has no multi-select — a drag always carries just this one entry.
   // Spring-load is Column view's own drill-in gesture (`onSelect` already navigates for a
   // directory), so a rested hover reaches a deep folder without dropping first.
-  const dnd = useEntryRowDnd({ entry, dragPaths: [entry.path], run: actions.transferInto, springLoad: onSelect });
+  const dnd = useEntryRowDnd({
+    entry, dragPaths: [entry.path], run: actions.transferInto, springLoad: onSelect, onFiles: actions.uploadInto,
+  });
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>

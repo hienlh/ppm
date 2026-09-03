@@ -62,7 +62,11 @@ export function ListView({
   const creating = slice.inlineEdit?.kind === "new-file" || slice.inlineEdit?.kind === "new-folder";
   // The view background is the current directory itself — a row already claims the drop
   // (and stops the event) when it is a directory, so this only ever fires over empty space.
-  const backgroundDrop = usePathDropTarget({ targetDir: slice.path, run: actions.transferInto });
+  const backgroundDrop = usePathDropTarget({
+    targetDir: slice.path,
+    run: actions.transferInto,
+    onFiles: actions.uploadInto,
+  });
 
   const toggleSort = (key: SortKey) =>
     setPrefs({ sort: { key, dir: sort.key === key && sort.dir === "asc" ? "desc" : "asc" } });

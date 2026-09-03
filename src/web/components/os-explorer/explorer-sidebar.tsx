@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { DROP_TARGET_CLASS } from "./dnd/drop-target-style";
 import type { DropRunner } from "./dnd/entry-drop-executor";
 import { usePathDropTarget } from "./dnd/use-path-drop-target";
-import { useDropTransfer } from "./dnd/use-drop-transfer";
+import { useDropTransfer, type DropTransfer } from "./dnd/use-drop-transfer";
 import { useExplorerPinsStore } from "./explorer-pins-store";
 import { FileTypeIcon } from "./icons/file-type-icon";
 import type { SkinVocab } from "./skins/skin-types";
@@ -43,13 +43,14 @@ interface PlaceProps {
   onUnpin?(): void;
   /** Every place is a directory, so a drop always has somewhere valid to land. */
   run: DropRunner;
+  uploadRun: DropTransfer["uploadRun"];
 }
 
-function Place({ label, path, active, icon: Icon, onNavigate, onUnpin, run }: PlaceProps) {
+function Place({ label, path, active, icon: Icon, onNavigate, onUnpin, run, uploadRun }: PlaceProps) {
   // Gated on real pointer coarseness, not a `md:` breakpoint — an iPad is ≥768px but has no
   // mouse, so a breakpoint-only rule was silently dropping the 44px minimum for it.
   const coarse = usePrefersCoarsePointer();
-  const drop = usePathDropTarget({ targetDir: path, run });
+  const drop = usePathDropTarget({ targetDir: path, run, onFiles: uploadRun });
   return (
     <div className="group/place relative flex items-center">
       <button
@@ -112,7 +113,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
   const isActive = (path: string) => path === currentPath;
   // One drop-transfer context for the whole sidebar — every place lands through the same
   // collision prompt rather than each row owning its own dialog state.
-  const { run, prompts } = useDropTransfer(host?.sep ?? "/", host?.platform);
+  const { run, uploadRun, prompts } = useDropTransfer(host?.sep ?? "/", host?.platform);
 
   return (
     <aside
@@ -132,6 +133,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               onNavigate={onNavigate}
               onUnpin={() => unpin(pin.path)}
               run={run}
+              uploadRun={uploadRun}
             />
           ))}
         </Section>
@@ -148,6 +150,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               active={isActive(entry.path)}
               onNavigate={onNavigate}
               run={run}
+              uploadRun={uploadRun}
             />
           ))}
         </Section>
@@ -155,7 +158,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
 
       {host && (
         <Section title={vocab.known}>
-          <Place label={vocab.home} path={host.homedir} icon={FolderPlaceIcon} active={isActive(host.homedir)} onNavigate={onNavigate} run={run} />
+          <Place label={vocab.home} path={host.homedir} icon={FolderPlaceIcon} active={isActive(host.homedir)} onNavigate={onNavigate} run={run} uploadRun={uploadRun} />
           {host.knownFolders.map((folder) => (
             <Place
               key={folder.path}
@@ -165,6 +168,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               active={isActive(folder.path)}
               onNavigate={onNavigate}
               run={run}
+              uploadRun={uploadRun}
             />
           ))}
         </Section>
@@ -181,6 +185,7 @@ export function ExplorerSidebar({ host, currentPath, onNavigate, vocab = DEFAULT
               active={isActive(drive.path)}
               onNavigate={onNavigate}
               run={run}
+              uploadRun={uploadRun}
             />
           ))}
         </Section>

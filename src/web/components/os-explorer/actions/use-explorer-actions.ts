@@ -7,7 +7,7 @@
  * plain async functions with no React inside them.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import type { FsEntry } from "@/lib/fs-api";
 import { openTerminalAt } from "@/lib/open-terminal-at";
@@ -20,6 +20,8 @@ import {
   type CollisionChoice, type CollisionRequest,
 } from "./explorer-actions-clipboard";
 import { createEntry, deleteEntries, renameEntry, validateEntryName } from "./explorer-actions-mutate";
+import { useExplorerUploadActions } from "./use-explorer-upload-actions";
+import type { DroppedEntry } from "../upload/collect-dropped-entries";
 
 export interface ExplorerActions {
   openEntry(entry: FsEntry): void;
@@ -42,6 +44,11 @@ export interface ExplorerActions {
   showProperties(entry: FsEntry): void;
   /** Move or copy arbitrary paths into a directory — also the drag-and-drop entry point. */
   transferInto(paths: string[], dstDir: string, op: "copy" | "move"): Promise<void>;
+  /** Upload dropped/picked OS files into a directory — the upload counterpart of `transferInto`. */
+  uploadInto(entries: DroppedEntry[], dstDir: string): Promise<void>;
+  openUploadPicker(): void;
+  openUploadFolderPicker(): void;
+  supportsFolderUpload: boolean;
 }
 
 export interface ExplorerDialogState {
@@ -54,6 +61,8 @@ export interface ExplorerDialogState {
   closeDelete(): void;
   runPermanentDelete(): void;
   closeProperties(): void;
+  /** Hidden upload `<input>`s — render once per window. */
+  uploadInputs: ReactNode;
 }
 
 export function useExplorerActions(
@@ -102,6 +111,7 @@ export function useExplorerActions(
   );
 
   const currentDir = () => sliceRef.current?.path ?? "";
+  const upload = useExplorerUploadActions(context, currentDir);
 
   const actions = useMemo<ExplorerActions>(() => ({
     openEntry: (entry) => {
@@ -126,6 +136,10 @@ export function useExplorerActions(
         toast.success(`${verb} ${result.succeeded} item${result.succeeded === 1 ? "" : "s"}`);
       }
     },
+    uploadInto: upload.uploadInto,
+    openUploadPicker: upload.openUploadPicker,
+    openUploadFolderPicker: upload.openUploadFolderPicker,
+    supportsFolderUpload: upload.supportsFolderUpload,
 
     startRename: (entry) => {
       setInlineError(null);
@@ -186,7 +200,7 @@ export function useExplorerActions(
       else pins.pin({ path, name });
     },
     showProperties: (entry) => setProperties(entry),
-  }), [windowId, patch, nav, context, platform]);
+  }), [windowId, patch, nav, context, platform, upload]);
 
   const runPermanentDelete = useCallback(() => {
     const target = pendingDelete;
@@ -206,6 +220,7 @@ export function useExplorerActions(
       closeDelete: () => setPendingDelete(null),
       runPermanentDelete,
       closeProperties: () => setProperties(null),
+      uploadInputs: upload.uploadInputs,
     },
   };
 }

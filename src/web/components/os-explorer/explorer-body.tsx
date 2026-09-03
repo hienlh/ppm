@@ -99,7 +99,7 @@ export function ExplorerBody({ windowId, initialPath, variant = "window" }: Expl
           <MobilePlacesStrip host={host} currentPath={slice.path} onNavigate={nav.go} vocab={skin.vocab} />
         </>
       ) : (
-        <ExplorerToolbar windowId={windowId} slice={slice} nav={nav} />
+        <ExplorerToolbar windowId={windowId} slice={slice} nav={nav} actions={actions} />
       )}
 
       {slice.error && (
