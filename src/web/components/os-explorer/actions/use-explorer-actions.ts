@@ -10,6 +10,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { FsEntry } from "@/lib/fs-api";
+import { openTerminalAt } from "@/lib/open-terminal-at";
 import { useExplorerPinsStore } from "../explorer-pins-store";
 import { useExplorerStore, type ExplorerSlice } from "../explorer-store";
 import type { ExplorerNavigation } from "../use-explorer-navigation";
@@ -23,6 +24,8 @@ import { createEntry, deleteEntries, renameEntry, validateEntryName } from "./ex
 export interface ExplorerActions {
   openEntry(entry: FsEntry): void;
   openInNewWindow(entry: FsEntry): void;
+  /** Shell in the dock starting in the given directory (or the file's parent). */
+  openInTerminal(entry?: FsEntry): void;
   cut(entries: FsEntry[]): void;
   copy(entries: FsEntry[]): void;
   paste(targetDir?: string): void;
@@ -107,6 +110,9 @@ export function useExplorerActions(
     },
     openInNewWindow: (entry) => {
       openPathInNewWindow(entry.type === "directory" ? entry.path : (sliceRef.current?.path ?? entry.path));
+    },
+    openInTerminal: (entry) => {
+      openTerminalAt(entry?.type === "directory" ? entry.path : currentDir());
     },
     cut: (entries) => setClipboardPaths(entries.map((e) => e.path), "cut"),
     copy: (entries) => setClipboardPaths(entries.map((e) => e.path), "copy"),

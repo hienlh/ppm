@@ -1,5 +1,23 @@
+import { statSync } from "node:fs";
 import { terminalService } from "../../services/terminal.service.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
+import { assertAllowed, resolvePath } from "../../services/fs-path-guard.service.ts";
+
+/**
+ * Where a new shell starts. An explicit `cwd` (explorer "Open in Terminal") wins
+ * over the project root and goes through the same allowlist as the filesystem
+ * API, so a terminal cannot be spawned anywhere the explorer could not browse.
+ */
+function resolveStartDir(projectName: string | undefined, cwd: string | undefined): string {
+  if (cwd) {
+    const resolved = resolvePath(cwd);
+    assertAllowed(resolved);
+    if (!statSync(resolved).isDirectory()) throw new Error("Not a directory");
+    return resolved;
+  }
+  if (projectName) return resolveProjectPath(projectName);
+  throw new Error("Session not found");
+}
 
 /** Control message prefix for resize commands */
 const RESIZE_PREFIX = "\x01RESIZE:";
@@ -13,18 +31,18 @@ const PONG_MSG = "\x01PONG";
  * Handles terminal session attach, input, resize, and disconnect.
  */
 export const terminalWebSocket = {
-  open(ws: { data: { type: string; id: string; projectName?: string }; send: (data: string) => void }) {
-    const { id, projectName } = ws.data;
+  open(ws: { data: { type: string; id: string; projectName?: string; cwd?: string }; send: (data: string) => void }) {
+    const { id, projectName, cwd } = ws.data;
 
     let session = id !== "new" ? terminalService.get(id) : undefined;
 
-    // If session doesn't exist and projectName is provided, create one
-    if (!session && projectName) {
+    // If session doesn't exist and a start directory is known, create one
+    if (!session && (projectName || cwd)) {
       try {
-        const projectPath = resolveProjectPath(projectName);
+        const startDir = resolveStartDir(projectName, cwd);
         // Create session with the requested ID — but TerminalService generates its own ID.
         // Instead, create and return the new session ID to client.
-        const newId = terminalService.create(projectPath);
+        const newId = terminalService.create(startDir);
         session = terminalService.get(newId);
         if (session) {
           // Update ws.data to reflect actual session ID

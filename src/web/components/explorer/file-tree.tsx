@@ -41,6 +41,7 @@ import { flattenVisibleTree, type InputRow } from "./flatten-visible-tree";
 import { downloadFile, downloadFolder } from "@/lib/file-download";
 import { api, projectUrl } from "@/lib/api-client";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
+import { openTerminalAt } from "@/lib/open-terminal-at";
 import { fsChanged, onFsChanged } from "@/components/os-explorer/explorer-store";
 import { dirnameOf } from "@/components/os-explorer/format-file-meta";
 import { useDragAutoScroll } from "@/components/os-explorer/dnd/use-drag-auto-scroll";
@@ -376,6 +377,11 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     if (action === "open-in-file-explorer") {
       const target = node.type === "directory" ? node.path : parentDirOfRelative(node.path);
       void openExplorer(absoluteProjectPath(activeProject!.path, target));
+      return;
+    }
+    if (action === "open-in-terminal") {
+      const target = node.type === "directory" ? node.path : parentDirOfRelative(node.path);
+      openTerminalAt(absoluteProjectPath(activeProject!.path, target), activeProject!.name);
       return;
     }
     if (action === "paste" && node.type === "directory") {

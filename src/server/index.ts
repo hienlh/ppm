@@ -854,8 +854,10 @@ if (process.argv.includes("__serve__")) {
         const id = parts[5] ?? "";
 
         if (wsType === "terminal") {
+          // Optional start directory (explorer "Open in Terminal"); validated in the handler.
+          const cwd = url.searchParams.get("cwd") ?? undefined;
           const upgraded = server.upgrade(req, {
-            data: { type: "terminal", id, projectName },
+            data: { type: "terminal", id, projectName, cwd },
           });
           if (upgraded) return undefined;
           return new Response("WebSocket upgrade failed", { status: 400 });

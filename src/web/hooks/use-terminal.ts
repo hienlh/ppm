@@ -21,6 +21,8 @@ function currentXtermTheme(): ITheme {
 interface UseTerminalOptions {
   sessionId: string;
   projectName?: string;
+  /** Absolute start directory for a brand-new shell; ignored when re-attaching to a session. */
+  cwd?: string;
   containerRef: React.RefObject<HTMLDivElement | null>;
   /** Stable tab ID for persisting session across reload */
   tabId?: string;
@@ -198,7 +200,8 @@ export function useTerminal(
     const projectName = options.projectName ?? "";
     // Use actual session ID from server on reconnect (not "new")
     const sid = actualSessionId.current;
-    const path = `/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}`;
+    const cwdQuery = sid === "new" && options.cwd ? `?cwd=${encodeURIComponent(options.cwd)}` : "";
+    const path = `/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}${cwdQuery}`;
     // Local dev over http: connect directly to backend (port 8081) to bypass
     // Vite's dev proxy which has unreliable WebSocket upgrade handling. Over https
     // (e.g. a Cloudflare tunnel) port 8081 isn't reachable and ws:// is blocked as

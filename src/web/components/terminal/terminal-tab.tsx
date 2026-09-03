@@ -19,9 +19,10 @@ interface TerminalTabProps {
 export const TerminalTab = memo(function TerminalTab({ metadata, tabId }: TerminalTabProps) {
   const sessionId = (metadata?.sessionId as string) ?? "new";
   const projectName = metadata?.projectName as string | undefined;
+  const cwd = metadata?.cwd as string | undefined;
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, getBufferUrls, restart } = useTerminal({ sessionId, projectName, containerRef, tabId });
+  const { connected, reconnecting, exited, sendData, getSelection, getLastCommandOutput, getBufferUrls, restart } = useTerminal({ sessionId, projectName, cwd, containerRef, tabId });
   const [ctrlMode, setCtrlMode] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);

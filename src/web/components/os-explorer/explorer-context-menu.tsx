@@ -54,6 +54,8 @@ export function ExplorerContextMenu({
         <ContextMenuSeparator />
         <ContextMenuItem disabled={!hasClipboard} onClick={() => actions.paste()}>Paste</ContextMenuItem>
         <ContextMenuSeparator />
+        <ContextMenuItem onClick={() => actions.openInTerminal()}>Open in Terminal</ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuSub>
           <ContextMenuSubTrigger>Sort by</ContextMenuSubTrigger>
           <ContextMenuSubContent>
@@ -91,6 +93,9 @@ export function ExplorerContextMenu({
         <ContextMenuItem onClick={() => actions.openInNewWindow(single)}>
           Open in New Window
         </ContextMenuItem>
+      )}
+      {onlyDirs && single && (
+        <ContextMenuItem onClick={() => actions.openInTerminal(single)}>Open in Terminal</ContextMenuItem>
       )}
       <ContextMenuSeparator />
 
