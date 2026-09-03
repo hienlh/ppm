@@ -35,12 +35,32 @@ import {
   Columns2,
   Clock,
   Send,
+  Users,
 } from "lucide-react";
 
+/**
+ * Handle of an agent that can be addressed later, or null for a one-shot subagent.
+ *
+ * Only a spawn that passed `name` stays reachable — that name is what SendMessage
+ * takes as its `to`. Teammates therefore always carry one, so the handle is what
+ * separates "a colleague working in the background" from "a scout that answers once".
+ */
+function addressableAgentName(toolName: string, input: Record<string, unknown>): string | null {
+  if (toolName !== "Agent" && toolName !== "Task") return null;
+  const name = input.name;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
 /** Per-tool-family icon chip: 24×24 rounded-7 tinted per the design spec. */
-function toolChip(name: string, isError: boolean): { Icon: React.ElementType; cls: string } {
+function toolChip(
+  name: string,
+  isError: boolean,
+  isAddressableAgent = false,
+): { Icon: React.ElementType; cls: string } {
   if (isError && (name === "Bash" || name === "PowerShell"))
     return { Icon: Terminal, cls: "bg-error/15 text-error" };
+  // A named teammate gets its own chip so it is not mistaken for a throwaway subagent.
+  if (isAddressableAgent) return { Icon: Users, cls: "bg-accent-2/15 text-accent-2" };
   switch (name) {
     case "Read": case "Glob": case "LS":
       return { Icon: FileSearch, cls: "bg-accent-wash text-primary" };
@@ -190,7 +210,11 @@ export function ToolCard({
     }
   }, [isError, toolName]);
 
-  const { Icon: ChipIcon, cls: chipCls } = toolChip(toolName, isError);
+  const { Icon: ChipIcon, cls: chipCls } = toolChip(
+    toolName,
+    isError,
+    !!addressableAgentName(toolName, input),
+  );
   const isInteractive = toolName === "AskUserQuestion" || toolName === "ExitPlanMode" || isSubagent;
 
   return (
@@ -275,8 +299,19 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
     case "ToolSearch":
       return <><Search className="size-3 inline" /> {name} <span className="text-text-subtle">{truncate(s(input.query), 50)}</span></>;
     case "Agent":
-    case "Task":
-      return <><Bot className="size-3 inline" /> {name} <span className="text-text-subtle">{truncate(s(input.description || input.prompt), 60)}</span></>;
+    case "Task": {
+      // Lead with the handle when there is one: it is both the identity of the
+      // teammate and the exact string SendMessage needs to reach it.
+      const handle = addressableAgentName(name, input);
+      const task = truncate(s(input.description || input.prompt), handle ? 44 : 60);
+      return (
+        <>
+          {!handle && <Bot className="size-3 inline" />} {name}{" "}
+          {handle && <span className="text-text-primary font-medium">{handle}</span>}
+          <span className="text-text-subtle">{handle ? ` · ${task}` : task}</span>
+        </>
+      );
+    }
     case "SendMessage":
       return <SendMessageSummary name={name} input={input} />;
     case "TodoWrite": {
@@ -416,14 +451,30 @@ function ToolDetails({
     case "TodoWrite":
       return <TodoDetails todos={(input.todos as Array<{ content: string; status: string }>) ?? []} />;
     case "Agent":
-    case "Task":
+    case "Task": {
+      const handle = addressableAgentName(name, input);
       return (
         <div className="space-y-1">
+          {!!handle && (
+            <p className="flex flex-wrap items-center gap-1.5">
+              <span className="text-text-subtle">Name</span>
+              <span className="font-medium text-text-primary">{handle}</span>
+              <span className="inline-block rounded px-1.5 py-0.5 text-[10px] bg-accent-2/15 text-accent-2">
+                teammate
+              </span>
+              {input.isolation === "worktree" && (
+                <span className="inline-block rounded px-1.5 py-0.5 text-[10px] bg-panel-2 text-text-3">
+                  worktree
+                </span>
+              )}
+            </p>
+          )}
           {!!input.description && <p className="text-text-secondary font-medium">{s(input.description)}</p>}
           {!!input.subagent_type && <p className="text-text-subtle">Type: {s(input.subagent_type)}</p>}
           {!!input.prompt && <MiniMarkdown content={s(input.prompt)} maxHeight="max-h-48" />}
         </div>
       );
+    }
     case "SendMessage":
       return <SendMessageDetails input={input} />;
     case "ToolSearch":
