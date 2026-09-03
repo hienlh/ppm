@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.18.5] - 2026-09-04
+
+### Added
+- **Upload progress panel in the file explorer** — every file shows its own progress, state and error, with Cancel per file and Cancel all; on mobile it lives in a bottom sheet.
+- **"Apply to all" on the name-collision prompt** for uploads and copy/move.
+
+### Fixed
+- **Uploading several files that already exist no longer hangs at 100%** — concurrent collision prompts overwrote each other, leaving one file waiting forever. Prompts now queue one at a time.
+- **Replace during upload moves the old file to the Trash first**, as the prompt promised and as copy/move already did.
+- **The Upload… picker reliably delivers the chosen files** on Chromium.
+
 ## [0.18.4] - 2026-09-04
 
 ### Changed
