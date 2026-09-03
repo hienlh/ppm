@@ -21,6 +21,8 @@ import { attachmentDisposition } from "../../services/fs-ops/fs-content-disposit
 import { fsErrorBody } from "../../services/fs-ops/fs-error-response.ts";
 import { isImageExtension } from "../../shared/image-extensions.ts";
 import { ok, err } from "../../types/api.ts";
+import { rangeFileResponse } from "../helpers/range-file-response.ts";
+import { handleMediaProbe, handleMediaTranscode } from "../helpers/media-route-handlers.ts";
 import {
   createDownloadToken,
   consumeDownloadToken,
@@ -121,16 +123,52 @@ fsBrowseRoutes.get("/raw", async (c) => {
 
     const download = c.req.query("download") === "true";
     const filename = basename(resolved) || "download";
-    const file = Bun.file(resolved);
-    return new Response(file.stream(), {
-      headers: {
-        "Content-Type": download ? "application/octet-stream" : (file.type || "application/octet-stream"),
+    // Range-aware so <video>/<audio>/pdf.js can seek instead of buffering the whole file.
+    return rangeFileResponse(
+      resolved,
+      c.req.raw,
+      {
         "Content-Disposition": download ? attachmentDisposition(filename) : "inline",
         // A download is a one-shot transfer of a file the user may edit right
         // after; caching it would hand out stale bytes on the next download.
         "Cache-Control": download ? "no-store" : "private, max-age=3600",
       },
-    });
+      download ? "application/octet-stream" : undefined,
+    );
+  } catch (e) {
+    const { body, status } = fail(e);
+    return c.json(body, status);
+  }
+});
+
+/** Resolve `?path=` for media routes: allowlisted, not inside ~/.ppm, and existing. */
+async function resolveMediaPath(raw: string | undefined): Promise<string | Response> {
+  if (!raw) return Response.json(err("path is required"), { status: 400 });
+  const resolved = resolvePath(raw);
+  assertAllowed(resolved);
+  assertNotPpmDir(resolved);
+  assertNotPpmDir(await realPathOrSelf(resolved));
+  const info = await stat(resolved).catch(() => null);
+  if (!info?.isFile()) return Response.json(err("File not found"), { status: 404 });
+  return resolved;
+}
+
+/** GET /api/fs/probe?path=/some/video — codec/duration facts + whether ffmpeg transcoding is available */
+fsBrowseRoutes.get("/probe", async (c) => {
+  try {
+    const abs = await resolveMediaPath(c.req.query("path"));
+    return abs instanceof Response ? abs : await handleMediaProbe(abs);
+  } catch (e) {
+    const { body, status } = fail(e);
+    return c.json(body, status);
+  }
+});
+
+/** GET /api/fs/transcode?path=/some/video&start=<sec> — ffmpeg → fragmented MP4 */
+fsBrowseRoutes.get("/transcode", async (c) => {
+  try {
+    const abs = await resolveMediaPath(c.req.query("path"));
+    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"));
   } catch (e) {
     const { body, status } = fail(e);
     return c.json(body, status);

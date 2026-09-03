@@ -5,6 +5,8 @@ import { fileService, SecurityError, NotFoundError, ValidationError } from "../.
 import { readSystemFileSync } from "../../services/fs-browse.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { errorStatus } from "../helpers/error-status.ts";
+import { rangeFileResponse } from "../helpers/range-file-response.ts";
+import { handleMediaProbe, handleMediaTranscode } from "../helpers/media-route-handlers.ts";
 import mammoth from "mammoth";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -103,16 +105,47 @@ fileRoutes.get("/raw", (c) => {
     }
     if (!existsSync(absPath)) return c.json(err("File not found"), 404);
 
-    const file = Bun.file(absPath);
     const download = c.req.query("download") === "true";
     const filename = filePath.split("/").pop() ?? "download";
 
-    return new Response(file.stream(), {
-      headers: {
-        "Content-Type": download ? "application/octet-stream" : (file.type || "application/octet-stream"),
-        "Content-Disposition": download ? `attachment; filename="${filename}"` : "inline",
-      },
-    });
+    // Range-aware so <video>/<audio>/pdf.js can seek instead of buffering the whole file.
+    return rangeFileResponse(
+      absPath,
+      c.req.raw,
+      { "Content-Disposition": download ? `attachment; filename="${filename}"` : "inline" },
+      download ? "application/octet-stream" : undefined,
+    );
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** Resolve `?path=` inside the project or return the error response to send. */
+function resolveProjectFile(c: { get(k: "projectPath"): string; req: { query(k: string): string | undefined } }): string | Response {
+  const projectPath = c.get("projectPath");
+  const filePath = c.req.query("path");
+  if (!filePath) return Response.json(err("Missing query parameter: path"), { status: 400 });
+  const absPath = resolve(projectPath, filePath);
+  if (!absPath.startsWith(projectPath)) return Response.json(err("Access denied"), { status: 403 });
+  if (!existsSync(absPath)) return Response.json(err("File not found"), { status: 404 });
+  return absPath;
+}
+
+/** GET /files/probe?path=... — codec/duration facts + whether ffmpeg transcoding is available */
+fileRoutes.get("/probe", async (c) => {
+  try {
+    const abs = resolveProjectFile(c);
+    return abs instanceof Response ? abs : await handleMediaProbe(abs);
+  } catch (e) {
+    return c.json(err((e as Error).message), errorStatus(e));
+  }
+});
+
+/** GET /files/transcode?path=...&start=<sec> — ffmpeg → fragmented MP4 for videos the browser cannot decode */
+fileRoutes.get("/transcode", async (c) => {
+  try {
+    const abs = resolveProjectFile(c);
+    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }
