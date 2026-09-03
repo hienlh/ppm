@@ -15,7 +15,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ChatEvent } from "../types/api.ts";
+import type { ChatEvent } from "../types/chat.ts";
 import { parseSessionMessage } from "./jsonl-transcript-parser.ts";
 
 /**
