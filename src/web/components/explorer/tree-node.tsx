@@ -3,7 +3,7 @@
  * Rows are flat siblings (no recursion); visible order comes from flatten-visible-tree.ts.
  * Handles click, drag/drop, context menu for individual tree items.
  */
-import { useState, useRef, useEffect, memo } from "react";
+import { useRef, useEffect, memo } from "react";
 import {
   Folder,
   FolderOpen,
@@ -17,26 +17,17 @@ import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useCompareStore } from "@/stores/compare-store";
 import { useGitStatusStore, GIT_STATUS_COLORS, type GitFileStatus } from "@/stores/git-status-store";
-import { api, projectUrl } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
 import {
   ContextMenu,
   ContextMenuTrigger,
 } from "@/components/ui/adaptive-context-menu";
-import { fsChanged } from "@/components/os-explorer/explorer-store";
+import { DROP_TARGET_CLASS } from "@/components/os-explorer/dnd/drop-target-style";
+import type { DropRunner } from "@/components/os-explorer/dnd/entry-drop-executor";
 import { getFileIcon } from "./file-icon-map";
 import { TreeNodeContextMenu } from "./tree-node-context-menu";
+import { useTreeRowDnd } from "./use-tree-row-dnd";
 import type { NodeRow } from "./flatten-visible-tree";
-
-/** Check if drag event is from OS files (not internal PPM drag) */
-export function isExternalFileDrag(e: React.DragEvent): boolean {
-  return e.dataTransfer.types.includes("Files") && !e.dataTransfer.types.includes("application/x-ppm-path");
-}
-
-function parentDirOf(path: string): string {
-  return path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-}
 
 export interface TreeRowProps {
   row: NodeRow;
@@ -44,9 +35,12 @@ export interface TreeRowProps {
   onAction: (action: string, node: FileNode) => void;
   onFileDrop: (targetDir: string, files: FileList) => void;
   onFileOpen?: () => void;
+  /** Runs a cross-surface entry drop (from an explorer window, another project's tree, or
+   *  this same tree) through the shared collision-prompt transfer — see `use-drop-transfer`. */
+  transferRun: DropRunner;
 }
 
-export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFileDrop, onFileOpen }: TreeRowProps) {
+export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFileDrop, onFileOpen, transferRun }: TreeRowProps) {
   const { node, effectiveNode, displayName, depth } = row;
   const { expandedPaths, loadedPaths, inflight, toggleExpand, selectedFiles, toggleFileSelect, clipboard, focusedPath, setFocusedPath } = useFileStore(
     useShallow((s) => ({
@@ -82,8 +76,6 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
     clipboard.paths.includes(absoluteProjectPath(projectRoot, node.path));
   const isFocused = focusedPath === node.path || focusedPath === effectiveNode.path;
   const isLoadingChildren = isDir && isExpanded && !loadedPaths.has(effectiveNode.path) && inflight.has(effectiveNode.path);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const dragCounter = useRef(0);
   const rowRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -130,95 +122,32 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
     onFileOpen?.();
   }
 
-  function handleDragStart(e: React.DragEvent) {
-    const pathValue = isDir ? `${node.path}/` : node.path;
-    e.dataTransfer.setData("application/x-ppm-path", pathValue);
-    e.dataTransfer.setData("text/plain", node.name);
-    e.dataTransfer.effectAllowed = "copyMove";
-  }
-
-  // Flat rows: dropping on a file targets its parent directory
-  const dropTargetDir = isDir ? effectiveNode.path : parentDirOf(node.path);
-
-  function canAcceptDrop(e: React.DragEvent): boolean {
-    return isExternalFileDrag(e) || e.dataTransfer.types.includes("application/x-ppm-path");
-  }
-
-  function handleNodeDragEnter(e: React.DragEvent) {
-    if (!canAcceptDrop(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter.current++;
-    if (dragCounter.current === 1) setIsDragOver(true);
-  }
-  function handleNodeDragLeave(e: React.DragEvent) {
-    e.stopPropagation();
-    dragCounter.current--;
-    if (dragCounter.current === 0) setIsDragOver(false);
-  }
-  function handleNodeDragOver(e: React.DragEvent) {
-    if (!canAcceptDrop(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = isExternalFileDrag(e) ? "copy" : "move";
-  }
-  function handleNodeDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    dragCounter.current = 0;
-    setIsDragOver(false);
-
-    // External file upload
-    if (isExternalFileDrag(e)) {
-      if (e.dataTransfer.files.length > 0) onFileDrop(dropTargetDir, e.dataTransfer.files);
-      return;
-    }
-
-    // Internal tree move
-    const sourcePath = e.dataTransfer.getData("application/x-ppm-path").replace(/\/$/, "");
-    if (!sourcePath) return;
-    // Prevent dropping into self or descendant
-    if (sourcePath === dropTargetDir || dropTargetDir.startsWith(`${sourcePath}/`)) return;
-    // Prevent no-op (already in this folder)
-    const sourceParent = parentDirOf(sourcePath);
-    if (sourceParent === dropTargetDir) return;
-
-    const sourceName = sourcePath.includes("/") ? sourcePath.slice(sourcePath.lastIndexOf("/") + 1) : sourcePath;
-    const destination = dropTargetDir ? `${dropTargetDir}/${sourceName}` : sourceName;
-    api.post(`${projectUrl(projectName)}/files/move`, { source: sourcePath, destination })
-      .then(() => {
-        const store = useFileStore.getState();
-        store.invalidateIndex();
-        store.loadIndex(projectName);
-        store.invalidateFolder(projectName, sourceParent);
-        store.invalidateFolder(projectName, dropTargetDir);
-        // An explorer window showing either folder must refresh too.
-        if (projectRoot) {
-          fsChanged(absoluteProjectPath(projectRoot, sourceParent), absoluteProjectPath(projectRoot, dropTargetDir));
-        }
-      })
-      .catch((err) => {
-        toast.error(err instanceof Error ? err.message : "Move failed");
-      });
-  }
+  const dnd = useTreeRowDnd({
+    path: node.path,
+    name: node.name,
+    isDir,
+    effectivePath: effectiveNode.path,
+    isSelected,
+    selectedFiles,
+    isExpanded,
+    projectName,
+    projectRoot,
+    toggleExpand,
+    onFileDrop,
+    transferRun,
+  });
 
   const { icon: FileIcon, color: fileIconColor } = isDir
     ? { icon: isExpanded ? FolderOpen : Folder, color: isExpanded ? "text-primary" : "text-text-3" }
     : getFileIcon(node.name);
 
   return (
-    <div
-      onDragEnter={handleNodeDragEnter}
-      onDragLeave={handleNodeDragLeave}
-      onDragOver={handleNodeDragOver}
-      onDrop={handleNodeDrop}
-    >
+    <div {...dnd.containerHandlers}>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <button
             ref={rowRef}
-            draggable
-            onDragStart={handleDragStart}
+            {...dnd.entrySource}
             onClick={handleClick}
             className={cn(
               "flex items-center w-full gap-1.5 px-2 py-1 rounded-[var(--rad-sm)] text-[13px]",
@@ -227,7 +156,7 @@ export const TreeRow = memo(function TreeRow({ row, projectName, onAction, onFil
               (isIgnored || isCut) && "opacity-40",
               isFocused && "bg-surface-elevated",
               isSelected && "bg-accent-wash",
-              isDragOver && "ring-1 ring-dashed ring-primary bg-primary/10",
+              dnd.isDragOver && DROP_TARGET_CLASS,
             )}
             style={{ paddingLeft: `${depth * 16 + 8}px` }}
           >

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { ListRowInteractive } from "../../../src/web/components/os-explorer/views/list-row.tsx";
 import { IconsViewTileInteractive } from "../../../src/web/components/os-explorer/views/icons-view-tile.tsx";
-import { ColumnRowInteractive } from "../../../src/web/components/os-explorer/views/column-view-column.tsx";
+import { ColumnRowInteractive } from "../../../src/web/components/os-explorer/views/column-row.tsx";
 
 /**
  * Regression guard for the row-context-menu bug: `ContextMenuTrigger asChild` clones its

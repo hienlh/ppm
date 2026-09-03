@@ -12,6 +12,8 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import { useFileStore } from "@/stores/file-store";
 import { cn } from "@/lib/utils";
+import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { usePathDropTarget } from "../dnd/use-path-drop-target";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { useExplorerStore, type SortKey } from "../explorer-store";
 import { useExplorerSkin } from "../skins/use-explorer-skin";
@@ -53,6 +55,9 @@ export function ListView({
 
   const menuTargets = useMemo(() => activeEntries(slice, entries), [slice, entries]);
   const creating = slice.inlineEdit?.kind === "new-file" || slice.inlineEdit?.kind === "new-folder";
+  // The view background is the current directory itself — a row already claims the drop
+  // (and stops the event) when it is a directory, so this only ever fires over empty space.
+  const backgroundDrop = usePathDropTarget({ targetDir: slice.path, run: actions.transferInto });
 
   const toggleSort = (key: SortKey) =>
     setPrefs({ sort: { key, dir: sort.key === key && sort.dir === "asc" ? "desc" : "asc" } });
@@ -100,8 +105,9 @@ export function ListView({
             aria-label="File list"
             // Clicking the empty area below the rows clears the selection, as in the OS.
             onMouseDown={(e) => { if (e.target === e.currentTarget) selection.clear(); }}
-            className="flex-1 overflow-auto outline-none"
+            className={cn("flex-1 overflow-auto outline-none", backgroundDrop.isOver && DROP_TARGET_CLASS)}
             {...backgroundLongPress}
+            {...backgroundDrop.handlers}
           >
             {creating && (
               <div className="flex items-center gap-2 px-2" style={{ height: rowHeight }}>

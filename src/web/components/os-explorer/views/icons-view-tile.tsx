@@ -6,17 +6,20 @@
  * `useMobileRowTap`.
  */
 
-import { forwardRef, memo, type MouseEventHandler } from "react";
+import { forwardRef, memo, useMemo, type HTMLAttributes } from "react";
 import { Check } from "lucide-react";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import type { FsEntry } from "@/lib/fs-api";
 import { cn } from "@/lib/utils";
 import { viewerKindOf } from "../can-open-in-ppm";
+import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { useEntryRowDnd } from "../dnd/use-entry-row-dnd";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { FileTypeIcon } from "../icons/file-type-icon";
 import { ThumbnailImage } from "../icons/thumbnail-image";
 import { useMobileRowTap } from "../mobile/use-mobile-row-tap";
 import { useCoarseLongPress } from "../use-coarse-long-press";
+import { composeInteractiveRowProps, type InjectedRowProps } from "./compose-interactive-row-props";
 import type { ExplorerViewProps } from "./explorer-view-registry";
 import { InlineNameInput } from "./inline-name-input";
 
@@ -36,10 +39,14 @@ export interface IconsViewTileProps
 
 export const IconsViewTile = memo(function IconsViewTile(props: IconsViewTileProps) {
   const { entry, currentDir, hasClipboard, isPinned, actions, menuTargets } = props;
+  // A drag carries whatever a context menu would act on: the selection when this tile is
+  // part of it, otherwise just this tile.
+  const dragPaths = useMemo(() => menuTargets.map((target) => target.path), [menuTargets]);
+  const dnd = useEntryRowDnd({ entry, dragPaths, run: actions.transferInto });
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <IconsViewTileInteractive {...props} />
+        <IconsViewTileInteractive {...props} dnd={dnd.props} dropActive={dnd.isDropTarget} />
       </ContextMenuTrigger>
       <ExplorerContextMenu
         targets={menuTargets}
@@ -55,15 +62,19 @@ export const IconsViewTile = memo(function IconsViewTile(props: IconsViewTilePro
 /**
  * Rendered inside the tile's own `<ContextMenu>` — see `useMobileRowTap`'s doc comment.
  *
- * `forwardRef` plus explicitly accepting `onContextMenu` is required here: `asChild` clones
- * this element and merges its own `onContextMenu` (which actually opens the tile's menu)
- * plus a `ref` onto it, but a plain function component that doesn't accept and forward
- * those two silently drops them — the tile still ran its own selection logic, but no menu
- * ever opened.
+ * `forwardRef` plus `composeInteractiveRowProps` over *everything* injected — not just
+ * `onContextMenu` — is required here: `asChild` clones this element and merges its own
+ * `onContextMenu` (which actually opens the tile's menu), a `ref`, pointer handlers,
+ * `data-state` and a `style` that suppresses the native touch callout, but a component that
+ * doesn't accept and forward all of them keeps them from ever touching the real DOM node.
  */
-export const IconsViewTileInteractive = forwardRef<HTMLDivElement, IconsViewTileProps & { onContextMenu?: MouseEventHandler<HTMLDivElement> }>(
+export const IconsViewTileInteractive = forwardRef<HTMLDivElement, IconsViewTileProps & InjectedRowProps>(
   function IconsViewTileInteractive(
-    { entry, selected, focused, cut, renaming, tileWidth, actions, selection, inlineError, onContextMenu },
+    {
+      entry, selected, focused, cut, renaming, tileWidth, actions, selection, inlineError,
+      currentDir: _currentDir, hasClipboard: _hasClipboard, isPinned: _isPinned, menuTargets: _menuTargets,
+      dnd, dropActive, ...injected
+    },
     ref,
   ) {
     const longPress = useCoarseLongPress(() => {
@@ -72,34 +83,40 @@ export const IconsViewTileInteractive = forwardRef<HTMLDivElement, IconsViewTile
     const { isMobile, selectMode, handleTap } = useMobileRowTap(actions, selection);
     const isImage = entry.type !== "directory" && viewerKindOf(entry.name) === "image";
 
-    return (
-      <div
-        ref={ref}
-        role="gridcell"
-        aria-selected={selected}
-        data-testid="explorer-tile"
-        data-path={entry.path}
-        title={entry.name}
-        style={tileWidth ? { width: tileWidth } : undefined}
-        {...longPress}
-        onContextMenu={(e) => {
-          // Run Radix's own handler first (it opens this tile's menu); only afterwards stop
-          // the event from also reaching the background trigger further up the DOM.
-          onContextMenu?.(e);
+    const props = composeInteractiveRowProps<Record<string, unknown>>(
+      { ...injected, ...longPress, ...dnd },
+      {
+        role: "gridcell",
+        "aria-selected": selected,
+        "data-testid": "explorer-tile",
+        "data-path": entry.path,
+        title: entry.name,
+        style: tileWidth ? { width: tileWidth } : undefined,
+        // Radix's own handler is chained in first (it opens this tile's menu); only
+        // afterwards does this stop the event from also reaching the background trigger
+        // further up the DOM.
+        onContextMenu: (e: React.MouseEvent) => {
           if (!selected) selection.selectOnly(entry.path);
           e.stopPropagation();
-        }}
-        onClick={(e) => { if (!handleTap(entry, selected)) selection.onRowClick(entry.path, e); }}
-        onDoubleClick={() => actions.openEntry(entry)}
-        className={cn(
+        },
+        onClick: (e: React.MouseEvent) => {
+          if (!handleTap(entry, selected)) selection.onRowClick(entry.path, e);
+        },
+        onDoubleClick: () => actions.openEntry(entry),
+        className: cn(
           "relative flex flex-col items-center gap-1 rounded p-2 text-center select-none",
           !tileWidth && "w-full",
           "can-hover:hover:bg-surface-elevated",
           focused && !selected && "bg-surface-elevated",
           selected && "bg-accent-wash",
           cut && "opacity-40",
-        )}
-      >
+          dropActive && DROP_TARGET_CLASS,
+        ),
+      },
+    );
+
+    return (
+      <div ref={ref} {...(props as HTMLAttributes<HTMLDivElement>)}>
         {isMobile && selectMode && (
           <span
             aria-hidden

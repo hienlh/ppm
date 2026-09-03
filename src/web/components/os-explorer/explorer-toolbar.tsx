@@ -81,7 +81,7 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
             className="min-w-0 flex-1 bg-transparent py-1 font-mono text-xs text-text outline-none"
           />
         ) : (
-          <ExplorerBreadcrumb crumbs={slice.breadcrumbs} onNavigate={nav.go} className="flex-1 overflow-hidden py-0.5" />
+          <ExplorerBreadcrumb crumbs={slice.breadcrumbs} onNavigate={nav.go} sep={slice.sep} className="flex-1 overflow-hidden py-0.5" />
         )}
         <button
           type="button"
