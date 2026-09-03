@@ -8,7 +8,7 @@
  * only the promise wiring is local — so a collision looks identical wherever the drop landed.
  */
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CollisionChoice, CollisionRequest, TransferContext } from "../actions/explorer-actions-clipboard";
 import type { ExplorerDialogState } from "../actions/use-explorer-actions";
 import { ExplorerDialogs } from "../explorer-dialogs";
@@ -26,8 +26,9 @@ export function useDropTransfer(sep: string, platform?: string): DropTransfer {
 
   // The separator can change under a long-lived surface (the tree follows the active
   // project), so the context reads it live rather than closing over the first value.
+  // Assigned in an effect, not during render — React may discard a render before commit.
   const sepRef = useRef(sep);
-  sepRef.current = sep;
+  useEffect(() => { sepRef.current = sep; }, [sep]);
 
   const context = useMemo<TransferContext>(
     () => ({

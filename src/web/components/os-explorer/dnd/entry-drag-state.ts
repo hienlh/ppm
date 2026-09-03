@@ -24,3 +24,12 @@ export function getInFlightDrag(): EntryDragPayload | null {
 export function clearInFlightDrag(): void {
   inFlight = null;
 }
+
+// Last-resort net: a source row that unmounts mid-drag (e.g. a spring-load navigation) can
+// skip its own `dragend`, and the row would otherwise never clear this ref itself. A
+// window-level bubble listener still clears it for any drop/dragend that reaches this far —
+// every drop target that actually claims one already clears it itself first.
+if (typeof window !== "undefined") {
+  window.addEventListener("dragend", clearInFlightDrag);
+  window.addEventListener("drop", clearInFlightDrag);
+}
