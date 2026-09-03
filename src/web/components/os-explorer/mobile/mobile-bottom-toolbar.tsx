@@ -8,7 +8,8 @@
 
 import { useState } from "react";
 import {
-  ArrowLeft, Check, ClipboardPaste, Copy, Download, FilePlus, FolderPlus, Info, MoreHorizontal, Plus, Scissors, Trash2, X,
+  ArrowLeft, Check, ClipboardPaste, Copy, Download, FilePlus, FolderPlus, Info, MoreHorizontal, Plus, Scissors,
+  Trash2, Upload, X,
 } from "lucide-react";
 import type { FsEntry } from "@/lib/fs-api";
 import { BottomSheet, BottomSheetItem } from "@/components/ui/mobile-bottom-sheet";
@@ -93,6 +94,9 @@ export function MobileBottomToolbar({ slice, nav, actions, entries, hasClipboard
         </BottomSheetItem>
         <BottomSheetItem onClick={() => actions.startCreate("new-folder")}>
           <FolderPlus className="size-4" /> New Folder
+        </BottomSheetItem>
+        <BottomSheetItem onClick={() => { setNewOpen(false); actions.openUploadPicker(); }}>
+          <Upload className="size-4" /> Upload Files…
         </BottomSheetItem>
       </BottomSheet>
 

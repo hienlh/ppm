@@ -54,6 +54,11 @@ export function ExplorerContextMenu({
         <ContextMenuSeparator />
         <ContextMenuItem disabled={!hasClipboard} onClick={() => actions.paste()}>Paste</ContextMenuItem>
         <ContextMenuSeparator />
+        <ContextMenuItem onClick={() => actions.openUploadPicker()}>Upload Files…</ContextMenuItem>
+        {actions.supportsFolderUpload && (
+          <ContextMenuItem onClick={() => actions.openUploadFolderPicker()}>Upload Folder…</ContextMenuItem>
+        )}
+        <ContextMenuSeparator />
         <ContextMenuItem onClick={() => actions.openInTerminal()}>Open in Terminal</ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub>

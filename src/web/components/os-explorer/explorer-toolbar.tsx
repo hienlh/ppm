@@ -9,9 +9,14 @@
 
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, ArrowUp, Columns3, Eye, EyeOff, LayoutGrid, List, PencilLine, RefreshCw, Search, X,
+  ArrowLeft, ArrowRight, ArrowUp, Columns3, Eye, EyeOff, LayoutGrid, List, PencilLine, RefreshCw, Search,
+  Upload, X,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import type { ExplorerActions } from "./actions/use-explorer-actions";
 import { ExplorerBreadcrumb } from "./explorer-breadcrumb";
 import { ExplorerSortMenu } from "./explorer-sort-menu";
 import { useExplorerStore, type ExplorerSlice, type ViewMode } from "./explorer-store";
@@ -27,9 +32,10 @@ export interface ExplorerToolbarProps {
   windowId: string;
   slice: ExplorerSlice;
   nav: ExplorerNavigation;
+  actions: ExplorerActions;
 }
 
-export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) {
+export function ExplorerToolbar({ windowId, slice, nav, actions }: ExplorerToolbarProps) {
   const patch = useExplorerStore((s) => s.patch);
   const showHidden = useExplorerStore((s) => s.showHidden);
   const viewMode = useExplorerStore((s) => s.viewMode);
@@ -123,6 +129,30 @@ export function ExplorerToolbar({ windowId, slice, nav }: ExplorerToolbarProps) 
         })}
 
       <ExplorerSortMenu coarse={coarse} />
+
+      {actions.supportsFolderUpload ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" aria-label="Upload" title="Upload" className={buttonClass(coarse)}>
+              <Upload className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => actions.openUploadPicker()}>Upload Files…</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => actions.openUploadFolderPicker()}>Upload Folder…</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : (
+        <button
+          type="button"
+          aria-label="Upload"
+          title="Upload"
+          onClick={() => actions.openUploadPicker()}
+          className={buttonClass(coarse)}
+        >
+          <Upload className="size-4" />
+        </button>
+      )}
 
       <button
         type="button"
