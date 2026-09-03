@@ -94,6 +94,16 @@ async function setupLogFile() {
   });
 }
 
+/**
+ * WebSocket upgrades carry the session token as `?token=` (no headers on a
+ * browser handshake). When auth is disabled every upgrade is allowed.
+ */
+export function isWsUpgradeAuthorized(url: URL): boolean {
+  const authConfig = configService.get("auth");
+  if (!authConfig.enabled) return true;
+  return url.searchParams.get("token") === authConfig.token;
+}
+
 // Register database adapters at module load time
 initAdapters();
 
@@ -818,30 +828,23 @@ if (process.argv.includes("__serve__")) {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
+      // Every socket except the health probe is authenticated at upgrade time.
+      // Browsers cannot send headers on a WebSocket handshake, so the session
+      // token travels as `?token=`; the terminal socket in particular hands out
+      // a shell, so an unauthenticated upgrade must never reach the handlers.
+      if (url.pathname.startsWith("/ws/") && !isWsUpgradeAuthorized(url)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
       if (url.pathname === "/ws/global") {
         // App-wide event bus: owns file watching + cross-cutting broadcasts, so
-        // they no longer depend on a chat tab being mounted. Same auth as below.
-        const authConfig = configService.get("auth");
-        if (authConfig.enabled) {
-          const token = url.searchParams.get("token");
-          if (token !== authConfig.token) {
-            return new Response("Unauthorized", { status: 401 });
-          }
-        }
+        // they no longer depend on a chat tab being mounted.
         const upgraded = server.upgrade(req, { data: { type: "global" } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
       if (url.pathname === "/ws/extensions") {
-        // Auth check for extension WS
-        const authConfig = configService.get("auth");
-        if (authConfig.enabled) {
-          const token = url.searchParams.get("token");
-          if (token !== authConfig.token) {
-            return new Response("Unauthorized", { status: 401 });
-          }
-        }
         const upgraded = server.upgrade(req, { data: { type: "extensions" } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });

@@ -3,6 +3,7 @@ import { RefreshCw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api-client";
 import type { TeamMessageItem } from "@/hooks/use-chat";
+import { TYPE_BADGES } from "./team-message-badges";
 
 interface TeamActivityPopoverProps {
   teamNames: string[];
@@ -15,14 +16,6 @@ const STATUS_COLORS: Record<string, string> = {
   active: "bg-success",
   idle: "bg-warning",
   shutdown: "bg-text-3",
-};
-
-const TYPE_BADGES: Record<string, { label: string; className: string }> = {
-  task_assignment: { label: "task", className: "bg-primary/20 text-primary" },
-  idle_notification: { label: "idle", className: "bg-warning/20 text-warning" },
-  completion: { label: "done", className: "bg-success/20 text-success" },
-  shutdown_request: { label: "shutdown", className: "bg-error/20 text-error" },
-  shutdown_approved: { label: "shutdown ✓", className: "bg-text-3/20 text-text-3" },
 };
 
 export function TeamActivityPopover({ teamNames, messages, open, onOpenChange }: TeamActivityPopoverProps) {

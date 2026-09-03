@@ -4,9 +4,13 @@
  */
 import { useState, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import type { BashPartialEntry } from "../../hooks/use-chat";
-const MarkdownRenderer = lazy(() =>
-  import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
-);
+import { MiniMarkdown } from "./mini-markdown";
+import {
+  SendMessageSummary,
+  SendMessageDetails,
+  SendMessageOutcomeView,
+} from "./send-message-card";
+import { parseSendMessageResult } from "./send-message-parse";
 import {
   ChevronDown,
   ChevronRight,
@@ -30,6 +34,7 @@ import {
   Code,
   Columns2,
   Clock,
+  Send,
 } from "lucide-react";
 
 /** Per-tool-family icon chip: 24×24 rounded-7 tinted per the design spec. */
@@ -53,6 +58,8 @@ function toolChip(name: string, isError: boolean): { Icon: React.ElementType; cl
       return { Icon: ListChecks, cls: "bg-warning/15 text-warning" };
     case "Task": case "Agent":
       return { Icon: Bot, cls: "bg-accent-wash text-primary" };
+    case "SendMessage":
+      return { Icon: Send, cls: "bg-info/15 text-info" };
     case "AskUserQuestion":
       return { Icon: CircleHelp, cls: "bg-accent-wash text-primary" };
     case "ExitPlanMode":
@@ -256,6 +263,8 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
     case "Agent":
     case "Task":
       return <><Bot className="size-3 inline" /> {name} <span className="text-text-subtle">{truncate(s(input.description || input.prompt), 60)}</span></>;
+    case "SendMessage":
+      return <SendMessageSummary name={name} input={input} />;
     case "TodoWrite": {
       const todos = Array.isArray(input.todos) ? input.todos as Array<{ content: string; status: string }> : [];
       const done = todos.filter((t) => t.status === "completed").length;
@@ -401,6 +410,8 @@ function ToolDetails({
           {!!input.prompt && <MiniMarkdown content={s(input.prompt)} maxHeight="max-h-48" />}
         </div>
       );
+    case "SendMessage":
+      return <SendMessageDetails input={input} />;
     case "ToolSearch":
       return (
         <div className="space-y-0.5">
@@ -556,6 +567,13 @@ function ToolResultView({ toolName, output }: { toolName: string; output: string
     return null;
   }, [toolName, output]);
 
+  // SendMessage answers with a JSON status object nested inside the SDK's text block —
+  // a raw dump would be JSON inside JSON, so collapse it to one delivery line.
+  // Declared after every hook above so the hook order stays stable.
+  if (toolName === "SendMessage" && parseSendMessageResult(output)) {
+    return <SendMessageOutcomeView output={output} />;
+  }
+
   // Agent with extracted markdown content
   if (agentContent) {
     return (
@@ -671,16 +689,6 @@ function SubagentChildren({ events, projectName }: { events: ChatEvent[]; projec
     </div>
   );
 }
-
-/** Inline markdown renderer for tool details (prompt, result) */
-function MiniMarkdown({ content, maxHeight = "max-h-48" }: { content: string; maxHeight?: string }) {
-  return (
-    <Suspense fallback={<div className="animate-pulse h-4 bg-muted rounded" />}>
-      <MarkdownRenderer content={content} className={`text-text-secondary overflow-auto ${maxHeight}`} />
-    </Suspense>
-  );
-}
-
 
 /** Real-time streaming bash output with auto-scroll */
 function StreamingBashOutput({ content, lineCount }: { content: string; lineCount: number }) {

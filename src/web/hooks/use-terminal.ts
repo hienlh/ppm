@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { Terminal, type ITheme } from "@xterm/xterm";
+import { withWsAuth } from "@/lib/ws-auth";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -201,7 +202,7 @@ export function useTerminal(
     // Use actual session ID from server on reconnect (not "new")
     const sid = actualSessionId.current;
     const cwdQuery = sid === "new" && options.cwd ? `?cwd=${encodeURIComponent(options.cwd)}` : "";
-    const path = `/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}${cwdQuery}`;
+    const path = withWsAuth(`/ws/project/${encodeURIComponent(projectName)}/terminal/${sid}${cwdQuery}`);
     // Local dev over http: connect directly to backend (port 8081) to bypass
     // Vite's dev proxy which has unreliable WebSocket upgrade handling. Over https
     // (e.g. a Cloudflare tunnel) port 8081 isn't reachable and ws:// is blocked as

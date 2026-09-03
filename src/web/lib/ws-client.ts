@@ -1,3 +1,5 @@
+import { withWsAuth } from "@/lib/ws-auth";
+
 type MessageHandler = (data: MessageEvent) => void;
 
 const MAX_RECONNECT_DELAY = 30_000;
@@ -33,17 +35,20 @@ export class WsClient {
     this.cleanup();
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // Every app socket is authenticated at upgrade time; the token is read fresh
+    // on each (re)connect so a re-login mid-session is picked up.
+    const path = this.url.startsWith("ws") ? this.url : withWsAuth(this.url);
     let fullUrl: string;
-    if (this.url.startsWith("ws")) {
-      fullUrl = this.url;
-    } else if (import.meta.env.DEV && this.url.startsWith("/ws/") && window.location.protocol !== "https:") {
+    if (path.startsWith("ws")) {
+      fullUrl = path;
+    } else if (import.meta.env.DEV && path.startsWith("/ws/") && window.location.protocol !== "https:") {
       // Local dev over http: connect directly to backend (port 8081) to bypass
       // Vite's dev proxy which has unreliable WebSocket upgrade handling.
       // Over https (e.g. a Cloudflare tunnel) port 8081 isn't reachable and ws://
       // is blocked as mixed content, so fall through to same-origin wss:// proxy.
-      fullUrl = `ws://${window.location.hostname}:8081${this.url}`;
+      fullUrl = `ws://${window.location.hostname}:8081${path}`;
     } else {
-      fullUrl = `${protocol}//${window.location.host}${this.url}`;
+      fullUrl = `${protocol}//${window.location.host}${path}`;
     }
 
     this.ws = new WebSocket(fullUrl);
