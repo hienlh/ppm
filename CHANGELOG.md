@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1] - 2026-09-03
+
+### Added
+- **"New" tag on the File Explorer button** (desktop rail and mobile drawer) so the 0.18.0 feature is easy to spot.
+
+### Changed
+- **New/beta feature tags come from one list** — the "beta" pill on Teams and the new tag share a single registry, so adding or retiring a tag is a one-line change.
+
 ## [0.18.0] - 2026-09-03
 
 ### Added
