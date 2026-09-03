@@ -76,6 +76,7 @@ import { useTabStore } from "@/stores/tab-store";
 import { basename } from "@/lib/utils";
 import { isImageExtension } from "../../../shared/image-extensions";
 import { resultHasImagePlaceholder } from "../../../shared/tool-result-content";
+import { isAsyncAgentLaunchAck } from "../../../shared/background-agent-status";
 import { ToolImagePreview } from "./tool-image-preview";
 
 /** Extract tool name and input from a ChatEvent */
@@ -148,7 +149,17 @@ export function ToolCard({
   const isSubagent = (toolName === "Agent" || toolName === "Task") && tool.type === "tool_use";
   const children = isSubagent ? (tool as any).children as ChatEvent[] | undefined : undefined;
   const hasChildren = children && children.length > 0;
-  const isDone = hasResult || hasAnswers || wasApproved || completed;
+  // A backgrounded subagent answers its tool call the instant it spawns ("Async agent
+  // launched successfully"), then runs on past the end of the turn. Neither that ack nor
+  // `completed` (which only means the parent turn stopped streaming) says the agent is
+  // finished — only the <task-notification> the SDK reports as bgStatus does. Without this
+  // the card showed a green check while its step count kept climbing.
+  const bgStatus = isSubagent && tool.type === "tool_use" ? tool.bgStatus : undefined;
+  const isBgAgent = isSubagent
+    && (bgStatus != null || (hasResult && !isError && isAsyncAgentLaunchAck(String((result as any).output ?? ""))));
+  const bgRunning = isBgAgent && bgStatus == null;
+  const bgFailed = bgStatus === "failed" || bgStatus === "stopped";
+  const isDone = bgRunning ? false : (hasResult || hasAnswers || wasApproved || completed);
   // File-mutation tools show their change via the inline diff/content preview — the SDK's
   // "file updated successfully" boilerplate is noise, so suppress it (but keep error output).
   const isFileMutation = ["Edit", "MultiEdit", "Write", "NotebookEdit"].includes(toolName);
@@ -204,7 +215,10 @@ export function ToolCard({
           {hasChildren && !isStreamingBash && (
             <span className="text-[10px] text-text-3 font-mono">{children!.length} steps</span>
           )}
-          {isError
+          {bgRunning && (
+            <span className="text-[10px] text-primary">running…</span>
+          )}
+          {isError || bgFailed
             ? <XCircle className="size-3.5 text-error" />
             : isDone
               ? <CheckCircle2 className="size-3.5 text-success" />

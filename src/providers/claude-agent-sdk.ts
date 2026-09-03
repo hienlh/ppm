@@ -25,6 +25,7 @@ import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
 import { parseSessionMessage, nestChildEventsAcrossMessages } from "../services/jsonl-transcript-parser.ts";
+import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
 import { isCompiledBinary } from "../services/autostart-generator.ts";
@@ -2099,6 +2100,11 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // instead of inline sidechain lines — merge them back as card children.
       const sessionDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
       if (sessionDir) mergeSubagentChildren(sessionDir, merged);
+
+      // A backgrounded Agent's tool result is only a launch ack; its real outcome arrives
+      // later as a <task-notification>. Stamp that onto the tool_use so the card can tell
+      // "spawned" from "finished" instead of showing a check the moment the ack lands.
+      applyBackgroundAgentStatus(merged);
 
       return merged.filter(
         (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),

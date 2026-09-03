@@ -158,7 +158,12 @@ export type ResultSubtype =
 export type ChatEvent =
   | { type: "text"; content: string; parentToolUseId?: string }
   | { type: "thinking"; content: string; parentToolUseId?: string }
-  | { type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string; children?: ChatEvent[] }
+  | {
+      type: "tool_use"; tool: string; input: unknown; toolUseId?: string; parentToolUseId?: string; children?: ChatEvent[];
+      /** Terminal state of a backgrounded Agent/Task, once its `<task-notification>` arrives.
+       *  Absent on a launched-but-unfinished agent — the card renders that as still running. */
+      bgStatus?: import("../shared/background-agent-status").BackgroundAgentStatus;
+    }
   | { type: "tool_result"; output: string; isError?: boolean; toolUseId?: string; parentToolUseId?: string }
   | { type: "approval_request"; requestId: string; tool: string; input: unknown }
   | { type: "error"; message: string }

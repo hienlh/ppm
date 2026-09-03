@@ -14,6 +14,7 @@ import { backgroundShellRegistry } from "../../services/background-shell-registr
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
 import { formatTurnUsageLog } from "../../shared/turn-usage.ts";
+import { isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
@@ -435,6 +436,12 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           const taskStatus = (ev as any).taskStatus as string | undefined;
           const taskToolUseId = (ev as any).taskToolUseId as string | undefined;
           const outputFile = (ev as any).outputFile as string | undefined;
+          // A backgrounded Agent reports its outcome only here — its tool_result was a
+          // launch ack the card must not read as "finished". Forward the terminal state so
+          // the card can settle. Harmless for background bash tasks: no card matches them.
+          if (sub === "task_notification" && taskToolUseId && isTerminalAgentStatus(taskStatus)) {
+            broadcast(sessionId, { type: "subagent_status", toolUseId: taskToolUseId, status: taskStatus });
+          }
           if (taskId) {
             // Ensure the shell is registered even if the spy missed the file (fallback).
             if (!backgroundShellRegistry.get(sessionId, taskId) && outputFile) {

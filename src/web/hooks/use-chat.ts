@@ -7,6 +7,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { playNotificationSound } from "@/lib/notification-sounds";
 import { toast } from "sonner";
 import type { ChatMessage, ChatEvent } from "../../types/chat";
+import type { BackgroundAgentStatus } from "../../shared/background-agent-status";
 import type { ChatWsServerMessage, SessionPhase, BackgroundShell, VersionGroup } from "../../types/api";
 import { useBackgroundOutputStore } from "../stores/background-output-store";
 
@@ -316,6 +317,37 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     }
   }, [flushMessages]);
 
+  /**
+   * Stamp a backgrounded Agent/Task card with its terminal state.
+   *
+   * The card may live in either half of the transcript: the streaming buffer when the agent
+   * finishes inside the turn that spawned it, or a finalized message when it outlives that
+   * turn — which is the common case, and the one that used to leave a green check on a
+   * still-running agent.
+   */
+  const markSubagentStatus = useCallback((toolUseId: string, status: BackgroundAgentStatus) => {
+    const isTarget = (e: ChatEvent) =>
+      e.type === "tool_use" && (e.tool === "Agent" || e.tool === "Task") && (e as any).toolUseId === toolUseId;
+
+    const idx = streamingEventsRef.current.findIndex(isTarget);
+    if (idx !== -1) {
+      streamingEventsRef.current[idx] = { ...streamingEventsRef.current[idx]!, bgStatus: status } as ChatEvent;
+      syncMessages();
+      return;
+    }
+
+    setMessages((prev) => {
+      let mi = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i]!.events?.some(isTarget)) { mi = i; break; }
+      }
+      if (mi === -1) return prev;
+      const msg = prev[mi]!;
+      const events = msg.events!.map((e) => (isTarget(e) ? { ...e, bgStatus: status } as ChatEvent : e));
+      return [...prev.slice(0, mi), { ...msg, events }, ...prev.slice(mi + 1)];
+    });
+  }, [syncMessages]);
+
   /** Process a single stream event — reused by live events and turn_events replay */
   const processStreamEvent = useCallback((data: unknown) => {
     const ev = data as any;
@@ -593,6 +625,15 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         break;
       }
 
+      case "subagent_status": {
+        // A backgrounded Agent finished. Its card has shown a spinner since the launch ack
+        // (see isAsyncAgentLaunchAck) — stamp the terminal state so it can settle.
+        const tuId = ev.toolUseId as string | undefined;
+        const status = ev.status as BackgroundAgentStatus | undefined;
+        if (tuId && status) markSubagentStatus(tuId, status);
+        break;
+      }
+
       case "background_registry": {
         const shells = (ev.shells as BackgroundShell[]) ?? [];
         backgroundShellsRef.current = shells;
@@ -656,7 +697,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         break;
       }
     }
-  }, [routeToParent, routeToFinalizedParent, syncMessages]);
+  }, [routeToParent, routeToFinalizedParent, syncMessages, markSubagentStatus]);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;
