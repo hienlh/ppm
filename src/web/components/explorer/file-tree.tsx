@@ -43,6 +43,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { fsChanged, onFsChanged } from "@/components/os-explorer/explorer-store";
 import { dirnameOf } from "@/components/os-explorer/format-file-meta";
+import { useDragAutoScroll } from "@/components/os-explorer/dnd/use-drag-auto-scroll";
 import { useDropTransfer } from "@/components/os-explorer/dnd/use-drop-transfer";
 import { usePathDropTarget } from "@/components/os-explorer/dnd/use-path-drop-target";
 import { useFileUploadDrag } from "./use-file-upload-drag";
@@ -302,6 +303,7 @@ export function FileTree({ onFileOpen }: FileTreeProps = {}) {
     [tree, expandedPaths, inlineAction],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(scrollRef);
   const isMobile = useIsMobile();
   const rowVirtualizer = useVirtualizer({
     count: rows.length,

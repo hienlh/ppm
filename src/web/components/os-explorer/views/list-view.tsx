@@ -13,6 +13,7 @@ import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-contex
 import { useFileStore } from "@/stores/file-store";
 import { cn } from "@/lib/utils";
 import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { useDragAutoScroll } from "../dnd/use-drag-auto-scroll";
 import { usePathDropTarget } from "../dnd/use-path-drop-target";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { useExplorerStore, type SortKey } from "../explorer-store";
@@ -37,6 +38,7 @@ export function ListView({
   const setPrefs = useExplorerStore((s) => s.setPrefs);
   const cutPaths = useFileStore((s) => (s.clipboard?.operation === "cut" ? s.clipboard.paths : null));
   const scrollRef = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(scrollRef);
   const skin = useExplorerSkin();
   const coarse = usePrefersCoarsePointer();
 

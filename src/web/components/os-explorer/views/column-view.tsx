@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { FsEntry } from "@/lib/fs-api";
+import { useDragAutoScroll } from "../dnd/use-drag-auto-scroll";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { ColumnViewColumn } from "./column-view-column";
 import { ColumnViewMobile } from "./column-view-mobile";
@@ -31,6 +32,10 @@ export function ColumnView({
   const isMobile = useIsMobile();
 
   const containerRef = useRef<HTMLDivElement>(null);
+  // Horizontal auto-scroll across the Miller strip itself; each column also scrolls
+  // vertically on its own (see `column-view-column.tsx`). Harmless on mobile — no drag
+  // source ever fires a `dragover` there, since `draggable` is withheld on coarse pointers.
+  useDragAutoScroll(containerRef);
   const [focusedIndex, setFocusedIndex] = useState(columns.length - 1);
   const [containerWidth, setContainerWidth] = useState(0);
   const prevLength = useRef(columns.length);

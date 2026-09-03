@@ -15,6 +15,7 @@ import { useFileStore } from "@/stores/file-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { useDragAutoScroll } from "../dnd/use-drag-auto-scroll";
 import { usePathDropTarget } from "../dnd/use-path-drop-target";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { activeEntries } from "../use-explorer-keyboard";
@@ -36,6 +37,7 @@ export function IconsView({
 }: ExplorerViewProps) {
   const cutPaths = useFileStore((s) => (s.clipboard?.operation === "cut" ? s.clipboard.paths : null));
   const scrollRef = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(scrollRef);
   const isMobile = useIsMobile();
   const [columns, setColumns] = useState(isMobile ? MOBILE_COLUMNS : 1);
 
