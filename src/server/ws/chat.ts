@@ -87,6 +87,8 @@ interface SessionEntry {
   teamNames: Set<string>;
   /** toolUseId of a pending TeamCreate call */
   pendingTeamCreate?: string;
+  /** Throttle marker for the filesystem probe that finds implicitly-created teams */
+  lastImplicitTeamProbe?: number;
   /** Compact indicator state — sticky until turn ends or boundary received, synced on reconnect */
   compactStatus?: "compacting" | null;
   /** toolUseIds of Bash calls launched with run_in_background — spy is kept alive for these */
@@ -267,6 +269,47 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
     }
   }
   broadcast(sessionId, event);
+}
+
+/** How often a session may stat ~/.claude/teams looking for an implicit team. */
+const IMPLICIT_TEAM_PROBE_INTERVAL_MS = 3_000;
+
+/** Watch a team's inboxes and announce it to the session's clients. Idempotent. */
+async function attachTeamWatcher(sessionId: string, teamName: string): Promise<void> {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.teamNames.has(teamName)) return;
+  entry.teamNames.add(teamName);
+  const { startTeamInboxWatcher } = await import("./team-inbox-watcher.ts");
+  const watcher = await startTeamInboxWatcher(teamName, {
+    onInboxUpdate: (tn, agent, msgs) => broadcast(sessionId, {
+      type: "team_inbox", teamName: tn, agent, messages: msgs,
+    }),
+    onConfigUpdate: (tn, config) => broadcast(sessionId, {
+      type: "team_updated", teamName: tn, team: config,
+    }),
+  });
+  // The session may have been torn down while the watcher was starting.
+  const live = activeSessions.get(sessionId);
+  if (!live) { watcher.cleanup(); return; }
+  live.teamWatchers.set(teamName, watcher);
+  bufferAndBroadcast(sessionId, { type: "team_detected", teamName });
+  console.log(`[chat] session=${sessionId} team detected: ${teamName}`);
+}
+
+/** Attach to the team Claude Code creates implicitly for this session.
+ *  Current releases no longer expose a TeamCreate tool — a team materialises as
+ *  ~/.claude/teams/<sessionId>/inboxes/ with no tool call to hook and no
+ *  config.json, so the directory itself is the only reliable signal. */
+async function detectImplicitTeam(sessionId: string): Promise<void> {
+  const entry = activeSessions.get(sessionId);
+  if (!entry || entry.teamNames.has(sessionId)) return;
+  const now = Date.now();
+  if (entry.lastImplicitTeamProbe && now - entry.lastImplicitTeamProbe < IMPLICIT_TEAM_PROBE_INTERVAL_MS) return;
+  entry.lastImplicitTeamProbe = now;
+  try {
+    const { teamExists } = await import("./team-inbox-watcher.ts");
+    if (await teamExists(sessionId)) await attachTeamWatcher(sessionId, sessionId);
+  } catch { /* teams dir unreadable — nothing to attach */ }
 }
 
 /** Transition session phase — guards same-phase, broadcasts phase_changed */
@@ -562,27 +605,17 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         if (ev.toolUseId && !entry.backgroundToolUseIds?.has(ev.toolUseId)) {
           bashOutputSpy.stopSpy(ev.toolUseId);
         }
-        // Detect team creation from TeamCreate tool_result
+        // Detect team creation from TeamCreate tool_result (legacy explicit teams)
         if (entry.pendingTeamCreate && entry.pendingTeamCreate === ev.toolUseId) {
-          const { extractTeamName, startTeamInboxWatcher } = await import("./team-inbox-watcher.ts");
+          const { extractTeamName } = await import("./team-inbox-watcher.ts");
           const teamName = extractTeamName(ev.output ?? "");
           console.log(`[chat] session=${sessionId} TeamCreate result matched, extracted teamName=${teamName}`);
-          if (teamName && !entry.teamNames.has(teamName)) {
-            entry.teamNames.add(teamName);
-            const watcher = startTeamInboxWatcher(teamName, {
-              onInboxUpdate: (tn, agent, msgs) => broadcast(sessionId, {
-                type: "team_inbox", teamName: tn, agent, messages: msgs,
-              }),
-              onConfigUpdate: (tn, config) => broadcast(sessionId, {
-                type: "team_updated", teamName: tn, team: config,
-              }),
-            });
-            entry.teamWatchers.set(teamName, watcher);
-            bufferAndBroadcast(sessionId, { type: "team_detected", teamName });
-            console.log(`[chat] session=${sessionId} team detected: ${teamName}`);
-          }
+          if (teamName) await attachTeamWatcher(sessionId, teamName);
           entry.pendingTeamCreate = undefined;
         }
+        // Implicit teams have no tool result to key off — the session's own team
+        // directory can appear after any Agent/SendMessage call, so poll (throttled).
+        void detectImplicitTeam(sessionId);
       } else if (evType === "error") {
         const errorDetail = ev.message ?? JSON.stringify(ev).slice(0, 500);
         console.error(`[chat] session=${sessionId} error: ${errorDetail}`);
@@ -794,6 +827,10 @@ export const chatWebSocket = {
       existing.clients.add(ws);
       setupClientPing(existing, ws);
 
+      // A team created in an earlier turn (or before a server restart) leaves no
+      // live event to replay — re-attach from disk so the UI comes back.
+      void detectImplicitTeam(sessionId);
+
       // Async: resolve title from SDK if in-memory title is generic (DB title takes priority)
       if (!session?.title || session.title === "Chat" || session.title === "Resumed Chat") {
         sdkListSessions({ dir: projectPath, limit: 50 }).then((sessions) => {
@@ -827,6 +864,10 @@ export const chatWebSocket = {
     };
     activeSessions.set(sessionId, newEntry);
     setupClientPing(newEntry, ws);
+
+    // Resuming a session whose team already exists on disk (server restart, or a
+    // team created many turns ago) — re-attach the watcher.
+    void detectImplicitTeam(sessionId);
 
     ws.send(JSON.stringify({
       type: "session_state",

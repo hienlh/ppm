@@ -21,16 +21,27 @@ interface WatcherCallbacks {
   onConfigUpdate: (teamName: string, config: unknown) => void;
 }
 
-/** Start watching a team's inboxes directory + config.json for changes */
-export function startTeamInboxWatcher(
+/** Start watching a team's inboxes directory + config.json for changes.
+ *  Snapshots are seeded from what is already on disk: a watcher can attach to a
+ *  team that has been running for hours, and an unseeded snapshot would replay
+ *  every historical message as "new" on the first file change. */
+export async function startTeamInboxWatcher(
   teamName: string,
   callbacks: WatcherCallbacks,
-): { watchers: FSWatcher[]; cleanup: () => void } {
+): Promise<{ watchers: FSWatcher[]; cleanup: () => void }> {
   const inboxDir = join(TEAMS_DIR, teamName, "inboxes");
   const configPath = join(TEAMS_DIR, teamName, "config.json");
   const watchers: FSWatcher[] = [];
   const inboxSnapshots = new Map<string, number>(); // filename → last known msg count
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  // Seed from current on-disk state before the first change event lands.
+  for (const file of await readInboxFiles(teamName)) {
+    try {
+      const parsed = JSON.parse(await Bun.file(join(inboxDir, file)).text());
+      if (Array.isArray(parsed)) inboxSnapshots.set(file, parsed.length);
+    } catch { /* mid-write or malformed — treat as empty */ }
+  }
 
   // Watch inboxes directory
   try {
@@ -92,6 +103,27 @@ export async function readTeamConfig(teamName: string): Promise<unknown | null> 
   } catch { return null; }
 }
 
+/** Inbox filenames (`<agent>.json`) for a team, empty when the dir is absent. */
+async function readInboxFiles(teamName: string): Promise<string[]> {
+  try {
+    return (await readdir(join(TEAMS_DIR, teamName, "inboxes"))).filter(f => f.endsWith(".json"));
+  } catch { return []; }
+}
+
+/** Member record for an agent only known by its inbox filename. */
+function synthesizeMember(name: string, teamName: string, status: string) {
+  return { name, agentId: `${name}@${teamName}`, agentType: "teammate", model: "unknown", status };
+}
+
+/** Whether a team directory holds anything usable.
+ *  config.json is optional: Claude Code now creates the team implicitly, named
+ *  after the session, and writes only inboxes/. Requiring a config would make
+ *  every implicitly-created team invisible. */
+export async function teamExists(teamName: string): Promise<boolean> {
+  if (await readTeamConfig(teamName)) return true;
+  return (await readInboxFiles(teamName)).length > 0;
+}
+
 /** List all teams from ~/.claude/teams/ */
 export async function listTeams(): Promise<unknown[]> {
   try {
@@ -99,8 +131,20 @@ export async function listTeams(): Promise<unknown[]> {
     const teams = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const config = await readTeamConfig(entry.name);
-      if (config) teams.push(config);
+      const config = await readTeamConfig(entry.name) as any;
+      if (config) {
+        teams.push({ ...config, name: config.name ?? entry.name, implicit: false });
+        continue;
+      }
+      // Implicit team: membership is only discoverable from inbox filenames.
+      const inboxFiles = await readInboxFiles(entry.name);
+      if (inboxFiles.length === 0) continue;
+      teams.push({
+        name: entry.name,
+        team_name: entry.name,
+        implicit: true,
+        members: inboxFiles.map(f => synthesizeMember(f.replace(".json", ""), entry.name, "active")),
+      });
     }
     return teams;
   } catch { return []; }
@@ -109,14 +153,15 @@ export async function listTeams(): Promise<unknown[]> {
 /** Read team detail with merged inbox messages + inferred member status */
 export async function readTeamDetail(teamName: string): Promise<unknown | null> {
   const config = await readTeamConfig(teamName) as any;
-  if (!config) return null;
-
   const inboxDir = join(TEAMS_DIR, teamName, "inboxes");
+  const inboxFiles = await readInboxFiles(teamName);
+  // Only a directory with neither a config nor any inbox is "not a team".
+  if (!config && inboxFiles.length === 0) return null;
+  const base = config ?? { name: teamName, team_name: teamName, implicit: true };
+
   const messages: unknown[] = [];
-  let inboxFiles: string[] = [];
-  try {
-    inboxFiles = (await readdir(inboxDir)).filter(f => f.endsWith(".json"));
-    for (const file of inboxFiles) {
+  for (const file of inboxFiles) {
+    try {
       const content = await Bun.file(join(inboxDir, file)).text();
       const agentName = file.replace(".json", "");
       const parsed = JSON.parse(content);
@@ -127,8 +172,8 @@ export async function readTeamDetail(teamName: string): Promise<unknown | null> 
           parsedType: inferMessageType(m.text ?? ""),
         })));
       }
-    }
-  } catch { /* no inboxes dir */ }
+    } catch { /* mid-write or malformed inbox — skip this agent */ }
+  }
 
   // Sort by timestamp
   messages.sort((a: any, b: any) =>
@@ -136,7 +181,7 @@ export async function readTeamDetail(teamName: string): Promise<unknown | null> 
   );
 
   // Infer member status from inboxes
-  const members = (config.members ?? []).map((m: any) => ({
+  const members = (base.members ?? []).map((m: any) => ({
     ...m,
     status: inferMemberStatus(messages, m.name),
   }));
@@ -145,17 +190,11 @@ export async function readTeamDetail(teamName: string): Promise<unknown | null> 
   for (const file of inboxFiles) {
     const name = file.replace(".json", "");
     if (!members.some((m: any) => m.name === name)) {
-      members.push({
-        name,
-        agentId: `${name}@${teamName}`,
-        agentType: "teammate",
-        model: "unknown",
-        status: inferMemberStatus(messages, name),
-      });
+      members.push(synthesizeMember(name, teamName, inferMemberStatus(messages, name)));
     }
   }
 
-  return { ...config, members, messages, memberCount: members.length };
+  return { ...base, name: base.name ?? teamName, members, messages, memberCount: members.length };
 }
 
 function inferMemberStatus(messages: unknown[], agentName: string): string {

@@ -211,6 +211,22 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     updateTeamActivity();
   }, [updateTeamActivity]);
 
+  /** Merge a team's on-disk message history into the activity buffer. */
+  const loadTeamDetail = useCallback(async (teamName: string) => {
+    try {
+      const res = await api.get<any>(`/api/teams/${encodeURIComponent(teamName)}`);
+      if (!res?.messages) return;
+      const existing = teamActivityRef.current.messages;
+      const newMsgs = (res.messages as any[]).filter(
+        (m: any) => !existing.some((e) => e.timestamp === m.timestamp && e.from === m.from)
+      );
+      existing.push(...newMsgs);
+      existing.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      if (existing.length > 500) existing.splice(0, existing.length - 500);
+      updateTeamActivity();
+    } catch { /* team deleted or unreadable */ }
+  }, [updateTeamActivity]);
+
   // Derived state
   const isStreaming = phase !== "idle";
 
@@ -568,20 +584,8 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         const teamName = ev.teamName as string;
         if (teamName) {
           teamActivityRef.current.teamNames.add(teamName);
-          // Fetch full team data from REST
-          api.get<any>(`/api/teams/${encodeURIComponent(teamName)}`).then((res: any) => {
-            if (res?.messages) {
-              const existing = teamActivityRef.current.messages;
-              const newMsgs = (res.messages as any[]).filter(
-                (m: any) => !existing.some((e) => e.timestamp === m.timestamp && e.from === m.from)
-              );
-              existing.push(...newMsgs);
-              existing.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-              if (existing.length > 500) existing.splice(0, existing.length - 500);
-            }
-            updateTeamActivity();
-          }).catch(() => {});
           updateTeamActivity();
+          void loadTeamDetail(teamName);
         }
         break;
       }
@@ -697,7 +701,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         break;
       }
     }
-  }, [routeToParent, routeToFinalizedParent, syncMessages, markSubagentStatus]);
+  }, [routeToParent, routeToFinalizedParent, syncMessages, markSubagentStatus, updateTeamActivity, loadTeamDetail]);
 
   const handleMessage = useCallback((event: MessageEvent) => {
     let data: ChatWsServerMessage;
@@ -955,6 +959,23 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     setTeamActivity(EMPTY_TEAM_ACTIVITY);
     setTeamMessages([]);
 
+    // Rehydrate the team from disk. team_detected only arrives live and its replay
+    // buffer is cleared at every turn boundary, so without this a reload — or any
+    // later turn — drops the team UI even while the team is still running.
+    if (sessionId) {
+      api.get<any[]>("/api/teams").then((teams) => {
+        if (cancelled || !Array.isArray(teams)) return;
+        // Only the team named after this session. The global list carries other
+        // sessions' teams and nothing on disk attributes those to a session, so
+        // matching by name is what keeps one session's team out of another's UI.
+        const mine = teams.filter((t: any) => (t?.name ?? t?.team_name) === sessionId);
+        if (mine.length === 0) return;
+        teamActivityRef.current.teamNames.add(sessionId);
+        updateTeamActivity();
+        void loadTeamDetail(sessionId);
+      }).catch(() => {});
+    }
+
     // Snapshot the previous session's message ids. On a same-tab session swap
     // (edit→fork / version switch) a queued send may append optimistic + live
     // streaming messages BEFORE this history fetch resolves. We drop exactly the
@@ -1011,7 +1032,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
     return () => {
       cancelled = true;
     };
-  }, [sessionId, providerId, projectName]);
+  }, [sessionId, providerId, projectName, updateTeamActivity, loadTeamDetail]);
 
   const sendMessage = useCallback(
     (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => {
