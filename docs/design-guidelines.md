@@ -96,6 +96,37 @@ These rules MUST be followed when creating or modifying any UI component. PPM is
 
 ---
 
+## Floating Windows
+
+Desktop-only window manager (`src/web/components/floating-window/`), currently used by the OS
+File Explorer. Any future floating-window feature must follow the same contract:
+
+- **Z-band**: windows render at `zIndex = 30 + rank`, dense-ranked, capped at an **8-window
+  limit** (opening a 9th focuses the oldest window instead of spawning one). This keeps every
+  window strictly below the app's `z-40` click-away backdrops and `z-50` Radix layers (dropdowns,
+  dialogs, the command palette) — those must always stay reachable regardless of how many
+  windows are open.
+- **Mobile fallback rule**: the window layer never mounts below the `md` breakpoint at all — not
+  a scaled-down window, a **separate full-screen bottom-sheet component** rendering the same
+  content component with a `variant="sheet"` (or equivalent) prop. Decide the desktop/mobile
+  branch with the same `isMobileDevice()` / `useIsMobile()` pair already used everywhere else in
+  the app (never a second breakpoint check).
+- **Skin CSS scoping**: a skin (OS chrome, icon set, font stack) is scoped entirely through a
+  `data-skin="<id>"` attribute plus `[data-skin="..."] { --x-*: ... }` blocks layered over PPM's
+  existing semantic tokens — never a second light/dark color table. Because a window's chrome is
+  a sibling of its body in the DOM (not a descendant), `data-skin` must be set on **both** —
+  a `--x-*` var only resolves on the element that itself carries the attribute.
+- **Coarse-pointer rules the explorer follows** (apply to any new window content):
+  - Resize/drag grab strips widen from 6/12px (edge/corner) to 12/20px under
+    `usePrefersCoarsePointer()` (a real `matchMedia("(pointer: coarse)")` check) — never a `md:`
+    breakpoint alone, since a touch laptop or iPad can be ≥768px wide with no mouse.
+  - `draggable` (HTML5 drag-and-drop) is never set on a coarse pointer — there is no touch
+    equivalent, and the guideline reserves long-press for the context menu instead.
+  - Row/tile height and toolbar buttons still need the 44×44px minimum on a coarse pointer even
+    at desktop width, gated the same way.
+
+---
+
 ## UI Framework Stack
 
 ### Tailwind CSS 4.2

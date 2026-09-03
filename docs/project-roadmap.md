@@ -10,6 +10,16 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
+### v0.17 — OS File Explorer Window (Released)
+- Floating, OS-skinned file explorer window (Windows 11 / macOS Finder chrome, Linux → macOS skin) — drag, 8-way resize, multi-instance, persisted rect
+- Browses the whole host filesystem via `/api/fs`, hardened to whole-disk scope (protected roots, PPM-dir shield, single-use path-bound download tokens)
+- List / Icons (thumbnails) / Column (Miller) views; sidebar with drives, known folders, OS-pinned folders (Quick Access / Finder Favorites / GTK+KDE), PPM pins
+- Double-click opens PPM-viewable files (incl. external `.db` via the host SQLite viewer) in the existing tab system; OS-style actions otherwise (Cut/Copy/Paste, Rename, Trash/Delete permanently, New, Properties)
+- Mouse drag-and-drop of entries across explorer windows, sidebar, and the project tree (move / Ctrl-copy)
+- Mobile: full-screen bottom-sheet variant of the same body (long-press menu, Select mode, single-column view)
+
+*(Note: this roadmap's version-table sections below (v0.8–v1.0) predate this entry and are not kept in sync with the shipped version — see `CHANGELOG.md` for the authoritative release history.)*
+
 ### v0.1–v0.5 — Foundation (Released)
 - Bun runtime, Hono server, React + Vite frontend
 - File explorer, Monaco editor, xterm.js terminal

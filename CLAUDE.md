@@ -98,3 +98,7 @@ Before planning or implementing a new feature, read `docs/project-roadmap.md` to
 - `src/server/ws/chat.ts` — WebSocket chat handler
 - `src/web/hooks/use-chat.ts` — Frontend chat state management
 - `src/services/config.service.ts` — Config from SQLite (`~/.ppm/ppm.db`)
+- `src/web/components/floating-window/` — Desktop window manager (drag/resize/z-band/persistence), OS-agnostic
+- `src/web/components/os-explorer/` — OS File Explorer window body: views (List/Icons/Column), skins, mobile sheet, actions, drag-and-drop
+- `src/services/fs-ops/` — Guarded whole-disk filesystem operations (`/api/fs/*`) behind PPM auth
+- `src/services/host-info/` — Per-OS drives/known-folders/pinned-folders providers (`/api/system/host`)
