@@ -2,6 +2,7 @@ import {
   FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Sparkles, BotMessageSquare, Globe, Users,
 } from "lucide-react";
 import type { SidebarActiveTab } from "@/stores/settings-store";
+import type { FeatureBadgeId } from "@/lib/feature-badges";
 import type { ExtensionContributes } from "../../../types/extension";
 
 export type SidebarTabId = SidebarActiveTab;
@@ -13,8 +14,8 @@ export interface SidebarTabDef {
   /** Compact label for the mobile bottom bar; falls back to `label`. */
   shortLabel?: string;
   icon: React.ElementType;
-  /** Marks the tab's feature as beta — renders a small "beta" tag on the rail + mobile bar. */
-  beta?: boolean;
+  /** Feature tag ("new"/"beta") looked up in `lib/feature-badges.ts`; rendered on the rail + mobile bar. */
+  badge?: FeatureBadgeId;
 }
 
 /**
@@ -24,7 +25,7 @@ export interface SidebarTabDef {
  */
 export const BUILTIN_SIDEBAR_TABS: SidebarTabDef[] = [
   { id: "history", label: "Chat History", shortLabel: "History", icon: BotMessageSquare },
-  { id: "teams", label: "Teams", icon: Users, beta: true },
+  { id: "teams", label: "Teams", icon: Users, badge: "teams" },
   { id: "explorer", label: "Explorer", icon: FolderOpen },
   { id: "search", label: "Search", icon: Search },
   { id: "git", label: "Git", icon: GitBranch },

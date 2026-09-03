@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { FeatureBadge } from "@/components/ui/feature-badge";
 import { cn } from "@/lib/utils";
 import type { SidebarActiveTab } from "@/stores/settings-store";
 import type { SidebarTabDef } from "@/lib/sidebar-tabs/tab-registry";
@@ -134,11 +135,7 @@ export function MobileDrawerTabBar({ tabs, activeId, onSelect, onReorder }: Prop
           >
             <Icon className="size-4" />
             <span>{tab.shortLabel ?? tab.label}</span>
-            {tab.beta && (
-              <span className="absolute top-1 right-2 rounded-full bg-accent-wash px-1 text-[7px] font-bold uppercase leading-[1.4] tracking-wide text-primary">
-                beta
-              </span>
-            )}
+            <FeatureBadge id={tab.badge} variant="corner" className="top-1 right-2 shadow-none" />
           </button>
         );
       })}
@@ -173,11 +170,7 @@ export function MobileDrawerTabBar({ tabs, activeId, onSelect, onReorder }: Prop
               >
                 <Icon className="size-4 shrink-0" />
                 <span>{tab.label}</span>
-                {tab.beta && (
-                  <span className="rounded-full bg-accent-wash px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
-                    beta
-                  </span>
-                )}
+                <FeatureBadge id={tab.badge} />
               </button>
             );
           })}

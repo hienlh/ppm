@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Users, Loader2, Trash2 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
+import { FeatureBadge } from "@/components/ui/feature-badge";
 import { useProjectStore } from "@/stores/project-store";
 import { usePanelStore } from "@/stores/panel-store";
 import {
@@ -68,9 +69,7 @@ export function GroupList() {
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border px-2">
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Teams</span>
-          <span className="rounded-full bg-accent-wash px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-primary">
-            beta
-          </span>
+          <FeatureBadge id="teams" />
         </div>
         <button
           type="button"

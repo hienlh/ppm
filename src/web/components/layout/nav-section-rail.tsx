@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import { Settings, Bug, Cloud, FolderTree } from "lucide-react";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
+import { FeatureBadge } from "@/components/ui/feature-badge";
+import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { getAvailableTabs } from "@/lib/sidebar-tabs/tab-registry";
 import { resolveTabOrder } from "@/lib/sidebar-tabs/resolve-tab-order";
@@ -26,8 +28,8 @@ function Badge({ count }: { count: number }) {
 }
 
 // Section nav item: 38×38, active = tinted bg + inset accent bar + bolder icon.
-function NavItem({ icon: Icon, label, active, badge, beta, onClick, dragging, dropBefore, onDragStart, onDragOver, onDrop, onDragEnd }: {
-  icon: React.ElementType; label: string; active: boolean; badge?: number; beta?: boolean; onClick: () => void;
+function NavItem({ icon: Icon, label, active, badge, featureBadge, onClick, dragging, dropBefore, onDragStart, onDragOver, onDrop, onDragEnd }: {
+  icon: React.ElementType; label: string; active: boolean; badge?: number; featureBadge?: FeatureBadgeId; onClick: () => void;
   dragging?: boolean; dropBefore?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onDragOver?: (e: React.DragEvent) => void;
@@ -53,11 +55,7 @@ function NavItem({ icon: Icon, label, active, badge, beta, onClick, dragging, dr
     >
       <Icon className="size-[18px]" strokeWidth={active ? 2.4 : 2} />
       {badge != null && badge > 0 && <Badge count={badge} />}
-      {beta && (
-        <span className="absolute -top-0.5 -right-0.5 rounded-full bg-accent-wash px-1 text-[7px] font-bold uppercase leading-[1.4] tracking-wide text-primary shadow-sm">
-          beta
-        </span>
-      )}
+      <FeatureBadge id={featureBadge} variant="corner" />
       {/* hover tooltip (pointer devices only) */}
       <span className="pointer-events-none absolute left-[calc(100%+8px)] z-50 hidden can-hover:group-hover:block whitespace-nowrap rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs font-medium text-foreground shadow-[0_4px_12px_rgba(0,0,0,.4)]">
         {label}
@@ -67,8 +65,8 @@ function NavItem({ icon: Icon, label, active, badge, beta, onClick, dragging, dr
 }
 
 // Footer utility item: 32×32, 16px icon.
-function FooterUtil({ icon: Icon, label, onClick, active }: {
-  icon: React.ElementType; label: string; onClick?: () => void; active?: boolean;
+function FooterUtil({ icon: Icon, label, onClick, active, featureBadge }: {
+  icon: React.ElementType; label: string; onClick?: () => void; active?: boolean; featureBadge?: FeatureBadgeId;
 }) {
   return (
     <button
@@ -82,6 +80,7 @@ function FooterUtil({ icon: Icon, label, onClick, active }: {
       )}
     >
       <Icon className="size-4" />
+      <FeatureBadge id={featureBadge} variant="corner" />
       <span className="pointer-events-none absolute left-[calc(100%+8px)] z-50 hidden can-hover:group-hover:block whitespace-nowrap rounded-md border border-border bg-surface-elevated px-2 py-1 text-xs font-medium text-foreground shadow-[0_4px_12px_rgba(0,0,0,.4)]">
         {label}
       </span>
@@ -173,7 +172,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
             label={tab.label}
             active={sidebarActiveTab === tab.id}
             badge={tab.id === "git" ? gitChangesCount : tab.id === "jira" ? jiraUnreadCount : tab.id === "history" ? historyUnreadCount : undefined}
-            beta={tab.beta}
+            featureBadge={tab.badge}
             onClick={() => handleTabClick(tab.id)}
             dragging={dragId === tab.id}
             dropBefore={dropId === tab.id && dragId !== tab.id}
@@ -211,7 +210,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           document.body,
         )}
         {/* Not a sidebar tab — the explorer lives in its own floating window. */}
-        <FooterUtil icon={FolderTree} label="File Explorer" onClick={() => void openExplorer()} />
+        <FooterUtil icon={FolderTree} label="File Explorer" featureBadge="os-explorer" onClick={() => void openExplorer()} />
         <FooterUtil icon={Bug} label="Report Bug" onClick={handleReportBug} />
         <FooterUtil icon={Settings} label="Settings" active={sidebarActiveTab === "settings"} onClick={() => handleTabClick("settings")} />
       </div>

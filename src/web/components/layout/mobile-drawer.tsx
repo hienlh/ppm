@@ -23,6 +23,7 @@ import { CloudSharePopover } from "@/components/layout/cloud-share-popover";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
+import { FeatureBadge } from "@/components/ui/feature-badge";
 import { cn } from "@/lib/utils";
 
 // Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
@@ -148,6 +149,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
               >
                 <FolderTree className="size-3" />
                 <span>Files</span>
+                <FeatureBadge id="os-explorer" className="text-[7px] px-1" />
               </button>
               <button
                 onClick={() => setCloudOpen(true)}
