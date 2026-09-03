@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.18.2] - 2026-09-03
+
+### Fixed
+- **Aurora Dark panels are opaque** — dropdowns, bottom sheets and stacked windows no longer show the content behind them through the glass tint.
+
 ## [0.18.1] - 2026-09-03
 
 ### Added
