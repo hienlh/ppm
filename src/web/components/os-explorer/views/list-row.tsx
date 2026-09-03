@@ -10,17 +10,20 @@
  * `useMobileRowTap`), and "Select" mode swaps the tap for a checkbox toggle.
  */
 
-import { forwardRef, memo, type MouseEventHandler } from "react";
+import { forwardRef, memo, useMemo, type HTMLAttributes } from "react";
 import { Check } from "lucide-react";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import type { FsEntry } from "@/lib/fs-api";
 import { cn } from "@/lib/utils";
 import { extensionOf } from "../can-open-in-ppm";
+import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { useEntryRowDnd } from "../dnd/use-entry-row-dnd";
 import { ExplorerContextMenu } from "../explorer-context-menu";
 import { FileTypeIcon } from "../icons/file-type-icon";
 import { formatRelativeTime, formatSize } from "../format-file-meta";
 import { useMobileRowTap } from "../mobile/use-mobile-row-tap";
 import { useCoarseLongPress } from "../use-coarse-long-press";
+import { composeInteractiveRowProps, type InjectedRowProps } from "./compose-interactive-row-props";
 import type { ExplorerViewProps } from "./explorer-view-registry";
 import { InlineNameInput } from "./inline-name-input";
 
@@ -37,11 +40,15 @@ export interface ListRowProps extends Pick<ExplorerViewProps, "actions" | "selec
 }
 
 export const ListRow = memo(function ListRow(props: ListRowProps) {
-  const { entry, currentDir, selected, hasClipboard, isPinned, actions, menuTargets } = props;
+  const { entry, currentDir, hasClipboard, isPinned, actions, menuTargets } = props;
+  // A drag carries whatever a context menu would act on: the selection when this row is part
+  // of it, otherwise just this row.
+  const dragPaths = useMemo(() => menuTargets.map((target) => target.path), [menuTargets]);
+  const dnd = useEntryRowDnd({ entry, dragPaths, run: actions.transferInto });
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <ListRowInteractive {...props} />
+        <ListRowInteractive {...props} dnd={dnd.props} dropActive={dnd.isDropTarget} />
       </ContextMenuTrigger>
       <ExplorerContextMenu
         targets={menuTargets}
@@ -59,16 +66,22 @@ export const ListRow = memo(function ListRow(props: ListRowProps) {
  * provider) — the position `useMobileRowTap` needs to reach this row's own sheet state.
  *
  * `ContextMenuTrigger asChild` clones its child and merges its own `onContextMenu` (the
- * handler that actually opens the row's menu) plus a `ref` onto it — but `cloneElement`
- * only reaches a plain function component's *props*, and a component that doesn't accept
- * and forward those two keeps them from ever touching the real DOM node. That was the bug:
- * the row still ran its own local selection logic, but Radix's own trigger handler was
- * silently dropped, so no menu ever opened. `forwardRef` plus explicitly accepting and
- * composing `onContextMenu` is what lets a wrapping component sit under `asChild` at all.
+ * handler that actually opens the row's menu), a `ref`, pointer handlers, `data-state` and a
+ * `style` that suppresses the native touch callout — but `cloneElement` only reaches a plain
+ * function component's *props*, and a component that doesn't accept and forward them keeps
+ * them from ever touching the real DOM node. That was the bug: the row still ran its own
+ * local selection logic, but Radix's own trigger handler was silently dropped, so no menu
+ * ever opened. `forwardRef` plus `composeInteractiveRowProps` over *everything* injected —
+ * not just the two props that fixed the visible symptom — is what lets a wrapping component
+ * sit under `asChild` at all.
  */
-export const ListRowInteractive = forwardRef<HTMLDivElement, ListRowProps & { onContextMenu?: MouseEventHandler<HTMLDivElement> }>(
+export const ListRowInteractive = forwardRef<HTMLDivElement, ListRowProps & InjectedRowProps>(
   function ListRowInteractive(
-    { entry, selected, focused, cut, renaming, height, actions, selection, inlineError, onContextMenu },
+    {
+      entry, selected, focused, cut, renaming, height, actions, selection, inlineError,
+      currentDir: _currentDir, hasClipboard: _hasClipboard, isPinned: _isPinned, menuTargets: _menuTargets,
+      dnd, dropActive, ...injected
+    },
     ref,
   ) {
     const longPress = useCoarseLongPress(() => {
@@ -76,34 +89,40 @@ export const ListRowInteractive = forwardRef<HTMLDivElement, ListRowProps & { on
     });
     const { isMobile, selectMode, handleTap } = useMobileRowTap(actions, selection);
 
-    return (
-      <div
-        ref={ref}
-        role="row"
-        aria-selected={selected}
-        data-testid="explorer-row"
-        data-path={entry.path}
-        title={entry.name}
-        style={{ height }}
-        {...longPress}
-        onContextMenu={(e) => {
-          // Run Radix's own handler first (it opens this row's menu); only afterwards stop
-          // the event from also reaching the background trigger further up the DOM — two
-          // independent `<ContextMenu>` roots would otherwise both react to one right-click.
-          onContextMenu?.(e);
+    const props = composeInteractiveRowProps<Record<string, unknown>>(
+      { ...injected, ...longPress, ...dnd },
+      {
+        role: "row",
+        "aria-selected": selected,
+        "data-testid": "explorer-row",
+        "data-path": entry.path,
+        title: entry.name,
+        style: { height },
+        // Radix's own handler is chained in first (it opens this row's menu); only afterwards
+        // does this stop the event from also reaching the background trigger further up the
+        // DOM — two independent `<ContextMenu>` roots would otherwise both react to one
+        // right-click.
+        onContextMenu: (e: React.MouseEvent) => {
           if (!selected) selection.selectOnly(entry.path);
           e.stopPropagation();
-        }}
-        onClick={(e) => { if (!handleTap(entry, selected)) selection.onRowClick(entry.path, e); }}
-        onDoubleClick={() => actions.openEntry(entry)}
-        className={cn(
+        },
+        onClick: (e: React.MouseEvent) => {
+          if (!handleTap(entry, selected)) selection.onRowClick(entry.path, e);
+        },
+        onDoubleClick: () => actions.openEntry(entry),
+        className: cn(
           "flex w-full items-center gap-2 px-2 text-[13px] select-none",
           "can-hover:hover:bg-surface-elevated",
           focused && !selected && "bg-surface-elevated",
           selected && "bg-accent-wash",
           cut && "opacity-40",
-        )}
-      >
+          dropActive && DROP_TARGET_CLASS,
+        ),
+      },
+    );
+
+    return (
+      <div ref={ref} {...(props as HTMLAttributes<HTMLDivElement>)}>
         {isMobile && selectMode && (
           <span
             aria-hidden

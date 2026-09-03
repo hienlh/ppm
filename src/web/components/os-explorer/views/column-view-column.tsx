@@ -6,18 +6,14 @@
  * shows" with no extra state.
  */
 
-import { forwardRef, useContext, useRef, type MouseEventHandler } from "react";
+import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { BottomSheetCtx } from "@/components/ui/mobile-bottom-sheet";
-import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
-import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { FsEntry } from "@/lib/fs-api";
 import { cn } from "@/lib/utils";
 import type { ExplorerActions } from "../actions/use-explorer-actions";
-import { ExplorerContextMenu } from "../explorer-context-menu";
-import { FileTypeIcon } from "../icons/file-type-icon";
-import { mobileTapAction } from "../mobile/mobile-tap-action";
-import { useCoarseLongPress } from "../use-coarse-long-press";
+import { DROP_TARGET_CLASS } from "../dnd/drop-target-style";
+import { usePathDropTarget } from "../dnd/use-path-drop-target";
+import { ColumnRow } from "./column-row";
 
 export const COLUMN_WIDTH = 220;
 /** Mobile's single full-width column needs a 44px+ touch target, bigger than the desktop
@@ -60,13 +56,23 @@ export function ColumnViewColumn({
     estimateSize: () => effectiveRowHeight,
     overscan: 8,
   });
+  // The column's own empty area is a drop target for its own directory — dropping below the
+  // last row of an ancestor column moves/copies into that ancestor, not just the deepest one.
+  // Mobile's single full-width column never gets one: no drag source can ever start on touch.
+  const backgroundDrop = usePathDropTarget({ targetDir: path, run: actions.transferInto, disabled: fullWidth });
 
   return (
     <div
       className={cn("flex h-full shrink-0 flex-col", !fullWidth && "border-r border-border", isFocused && "bg-panel-2/40")}
       style={fullWidth ? undefined : { width: COLUMN_WIDTH }}
     >
-      <div ref={scrollRef} className="flex-1 overflow-y-auto outline-none" role="listbox" aria-label={path}>
+      <div
+        ref={scrollRef}
+        role="listbox"
+        aria-label={path}
+        className={cn("flex-1 overflow-y-auto outline-none", backgroundDrop.isOver && DROP_TARGET_CLASS)}
+        {...backgroundDrop.handlers}
+      >
         {loading && entries.length === 0 && <p className="p-2 text-xs text-text-subtle">Loading…</p>}
         {error && <p className="p-2 text-xs text-error">{error}</p>}
         {!loading && !error && entries.length === 0 && <p className="p-2 text-xs text-text-subtle">Empty</p>}
@@ -102,94 +108,3 @@ export function ColumnViewColumn({
     </div>
   );
 }
-
-interface ColumnRowProps {
-  entry: FsEntry;
-  selected: boolean;
-  currentDir: string;
-  hasClipboard: boolean;
-  isPinned(path: string): boolean;
-  actions: ExplorerActions;
-  rowHeight: number;
-  onSelect(): void;
-  onOpen(): void;
-}
-
-function ColumnRow({ entry, selected, currentDir, hasClipboard, isPinned, actions, rowHeight, onSelect, onOpen }: ColumnRowProps) {
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <ColumnRowInteractive entry={entry} selected={selected} rowHeight={rowHeight} onSelect={onSelect} onOpen={onOpen} />
-      </ContextMenuTrigger>
-      <ExplorerContextMenu
-        targets={[entry]}
-        currentDir={currentDir}
-        hasClipboard={hasClipboard}
-        isPinned={isPinned}
-        actions={actions}
-      />
-    </ContextMenu>
-  );
-}
-
-/**
- * Rendered inside the row's own `<ContextMenu>` — the position `useContext(BottomSheetCtx)`
- * needs to reach this row's own sheet state (see `use-mobile-row-tap.ts` for the same
- * pattern in List/Icons). Column view keeps its existing single-select semantics on mobile —
- * a directory already navigates on tap via `onSelect`; the only mobile addition is opening a
- * viewable file immediately (no double-click on touch) and surfacing the actions sheet for
- * one that has no viewer, instead of a tap that silently does nothing.
- *
- * `forwardRef` plus explicitly accepting `onContextMenu` is required here: `asChild` clones
- * this element and merges its own `onContextMenu` (which actually opens the row's menu) plus
- * a `ref` onto it, but a plain function component that doesn't accept and forward those two
- * silently drops them — the row still ran its own selection logic, but no menu ever opened.
- */
-export const ColumnRowInteractive = forwardRef<
-  HTMLDivElement,
-  Pick<ColumnRowProps, "entry" | "selected" | "rowHeight" | "onSelect" | "onOpen"> & {
-    onContextMenu?: MouseEventHandler<HTMLDivElement>;
-  }
->(function ColumnRowInteractive({ entry, selected, rowHeight, onSelect, onOpen, onContextMenu }, ref) {
-  const longPress = useCoarseLongPress(onSelect);
-  const isMobile = useIsMobile();
-  const { setOpen } = useContext(BottomSheetCtx);
-
-  const handleClick = () => {
-    onSelect();
-    if (!isMobile || entry.type === "directory") return;
-    if (mobileTapAction(entry) === "open") onOpen();
-    else setOpen(true);
-  };
-
-  return (
-    <div
-      ref={ref}
-      role="option"
-      aria-selected={selected}
-      data-testid="explorer-column-row"
-      data-path={entry.path}
-      title={entry.name}
-      style={{ height: rowHeight }}
-      {...longPress}
-      onContextMenu={(e) => {
-        // Run Radix's own handler first (it opens this row's menu); only afterwards stop
-        // the event from also reaching the background trigger further up the DOM.
-        onContextMenu?.(e);
-        onSelect();
-        e.stopPropagation();
-      }}
-      onClick={handleClick}
-      onDoubleClick={onOpen}
-      className={cn(
-        "flex w-full items-center gap-1.5 px-2 text-[13px] select-none",
-        "can-hover:hover:bg-surface-elevated",
-        selected && "bg-accent-wash text-text",
-      )}
-    >
-      <FileTypeIcon name={entry.name} kind={entry.kind} className="size-4 shrink-0" />
-      <span className={cn("flex-1 truncate", selected ? "text-text" : "text-text-2")}>{entry.name}</span>
-      {entry.type === "directory" && <span className="text-text-subtle">›</span>}
-    </div>
-  );
-});
