@@ -364,7 +364,13 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
-        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
+        if (pid) {
+          // Parent card not found (e.g. replay raced the history fetch) — drop
+          // rather than rendering subagent output flat in the main transcript;
+          // the history merge restores it from the agent's disk transcript.
+          if (routeToFinalizedParent(ev as ChatEvent, pid)) { /* nested */ }
+          break;
+        }
         streamingContentRef.current += ev.content;
         streamingEventsRef.current.push(ev as ChatEvent);
         syncMessages();
@@ -377,7 +383,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
-        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
+        if (pid) {
+          // No parent found → drop (see text case) instead of flat-rendering.
+          if (routeToFinalizedParent(ev as ChatEvent, pid)) { /* nested */ }
+          break;
+        }
         streamingEventsRef.current.push(ev as ChatEvent);
         syncMessages();
         break;
@@ -395,7 +405,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
-        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
+        if (pid) {
+          // No parent found → drop (see text case) instead of flat-rendering.
+          if (routeToFinalizedParent(ev as ChatEvent, pid)) { /* nested */ }
+          break;
+        }
         const tuId = ev.toolUseId as string | undefined;
         upsertStreamingEvent((e) => !!tuId && e.type === "tool_use" && (e as any).toolUseId === tuId);
         syncMessages();
@@ -416,7 +430,11 @@ export function useChat(sessionId: string | null, providerId = "claude", project
           syncMessages();
           break;
         }
-        if (pid && routeToFinalizedParent(ev as ChatEvent, pid)) break;
+        if (pid) {
+          // No parent found → drop (see text case) instead of flat-rendering.
+          if (routeToFinalizedParent(ev as ChatEvent, pid)) { /* nested */ }
+          break;
+        }
         upsertStreamingEvent((e) => !!trId && e.type === "tool_result" && (e as any).toolUseId === trId);
         syncMessages();
         break;

@@ -279,6 +279,12 @@ export async function parseJsonlTranscript(
   // messages than the Agent tool_use that spawned it.
   nestChildEventsAcrossMessages(merged);
 
+  // Newer CLIs keep subagent transcripts in <session-dir>/subagents/ instead
+  // of inline sidechain lines — merge them back as Agent card children.
+  // Lazy import: merger depends on this module (parseSessionMessage).
+  const { mergeSubagentChildren } = await import("./subagent-transcript-merger.ts");
+  mergeSubagentChildren(filePath.replace(/\.jsonl$/, ""), merged);
+
   return merged.filter(
     (msg) => msg.content.trim().length > 0 || (msg.events && msg.events.length > 0),
   );
