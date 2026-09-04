@@ -124,6 +124,12 @@ File Explorer. Any future floating-window feature must follow the same contract:
     equivalent, and the guideline reserves long-press for the context menu instead.
   - Row/tile height and toolbar buttons still need the 44×44px minimum on a coarse pointer even
     at desktop width, gated the same way.
+- **Tab-host windows** (a tab detached from its panel, plus its optional Document
+  Picture-in-Picture step) follow the same desktop-only rule: below `md`, "Open in window" is
+  hidden from the tab context menu and any already-detached tabs reconcile back into the grid — a
+  windowed tab is never shown scaled down. The PiP toggle button is absent (not disabled) on
+  browsers without `documentPictureInPicture`. The "Bring back" control shown while a tab plays in
+  PiP is a full ≥44×44px touch target like any other primary action.
 
 ---
 

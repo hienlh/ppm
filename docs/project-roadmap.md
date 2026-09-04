@@ -10,6 +10,15 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
+### Tab pop-out → floating window → Document Picture-in-Picture (implemented, branch `feat/tab-popout-pip`, not yet merged/released)
+- Any desktop tab detaches from its panel into an in-app floating window (same chrome as OS
+  Explorer), and from there into an always-on-top browser Document Picture-in-Picture window —
+  both directions reversible, terminal/editor/chat state survives every move (no tab remount)
+- All tab types except `system-monitor` (has its own window kind); Radix dropdowns/tooltips/dialogs
+  follow a popped-out tab into the PiP document
+- Mobile unaffected: pop-out and PiP are desktop-only, hidden entirely below `md`
+- See `docs/system-architecture.md` → "Tab-host windows and Document PiP" for the mechanism
+
 ### v0.17 — OS File Explorer Window (Released)
 - Floating, OS-skinned file explorer window (Windows 11 / macOS Finder chrome, Linux → macOS skin) — drag, 8-way resize, multi-instance, persisted rect
 - Browses the whole host filesystem via `/api/fs`, hardened to whole-disk scope (protected roots, PPM-dir shield, single-use path-bound download tokens)

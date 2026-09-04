@@ -2271,3 +2271,64 @@ scoped entirely through `[data-skin="windows"|"macos"]` CSS variables layered ov
 semantic theme tokens, so both PPM dark and light mode render correctly under either skin with no
 second color table.
 
+#### Tab-host windows and Document PiP
+
+A desktop tab can detach into a floating window (`WindowKind` `"tab-host"`, `window-store-types.ts`)
+and further into a browser Document Picture-in-Picture window, reversible at either step, with zero
+state loss — no tab component is ever remounted.
+
+- **Off-grid panel.** Detaching creates `` `__win__:${windowId}` `` (`windowPanelId()`,
+  `stores/panel-utils.ts`) — same treatment as `__dock__`: lives in `panels`, never in `grid`, so no
+  grid math (rows/columns/split) sees it. `stores/window-panel-actions.ts` is the only writer of
+  these panels and enforces the paired invariant: `focusedPanelId` never points at one (it would
+  send the next `openTab()` with no explicit panel into a window). `popOutTab`/`redockFromWindow`
+  create and destroy the panel and its window together; every close path (titlebar ×, keyboard,
+  reconcile) routes through `redockFromWindow`, which re-docks to the origin panel if it is still in
+  the grid, else the focused grid panel, else the first grid panel. All tab types pop out except
+  `system-monitor`, which already has its own window kind.
+- **No-remount move.** `TabPool` (`components/layout/tab-pool.tsx`) mounts every tab once into a
+  wrapper `div[data-tab-pool-id]` created imperatively in `ReparentingTab`
+  (`components/layout/reparenting-tab.tsx`) and rendered into it via `createPortal` — React attaches
+  its listeners to the wrapper itself, so they keep firing after the node moves, including into
+  another document. A `useLayoutEffect` with no deps calls `appendChild` to move the wrapper into
+  whichever element last registered for the tab's panel id (`slotRegistry`,
+  `components/layout/tab-pool-registry.ts`); `TabHostWindowContent`'s slot `div` is always mounted
+  (never swapped for a placeholder), because it may currently be living inside the PiP document.
+- **Persistence.** Window panels persist to their own global `localStorage["ppm-window-panels"]`
+  key (`stores/window-panel-persistence.ts`), separate from the per-project `ppm-panels-*` blob and
+  not synced to the server — the same limitation window geometry (`ppm-windows`) already has.
+  `WINDOW_KINDS` (`window-store-types.ts`) is the single list both the window store and
+  `window-persistence.ts` filter against; `team-member` is excluded from restore because its body
+  streams a live subagent session that cannot survive a reload.
+- **Reconcile.** The two halves persist separately, so a reload can restore one without the other.
+  `reconcileTabHostWindows` (`stores/window-panel-reconcile.ts`), run once per project via
+  `useWindowPanelReconcile()` after the window layer restores, and unconditionally below `md` (the
+  window layer never mounts there): a panel whose window is gone comes back to the grid; a window
+  with no panel behind it closes.
+- **PiP host.** `attachPipHost`/`isDocumentPipSupported` (`floating-window/pip/pip-host.ts`,
+  `pip-support.ts`) move the tab-host window's *slot* element — never the tab's wrapper — into a
+  `documentPictureInPicture` window, one at a time per page. `pagehide` triggers a synchronous
+  restore (no `await` between it and the DOM move) so a closing PiP document never strips listeners
+  off a still-live terminal. `pip-style-copy.ts` mirrors stylesheets + `adoptedStyleSheets` once and
+  `<html>` class/inline theme CSS vars + `<body>` class on every theme change, plus a
+  MutationObserver for Vite HMR-injected `<style>` tags. `pip-key-forward.ts` re-dispatches
+  keydown/keyup from the PiP window onto the main window for app-level shortcuts, skipping targets
+  that own their own input (`input`, `.monaco-editor`, `.xterm-helper-textarea`, etc.).
+  `pip-resize-signal.ts` dispatches a non-bubbling `ppm:host-resize` CustomEvent on each
+  `[data-tab-pool-id]` wrapper inside the slot (on attach, every PiP `resize`, and on detach); the
+  terminal and editors subscribe via `onHostResize` and re-fit, because main-window
+  `ResizeObserver`s are late or silent for a PiP-driven size.
+- **Radix portals in PiP.** `PortalContainerProvider` (`components/ui/portal-container-context.tsx`)
+  is mounted inside `ReparentingTab` around each tab's content, fed the PiP document's `body` while
+  that tab's window is in PiP (`usePipPortalContainer`, `tab-host-pip-registry.ts`) — so a tab's own
+  dropdowns/tooltips/dialogs render inside the PiP document instead of opening unreachably in the
+  main window. `undefined` (document default) while docked.
+- **Known limitations** (see the comment block atop `tab-host-window-chrome.tsx`): sonner toasts
+  always render in the main window (one app-root toaster); `useIsMobile()`/Tailwind `md:` read the
+  main window's viewport, not the PiP window's; `onSelect`/`selectionchange` degrades for PiP
+  content; the terminal's reconnect check reads the main document's visibility; Monaco keybindings
+  (Ctrl+Z, Ctrl+F, …) don't fire while the editor sits in PiP (typing still reaches the buffer); a
+  window's titlebar keeps the tab title captured at pop-out time.
+- **Mobile.** Pop-out and PiP are hidden entirely below `md` (`useIsMobile()`) — never a scaled-down
+  window.
+

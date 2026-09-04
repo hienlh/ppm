@@ -169,6 +169,10 @@ src/
     │   ├── editor/
     │   ├── explorer/                # Project file tree (sidebar)
     │   ├── floating-window/         # ADDED: Desktop window manager — drag/8-handle resize, z-band 30..38, persisted rects
+    │   │   ├── tab-host-window-content.tsx  # ADDED: tab-host window body — publishes the slot TabPool reparents a detached tab into
+    │   │   ├── tab-host-window-chrome.tsx   # ADDED: tab-host titlebar — Document PiP toggle button
+    │   │   ├── tab-host-pip-registry.ts     # ADDED: cross-sibling slot/PiP-handle registry shared by the tab-host body, chrome and tab content
+    │   │   └── pip/                          # ADDED: Document Picture-in-Picture host (pip-host, pip-style-copy, pip-key-forward, pip-resize-signal, pip-geometry, pip-support, pip-focus-target)
     │   ├── os-explorer/              # ADDED: OS File Explorer window body
     │   │   ├── views/                # List / Icons (thumbnails) / Column (Miller) view components
     │   │   ├── skins/                 # Windows 11 + macOS Finder chrome, folder icons, [data-skin] CSS vars
@@ -247,7 +251,12 @@ src/
 │           │   ├── command-palette-filter-chips.tsx # Presentational filter chip bar — group toggle buttons with count badges (hidden when ≤1 group)
 │           │   ├── add-project-form.tsx # Modal form to add projects
 │           │   ├── mobile-nav.tsx    # Bottom navigation for mobile (v0.9.85+: fallback guards)
-│           │   └── mobile-drawer.tsx # Mobile overlay drawer
+│           │   ├── mobile-drawer.tsx # Mobile overlay drawer
+│           │   ├── tab-pool.tsx      # ADDED: mounts every tab once, reparents its DOM wrapper into the focused panel/dock/window slot
+│           │   ├── reparenting-tab.tsx # ADDED: per-tab stable-container createPortal wrapper — no-remount move across panels/windows/PiP
+│           │   ├── tab-pool-registry.ts # ADDED: slotRegistry — panels/dock/windows publish the element their tab content lives in
+│           │   ├── tab-pop-out-menu-item.tsx # ADDED: "Open in window" tab context-menu item (desktop only)
+│           │   └── use-window-panel-reconcile.ts # ADDED: one-shot repair between persisted window panels and live floating windows
 │           ├── database/            # Database management (5 files, 300+ LOC)
 │           │   ├── database-sidebar.tsx # Sidebar tab container (connection list, form)
 │           │   ├── connection-list.tsx # Connections list with actions, color badges
@@ -270,7 +279,8 @@ src/
 │           │   ├── postgres-viewer.tsx # Display table data, execute queries
 │           │   └── use-postgres.ts  # Hook for Postgres operations via /api/db routes
 │           └── ui/                  # Radix + shadcn primitives (14 files)
-│               └── button, input, label, dialog, dropdown-menu, select, tabs, tooltip, etc.
+│               ├── button, input, label, dialog, dropdown-menu, select, tabs, tooltip, etc.
+│               └── portal-container-context.tsx # ADDED: shared Radix portal target context — lets a tab's popped-out primitives render into the PiP document
 ├── tests/
 │   ├── test-setup.ts                # Disable auth for tests
 │   ├── unit/
@@ -286,6 +296,8 @@ src/
 │       ├── api/                     # Chat route tests
 │       ├── api/jira-routes.test.ts # ADDED: Jira API endpoints
 │       └── ws/                      # WebSocket tests
+│   └── e2e/
+│       └── tab-popout-pip-e2e.mjs   # ADDED: headed-Chrome CDP proof — pop-out → floating window → Document PiP round trip
 ├── scripts/
 │   ├── build.ts                     # Build CLI binary (bun build --compile)
 │   └── dev.ts                       # Dev server helpers
@@ -381,7 +393,7 @@ src/
 - **Key Stores:**
   - **ProjectStore** — Active project, project list, localStorage persistence
   - **TabStore** — Tab facade, delegates to panel-store
-  - **PanelStore** — Grid layout, panel creation, keep-alive snapshots
+  - **PanelStore** — Grid layout, panel creation, keep-alive snapshots; `window-panel-actions.ts`/`window-panel-persistence.ts`/`window-panel-reconcile.ts` (ADDED) — pop a tab out to a floating window (off-grid `__win__:` panel) and reconcile it against live windows on reload
   - **FileStore** — File cache
   - **SettingsStore** — Theme, sidebar, git view, device name
   - **CompareStore** — File compare selection (path, project, dirty content); persists to localStorage with >500KB guard; auto-clears on project switch
