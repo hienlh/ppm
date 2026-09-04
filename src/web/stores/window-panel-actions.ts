@@ -137,6 +137,14 @@ export function makeRedockFromWindow(set: Set, get: Get) {
       return focus ? { panels: rest, focusedPanelId: focus } : { panels: rest };
     });
     persistWindowPanelChange(get);
+
+    // The body can unmount without the window closing: the whole desktop window layer is
+    // dropped below the `md` breakpoint, which re-docks the tabs but would leave the
+    // window entry in `ppm-windows` — restored empty and unfillable on the way back, and
+    // burning one of MAX_WINDOWS on every reload. `close()` is a no-op when the window is
+    // already gone (the ×/keyboard paths), and re-entry here returns early: the panel is
+    // deleted above.
+    useWindowStore.getState().close(windowId);
   };
 }
 

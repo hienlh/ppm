@@ -137,6 +137,41 @@ describe("redockFromWindow", () => {
 
     expect(usePanelStore.getState().panels).toBe(before);
   });
+
+  it("closes the window it emptied, so an unmounted body cannot leave a ghost behind", () => {
+    // The body can unmount without the window closing — dropping below `md` unmounts the
+    // whole desktop window layer. Without this the entry survives in the window store and
+    // in `ppm-windows`, and comes back empty and unfillable.
+    seedStore(
+      [makePanel("panel-A", [{ id: "terminal:1", type: "terminal" }, { id: "editor:/a.ts", type: "editor" }])],
+      [["panel-A"]],
+      "panel-A",
+    );
+    const { windowId } = popOut("terminal:1", "panel-A");
+    expect(useWindowStore.getState().windows[windowId]).toBeTruthy();
+
+    usePanelStore.getState().redockFromWindow(windowId, "panel-A");
+
+    expect(useWindowStore.getState().windows[windowId]).toBeUndefined();
+    expect(localStorageStub.getItem("ppm-windows") ?? "").not.toContain(windowId);
+  });
+
+  it("stays a no-op on the normal close path, where the window is already gone", () => {
+    seedStore(
+      [makePanel("panel-A", [{ id: "terminal:1", type: "terminal" }, { id: "editor:/a.ts", type: "editor" }])],
+      [["panel-A"]],
+      "panel-A",
+    );
+    const { windowId } = popOut("terminal:1", "panel-A");
+    // What the titlebar × does: the window goes first, the body's cleanup re-docks after.
+    useWindowStore.getState().close(windowId);
+    const windowsBefore = useWindowStore.getState().windows;
+
+    usePanelStore.getState().redockFromWindow(windowId, "panel-A");
+
+    expect(useWindowStore.getState().windows).toBe(windowsBefore);
+    expect(usePanelStore.getState().panels["panel-A"]?.tabs.map((t) => t.id)).toContain("terminal:1");
+  });
 });
 
 describe("closeTab on a window panel", () => {
