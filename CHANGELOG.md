@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.18.9] - 2026-09-04
+
+### Added
+- **System Monitor is now a Task Manager for the whole machine** — CPU per core, RAM, disk, network and NVIDIA GPU charts, plus every process grouped by app with live CPU%, RAM, disk I/O and GPU usage; sort by any column, search, filter to PPM's own processes. Opens as a floating window on desktop and a tab on mobile. Works on Windows, where the old monitor showed nothing.
+- **End a process from the monitor** — with a confirm dialog and an optional "end child processes" switch. PPM itself, its tunnel and OS-critical processes are refused.
+
+### Fixed
+- **Enabling autostart on Windows no longer fails with "Access is denied"** for standard accounts; the logon task is registered from a task definition, and the 72-hour run limit schtasks applied by default is lifted.
+
 ## [0.18.8] - 2026-09-04
 
 ### Fixed
