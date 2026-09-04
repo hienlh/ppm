@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.8] - 2026-09-04
+
+### Fixed
+- **Images the assistant opens show in the transcript again** — attachments live in the PPM directory, which is shielded to keep the credentials database off the file routes, so every attachment preview, editor open and download answered 403.
+- **Seeking an AVI over a tunnel no longer sticks on "Transcoding failed"** — each seek left an ffmpeg job running to the end of the file until the slots ran out.
+- **The video player keeps volume, mute and speed across loads**, and rapid seeks no longer stall at 0:00.
+
 ## [0.18.7] - 2026-09-04
 
 ### Fixed
