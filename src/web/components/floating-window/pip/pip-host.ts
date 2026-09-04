@@ -123,7 +123,16 @@ export async function attachPipHost(slotEl: HTMLElement, opts: PipHostOptions): 
   // One PiP at a time: the previous tab goes back to its floating window first.
   activeHandle?.detach();
 
-  const pipWindow = await api.requestWindow(clampPipSize({ width: opts.width, height: opts.height }));
+  let pipWindow: Window;
+  try {
+    pipWindow = await api.requestWindow(clampPipSize({ width: opts.width, height: opts.height }));
+  } catch (err) {
+    // Rejected (usually: no transient activation left). Nothing moved, but the
+    // caller still has to drop the "in PiP" state it optimistically set.
+    opts.onDetach();
+    throw err;
+  }
+
   const handle = setUpHost(slotEl, origin, pipWindow, opts);
   activeHandle = handle;
   return handle;
