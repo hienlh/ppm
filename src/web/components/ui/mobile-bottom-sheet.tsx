@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { useSwipeToDismiss } from "@/hooks/use-swipe-to-dismiss";
 import { useVisualViewport } from "@/hooks/use-visual-viewport";
+import { usePortalContainer } from "./portal-container-context";
 
 /* ------------------------------------------------------------------ */
 /*  Core BottomSheet — reusable everywhere                             */
@@ -33,6 +34,7 @@ interface BottomSheetProps {
 export function BottomSheet({ open, onClose, children, className, zIndex = 50 }: BottomSheetProps) {
   const { dragY, swipeHandlers, dragStyle, backdropOpacity, isDragging } =
     useSwipeToDismiss(onClose);
+  const portalContainer = usePortalContainer();
 
   // Keyboard-aware geometry. The backdrop deliberately keeps covering the whole
   // layout viewport while only the panel tracks the keyboard: if the two ever
@@ -89,7 +91,7 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
         {children}
       </div>
     </div>,
-    sheetPortalTarget(),
+    sheetPortalTarget(portalContainer),
   );
 }
 
@@ -103,10 +105,11 @@ export function BottomSheet({ open, onClose, children, className, zIndex = 50 }:
  * the event fired on (`body`), finds no match, and drops the event — every
  * button inside a dock tab goes dead while native listeners still fire.
  * `#root` carries no styles, so keeping the portal inside it leaves stacking
- * order untouched.
+ * order untouched. A caller-supplied `container` (`PortalContainerProvider`)
+ * wins over both fallbacks.
  */
-function sheetPortalTarget(): HTMLElement {
-  return document.getElementById("root") ?? document.body;
+function sheetPortalTarget(container?: HTMLElement): HTMLElement {
+  return container ?? document.getElementById("root") ?? document.body;
 }
 
 /* ------------------------------------------------------------------ */
