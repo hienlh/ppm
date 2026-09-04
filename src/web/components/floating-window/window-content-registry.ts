@@ -9,6 +9,7 @@
 
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 import { ExplorerSkinChrome } from "@/components/os-explorer/skins/explorer-skin-chrome";
+import { TabHostWindowChrome } from "./tab-host-window-chrome";
 import type { WindowChrome } from "./window-chrome-contract";
 import type { WindowKind } from "./window-store-types";
 
@@ -33,6 +34,7 @@ export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentTyp
  */
 export const WINDOW_CHROME: Partial<Record<WindowKind, WindowChrome>> = {
   explorer: ExplorerSkinChrome,
+  "tab-host": TabHostWindowChrome,
 };
 
 /** Chrome for a window kind, or `undefined` to fall back to `DefaultWindowChrome`. */

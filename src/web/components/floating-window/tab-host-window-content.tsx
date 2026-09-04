@@ -9,6 +9,8 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { usePanelStore } from "@/stores/panel-store";
 import { windowPanelId } from "@/stores/panel-utils";
 import { registerPanelSlot } from "@/components/layout/tab-pool";
+import { activePipHost } from "./pip/pip-host";
+import { publishTabHostSlot, tabHostPip, useTabHostPip } from "./tab-host-pip-registry";
 import type { WindowContentProps } from "./window-content-registry";
 
 export default function TabHostWindowContent({ id, payload }: WindowContentProps) {
@@ -28,10 +30,17 @@ export default function TabHostWindowContent({ id, payload }: WindowContentProps
   const originRef = useRef(originPanelId);
   originRef.current = originPanelId;
 
+  // The titlebar's PiP button needs this element and is a DOM sibling, not an ancestor,
+  // so the slot is published by window id instead of passed down.
   const slotRef = useCallback(
-    (el: HTMLDivElement | null) => registerPanelSlot(panelId, el),
-    [panelId],
+    (el: HTMLDivElement | null) => {
+      registerPanelSlot(panelId, el);
+      publishTabHostSlot(id, el);
+    },
+    [panelId, id],
   );
+
+  const pip = useTabHostPip(id);
 
   // Re-dock on unmount, from a LAYOUT cleanup: React runs those before it removes the
   // host nodes, while a passive cleanup runs after — too late to hand the tab back, and
@@ -39,6 +48,12 @@ export default function TabHostWindowContent({ id, payload }: WindowContentProps
   // ×, keyboard, a programmatic close) unmounts this body, so they all route through here.
   useLayoutEffect(() => {
     return () => {
+      // PiP first: detaching puts the slot back into this (still mounted) body, and only
+      // then can the re-dock move the tab out of it. The reverse order leaves the tab in
+      // a document that is about to close, with nothing left to move it home.
+      const handle = tabHostPip(id);
+      if (handle && activePipHost() === handle) handle.detach();
+      publishTabHostSlot(id, null);
       usePanelStore.getState().redockFromWindow(id, originRef.current);
     };
   }, [id]);
@@ -52,6 +67,21 @@ export default function TabHostWindowContent({ id, payload }: WindowContentProps
       {!hasTabs && !everHadTabs.current && (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-text-2 pointer-events-none">
           Loading…
+        </div>
+      )}
+      {/* While the slot lives in the PiP window this body would be an empty frame, which
+          reads as a lost tab. The placeholder stays in the main document on purpose — it
+          is the way back. */}
+      {pip && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-panel text-center px-4">
+          <span className="text-xs text-text-2">Playing in picture-in-picture</span>
+          <button
+            type="button"
+            onClick={() => pip.detach()}
+            className="min-h-11 min-w-11 px-4 rounded-md border border-border bg-surface-elevated text-sm text-text can-hover:hover:bg-panel-2 transition-colors"
+          >
+            Bring back
+          </button>
         </div>
       )}
     </div>

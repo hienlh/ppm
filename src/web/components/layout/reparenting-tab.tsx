@@ -17,6 +17,8 @@ import { createPortal } from "react-dom";
 import { Loader2 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { DOCK_PANEL_ID, isWindowPanelId } from "@/stores/panel-utils";
+import { PortalContainerProvider } from "@/components/ui/portal-container-context";
+import { usePipPortalContainer } from "@/components/floating-window/tab-host-pip-registry";
 import { slotRegistry } from "./tab-pool-registry";
 
 export interface ReparentingTabProps {
@@ -109,16 +111,26 @@ export function ReparentingTab({
     }
   });
 
+  // Portal target for the tab's own dropdowns, tooltips and sheets. It belongs here and
+  // not in the floating-window body: the wrapper's React parent is this component, so a
+  // provider mounted around the window body would never reach the tab's primitives, and
+  // a menu opened in a picture-in-picture window would render in the main one — off
+  // screen, unreachable, and stealing the click. `undefined` while docked, which is the
+  // document default.
+  const portalContainer = usePipPortalContainer(panelId);
+
   return createPortal(
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center h-full">
-          <Loader2 className="size-6 animate-spin text-primary" />
-        </div>
-      }
-    >
-      <Component metadata={metadata} tabId={tabId} />
-    </Suspense>,
+    <PortalContainerProvider container={portalContainer}>
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center h-full">
+            <Loader2 className="size-6 animate-spin text-primary" />
+          </div>
+        }
+      >
+        <Component metadata={metadata} tabId={tabId} />
+      </Suspense>
+    </PortalContainerProvider>,
     wrapper,
   );
 }

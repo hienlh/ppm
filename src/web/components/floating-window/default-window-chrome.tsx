@@ -6,6 +6,7 @@
  * focus or animation state without entangling itself with the window frame's hooks.
  */
 
+import type { ReactNode } from "react";
 import { Minus, Square, Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT, type WindowChromeProps } from "./window-chrome-contract";
@@ -14,9 +15,17 @@ import { TITLEBAR_HEIGHT, type WindowChromeProps } from "./window-chrome-contrac
  * Caption buttons follow the Windows metric (44 px wide) rather than a square 44 px touch
  * target: the window layer never renders below the `md` breakpoint, where mobile sheets
  * take over, so the titlebar can stay at desktop height.
+ *
+ * Exported so a kind-specific chrome that reuses this titlebar styles its extra button
+ * identically instead of re-deriving the metric.
  */
-const CAPTION_BUTTON = "grid place-items-center w-11 self-stretch text-text-2 can-hover:hover:bg-surface-elevated can-hover:hover:text-text transition-colors";
+export const CAPTION_BUTTON = "grid place-items-center w-11 self-stretch text-text-2 can-hover:hover:bg-surface-elevated can-hover:hover:text-text transition-colors";
 
+/**
+ * `children` are extra caption buttons, rendered left of minimize/maximize/close — a
+ * wrapping chrome cannot reach inside this markup, and duplicating the whole titlebar to
+ * add one button is how the two copies drift apart.
+ */
 export function DefaultWindowChrome({
   title,
   state,
@@ -25,7 +34,8 @@ export function DefaultWindowChrome({
   onMinimize,
   onToggleMaximize,
   onClose,
-}: WindowChromeProps) {
+  children,
+}: WindowChromeProps & { children?: ReactNode }) {
   const { className, style, ...rest } = titlebarProps;
   return (
     <div
@@ -42,6 +52,7 @@ export function DefaultWindowChrome({
           {title}
         </span>
       </div>
+      {children}
       <button
         type="button"
         aria-label="Minimize window"
