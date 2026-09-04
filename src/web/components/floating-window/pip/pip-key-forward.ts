@@ -15,7 +15,7 @@
  *   textarea — both must be in the skip list.
  */
 
-const SKIP_SELECTOR = [
+export const SKIP_SELECTOR = [
   "input",
   "textarea",
   "select",
@@ -25,8 +25,15 @@ const SKIP_SELECTOR = [
   ".xterm-helper-textarea",
 ].join(", ");
 
-/** PiP-created nodes live in another realm, so `instanceof Element` is unsafe. */
-function isEditableTarget(target: EventTarget | null): boolean {
+/**
+ * Whether the event's target owns its own keyboard input, in which case the event is
+ * the user typing and must not be forwarded as a shortcut.
+ *
+ * PiP-created nodes live in another realm, so `instanceof Element` is unsafe; the
+ * duck-typed `closest` is the check. A target that cannot answer is not editable —
+ * the PiP `window` itself is the common one.
+ */
+export function isEditableTarget(target: EventTarget | null): boolean {
   const el = target as Element | null;
   if (!el || typeof el.closest !== "function") return false;
   return el.closest(SKIP_SELECTOR) !== null;
