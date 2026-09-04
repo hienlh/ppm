@@ -2,12 +2,12 @@ import { describe, test, expect } from "bun:test";
 import { flattenColor } from "../../../src/web/lib/color-utils";
 
 describe("flattenColor", () => {
-  test("composites the translucent Aurora Light panel onto the page background", () => {
-    // aurora-light: panel rgba(255,255,255,0.62) over bgSolid #f3f7ff
+  test("composites a translucent light panel onto the page background", () => {
+    // a white glass tint over a light bgSolid, as an imported theme may declare
     expect(flattenColor("rgba(255,255,255,0.62)", "#f3f7ff")).toBe("rgb(250, 252, 255)");
   });
 
-  test("composites the translucent Aurora Dark panel", () => {
+  test("composites a translucent dark panel", () => {
     expect(flattenColor("rgba(255, 255, 255, 0.04)", "#0a0e17")).toBe("rgb(20, 24, 32)");
   });
 

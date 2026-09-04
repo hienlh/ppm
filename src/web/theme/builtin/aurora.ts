@@ -51,16 +51,19 @@ export const auroraLight: PpmTheme = {
   mode: "light",
   swatch: ["#f3f7ff", "#2f6bff", "#7c4dff"],
   syntax: { shikiTheme: "github-light" },
+  // Surfaces are opaque on purpose: translucent panels let underlying content
+  // bleed through dropdowns, sheets and stacked windows and hurt legibility.
+  // Values are the old glass tints pre-blended over bgSolid.
   mobileOverrides: {
-    panel: "rgba(255,255,255,0.82)",
-    panel2: "rgba(255,255,255,0.96)",
+    panel: "#ffffff",
+    panel2: "#ffffff",
   },
   tokens: {
     bg: "radial-gradient(120% 120% at 0% 0%, #f3f7ff 0%, #eef2fb 55%, #e8edf7 100%)",
     bgSolid: "#f3f7ff",
-    rail: "rgba(255,255,255,0.62)",
-    panel: "rgba(255,255,255,0.62)",
-    panel2: "rgba(255,255,255,0.94)",
+    rail: "#fafcff",
+    panel: "#fafcff",
+    panel2: "#ffffff",
     border: "rgba(20,30,60,0.12)",
     borderSoft: "rgba(20,30,60,0.07)",
     text: "#0f1a33",

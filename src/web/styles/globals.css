@@ -74,13 +74,15 @@
 /*
  * Default token values (Aurora Dark). Present before JS runs so the first
  * paint is correct; apply-theme overrides these on <html> at runtime.
+ * Surfaces stay opaque here for the same reason they are in the theme itself:
+ * a translucent panel lets content bleed through dropdowns and sheets.
  */
 :root {
   --bg: radial-gradient(120% 120% at 0% 0%, #0e1626 0%, #0a0e17 55%, #080b12 100%);
   --bg-solid: #0a0e17;
-  --rail: rgba(255, 255, 255, 0.04);
-  --panel: rgba(255, 255, 255, 0.04);
-  --panel-2: rgba(20, 28, 46, 0.85);
+  --rail: #141820;
+  --panel: #141820;
+  --panel-2: #141c2e;
   --border: rgba(255, 255, 255, 0.12);
   --border-soft: rgba(255, 255, 255, 0.06);
   --text: #eaeefb;
