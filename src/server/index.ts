@@ -128,19 +128,13 @@ app.get("/api/logs/recent", async (c) => {
   const { resolve } = await import("node:path");
   const { existsSync, readFileSync } = await import("node:fs");
   const { getPpmDir } = await import("../services/ppm-dir.ts");
+  const { redactSecrets } = await import("../services/redact-secrets.ts");
   const logFile = resolve(getPpmDir(), "ppm.log");
   if (!existsSync(logFile)) return c.json(ok({ logs: "" }));
   const content = readFileSync(logFile, "utf-8");
   const lines = content.split("\n").slice(-30).join("\n").trim();
   // Double-redact in case old logs have unredacted content
-  const redacted = lines
-    .replace(/Token:\s*\S+/gi, "Token: [REDACTED]")
-    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
-    .replace(/password['":\s]+\S+/gi, "password: [REDACTED]")
-    .replace(/api[_-]?key['":\s]+\S+/gi, "api_key: [REDACTED]")
-    .replace(/ANTHROPIC_API_KEY=\S+/gi, "ANTHROPIC_API_KEY=[REDACTED]")
-    .replace(/secret['":\s]+\S+/gi, "secret: [REDACTED]");
-  return c.json(ok({ logs: redacted }));
+  return c.json(ok({ logs: redactSecrets(lines) }));
 });
 
 // Dev-only: crash endpoint for testing health check UI

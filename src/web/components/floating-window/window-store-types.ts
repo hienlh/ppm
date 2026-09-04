@@ -3,7 +3,7 @@
 import type { Rect } from "./window-geometry";
 
 /** Content families the layer can host. The registry maps each kind to its body component. */
-export type WindowKind = "explorer" | "team-member";
+export type WindowKind = "explorer" | "team-member" | "system-monitor";
 
 export type WindowVisualState = "normal" | "maximized" | "minimized";
 

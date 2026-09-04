@@ -1,88 +1,134 @@
+/**
+ * Whole-machine metrics routes, mounted under `/api/system` behind auth.
+ *
+ *   GET    /resources?processes=0|1          latest snapshot for that tier (or null)
+ *   GET    /resources/stream?processes=0|1   SSE: `session` frame, then `snapshot` frames
+ *   POST   /resources/stream/:sid/ping       renew the subscriber lease
+ *   DELETE /resources/stream/:sid            drop the subscriber
+ *   POST   /resources/kill                   guarded kill (JSON + X-PPM-Request header)
+ */
 import { Hono } from "hono";
-import { resourceMonitor, type ResourceSnapshot } from "../../services/resource-monitor.service.ts";
+import type { MetricsSnapshot, MetricsTier } from "../../types/system-metrics.ts";
 import { ok, err } from "../../types/api.ts";
+import {
+  systemMetricsService, MAX_STREAM_SUBSCRIBERS, type SystemMetricsService,
+} from "../../services/system-metrics/system-metrics.service.ts";
+import { isValidSid } from "../../services/system-metrics/metrics-subscriber-registry.ts";
 
-export const resourceRoutes = new Hono();
+/** Frames a stalled client failed to take before the stream is closed. Metrics
+ *  are lossy by nature; `ReadableStream`'s queue is not, and 30-60 KB every 2 s
+ *  toward a dead mobile client is ~54 MB/hour of heap. */
+export const MAX_DROPPED_FRAMES = 10;
 
-const MAX_SSE_CLIENTS = 5;
-let sseClientCount = 0;
+const tierOf = (raw: string | undefined): MetricsTier => (raw === "1" || raw === "true" ? "full" : "light");
 
-/** GET /resources — latest snapshot as JSON */
-resourceRoutes.get("/resources", (c) => {
-  return c.json(ok(resourceMonitor.getLatest()));
-});
+export function createResourceRoutes(service: SystemMetricsService = systemMetricsService): Hono {
+  const routes = new Hono();
 
-/** GET /resources/history — full ring buffer */
-resourceRoutes.get("/resources/history", (c) => {
-  return c.json(ok(resourceMonitor.getHistory()));
-});
+  routes.get("/resources", (c) => c.json(ok(service.getLatest(tierOf(c.req.query("processes"))))));
 
-/** POST /resources/kill/:pid — send SIGTERM to a process in PPM's tree */
-resourceRoutes.post("/resources/kill/:pid", async (c) => {
-  const pid = parseInt(c.req.param("pid"), 10);
-  if (isNaN(pid) || pid <= 0) {
-    return c.json(err("Invalid PID"), 400);
-  }
-  // Safety: only allow killing processes in PPM's own tree
-  const snapshot = resourceMonitor.getLatest();
-  if (!snapshot) {
-    return c.json(err("No resource data available"), 400);
-  }
-  const allPids = snapshot.groups.flatMap((g) => g.processes.map((p) => p.pid));
-  if (!allPids.includes(pid)) {
-    return c.json(err("PID not in PPM process tree"), 403);
-  }
-  // Don't allow killing the server itself
-  if (pid === process.pid) {
-    return c.json(err("Cannot kill PPM server process"), 403);
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-    return c.json(ok({ pid, signal: "SIGTERM" }));
-  } catch (e: any) {
-    return c.json(err(`Failed to kill PID ${pid}: ${e.message}`), 500);
-  }
-});
+  routes.get("/resources/stream", (c) => {
+    const tier = tierOf(c.req.query("processes"));
+    // A 429 is only possible before the body starts, so reap expired leases and
+    // check the cap here — BEFORE the stream is built, because `start()` runs
+    // synchronously at construction. subscribe() re-checks in case two opens race.
+    service.reapExpired();
+    if (service.liveCount() >= MAX_STREAM_SUBSCRIBERS) {
+      return c.json(err("Too many metrics subscribers"), 429);
+    }
 
-/** GET /resources/stream — SSE stream of snapshots every 3s */
-resourceRoutes.get("/resources/stream", (c) => {
-  if (sseClientCount >= MAX_SSE_CLIENTS) {
-    return c.json({ ok: false, error: "Too many SSE clients" }, 429);
-  }
+    const encoder = new TextEncoder();
+    let sid: string | null = null;
+    let drops = 0;
 
-  let callbackRef: ((s: ResourceSnapshot) => void) | null = null;
-
-  const stream = new ReadableStream({
-    start(controller) {
-      sseClientCount++;
-      const encoder = new TextEncoder();
-
-      // Send retry hint for reconnect interval
-      controller.enqueue(encoder.encode("retry: 5000\n\n"));
-
-      callbackRef = (snapshot: ResourceSnapshot) => {
-        try {
-          const data = `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`;
-          controller.enqueue(encoder.encode(data));
-        } catch {
-          // Client disconnected — cleanup happens in cancel
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const close = () => { try { controller.close(); } catch { /* already closed */ } };
+        const result = service.subscribe({
+          tier,
+          close,
+          deliver: (snapshot: MetricsSnapshot) => {
+            // `enqueue` never throws on backpressure, only on a closed controller,
+            // so `desiredSize` is the only signal that the client stopped reading.
+            if ((controller.desiredSize ?? 1) <= 0) {
+              if (++drops >= MAX_DROPPED_FRAMES) {
+                if (sid) service.unsubscribe(sid);
+                close();
+              }
+              return;
+            }
+            drops = 0;
+            try {
+              controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`));
+            } catch {
+              if (sid) service.unsubscribe(sid);
+            }
+          },
+        });
+        if (!result) {
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: "Too many metrics subscribers" })}\n\n`));
+          close();
+          return;
         }
-      };
+        sid = result.sid;
+        controller.enqueue(encoder.encode("retry: 5000\n\n"));
+        controller.enqueue(encoder.encode(`event: session\ndata: ${JSON.stringify(result)}\n\n`));
+      },
+      cancel() {
+        // Best effort only — a proxy may keep this request alive after the
+        // browser left, which is what the lease + DELETE route are for.
+        if (sid) service.unsubscribe(sid);
+      },
+    });
 
-      resourceMonitor.subscribe(callbackRef);
-    },
-    cancel() {
-      sseClientCount = Math.max(0, sseClientCount - 1);
-      if (callbackRef) resourceMonitor.unsubscribe(callbackRef);
-      callbackRef = null;
-    },
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    });
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    },
+  routes.post("/resources/stream/:sid/ping", (c) => {
+    const sid = c.req.param("sid");
+    if (!isValidSid(sid) || !service.ping(sid)) return c.json(err("Unknown or expired stream session"), 404);
+    return c.json(ok({ alive: true }));
   });
-});
+
+  routes.delete("/resources/stream/:sid", (c) => {
+    const sid = c.req.param("sid");
+    const stopped = isValidSid(sid) ? service.unsubscribe(sid) : false;
+    return c.json(ok({ stopped }));
+  });
+
+  routes.post("/resources/kill", async (c) => {
+    // CSRF hardening for the auth-disabled configuration: a cross-origin HTML
+    // form can set neither a JSON content type nor a custom header, so both
+    // force a preflight that the browser will refuse.
+    const contentType = c.req.header("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("application/json")) {
+      return c.json(err("Content-Type must be application/json"), 400);
+    }
+    if (c.req.header("x-ppm-request") !== "1") return c.json(err("Missing X-PPM-Request header"), 400);
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(err("Invalid JSON body"), 400);
+    }
+    try {
+      const outcome = await service.kill(body);
+      return c.json(outcome.body, outcome.status);
+    } catch (e) {
+      // The live re-query itself failed (collector down, session restarting);
+      // nothing was signalled, so the client can simply retry.
+      console.error("[SystemMetrics] kill re-query failed:", (e as Error)?.message ?? e);
+      return c.json(err("Could not verify the process — try again"), 500);
+    }
+  });
+
+  return routes;
+}
+
+export const resourceRoutes = createResourceRoutes();

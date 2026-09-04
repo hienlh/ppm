@@ -1,9 +1,9 @@
 import { memo } from "react";
 import { Cpu } from "lucide-react";
 import { useResourceMonitor } from "@/hooks/use-resource-monitor";
-import { useTabStore } from "@/stores/tab-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
+import { useOpenSystemMonitor } from "./use-open-system-monitor";
 
 function cpuColor(cpu: number) {
   if (cpu > 80) return "text-error";
@@ -11,26 +11,21 @@ function cpuColor(cpu: number) {
   return "text-success";
 }
 
-/** `compact` renders inline for the 22px status bar (no full-width button, CPU+MEM only). */
+/** `compact` renders inline for the 22px status bar (no full-width button, CPU+MEM only).
+ *  Stays on the light SSE tier — never opts into `{processes:true}` — so it never pays
+ *  for the full collector just to render two numbers. */
 export const ResourceStatusBar = memo(function ResourceStatusBar({ compact = false }: { compact?: boolean }) {
   const { latest, isConnected } = useResourceMonitor();
-  const openTab = useTabStore((s) => s.openTab);
+  const openSystemMonitor = useOpenSystemMonitor();
   const isMobile = useIsMobile();
-
-  const handleClick = () => {
-    openTab({
-      type: "system-monitor",
-      title: "System Monitor",
-      projectId: null,
-      closable: true,
-    });
-  };
 
   if (!isConnected || !latest) {
     if (compact) return null; // stay silent in the status bar until connected
     return (
       <button
-        onClick={handleClick}
+        onClick={openSystemMonitor}
+        data-testid="status-bar-resources"
+        aria-label="Open System Monitor"
         className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors w-full"
       >
         <Cpu className="size-3 opacity-50" />
@@ -39,14 +34,18 @@ export const ResourceStatusBar = memo(function ResourceStatusBar({ compact = fal
     );
   }
 
-  const { cpu, ramMB, processCount } = latest.total;
+  const cpu = latest.system.cpu.total;
+  const ramMB = latest.system.mem.usedMB;
+  const processCount = latest.system.processCount;
   const mem = ramMB < 1024 ? `${ramMB.toFixed(0)}M` : `${(ramMB / 1024).toFixed(1)}G`;
 
   if (compact) {
     // Inline segment for the 22px status bar: CPU % · MEM (handoff B2 right cluster).
     return (
       <button
-        onClick={handleClick}
+        onClick={openSystemMonitor}
+        data-testid="status-bar-resources"
+        aria-label="Open System Monitor"
         className="flex items-center gap-2 px-1 rounded-sm hover:bg-accent/15 transition-colors cursor-pointer"
         title="Open System Monitor"
       >
@@ -58,7 +57,9 @@ export const ResourceStatusBar = memo(function ResourceStatusBar({ compact = fal
 
   return (
     <button
-      onClick={handleClick}
+      onClick={openSystemMonitor}
+      data-testid="status-bar-resources"
+      aria-label="Open System Monitor"
       className="flex items-center gap-1.5 px-2 py-1 text-[10px] hover:bg-surface-hover transition-colors w-full cursor-pointer"
       title="Open System Monitor"
     >

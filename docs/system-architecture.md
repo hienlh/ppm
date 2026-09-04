@@ -257,9 +257,9 @@ the loop seeded from the bus (windowed + rolling summary).
 | **TagService** | Session tagging CRUD, bulk operations, tag-session enrichment | seedDefaultTags, getTagsByProject, createTag, updateTag, deleteTag, setSessionTag, bulkSetSessionTag, getSessionTags, getTagSessionCounts |
 | **DraftService** | Chat draft auto-save per session, 50KB cap | get, upsert, delete, deleteOrphaned |
 | **FileFilterService** | Glob pattern matching + precedence-enforced filtering (hardcoded ⊂ global ⊂ project) | mergeFilters, isPathIgnored, matchesPattern |
-| **ResourceMonitorService** | System resource monitoring with process tree, SSE streaming, 30-min history ring buffer | subscribe, unsubscribe, getLatest, getHistory, poll |
+| **SystemMetricsService** (`src/services/system-metrics/`) | Whole-machine Task Manager backend: CPU per core + RAM via `node:os`, disk/net/GPU + all processes via per-OS collectors (Linux `/proc`, macOS `ps`, Windows one long-lived PowerShell REPL child, `Win32_Process` + `PerfRawData` per 2 s tick), delta-based CPU%, grouping by app root, aggregate-only 30-min history. Two SSE tiers on `/api/system/resources/stream`: `light` (status bar, no children spawned) and `full` (`?processes=1`, demand-gated collectors, 60 s teardown). Subscriber lease (sid + 10 s ping, 30 s expiry) because Cloudflare tunnel never propagates client disconnects. Guarded `POST /resources/kill`: protected set (PPM server/supervisor/edge/cloudflared, OS-critical names), ancestor/tree-intersection rule, `startedAt` identity re-query → 409, JSON + `X-PPM-Request` header. | subscribe, unsubscribe, ping, getLatest, kill, reapExpired |
 
-**Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/services/resource-monitor.service.ts`, `src/services/file-filter.service.ts`, `src/cli/commands/bot-cmd.ts`
+**Key Files:** `src/services/*.service.ts`, `src/services/tag.service.ts`, `src/services/ppmbot/*.ts`, `src/services/bash-output-spy.ts`, `src/services/system-metrics/system-metrics.service.ts`, `src/services/system-metrics/kill-guard.ts`, `src/services/system-metrics/powershell-session.ts`, `src/services/redact-secrets.ts`, `src/services/file-filter.service.ts`, `src/cli/commands/bot-cmd.ts`
 
 ---
 

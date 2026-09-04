@@ -1,10 +1,14 @@
 import { useRef, useEffect, memo } from "react";
+import { resolveScaleMax, resolveCssColor } from "./chart-scale";
 
 interface SparklineCanvasProps {
   data: number[];
   width?: number;
   height?: number;
   color?: string;
+  /** Fixed scale ceiling (e.g. 100 for a percentage axis). Omitted = autoscale to
+   *  the max of the visible window, same as before. */
+  maxValue?: number;
 }
 
 export const SparklineCanvas = memo(function SparklineCanvas({
@@ -12,16 +16,11 @@ export const SparklineCanvas = memo(function SparklineCanvas({
   width = 120,
   height = 24,
   color = "var(--color-primary)",
+  maxValue,
 }: SparklineCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const lastDrawRef = useRef(0);
 
   useEffect(() => {
-    const now = Date.now();
-    // Throttle redraws to 1fps
-    if (now - lastDrawRef.current < 1000) return;
-    lastDrawRef.current = now;
-
     const canvas = canvasRef.current;
     if (!canvas || data.length < 2) return;
 
@@ -35,13 +34,13 @@ export const SparklineCanvas = memo(function SparklineCanvas({
 
     ctx.clearRect(0, 0, width, height);
 
-    const max = Math.max(...data, 1);
+    const max = resolveScaleMax(data, maxValue);
     const stepX = width / (data.length - 1);
     const padding = 2;
     const drawH = height - padding * 2;
 
     ctx.beginPath();
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = resolveCssColor(color, getComputedStyle(canvas));
     ctx.lineWidth = 1.5;
     ctx.lineJoin = "round";
 
@@ -52,7 +51,7 @@ export const SparklineCanvas = memo(function SparklineCanvas({
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
-  }, [data, width, height, color]);
+  }, [data, width, height, color, maxValue]);
 
   return (
     <canvas

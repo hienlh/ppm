@@ -28,6 +28,9 @@ export interface ProcEntry {
   ppid: number;
   /** Average CPU% over the process lifetime — the same figure `ps %cpu` prints. */
   cpuPercent: number;
+  /** Cumulative CPU time (utime + stime), milliseconds. Diff two reads for an
+   *  instantaneous figure — `cpuPercent` is a lifetime average and never moves. */
+  cpuMs: number;
   rssKB: number;
   /** Seconds since the process started. */
   elapsedSec: number;
@@ -121,6 +124,7 @@ export function readProcTable(): ProcEntry[] | null {
       pid,
       ppid: f.ppid,
       cpuPercent: Math.round((cpuSec / elapsedSec) * 1000) / 10,
+      cpuMs: cpuSec * 1000,
       rssKB: f.rssPages * PAGE_SIZE_KB,
       elapsedSec,
       startedAtMs: bootTimeMs + startSec * 1000,

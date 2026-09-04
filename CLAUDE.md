@@ -103,3 +103,4 @@ Before planning or implementing a new feature, read `docs/project-roadmap.md` to
 - `src/web/components/os-explorer/` — OS File Explorer window body: views (List/Icons/Column), skins, mobile sheet, actions, drag-and-drop
 - `src/services/fs-ops/` — Guarded whole-disk filesystem operations (`/api/fs/*`) behind PPM auth
 - `src/services/host-info/` — Per-OS drives/known-folders/pinned-folders providers (`/api/system/host`)
+- `src/services/system-metrics/` — Task Manager backend (`/api/system/resources*`): per-OS collectors, one long-lived PowerShell child on Windows (never spawn per tick — 32 MiB commit leak each), light/full SSE tiers with leases, guarded kill. UI in `src/web/components/system/` (floating window on desktop, tab on mobile)

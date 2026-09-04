@@ -20,7 +20,7 @@ export interface PersistedWindow {
   payload?: Record<string, unknown>;
 }
 
-const KINDS: WindowKind[] = ["explorer"];
+const KINDS: WindowKind[] = ["explorer", "system-monitor"];
 const STATES: WindowVisualState[] = ["normal", "maximized", "minimized"];
 
 function isRect(v: unknown): v is Rect {
