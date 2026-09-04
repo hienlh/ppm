@@ -113,8 +113,11 @@ function setUpHost(
  * `requestWindow()` needs transient activation, and it is the first async call
  * here — call this synchronously from a click handler, with nothing awaited
  * before it.
+ *
+ * Resolves to `null` when the slot went away while the request was in flight;
+ * that is the user closing the window mid-request, not a failure.
  */
-export async function attachPipHost(slotEl: HTMLElement, opts: PipHostOptions): Promise<PipHandle> {
+export async function attachPipHost(slotEl: HTMLElement, opts: PipHostOptions): Promise<PipHandle | null> {
   const api = documentPipApi();
   if (!api) throw new Error("Document Picture-in-Picture is not supported in this browser");
   const origin = slotEl.parentElement;
@@ -131,6 +134,20 @@ export async function attachPipHost(slotEl: HTMLElement, opts: PipHostOptions): 
     // caller still has to drop the "in PiP" state it optimistically set.
     opts.onDetach();
     throw err;
+  }
+
+  // The window can close while the request is pending: its body unmounts, the tab is
+  // re-docked and the slot is dropped from the document. Moving it now would hand an
+  // orphaned subtree to a PiP window nobody owns, and register a handle under a dead
+  // window id. Proceed only if the slot is still exactly where it was.
+  if (!slotEl.isConnected || slotEl.parentElement !== origin) {
+    try {
+      pipWindow.close();
+    } catch {
+      // Already closing.
+    }
+    opts.onDetach();
+    return null;
   }
 
   const handle = setUpHost(slotEl, origin, pipWindow, opts);
