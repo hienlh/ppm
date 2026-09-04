@@ -7,6 +7,7 @@ import {
   isProtectedRoot,
   assertNotProtected,
   assertNotPpmDir,
+  isChatUploadPath,
   mapFsError,
   resolvePath,
 } from "../../../src/services/fs-path-guard.service.ts";
@@ -91,6 +92,18 @@ describe("PPM directory shield", () => {
 
   it("refuses reads inside the ppm dir", () => {
     expect(() => assertNotPpmDir(resolve(getPpmDir(), "ppm.db"))).toThrow("Access denied");
+  });
+
+  it("still allows chat attachments, which live inside the ppm dir", () => {
+    expect(() => assertNotPpmDir(resolve(getPpmDir(), "uploads", "abc123-image.png"))).not.toThrow();
+    expect(isChatUploadPath(resolve(getPpmDir(), "uploads", "abc123-image.png"))).toBe(true);
+  });
+
+  it("does not let a name that merely starts with uploads escape the refusal", () => {
+    expect(isChatUploadPath(resolve(getPpmDir(), "uploads-secret", "ppm.db"))).toBe(false);
+    expect(() => assertNotPpmDir(resolve(getPpmDir(), "uploads-secret", "ppm.db"))).toThrow(
+      "Access denied",
+    );
   });
 });
 

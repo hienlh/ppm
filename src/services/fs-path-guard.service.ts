@@ -2,6 +2,7 @@ import { resolve, sep } from "node:path";
 import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { getPpmDir } from "./ppm-dir.ts";
+import { getUploadsDir } from "./chat-upload-storage.service.ts";
 import { realPathOrSelf, realPathOrSelfSync } from "./fs-ops/fs-real-path.ts";
 
 // Re-exported so callers reach both the guards and the resolver they build on
@@ -85,12 +86,27 @@ export function isPpmDirPath(resolved: string): boolean {
 }
 
 /**
+ * Chat attachments the user uploaded through the UI. They sit under the PPM
+ * dir so chat history keeps resolving them across reboots, but they are
+ * ordinary user content, not credential material: the transcript has to render
+ * the very image the assistant just read back from that directory.
+ */
+export function isChatUploadPath(resolved: string): boolean {
+  return isInside(resolved, getUploadsDir());
+}
+
+/**
  * Refuse the PPM directory subtree on read-style doors. It stores the config
  * database with provider credentials and auth tokens, which must never be
  * downloadable through a generic file route.
+ *
+ * Chat uploads are the one exception. Every caller applies this to the
+ * requested path *and* to its real path, so a symlink parked in the uploads
+ * directory still fails on the second call and cannot reach the rest of the
+ * PPM dir through the exception.
  */
 export function assertNotPpmDir(resolved: string): void {
-  if (isPpmDirPath(resolved)) {
+  if (isPpmDirPath(resolved) && !isChatUploadPath(resolved)) {
     throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
 }
