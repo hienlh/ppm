@@ -658,7 +658,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       }
 
       // A window that lost its last tab closes with it — it can never show anything again.
-      if (isWindowPanelId(pid)) syncWindowPanel(get, pid);
+      if (isWindowPanelId(pid)) syncWindowPanel(set, get, pid);
     },
 
     setActiveTab: (tabId, panelId?) => {
@@ -723,10 +723,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // Auto-close empty source panel if not last in current grid.
         // Guard: never attempt to remove __dock__ from the grid — it is intentionally
         // absent from grid and gridRemovePanel would be a no-op, but the panels-map
-        // delete would destroy the dock panel entirely.
-        // Same guard for a window panel: its lifetime belongs to the floating window,
-        // and window-panel-actions is the single writer that deletes it (together with
-        // closing the window). A silent delete here would strand an open, empty window.
+        // delete would destroy the dock panel entirely. The dock is reserved and outlives
+        // its tabs; only its visibility follows them.
+        // A window panel is skipped for a different reason: its lifetime belongs to the
+        // floating window, so syncWindowPanel below drops it together with the window
+        // rather than leaving an open, empty one behind.
         const offGridSource = fromPanelId === DOCK_PANEL_ID || isWindowPanelId(fromPanelId);
         if (fromTabs.length === 0 && gridPanelCount > 1 && !offGridSource) {
           const { [fromPanelId]: _, ...rest } = s.panels;
@@ -750,6 +751,10 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         };
       });
       persist();
+
+      // Moving the last tab out of a window empties it exactly as closing that tab would,
+      // and the window has no tab bar to fill itself from — same owner, same outcome.
+      if (isWindowPanelId(fromPanelId)) syncWindowPanel(set, get, fromPanelId);
     },
 
     splitPanel: (direction, tabId, sourcePanelId, targetPanelId?) => {

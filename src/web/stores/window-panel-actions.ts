@@ -54,11 +54,22 @@ export function persistWindowPanelChange(get: Get): void {
 /**
  * Keep a floating window and its panel in lockstep after a tab left the panel: an empty
  * tab-host window has no way back to a tab, so it closes with its panel.
+ *
+ * Every way a tab can leave — closed, moved to the grid or the dock, dragged out — ends
+ * here, so the panel and the window are created and destroyed by the same two functions.
+ * Both halves are idempotent: a panel already dropped by the caller and a window already
+ * closed are both no-ops.
  */
-export function syncWindowPanel(get: Get, panelId: string): void {
+export function syncWindowPanel(set: Set, get: Get, panelId: string): void {
+  if (get().panels[panelId]?.tabs.length) {
+    saveWindowPanels(get().panels);
+    return;
+  }
+  set((s) => {
+    const { [panelId]: _dropped, ...rest } = s.panels;
+    return { panels: rest };
+  });
   saveWindowPanels(get().panels);
-  const panel = get().panels[panelId];
-  if (panel && panel.tabs.length > 0) return;
   const windowId = windowIdFromPanelId(panelId);
   if (windowId) useWindowStore.getState().close(windowId);
 }
