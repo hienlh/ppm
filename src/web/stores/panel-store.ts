@@ -191,6 +191,22 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     return panelId ?? get().focusedPanelId;
   }
 
+  /**
+   * The focus to commit when a tab was activated in `pid`.
+   *
+   * Focus decides where the next `openTab()` with no explicit panel lands, and a
+   * floating window renders no tab bar — a tab opened inside one would be unreachable
+   * until the window closes, and the id would be persisted with the layout. So
+   * activating a tab that lives in a window leaves focus where it was: the window is
+   * already in front of the user, nothing more is needed to "focus" it.
+   *
+   * Every caller here picks `pid` by scanning the whole `panels` map, which includes
+   * the off-grid window panels.
+   */
+  function focusAfterActivate(pid: string): string {
+    return isWindowPanelId(pid) ? get().focusedPanelId : pid;
+  }
+
   return {
     ...defaultLayout(),
     currentProject: null,
@@ -484,7 +500,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           const existing = p.tabs.find((t) => t.type === "chat" && t.metadata?.sessionId === sid);
           if (existing) {
             set((s) => ({
-              focusedPanelId: p.id,
+              focusedPanelId: focusAfterActivate(p.id),
               panels: {
                 ...s.panels,
                 [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
@@ -502,7 +518,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           const existing = p.tabs.find((t) => t.id === baseId);
           if (existing) {
             set((s) => ({
-              focusedPanelId: p.id,
+              focusedPanelId: focusAfterActivate(p.id),
               panels: {
                 ...s.panels,
                 [p.id]: {
@@ -652,7 +668,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       set((s) => {
         const p = s.panels[pid]!;
         return {
-          focusedPanelId: pid,
+          focusedPanelId: focusAfterActivate(pid),
           panels: { ...s.panels, [pid]: { ...p, tabs: stampActive(p.tabs, tabId), activeTabId: tabId, tabHistory: pushHistory(p.tabHistory, tabId) } },
         };
       });
