@@ -23,6 +23,7 @@ export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentTyp
   explorer: lazy(() => import("@/components/os-explorer/explorer-window-content")),
   "team-member": lazy(() => import("@/components/chat/team-member-window-content")),
   "system-monitor": lazy(() => import("@/components/system/system-monitor-window-content")),
+  "tab-host": lazy(() => import("./tab-host-window-content")),
 };
 
 /**
@@ -48,6 +49,9 @@ export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>)
     return typeof member === "string" && member ? `Session — ${member}` : "Team member";
   }
   if (kind === "system-monitor") return "System Monitor";
+  // A detached tab carries its title in the payload; the generic name only shows for a
+  // window whose tab has not been resolved yet (restore before the layout is loaded).
+  if (kind === "tab-host") return "Tab";
   const path = payload?.path;
   if (kind === "explorer" && typeof path === "string" && path) {
     const segments = path.split(/[\\/]/).filter(Boolean);
