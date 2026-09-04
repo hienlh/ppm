@@ -12,7 +12,7 @@ import { useEffect, useRef } from "react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { usePanelStore } from "@/stores/panel-store";
 import { persistWindowPanelChange } from "@/stores/window-panel-actions";
-import { reconcileTabHostWindows } from "@/stores/window-panel-reconcile";
+import { reconcileRunKey, reconcileTabHostWindows } from "@/stores/window-panel-reconcile";
 import { useWindowStore } from "@/components/floating-window/window-store";
 
 export function useWindowPanelReconcile(): void {
@@ -24,8 +24,9 @@ export function useWindowPanelReconcile(): void {
   useEffect(() => {
     if (!currentProject) return;
     if (!restored && !isMobile) return;
-    if (reconciledFor.current === currentProject) return;
-    reconciledFor.current = currentProject;
+    const runKey = reconcileRunKey(currentProject, isMobile);
+    if (reconciledFor.current === runKey) return;
+    reconciledFor.current = runKey;
 
     const { panels, grid, focusedPanelId } = usePanelStore.getState();
     // No window layer on mobile ⇒ no window is live ⇒ every detached tab comes home.

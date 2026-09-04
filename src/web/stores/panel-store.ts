@@ -191,6 +191,22 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     return panelId ?? get().focusedPanelId;
   }
 
+  /**
+   * The focus to commit when a tab was activated in `pid`.
+   *
+   * Focus decides where the next `openTab()` with no explicit panel lands, and a
+   * floating window renders no tab bar — a tab opened inside one would be unreachable
+   * until the window closes, and the id would be persisted with the layout. So
+   * activating a tab that lives in a window leaves focus where it was: the window is
+   * already in front of the user, nothing more is needed to "focus" it.
+   *
+   * Every caller here picks `pid` by scanning the whole `panels` map, which includes
+   * the off-grid window panels.
+   */
+  function focusAfterActivate(pid: string): string {
+    return isWindowPanelId(pid) ? get().focusedPanelId : pid;
+  }
+
   return {
     ...defaultLayout(),
     currentProject: null,
@@ -484,7 +500,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           const existing = p.tabs.find((t) => t.type === "chat" && t.metadata?.sessionId === sid);
           if (existing) {
             set((s) => ({
-              focusedPanelId: p.id,
+              focusedPanelId: focusAfterActivate(p.id),
               panels: {
                 ...s.panels,
                 [p.id]: { ...p, tabs: stampActive(p.tabs, existing.id), activeTabId: existing.id, tabHistory: pushHistory(p.tabHistory, existing.id) },
@@ -502,7 +518,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
           const existing = p.tabs.find((t) => t.id === baseId);
           if (existing) {
             set((s) => ({
-              focusedPanelId: p.id,
+              focusedPanelId: focusAfterActivate(p.id),
               panels: {
                 ...s.panels,
                 [p.id]: {
@@ -642,7 +658,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       }
 
       // A window that lost its last tab closes with it — it can never show anything again.
-      if (isWindowPanelId(pid)) syncWindowPanel(get, pid);
+      if (isWindowPanelId(pid)) syncWindowPanel(set, get, pid);
     },
 
     setActiveTab: (tabId, panelId?) => {
@@ -652,7 +668,7 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       set((s) => {
         const p = s.panels[pid]!;
         return {
-          focusedPanelId: pid,
+          focusedPanelId: focusAfterActivate(pid),
           panels: { ...s.panels, [pid]: { ...p, tabs: stampActive(p.tabs, tabId), activeTabId: tabId, tabHistory: pushHistory(p.tabHistory, tabId) } },
         };
       });
@@ -707,10 +723,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // Auto-close empty source panel if not last in current grid.
         // Guard: never attempt to remove __dock__ from the grid — it is intentionally
         // absent from grid and gridRemovePanel would be a no-op, but the panels-map
-        // delete would destroy the dock panel entirely.
-        // Same guard for a window panel: its lifetime belongs to the floating window,
-        // and window-panel-actions is the single writer that deletes it (together with
-        // closing the window). A silent delete here would strand an open, empty window.
+        // delete would destroy the dock panel entirely. The dock is reserved and outlives
+        // its tabs; only its visibility follows them.
+        // A window panel is skipped for a different reason: its lifetime belongs to the
+        // floating window, so syncWindowPanel below drops it together with the window
+        // rather than leaving an open, empty one behind.
         const offGridSource = fromPanelId === DOCK_PANEL_ID || isWindowPanelId(fromPanelId);
         if (fromTabs.length === 0 && gridPanelCount > 1 && !offGridSource) {
           const { [fromPanelId]: _, ...rest } = s.panels;
@@ -734,6 +751,10 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         };
       });
       persist();
+
+      // Moving the last tab out of a window empties it exactly as closing that tab would,
+      // and the window has no tab bar to fill itself from — same owner, same outcome.
+      if (isWindowPanelId(fromPanelId)) syncWindowPanel(set, get, fromPanelId);
     },
 
     splitPanel: (direction, tabId, sourcePanelId, targetPanelId?) => {

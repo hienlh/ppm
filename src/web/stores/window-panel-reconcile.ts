@@ -29,6 +29,18 @@ export interface ReconcileResult {
   changed: boolean;
 }
 
+/**
+ * Identity of one reconcile run, for the caller's once-per-run guard.
+ *
+ * The viewport class belongs in the key, not just the project: crossing the `md`
+ * breakpoint unmounts or remounts the entire window layer, which is precisely the split
+ * this reconciles. Keying on the project alone lets the first desktop run suppress the
+ * mobile repair that must follow it (and the reverse on the way back).
+ */
+export function reconcileRunKey(project: string, isMobile: boolean): string {
+  return `${project}|${isMobile}`;
+}
+
 /** Append tabs to a panel without disturbing which tab the user was last looking at. */
 function appendTabs(target: Panel, tabs: Tab[]): Panel {
   const known = new Set(target.tabs.map((t) => t.id));

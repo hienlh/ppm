@@ -54,11 +54,22 @@ export function persistWindowPanelChange(get: Get): void {
 /**
  * Keep a floating window and its panel in lockstep after a tab left the panel: an empty
  * tab-host window has no way back to a tab, so it closes with its panel.
+ *
+ * Every way a tab can leave — closed, moved to the grid or the dock, dragged out — ends
+ * here, so the panel and the window are created and destroyed by the same two functions.
+ * Both halves are idempotent: a panel already dropped by the caller and a window already
+ * closed are both no-ops.
  */
-export function syncWindowPanel(get: Get, panelId: string): void {
+export function syncWindowPanel(set: Set, get: Get, panelId: string): void {
+  if (get().panels[panelId]?.tabs.length) {
+    saveWindowPanels(get().panels);
+    return;
+  }
+  set((s) => {
+    const { [panelId]: _dropped, ...rest } = s.panels;
+    return { panels: rest };
+  });
   saveWindowPanels(get().panels);
-  const panel = get().panels[panelId];
-  if (panel && panel.tabs.length > 0) return;
   const windowId = windowIdFromPanelId(panelId);
   if (windowId) useWindowStore.getState().close(windowId);
 }
@@ -137,6 +148,14 @@ export function makeRedockFromWindow(set: Set, get: Get) {
       return focus ? { panels: rest, focusedPanelId: focus } : { panels: rest };
     });
     persistWindowPanelChange(get);
+
+    // The body can unmount without the window closing: the whole desktop window layer is
+    // dropped below the `md` breakpoint, which re-docks the tabs but would leave the
+    // window entry in `ppm-windows` — restored empty and unfillable on the way back, and
+    // burning one of MAX_WINDOWS on every reload. `close()` is a no-op when the window is
+    // already gone (the ×/keyboard paths), and re-entry here returns early: the panel is
+    // deleted above.
+    useWindowStore.getState().close(windowId);
   };
 }
 

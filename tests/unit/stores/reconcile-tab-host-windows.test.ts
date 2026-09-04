@@ -7,7 +7,7 @@
  * every detached tab must come home to the grid.
  */
 import { describe, it, expect } from "bun:test";
-import { reconcileTabHostWindows } from "../../../src/web/stores/window-panel-reconcile";
+import { reconcileRunKey, reconcileTabHostWindows } from "../../../src/web/stores/window-panel-reconcile";
 import { DOCK_PANEL_ID, windowPanelId } from "../../../src/web/stores/panel-utils";
 import type { Panel } from "../../../src/web/stores/panel-utils";
 
@@ -152,5 +152,21 @@ describe("reconcileTabHostWindows", () => {
     expect(second.changed).toBe(false);
     expect(second.panels).toEqual(first.panels);
     expect(second.windowIdsToClose).toEqual([]);
+  });
+});
+
+describe("reconcileRunKey", () => {
+  it("changes when the viewport crosses the breakpoint, so the repair runs again", () => {
+    // Shrinking below `md` unmounts the window layer and re-docks the tabs; the mobile
+    // pass must not be suppressed by the desktop pass that already ran for this project.
+    expect(reconcileRunKey("proj1", false)).not.toBe(reconcileRunKey("proj1", true));
+  });
+
+  it("is stable for the same project and viewport, so the repair runs once", () => {
+    expect(reconcileRunKey("proj1", false)).toBe(reconcileRunKey("proj1", false));
+  });
+
+  it("changes with the project", () => {
+    expect(reconcileRunKey("proj1", true)).not.toBe(reconcileRunKey("proj2", true));
   });
 });

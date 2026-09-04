@@ -58,7 +58,13 @@ export function TabHostWindowChrome(props: WindowChromeProps) {
       .then((handle) => {
         // The window can be closed before this resolves, in which case onDetach has
         // already cleared the state and storing the handle would strand a dead one.
-        if (activePipHost() !== handle) return;
+        // A null handle is that same case, detected inside the host. The slot check
+        // covers a body that unmounted and came back: the new one is not this one.
+        if (!handle || activePipHost() !== handle) return;
+        if (tabHostSlot(props.id) !== slot) {
+          handle.detach();
+          return;
+        }
         setTabHostPip(props.id, handle);
         // A DOM move carries no focus with it: without this the popped-out terminal or
         // editor is visible but swallows nothing until the user clicks it.

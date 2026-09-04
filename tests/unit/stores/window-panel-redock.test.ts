@@ -137,6 +137,94 @@ describe("redockFromWindow", () => {
 
     expect(usePanelStore.getState().panels).toBe(before);
   });
+
+  it("closes the window it emptied, so an unmounted body cannot leave a ghost behind", () => {
+    // The body can unmount without the window closing — dropping below `md` unmounts the
+    // whole desktop window layer. Without this the entry survives in the window store and
+    // in `ppm-windows`, and comes back empty and unfillable.
+    seedStore(
+      [makePanel("panel-A", [{ id: "terminal:1", type: "terminal" }, { id: "editor:/a.ts", type: "editor" }])],
+      [["panel-A"]],
+      "panel-A",
+    );
+    const { windowId } = popOut("terminal:1", "panel-A");
+    expect(useWindowStore.getState().windows[windowId]).toBeTruthy();
+
+    usePanelStore.getState().redockFromWindow(windowId, "panel-A");
+
+    expect(useWindowStore.getState().windows[windowId]).toBeUndefined();
+    expect(localStorageStub.getItem("ppm-windows") ?? "").not.toContain(windowId);
+  });
+
+  it("stays a no-op on the normal close path, where the window is already gone", () => {
+    seedStore(
+      [makePanel("panel-A", [{ id: "terminal:1", type: "terminal" }, { id: "editor:/a.ts", type: "editor" }])],
+      [["panel-A"]],
+      "panel-A",
+    );
+    const { windowId } = popOut("terminal:1", "panel-A");
+    // What the titlebar × does: the window goes first, the body's cleanup re-docks after.
+    useWindowStore.getState().close(windowId);
+    const windowsBefore = useWindowStore.getState().windows;
+
+    usePanelStore.getState().redockFromWindow(windowId, "panel-A");
+
+    expect(useWindowStore.getState().windows).toBe(windowsBefore);
+    expect(usePanelStore.getState().panels["panel-A"]?.tabs.map((t) => t.id)).toContain("terminal:1");
+  });
+});
+
+describe("moveTab out of a window panel", () => {
+  it("drops the panel and closes the window when the last tab leaves", () => {
+    seedStore(
+      [makePanel("panel-A", [{ id: "terminal:1", type: "terminal" }, { id: "editor:/a.ts", type: "editor" }])],
+      [["panel-A"]],
+      "panel-A",
+    );
+    const { windowId, panelId } = popOut("terminal:1", "panel-A");
+
+    usePanelStore.getState().moveTab("terminal:1", panelId, "panel-A");
+
+    const state = usePanelStore.getState();
+    expect(state.panels[panelId]).toBeUndefined();
+    expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).toContain("terminal:1");
+    expect(useWindowStore.getState().windows[windowId]).toBeUndefined();
+    // Nothing detached is left, so the blob is dropped rather than persisted empty.
+    expect(localStorageStub.getItem("ppm-window-panels")).toBeNull();
+  });
+
+  it("keeps the window while the panel still holds another tab", () => {
+    seedStore(
+      [makePanel("panel-A", [
+        { id: "terminal:1", type: "terminal" },
+        { id: "editor:/a.ts", type: "editor" },
+        { id: "editor:/b.ts", type: "editor" },
+      ])],
+      [["panel-A"]],
+      "panel-A",
+    );
+    const { windowId, panelId } = popOut("terminal:1", "panel-A");
+    // A second tab in one window is only reachable through a crafted persisted blob.
+    usePanelStore.getState().moveTab("editor:/b.ts", "panel-A", panelId);
+
+    usePanelStore.getState().moveTab("terminal:1", panelId, "panel-A");
+
+    const state = usePanelStore.getState();
+    expect(state.panels[panelId]?.tabs.map((t) => t.id)).toEqual(["editor:/b.ts"]);
+    expect(useWindowStore.getState().windows[windowId]).toBeTruthy();
+  });
+
+  it("leaves the reserved dock panel in place when its last tab leaves", () => {
+    seedStore([makePanel("panel-A", [{ id: "editor:/a.ts", type: "editor" }])], [["panel-A"]], "panel-A", [
+      { id: "terminal:1", type: "terminal" },
+    ]);
+
+    usePanelStore.getState().moveTab("terminal:1", DOCK_PANEL_ID, "panel-A");
+
+    const state = usePanelStore.getState();
+    expect(state.panels[DOCK_PANEL_ID]?.tabs).toEqual([]);
+    expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).toContain("terminal:1");
+  });
 });
 
 describe("closeTab on a window panel", () => {
