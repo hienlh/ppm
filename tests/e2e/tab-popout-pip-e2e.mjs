@@ -292,6 +292,7 @@ async function bootBrowser({ deletePipApi = false } = {}) {
   main = await cdp.attach(mainTargetId);
   await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }, main).catch(() => {});
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: pageInitScript(TOKEN, { deletePipApi }) }, main);
+  if (await retargetTerminalWs(main)) console.log(`terminal WebSocket retargeted to :${API_PORT}`);
 }
 
 /**
@@ -315,6 +316,48 @@ async function neutralizeStrictMode(sessionId) {
       const text = (r.base64Encoded ? Buffer.from(r.body, "base64").toString("utf8") : r.body).replace(
         /_jsxDEV\(StrictMode,/g,
         "_jsxDEV(((props) => props.children),",
+      );
+      await cdp.send(
+        "Fetch.fulfillRequest",
+        {
+          requestId,
+          responseCode: 200,
+          responseHeaders: [
+            { name: "content-type", value: "application/javascript" },
+            { name: "cache-control", value: "no-store" },
+          ],
+          body: Buffer.from(text, "utf8").toString("base64"),
+        },
+        sessionId,
+      );
+    } catch {
+      await cdp.send("Fetch.continueRequest", { requestId }, sessionId).catch(() => {});
+    }
+  });
+  return true;
+}
+
+/**
+ * Point the dev-only terminal WebSocket at an isolated backend port.
+ *
+ * `use-terminal.ts` hard-codes `ws://<host>:8081` for http dev (Vite's proxy is unreliable
+ * for upgrades), and a WebSocket handshake cannot be rewritten by the Fetch domain — so the
+ * module itself is rewritten as it is served. Only needed when the run is NOT on 8081, e.g.
+ * after Windows wedges that port behind a dead PID. No app behaviour changes.
+ */
+async function retargetTerminalWs(sessionId) {
+  if (API_PORT === "8081") return false;
+  await cdp.send("Network.enable", {}, sessionId).catch(() => {});
+  await cdp.send("Network.setCacheDisabled", { cacheDisabled: true }, sessionId).catch(() => {});
+  await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*/hooks/use-terminal.ts*", requestStage: "Response" }] }, sessionId);
+  cdp.on(async (m) => {
+    if (m.method !== "Fetch.requestPaused" || m.sessionId !== sessionId) return;
+    const { requestId } = m.params;
+    try {
+      const r = await cdp.send("Fetch.getResponseBody", { requestId }, sessionId);
+      const text = (r.base64Encoded ? Buffer.from(r.body, "base64").toString("utf8") : r.body).replace(
+        /hostname\}:8081/g,
+        `hostname}:${API_PORT}`,
       );
       await cdp.send(
         "Fetch.fulfillRequest",
@@ -538,6 +581,11 @@ async function scenario0() {
     stuck,
     `${out}${stuck ? "" : ` | redock stack: ${(stacks[0] || "none").slice(0, 320)}`}`,
   );
+  await screenshot("00-strictmode-popout.png", {
+    scenarioId: "0",
+    step: "1.8 s after pop-out under real StrictMode",
+    pass: stuck,
+  });
   await ev(`(async () => { ${WINDOWS}.getState().close(${JSON.stringify(timeline.wid)}); return 'ok'; })()`);
   await sleep(600);
 }
@@ -994,6 +1042,237 @@ async function scenarioMobile() {
   }
 }
 
+/**
+ * Focus must never land on a `__win__:` panel: a floating window has no tab bar, so the
+ * next `openTab()` with no explicit panel would drop a tab somewhere unreachable — and
+ * the id would be persisted with the layout.
+ */
+async function scenario8() {
+  await resetWorkspace();
+  const persistedFocus = `(() => {
+    const raw = localStorage.getItem('ppm-panels-' + ${JSON.stringify(PROJECT_NAME)});
+    return raw ? (JSON.parse(raw).focusedPanelId ?? null) : null;
+  })()`;
+
+  // --- singleton (settings) ---
+  await openTab({ type: "settings", title: "Settings", projectId: PROJECT_NAME, closable: true, metadata: {} });
+  await sleep(800);
+  const { winId } = await popOutViaMenu("settings");
+  const afterPopOut = await snapshot();
+  assert(
+    panelOf(afterPopOut, "settings") === `__win__:${winId}`,
+    "[8] settings tab detached into the window panel",
+    `panel=${panelOf(afterPopOut, "settings")}`,
+  );
+
+  // Re-trigger the singleton the way the nav/command path does, twice over: openTab's
+  // dedupe branch and a bare setActiveTab with no panelId.
+  await ev(`${PANELS}.getState().openTab({ type: 'settings', title: 'Settings', projectId: ${JSON.stringify(PROJECT_NAME)}, closable: true, metadata: {} })`);
+  await sleep(500);
+  await ev(`${PANELS}.getState().setActiveTab('settings')`);
+  await sleep(700);
+
+  const afterActivate = await snapshot();
+  assert(
+    afterActivate.grid.flat().includes(afterActivate.focused),
+    "[8] focusedPanelId is a grid panel after re-activating the detached singleton",
+    `focused=${afterActivate.focused} grid=${JSON.stringify(afterActivate.grid)}`,
+  );
+  assert(
+    panelOf(afterActivate, "settings") === `__win__:${winId}`,
+    "[8] the settings tab stayed in the window (activation did not pull it home)",
+    `panel=${panelOf(afterActivate, "settings")}`,
+  );
+
+  // The consequence the invariant exists for: a new tab with no panelId must land in the grid.
+  await openTab({
+    type: "terminal",
+    title: "Terminal 2",
+    projectId: PROJECT_NAME,
+    closable: true,
+    metadata: { terminalIndex: 2, projectName: PROJECT_NAME },
+  });
+  const afterOpen = await snapshot();
+  const newTabPanel = panelOf(afterOpen, "terminal:2");
+  assert(
+    newTabPanel && afterOpen.grid.flat().includes(newTabPanel),
+    "[8] a new tab opened with no panelId lands in the GRID, not in the window",
+    `panel=${newTabPanel} grid=${JSON.stringify(afterOpen.grid)}`,
+  );
+  const focusOnDisk = await ev(persistedFocus);
+  assert(
+    focusOnDisk && !String(focusOnDisk).startsWith("__win__:"),
+    "[8] persisted ppm-panels-<project> holds no __win__ focusedPanelId",
+    `persisted focusedPanelId=${focusOnDisk}`,
+  );
+  await screenshot("08-focus-invariant.png", { scenarioId: "8", step: "settings detached, new tab landed in the grid" });
+  await closeWindowChrome();
+
+  // --- chat, deduped by sessionId (the other focus-setting branch) ---
+  const sessionId = "11111111-2222-4333-8444-555555555555";
+  const chatDef = {
+    type: "chat",
+    title: "Chat",
+    projectId: PROJECT_NAME,
+    closable: true,
+    metadata: { sessionId, projectName: PROJECT_NAME },
+  };
+  const chatId = await openTab(chatDef);
+  await sleep(800);
+  const { winId: chatWin } = await popOutViaMenu(chatId);
+  await ev(`${PANELS}.getState().openTab(${JSON.stringify(chatDef)})`); // dedupe branch
+  await sleep(800);
+  const afterChat = await snapshot();
+  assert(
+    afterChat.grid.flat().includes(afterChat.focused) && panelOf(afterChat, chatId) === `__win__:${chatWin}`,
+    "[8] re-opening a detached chat by sessionId keeps focus on the grid",
+    `focused=${afterChat.focused} chatPanel=${panelOf(afterChat, chatId)} tabs=${totalTabs(afterChat)}`,
+  );
+  assert(
+    totalTabs(afterChat) === totalTabs(afterOpen) + 1,
+    "[8] the dedupe branch opened no second chat tab",
+    `tabs ${totalTabs(afterOpen)}→${totalTabs(afterChat)}`,
+  );
+  await closeWindowChrome();
+}
+
+/**
+ * Crossing below the `md` breakpoint unmounts the whole window layer. The detached tab
+ * must come home AND the window entry must go away, or the next desktop viewport paints
+ * an empty "Loading…" window nothing can fill.
+ */
+async function scenario9() {
+  await resetWorkspace();
+  await openTab({
+    type: "terminal",
+    title: "Terminal 1",
+    projectId: PROJECT_NAME,
+    closable: true,
+    metadata: { terminalIndex: 1, projectName: PROJECT_NAME },
+  });
+  await waitFor(`document.querySelector('[data-tab-pool-id="terminal:1"] .xterm')`, 30000, "xterm mounted");
+  const { winId } = await popOutViaMenu(TERMINAL_ID);
+  const storedWindows = `(() => { const raw = localStorage.getItem('ppm-windows'); return raw ? JSON.parse(raw).map(w => w.id) : []; })()`;
+  const beforeMobile = await snapshot();
+  assert(
+    (await ev(storedWindows)).includes(winId),
+    "[9] the window is in ppm-windows before the viewport shrinks",
+    `stored=${JSON.stringify(await ev(storedWindows))}`,
+  );
+
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, main);
+  await sleep(2500);
+  try {
+    const onMobile = await snapshot();
+    const homePanel = panelOf(onMobile, TERMINAL_ID);
+    assert(
+      homePanel && !String(homePanel).startsWith("__win__:"),
+      "[9] the detached tab re-docks to the grid below the md breakpoint",
+      `panel=${homePanel}`,
+    );
+    // Recorded, not asserted: the window layer renders nothing below md, so a surviving
+    // entry is invisible there. What must never happen is a ghost on the way back — that
+    // is asserted after the viewport is restored.
+    const storeGone = !onMobile.windows.some((w) => w.id === winId);
+    const stored = await ev(storedWindows);
+    record(
+      "[9] the window entry is dropped from the window store while below md",
+      storeGone,
+      `windows=${JSON.stringify(onMobile.windows.map((w) => w.id))}`,
+    );
+    record(
+      "[9] the window entry is dropped from ppm-windows while below md",
+      !stored.includes(winId),
+      `stored=${JSON.stringify(stored)}`,
+    );
+    await screenshot("09-mobile-redock.png", {
+      scenarioId: "9",
+      step: "below md: tab re-docked to the grid",
+      pass: storeGone,
+    });
+  } finally {
+    await cdp.send("Emulation.clearDeviceMetricsOverride", {}, main).catch(() => {});
+  }
+
+  // Sample the first seconds back on the desktop: a window element that appears and is
+  // then reconciled away is still a ghost the user can see.
+  let peakWindowEls = 0;
+  for (let i = 0; i < 12; i++) {
+    await sleep(250);
+    peakWindowEls = Math.max(peakWindowEls, await ev(`document.querySelectorAll('[role="group"][aria-label]').length`));
+  }
+  record("[9] no window element flashes on the way back to desktop", peakWindowEls === 0, `peak window elements=${peakWindowEls}`);
+  await sleep(1500);
+
+  const back = await snapshot();
+  assert(
+    back.windows.length === 0,
+    "[9] no window comes back on the desktop viewport",
+    `windows=${JSON.stringify(back.windows.map((w) => w.id))}`,
+  );
+  const ghost = await ev(`(() => {
+    const groups = [...document.querySelectorAll('[role="group"][aria-label]')];
+    return JSON.stringify({ windowEls: groups.length, loading: document.body.innerText.includes('Loading…') });
+  })()`);
+  assert(
+    JSON.parse(ghost).windowEls === 0 && !JSON.parse(ghost).loading,
+    "[9] no empty 'Loading…' ghost window is painted",
+    ghost,
+  );
+  assert(
+    totalTabs(back) === totalTabs(beforeMobile),
+    "[9] no tab was lost or duplicated across the viewport round trip",
+    `${totalTabs(beforeMobile)}→${totalTabs(back)}`,
+  );
+  await screenshot("09b-back-to-desktop.png", { scenarioId: "9", step: "back above md: no ghost window" });
+
+  // Harder case for the entry that survives on mobile: reload while below md (so the
+  // persisted blob is all that is left), then come back to the desktop viewport.
+  await openTab({
+    type: "terminal",
+    title: "Terminal 1",
+    projectId: PROJECT_NAME,
+    closable: true,
+    metadata: { terminalIndex: 1, projectName: PROJECT_NAME },
+  }).catch(() => {});
+  await waitFor(`document.querySelector('[data-tab-pool-id="terminal:1"] .xterm')`, 30000, "xterm mounted");
+  const { winId: win2 } = await popOutViaMenu(TERMINAL_ID);
+  await sleep(1500);
+  await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }, main);
+  await sleep(2500);
+  const reloaded = cdp.once("Page.loadEventFired", main, 25000);
+  await cdp.send("Page.reload", {}, main);
+  await reloaded;
+  await sleep(4000);
+  await cdp.send("Runtime.enable", {}, main).catch(() => {});
+  await waitFor(`${PROJECTS}.getState().activeProject?.name === ${JSON.stringify(PROJECT_NAME)}`, 40000, "app after mobile reload");
+  await sleep(2500);
+  await installAppHelpers();
+  const mobileReload = await snapshot();
+  record(
+    "[9] mobile reload paints no floating window",
+    (await ev(`document.querySelectorAll('[role="group"][aria-label]').length`)) === 0,
+    `windowsInStore=${JSON.stringify(mobileReload.windows.map((w) => w.id))} tabPanel=${panelOf(mobileReload, TERMINAL_ID)}`,
+  );
+  await cdp.send("Emulation.clearDeviceMetricsOverride", {}, main).catch(() => {});
+  let peakAfterReload = 0;
+  for (let i = 0; i < 16; i++) {
+    await sleep(250);
+    peakAfterReload = Math.max(peakAfterReload, await ev(`document.querySelectorAll('[role="group"][aria-label]').length`));
+  }
+  const end = await snapshot();
+  record(
+    "[9] no ghost window after a mobile reload followed by a desktop viewport",
+    peakAfterReload === 0 && end.windows.length === 0,
+    `peak window elements=${peakAfterReload}, windows=${JSON.stringify(end.windows.map((w) => w.id))}, tabPanel=${panelOf(end, TERMINAL_ID)}, win2=${win2}`,
+  );
+  await screenshot("09c-after-mobile-reload.png", {
+    scenarioId: "9",
+    step: "desktop viewport after a mobile reload",
+    pass: peakAfterReload === 0 && end.windows.length === 0,
+  });
+}
+
 async function scenario7() {
   const files = [
     "tests/unit/stores/window-panel-popout.test.ts",
@@ -1079,6 +1358,8 @@ async function run() {
   await scenario("4", "close semantics", scenario4);
   await scenario("5", "reload restores as a floating window", scenario5);
   await scenario("6", "unsupported browser", scenario6);
+  await scenario("8", "focus never lands on a window panel", scenario8);
+  await scenario("9", "no ghost window below the md breakpoint", scenario9);
   await scenario("mobile", "mobile guard", scenarioMobile);
   await scenario("7", "unit coverage", scenario7);
 }
