@@ -8,6 +8,7 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { buildXtermTheme } from "@/theme/adapters/xterm-adapter";
 import { resolveTheme as resolvePpmTheme } from "@/theme/resolve-theme";
 import { getCurrentAppliedTheme, THEME_CHANGE_EVENT } from "@/theme/apply-theme";
+import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import type { PpmTheme } from "@/theme/types";
 
 /** Current active PpmTheme → xterm ITheme (prefers the live applied theme). */
@@ -400,10 +401,13 @@ export function useTerminal(
 
     // Keepalive heartbeat + zombie detection (covers suspend/sleep/network drop)
     const heartbeatInterval = setInterval(checkConnection, HEARTBEAT_INTERVAL_MS);
+    // Bound to the container's own document: the terminal may be living in a
+    // picture-in-picture window, whose visibility is not the main document's.
+    const hostDoc = container.ownerDocument;
     const onVisibility = () => {
-      if (document.visibilityState === "visible") checkConnection();
+      if (hostDoc.visibilityState === "visible") checkConnection();
     };
-    document.addEventListener("visibilitychange", onVisibility);
+    hostDoc.addEventListener("visibilitychange", onVisibility);
 
     // ResizeObserver for auto-fit — skip when tab is hidden (0 dimensions).
     // Debounced: an on-screen keyboard resizes the container many times as it
@@ -426,6 +430,18 @@ export function useTerminal(
     });
     resizeObserver.observe(container);
 
+    // Host-driven resize (picture-in-picture): the ResizeObserver above only
+    // reports a PiP-driven size seconds later, so refit as soon as the host says
+    // its size changed.
+    const unsubHostResize = onHostResize(container, () => {
+      try {
+        fitAddon.fit();
+        sendResize();
+      } catch {
+        // Ignore fit errors while the tab is detached or tearing down
+      }
+    });
+
     // React to theme changes — the theme-change event fires after CSS vars are
     // applied, covering style, mode, system-OS, and imported-theme swaps.
     const onThemeChange = () => { term.options.theme = currentXtermTheme(); };
@@ -434,10 +450,11 @@ export function useTerminal(
 
     return () => {
       unsubTheme();
+      unsubHostResize();
       if (fitTimer) clearTimeout(fitTimer);
       resizeObserver.disconnect();
       clearInterval(heartbeatInterval);
-      document.removeEventListener("visibilitychange", onVisibility);
+      hostDoc.removeEventListener("visibilitychange", onVisibility);
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
       if (readyQuietTimer.current) clearTimeout(readyQuietTimer.current);
       if (readyMaxTimer.current) clearTimeout(readyMaxTimer.current);
