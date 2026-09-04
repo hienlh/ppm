@@ -263,9 +263,10 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 ## /api/system
 
 - `GET    /api/system/resources`
-- `GET    /api/system/resources/history`
-- `POST   /api/system/resources/kill/:pid`
 - `GET    /api/system/resources/stream`
+- `POST   /api/system/resources/stream/:sid/ping`
+- `DELETE /api/system/resources/stream/:sid`
+- `POST   /api/system/resources/kill`
 - `GET    /api/system/host`
 
 ## /api/teams
@@ -308,4 +309,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.18.8 -->
+<!-- Generated from src/server/routes/ for PPM v0.18.9 -->
