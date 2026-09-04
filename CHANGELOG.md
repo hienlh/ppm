@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.10] - 2026-09-05
+
+### Added
+- **End a whole app from System Monitor** — the × on a group row ends the app and all its helper processes in one confirm; groups holding a PPM or system process stay disabled.
+- **Resizable process columns** — drag a header's right edge to resize CPU/RAM/Disk/GPU/Net, double-click to reset; widths are remembered per device.
+
+### Changed
+- **Trend/Age column removed** from the process table — it starved the process name; uptime now shows in the name tooltip.
+
+### Fixed
+- **Aurora Light surfaces are opaque again** — dropdowns, bottom sheets and stacked windows no longer let content bleed through; the pre-theme first paint matches too.
+
 ## [0.18.9] - 2026-09-04
 
 ### Added
