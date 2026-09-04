@@ -15,6 +15,11 @@
  *    mounted in; selection-driven UI degrades for content living in the PiP document.
  *  - `use-terminal`'s reconnect check reads the main document's visibility, so a hidden
  *    main tab is treated as hidden even while its terminal is visible in PiP.
+ *  - Monaco chords (Ctrl+Z, Ctrl+F, …) do not fire while the editor sits in PiP: typing
+ *    reaches the buffer, but the keybinding dispatcher listens on the window the editor was
+ *    created in. Undo works again as soon as the tab is brought back.
+ *  - The titlebar shows the tab title captured at pop-out time; a tab renamed afterwards
+ *    (a chat acquiring a name) keeps the old caption until it is popped out again.
  */
 
 import { PictureInPicture2 } from "lucide-react";

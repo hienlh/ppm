@@ -42,19 +42,34 @@ export default function TabHostWindowContent({ id, payload }: WindowContentProps
 
   const pip = useTabHostPip(id);
 
-  // Re-dock on unmount, from a LAYOUT cleanup: React runs those before it removes the
-  // host nodes, while a passive cleanup runs after — too late to hand the tab back, and
-  // fatal once the slot has been moved into another document. Every close path (titlebar
-  // ×, keyboard, a programmatic close) unmounts this body, so they all route through here.
+  // Re-dock when this body goes away. Every close path (titlebar ×, keyboard, a
+  // programmatic close, the window layer unmounting below the desktop breakpoint) unmounts
+  // this body, so they all route through here.
+  //
+  // The hand-back is deferred by one microtask on purpose: React StrictMode (and Offscreen /
+  // Activity subtrees) run a layout cleanup and then immediately re-run the setup on the
+  // SAME instance. Re-docking synchronously in that simulated cleanup pulled the tab back
+  // to the grid a moment after every pop-out and left the window empty. A re-run setup
+  // cancels the pending hand-back; a real unmount has no re-run, so the microtask fires.
+  // Deferring is safe for the DOM: React only detaches this body's root node, the slot and
+  // the tab inside it stay intact (even inside a PiP document) until the microtask runs,
+  // and the PiP host already tolerates a restore target that is no longer connected.
+  const pendingRedock = useRef<object | null>(null);
   useLayoutEffect(() => {
+    pendingRedock.current = null;
     return () => {
-      // PiP first: detaching puts the slot back into this (still mounted) body, and only
-      // then can the re-dock move the tab out of it. The reverse order leaves the tab in
-      // a document that is about to close, with nothing left to move it home.
-      const handle = tabHostPip(id);
-      if (handle && activePipHost() === handle) handle.detach();
-      publishTabHostSlot(id, null);
-      usePanelStore.getState().redockFromWindow(id, originRef.current);
+      const token = {};
+      pendingRedock.current = token;
+      queueMicrotask(() => {
+        if (pendingRedock.current !== token) return;
+        pendingRedock.current = null;
+        // PiP first: detaching hands the slot back, and only then can the re-dock move the
+        // tab out of it. The reverse order leaves the tab in a document about to close.
+        const handle = tabHostPip(id);
+        if (handle && activePipHost() === handle) handle.detach();
+        publishTabHostSlot(id, null);
+        usePanelStore.getState().redockFromWindow(id, originRef.current);
+      });
     };
   }, [id]);
 
