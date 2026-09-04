@@ -17,7 +17,17 @@ import {
   deriveTabId,
   visibleTabs,
   DOCK_PANEL_ID,
+  isWindowPanelId,
 } from "./panel-utils";
+import {
+  makePopOutTab,
+  makeRedockFromWindow,
+  hydrateWindowPanels,
+  stripProjectFromWindowPanels,
+  syncWindowPanel,
+} from "./window-panel-actions";
+import { saveWindowPanels } from "./window-panel-persistence";
+import { useWindowStore } from "@/components/floating-window/window-store";
 import {
   makeToggleDock,
   makeSetDockVisible,
@@ -120,6 +130,16 @@ export interface PanelStore {
   /** Park a terminal from a grid panel into __dock__ without killing the PTY session. */
   redockTab: (tabId: string, fromPanelId: string) => void;
 
+  // Floating-window actions
+  /**
+   * Detach a tab into a floating window, returning the window id — or null when the
+   * request is rejected (mobile, a tab type that cannot detach, or the window cap),
+   * in which case nothing changed and the caller reports it.
+   */
+  popOutTab: (tabId: string, fromPanelId: string) => string | null;
+  /** Send a window's tabs back to the grid and drop its panel. Runs on window close. */
+  redockFromWindow: (windowId: string, originPanelId?: string | null) => void;
+
   // Helpers
   getPanelForTab: (tabId: string) => Panel | undefined;
   isMobile: () => boolean;
@@ -188,8 +208,13 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
     toggleDockExpanded: () => set((s) => ({ dockExpanded: !s.dockExpanded })),
     openInDock: makeOpenInDock(set, get),
     redockTab: makeRedockTab(set, get),
+    popOutTab: makePopOutTab(set, get),
+    redockFromWindow: makeRedockFromWindow(set, get),
 
     switchProject: (projectName) => {
+      // Window panels are global, not part of any project's layout blob, so they are
+      // merged into the flat map once — before the first project reads it.
+      hydrateWindowPanels(set, get);
       const { currentProject, panels, grid, focusedPanelId, projectGrids, projectFocused, dock, projectDock } = get();
 
       // No-op if same project
@@ -401,18 +426,26 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         };
       }
 
+      // A window panel is off-grid, so the loop above never reaches it: a floating
+      // window would keep showing a tab of a project that no longer exists.
+      const stripped = stripProjectFromWindowPanels(cleanedPanels, projectName);
+
       set({
         projectGrids: newGrids,
         projectFocused: newFocused,
         projectDock: newProjectDock,
-        panels: cleanedPanels,
+        panels: stripped.panels,
         currentProject: null,
       });
+      saveWindowPanels(stripped.panels);
+      for (const windowId of stripped.windowIdsToClose) useWindowStore.getState().close(windowId);
       // Re-trigger full load from localStorage
       get().switchProject(projectName);
     },
 
     setFocusedPanel: (panelId) => {
+      // Focus drives where the next tab opens, so it must stay on a real, on-grid panel.
+      if (isWindowPanelId(panelId)) return;
       if (get().panels[panelId]) set({ focusedPanelId: panelId });
     },
 
@@ -581,8 +614,12 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // no-op for it) so the map-delete would destroy the reserved dock panel, and a
         // later redock (moveTab → __dock__) would silently no-op (to === undefined),
         // leaving the terminal stuck in the grid while an empty dock opens.
+        // A window panel is exempt from the "keep the last panel" rule: that rule
+        // protects the grid from ending up with nothing to render, and a window panel
+        // is not in the grid. Leaving it behind would strand an empty floating window.
         const gridPanelCount = s.grid.flat().length;
-        if (newTabs.length === 0 && gridPanelCount > 1 && pid !== DOCK_PANEL_ID) {
+        const removable = isWindowPanelId(pid) || (gridPanelCount > 1 && pid !== DOCK_PANEL_ID);
+        if (newTabs.length === 0 && removable) {
           const { [pid]: _, ...rest } = s.panels;
           const newGrid = gridRemovePanel(s.grid, pid);
           // Focus must land on a panel still in the grid — Object.keys(rest)
@@ -603,6 +640,9 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
       if (pid === DOCK_PANEL_ID && activeProjectDockTabCount(get) === 0) {
         get().setDockVisible(false);
       }
+
+      // A window that lost its last tab closes with it — it can never show anything again.
+      if (isWindowPanelId(pid)) syncWindowPanel(get, pid);
     },
 
     setActiveTab: (tabId, panelId?) => {
@@ -668,7 +708,11 @@ export const usePanelStore = create<PanelStore>()((set, get) => {
         // Guard: never attempt to remove __dock__ from the grid — it is intentionally
         // absent from grid and gridRemovePanel would be a no-op, but the panels-map
         // delete would destroy the dock panel entirely.
-        if (fromTabs.length === 0 && gridPanelCount > 1 && fromPanelId !== DOCK_PANEL_ID) {
+        // Same guard for a window panel: its lifetime belongs to the floating window,
+        // and window-panel-actions is the single writer that deletes it (together with
+        // closing the window). A silent delete here would strand an open, empty window.
+        const offGridSource = fromPanelId === DOCK_PANEL_ID || isWindowPanelId(fromPanelId);
+        if (fromTabs.length === 0 && gridPanelCount > 1 && !offGridSource) {
           const { [fromPanelId]: _, ...rest } = s.panels;
           return {
             panels: {

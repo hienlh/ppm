@@ -11,7 +11,7 @@
  * characterization test proves it by asserting the same outputs.
  */
 import type { Panel } from "@/stores/panel-utils";
-import { DOCK_PANEL_ID } from "@/stores/panel-utils";
+import { DOCK_PANEL_ID, isWindowPanelId } from "@/stores/panel-utils";
 import type { TabType } from "@/stores/tab-store";
 
 export interface TabEntry {
@@ -99,13 +99,45 @@ export function collectFromDock(
 }
 
 /**
+ * Collect tab entries from the off-grid panels that host detached tabs (`__win__:*`),
+ * deduplicating via seenTabs.
+ *
+ * Without this pass a popped-out tab is in neither a grid nor the dock, so TabPool would
+ * mount it nowhere and the floating window would stay empty.
+ *
+ * WHY no projectId filter: like the dock, a window panel is global — a detached tab stays
+ * visible across a project switch, because a window the user pulled out explicitly
+ * vanishing on switch reads as data loss.
+ */
+export function collectFromWindowPanels(
+  panels: Record<string, Panel>,
+  seenTabs: Set<string>,
+  tabEntries: TabEntry[],
+): void {
+  for (const [panelId, panel] of Object.entries(panels)) {
+    if (!isWindowPanelId(panelId)) continue;
+    for (const tab of panel.tabs) {
+      if (seenTabs.has(tab.id)) continue;
+      seenTabs.add(tab.id);
+      tabEntries.push({
+        tabId: tab.id,
+        panelId,
+        type: tab.type,
+        metadata: tab.metadata,
+        isActive: tab.id === panel.activeTabId,
+      });
+    }
+  }
+}
+
+/**
  * Collect all tab entries across active and non-active projects, returning
  * the full deduplicated list (sorted by tabId for stable ordering).
  *
  * Collection order (intentional — determines dedup precedence):
  *   1. Active project's live grid  (highest priority)
  *   2. Non-active projects' snapshotted grids  (keep-alive)
- *   3. Dock panel (__dock__)  (lowest priority — grid wins on collision)
+ *   3. Window panels (__win__:*) and the dock panel (__dock__)  (grid wins on collision)
  *
  * This mirrors what TabPool does before passing entries to ReparentingTab.
  */
@@ -126,6 +158,10 @@ export function collectTabEntries(
     if (projectName === currentProject) continue;
     collectFromGrid(projectGrid, projectName, false, panels, seenTabs, tabEntries);
   }
+
+  // Off-grid panels last, so a tab that is briefly in both a grid panel and an off-grid
+  // one (mid-move) renders in the grid slot the user just dropped it into.
+  collectFromWindowPanels(panels, seenTabs, tabEntries);
 
   // Dock panel — collected last so grid tabs always win dedup.
   // Missing __dock__ (e.g. legacy state, tests without dock) is safe to skip.

@@ -7,6 +7,7 @@
  */
 
 import { clampRect, type Bounds, type Rect } from "./window-geometry";
+import { WINDOW_KINDS } from "./window-store-types";
 import type { WindowKind, WindowRuntimeState, WindowVisualState } from "./window-store-types";
 
 const STORAGE_KEY = "ppm-windows";
@@ -20,7 +21,13 @@ export interface PersistedWindow {
   payload?: Record<string, unknown>;
 }
 
-const KINDS: WindowKind[] = ["explorer", "system-monitor"];
+/**
+ * Kinds that may come back after a reload. Derived from WINDOW_KINDS so a new kind is
+ * restorable by default; `team-member` is the one exclusion, because its body streams a
+ * live subagent session that no longer exists after a reload — restoring it would open
+ * an empty shell the user never asked for.
+ */
+const RESTORABLE_KINDS: readonly WindowKind[] = WINDOW_KINDS.filter((k) => k !== "team-member");
 const STATES: WindowVisualState[] = ["normal", "maximized", "minimized"];
 
 function isRect(v: unknown): v is Rect {
@@ -79,7 +86,7 @@ export function loadWindowRects(bounds: Bounds): PersistedWindow[] {
   for (const item of parsed) {
     if (!item || typeof item !== "object") continue;
     const w = item as Record<string, unknown>;
-    if (typeof w.id !== "string" || !KINDS.includes(w.kind as WindowKind)) continue;
+    if (typeof w.id !== "string" || !RESTORABLE_KINDS.includes(w.kind as WindowKind)) continue;
     if (!isRect(w.rect) || !isSerialisable(w.payload)) continue;
     const state = STATES.includes(w.state as WindowVisualState)
       ? (w.state as WindowVisualState)
