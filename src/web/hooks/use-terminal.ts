@@ -401,8 +401,12 @@ export function useTerminal(
 
     // Keepalive heartbeat + zombie detection (covers suspend/sleep/network drop)
     const heartbeatInterval = setInterval(checkConnection, HEARTBEAT_INTERVAL_MS);
-    // Bound to the container's own document: the terminal may be living in a
-    // picture-in-picture window, whose visibility is not the main document's.
+    // Always the main document: a tab mounts there and is only moved into a
+    // picture-in-picture window afterwards, and this is resolved once at mount.
+    // So a terminal that is visible in PiP while the main tab is hidden is still
+    // treated as hidden and does not reconnect until the main tab comes back —
+    // checkConnection() reads the main document's visibility directly too, so
+    // re-resolving this one would not change that on its own.
     const hostDoc = container.ownerDocument;
     const onVisibility = () => {
       if (hostDoc.visibilityState === "visible") checkConnection();
