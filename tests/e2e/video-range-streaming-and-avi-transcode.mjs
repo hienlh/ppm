@@ -177,12 +177,20 @@ async function main() {
         const clock = await cdp.evalJs(`document.querySelector('span.tabular-nums')?.textContent`);
         if (!/^5:0\d/.test(clock)) throw new Error(`clock shows ${clock}, want ~5:00`);
         await screenshot(cdp, "avi-transcode-after-seek.png");
-        // Keyboard seek on a transcoded stream must restart ffmpeg 10s further on.
+        // Keyboard seek on a transcoded stream must restart ffmpeg 10s further on, and the
+        // restarted element must keep the user's volume (a fresh load resets it to 1).
         await cdp.evalJs(`document.querySelector('[data-testid="video-player"]').focus()`);
-        await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "l", code: "KeyL", text: "l" });
-        await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "l", code: "KeyL" });
-        await waitFor(cdp, `(() => { const v = document.querySelector('video'); const m = /start=([\\d.]+)/.exec(v.currentSrc); return m && Number(m[1]) >= 309 && Number(m[1]) <= 315 && v.videoWidth > 0; })()`, 30000, "keyboard +10s restart");
-        return `clock=${clock}, L → ${await cdp.evalJs(`/start=([\\d.]+)/.exec(document.querySelector('video').currentSrc)[1]`)}s`;
+        for (const [key, code] of [["ArrowDown", "ArrowDown"], ["ArrowDown", "ArrowDown"], ["l", "KeyL"]]) {
+          await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, text: key.length === 1 ? key : undefined });
+          await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code });
+          await Bun.sleep(120);
+        }
+        await waitFor(cdp, `(() => { const v = document.querySelector('video'); const m = /start=([\\d.]+)/.exec(v.currentSrc); return m && Number(m[1]) >= 309 && Number(m[1]) <= 315 && v.videoWidth > 0 && v.currentTime > 0.3; })()`, 30000, "keyboard +10s restart");
+        const after = JSON.parse(await cdp.evalJs(`(() => { const v = document.querySelector('video'); return JSON.stringify({ start: /start=([\\d.]+)/.exec(v.currentSrc)[1], sid: /sid=/.test(v.currentSrc), vol: v.volume, paused: v.paused }); })()`));
+        if (!after.sid) throw new Error("transcode URL lacks sid");
+        if (Math.abs(after.vol - 0.8) > 0.01) throw new Error(`volume after restart ${after.vol}, want 0.8`);
+        if (after.paused) throw new Error("stream restarted paused although the user never paused");
+        return `clock=${clock}, L → ${after.start}s, vol=${after.vol}`;
       });
       await closeAllTabs(cdp);
       await scenario("closing the tab leaves no ffmpeg running", async () => {

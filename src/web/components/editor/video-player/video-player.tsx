@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { rawMediaUrl, transcodeMediaUrl } from "@/lib/media-url";
+import { newMediaSessionId, rawMediaUrl, stopTranscode, transcodeMediaUrl } from "@/lib/media-url";
 import { VideoPlayerControls } from "./video-player-controls";
 import { SPEED_STEPS } from "./video-settings-menu";
 import { useVideoKeyboardShortcuts, type VideoPlayerActions } from "./use-video-keyboard-shortcuts";
@@ -30,7 +30,13 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const resumeRef = useRef(true);
+  // Whether the user wants playback. Read after a transcode restart to decide between
+  // resuming and staying paused; derived from user actions, not `video.paused`, because
+  // the element reports paused while a fresh stream is still loading.
+  const wantPlayRef = useRef(true);
+  // One id per mounted player: the server replaces (kills) this player's previous
+  // ffmpeg job on every seek and stops it when told the player is gone.
+  const [sessionId] = useState(newMediaSessionId);
 
   const [start, setStart] = useState(0);
   const [elapsed, setElapsed] = useState(0);
@@ -47,7 +53,7 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   const [error, setError] = useState<string | null>(null);
 
   const isTranscode = mode === "transcode";
-  const src = isTranscode ? transcodeMediaUrl(filePath, projectName, start) : rawMediaUrl(filePath, projectName);
+  const src = isTranscode ? transcodeMediaUrl(filePath, projectName, start, sessionId) : rawMediaUrl(filePath, projectName);
   const duration = isTranscode ? probeDuration : nativeDuration;
   const position = scrub ?? (isTranscode ? start + elapsed : elapsed);
 
@@ -59,14 +65,26 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   useEffect(() => { const v = videoRef.current; if (v) { v.volume = volume; v.muted = muted; } }, [volume, muted]);
   useEffect(() => { const v = videoRef.current; if (v) v.playbackRate = speed; }, [speed, src]);
 
-  // A detached <video> keeps its network fetch alive until garbage-collected, which
-  // would leave ffmpeg encoding for nobody. Emptying the source aborts the load now.
-  // `isConnected` guards StrictMode's simulated unmount, where the element stays in the
-  // DOM and React would not re-apply the src attribute afterwards.
+  // Leaving the player must stop its ffmpeg job explicitly: a detached <video> keeps its
+  // fetch alive until garbage-collected, and a proxy such as Cloudflare Tunnel keeps the
+  // origin request open even after the browser has dropped it. Emptying the source aborts
+  // the local load; the DELETE tells the server. `isConnected` guards StrictMode's
+  // simulated unmount, where the element stays in the DOM and React would not re-apply
+  // the src attribute afterwards. `pagehide` covers reload/close, where cleanups never run.
   useEffect(() => {
     const v = videoRef.current;
-    return () => { if (v && !v.isConnected) { v.pause(); v.removeAttribute("src"); v.load(); } };
-  }, []);
+    const stop = () => { if (isTranscode) stopTranscode(filePath, projectName, sessionId); };
+    window.addEventListener("pagehide", stop);
+    return () => {
+      window.removeEventListener("pagehide", stop);
+      if (v && !v.isConnected) {
+        v.pause();
+        v.removeAttribute("src");
+        v.load();
+        stop();
+      }
+    };
+  }, [filePath, projectName, isTranscode, sessionId]);
 
   useEffect(() => {
     const onFs = () => setFullscreen(document.fullscreenElement === rootRef.current);
@@ -90,12 +108,17 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
     if (!isTranscode) { if (v) v.currentTime = clamped; return; }
     // Restarting ffmpeg for a sub-second nudge is wasteful.
     if (Math.abs(clamped - (start + (v?.currentTime ?? 0))) < 0.5) return;
-    resumeRef.current = !(v?.paused ?? false);
     setStart(clamped);
   }, [duration, isTranscode, start]);
 
   const actions = useMemo<VideoPlayerActions>(() => ({
-    togglePlay: () => { const v = videoRef.current; if (!v) return; if (v.paused) void v.play().catch(() => {}); else v.pause(); },
+    togglePlay: () => {
+      const v = videoRef.current;
+      if (!v) return;
+      wantPlayRef.current = v.paused;
+      if (v.paused) void v.play().catch(() => {});
+      else v.pause();
+    },
     seekBy: (d) => seekTo((isTranscode ? start : 0) + (videoRef.current?.currentTime ?? 0) + d),
     toggleFullscreen: () => {
       if (document.fullscreenElement) void document.exitFullscreen();
@@ -113,14 +136,8 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
   const onKeyDown = useVideoKeyboardShortcuts(actions);
   const fitted = fittedMaxSize(transform, box);
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-text-secondary p-4 text-center">
-        <p className="text-sm">{error}</p>
-        <Button variant="outline" size="sm" onClick={() => { setError(null); setStart((s) => s + 0.001); }}>Retry</Button>
-      </div>
-    );
-  }
+  // Retry re-requests the same position; the nudge makes the URL differ so the element reloads.
+  const retry = () => { setError(null); setStart((s) => s + 0.001); };
 
   return (
     <div
@@ -144,10 +161,13 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
           preload={isTranscode ? "auto" : "metadata"}
           style={{ transform: toCssTransform(transform), maxWidth: fitted.maxWidth || undefined, maxHeight: fitted.maxHeight || undefined }}
           onLoadedMetadata={(e) => {
+            // Re-apply user settings: a fresh load (seek restart, retry) resets the element.
             const v = e.currentTarget;
             v.playbackRate = speed;
+            v.volume = volume;
+            v.muted = muted;
             if (!isTranscode && Number.isFinite(v.duration)) setNativeDuration(v.duration);
-            if (isTranscode && !resumeRef.current) v.pause();
+            if (isTranscode && !wantPlayRef.current) v.pause();
           }}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -155,13 +175,25 @@ export function VideoPlayer({ filePath, projectName, mode, probeDuration = null,
           onPlaying={() => setWaiting(false)}
           onCanPlay={() => setWaiting(false)}
           onTimeUpdate={(e) => setElapsed(e.currentTarget.currentTime)}
-          onEnded={() => setPlaying(false)}
+          onEnded={() => { setPlaying(false); wantPlayRef.current = false; }}
           onError={() => {
             if (!isTranscode) onNativeError?.();
             else setError("Transcoding failed. ffmpeg may have stopped or the file is corrupt.");
           }}
         />
-        {waiting && <Loader2 className="absolute size-8 animate-spin text-white/80 pointer-events-none" />}
+        {waiting && !error && <Loader2 className="absolute size-8 animate-spin text-white/80 pointer-events-none" />}
+        {/* Overlay rather than a replacement tree: the <video> stays mounted so volume,
+            mute and speed survive a retry. */}
+        {error && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 text-text-secondary p-4 text-center"
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm">{error}</p>
+            <Button variant="outline" size="sm" className="h-11 px-4" onClick={retry}>Retry</Button>
+          </div>
+        )}
       </div>
 
       <VideoPlayerControls

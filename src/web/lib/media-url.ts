@@ -30,10 +30,36 @@ export function rawMediaUrl(filePath: string, projectName: string): string {
   return withToken(mediaBase("raw", filePath, projectName));
 }
 
-/** Live ffmpeg → fragmented-MP4 stream starting at `start` seconds. */
-export function transcodeMediaUrl(filePath: string, projectName: string, start = 0): string {
-  const base = mediaBase("transcode", filePath, projectName);
-  return withToken(start > 0 ? `${base}&start=${start.toFixed(3)}` : base);
+/**
+ * Live ffmpeg → fragmented-MP4 stream starting at `start` seconds.
+ * `sessionId` identifies the player instance: the server kills that player's previous
+ * job before starting this one, so a seek never leaves an orphaned ffmpeg behind —
+ * even through proxies (Cloudflare Tunnel) that do not propagate client disconnects.
+ */
+export function transcodeMediaUrl(filePath: string, projectName: string, start = 0, sessionId?: string): string {
+  let url = mediaBase("transcode", filePath, projectName);
+  if (start > 0) url += `&start=${start.toFixed(3)}`;
+  if (sessionId) url += `&sid=${encodeURIComponent(sessionId)}`;
+  return withToken(url);
+}
+
+/**
+ * Tell the server the player is gone so its ffmpeg job stops now. `keepalive` lets the
+ * request complete even when fired from a page that is unloading.
+ */
+export function stopTranscode(filePath: string, projectName: string, sessionId: string): void {
+  const prefix = isExternalPath(filePath) ? "/api/fs" : `${projectUrl(projectName)}/files`;
+  const token = getAuthToken();
+  void fetch(`${prefix}/transcode?sid=${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    keepalive: true,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  }).catch(() => {});
+}
+
+/** Short random id for one mounted player. */
+export function newMediaSessionId(): string {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
 export interface MediaProbeInfo {

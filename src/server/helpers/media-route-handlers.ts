@@ -9,6 +9,7 @@ import { getFfmpegCapabilities } from "../../services/media-transcode/ffmpeg-cap
 import { probeMedia } from "../../services/media-transcode/media-probe.ts";
 import {
   startTranscode,
+  stopTranscode,
   TranscodeBusyError,
   TranscodeUnavailableError,
 } from "../../services/media-transcode/transcode-stream.ts";
@@ -46,10 +47,18 @@ function parseStart(raw: string | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** GET …/transcode?path=&start= → live fragmented-MP4 body. */
-export async function handleMediaTranscode(absPath: string, req: Request, startRaw?: string): Promise<Response> {
+/** Accept only a short opaque id so a hostile query cannot bloat the session map. */
+function parseSessionId(raw: string | undefined): string | undefined {
+  return raw && /^[A-Za-z0-9_-]{1,64}$/.test(raw) ? raw : undefined;
+}
+
+/**
+ * GET …/transcode?path=&start=&sid= → live fragmented-MP4 body.
+ * `sid` identifies the player; its previous job is killed before this one starts.
+ */
+export async function handleMediaTranscode(absPath: string, req: Request, startRaw?: string, sidRaw?: string): Promise<Response> {
   try {
-    const job = await startTranscode(absPath, { start: parseStart(startRaw), signal: req.signal });
+    const job = await startTranscode(absPath, { start: parseStart(startRaw), signal: req.signal, sessionId: parseSessionId(sidRaw) });
     return new Response(job.stream, {
       headers: {
         "Content-Type": "video/mp4",
@@ -63,4 +72,14 @@ export async function handleMediaTranscode(absPath: string, req: Request, startR
     if (e instanceof TranscodeBusyError) return Response.json(err(e.message), { status: 503 });
     throw e;
   }
+}
+
+/**
+ * DELETE …/transcode?sid= → kill the player's job. Needed because a proxy in front of
+ * PPM (Cloudflare Tunnel) may keep the origin request alive after the browser left.
+ */
+export function handleMediaTranscodeStop(sidRaw?: string): Response {
+  const sid = parseSessionId(sidRaw);
+  if (!sid) return Response.json(err("sid is required"), { status: 400 });
+  return Response.json(ok({ stopped: stopTranscode(sid) }));
 }

@@ -8,19 +8,34 @@
  * by re-requesting with `start`, which becomes `-ss` *before* `-i` (fast keyframe
  * seek; exact-frame seeking would decode from the file start every time).
  *
- * Every spawned process is tied to the response body: when the browser drops the
- * connection (tab closed, seek, next file) the stream is cancelled and only that PID
- * is killed — never a blanket kill by image name.
+ * Process lifetime is controlled explicitly, not only by the connection: a job is
+ * keyed by the player's `sessionId`, a new request for the same session kills the
+ * previous job, and the player sends a stop when it unmounts. Relying on the client
+ * disconnect alone is not enough — Cloudflare Tunnel (and other proxies) keep the
+ * origin request open and drain the body after the browser has gone, which left
+ * every seek's ffmpeg running to the end of the file and exhausted the job slots.
+ * Only the job's own PID is ever killed — never a blanket kill by image name.
  */
 import { encoderArgs, getFfmpegCapabilities } from "./ffmpeg-capabilities.ts";
 
-/** Parallel ffmpeg jobs allowed. A seek briefly overlaps old + new job, so allow a little slack. */
-export const MAX_CONCURRENT_TRANSCODES = 3;
+/** Parallel ffmpeg jobs allowed across all players (one per player after session replacement). */
+export const MAX_CONCURRENT_TRANSCODES = 4;
 let active = 0;
+
+/** Live jobs by player session so a seek or unmount can stop the right one. */
+const jobsBySession = new Map<string, () => void>();
 
 /** How many transcodes are running right now (exposed for tests/diagnostics). */
 export function activeTranscodeCount(): number {
   return active;
+}
+
+/** Kill the job a player owns. Returns false when nothing was running for it. */
+export function stopTranscode(sessionId: string): boolean {
+  const kill = jobsBySession.get(sessionId);
+  if (!kill) return false;
+  kill();
+  return true;
 }
 
 export class TranscodeUnavailableError extends Error {
@@ -42,6 +57,8 @@ export interface TranscodeOptions {
   start?: number;
   /** Aborts the job when the HTTP request is aborted. */
   signal?: AbortSignal;
+  /** Player instance id; a new job for the same id replaces (kills) the previous one. */
+  sessionId?: string;
 }
 
 /** Build the ffmpeg argv; pure so tests can assert on it without spawning. */
@@ -72,6 +89,8 @@ export interface TranscodeJob {
 export async function startTranscode(absPath: string, opts: TranscodeOptions = {}): Promise<TranscodeJob> {
   const caps = await getFfmpegCapabilities();
   if (!caps.ffmpeg || !caps.encoder) throw new TranscodeUnavailableError();
+  // A seek is a replacement, not an addition: free this player's slot before counting.
+  if (opts.sessionId) stopTranscode(opts.sessionId);
   if (active >= MAX_CONCURRENT_TRANSCODES) throw new TranscodeBusyError();
 
   const proc = Bun.spawn(buildTranscodeArgs(caps.ffmpeg, absPath, caps.encoder, opts.start), {
@@ -85,6 +104,8 @@ export async function startTranscode(absPath: string, opts: TranscodeOptions = {
     if (finished) return;
     finished = true;
     active--;
+    // Only drop the registration if it is still ours — a replacement may already own the key.
+    if (opts.sessionId && jobsBySession.get(opts.sessionId) === kill) jobsBySession.delete(opts.sessionId);
   };
 
   // Drain stderr so ffmpeg never blocks on a full pipe; keep the tail for the log.
@@ -102,6 +123,7 @@ export async function startTranscode(absPath: string, opts: TranscodeOptions = {
     finish();
   };
   opts.signal?.addEventListener("abort", kill, { once: true });
+  if (opts.sessionId) jobsBySession.set(opts.sessionId, kill);
 
   // Wrap stdout so a cancelled response body (client went away) kills this process.
   //

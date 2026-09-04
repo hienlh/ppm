@@ -22,7 +22,7 @@ import { fsErrorBody } from "../../services/fs-ops/fs-error-response.ts";
 import { isImageExtension } from "../../shared/image-extensions.ts";
 import { ok, err } from "../../types/api.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
-import { handleMediaProbe, handleMediaTranscode } from "../helpers/media-route-handlers.ts";
+import { handleMediaProbe, handleMediaTranscode, handleMediaTranscodeStop } from "../helpers/media-route-handlers.ts";
 import {
   createDownloadToken,
   consumeDownloadToken,
@@ -168,12 +168,15 @@ fsBrowseRoutes.get("/probe", async (c) => {
 fsBrowseRoutes.get("/transcode", async (c) => {
   try {
     const abs = await resolveMediaPath(c.req.query("path"));
-    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"));
+    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"), c.req.query("sid"));
   } catch (e) {
     const { body, status } = fail(e);
     return c.json(body, status);
   }
 });
+
+/** DELETE /api/fs/transcode?sid=... — stop the player's ffmpeg job (unmount, tab close) */
+fsBrowseRoutes.delete("/transcode", (c) => handleMediaTranscodeStop(c.req.query("sid")));
 
 /** GET /api/fs/docx-html?path=/some/file.docx — convert .docx to HTML via mammoth */
 fsBrowseRoutes.get("/docx-html", async (c) => {

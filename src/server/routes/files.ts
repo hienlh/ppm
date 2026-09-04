@@ -6,7 +6,7 @@ import { readSystemFileSync } from "../../services/fs-browse.service.ts";
 import { ok, err } from "../../types/api.ts";
 import { errorStatus } from "../helpers/error-status.ts";
 import { rangeFileResponse } from "../helpers/range-file-response.ts";
-import { handleMediaProbe, handleMediaTranscode } from "../helpers/media-route-handlers.ts";
+import { handleMediaProbe, handleMediaTranscode, handleMediaTranscodeStop } from "../helpers/media-route-handlers.ts";
 import mammoth from "mammoth";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -145,11 +145,14 @@ fileRoutes.get("/probe", async (c) => {
 fileRoutes.get("/transcode", async (c) => {
   try {
     const abs = resolveProjectFile(c);
-    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"));
+    return abs instanceof Response ? abs : await handleMediaTranscode(abs, c.req.raw, c.req.query("start"), c.req.query("sid"));
   } catch (e) {
     return c.json(err((e as Error).message), errorStatus(e));
   }
 });
+
+/** DELETE /files/transcode?sid=... — stop the player's ffmpeg job (unmount, tab close) */
+fileRoutes.delete("/transcode", (c) => handleMediaTranscodeStop(c.req.query("sid")));
 
 /** GET /files/docx-html?path=... — convert project .docx to HTML via mammoth */
 fileRoutes.get("/docx-html", async (c) => {
