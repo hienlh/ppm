@@ -4,6 +4,7 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { Loader2, FileCode, WrapText } from "lucide-react";
 
 function getMonacoLanguage(filename: string): string {
@@ -59,6 +60,14 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, [loading, error]);
+
+  // Host-driven resize (picture-in-picture): `automaticLayout` never fires for a
+  // size driven by another document, and the editor keeps the PiP size after the
+  // return. Re-runs on loading/error because the container renders only then.
+  useEffect(
+    () => onHostResize(containerRef.current, () => diffEditorRef.current?.layout()),
+    [loading, error],
+  );
 
   useEffect(() => {
     if (isInline) return;
