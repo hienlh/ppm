@@ -1,10 +1,13 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import {
   generatePlist,
   generateSystemdService,
   generateVbsWrapper,
   buildRegDeleteCommand,
   buildSchtasksCreateCommand,
+  generateTaskXml,
+  getCurrentWindowsUserId,
+  getTaskXmlPath,
   buildSchtasksDeleteCommand,
   buildSchtasksQueryCommand,
   buildExecCommand,
@@ -212,7 +215,7 @@ describe("generateVbsWrapper", () => {
 
 describe("buildSchtasksCreateCommand", () => {
   test("uses schtasks /Create with task name", () => {
-    const cmd = buildSchtasksCreateCommand("C:\\path\\run-ppm.vbs");
+    const cmd = buildSchtasksCreateCommand("C:\\path\\ppm-task.xml");
     expect(cmd[0]).toBe("schtasks");
     expect(cmd).toContain("/Create");
     const tnIdx = cmd.indexOf("/TN");
@@ -220,19 +223,100 @@ describe("buildSchtasksCreateCommand", () => {
     expect(cmd[tnIdx + 1]).toBe(TASK_NAME);
   });
 
-  test("triggers at logon", () => {
-    const cmd = buildSchtasksCreateCommand("C:\\path\\run-ppm.vbs");
-    const scIdx = cmd.indexOf("/SC");
-    expect(scIdx).toBeGreaterThan(-1);
-    expect(cmd[scIdx + 1]).toBe("ONLOGON");
+  test("registers from the XML definition and includes force flag", () => {
+    const cmd = buildSchtasksCreateCommand("C:\\custom\\ppm-task.xml");
+    const xmlIdx = cmd.indexOf("/XML");
+    expect(xmlIdx).toBeGreaterThan(-1);
+    expect(cmd[xmlIdx + 1]).toBe("C:\\custom\\ppm-task.xml");
+    expect(cmd).toContain("/F");
   });
 
-  test("runs the VBS via wscript and includes force flag", () => {
-    const cmd = buildSchtasksCreateCommand("C:\\custom\\run.vbs");
-    const trValue = cmd[cmd.indexOf("/TR") + 1];
-    expect(trValue).toContain("wscript.exe");
-    expect(trValue).toContain("C:\\custom\\run.vbs");
-    expect(cmd).toContain("/F");
+  test("avoids /SC ONLOGON, which cannot scope the trigger to one user and so needs admin", () => {
+    const cmd = buildSchtasksCreateCommand("C:\\path\\ppm-task.xml");
+    expect(cmd).not.toContain("/SC");
+    expect(cmd).not.toContain("ONLOGON");
+  });
+});
+
+describe("generateTaskXml", () => {
+  const USER = "MYPC\\alice";
+
+  test("scopes the logon trigger to the given user so no elevation is needed", () => {
+    const xml = generateTaskXml("C:\\path\\run-ppm.vbs", USER);
+    expect(xml).toContain("<LogonTrigger>");
+    expect(xml).toContain("<UserId>MYPC\\alice</UserId>");
+  });
+
+  test("runs as that user with an interactive, unelevated token", () => {
+    const xml = generateTaskXml("C:\\path\\run-ppm.vbs", USER);
+    expect(xml).toContain("<LogonType>InteractiveToken</LogonType>");
+    expect(xml).toContain("<RunLevel>LeastPrivilege</RunLevel>");
+  });
+
+  test("lifts the execution time limit so the supervisor is not killed after 72h", () => {
+    const xml = generateTaskXml("C:\\path\\run-ppm.vbs", USER);
+    expect(xml).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
+  });
+
+  test("launches the VBS wrapper through wscript", () => {
+    const xml = generateTaskXml("C:\\custom\\run.vbs", USER);
+    expect(xml).toContain("<Command>wscript.exe</Command>");
+    expect(xml).toContain('<Arguments>"C:\\custom\\run.vbs"</Arguments>');
+  });
+
+  test("declares the UTF-16 encoding Task Scheduler requires", () => {
+    const xml = generateTaskXml("C:\\path\\run-ppm.vbs", USER);
+    expect(xml.startsWith('<?xml version="1.0" encoding="UTF-16"?>')).toBe(true);
+  });
+
+  test("escapes XML metacharacters in the path", () => {
+    const xml = generateTaskXml("C:\\a&b\\run.vbs", USER);
+    expect(xml).toContain("C:\\a&amp;b\\run.vbs");
+  });
+});
+
+describe("getCurrentWindowsUserId", () => {
+  const saved = {
+    user: process.env.USERNAME,
+    domain: process.env.USERDOMAIN,
+    computer: process.env.COMPUTERNAME,
+  };
+  const restore = (key: "USERNAME" | "USERDOMAIN" | "COMPUTERNAME", value: string | undefined) => {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  };
+  afterEach(() => {
+    restore("USERNAME", saved.user);
+    restore("USERDOMAIN", saved.domain);
+    restore("COMPUTERNAME", saved.computer);
+  });
+
+  test("joins domain and user", () => {
+    process.env.USERNAME = "alice";
+    process.env.USERDOMAIN = "MYPC";
+    expect(getCurrentWindowsUserId()).toBe("MYPC\\alice");
+  });
+
+  test("falls back to the computer name when no domain is set", () => {
+    process.env.USERNAME = "alice";
+    delete process.env.USERDOMAIN;
+    process.env.COMPUTERNAME = "BOX";
+    expect(getCurrentWindowsUserId()).toBe("BOX\\alice");
+  });
+
+  test("returns the bare user name when neither is set", () => {
+    process.env.USERNAME = "alice";
+    delete process.env.USERDOMAIN;
+    delete process.env.COMPUTERNAME;
+    expect(getCurrentWindowsUserId()).toBe("alice");
+  });
+});
+
+describe("getTaskXmlPath", () => {
+  test("returns a path in ~/.ppm/", () => {
+    const p = getTaskXmlPath();
+    expect(p).toContain(".ppm");
+    expect(p).toContain("ppm-task.xml");
   });
 });
 

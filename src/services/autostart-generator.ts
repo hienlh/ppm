@@ -205,18 +205,90 @@ export function buildRegDeleteCommand(): string[] {
 // by third-party "startup cleaner" utilities that only target Run keys and
 // the Startup folder. No admin required for a current-user logon task.
 
-/** wscript runs the VBS without a console window; VBS in turn launches bun hidden. */
-function buildTaskRunString(vbsPath: string): string {
-  return `wscript.exe "${vbsPath}"`;
+/**
+ * The account the task runs as, and whose logon fires it — `DOMAIN\user`, or
+ * bare user name when the machine reports no domain.
+ */
+export function getCurrentWindowsUserId(): string {
+  const user = process.env.USERNAME ?? "";
+  const domain = process.env.USERDOMAIN ?? process.env.COMPUTERNAME ?? "";
+  return domain ? `${domain}\\${user}` : user;
 }
 
-/** Build schtasks command to create the At-logon task (no admin) */
-export function buildSchtasksCreateCommand(vbsPath: string): string[] {
+export function getTaskXmlPath(): string {
+  return resolve(homedir(), ".ppm", "ppm-task.xml");
+}
+
+/**
+ * Task Scheduler XML for the At-logon task.
+ *
+ * `schtasks /SC ONLOGON` cannot express *which* user's logon fires the task:
+ * it always emits a LogonTrigger with no UserId, meaning "any user logs on",
+ * and registering that is an all-users change the Task Scheduler refuses for a
+ * standard account — the create fails with "ERROR: Access is denied." even
+ * when /RU names the caller, because /RU sets the run-as principal, not the
+ * trigger scope. Registering from XML lets the trigger carry a UserId, which
+ * scopes it to this account and needs no elevation.
+ *
+ * ExecutionTimeLimit must be PT0S (unlimited): schtasks would have defaulted to
+ * PT72H and killed the supervisor after three days of uptime.
+ */
+export function generateTaskXml(vbsPath: string, userId = getCurrentWindowsUserId()): string {
+  const user = escapeXml(userId);
+  return `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>PPM - starts the PPM supervisor at logon</Description>
+    <URI>\\${TASK_NAME}</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>${user}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>${user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>wscript.exe</Command>
+      <Arguments>"${escapeXml(vbsPath)}"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+`;
+}
+
+/** Build schtasks command to create the At-logon task from XML (no admin) */
+export function buildSchtasksCreateCommand(xmlPath: string): string[] {
   return [
     "schtasks", "/Create",
     "/TN", TASK_NAME,
-    "/TR", buildTaskRunString(vbsPath),
-    "/SC", "ONLOGON",
+    "/XML", xmlPath,
     "/F",
   ];
 }

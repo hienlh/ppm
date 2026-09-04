@@ -11,6 +11,8 @@ import {
   getServicePath,
   generateVbsWrapper,
   getVbsPath,
+  generateTaskXml,
+  getTaskXmlPath,
   buildRegDeleteCommand,
   buildSchtasksCreateCommand,
   buildSchtasksDeleteCommand,
@@ -300,18 +302,27 @@ function statusLinux(): AutoStartStatus {
 
 async function enableWindows(config: AutoStartConfig): Promise<string> {
   const vbsPath = getVbsPath();
+  const xmlPath = getTaskXmlPath();
   const vbsDir = dirname(vbsPath);
 
   if (!existsSync(vbsDir)) mkdirSync(vbsDir, { recursive: true });
   writeFileSync(vbsPath, generateVbsWrapper(config));
 
+  // Task Scheduler only accepts a definition file encoded as UTF-16 and reads
+  // the BOM to detect it; a UTF-8 file is rejected as malformed XML.
+  writeFileSync(xmlPath, `\ufeff${generateTaskXml(vbsPath)}`, "utf16le");
+
   // Register an At-logon scheduled task (no admin). More reliable than the
   // HKCU Run key, which startup-cleaner utilities sweep and which can silently
   // fail to fire at logon.
-  const cmd = buildSchtasksCreateCommand(vbsPath);
+  const cmd = buildSchtasksCreateCommand(xmlPath);
   const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
 
   if (result.exitCode !== 0) {
+    // Leave nothing half-registered: a stale wrapper and definition on disk
+    // make the next `ppm autostart status` look configured when no task exists.
+    try { unlinkSync(vbsPath); } catch {}
+    try { unlinkSync(xmlPath); } catch {}
     const err = result.stderr.toString().trim() || result.stdout.toString().trim();
     throw new Error(`schtasks create failed: ${err}`);
   }
@@ -336,9 +347,11 @@ async function disableWindows(): Promise<void> {
   Bun.spawnSync({ cmd: buildSchtasksDeleteCommand(), stdout: "ignore", stderr: "ignore" });
   Bun.spawnSync({ cmd: buildRegDeleteCommand(), stdout: "ignore", stderr: "ignore" });
 
-  // Remove VBS wrapper
+  // Remove VBS wrapper and task definition
   const vbsPath = getVbsPath();
   try { if (existsSync(vbsPath)) unlinkSync(vbsPath); } catch {}
+  const xmlPath = getTaskXmlPath();
+  try { if (existsSync(xmlPath)) unlinkSync(xmlPath); } catch {}
 
   removeMetadata();
 }
