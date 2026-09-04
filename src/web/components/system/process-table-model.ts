@@ -2,26 +2,19 @@
  *  filter/sort/expand/rollup rules are unit-testable without mounting a component.
  *  Sort comparator lives in `process-table-sort.ts`, totals accumulator in
  *  `process-table-totals.ts` — both split out to stay under the file-size guideline. */
-import type {
-  MetricsHistoryPoint,
-  ProcessGroup,
-  ProcessInfo,
-  SortDir,
-  SortKey,
-} from "../../../types/system-metrics";
+import type { ProcessGroup, ProcessInfo, SortDir, SortKey } from "../../../types/system-metrics";
 import { sortByKey, sortFields } from "./process-table-sort";
 import { accumulateTotals, EMPTY_TOTALS, type Totals } from "./process-table-totals";
 
 export type { Totals } from "./process-table-totals";
 
 export type TableRow =
-  | { kind: "group"; group: ProcessGroup; expanded: boolean; spark: number[] }
+  | { kind: "group"; group: ProcessGroup; expanded: boolean }
   | { kind: "process"; proc: ProcessInfo; indent: boolean };
 
 export interface BuildRowsInput {
   processes: ProcessInfo[];
   groups: ProcessGroup[];
-  history: MetricsHistoryPoint[];
   mode: "grouped" | "flat";
   ppmOnly: boolean;
   query: string;
@@ -37,8 +30,6 @@ export interface BuildRowsResult {
   autoExpanded: Set<string>;
 }
 
-const SPARK_POINTS = 60;
-
 function matches(text: string, query: string): boolean {
   return text.toLowerCase().includes(query);
 }
@@ -47,13 +38,9 @@ function processMatches(proc: ProcessInfo, query: string): boolean {
   return matches(proc.name, query) || matches(proc.command, query);
 }
 
-function sparkFor(history: MetricsHistoryPoint[], groupKey: string): number[] {
-  return history.slice(-SPARK_POINTS).map((h) => h.groups[groupKey]?.cpu ?? 0);
-}
-
 /** Order fixed: filter (ppmOnly) -> filter (query) -> sort -> flatten (expand). */
 export function buildRows(input: BuildRowsInput): BuildRowsResult {
-  const { processes, groups, history, mode, ppmOnly, query, sortKey, sortDir, expanded } = input;
+  const { processes, groups, mode, ppmOnly, query, sortKey, sortDir, expanded } = input;
   const q = query.trim().toLowerCase();
   const byPid = new Map(processes.map((p) => [p.pid, p]));
 
@@ -93,12 +80,7 @@ export function buildRows(input: BuildRowsInput): BuildRowsResult {
   const rows: TableRow[] = [];
   for (const group of filteredGroups) {
     const isExpanded = q ? autoExpanded.has(group.key) || expanded.has(group.key) : expanded.has(group.key);
-    rows.push({
-      kind: "group",
-      group,
-      expanded: isExpanded,
-      spark: sparkFor(history, group.key),
-    });
+    rows.push({ kind: "group", group, expanded: isExpanded });
     if (!isExpanded) continue;
 
     // Skip pids the current snapshot no longer has — a process can exit between the

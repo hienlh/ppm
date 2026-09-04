@@ -523,6 +523,58 @@ async function main() {
   });
   await cdp.screenshot(join(SHOTS, "07-processes-sorted-by-gpu.png"));
 
+  await scenario("desktop: dragging the RAM header handle widens the RAM column and persists it", async () => {
+    // Synthetic pointer events on the handle: the hook listens on window for the
+    // move/up, so dispatching there mirrors a real drag without CDP Input emulation.
+    const result = await cdp.evaluate(`(() => {
+      const handle = document.querySelector('[data-testid="sysmon-sort-ram-resize"]');
+      if (!handle) return { error: "no resize handle" };
+      const cell = handle.closest('[role="columnheader"]');
+      const before = cell.getBoundingClientRect().width;
+      const r = handle.getBoundingClientRect();
+      const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
+      const fire = (target, type, x) => target.dispatchEvent(new PointerEvent(type, { bubbles: true, clientX: x, clientY: y0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      fire(handle, "pointerdown", x0);
+      fire(window, "pointermove", x0 + 60);
+      fire(window, "pointerup", x0 + 60);
+      return { before };
+    })()`);
+    if (result.error) throw new Error(result.error);
+    await Bun.sleep(300);
+    const after = await cdp.evaluate(`document.querySelector('[data-testid="sysmon-sort-ram-resize"]').closest('[role="columnheader"]').getBoundingClientRect().width`);
+    if (!(after > result.before + 40)) throw new Error(`expected RAM header to grow by ~60px, before=${result.before} after=${after}`);
+    const stored = await cdp.evaluate(`localStorage.getItem("ppm-sysmon-col-widths")`);
+    if (!stored || !JSON.parse(stored).ram) throw new Error(`width not persisted: ${stored}`);
+    await cdp.screenshot(join(SHOTS, "09-column-resized.png"));
+    // Double-click resets that one column and clears its stored override.
+    await cdp.evaluate(`document.querySelector('[data-testid="sysmon-sort-ram-resize"]').dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))`);
+    await Bun.sleep(200);
+    const storedAfterReset = await cdp.evaluate(`localStorage.getItem("ppm-sysmon-col-widths")`);
+    if (storedAfterReset && JSON.parse(storedAfterReset).ram) throw new Error("double-click did not reset the RAM width");
+  });
+
+  await scenario("desktop: whole-app kill dialog opens on an unprotected group and CANCEL never kills it", async () => {
+    // Grouped mode is still active here. The list is virtualised, so only ~25 rows
+    // exist in the DOM — after the GPU sort those are mostly system groups with a
+    // disabled button. Sort by RAM to bring user apps (Slack, Notion…) to the top.
+    await clickTestId(cdp, "sysmon-sort-ram");
+    await Bun.sleep(400);
+    const clicked = await cdp.evaluate(`(() => {
+      const btns = [...document.querySelectorAll('[data-testid="sysmon-group-kill-btn"]')];
+      const btn = btns.find((b) => !b.disabled);
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    if (!clicked) throw new Error("no enabled whole-app kill button found on any group row");
+    await waitFor(cdp, `document.querySelector('[data-testid="sysmon-kill-confirm"][data-kill-kind="group"]')`, "group kill confirm dialog", 5_000);
+    await cdp.screenshot(join(SHOTS, "08-kill-group-confirm.png"));
+    await clickTestId(cdp, "sysmon-kill-confirm-cancel");
+    await Bun.sleep(300);
+    const stillOpen = await cdp.evaluate(`!!document.querySelector('[data-testid="sysmon-kill-confirm"]')`);
+    if (stillOpen) throw new Error("group kill confirm dialog did not close after Cancel");
+  });
+
   await scenario("desktop: kill dialog opens on a harmless row and CANCEL never kills it", async () => {
     await clickTestId(cdp, "sysmon-toggle-flat");
     await Bun.sleep(400);

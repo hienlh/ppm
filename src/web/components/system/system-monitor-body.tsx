@@ -137,7 +137,7 @@ export const SystemMonitorBody = memo(function SystemMonitorBody({
           ) : tab === "overview" ? (
             <OverviewPanel system={latest.system} history={history} />
           ) : (
-            <ProcessTable snapshot={latest} history={history} />
+            <ProcessTable snapshot={latest} />
           )}
         </Suspense>
       </div>

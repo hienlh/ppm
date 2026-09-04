@@ -26,9 +26,14 @@ export function ProcessRow({ proc, indent, grid, onKillClick }: ProcessRowProps)
       data-gpu-pct={proc.gpuPct}
       data-net-bps={sumOptionalBps(proc.netInBps, proc.netOutBps)}
     >
+      {/* Uptime lives in the tooltip: a dedicated column cost 130px for a figure
+          that matters only when you are already looking at one row. */}
       <div className={cn("flex items-start gap-1.5 min-w-0", indent && "pl-6")}>
         <span className="text-text-subtle shrink-0">{proc.pid}</span>
-        <span className="truncate text-text-secondary" title={proc.command}>
+        <span
+          className="truncate text-text-secondary"
+          title={proc.startedAt ? `${proc.command}\nRunning ${formatAge(proc.startedAt)}` : proc.command}
+        >
           {proc.command}
         </span>
       </div>
@@ -49,12 +54,6 @@ export function ProcessRow({ proc, indent, grid, onKillClick }: ProcessRowProps)
           {formatNetCell(proc.netInBps, proc.netOutBps)}
         </span>
       )}
-      <span
-        className="hidden @lg:block text-text-subtle text-right"
-        title={proc.startedAt ? new Date(proc.startedAt).toLocaleString() : ""}
-      >
-        {formatAge(proc.startedAt || undefined)}
-      </span>
       <div className="flex justify-end">
         <button
           type="button"

@@ -5,7 +5,7 @@ import { formatRam } from "@/lib/format-bytes";
 import { cpuColor, formatDiskCell, formatGpuCell, formatNetCell } from "./process-row-format";
 import { optionalCellClassName, PROCESS_ROW_GRID_CLASS, type ProcessGridResult } from "./process-columns-grid";
 import type { Totals } from "./process-table-totals";
-import { SortableHeader } from "./sortable-header";
+import { SortableHeader, type ColumnResizeHandlers } from "./sortable-header";
 import type { SortDir, SortKey } from "../../../types/system-metrics";
 
 const SEARCH_DEBOUNCE_MS = 150;
@@ -83,12 +83,15 @@ export interface ProcessTableHeaderProps {
   sortDir: SortDir;
   grid: ProcessGridResult;
   onSort: (field: Exclude<SortKey, null>) => void;
+  resize: ColumnResizeHandlers;
 }
 
 /** Sticky column header row, grid-aligned with the rows below it. Disk/GPU/Net
  *  headers only render when the host reported that column as measurable
- *  (`grid.columns.<x>`); below `@lg` only the one currently sorted survives. */
-export function ProcessTableHeader({ sortKey, sortDir, grid, onSort }: ProcessTableHeaderProps) {
+ *  (`grid.columns.<x>`); below `@lg` only the one currently sorted survives. Every
+ *  fixed-width column carries a drag handle on its right edge. */
+export function ProcessTableHeader({ sortKey, sortDir, grid, onSort, resize }: ProcessTableHeaderProps) {
+  const common = { activeKey: sortKey, activeDir: sortDir, onClick: onSort, resize };
   return (
     <div
       role="row"
@@ -97,51 +100,18 @@ export function ProcessTableHeader({ sortKey, sortDir, grid, onSort }: ProcessTa
         PROCESS_ROW_GRID_CLASS,
       )}
     >
-      <SortableHeader
-        label="Process"
-        field="name"
-        activeKey={sortKey}
-        activeDir={sortDir}
-        onClick={onSort}
-        align="left"
-        testId="sysmon-sort-name"
-      />
-      <SortableHeader label="CPU" field="cpu" activeKey={sortKey} activeDir={sortDir} onClick={onSort} testId="sysmon-sort-cpu" />
-      <SortableHeader label="RAM" field="ram" activeKey={sortKey} activeDir={sortDir} onClick={onSort} testId="sysmon-sort-ram" />
+      <SortableHeader label="Process" field="name" {...common} resize={undefined} align="left" testId="sysmon-sort-name" />
+      <SortableHeader label="CPU" field="cpu" {...common} resizeKey="cpu" testId="sysmon-sort-cpu" />
+      <SortableHeader label="RAM" field="ram" {...common} resizeKey="ram" testId="sysmon-sort-ram" />
       {grid.columns.disk && (
-        <SortableHeader
-          label="Disk"
-          field="disk"
-          activeKey={sortKey}
-          activeDir={sortDir}
-          onClick={onSort}
-          testId="sysmon-col-disk"
-          className={optionalCellClassName(grid, "disk")}
-        />
+        <SortableHeader label="Disk" field="disk" {...common} resizeKey="disk" testId="sysmon-col-disk" className={optionalCellClassName(grid, "disk")} />
       )}
       {grid.columns.gpu && (
-        <SortableHeader
-          label="GPU"
-          field="gpu"
-          activeKey={sortKey}
-          activeDir={sortDir}
-          onClick={onSort}
-          testId="sysmon-col-gpu"
-          className={optionalCellClassName(grid, "gpu")}
-        />
+        <SortableHeader label="GPU" field="gpu" {...common} resizeKey="gpu" testId="sysmon-col-gpu" className={optionalCellClassName(grid, "gpu")} />
       )}
       {grid.columns.net && (
-        <SortableHeader
-          label="Net"
-          field="net"
-          activeKey={sortKey}
-          activeDir={sortDir}
-          onClick={onSort}
-          testId="sysmon-col-net"
-          className={optionalCellClassName(grid, "net")}
-        />
+        <SortableHeader label="Net" field="net" {...common} resizeKey="net" testId="sysmon-col-net" className={optionalCellClassName(grid, "net")} />
       )}
-      <span className="text-right hidden @lg:block">Trend</span>
       <span />
     </div>
   );
@@ -183,7 +153,6 @@ export function ProcessTableFooter({ totals, grid, gpuUtilPercent }: ProcessTabl
           {formatNetCell(totals.netInBps, totals.netOutBps)}
         </span>
       )}
-      <span className="hidden @lg:block" />
       <span />
     </div>
   );

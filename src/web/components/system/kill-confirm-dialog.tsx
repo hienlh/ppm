@@ -5,44 +5,60 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { formatRam } from "@/lib/format-bytes";
-import type { ProcessInfo } from "../../../types/system-metrics";
+import type { KillTarget } from "./build-kill-request";
 
 export interface KillConfirmDialogProps {
-  process: ProcessInfo | null;
-  onConfirm: (proc: ProcessInfo, tree: boolean) => void;
+  target: KillTarget | null;
+  /** `tree` is only meaningful for a single process; a group is always ended whole. */
+  onConfirm: (target: KillTarget, tree: boolean) => void;
   onCancel: () => void;
 }
 
-/** Confirm dialog for ending a process. Bottom sheet below `md`, centered dialog at
- *  `md`+. The "end child processes" toggle defaults off and the destructive action is
- *  never the default focus — Escape/backdrop cancels either way. */
-export function KillConfirmDialog({ process, onConfirm, onCancel }: KillConfirmDialogProps) {
+/** Confirm dialog for ending a process or a whole app group. Bottom sheet below
+ *  `md`, centered dialog at `md`+. The "end child processes" toggle defaults off and
+ *  the destructive action is never the default focus — Escape/backdrop cancels either
+ *  way. */
+export function KillConfirmDialog({ target, onConfirm, onCancel }: KillConfirmDialogProps) {
   const isMobile = useIsMobile();
   const [tree, setTree] = useState(false);
 
   useEffect(() => {
-    if (!process) setTree(false);
-  }, [process]);
+    if (!target) setTree(false);
+  }, [target]);
 
-  if (!process) return null;
+  if (!target) return null;
+
+  const isGroup = target.kind === "group";
+  const title = isGroup ? "End app" : "End process";
+  const cpu = isGroup ? target.group.cpu : target.proc.cpu;
+  const ramMB = isGroup ? target.group.ramMB : target.proc.ramMB;
 
   const body = (
-    <div className="space-y-4" data-testid="sysmon-kill-confirm">
-      <p className="text-sm">
-        End <span className="font-medium">{process.name}</span> (pid {process.pid})?
-      </p>
+    <div className="space-y-4" data-testid="sysmon-kill-confirm" data-kill-kind={target.kind}>
+      {isGroup ? (
+        <p className="text-sm">
+          End <span className="font-medium">{target.group.label}</span> and all its{" "}
+          <span className="font-medium">{target.members.length}</span> processes?
+        </p>
+      ) : (
+        <p className="text-sm">
+          End <span className="font-medium">{target.proc.name}</span> (pid {target.proc.pid})?
+        </p>
+      )}
       <p className="text-xs text-text-subtle">
-        CPU {process.cpu.toFixed(1)}% · RAM {formatRam(process.ramMB)}
+        CPU {cpu.toFixed(1)}% · RAM {formatRam(ramMB)}
       </p>
-      <label className="flex items-center justify-between gap-3 min-h-11 py-1">
-        <span className="text-sm">Also end child processes</span>
-        <Switch
-          checked={tree}
-          onCheckedChange={setTree}
-          data-testid="sysmon-kill-tree"
-          aria-label="Also end child processes"
-        />
-      </label>
+      {!isGroup && (
+        <label className="flex items-center justify-between gap-3 min-h-11 py-1">
+          <span className="text-sm">Also end child processes</span>
+          <Switch
+            checked={tree}
+            onCheckedChange={setTree}
+            data-testid="sysmon-kill-tree"
+            aria-label="Also end child processes"
+          />
+        </label>
+      )}
       <div className="flex flex-col-reverse md:flex-row gap-2 md:justify-end pt-2">
         <Button
           variant="outline"
@@ -55,11 +71,11 @@ export function KillConfirmDialog({ process, onConfirm, onCancel }: KillConfirmD
         <Button
           variant="destructive"
           autoFocus={false}
-          onClick={() => onConfirm(process, tree)}
+          onClick={() => onConfirm(target, tree)}
           data-testid="sysmon-kill-confirm-ok"
           className="min-h-11"
         >
-          End process
+          {isGroup ? `End ${target.members.length} processes` : "End process"}
         </Button>
       </div>
     </div>
@@ -69,7 +85,7 @@ export function KillConfirmDialog({ process, onConfirm, onCancel }: KillConfirmD
     return (
       <BottomSheet open onClose={onCancel}>
         <div className="px-4 pb-4">
-          <h2 className="text-base font-semibold mb-3">End process</h2>
+          <h2 className="text-base font-semibold mb-3">{title}</h2>
           {body}
         </div>
       </BottomSheet>
@@ -80,7 +96,7 @@ export function KillConfirmDialog({ process, onConfirm, onCancel }: KillConfirmD
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>End process</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         {body}
       </DialogContent>

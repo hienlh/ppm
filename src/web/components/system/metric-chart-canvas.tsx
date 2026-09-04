@@ -20,8 +20,7 @@ interface MetricChartCanvasProps {
  *  width of its parent — the cards live in a resizable floating window, so a fixed
  *  pixel width overflows the card as soon as the window is narrower than designed.
  *  No redraw throttle — one draw per prop change, which at a 2s tick cadence is
- *  nowhere near a frame budget. `SparklineCanvas` stays the small inline variant
- *  used by process rows. */
+ *  nowhere near a frame budget. */
 export const MetricChartCanvas = memo(function MetricChartCanvas({
   series,
   height,

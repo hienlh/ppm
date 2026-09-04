@@ -1,45 +1,50 @@
 /** Pure grid-template builder for the process table. No React, so the visibility
- *  rules (which optional columns exist, which one survives below `@lg`) are
- *  unit-testable without mounting a component.
+ *  rules (which optional columns exist, which one survives below `@lg`) and the
+ *  user-resized widths are unit-testable without mounting a component.
  *
  *  Two responsive templates are computed up front and switched via CSS custom
  *  properties + a `@lg:` Tailwind class (see `PROCESS_ROW_GRID_CLASS` below) —
  *  Tailwind's arbitrary-value scan only needs the class NAME to be a static
- *  string; the var() value itself can vary at runtime. This mirrors the fixed
- *  two-template approach the process table already used for the trend/age
- *  track, just parameterised by which optional columns the host can measure. */
+ *  string; the var() value itself can vary at runtime. */
 import type { CSSProperties } from "react";
 import type { ProcessColumnAvailability, SortKey } from "../../../types/system-metrics";
 
 export type OptionalColumnKey = "disk" | "gpu" | "net";
+/** Every column whose width the user can drag. The name column takes the rest. */
+export type ResizableColumnKey = "cpu" | "ram" | OptionalColumnKey;
 
 /** Alias kept local so call sites don't need to know the exact server-contract
  *  type name — this module only cares about the three boolean flags. */
 export type ProcessColumnsFlags = ProcessColumnAvailability;
 
+/** px overrides from a drag; missing keys fall back to `DEFAULT_COLUMN_WIDTH`. */
+export type ColumnWidths = Partial<Record<ResizableColumnKey, number>>;
+
 const OPTIONAL_COLUMN_ORDER: OptionalColumnKey[] = ["disk", "gpu", "net"];
 
 /** Disk/Net cells show two values ("↓ read ↑ write"); GPU shows one composite
  *  ("12% · 1.1 GB") and fits narrower. */
-const OPTIONAL_COLUMN_WIDTH: Record<OptionalColumnKey, string> = {
-  disk: "120px",
-  gpu: "90px",
-  net: "120px",
+export const DEFAULT_COLUMN_WIDTH: Record<ResizableColumnKey, number> = {
+  cpu: 64,
+  ram: 80,
+  disk: 120,
+  gpu: 90,
+  net: 120,
 };
+/** Drag bounds: below 48px a "1.2 MB/s" no longer fits; above 400px the name
+ *  column starves in a default-size window. */
+export const MIN_COLUMN_WIDTH = 48;
+export const MAX_COLUMN_WIDTH = 400;
 
-/** Fixed tracks that exist regardless of optional columns: Process name (flexible),
- *  CPU, RAM at the start; the trend/age track (wide only) and the kill button at
- *  the end. */
-const NAME_CPU_RAM = ["minmax(0,1fr)", "64px", "80px"];
-const TREND_TRACK = "130px";
+const NAME_TRACK = "minmax(0,1fr)";
 const KILL_TRACK = "44px";
 
 export interface ProcessGridResult {
   /** Grid template for `@lg` and up: Name/CPU/RAM + every enabled optional column
-   *  in a fixed order + the trend/age track + kill button. */
+   *  in a fixed order + kill button. */
   wideTemplate: string;
   /** Grid template below `@lg`: Name/CPU/RAM + AT MOST the one optional column
-   *  currently sorted by (if enabled) + kill button. No trend/age track. */
+   *  currently sorted by (if enabled) + kill button. */
   narrowTemplate: string;
   /** Which optional columns are enabled at all (host can measure them). */
   columns: ProcessColumnsFlags;
@@ -52,22 +57,27 @@ function isOptionalColumnKey(key: SortKey): key is OptionalColumnKey {
   return key === "disk" || key === "gpu" || key === "net";
 }
 
-export function buildProcessGrid(columns: ProcessColumnsFlags, sortKey: SortKey): ProcessGridResult {
+export function clampColumnWidth(px: number): number {
+  return Math.round(Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, px)));
+}
+
+export function columnWidthPx(key: ResizableColumnKey, widths: ColumnWidths): number {
+  const w = widths[key];
+  return typeof w === "number" && Number.isFinite(w) ? clampColumnWidth(w) : DEFAULT_COLUMN_WIDTH[key];
+}
+
+export function buildProcessGrid(
+  columns: ProcessColumnsFlags,
+  sortKey: SortKey,
+  widths: ColumnWidths = {},
+): ProcessGridResult {
   const enabled = OPTIONAL_COLUMN_ORDER.filter((k) => columns[k]);
   const narrowExtra = isOptionalColumnKey(sortKey) && columns[sortKey] ? sortKey : null;
+  const track = (k: ResizableColumnKey) => `${columnWidthPx(k, widths)}px`;
+  const base = [NAME_TRACK, track("cpu"), track("ram")];
 
-  const wideTemplate = [
-    ...NAME_CPU_RAM,
-    ...enabled.map((k) => OPTIONAL_COLUMN_WIDTH[k]),
-    TREND_TRACK,
-    KILL_TRACK,
-  ].join(" ");
-
-  const narrowTemplate = [
-    ...NAME_CPU_RAM,
-    ...(narrowExtra ? [OPTIONAL_COLUMN_WIDTH[narrowExtra]] : []),
-    KILL_TRACK,
-  ].join(" ");
+  const wideTemplate = [...base, ...enabled.map(track), KILL_TRACK].join(" ");
+  const narrowTemplate = [...base, ...(narrowExtra ? [track(narrowExtra)] : []), KILL_TRACK].join(" ");
 
   return { wideTemplate, narrowTemplate, columns, narrowExtra };
 }

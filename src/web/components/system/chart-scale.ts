@@ -1,8 +1,8 @@
 /** Shared scale resolution for the canvas charts: a fixed ceiling (percentage axes)
  *  or autoscale to the max of the visible window (byte-rate axes) — pulled out of
- *  `sparkline-canvas.tsx`/`metric-chart-canvas.tsx` so it is unit-testable without a
- *  canvas context. This is the fix for the bug where a 3% CPU reading rendered as a
- *  full-height sparkline: the old code always did `Math.max(...data, 1)`. */
+ *  `metric-chart-canvas.tsx` so it is unit-testable without a canvas context. A
+ *  percentage axis must be pinned to 100, otherwise a 3% CPU reading autoscales to a
+ *  full-height line. */
 export function resolveScaleMax(data: number[], maxValue?: number): number {
   if (maxValue !== undefined) return maxValue;
   return Math.max(...data, 1);

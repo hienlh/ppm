@@ -1,12 +1,18 @@
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SortDir, SortKey } from "../../../types/system-metrics";
+import type { ResizableColumnKey } from "./process-columns-grid";
 
-/** Sortable column header shared by the process table toolbar, salvaged from
- *  the deleted `system-monitor-group-row.tsx`. Renders as a `columnheader` `<div>`,
- *  not a `<th>` — the parent row is a CSS-grid `<div role="row">`, and a `<th>`
- *  inside a non-table ancestor both triggers React's DOM-nesting warning and makes
- *  `aria-sort` meaningless to assistive tech outside an actual table. */
+export interface ColumnResizeHandlers {
+  onResizeStart: (key: ResizableColumnKey, e: { clientX: number; preventDefault: () => void }) => void;
+  onResizeReset: (key: ResizableColumnKey) => void;
+}
+
+/** Sortable column header shared by the process table toolbar. Renders as a
+ *  `columnheader` `<div>`, not a `<th>` — the parent row is a CSS-grid
+ *  `<div role="row">`, and a `<th>` inside a non-table ancestor both triggers React's
+ *  DOM-nesting warning and makes `aria-sort` meaningless to assistive tech outside
+ *  an actual table. */
 export function SortableHeader({
   label,
   field,
@@ -16,6 +22,8 @@ export function SortableHeader({
   align = "right",
   testId,
   className,
+  resizeKey,
+  resize,
 }: {
   label: string;
   field: Exclude<SortKey, null>;
@@ -29,6 +37,9 @@ export function SortableHeader({
   /** Extra classes on the outer `columnheader` — e.g. the `hidden @lg:block`
    *  visibility rule an optional (Disk/GPU/Net) column needs below `@lg`. */
   className?: string;
+  /** Present for fixed-width columns: renders the drag handle on the right edge. */
+  resizeKey?: ResizableColumnKey;
+  resize?: ColumnResizeHandlers;
 }) {
   const isActive = activeKey === field;
   const Arrow = isActive ? (activeDir === "asc" ? ArrowUp : ArrowDown) : null;
@@ -39,7 +50,7 @@ export function SortableHeader({
       role="columnheader"
       aria-sort={ariaSort}
       className={cn(
-        "py-1.5 px-2 font-medium select-none",
+        "relative py-1.5 px-2 font-medium select-none",
         align === "left" ? "text-left" : "text-right",
         className,
       )}
@@ -57,9 +68,23 @@ export function SortableHeader({
           isActive && "text-text-primary",
         )}
       >
-        <span>{label}</span>
-        {Arrow && <Arrow className="size-3" />}
+        <span className="truncate">{label}</span>
+        {Arrow && <Arrow className="size-3 shrink-0" />}
       </button>
+      {/* Drag handle: pointer-only (hidden below `md`, where the table is a
+          single narrow column set and there is nothing worth resizing). Double-click
+          returns the column to its default width. */}
+      {resizeKey && resize && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${label} column`}
+          data-testid={testId ? `${testId}-resize` : undefined}
+          onPointerDown={(e) => resize.onResizeStart(resizeKey, e)}
+          onDoubleClick={() => resize.onResizeReset(resizeKey)}
+          className="hidden md:block absolute top-0 -right-1 h-full w-2 cursor-col-resize hover:bg-primary/40 active:bg-primary/60"
+        />
+      )}
     </div>
   );
 }
