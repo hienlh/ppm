@@ -19,4 +19,5 @@ marketing/
 
 # Throwaway investigation probes and runtime rollout state
 spike-*
+.spike/
 .rollout-mark

@@ -9,6 +9,8 @@ codex-sdk-poc.ts
 codex-junction-skill-probe.ts
 *-poc.ts
 spike-*
+.spike/
+*.err
 .out.txt
 
 # AgentKit tooling state, not part of PPM

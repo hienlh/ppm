@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.18.12] - 2026-09-05
+
+### Fixed
+- **npm package no longer includes local investigation scripts** — the 0.18.11 tarball shipped a `.spike/` scratch folder by mistake; it is now excluded.
+
 ## [0.18.11] - 2026-09-05
 
 ### Added
