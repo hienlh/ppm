@@ -3,6 +3,7 @@
 import { useDrag } from "@use-gesture/react";
 import { clampRect, type Rect } from "./window-geometry";
 import {
+  gestureAbandoned,
   gestureDisplacement,
   WINDOW_DRAG_CONFIG,
   type WindowGestureContext,
@@ -11,6 +12,10 @@ import {
 export function useWindowDrag(ctx: WindowGestureContext) {
   return useDrag(
     ({ xy, initial, first, last, memo }) => {
+      if (gestureAbandoned(first, memo)) {
+        if (last) ctx.onGestureActive(false);
+        return;
+      }
       // The rect is captured once per gesture: the displacement is cumulative from the
       // start, so re-reading a rect that we ourselves are mutating would compound it.
       const base: Rect = first ? { ...ctx.getRect() } : (memo as Rect);
