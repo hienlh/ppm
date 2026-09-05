@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "bun:test";
+import { describe, it, expect, beforeAll, beforeEach, spyOn } from "bun:test";
 import "../../test-setup.ts";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -85,6 +85,84 @@ describe("PATCH /api/accounts/:id", () => {
     });
     const json = await res.json() as any;
     expect(json.data.status).toBe("active");
+  });
+
+  // Enabling a parked account is the one place that proves its token before letting the
+  // rotation near it. A parked account inside ensureFreshToken's 1h buffer is the case that
+  // actually reaches the refresh — the sibling test above seeds a non-OAuth token, so it
+  // short-circuits before any of this and would pass whatever the ordering were.
+  describe("re-enabling a parked account proves its token first", () => {
+    function parkedExpiredAccount() {
+      const acc = accountService.add({
+        email: "parked@test.com",
+        accessToken: "sk-ant-oat01-parked-token",
+        refreshToken: "r",
+        expiresAt: Math.floor(Date.now() / 1000) - 10,
+      });
+      accountService.setDisabled(acc.id);
+      return acc;
+    }
+
+    it("stays disabled and says to sign in again when the refresh token is rejected", async () => {
+      const acc = parkedExpiredAccount();
+      let statusDuringRefresh: string | undefined;
+      const spy = spyOn(accountService, "refreshAccessToken").mockImplementation(async () => {
+        // The ordering assertion: the account must still be parked at the moment its token
+        // is being proved. Enabling first left it selectable for the ~53s postRefreshGrant
+        // spends retrying, so a turn could pick it and fail before the re-park landed.
+        statusDuringRefresh = accountService.list().find((a) => a.id === acc.id)?.status;
+        throw new Error('Token refresh failed for account x: 400 {"error":"invalid_grant"}');
+      });
+      try {
+        const res = await req(`/api/accounts/${acc.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "active" }),
+        });
+        const json = await res.json() as any;
+        expect(res.status).toBe(400);
+        expect(json.error).toContain("Sign in again");
+        expect(statusDuringRefresh).toBe("disabled");
+        expect(accountService.list().find((a) => a.id === acc.id)!.status).toBe("disabled");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("does not tell the user to sign in again over a network failure", async () => {
+      const acc = parkedExpiredAccount();
+      const spy = spyOn(accountService, "refreshAccessToken").mockImplementation(async () => {
+        throw new Error("fetch failed");
+      });
+      try {
+        const res = await req(`/api/accounts/${acc.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "active" }),
+        });
+        const json = await res.json() as any;
+        expect(res.status).toBe(400);
+        expect(json.error).toContain("Try again in a moment");
+        expect(json.error).not.toContain("Sign in again");
+        expect(accountService.list().find((a) => a.id === acc.id)!.status).toBe("disabled");
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("enables the account once the refresh succeeds", async () => {
+      const acc = parkedExpiredAccount();
+      const spy = spyOn(accountService, "refreshAccessToken").mockImplementation(async () => {});
+      try {
+        const res = await req(`/api/accounts/${acc.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "active" }),
+        });
+        const json = await res.json() as any;
+        expect(res.status).toBe(200);
+        expect(json.data.status).toBe("active");
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 
   it("returns 400 for invalid status", async () => {

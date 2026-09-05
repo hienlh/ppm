@@ -93,6 +93,31 @@ describe("AccountService", () => {
     expect(withTokens.status).toBe("active");
   });
 
+  it("updateTokens() leaves a disabled account disabled", () => {
+    // Usage polling deliberately refreshes parked accounts, and export refreshes every
+    // account before writing a backup. Activating on refresh silently returned a parked
+    // account to the chat rotation, which read as the toggle resetting itself.
+    const acc = accountService.add({ email: "parked@b.com", accessToken: "old", refreshToken: "old-r", expiresAt: 0 });
+    accountService.setDisabled(acc.id);
+
+    accountService.updateTokens(acc.id, "fresh-access", "fresh-refresh", Math.floor(Date.now() / 1000) + 7200);
+
+    const after = accountService.getWithTokens(acc.id)!;
+    expect(after.status).toBe("disabled");
+    expect(after.accessToken).toBe("fresh-access"); // still refreshed, just not re-enabled
+  });
+
+  it("updateTokens() clears a cooldown, since a fresh token is what ends one", () => {
+    const acc = accountService.add({ email: "cool@b.com", accessToken: "old", refreshToken: "old-r", expiresAt: 0 });
+    accountService.setCooldown(acc.id, Date.now() + 60_000);
+
+    accountService.updateTokens(acc.id, "fresh-access", "fresh-refresh", Math.floor(Date.now() / 1000) + 7200);
+
+    const after = accountService.list().find((a) => a.id === acc.id)!;
+    expect(after.status).toBe("active");
+    expect(after.cooldownUntil).toBeFalsy();
+  });
+
   it("exportEncrypted() / importEncrypted() round-trips accounts with password", async () => {
     accountService.add({ email: "export@test.com", accessToken: "tok-a", refreshToken: "tok-r", expiresAt: 9999 });
     const blob = accountService.exportEncrypted("test-password-123");
@@ -120,15 +145,164 @@ describe("AccountService", () => {
     expect(() => accountService.importEncrypted(blob, "wrong-password")).toThrow("Wrong password");
   });
 
-  it("exportEncrypted() with accountIds only exports selected accounts", () => {
+  it("exportEncrypted() with accountIds only exports selected accounts", async () => {
     const a1 = accountService.add({ email: "a1@test.com", accessToken: "t1", refreshToken: "r1", expiresAt: 0 });
     accountService.add({ email: "a2@test.com", accessToken: "t2", refreshToken: "r2", expiresAt: 0 });
     const blob = accountService.exportEncrypted("pass", [a1.id]);
     // Decrypt and verify only a1 is included
-    const { decryptWithPassword } = require("../../../src/lib/account-crypto.ts");
+    const { decryptWithPassword } = await import("../../../src/lib/account-crypto.ts");
     const plain = JSON.parse(decryptWithPassword(blob, "pass"));
     expect(plain).toHaveLength(1);
     expect(plain[0].email).toBe("a1@test.com");
+  });
+
+  it("add() carries new tokens into a parked account without un-parking it", async () => {
+    // Signing in again is how a user gets a live token onto a parked account; it is not a
+    // decision to put the account back in the rotation. The tokens have to actually land,
+    // though — a status-preserving path that also dropped the tokens would look identical
+    // from the toggle, so both halves are asserted here.
+    const acc = accountService.add({
+      email: "relogin@test.com", accessToken: "old", refreshToken: "old-r", expiresAt: 1,
+    });
+    accountService.setDisabled(acc.id);
+
+    accountService.add({
+      email: "relogin@test.com", accessToken: "new", refreshToken: "new-r", expiresAt: 9999999999,
+    });
+
+    const after = accountService.list().find((a) => a.id === acc.id)!;
+    expect(accountService.list()).toHaveLength(1);   // matched the duplicate, did not add
+    expect(after.status).toBe("disabled");
+    expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("new");
+  });
+
+  it("addManual() leaves a parked account parked, matching add()", async () => {
+    // The two doors disagreed: pasting a token force-enabled while signing in preserved.
+    // Whichever rule wins, they have to be the same rule — that split is the actual bug.
+    const acc = accountService.add({
+      email: "paste@test.com", accessToken: "sk-ant-oat-old", refreshToken: "r", expiresAt: 9999999999,
+    });
+    accountService.setDisabled(acc.id);
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(
+      JSON.stringify({ account: { email: "paste@test.com" } }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )) as typeof fetch;
+    try {
+      await accountService.addManual({ apiKey: "sk-ant-oat-new", label: null });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    const after = accountService.list().find((a) => a.id === acc.id)!;
+    expect(accountService.list()).toHaveLength(1);
+    expect(after.status).toBe("disabled");
+    expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("sk-ant-oat-new");
+  });
+
+  it("updateTokens() clears a stale cooldown even on a parked account", () => {
+    // The parked branch used to skip cooldown_until, so a 429 that arrived before the
+    // user parked the account would resurrect it the moment the park was lifted.
+    const acc = accountService.add({ email: "c@t.com", accessToken: "a", refreshToken: "r", expiresAt: 0 });
+    accountService.setCooldown(acc.id, Date.now() + 600_000);
+    accountService.setDisabled(acc.id);
+
+    accountService.updateTokens(acc.id, "fresh", "fresh-r", 9999999999);
+
+    const after = accountService.list().find((a) => a.id === acc.id)!;
+    expect(after.status).toBe("disabled");
+    expect(after.cooldownUntil).toBeFalsy();
+  });
+
+  it("importEncrypted() does not claim ownership of a parked account's token", async () => {
+    // The post-import refresh exists to make this machine the owner of the token. Running
+    // it for an account this machine has parked spends the refresh token — invalidating
+    // whichever machine is still using the account — to claim something nobody asked for.
+    // Enabling the account is what claims it.
+    const acc = accountService.add({
+      email: "claim@test.com", accessToken: "sk-ant-oat-a", refreshToken: "r", expiresAt: 1,
+    });
+    const blob = accountService.exportEncrypted("pass", undefined, true);
+    accountService.setDisabled(acc.id);
+
+    const realFetch = globalThis.fetch;
+    const urls: string[] = [];
+    globalThis.fetch = (async (u: unknown) => {
+      urls.push(String(u));
+      return new Response("{}", { status: 500 });
+    }) as typeof fetch;
+    try {
+      await accountService.importEncrypted(blob, "pass");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(urls.some((u) => u.includes("/oauth/token"))).toBe(false);
+    expect(accountService.list().find((a) => a.id === acc.id)!.status).toBe("disabled");
+  });
+
+  it("importEncrypted() does not import a status the app cannot use", async () => {
+    // The column has no CHECK constraint and the blob is user-supplied. A stray value
+    // reads as *on* in the UI (status !== "disabled") but is never selectable for a turn.
+    const acc = accountService.add({
+      email: "bogus@test.com", accessToken: "a", refreshToken: "r",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+    const blob = accountService.exportEncrypted("pass", undefined, true);
+    accountService.remove(acc.id);
+
+    const { decryptWithPassword, encryptWithPassword } = await import("../../../src/lib/account-crypto.ts");
+    const rows = JSON.parse(decryptWithPassword(blob, "pass"));
+    rows[0].status = "paused";
+    const tampered = encryptWithPassword(JSON.stringify(rows), "pass");
+
+    await accountService.importEncrypted(tampered, "pass");
+    expect(accountService.list()[0].status).toBe("active");
+  });
+
+  it("importEncrypted() leaves an account parked on this machine parked", async () => {
+    // Regression: the update-existing branch set status "active" unconditionally, so
+    // restoring a backup silently put a parked account back in the chat rotation.
+    const acc = accountService.add({
+      email: "parked@test.com",
+      accessToken: "backed-up-access",
+      refreshToken: "backed-up-refresh",
+      // Fresh, so the post-import ownership refresh short-circuits before any OAuth call.
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+    const blob = accountService.exportEncrypted("pass", undefined, true);
+
+    // The state the user is in when they restore: tokens have moved on locally, and the
+    // account has since been parked.
+    accountService.updateTokens(acc.id, "stale-access", "stale-refresh", 1);
+    accountService.setDisabled(acc.id);
+
+    const result = await accountService.importEncrypted(blob, "pass");
+    expect(result.imported).toBe(1);
+
+    const after = accountService.list().find((a) => a.id === acc.id)!;
+    expect(after.status).toBe("disabled");
+    // The tokens still had to land — parking is about the rotation, not about the import.
+    expect(accountService.getWithTokens(acc.id)!.accessToken).toBe("backed-up-access");
+  });
+
+  it("importEncrypted() gives a brand-new account the status the backup carried", async () => {
+    // The other half of the rule: with no local account there is no local decision to
+    // respect, so the backup's own status wins.
+    const acc = accountService.add({
+      email: "fresh@test.com",
+      accessToken: "acc",
+      refreshToken: "ref",
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    });
+    accountService.setDisabled(acc.id);
+    const blob = accountService.exportEncrypted("pass", undefined, true);
+    accountService.remove(acc.id);
+
+    const result = await accountService.importEncrypted(blob, "pass");
+    expect(result.imported).toBe(1);
+    expect(accountService.list()[0].status).toBe("disabled");
   });
 
   it("importEncrypted() skips duplicate accounts", async () => {

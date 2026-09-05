@@ -149,6 +149,9 @@ export function AccountsSettingsSection() {
   const [oauthStep, setOauthStep] = useState<"idle" | "waiting">("idle");
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; display: string } | null>(null);
+  // The proof-of-token round trip on enable is slow enough to see, so the row says so
+  // rather than looking like a Switch that ignored the click.
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   // Export dialog
@@ -198,8 +201,15 @@ export function AccountsSettingsSection() {
     setAdding(true);
     setAddError(null);
     try {
-      await addAccount({ apiKey: newToken.trim(), label: newLabel.trim() || undefined });
-      showMessage({ type: "success", text: "Account added successfully!" });
+      const acc = await addAccount({ apiKey: newToken.trim(), label: newLabel.trim() || undefined });
+      // Re-adding a parked account carries the token in but deliberately leaves it out of
+      // the rotation, so a flat "added successfully" over a toggle that is still off reads
+      // as a bug. The server knows; this is the only place the user finds out.
+      showMessage(
+        acc?.status === "disabled"
+          ? { type: "success", text: "Token updated. This account is still disabled — enable it below to use it." }
+          : { type: "success", text: "Account added successfully!" },
+      );
       setShowAddDialog(false);
       setNewToken("");
       setNewLabel("");
@@ -233,8 +243,12 @@ export function AccountsSettingsSection() {
       // Parse code — platform returns "CODE#STATE" or just the code
       let code = oauthCode.trim();
       if (code.includes("#")) code = code.split("#")[0] ?? code;
-      await exchangeOAuthCode(code, oauthState);
-      showMessage({ type: "success", text: "Account connected via OAuth!" });
+      const acc = await exchangeOAuthCode(code, oauthState);
+      showMessage(
+        acc?.status === "disabled"
+          ? { type: "success", text: "Signed in. This account is still disabled — enable it below to use it." }
+          : { type: "success", text: "Account connected via OAuth!" },
+      );
       setShowAddDialog(false);
       resetOAuthState();
       refresh();
@@ -253,7 +267,17 @@ export function AccountsSettingsSection() {
 
   async function handleToggle(id: string, currentStatus: string) {
     const newStatus = currentStatus === "disabled" ? "active" : "disabled";
-    await patchAccount(id, { status: newStatus });
+    // Enabling a parked account proves its token server-side first, which is a network
+    // round trip that can come back 400 — and api.patch throws on that. Without the catch
+    // the message the server took care to write reaches nobody: unhandled rejection, no
+    // toast, no refresh, and the Switch silently snaps back with no explanation.
+    setTogglingId(id);
+    try {
+      await patchAccount(id, { status: newStatus });
+    } catch (e) {
+      showMessage({ type: "error", text: (e as Error).message });
+    }
+    setTogglingId(null);
     refresh();
   }
 
@@ -454,6 +478,11 @@ export function AccountsSettingsSection() {
           )}
           {accounts.map((acc) => {
             const usage = usageMap.get(acc.id);
+            // A parked account stops being polled once its token lapses, so these numbers
+            // freeze where they were. A stale 87% shown as if it were live is the part that
+            // misleads — dimming it with a reason is enough.
+            const usageFrozen =
+              acc.status === "disabled" && !!acc.expiresAt && acc.expiresAt < Math.floor(Date.now() / 1000);
             return (
               <div key={acc.id} className="p-2.5 rounded-lg border bg-card space-y-1.5">
                 {/* Row 1: name + badges + actions */}
@@ -471,7 +500,7 @@ export function AccountsSettingsSection() {
                     <Switch
                       checked={acc.status !== "disabled"}
                       onCheckedChange={() => handleToggle(acc.id, acc.status)}
-                      disabled={acc.status === "cooldown" || (!acc.hasRefreshToken && !!acc.expiresAt && acc.expiresAt < Math.floor(Date.now() / 1000))}
+                      disabled={togglingId === acc.id || acc.status === "cooldown" || (!acc.hasRefreshToken && !!acc.expiresAt && acc.expiresAt < Math.floor(Date.now() / 1000))}
                       className="scale-[0.65] cursor-pointer"
                       title={!acc.hasRefreshToken && !!acc.expiresAt && acc.expiresAt < Math.floor(Date.now() / 1000) ? "Expired temporary account — cannot re-enable" : undefined}
                     />
@@ -488,7 +517,10 @@ export function AccountsSettingsSection() {
                     <span>· {formatLastUsed(acc.lastUsedAt)}</span>
                   </div>
                   {usage && (usage.session || usage.weekly) && (
-                    <div className="flex gap-2 shrink-0 tabular-nums">
+                    <div
+                      className={`flex gap-2 shrink-0 tabular-nums ${usageFrozen ? "opacity-50" : ""}`}
+                      title={usageFrozen ? "Usage stopped updating — this account is disabled and its token has expired" : undefined}
+                    >
                       {usage.session && <span className={miniPctColor(Math.round(usage.session.utilization * 100))}>5h {Math.round(usage.session.utilization * 100)}%</span>}
                       {usage.weekly && <span className={miniPctColor(Math.round(usage.weekly.utilization * 100))}>Wk {Math.round(usage.weekly.utilization * 100)}%</span>}
                     </div>
