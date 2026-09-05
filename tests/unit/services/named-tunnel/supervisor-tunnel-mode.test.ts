@@ -3,7 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { _resetPpmDir } from "../../../../src/services/ppm-dir.ts";
-import { buildTunnelAttempts, orphanedTunnelPgrepPattern } from "../../../../src/services/supervisor.ts";
+import {
+  buildTunnelAttempts, orphanedTunnelPgrepPattern, tunnelWarningPatchForSpawnSuccess,
+} from "../../../../src/services/supervisor.ts";
 import { getQuickTunnelArgs } from "../../../../src/services/cloudflared.service.ts";
 import type { ResolvedTunnelConfig } from "../../../../src/services/named-tunnel/named-tunnel-config.ts";
 
@@ -87,5 +89,21 @@ describe("orphanedTunnelPgrepPattern — reapOrphanedTunnels' match set", () => 
 
   test("does not match an unrelated process merely containing the word tunnel", () => {
     expect(pattern.test("/usr/bin/some-other-tool --tunnel run")).toBe(false);
+  });
+});
+
+describe("tunnelWarningPatchForSpawnSuccess — spawnTunnel's success-write decision (R4)", () => {
+  test("downgraded (named failed this attempt, quick fell back) always writes the downgrade warning", () => {
+    expect(tunnelWarningPatchForSpawnSuccess("quick", true)).toEqual({
+      tunnelWarning: "Named tunnel failed to start — using a temporary quick URL",
+    });
+  });
+
+  test("quick success with no downgrade clears any leftover warning — deliberate config-is-quick case (retunnel-to-quick, cold boot, later regen)", () => {
+    expect(tunnelWarningPatchForSpawnSuccess("quick", false)).toEqual({ tunnelWarning: null });
+  });
+
+  test("plain named success (no downgrade) never touches the warning — clearing a named warning is the probe's job alone", () => {
+    expect(tunnelWarningPatchForSpawnSuccess("named", false)).toEqual({});
   });
 });
