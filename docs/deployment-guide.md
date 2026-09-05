@@ -194,8 +194,9 @@ would otherwise impose a 72-hour run limit.
 3. The tunnel runs as a child process; its URL is parsed from stderr
 4. The URL is written to `~/.ppm/status.json` and printed with a QR code
 
-**The quick-tunnel URL rotates on every fresh tunnel.** For a stable address, link the machine to
-PPM Cloud (`ppm cloud login`) and use the permanent alias instead.
+**The quick-tunnel URL rotates on every fresh tunnel.** For a stable address, either link the machine
+to PPM Cloud (`ppm cloud login`) for a permanent alias, or set up a named tunnel on a domain you
+already have on Cloudflare — see the next section.
 
 **Security:** if `auth.enabled` is false while the tunnel is up, PPM warns that the IDE is publicly
 reachable. Always keep auth on when sharing. The session token is required on the WebSocket
@@ -203,6 +204,52 @@ handshake too, not just on HTTP.
 
 Per-port forwarding for local dev servers is separate: the dock's Cloudflare Tunnels panel drives
 `/api/tunnels`, which spawns one quick tunnel per port.
+
+---
+
+## Stable Public URL with Your Own Domain
+
+A named tunnel pins PPM to `https://<prefix>.<your-zone>` — the same hostname across restarts,
+hibernate, and crashes, unlike the quick tunnel's rotating `*.trycloudflare.com` URL. It requires:
+
+- A domain already added as a zone in your Cloudflare account.
+- `auth.enabled` set to `true` — a stable, guessable hostname must never be reachable by an
+  unauthenticated request, so the setup popup stays hidden and every mutating endpoint 403s while
+  auth is off.
+
+### Setup flow
+
+A first-run popup asks whether you have a domain on Cloudflare. Answering yes opens a Cloudflare
+login link — copy it to a phone or another browser if this machine has no browser of its own. The
+login stays open while you finish it: after 60 seconds idle you get a "still logging in?" prompt
+(the login keeps running), and after 5 minutes with no login it times out and lets you retry with a
+fresh link. Once logged in, PPM reads the zone from the new credential and proposes a hostname
+(`ppm.<zone>` by default) — you can pick a different prefix, but it must be exactly one label under
+the zone (no apex record, no `www`; Cloudflare's free certificate only covers one subdomain level,
+and anything deeper would serve a TLS error).
+
+The Tunnel Manager section (in the app, alongside the quick-tunnel controls) is where the flow lives
+permanently — the popup only covers first-run:
+
+- **Disable** switches back to the quick tunnel. The named-tunnel configuration is kept (not deleted)
+  so re-enabling doesn't require logging in again.
+- **Re-login** ("Log in again") is what to use when the domain's zone changes, or whenever PPM
+  reports the Cloudflare credential looks stale (wrong account, unreadable file). It moves the
+  existing credential aside (`cert.pem` → `cert.pem.bak-<timestamp>`) rather than deleting it, then
+  starts a fresh login — never edit or delete `~/.cloudflared/cert.pem` by hand.
+
+### Troubleshooting
+
+**"Hostname unreachable" warning** — shown when the DNS record for your named tunnel stops
+resolving (for example, the CNAME was deleted in the Cloudflare dashboard outside PPM). PPM restarts
+the tunnel connector once to rule out a transient failure; if the hostname is still unreachable after
+that it stops retrying and leaves the warning up rather than restarting forever. Recreate the DNS
+record in Cloudflare (or use Re-login if the whole zone changed) to clear it.
+
+**Setup finishes but says "pending" / asks you to run `ppm restart`** — the setup call always
+succeeds once cloudflared provisions the tunnel; picking it up without a full restart needs a
+supervisor version that understands the `retunnel` command. On an older supervisor (from before a
+PPM upgrade), run `ppm restart` once to finish applying it.
 
 ---
 

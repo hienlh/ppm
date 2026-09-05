@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Stable public URL on your own domain** — a named tunnel via Cloudflare login pins PPM to `https://<prefix>.<zone>`, no more rotating URL on restart or hibernate; quick tunnel stays the default and the fallback.
+- **Quick-tunnel fallback warning** — if a named tunnel fails to start, or its hostname stops resolving, PPM falls back to (or stays on) the quick tunnel and shows why.
+
+### Changed
+- **Named tunnel setup requires `auth.enabled`** — the popup stays hidden and every mutating tunnel endpoint 403s while PPM auth is off.
+- **`~/.cloudflared` is now refused by the file browser API**, the same protection the PPM config directory already had, covering read/copy/move/upload.
+- **Tunnel and auth secrets are masked wherever config is echoed back** — `ppm config get`, the extension RPC, and `ppm status` never print a raw token, even when an ancestor object (`tunnel`, `auth`) is requested.
+
 ## [0.18.12] - 2026-09-05
 
 ### Fixed

@@ -461,9 +461,9 @@ Supervisor Process (parent)
   │   ├── Auto-restart on crash (exponential backoff, max 10 restarts)
   │   └── If in "stopped" state, serves minimal 503 page instead of restarting
   │
-  ├── Tunnel Child (Cloudflare Quick Tunnel, always enabled)
+  ├── Tunnel Child (quick by default; named when configured — see "Tunnel Modes" below)
   │   ├── Origin is the EDGE port, so a server port move cannot rotate the URL
-  │   ├── URL probe every 2min
+  │   ├── Quick: URL probe every 2min. Named: health probe every 30s, restart-once-then-warn
   │   ├── Auto-reconnect on failure
   │   └── URL persisted to status.json
   │
@@ -496,9 +496,16 @@ Supervisor Process (parent)
 | `ppm down` | Killed | Killed | Killed | Full cleanup, exit |
 
 **State Persistence:**
-- Status file: `~/.ppm/status.json` — PID, port, host, shareUrl, supervisorPid, availableVersion, state
+- Status file: `~/.ppm/status.json` — PID, port, host, shareUrl, supervisorPid, availableVersion, state,
+  `tunnelMode` ("quick"|"named", what's actually running), `tunnelWarning` (set when named degrades to
+  quick or the named hostname stops resolving; persists until the condition clears), `capabilities`
+  (`["retunnel"]` once the running supervisor understands that command — its absence is how the UI
+  detects a pre-upgrade supervisor and falls back to "run `ppm restart`")
 - Lock file: `~/.ppm/.start-lock` — Prevent concurrent starts
-- Command file: `~/.ppm/.supervisor-cmd` — IPC for soft_stop, resume, self_replace
+- Command file: `~/.ppm/.supervisor-cmd` — IPC for soft_stop, resume, self_replace, restart, upgrade,
+  and `retunnel` (reload the tunnel config without a full restart, used after named-tunnel setup);
+  `retunnel` is deliberately the lowest-priority action — any lifecycle command overwrites a pending
+  one rather than getting silently dropped
 
 **Stopped Page Implementation:**
 - Minimal HTTP server on same port as main server
@@ -512,6 +519,48 @@ Supervisor Process (parent)
 - `src/services/supervisor-stopped-page.ts` — Minimal 503 page + Cloud WS proxy
 
 ---
+
+### Tunnel Modes: Quick vs Named
+
+Two ways to get a public URL, chosen by the `tunnel` config row in SQLite:
+
+- **Quick** (default) — a Cloudflare Quick Tunnel with a random `*.trycloudflare.com` hostname that
+  rotates on every restart. No setup, no Cloudflare account.
+- **Named** — a stable `https://<prefix>.<zone>` hostname on a Cloudflare-managed domain the user
+  owns, set up once through a first-run popup (Cloudflare login → pick a hostname) and reused across
+  restarts, hibernate, and crashes.
+
+**Process ownership** — the split matters for reasoning about failures:
+- The **supervisor** (`src/services/supervisor.ts`) owns the one long-running `cloudflared tunnel run`
+  (or `tunnel --url` for quick) child, in both modes — spawn, health-probe, kill, and respawn all
+  happen there, the same seam that already manages the server child.
+- The **server** (`src/server/routes/named-tunnel.ts` → `src/services/named-tunnel/`) only
+  *orchestrates setup*: one-shot `cloudflared tunnel create/route/token` calls to provision the
+  tunnel and DNS record, then asks the supervisor to pick up the new config via `retunnel`
+  (`requestTunnelReload()` writes `.supervisor-cmd`). The server process never runs the long-lived
+  connector itself.
+- A named tunnel that fails to spawn falls back to quick immediately (never leaves the process
+  without a public URL); the fallback and the reason are surfaced as `tunnelWarning` in `status.json`.
+  A named tunnel whose hostname stops resolving (e.g. the CNAME was deleted) gets exactly one
+  restart-and-hope; if the next health probe is still unhealthy, the connector is left running and a
+  `tunnelWarning` is raised instead of restarting forever (`src/services/named-tunnel/named-tunnel-probe-state.ts`).
+
+**Where the secrets live** — three different pieces of Cloudflare-issued material, three different
+homes, none of them ever in a process's argv:
+- `cert.pem`'s `apiToken` (the Cloudflare API credential `cloudflared tunnel login` writes) is parsed
+  in-memory to call the Cloudflare API during setup and is **never persisted anywhere PPM controls** —
+  it stays only in `~/.cloudflared/cert.pem`, which is on `fs-credential-path-guard.ts`'s refuse-list
+  (see "PPM Directory" in the root `CLAUDE.md`) so no generic file route can read, copy, or move it out.
+- The tunnel's run token (from `cloudflared tunnel token`) is stored in SQLite as
+  `tunnel.namedTunnelToken` and masked wherever config is echoed back (`ppm config get`, the extension
+  RPC `workspace:config:get`, `ppm status`) — see `src/services/config-secret-keys.ts`.
+- The same run token is also written to `~/.ppm/named-tunnel.token` (mode 0600) and handed to
+  `cloudflared` via `--token-file`, never `--token <value>`, so it never appears in a process listing
+  or a crash dump that captures cmdlines.
+
+Zone/account IDs read from the cert are pinned into the config row at setup time; a later login to a
+different Cloudflare account is detected (`certState: "mismatch"`) and routed to a re-login rather
+than silently reused.
 
 ### Future: Multi-Machine (not planned)
 PPM is single-machine by design; multi-machine would require:
