@@ -20,7 +20,8 @@ import { configService } from "../services/config.service.ts";
 import { mcpConfigService } from "../services/mcp-config.service.ts";
 import { listInheritedClaudeMcpServers } from "../services/claude-code-mcp.service.ts";
 import { updateFromSdkEvent } from "../services/claude-usage.service.ts";
-import { getSessionProjectPath, setSessionMetadata, getSessionTitles, insertTurnUsage } from "../services/db.service.ts";
+import { getSessionProjectPath, setSessionMetadata, getSessionTitles, insertTurnUsage, getSessionAccount } from "../services/db.service.ts";
+import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from "../services/subprocess-retention.ts";
 import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
@@ -759,6 +760,33 @@ export class ClaudeAgentSdkProvider implements AIProvider {
   /** Check if a streaming session is active for a given session ID */
   hasStreamingSession(sessionId: string): boolean {
     return this.streamingSessions.has(sessionId);
+  }
+
+  /**
+   * How long this session's prompt cache is worth holding a subprocess for.
+   *
+   * The hour only applies to a Claude subscription; an API key — settings `api_key`, a shell
+   * key, or anything behind a custom `base_url` — gets five minutes. Mirrors
+   * `buildQueryEnv`'s precedence, since that is what actually decides how the subprocess
+   * authenticates: settings api_key first, then the session's account, then the shell.
+   */
+  promptCacheTtlMs(sessionId: string): number {
+    const cfg = this.getProviderConfig();
+    // A custom endpoint is not Anthropic's subscription API whatever the credential is.
+    const shellBaseUrl = process.env.ANTHROPIC_BASE_URL ?? "";
+    if (cfg.base_url || (shellBaseUrl && !shellBaseUrl.includes("/proxy"))) {
+      return API_KEY_PROMPT_CACHE_TTL_MS;
+    }
+    if (cfg.api_key?.trim()) return API_KEY_PROMPT_CACHE_TTL_MS;
+
+    const accountId = getSessionAccount(sessionId);
+    const token = accountId ? accountService.getWithTokens(accountId)?.accessToken : undefined;
+    if (token) return token.startsWith("sk-ant-oat") ? SUBSCRIPTION_PROMPT_CACHE_TTL_MS : API_KEY_PROMPT_CACHE_TTL_MS;
+
+    // No account recorded yet: the shell's own credentials decide, and an OAuth token there
+    // is still a subscription. Nothing at all means the CLI's own auth, which we cannot
+    // classify — take the short window rather than hold memory on a guess.
+    return process.env.CLAUDE_CODE_OAUTH_TOKEN ? SUBSCRIPTION_PROMPT_CACHE_TTL_MS : API_KEY_PROMPT_CACHE_TTL_MS;
   }
 
   async *sendMessage(

@@ -20,9 +20,11 @@ describe("cacheReleaseDelayMs", () => {
 
   test("waits out the remainder of the TTL from the last turn, not from now", () => {
     // Turn ended 2 minutes ago → 3 of the 5 minutes remain. Timing this from the disconnect
-    // instead would hold the subprocess for a further full 5 minutes.
+    // instead would hold the subprocess for a further full 5 minutes. The window is passed
+    // explicitly so the assertion states the behaviour, not whatever the default happens to be.
+    const ttl = 5 * 60_000;
     const twoMinutesAgo = now - 2 * 60_000;
-    expect(cacheReleaseDelayMs(twoMinutesAgo, now)).toBe(3 * 60_000);
+    expect(cacheReleaseDelayMs(twoMinutesAgo, now, ttl)).toBe(3 * 60_000);
   });
 
   test("gives the full window to a turn that just finished", () => {

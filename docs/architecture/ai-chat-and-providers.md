@@ -239,6 +239,9 @@ interface SessionEntry {
 - **FE reconnects** → Receive session_state + buffered turnEvents, resync with stream
 - **Idle (no query running)** → Phase is "idle", ready for next message
 - **Idle + no FE for 5min** → Cleanup timer removes session from memory
+- **…unless its subprocess is still held** → the cleanup timer reschedules itself while a
+  prompt-cache release is pending, so the session entry outlives 5min only when there is a
+  warm subprocess to protect (1h on a subscription, 5min on an API key)
 
 ### Follow-up Messages
 
