@@ -3,6 +3,7 @@ import { Check, Copy, ExternalLink, Globe, Loader2, Lock, RefreshCw, Square } fr
 import { tunnelsApi, type TunnelEntry } from "@/lib/api-tunnels";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "sonner";
+import { NamedTunnelSection } from "@/components/tunnels/named-tunnel/named-tunnel-section";
 
 /** Badge label + style per tunnel source. */
 const SOURCE_META: Record<TunnelEntry["source"], { label: string; cls: string }> = {
@@ -91,6 +92,9 @@ export function TunnelManagerTab() {
 
   return (
     <div className="flex flex-col h-full w-full bg-background">
+      {/* Named tunnel status + setup entry point, above the quick-forward form */}
+      <NamedTunnelSection />
+
       {/* Compact start form (sidebar section is already labelled in the rail) */}
       <div className="p-3 border-b border-border bg-surface">
         <form onSubmit={handleSubmit} className="flex items-center gap-2">

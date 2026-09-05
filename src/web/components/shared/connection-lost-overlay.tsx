@@ -1,11 +1,21 @@
 import { WifiOff, ServerOff, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { useConnectionStore } from "@/stores/connection-store";
+import { getCachedNamedHostname } from "@/components/tunnels/named-tunnel/use-named-tunnel-setup";
 
 const CLOUD_URL = "https://cloud.ppm.sh";
 
+/**
+ * True when this page is reached through *some* cloudflared tunnel (quick or
+ * named) rather than directly (localhost/LAN IP) — that distinction decides
+ * whether the "tunnel closed" or the generic "server unreachable" copy shows.
+ * The named hostname is cached in memory by the setup hook the last time
+ * `/status` answered while online; there is nothing else to ask once the API
+ * itself is the thing that is down.
+ */
 function isTunnelDomain(): boolean {
-  return window.location.hostname.endsWith(".trycloudflare.com");
+  const host = window.location.hostname;
+  return host.endsWith(".trycloudflare.com") || host === getCachedNamedHostname();
 }
 
 export function ConnectionLostOverlay() {

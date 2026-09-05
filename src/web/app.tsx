@@ -27,6 +27,7 @@ import { useServerReload } from "@/hooks/use-server-reload";
 import { CommandPalette } from "@/components/layout/command-palette";
 import { ComparePicker } from "@/components/editor/compare-picker";
 import { BugReportPopup } from "@/components/shared/bug-report-popup";
+import { NamedTunnelSetupPopup } from "@/components/tunnels/named-tunnel/named-tunnel-setup-popup";
 import { ImageOverlay } from "@/components/shared/image-overlay";
 import { DiagramOverlay } from "@/components/shared/diagram-overlay";
 import { BackgroundOutputPanel } from "@/components/chat/background-output-panel";
@@ -358,6 +359,10 @@ export function App() {
 
         {/* Global bug report popup */}
         <BugReportPopup />
+
+        {/* Named-tunnel first-run setup popup — hidden unless auth is on, mode is
+            still quick and the user has not dismissed it (or a cert needs renewal) */}
+        <NamedTunnelSetupPopup />
 
         {/* Global image lightbox */}
         <ImageOverlay />

@@ -23,6 +23,8 @@ import { syncRunningSessions } from "@/lib/sync-running-sessions";
  *   registry, since a phase change that happened while this socket was down was
  *   never delivered and would otherwise stick until a full reload.
  * - `jira:*` → re-dispatched as window events.
+ * - `tunnel:*` → re-dispatched as window events (named-tunnel setup flow —
+ *   login URL/state, setup progress/done/pending/error).
  *
  * Also tells the server which project to watch, so file watching follows the
  * active project instead of depending on a chat socket existing.
@@ -83,7 +85,7 @@ export function useGlobalEvents(enabled: boolean, projectName?: string): void {
         return;
       }
 
-      if (type.startsWith("jira:")) {
+      if (type.startsWith("jira:") || type.startsWith("tunnel:")) {
         window.dispatchEvent(new CustomEvent(type, { detail: data }));
       }
     });
