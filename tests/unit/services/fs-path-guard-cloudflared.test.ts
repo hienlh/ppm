@@ -6,9 +6,12 @@ import {
   isCloudflaredDirPath,
   isCredentialPath,
   assertNotPpmDir,
+  assertNotPpmSubtree,
+  assertNotPpmSubtreeDeep,
   realPathOrSelf,
 } from "../../../src/services/fs-path-guard.service.ts";
 import { assertReadPermitted } from "../../../src/services/fs-ops/fs-ops-read-write.service.ts";
+import { copyPath } from "../../../src/services/fs-ops/fs-ops-copy-move.service.ts";
 
 const cloudflaredDir = resolve(homedir(), ".cloudflared");
 // Never create/remove the real dir if cloudflared already put it there — only
@@ -58,5 +61,31 @@ describe("cloudflared credential shield", () => {
     }
     const real = await realPathOrSelf(link);
     expect(() => assertReadPermitted(link, real)).toThrow("Access denied");
+  });
+
+  it("refuses the write/transfer guard on a direct cert path (source or destination)", () => {
+    // assertNotPpmSubtree backs every copy/move/rename/upload/trash door —
+    // relocating the cert out of ~/.cloudflared would defeat the read shield
+    // above via a plain read of the copy.
+    expect(() => assertNotPpmSubtree(markerFile)).toThrow(/credential/);
+    expect(() => assertNotPpmSubtree(join(scratchDir, "unrelated.txt"))).not.toThrow();
+  });
+
+  it("refuses the deep (realpath-following) write/transfer guard through a symlink", async () => {
+    const link = join(scratchDir, "escape-link.pem");
+    try {
+      symlinkSync(markerFile, link);
+    } catch {
+      return; // no privilege to create file symlinks on this host — nothing to assert
+    }
+    await expect(assertNotPpmSubtreeDeep(link)).rejects.toThrow(/credential/);
+  });
+
+  it("refuses copyPath from the cert path to a public destination", async () => {
+    // Regression for the exact reported bypass: POST /api/fs/copy with the
+    // cert as source and a readable public path as destination.
+    const destination = join(scratchDir, "exfiltrated-cert.pem");
+    await expect(copyPath(markerFile, destination)).rejects.toThrow(/credential/);
+    expect(existsSync(destination)).toBe(false);
   });
 });

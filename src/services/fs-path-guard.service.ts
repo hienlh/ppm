@@ -1,13 +1,25 @@
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { getPpmDir } from "./ppm-dir.ts";
-import { getUploadsDir } from "./chat-upload-storage.service.ts";
 import { realPathOrSelf, realPathOrSelfSync } from "./fs-ops/fs-real-path.ts";
 
 // Re-exported so callers reach both the guards and the resolver they build on
 // through one import.
 export { realPathOrSelf, realPathOrSelfSync };
+
+// The credential-path predicates (PPM dir + ~/.cloudflared) live in their own
+// module so this file stays focused on the platform allowlist and protected
+// roots; re-exported here so every existing caller keeps a single import.
+export {
+  isPpmDirPath,
+  isChatUploadPath,
+  isCloudflaredDirPath,
+  isCredentialPath,
+  assertNotPpmDir,
+  assertNotPpmSubtree,
+  assertNotPpmSubtreeDeep,
+} from "./fs-credential-path-guard.ts";
 
 /**
  * Central guard for every filesystem route that works outside project scope.
@@ -36,14 +48,6 @@ export function resolvePath(input: string): string {
     return resolve(homedir(), input.slice(2));
   }
   return resolve(input);
-}
-
-/** Case-insensitive prefix test on Windows/macOS-style paths. */
-function isInside(child: string, parent: string): boolean {
-  const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
-  const c = norm(child);
-  const p = norm(parent);
-  return c === p || c.startsWith(p.endsWith(sep) ? p : p + sep);
 }
 
 /**
@@ -78,85 +82,6 @@ export function assertAllowed(resolved: string): void {
   if (!isAllowedPath(resolved)) {
     throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
-}
-
-/** True when the path is the PPM directory or anything inside it. */
-export function isPpmDirPath(resolved: string): boolean {
-  return isInside(resolved, getPpmDir());
-}
-
-/**
- * Chat attachments the user uploaded through the UI. They sit under the PPM
- * dir so chat history keeps resolving them across reboots, but they are
- * ordinary user content, not credential material: the transcript has to render
- * the very image the assistant just read back from that directory.
- */
-export function isChatUploadPath(resolved: string): boolean {
-  return isInside(resolved, getUploadsDir());
-}
-
-/**
- * True when the path is `~/.cloudflared` or anything inside it. Real
- * `homedir()` is a deliberate exception to the getPpmDir()-only rule (see
- * CLAUDE.md "PPM Directory"): `cloudflared`, not PPM, decides this location,
- * and it holds `cert.pem` — an account-level Cloudflare login credential that
- * must never be servable through a generic file route, same as the PPM
- * config DB. `isInside` is a prefix match against this exact resolved path,
- * not a substring test, so an unrelated folder that merely contains
- * ".cloudflared" as a path segment elsewhere does not match.
- */
-export function isCloudflaredDirPath(resolved: string): boolean {
-  return isInside(resolved, resolve(homedir(), ".cloudflared"));
-}
-
-/** True when the path holds credential material a generic file route must never serve. */
-export function isCredentialPath(resolved: string): boolean {
-  return isPpmDirPath(resolved) || isCloudflaredDirPath(resolved);
-}
-
-/**
- * Refuse the PPM directory subtree and `~/.cloudflared` on read-style doors.
- * The former stores the config database with provider credentials and auth
- * tokens; the latter stores the Cloudflare login cert. Neither may be
- * downloadable through a generic file route.
- *
- * Chat uploads are the one exception, and only for the PPM-dir branch — chat
- * uploads always live under `getPpmDir()`, never under `~/.cloudflared`, so
- * the exception is a no-op for the cloudflared branch. Every caller applies
- * this to the requested path *and* to its real path, so a symlink parked in
- * the uploads directory still fails on the second call and cannot reach the
- * rest of the PPM dir through the exception, and a symlink pointing at
- * `~/.cloudflared/cert.pem` fails the same way.
- */
-export function assertNotPpmDir(resolved: string): void {
-  if (isCredentialPath(resolved) && !isChatUploadPath(resolved)) {
-    throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
-  }
-}
-
-/**
- * Refuse operations that would take the PPM directory's contents anywhere
- * else. Reading that subtree is already blocked, so without this a copy to a
- * public path followed by an ordinary read would still hand out the
- * credentials database.
- */
-export function assertNotPpmSubtree(candidate: string): void {
-  if (isPpmDirPath(candidate)) {
-    throw Object.assign(new Error(`Refusing to operate on the PPM directory: ${candidate}`), {
-      status: 403,
-      code: "EPROTECTED",
-    });
-  }
-}
-
-/**
- * Same refusal, applied to the real path as well. A path that does not exist
- * yet is still resolved through its parents, so a symlinked directory cannot
- * be used to reach — or create something inside — the PPM directory.
- */
-export async function assertNotPpmSubtreeDeep(candidate: string): Promise<void> {
-  assertNotPpmSubtree(candidate);
-  assertNotPpmSubtree(await realPathOrSelf(candidate));
 }
 
 /** Paths whose removal or rename would break the host or PPM itself. */
