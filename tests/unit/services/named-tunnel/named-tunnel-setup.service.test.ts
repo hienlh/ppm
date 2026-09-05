@@ -288,6 +288,22 @@ describe("named-tunnel-setup.service", () => {
     });
   });
 
+  describe("runSetup — same-hostname retry while a confirmation is still running", () => {
+    test("a second call for the same hostname is 409 while confirmation is still running", async () => {
+      await runSetup(HOSTNAME); // setupInFlight is released; confirmReloadInBackground now owns the window
+      await expect(runSetup(HOSTNAME)).rejects.toThrow("already confirming");
+      expect(runCalls.filter((c) => c.includes("create"))).toHaveLength(1); // no redundant create/route/token cycle
+    });
+
+    test("a different hostname is not blocked by another hostname's confirmation window", async () => {
+      await runSetup(HOSTNAME);
+      const other = "ppm2.example.com";
+      const result = await runSetup(other);
+      expect(result.ok).toBe("pending");
+      if (result.ok === "pending") expect(result.hostname).toBe(other);
+    });
+  });
+
   describe("disableNamedTunnel", () => {
     test("flips mode to quick, keeps other fields, and asks the supervisor to reload", async () => {
       configService.set("tunnel", { mode: "named", namedTunnelHostname: HOSTNAME, namedTunnelToken: VALID_RUN_TOKEN });
