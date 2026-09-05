@@ -350,7 +350,12 @@ export async function startServer(options: {
                 signalSupervisor("SIGUSR1");
                 await waitForNewSupervisor(statusFile, supervisorPid);
               } else {
-                writeCmd("resume");
+                // resume is a lifecycle action and outranks a pending retunnel
+                // (writeCmd overwrites it), so `false` here means a genuinely
+                // different lifecycle command is already queued.
+                if (!writeCmd("resume")) {
+                  console.log("  Warning: another supervisor command is already pending; resume may be delayed.");
+                }
                 signalSupervisor("SIGUSR2", "resume");
                 await waitForServerReady(statusFile, port);
               }
@@ -372,7 +377,9 @@ export async function startServer(options: {
 
             if (state === "paused") {
               console.log("  Supervisor is paused (max restarts). Sending resume...");
-              writeCmd("resume");
+              if (!writeCmd("resume")) {
+                console.log("  Warning: another supervisor command is already pending; resume may be delayed.");
+              }
               signalSupervisor("SIGUSR2", "resume");
               await waitForServerReady(statusFile, port);
               return;

@@ -41,6 +41,29 @@ describe("supervisor-state — retunnel", () => {
       expect(writeCmd("retunnel")).toBe(false);
       expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe("restart");
     });
+
+    test("a lifecycle action overwrites a pending retunnel", () => {
+      writeFileSync(CMD_FILE(), JSON.stringify({ action: "retunnel" }));
+      for (const action of ["resume", "soft_stop", "restart", "upgrade"] as const) {
+        writeFileSync(CMD_FILE(), JSON.stringify({ action: "retunnel" }));
+        expect(writeCmd(action)).toBe(true);
+        expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe(action);
+      }
+    });
+
+    test("retunnel still yields to a pending lifecycle action", () => {
+      for (const action of ["resume", "soft_stop", "restart", "upgrade"] as const) {
+        writeFileSync(CMD_FILE(), JSON.stringify({ action }));
+        expect(writeCmd("retunnel")).toBe(false);
+        expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe(action);
+      }
+    });
+
+    test("two different lifecycle actions still refuse to clobber each other", () => {
+      writeFileSync(CMD_FILE(), JSON.stringify({ action: "restart" }));
+      expect(writeCmd("resume")).toBe(false);
+      expect(JSON.parse(readFileSync(CMD_FILE(), "utf-8")).action).toBe("restart");
+    });
   });
 
   describe("requestTunnelReload", () => {

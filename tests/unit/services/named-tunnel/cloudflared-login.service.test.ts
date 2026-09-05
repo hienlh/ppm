@@ -114,8 +114,9 @@ describe("cloudflared-login.service", () => {
     expect(snapshot).toEqual({ state: "success", url: null, message: "already logged in" });
   });
 
-  test("cert parsed but pinned zoneID/accountID differ: falls through to a fresh spawn attempt", async () => {
-    writeFileSync(process.env.TUNNEL_ORIGIN_CERT!, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
+  test("cert parsed but pinned zoneID/accountID differ: falls through to a fresh spawn attempt AND renames the mismatched cert aside", async () => {
+    const certPath = process.env.TUNNEL_ORIGIN_CERT!;
+    writeFileSync(certPath, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
     configService.set("tunnel", {
       mode: "named",
       namedTunnelToken: "tok", namedTunnelHostname: "ppm.example.com",
@@ -126,6 +127,11 @@ describe("cloudflared-login.service", () => {
 
     const snapshot = await startLogin();
     expect(snapshot.state).not.toBe("success"); // shortcut correctly refused the mismatch
+    // The mismatched cert must not be left in place to silently repeat the
+    // same refusal on every future login attempt.
+    expect(existsSync(certPath)).toBe(false);
+    const backups = readdirSync(certDir).filter((f) => f.startsWith("cert.pem.bak-"));
+    expect(backups).toHaveLength(1);
   }, 15_000);
 
   test("relogin renames an existing cert.pem aside before attempting a fresh login", async () => {

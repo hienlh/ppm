@@ -92,18 +92,37 @@ export function readAndDeleteCmd(): { action: CmdAction } | null {
 }
 
 /**
+ * `retunnel` is the only low-priority action — it always yields to whatever
+ * is already pending, since a named-tunnel reload can wait behind a genuine
+ * lifecycle transition. The other three outrank it: a `resume` stuck behind
+ * an unclaimed `retunnel` would otherwise leave the server looking stopped
+ * (win32's poll loop is 1s; POSIX has a write/SIGUSR2 gap) for no reason.
+ */
+const LIFECYCLE_ACTIONS: readonly CmdAction[] = ["resume", "soft_stop", "restart", "upgrade"];
+
+/**
  * Write `.supervisor-cmd`, but never clobber a *different* action that's still
- * unclaimed (e.g. a pending `restart` this call didn't originate) — returns
- * `false` without writing so the caller can report "busy" instead of silently
- * discarding someone else's request. Note: `restart.ts`/`stop.ts` write this
- * file directly and bypass this peek entirely, so the supervisor's dispatcher
- * must still treat a stale/racing action defensively regardless of who wrote
- * it — this is a best-effort single-slot guard, not a full queue.
+ * unclaimed — with one exception: a lifecycle action (`resume`/`soft_stop`/
+ * `restart`/`upgrade`) always overwrites a pending `retunnel`. Any other
+ * collision (two different lifecycle actions, or a `retunnel` behind a
+ * pending lifecycle action) returns `false` without writing so the caller can
+ * report "busy" instead of silently discarding someone else's request; a
+ * warning is logged either way so a dropped command is never silent. Note:
+ * `restart.ts`/`stop.ts` write this file directly and bypass this peek
+ * entirely, so the supervisor's dispatcher must still treat a stale/racing
+ * action defensively regardless of who wrote it — this is a best-effort
+ * single-slot guard, not a full queue.
  */
 export function writeCmd(action: CmdAction): boolean {
   try {
     const existing = JSON.parse(readFileSync(CMD_FILE(), "utf-8")) as { action?: string };
-    if (existing?.action && existing.action !== action) return false;
+    if (existing?.action && existing.action !== action) {
+      const lifecycleOverridesRetunnel = LIFECYCLE_ACTIONS.includes(action) && existing.action === "retunnel";
+      if (!lifecycleOverridesRetunnel) {
+        try { process.stderr.write(`[writeCmd] dropped "${action}" — "${existing.action}" is already pending\n`); } catch {}
+        return false;
+      }
+    }
   } catch {
     // Missing file, unreadable, or invalid JSON — nothing unclaimed to protect.
   }

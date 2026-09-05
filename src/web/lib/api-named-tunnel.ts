@@ -3,7 +3,7 @@ import { api } from "./api-client";
 export type LoginState = "idle" | "waiting" | "slow" | "success" | "timeout" | "cancelled" | "error";
 export interface LoginSnapshot { state: LoginState; url: string | null; message: string | null }
 
-export type CertState = "none" | "invalid" | "ok";
+export type CertState = "none" | "invalid" | "ok" | "mismatch";
 
 export interface NamedTunnelStatus {
   mode: "quick" | "named";
@@ -17,6 +17,8 @@ export interface NamedTunnelStatus {
   liveMode?: "quick" | "named" | null;
   /** Supervisor-side downgrade warning (e.g. named tunnel failed → running quick). */
   tunnelWarning?: string | null;
+  /** PPM auth toggle — a named tunnel must never be reachable from an auth-disabled install. */
+  authEnabled: boolean;
 }
 
 export interface ZoneInfo {

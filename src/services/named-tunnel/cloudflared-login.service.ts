@@ -97,7 +97,11 @@ export async function startLogin(opts: { relogin?: boolean } = {}): Promise<Logi
         session.message = "already logged in";
         return getLoginSnapshot();
       }
-      // Any mismatch (dead token, rotated cert) falls through to a fresh login.
+      // A dead token or an account/zone pin mismatch means this cert can
+      // never pass the shortcut again as-is — move it aside now instead of
+      // leaving a bad file to keep silently triggering the same fallthrough
+      // on every future login attempt.
+      renameCertAside();
     }
   } else {
     renameCertAside();

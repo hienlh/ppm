@@ -15,8 +15,9 @@ import { runCloudflared } from "./cloudflared-exec.ts";
 import { configService } from "../config.service.ts";
 import { requestTunnelReload, readStatus } from "../supervisor-state.ts";
 import { broadcastGlobalEvent } from "../../server/ws/global.ts";
+import { pinsMatch } from "./cloudflared-login-helpers.ts";
 
-export type CertState = "none" | "invalid" | "ok";
+export type CertState = "none" | "invalid" | "ok" | "mismatch";
 
 /** Thrown by the flow below; routes map `.status` straight to the HTTP response. */
 export class SetupError extends Error {
@@ -35,17 +36,26 @@ const CONFIRM_POLL_INTERVAL_MS = 1_000;
 /** Module-level in-flight guard — two concurrent setups would race `route dns`. */
 let setupInFlight = false;
 
-/** Read-mostly cert classification for `/status` — never leaks the token. */
+/**
+ * Read-mostly cert classification for `/status` — never leaks the token.
+ * `"mismatch"` is a pure pin comparison (no network call): the parsed cert's
+ * zoneID/accountID differ from whatever `tunnel` config already pinned, i.e.
+ * cloudflared logged into a *different* Cloudflare account than the one this
+ * machine's named tunnel was set up under.
+ */
 export function currentCertState(): CertState {
   const state = readOriginCertState();
   if (state.kind === "absent") return "none";
   if (state.kind === "unparseable") return "invalid";
-  return "ok";
+  return pinsMatch(state.cert) ? "ok" : "mismatch";
 }
 
 export async function readZoneInfo(): Promise<{ zone: string; zoneID: string; accountID: string; proposedHostname: string }> {
   const certState = readOriginCertState();
   if (certState.kind !== "parsed") throw new SetupError(400, "Not logged in to Cloudflare");
+  if (!pinsMatch(certState.cert)) {
+    throw new SetupError(400, "cert belongs to a different Cloudflare account — log in again");
+  }
   const zone = await fetchZoneName(certState.cert.zoneID, certState.cert.apiToken);
   return { zone, zoneID: certState.cert.zoneID, accountID: certState.cert.accountID, proposedHostname: proposeHostname(zone) };
 }
@@ -155,15 +165,39 @@ async function runSetupInner(hostname: string): Promise<SetupOutcome> {
     return pending("no supervisor detected — run `ppm restart`");
   }
 
-  const confirmed = await pollForConfirmation(hostname);
-  if (!confirmed) {
-    const latest = readStatus();
-    const warning = typeof latest.tunnelWarning === "string" ? latest.tunnelWarning : null;
-    return pending(warning ?? "setup saved but the supervisor has not confirmed it yet — check again shortly");
-  }
+  // reload === "sent" — don't block the HTTP response on up to 45s of
+  // polling: a proxy/tunnel in front of PPM with a shorter idle timeout would
+  // time the browser out while setup was actually succeeding. Confirm
+  // detached and let /ws/global carry the final result (setup_done, or a
+  // follow-up setup_pending if confirmation itself times out) — the UI
+  // already listens for both events.
+  confirmReloadInBackground(hostname);
+  return pending("reload sent — waiting for the supervisor to confirm");
+}
 
-  broadcastGlobalEvent({ type: "tunnel:setup_done", hostname });
-  return { ok: true, hostname, tunnelName };
+/** Fire-and-forget: polls status.json and broadcasts the final outcome. Never throws into the caller. */
+function confirmReloadInBackground(hostname: string): void {
+  pollForConfirmation(hostname)
+    .then((confirmed) => {
+      if (confirmed) {
+        broadcastGlobalEvent({ type: "tunnel:setup_done", hostname });
+        return;
+      }
+      const latest = readStatus();
+      const warning = typeof latest.tunnelWarning === "string" ? latest.tunnelWarning : null;
+      broadcastGlobalEvent({
+        type: "tunnel:setup_pending",
+        hostname,
+        message: warning ?? "setup saved but the supervisor has not confirmed it yet — check again shortly",
+      });
+    })
+    .catch(() => {
+      broadcastGlobalEvent({
+        type: "tunnel:setup_pending",
+        hostname,
+        message: "confirmation check failed — check status again shortly",
+      });
+    });
 }
 
 /**
