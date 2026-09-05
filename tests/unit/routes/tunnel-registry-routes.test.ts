@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { Hono } from "hono";
 import type { TunnelEntry } from "../../../src/services/tunnel-registry-parse.ts";
+// Captured BEFORE mock.module() runs — Bun's module mocks are process-global
+// and outlive this file, so a full-replacement stub here would leak into any
+// later-loaded test that imports the real module (e.g. supervisor.ts pulling
+// in findPortListenerPid/isPpmProcess/etc.) and break it with a missing-export
+// SyntaxError. Spreading the real exports keeps every non-overridden export intact.
+import * as RealWindowsProcessTree from "../../../src/services/windows-process-tree.ts";
 
 // Shared mutable state the mocks read from.
 const state: { list: TunnelEntry[]; isCf: boolean; killed: number[] } = {
@@ -16,6 +22,7 @@ mock.module("../../../src/services/tunnel-registry.service.ts", () => ({
 }));
 
 mock.module("../../../src/services/windows-process-tree.ts", () => ({
+  ...RealWindowsProcessTree,
   killProcessTree: (pid: number) => { state.killed.push(pid); },
 }));
 
