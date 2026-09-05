@@ -630,7 +630,7 @@ Start with mobile styles, add complexity for larger screens:
 
 - Cache static assets (CSS, JS, images)
 - Offline fallback (HTML, basic UI)
-- Background sync (planned for v3)
+- Background sync — not implemented
 
 ### Installation Prompt
 

@@ -690,7 +690,7 @@ Simplified interface: `createSession()` → `send()` / `stream()`.
 ```typescript
 import { unstable_v2_createSession } from "@anthropic-ai/claude-agent-sdk";
 
-await using session = unstable_v2_createSession({ model: "claude-opus-4-6" });
+await using session = unstable_v2_createSession({ model: "claude-opus-5" });
 
 await session.send("Hello!");
 for await (const msg of session.stream()) {

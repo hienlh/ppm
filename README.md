@@ -242,9 +242,9 @@ For architecture details, API reference, and contribution guidelines, see the [d
 | Doc | Purpose |
 |-----|---------|
 | [Project Overview](docs/project-overview-pdr.md) | Goals, features, decisions |
-| [System Architecture](docs/system-architecture.md) | Layers, protocols, data flows |
-| [Codebase Summary](docs/codebase-summary.md) | Module responsibilities |
-| [Code Standards](docs/code-standards.md) | Conventions and patterns |
+| [System Architecture](docs/system-architecture.md) | Layers, protocols, data flows (subsystem detail in [docs/architecture/](docs/architecture/)) |
+| [Codebase Summary](docs/codebase-summary.md) | Module responsibilities (deep dives in [codebase-subsystems.md](docs/codebase-subsystems.md)) |
+| [Code Standards](docs/code-standards.md) | Conventions ([code-patterns.md](docs/code-patterns.md) for PPM-specific patterns) |
 | [Deployment Guide](docs/deployment-guide.md) | Installation, config, troubleshooting |
 | [Design Guidelines](docs/design-guidelines.md) | UI framework, colors, components |
 | [Extension Development](docs/extension-development-guide.md) | Building PPM extensions |

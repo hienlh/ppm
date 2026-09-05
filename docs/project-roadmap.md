@@ -19,7 +19,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
   in-app floating window and from there into an always-on-top browser PiP window; both directions
   reversible, terminal/editor/chat state survives every move (no tab remount). Radix
   dropdowns/tooltips/dialogs follow a popped-out tab into the PiP document. Desktop only.
-  See `docs/system-architecture.md` → "Tab-host windows and Document PiP".
+  See `docs/architecture/workspace-and-ui.md` → "Tab-host windows".
 - **System Monitor became a whole-machine task manager** — CPU per core, RAM, disk, network and
   NVIDIA GPU charts; every process grouped by app with live CPU/RAM/disk/GPU; end a process or a
   whole app group (PPM's own, its tunnel and OS-critical processes are refused). Works on Windows,

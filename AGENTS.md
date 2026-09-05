@@ -39,11 +39,23 @@ Keep all important docs in `./docs` folder:
 
 ```
 ./docs
-├── project-overview-pdr.md
-├── code-standards.md
-├── codebase-summary.md
-├── design-guidelines.md
-└── system-architecture.md
+├── project-overview-pdr.md          # Goals, decisions, committed scope
+├── project-roadmap.md               # What shipped, what is still open
+├── system-architecture.md           # Layer map, protocols, auth, deployment
+│   └── architecture/                # Subsystem detail
+│       ├── ai-chat-and-providers.md
+│       ├── extensions.md
+│       ├── data-and-storage.md
+│       ├── workspace-and-ui.md
+│       └── integrations.md
+├── codebase-summary.md              # Directory + module map
+├── codebase-subsystems.md           # Subsystem deep dives
+├── code-standards.md                # Language and style conventions
+├── code-patterns.md                 # PPM-specific implementation patterns
+├── design-guidelines.md             # UI framework, mobile-first rules
+├── deployment-guide.md              # Install, config, run, release, troubleshoot
+├── extension-development-guide.md
+└── lessons-learned.md               # Traps that already cost time
 ```
 
 ## External Files
