@@ -2264,18 +2264,33 @@ below the app's existing `z-40` click-away backdrops and `z-50` Radix layers, so
 dropdowns and dialogs always stay reachable above any number of open explorer windows. Below the
 `md` breakpoint the layer never mounts at all; `src/web/components/os-explorer/mobile/` renders the
 same `ExplorerBody` component inside a full-screen bottom sheet instead (`variant="sheet"`).
+Drag and resize share a `gestureAbandoned()` guard (`use-window-gesture-context.ts`) for the
+pointer-up that still arrives after a mid-gesture window close (e.g. dragging by a titlebar button
+that closes the frame).
 
-A window's titlebar is a swappable `chrome` component (`WindowChromeProps` contract) — the OS skin
-picks Windows caption buttons or macOS traffic lights from `src/web/components/os-explorer/skins/`,
-scoped entirely through `[data-skin="windows"|"macos"]` CSS variables layered over PPM's existing
-semantic theme tokens, so both PPM dark and light mode render correctly under either skin with no
-second color table.
+**One chrome, every kind.** `WindowSkinChrome` (`window-skin-chrome.tsx`) is the titlebar every
+window kind — explorer, team-member session, system monitor, detached tab — renders: it resolves
+the active OS skin via `useExplorerSkin()` (Settings override, else host platform; Linux → macOS)
+and delegates to that skin's `WindowsWindowChrome` / `MacosWindowChrome`
+(`src/web/components/os-explorer/skins/`), scoped entirely through `[data-skin="windows"|"macos"]`
+CSS variables layered over PPM's existing semantic theme tokens — no second color table. The
+Windows skin's folder glyph draws only for `kind === "explorer"`; every other kind gets the bare
+titlebar. The macOS skin boxes the title between the traffic lights and the PiP button as a flex
+child (so a long title truncates instead of overlapping either), and puts the PiP button at the
+titlebar's right end; the Windows skin puts it left of minimize.
 
-#### Tab-host windows and Document PiP
+**PiP is a capability of the frame, not of one kind.** `useWindowBodyElement`
+(`use-window-body-element.ts`) creates the single DOM element `FloatingWindow` portals a window's
+content into and publishes it as that window's PiP slot (`window-pip-registry.ts`, keyed by window
+id). `PipCaptionButton` (`pip/pip-caption-button.tsx`), rendered by both skins, moves that slot into
+a `documentPictureInPicture` window and back; it is absent (not disabled) where the API is
+unsupported. `WindowPipPlaceholder` (`window-pip-placeholder.tsx`) takes the body's place in the
+frame while it plays in PiP, with a ≥44px "Bring back" control. The mechanics below (attach/detach,
+style mirroring, key forwarding, resize signalling) apply to whichever window kind currently owns
+the slot — a tab-host window is only the one kind whose body is itself a portal target for another
+component (`TabPool`).
 
-A desktop tab can detach into a floating window (`WindowKind` `"tab-host"`, `window-store-types.ts`)
-and further into a browser Document Picture-in-Picture window, reversible at either step, with zero
-state loss — no tab component is ever remounted.
+#### Tab-host windows (detaching a tab into its own window)
 
 - **Off-grid panel.** Detaching creates `` `__win__:${windowId}` `` (`windowPanelId()`,
   `stores/panel-utils.ts`) — same treatment as `__dock__`: lives in `panels`, never in `grid`, so no
@@ -2306,29 +2321,30 @@ state loss — no tab component is ever remounted.
   window layer never mounts there): a panel whose window is gone comes back to the grid; a window
   with no panel behind it closes.
 - **PiP host.** `attachPipHost`/`isDocumentPipSupported` (`floating-window/pip/pip-host.ts`,
-  `pip-support.ts`) move the tab-host window's *slot* element — never the tab's wrapper — into a
+  `pip-support.ts`) move a window's *slot* element — never a tab's own wrapper — into a
   `documentPictureInPicture` window, one at a time per page. `pagehide` triggers a synchronous
   restore (no `await` between it and the DOM move) so a closing PiP document never strips listeners
   off a still-live terminal. `pip-style-copy.ts` mirrors stylesheets + `adoptedStyleSheets` once and
-  `<html>` class/inline theme CSS vars + `<body>` class on every theme change, plus a
-  MutationObserver for Vite HMR-injected `<style>` tags. `pip-key-forward.ts` re-dispatches
-  keydown/keyup from the PiP window onto the main window for app-level shortcuts, skipping targets
-  that own their own input (`input`, `.monaco-editor`, `.xterm-helper-textarea`, etc.).
-  `pip-resize-signal.ts` dispatches a non-bubbling `ppm:host-resize` CustomEvent on each
+  `<html>` class/inline theme CSS vars + `<body>` class **and inline style** on every theme change
+  (the page background is an inline `background: var(--bg)` on `<body>` in `index.html`, not a
+  class), plus a MutationObserver for Vite HMR-injected `<style>` tags. `pip-key-forward.ts`
+  re-dispatches keydown/keyup from the PiP window onto the main window for app-level shortcuts,
+  skipping targets that own their own input (`input`, `.monaco-editor`, `.xterm-helper-textarea`,
+  etc.). `pip-resize-signal.ts` dispatches a non-bubbling `ppm:host-resize` CustomEvent on each
   `[data-tab-pool-id]` wrapper inside the slot (on attach, every PiP `resize`, and on detach); the
   terminal and editors subscribe via `onHostResize` and re-fit, because main-window
   `ResizeObserver`s are late or silent for a PiP-driven size.
 - **Radix portals in PiP.** `PortalContainerProvider` (`components/ui/portal-container-context.tsx`)
   is mounted inside `ReparentingTab` around each tab's content, fed the PiP document's `body` while
-  that tab's window is in PiP (`usePipPortalContainer`, `tab-host-pip-registry.ts`) — so a tab's own
+  that tab's window is in PiP (`usePipPortalContainer`, `window-pip-registry.ts`) — so a tab's own
   dropdowns/tooltips/dialogs render inside the PiP document instead of opening unreachably in the
   main window. `undefined` (document default) while docked.
-- **Known limitations** (see the comment block atop `tab-host-window-chrome.tsx`): sonner toasts
+- **Known limitations** (see the comment block atop `pip/pip-caption-button.tsx`): sonner toasts
   always render in the main window (one app-root toaster); `useIsMobile()`/Tailwind `md:` read the
   main window's viewport, not the PiP window's; `onSelect`/`selectionchange` degrades for PiP
   content; the terminal's reconnect check reads the main document's visibility; Monaco keybindings
   (Ctrl+Z, Ctrl+F, …) don't fire while the editor sits in PiP (typing still reaches the buffer); a
-  window's titlebar keeps the tab title captured at pop-out time.
+  tab-host window's titlebar keeps the tab title captured at pop-out time.
 - **Mobile.** Pop-out and PiP are hidden entirely below `md` (`useIsMobile()`) — never a scaled-down
   window.
 

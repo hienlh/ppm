@@ -168,14 +168,16 @@ src/
     │   ├── database/
     │   ├── editor/
     │   ├── explorer/                # Project file tree (sidebar)
-    │   ├── floating-window/         # ADDED: Desktop window manager — drag/8-handle resize, z-band 30..38, persisted rects
-    │   │   ├── tab-host-window-content.tsx  # ADDED: tab-host window body — publishes the slot TabPool reparents a detached tab into
-    │   │   ├── tab-host-window-chrome.tsx   # ADDED: tab-host titlebar — Document PiP toggle button
-    │   │   ├── tab-host-pip-registry.ts     # ADDED: cross-sibling slot/PiP-handle registry shared by the tab-host body, chrome and tab content
-    │   │   └── pip/                          # ADDED: Document Picture-in-Picture host (pip-host, pip-style-copy, pip-key-forward, pip-resize-signal, pip-geometry, pip-support, pip-focus-target)
+    │   ├── floating-window/         # Desktop window manager — drag/8-handle resize, z-band 30..38, persisted rects; one skinned chrome + frame-owned PiP for every window kind
+    │   │   ├── window-skin-chrome.tsx       # Titlebar every window kind renders — resolves the active OS skin and delegates to it
+    │   │   ├── use-window-body-element.ts   # Body element every window portals content into; publishes/detaches its PiP slot
+    │   │   ├── window-pip-registry.ts       # Per-window PiP slot/handle registry — also read by TabPool for a detached tab's portal target
+    │   │   ├── window-pip-placeholder.tsx   # "Playing in picture-in-picture" / "Bring back" shown by the frame while a window's body is popped out
+    │   │   ├── tab-host-window-content.tsx  # tab-host window body — publishes the slot TabPool reparents a detached tab into
+    │   │   └── pip/                          # Document Picture-in-Picture host (pip-host, pip-style-copy, pip-key-forward, pip-resize-signal, pip-geometry, pip-support, pip-focus-target, pip-caption-button — the shared titlebar PiP button every skin renders)
     │   ├── os-explorer/              # ADDED: OS File Explorer window body
     │   │   ├── views/                # List / Icons (thumbnails) / Column (Miller) view components
-    │   │   ├── skins/                 # Windows 11 + macOS Finder chrome, folder icons, [data-skin] CSS vars
+    │   │   ├── skins/                 # Windows 11 + macOS Finder chrome (worn by every floating-window kind, not just explorer), folder icons, [data-skin] CSS vars
     │   │   ├── mobile/                # Full-screen bottom-sheet variant (top bar, places strip, bottom toolbar)
     │   │   ├── dnd/                   # Entry drag-and-drop (explorer ↔ explorer ↔ project tree)
     │   │   └── actions/                # Disk mutations (cut/copy/paste/rename/trash/delete), collision prompt

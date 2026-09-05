@@ -98,8 +98,11 @@ These rules MUST be followed when creating or modifying any UI component. PPM is
 
 ## Floating Windows
 
-Desktop-only window manager (`src/web/components/floating-window/`), currently used by the OS
-File Explorer. Any future floating-window feature must follow the same contract:
+Desktop-only window manager (`src/web/components/floating-window/`), hosting the OS File Explorer,
+team-member sessions, the System Monitor, and detached tabs (`tab-host`). Every kind shares one
+titlebar chrome — `WindowSkinChrome` resolves the active OS skin (Settings override, else host
+platform) and renders it, whatever the window's `kind` — and one PiP capability owned by the frame,
+not by any one kind. Any future floating-window feature must follow the same contract:
 
 - **Z-band**: windows render at `zIndex = 30 + rank`, dense-ranked, capped at an **8-window
   limit** (opening a 9th focuses the oldest window instead of spawning one). This keeps every
@@ -124,12 +127,14 @@ File Explorer. Any future floating-window feature must follow the same contract:
     equivalent, and the guideline reserves long-press for the context menu instead.
   - Row/tile height and toolbar buttons still need the 44×44px minimum on a coarse pointer even
     at desktop width, gated the same way.
-- **Tab-host windows** (a tab detached from its panel, plus its optional Document
-  Picture-in-Picture step) follow the same desktop-only rule: below `md`, "Open in window" is
-  hidden from the tab context menu and any already-detached tabs reconcile back into the grid — a
-  windowed tab is never shown scaled down. The PiP toggle button is absent (not disabled) on
-  browsers without `documentPictureInPicture`. The "Bring back" control shown while a tab plays in
-  PiP is a full ≥44×44px touch target like any other primary action.
+- **Picture-in-Picture** is a titlebar capability of every window kind, not just a detached tab:
+  every skin renders the same PiP button, absent (not disabled, never a dead control that only
+  explains itself) on browsers without `documentPictureInPicture`. The "Bring back" control shown
+  while a window plays in PiP is a full ≥44×44px touch target like any other primary action.
+- **Tab-host windows** (a tab detached from its panel, plus its optional PiP step) follow the same
+  desktop-only rule as every other kind: below `md`, "Open in window" is hidden from the tab
+  context menu and any already-detached tabs reconcile back into the grid — a windowed tab is
+  never shown scaled down.
 
 ---
 
