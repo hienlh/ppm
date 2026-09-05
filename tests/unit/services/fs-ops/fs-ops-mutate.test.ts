@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,11 +21,30 @@ function ppmSecret(): string {
   return secret;
 }
 
+// ── `~/.cloudflared` credential-path fixture ──────────────────────────────
+// Same "never touch a real login state" discipline as
+// tests/unit/services/fs-path-guard-cloudflared.test.ts: only create/remove
+// what this file itself creates, never the real dir or a real cert.pem next
+// to it if cloudflared already put one there.
+const cloudflaredDir = join(homedir(), ".cloudflared");
+const cloudflaredDirPreexisted = existsSync(cloudflaredDir);
+let cloudflaredMarker: string;
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "fs-mutate-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+beforeAll(() => {
+  if (!cloudflaredDirPreexisted) mkdirSync(cloudflaredDir, { recursive: true });
+  cloudflaredMarker = join(cloudflaredDir, "ppm-test-copy-guard-marker.pem");
+  writeFileSync(cloudflaredMarker, "not a real credential — fs-ops-mutate test fixture");
+});
+afterAll(() => {
+  rmSync(cloudflaredMarker, { force: true });
+  if (!cloudflaredDirPreexisted) rmSync(cloudflaredDir, { recursive: true, force: true });
 });
 
 describe("renamePath", () => {
@@ -218,5 +237,24 @@ describe("copyPath / movePath", () => {
     await expect(
       copyPath(join(dir, "a.txt"), "\\\\server\\share\\a.txt"),
     ).rejects.toThrow("Access denied");
+  });
+
+  it("refuses to copy a file out of ~/.cloudflared (Cloudflare login cert directory)", async () => {
+    const dest = join(dir, "stolen.pem");
+    await expect(copyPath(cloudflaredMarker, dest)).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(dest)).toBe(false);
+  });
+
+  it("refuses to move a file out of ~/.cloudflared the same way", async () => {
+    const dest = join(dir, "stolen.pem");
+    await expect(movePath(cloudflaredMarker, dest)).rejects.toMatchObject({
+      status: 403,
+      code: "EPROTECTED",
+    });
+    expect(existsSync(dest)).toBe(false);
+    expect(existsSync(cloudflaredMarker)).toBe(true); // source must survive the refused move
   });
 });
