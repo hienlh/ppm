@@ -8,9 +8,6 @@
  */
 
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
-import { ExplorerSkinChrome } from "@/components/os-explorer/skins/explorer-skin-chrome";
-import { TabHostWindowChrome } from "./tab-host-window-chrome";
-import type { WindowChrome } from "./window-chrome-contract";
 import type { WindowKind } from "./window-store-types";
 
 export interface WindowContentProps {
@@ -26,21 +23,6 @@ export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentTyp
   "system-monitor": lazy(() => import("@/components/system/system-monitor-window-content")),
   "tab-host": lazy(() => import("./tab-host-window-content")),
 };
-
-/**
- * Per-kind titlebar chrome. `FloatingWindow` renders `chrome` directly with no
- * `<Suspense>` around it, so — unlike `WINDOW_CONTENT` — entries here must be plain,
- * synchronously-renderable components, not `lazy()`.
- */
-export const WINDOW_CHROME: Partial<Record<WindowKind, WindowChrome>> = {
-  explorer: ExplorerSkinChrome,
-  "tab-host": TabHostWindowChrome,
-};
-
-/** Chrome for a window kind, or `undefined` to fall back to `DefaultWindowChrome`. */
-export function chromeFor(kind: WindowKind): WindowChrome | undefined {
-  return WINDOW_CHROME[kind];
-}
 
 /** Titlebar text for a window. Falls back to the kind's generic name. */
 export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>): string {

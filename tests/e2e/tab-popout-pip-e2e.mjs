@@ -68,7 +68,7 @@ async function scenario(id, name, fn) {
 const PANELS = `(await import('/stores/panel-store.ts')).usePanelStore`;
 const WINDOWS = `(await import('/components/floating-window/window-store.ts')).useWindowStore`;
 const PROJECTS = `(await import('/stores/project-store.ts')).useProjectStore`;
-const PIPREG = `(await import('/components/floating-window/tab-host-pip-registry.ts'))`;
+const PIPREG = `(await import('/components/floating-window/window-pip-registry.ts'))`;
 
 let cdp;
 let main; // sessionId of the app page
@@ -106,9 +106,9 @@ async function api(method, path, body) {
 // ---------------------------------------------------------------------------
 async function installAppHelpers() {
   await ev(`(async () => {
-    const reg = await import('/components/floating-window/tab-host-pip-registry.ts');
+    const reg = await import('/components/floating-window/window-pip-registry.ts');
     const E = window.__e2e;
-    E.pipDoc = (wid) => reg.tabHostPip(wid)?.pipWindow.document ?? null;
+    E.pipDoc = (wid) => reg.windowPip(wid)?.pipWindow.document ?? null;
     E.wrapper = (tabId, wid) => {
       const sel = '[data-tab-pool-id=' + JSON.stringify(tabId) + ']';
       const pip = wid ? E.pipDoc(wid) : null;
@@ -223,7 +223,7 @@ async function enterPip(winId) {
   const sid = await cdp.attach(target.targetId);
   await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }, sid).catch(() => {});
   await sleep(800);
-  const inPip = await ev(`!!(${PIPREG}.tabHostPip(${JSON.stringify(winId)}))`);
+  const inPip = await ev(`!!(${PIPREG}.windowPip(${JSON.stringify(winId)}))`);
   if (!inPip) throw new Error("registry has no PiP handle after requestWindow");
   return { sid, targetId: target.targetId };
 }

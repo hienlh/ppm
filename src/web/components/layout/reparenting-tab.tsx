@@ -18,7 +18,7 @@ import { Loader2 } from "lucide-react";
 import { usePanelStore } from "@/stores/panel-store";
 import { DOCK_PANEL_ID, isWindowPanelId } from "@/stores/panel-utils";
 import { PortalContainerProvider } from "@/components/ui/portal-container-context";
-import { usePipPortalContainer } from "@/components/floating-window/tab-host-pip-registry";
+import { usePipPortalContainer } from "@/components/floating-window/window-pip-registry";
 import { slotRegistry } from "./tab-pool-registry";
 
 export interface ReparentingTabProps {
