@@ -59,18 +59,18 @@ export function MacosWindowChrome({
           </button>
         ))}
       </div>
+      {/* A flex child, not an absolutely centred span: the title is boxed between the
+          traffic lights and the caption button, so a long title truncates instead of
+          painting over either of them. Centre is a few px off true middle — acceptable. */}
       <span
         className={cn(
-          "pointer-events-none absolute inset-x-0 truncate text-center text-[13px]",
+          "pointer-events-none flex-1 min-w-0 truncate text-center text-[13px] px-2",
           focused ? "text-text" : "text-text-2",
         )}
       >
         {title}
       </span>
-      {/* `relative` on purpose: the centred title above is absolutely positioned and would
-          otherwise paint over this button. Both positioned → DOM order decides, and this
-          comes last. */}
-      <div className="relative ml-auto flex items-center pr-2">
+      <div className="flex items-center pr-2">
         <PipCaptionButton id={id} />
       </div>
     </div>
