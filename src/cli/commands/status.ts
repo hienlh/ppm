@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { getPpmDir } from "../../services/ppm-dir.ts";
+import { redactSecrets } from "../../services/redact-secrets.ts";
 
 interface DaemonStatus {
   running: boolean;
@@ -149,13 +150,13 @@ export async function showStatus(options: { json?: boolean; all?: boolean }) {
     const serverProcs = ppmProcs.filter((p) => p.args.includes("ppm") && !p.args.includes("pgrep"));
     if (serverProcs.length > 0) {
       console.log(`\n  PPM-related processes (${serverProcs.length}):`);
-      for (const p of serverProcs) console.log(`    PID ${p.pid}  ${p.args}`);
+      for (const p of serverProcs) console.log(`    PID ${p.pid}  ${redactSecrets(p.args)}`);
     }
 
     // All cloudflared processes
     if (cfProcs.length > 0) {
       console.log(`\n  Cloudflared processes (${cfProcs.length}):`);
-      for (const p of cfProcs) console.log(`    PID ${p.pid}  ${p.args}`);
+      for (const p of cfProcs) console.log(`    PID ${p.pid}  ${redactSecrets(p.args)}`);
     }
 
     if (serverProcs.length === 0 && cfProcs.length === 0 && !status.running) {

@@ -8,6 +8,7 @@ import type { RpcChannel } from "./extension-rpc.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import { broadcastExtMsg, requestFromBrowser } from "../server/ws/extensions.ts";
 import { getProjects } from "./db.service.ts";
+import { isSecretConfigKey } from "./config-secret-keys.ts";
 
 let requestIdCounter = 0;
 function nextRequestId(): string {
@@ -153,6 +154,9 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
   // --- workspace config ---
   rpc.onRequest("workspace:config:get", async (params) => {
     const [key] = params as [string];
+    // An extension gets no signal beyond "not present" for a secret key —
+    // same not-found shape as a key that genuinely does not exist.
+    if (isSecretConfigKey(key)) return null;
     // Read from PPM config service
     try {
       const { configService } = await import("./config.service.ts");
