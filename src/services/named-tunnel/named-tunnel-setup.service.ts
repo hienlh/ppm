@@ -16,6 +16,7 @@ import { configService } from "../config.service.ts";
 import { requestTunnelReload, readStatus } from "../supervisor-state.ts";
 import { broadcastGlobalEvent } from "../../server/ws/global.ts";
 import { pinsMatch } from "./cloudflared-login-helpers.ts";
+import { confirmReloadInBackground, isConfirmationRunning } from "./named-tunnel-setup-confirm.ts";
 
 export type CertState = "none" | "invalid" | "ok" | "mismatch";
 
@@ -30,8 +31,6 @@ export class SetupError extends Error {
 
 const TOKEN_SHAPE = /^[A-Za-z0-9._-]{100,}$/;
 const RELOAD_RETRY_DELAY_MS = 2_000;
-const CONFIRM_POLL_BUDGET_MS = 45_000;
-const CONFIRM_POLL_INTERVAL_MS = 1_000;
 
 /** Module-level in-flight guard — two concurrent setups would race `route dns`. */
 let setupInFlight = false;
@@ -66,22 +65,26 @@ export async function disableNamedTunnel(): Promise<void> {
   requestTunnelReload();
 }
 
-async function pollForConfirmation(hostname: string): Promise<boolean> {
-  const deadline = Date.now() + CONFIRM_POLL_BUDGET_MS;
-  while (Date.now() < deadline) {
-    const status = readStatus();
-    if (status.tunnelMode === "named" && status.shareUrl === `https://${hostname}`) return true;
-    await Bun.sleep(CONFIRM_POLL_INTERVAL_MS);
-  }
-  return false;
-}
-
 export type SetupOutcome =
   | { ok: true; hostname: string; tunnelName: string }
   | { ok: "pending"; hostname: string; tunnelName: string; message: string };
 
+/**
+ * The synchronous `setupInFlight` lock only covers the create/route/token
+ * cycle — once the supervisor reload is sent, confirmation continues in the
+ * background (`named-tunnel-setup-confirm.ts`) and this function has already
+ * returned. `isConfirmationRunning` extends the 409 specifically to a retry
+ * for the *same* hostname during that bounded (<=45s) window, so mashing
+ * "Set up" doesn't kick off a second, redundant create/route/token cycle for
+ * a request that is already in flight. A *different* hostname is still let
+ * through immediately and supersedes the earlier confirmer — see the confirm
+ * module for how the stale one is silenced instead of broadcasting late.
+ */
 export async function runSetup(hostname: string): Promise<SetupOutcome> {
   if (setupInFlight) throw new SetupError(409, "a setup is already running");
+  if (isConfirmationRunning(hostname)) {
+    throw new SetupError(409, "a setup for this hostname is already confirming — check again shortly");
+  }
   setupInFlight = true;
   try {
     return await runSetupInner(hostname);
@@ -173,31 +176,6 @@ async function runSetupInner(hostname: string): Promise<SetupOutcome> {
   // already listens for both events.
   confirmReloadInBackground(hostname);
   return pending("reload sent — waiting for the supervisor to confirm");
-}
-
-/** Fire-and-forget: polls status.json and broadcasts the final outcome. Never throws into the caller. */
-function confirmReloadInBackground(hostname: string): void {
-  pollForConfirmation(hostname)
-    .then((confirmed) => {
-      if (confirmed) {
-        broadcastGlobalEvent({ type: "tunnel:setup_done", hostname });
-        return;
-      }
-      const latest = readStatus();
-      const warning = typeof latest.tunnelWarning === "string" ? latest.tunnelWarning : null;
-      broadcastGlobalEvent({
-        type: "tunnel:setup_pending",
-        hostname,
-        message: warning ?? "setup saved but the supervisor has not confirmed it yet — check again shortly",
-      });
-    })
-    .catch(() => {
-      broadcastGlobalEvent({
-        type: "tunnel:setup_pending",
-        hostname,
-        message: "confirmation check failed — check status again shortly",
-      });
-    });
 }
 
 /**
