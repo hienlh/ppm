@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WatchTree } from "../../../src/services/file-watcher/watch-tree.ts";
@@ -34,6 +34,9 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<bool
 }
 
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Mirrors NATIVE_RECURSIVE in watch-tree.ts: a clean subtree costs one handle there. */
+const NATIVE_RECURSIVE = process.platform === "win32" || process.platform === "darwin";
 
 afterEach(() => {
   for (const tree of trees) tree.close();
@@ -74,25 +77,85 @@ describe("WatchTree coverage", () => {
     expect(tree.stats().truncated).toBe(false);
   });
 
-  it("covers a clean subtree with a single recursive watcher", () => {
+  it("covers a clean subtree with one handle, or one per directory on Linux", () => {
     const root = makeRoot();
     for (let i = 0; i < 5; i++) {
       mkdirSync(join(root, "src", `mod-${i}`, "nested"), { recursive: true });
     }
 
+    // root + src + 5 mods + 5 nested, covered either way. Where the runtime's recursive
+    // watch is kernel-side the whole clean tree costs one handle; on Linux it is emulated
+    // per directory, which buys nothing and misses directories created later, so coverage
+    // is attached here and the handle count tracks the directory count.
     const { tree } = open(root);
-    // root + src + 5 mods + 5 nested, all under one recursive watch on the root.
-    expect(tree.stats()).toEqual({ dirs: 12, watchers: 1, truncated: false, polledDirs: 0 });
+    expect(tree.stats()).toEqual({
+      dirs: 12,
+      watchers: NATIVE_RECURSIVE ? 1 : 12,
+      truncated: false,
+      polledDirs: 0,
+    });
   });
 
-  it("splits into per-directory watchers only where an ignored directory sits", () => {
+  it("leaves an ignored directory and everything under it unwatched", () => {
     const root = makeRoot();
     mkdirSync(join(root, "src", "deep", "deeper"), { recursive: true });
     mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
 
+    // root + src + deep + deeper: node_modules and its package are never covered. The
+    // ignored entry forces root itself to be watched alone on every platform; the clean
+    // src subtree below it can still be one recursive handle where that is native.
     const { tree } = open(root);
-    // root must be non-recursive (it holds node_modules); src is clean so it takes one recursive watch.
-    expect(tree.stats()).toEqual({ dirs: 4, watchers: 2, truncated: false, polledDirs: 0 });
+    expect(tree.stats()).toEqual({
+      dirs: 4,
+      watchers: NATIVE_RECURSIVE ? 2 : 4,
+      truncated: false,
+      polledDirs: 0,
+    });
+  });
+
+  it("reports nothing from a store reached through a symlinked node_modules", async () => {
+    const root = makeRoot();
+    const store = makeRoot();
+    mkdirSync(join(store, "pkg", "lib"), { recursive: true });
+    mkdirSync(join(root, "src"), { recursive: true });
+    // "junction" is ignored off Windows and avoids needing the symlink privilege on it.
+    symlinkSync(store, join(root, "node_modules"), "junction");
+
+    // A pnpm workspace links node_modules elsewhere, and the store must not be watched:
+    // on Bun/Linux every watched file costs an open descriptor, and a store reached this
+    // way is what exhausted the process.
+    const { tree, changes } = open(root);
+    expect(tree.stats().dirs).toBe(2); // root + src
+    // Two handles is the assertion that fails against a build without the symlink mark:
+    // there the root looks clean and takes a single recursive watch. `dirs` and the
+    // silence below are both the same on either build — on Linux because the events are
+    // dropped on arrival instead, on Windows because the subtree watch never follows the
+    // reparse point. Only the shape distinguishes them, on both platforms.
+    expect(tree.stats().watchers).toBe(2); // non-recursive root + src
+
+    writeFileSync(join(store, "pkg", "lib", "index.js"), "module.exports = 1;");
+    writeFileSync(join(root, "src", "app.ts"), "export const a = 1;");
+
+    // The sibling write is the control: once it lands, delivery has happened and a
+    // report from the store would have arrived with it.
+    expect(await waitFor(() => changes.some((p) => p.endsWith("src/app.ts")))).toBe(true);
+    expect(changes.some((p) => p.includes("node_modules") || p.includes("pkg"))).toBe(false);
+  });
+
+  it("reports a file created in a directory that appeared after the watch started", async () => {
+    const root = makeRoot();
+    mkdirSync(join(root, "src"), { recursive: true });
+    const { tree, changes } = open(root);
+
+    mkdirSync(join(root, "src", "feature"));
+    // On Linux the new directory needs its own handle before the file lands, so wait for
+    // the coverage itself rather than a fixed delay. A native recursive watch covers it
+    // without ever calling syncChildDir, so `dirs` stays 2 there and waiting for 3 would
+    // just time out — the file arriving below is the assertion that holds on both.
+    if (!NATIVE_RECURSIVE) expect(await waitFor(() => tree.stats().dirs === 3)).toBe(true);
+
+    writeFileSync(join(root, "src", "feature", "index.ts"), "export const a = 1;");
+    expect(await waitFor(() => changes.some((p) => p.endsWith("feature/index.ts")))).toBe(true);
   });
 
   it("stops at the directory budget and reports truncation", () => {

@@ -134,10 +134,10 @@ See `src/web/hooks/use-tab-prefetch.ts`.
 
 ## File Watching
 
-### `fs.watch(dir, { recursive: true })` costs one inotify watch per subdirectory
+### `fs.watch(dir, { recursive: true })` costs one inotify watch per entry
 
-One call, but on Linux the runtime expands it into a watch per directory in the tree —
-`node_modules` included. Filtering unwanted paths when the event *arrives* still pays the
+One call, but on Linux the runtime expands it into a watch per *entry* in the tree — every
+file as well as every directory, `node_modules` included. Filtering unwanted paths when the event *arrives* still pays the
 full registration cost: PPM held **359,058** inotify watches on one machine (68.5% of the
 524,288 default `fs.inotify.max_user_watches`, with the box at 91.6% overall), which starves
 every other process on the system — editors, language servers, dev servers.
@@ -146,10 +146,27 @@ A directory census of this repo shows why: 18,731 directories total, of which `n
 is 16,926 (90.4%) and `.git` 286. Only ~200 are worth watching.
 
 **Rule:** prune at registration, never at event time. `src/services/file-watcher/watch-tree.ts`
-scans once, then attaches the fewest watchers that cover the tree without ever handing an
-ignored directory to the runtime: one native recursive watch for any subtree that contains no
-ignored directory, and a non-recursive watch plus per-child recursion wherever one sits. Keeping
-the handle count low also keeps `fs.inotify.max_user_instances` (default 128) out of play.
+scans once, then attaches the fewest watchers that cover the tree without ever handing an ignored
+directory to the runtime.
+
+What "fewest" means is per-platform, because `{ recursive: true }` is two different mechanisms.
+On Windows and macOS it is a kernel-side subtree watch, so any subtree holding no ignored
+directory gets a single handle. On Linux it is emulated by walking the tree and opening a watch
+per entry — it follows symlinks out of the subtree and never picks up directories created after
+the call, so there PPM attaches one non-recursive watcher per directory and extends coverage
+itself as directories appear.
+
+The split is measured, not assumed. On a 2,441-directory tree on Windows the one recursive handle
+attaches in 80ms for +7.0MB, against 965ms and +25.2MB for per-directory handles — so the
+emulation's defects are not a reason to give up the real thing where it exists.
+
+Handle count is not the same as inotify pressure, and neither is directory count. Measured on
+Linux over 4 directories holding 600 files: a single recursive handle and one non-recursive
+handle per directory both come to **604** watch descriptors on one inotify instance — the
+directories plus every file. So `max_user_instances` (default 128) counts instances, not
+descriptors, and a *directory* budget bounds handles and walk cost rather than descriptors.
+What removed the 359,058 watches was never registering `node_modules` — not the shape of the
+handles, and not the cap.
 
 Raising the sysctl limit is not a fix — each watch pins ~1KB of kernel memory, so a 2M ceiling
 reserves ~2GB to paper over waste.
@@ -276,9 +293,9 @@ never watched works normally even inside a recreated parent
 
 **Fix**: `WatchTree` remembers every path it has handed to `fs.watch`. Re-attaching one of them
 means that directory was deleted and recreated, so on Linux it hands the directory to
-`RecreatedDirPoller` (readdir + mtime diff, 1s interval, hard cap of 64 directories) and covers the
-subtree non-recursively so each child gets a watcher on a path the runtime still honours. Windows
-and macOS never construct the poller.
+`RecreatedDirPoller` (readdir + mtime diff, 1s interval, hard cap of 64 directories). Nothing more
+is needed for the children: Linux already covers every directory with its own watcher, so they sit
+on paths the runtime still honours. Windows and macOS never construct the poller.
 
 `WatchTreeStats.polledDirs` reports how many directories are on the degraded path, and the cap
 being hit sets `truncated` — so a churn storm shows up in stats instead of silently growing the
