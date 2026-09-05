@@ -119,6 +119,48 @@ describe("sanitizeConfig — multi-provider", () => {
   });
 });
 
+describe("sanitizeConfig — tunnel", () => {
+  it("returns false for the default {mode:'quick'} tunnel row", () => {
+    const config = makeConfig();
+    expect(sanitizeConfig(config)).toBe(false);
+  });
+
+  it("leaves an incomplete-but-typed named row unchanged — no strip", () => {
+    const config = makeConfig();
+    config.tunnel = { mode: "quick", namedTunnelHostname: "ppm.x", namedTunnelToken: "t" } as any;
+    const dirty = sanitizeConfig(config);
+    expect(dirty).toBe(false);
+    expect(config.tunnel).toEqual({ mode: "quick", namedTunnelHostname: "ppm.x", namedTunnelToken: "t" });
+  });
+
+  it("resets tunnel to default when the raw value is not an object", () => {
+    const config = makeConfig();
+    (config as any).tunnel = "not-an-object";
+    const dirty = sanitizeConfig(config);
+    expect(dirty).toBe(true);
+    expect(config.tunnel).toEqual({ mode: "quick" });
+  });
+
+  it("resets tunnel to default when mode is neither quick nor named", () => {
+    const config = makeConfig();
+    (config as any).tunnel = { mode: "bogus" };
+    const dirty = sanitizeConfig(config);
+    expect(dirty).toBe(true);
+    expect(config.tunnel).toEqual({ mode: "quick" });
+  });
+
+  it("preserves a fully-populated named tunnel row", () => {
+    const config = makeConfig();
+    config.tunnel = {
+      mode: "named", namedTunnelName: "ppm-host", namedTunnelHostname: "ppm.hienle.tech",
+      namedTunnelToken: "tok", zoneID: "a".repeat(32), accountID: "b".repeat(32),
+    };
+    const dirty = sanitizeConfig(config);
+    expect(dirty).toBe(false);
+    expect(config.tunnel.namedTunnelToken).toBe("tok");
+  });
+});
+
 describe("validateDefaultProvider", () => {
   it("returns null when provider exists", () => {
     const result = validateDefaultProvider("claude", { claude: {} });
