@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import type { PpmConfig } from "../../types/config.ts";
-import { isSecretConfigKey } from "../../services/config-secret-keys.ts";
+import { isSecretConfigKey, redactSecretConfigValue } from "../../services/config-secret-keys.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -83,10 +83,14 @@ export function registerConfigCommands(program: Command): void {
           }
           process.exit(1);
         }
-        if (typeof value === "object") {
-          console.log(JSON.stringify(value, null, 2));
+        // A leaf secret key is caught above; an ANCESTOR of one (e.g. "tunnel",
+        // "auth") reaches here with the raw object still intact, so every
+        // result — object or scalar — is deep-redacted before printing.
+        const display = redactSecretConfigValue(key, value);
+        if (typeof display === "object") {
+          console.log(JSON.stringify(display, null, 2));
         } else {
-          console.log(`${C.bold}${key}${C.reset} = ${C.green}${String(value)}${C.reset}`);
+          console.log(`${C.bold}${key}${C.reset} = ${C.green}${String(display)}${C.reset}`);
         }
       } catch (err) {
         console.error(`${C.red}Error:${C.reset}`, (err as Error).message);

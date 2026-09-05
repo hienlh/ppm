@@ -8,7 +8,7 @@ import type { RpcChannel } from "./extension-rpc.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
 import { broadcastExtMsg, requestFromBrowser } from "../server/ws/extensions.ts";
 import { getProjects } from "./db.service.ts";
-import { isSecretConfigKey } from "./config-secret-keys.ts";
+import { isSecretConfigKey, redactSecretConfigValue } from "./config-secret-keys.ts";
 
 let requestIdCounter = 0;
 function nextRequestId(): string {
@@ -161,7 +161,11 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     try {
       const { configService } = await import("./config.service.ts");
       const config = configService.getAll() as unknown as Record<string, unknown>;
-      return getNestedValue(config, key) ?? null;
+      const value = getNestedValue(config, key) ?? null;
+      // A request for an ANCESTOR of a secret key (e.g. "tunnel", "auth")
+      // is not caught by isSecretConfigKey above and still holds the raw
+      // object here, so deep-redact before it crosses the RPC boundary.
+      return value === null ? null : redactSecretConfigValue(key, value);
     } catch {
       return null;
     }
