@@ -3,6 +3,7 @@ import { openTestDb, setDb, getDb } from "../../../src/services/db.service.ts";
 import {
   setSessionUnread,
   clearSessionUnread,
+  clearSessionUnreadMany,
   getAllUnread,
   incrementSessionUnread,
   getSessionTitle,
@@ -456,5 +457,88 @@ describe("Session Unread Tracking — setSessionUnread", () => {
       };
       expect(row.last_known_title).toBe("Title 2");
     });
+  });
+});
+
+describe("incrementSessionUnread — row creation and project precedence", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+  });
+
+  it("creates the row for a session PPM never recorded", () => {
+    // The whole defect: this was UPDATE-only, so a session resumed here or started in the
+    // CLI has no session_metadata row and its notification was dropped on the floor.
+    incrementSessionUnread("cli-session", "done", "Started elsewhere", "alpha");
+
+    const rows = getAllUnread();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      sessionId: "cli-session",
+      unreadCount: 1,
+      unreadType: "done",
+      projectName: "alpha",
+    });
+  });
+
+  it("keeps counting up once the row exists", () => {
+    incrementSessionUnread("s", "done", null, "alpha");
+    incrementSessionUnread("s", "approval_request", null, "alpha");
+
+    const row = getAllUnread().find((r) => r.sessionId === "s")!;
+    expect(row.unreadCount).toBe(2);
+    expect(row.unreadType).toBe("approval_request"); // latest type wins
+  });
+
+  it("does not let a later project name overwrite the stored one", () => {
+    // A name arriving later is not evidence the session moved — a persisted tab can carry
+    // a renamed project in its URL. Overwriting would file the session under a project
+    // that no longer exists, which is un-openable and un-clearable: the exact state this
+    // whole change is meant to prevent.
+    incrementSessionUnread("s", "done", null, "real-project");
+    incrementSessionUnread("s", "done", null, "stale-project");
+
+    expect(getAllUnread().find((r) => r.sessionId === "s")!.projectName).toBe("real-project");
+  });
+
+  it("fills a missing project name when one finally arrives", () => {
+    incrementSessionUnread("s", "done", null, null);
+    incrementSessionUnread("s", "done", null, "alpha");
+
+    expect(getAllUnread().find((r) => r.sessionId === "s")!.projectName).toBe("alpha");
+  });
+
+  it("keeps the stored title when a later event has none", () => {
+    incrementSessionUnread("s", "done", "Real title", "alpha");
+    incrementSessionUnread("s", "done", null, "alpha");
+
+    const row = getDb().query("SELECT last_known_title FROM session_metadata WHERE session_id = ?")
+      .get("s") as { last_known_title: string | null };
+    expect(row.last_known_title).toBe("Real title");
+  });
+});
+
+describe("clearSessionUnreadMany", () => {
+  beforeEach(() => {
+    setDb(openTestDb());
+  });
+
+  it("clears sessions regardless of whether they have a project", () => {
+    // The set that could not be cleared before: the per-session route is mounted under
+    // /api/project/:projectName, whose middleware 404s for an unknown or renamed project.
+    incrementSessionUnread("with-project", "done", null, "alpha");
+    incrementSessionUnread("no-project", "done", null, null);
+    expect(getAllUnread()).toHaveLength(2);
+
+    clearSessionUnreadMany(["with-project", "no-project"]);
+
+    expect(getAllUnread()).toHaveLength(0);
+  });
+
+  it("ignores ids it does not know and an empty list", () => {
+    incrementSessionUnread("real", "done", null, "alpha");
+    clearSessionUnreadMany([]);
+    expect(getAllUnread()).toHaveLength(1);
+    clearSessionUnreadMany(["ghost", "real"]);
+    expect(getAllUnread()).toHaveLength(0);
   });
 });
