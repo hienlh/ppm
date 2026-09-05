@@ -79,6 +79,19 @@ const STATUS_RESETTABLE: ReadonlySet<Step["k"]> = new Set([
   "hidden", "ask-domain", "login-wait", "login-timeout", "login-cancelled", "needs-relogin", "error",
 ]);
 
+/**
+ * Steps that are actually waiting on a zone lookup. A login session's
+ * `state` stays "success" long after the moment it fired — it is not reset
+ * to "idle" — so a later, unrelated `/status` refresh (after setup-done, or
+ * on mount of an already-configured install) can still read "success" and
+ * ask for the zone again. Without this gate that stray `zone-loaded` would
+ * silently replace a "done" card with "confirm-zone", or reopen the hidden
+ * popup of a finished install straight into it. Exported so the hook can
+ * skip the redundant `/zone` call at the source instead of only discarding
+ * its result here.
+ */
+export const ZONE_EXPECTING_STEPS: ReadonlySet<Step["k"]> = new Set(["login-wait", "needs-relogin"]);
+
 function stepFromLoginState(state: LoginState, url: string | null, message: string | null): Step {
   switch (state) {
     case "waiting":
@@ -127,10 +140,10 @@ export function reduceStep(step: Step, action: Action): Step {
       return { k: "login-wait", url: null, slow: false };
 
     case "zone-loaded":
-      return { k: "confirm-zone", zone: action.zone };
+      return ZONE_EXPECTING_STEPS.has(step.k) ? { k: "confirm-zone", zone: action.zone } : step;
 
     case "zone-error":
-      return { k: "error", message: action.message };
+      return ZONE_EXPECTING_STEPS.has(step.k) ? { k: "error", message: action.message } : step;
 
     case "confirm-zone":
       return step.k === "confirm-zone"

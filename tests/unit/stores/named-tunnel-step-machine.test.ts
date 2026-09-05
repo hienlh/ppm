@@ -234,3 +234,40 @@ describe("reduceStep — a later status refresh must not clobber committed progr
     });
   }
 });
+
+describe("reduceStep — zone-loaded/zone-error only fire for a step that is actually expecting them (R1)", () => {
+  // A login session's `state` reads "success" long after that moment fired —
+  // it is not reset — so a later, unrelated status refresh can still see
+  // "success" and (before this fix) chase a zone lookup from any step.
+
+  it("(a) an already-configured install on mount stays hidden — a stray zone-loaded from that stale success is a no-op", () => {
+    const hidden: Step = { k: "hidden" };
+    // Mirrors an already-configured, already-dismissed-by-mode install: mode
+    // named, login snapshot still reporting the success from setup time.
+    const configuredStatus = status({ mode: "named", hostname: "ppm.example.com", login: { state: "success", url: null, message: null } });
+    expect(reduceStep(hidden, { type: "status", status: configuredStatus })).toEqual({ k: "hidden" });
+    expect(reduceStep(hidden, { type: "zone-loaded", zone: "example.com" })).toEqual({ k: "hidden" });
+    expect(reduceStep(hidden, { type: "zone-error", message: "not logged in" })).toEqual({ k: "hidden" });
+  });
+
+  it("(b) setup done, then a post-setup refetch reads login success — the done card is untouched by the status action or a stray zone-loaded", () => {
+    const done: Step = { k: "done", hostname: "ppm.example.com" };
+    const postSetupStatus = status({ mode: "named", hostname: "ppm.example.com", login: { state: "success", url: null, message: null } });
+    const afterStatus = reduceStep(done, { type: "status", status: postSetupStatus });
+    expect(afterStatus).toEqual(done);
+    expect(reduceStep(afterStatus, { type: "zone-loaded", zone: "example.com" })).toEqual(done);
+  });
+
+  it("a pending card also survives a stray zone-loaded/zone-error", () => {
+    const pending: Step = { k: "pending", hostname: "ppm.example.com", message: "…" };
+    expect(reduceStep(pending, { type: "zone-loaded", zone: "example.com" })).toEqual(pending);
+    expect(reduceStep(pending, { type: "zone-error", message: "boom" })).toEqual(pending);
+  });
+
+  it("zone-loaded still resolves normally from login-wait and needs-relogin (the steps that actually expect it)", () => {
+    expect(reduceStep({ k: "login-wait", url: null, slow: false }, { type: "zone-loaded", zone: "example.com" }))
+      .toEqual({ k: "confirm-zone", zone: "example.com" });
+    expect(reduceStep({ k: "needs-relogin", message: "renew" }, { type: "zone-loaded", zone: "example.com" }))
+      .toEqual({ k: "confirm-zone", zone: "example.com" });
+  });
+});

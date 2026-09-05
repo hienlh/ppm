@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { namedTunnelApi, type LoginState, type NamedTunnelStatus } from "@/lib/api-named-tunnel";
-import { reduceStep, type Step } from "./named-tunnel-step-reducer";
+import { reduceStep, ZONE_EXPECTING_STEPS, type Step } from "./named-tunnel-step-reducer";
 import { validateHostname, buildHostname } from "./hostname-validation";
 import { namedTunnelCopy } from "./named-tunnel-copy";
 
@@ -73,17 +73,31 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
       .finally(() => { zoneInFlight.current = false; });
   }, [dispatch]);
 
+  /**
+   * Only chase a zone lookup while the user is actually mid-setup
+   * (login-wait/needs-relogin). A login session's `state` reads "success"
+   * long after that moment — it is not reset — so reacting to it from just
+   * any step reopened a finished "done" card into confirm-zone on the
+   * post-setup refetch, and reopened the hidden popup of an
+   * already-configured install into confirm-zone on mount. The reducer also
+   * guards `zone-loaded`/`zone-error` the same way; this skips the redundant
+   * network call at the source.
+   */
+  const maybeLoadZone = useCallback(() => {
+    if (ZONE_EXPECTING_STEPS.has(stepRef.current.k)) loadZone();
+  }, [loadZone]);
+
   const refreshStatus = useCallback(async () => {
     try {
       const s = await namedTunnelApi.status();
       setStatus(s);
       if (s.mode === "named" && s.hostname) cachedNamedHostname = s.hostname;
       dispatch({ type: "status", status: s });
-      if (s.login.state === "success") loadZone();
+      if (s.mode === "quick" && s.login.state === "success") maybeLoadZone();
     } catch {
       // Offline at mount — popup/section just stay on their last known state.
     }
-  }, [dispatch, loadZone]);
+  }, [dispatch, maybeLoadZone]);
 
   useEffect(() => { void refreshStatus(); }, [refreshStatus]);
 
@@ -99,8 +113,10 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
           dispatch({ type: "login-state", state, message: (detail.message as string | null) ?? null });
           // Success can mean "cert renewed" (re-login on an already-named
           // install) as much as "first-time login" — refresh so certState
-          // and mode never sit stale behind the step machine.
-          if (state === "success") { loadZone(); void refreshStatus(); }
+          // and mode never sit stale behind the step machine. The zone
+          // lookup only fires while a step actually expects it (see
+          // maybeLoadZone).
+          if (state === "success") { maybeLoadZone(); void refreshStatus(); }
           break;
         }
         case "tunnel:setup_step":
@@ -122,7 +138,7 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
     }
     TUNNEL_EVENT_TYPES.forEach((t) => window.addEventListener(t, handle));
     return () => TUNNEL_EVENT_TYPES.forEach((t) => window.removeEventListener(t, handle));
-  }, [dispatch, loadZone, refreshStatus]);
+  }, [dispatch, maybeLoadZone, refreshStatus]);
 
   const startLogin = useCallback((relogin: boolean) => {
     dispatch({ type: "answer-yes" });
@@ -130,10 +146,10 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
       .then((snap) => {
         if (snap.url) dispatch({ type: "login-url", url: snap.url });
         dispatch({ type: "login-state", state: snap.state, message: snap.message });
-        if (snap.state === "success") { loadZone(); void refreshStatus(); }
+        if (snap.state === "success") { maybeLoadZone(); void refreshStatus(); }
       })
       .catch((e) => dispatch({ type: "login-state", state: "error", message: errorMessage(e) }));
-  }, [dispatch, loadZone, refreshStatus]);
+  }, [dispatch, maybeLoadZone, refreshStatus]);
 
   const answerYes = useCallback(() => startLogin(false), [startLogin]);
   const retryLogin = useCallback(() => startLogin(false), [startLogin]);
