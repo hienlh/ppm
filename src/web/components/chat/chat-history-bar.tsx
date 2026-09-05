@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, BellOff, Circle, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
 import { Activity } from "lucide-react";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 import { AISettingsSection } from "@/components/settings/ai-settings-section";
 import { TagSettingsSection } from "@/components/settings/tag-settings-section";
 import { SessionContextMenu } from "./session-context-menu";
-import { SessionDebugButton } from "./session-debug-dialog";
+import { SessionDebugDialog } from "./session-debug-dialog";
+import { ChatToolbarOverflowMenu } from "./chat-toolbar-overflow-menu";
 import { UsageDetailPanel } from "./usage-badge";
 import { CodexUsagePanel } from "./codex-usage-panel";
 import { TeamActivityPanel } from "./team-activity-panel";
@@ -82,6 +83,7 @@ export function ChatHistoryBar({
   const [selectedTagId, setSelectedTagId] = useState<number | null>(null);
   const [tagCounts, setTagCounts] = useState<Record<number, number>>({});
   const [showTagSettings, setShowTagSettings] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const openTab = useTabStore((s) => s.openTab);
   const PAGE_SIZE = 50;
@@ -273,112 +275,88 @@ export function ChatHistoryBar({
 
   return (
     <div className="border-b border-border/50">
-      {/* Toolbar row — all buttons on one line */}
+      {/* Toolbar row — status chips scroll on the left, controls stay pinned right.
+          A narrow chat pane must never push the connection indicator out of view. */}
       <div className="flex items-center gap-1 px-2 py-1">
-        {/* History */}
-        <button
-          onClick={() => togglePanel("history")}
-          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-            activePanel === "history" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
-          }`}
-        >
-          <History className="size-3" />
-          <span>History</span>
-        </button>
-
-        {/* Active provider + AI Settings (combined) */}
-        {sessionId && providerId && providerId !== "mock" ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
+          {/* History */}
           <button
-            onClick={() => togglePanel("config")}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-              activePanel === "config" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
+            onClick={() => togglePanel("history")}
+            className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
+              activePanel === "history" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
             }`}
-            title="AI Settings"
           >
-            <ProviderBadge providerId={providerId} />
-            <span className="capitalize">{providerId}</span>
+            <History className="size-3" />
+            <span>History</span>
           </button>
-        ) : (
-          <button
-            onClick={() => togglePanel("config")}
-            className={`p-1 rounded transition-colors ${
-              activePanel === "config" ? "text-primary bg-primary/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"
-            }`}
-            title="AI Settings"
-          >
-            <Settings2 className="size-3" />
-          </button>
-        )}
 
-        {/* Usage & Accounts — Claude and Codex both surface usage + account mgmt here */}
-        {(isClaudeProvider || isCodexProvider) ? (
-          <button
-            onClick={() => togglePanel("usage")}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-elevated ${
-              activePanel === "usage" ? "bg-primary/10" : ""
-            } ${usageColor}`}
-            title="Usage limits"
-          >
-            <Activity className="size-3" />
-            {usageInfo.activeAccountLabel && (
-              <span className="text-text-secondary font-normal truncate max-w-[60px]">[{usageInfo.activeAccountLabel}]</span>
-            )}
-            <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
-            <span className="text-text-subtle">·</span>
-            <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
-          </button>
-        ) : null}
+          {/* Active provider + AI Settings (combined) */}
+          {sessionId && providerId && providerId !== "mock" ? (
+            <button
+              onClick={() => togglePanel("config")}
+              className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
+                activePanel === "config" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
+              }`}
+              title="AI Settings"
+            >
+              <ProviderBadge providerId={providerId} />
+              <span className="capitalize">{providerId}</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => togglePanel("config")}
+              className={`shrink-0 p-1 rounded transition-colors ${
+                activePanel === "config" ? "text-primary bg-primary/10" : "text-text-subtle hover:text-text-secondary hover:bg-surface-elevated"
+              }`}
+              title="AI Settings"
+            >
+              <Settings2 className="size-3" />
+            </button>
+          )}
 
-        {/* Team activity */}
-        {teamActivity?.hasTeams && (
-          <button
-            onClick={() => {
-              togglePanel("team");
-              onTeamOpen?.();
-            }}
-            className={`relative flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
-              activePanel === "team" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
-            }`}
-            title="Team activity"
-          >
-            <Users className="size-3" />
-            <span>Team</span>
-            {(teamActivity.unreadCount ?? 0) > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 size-2 bg-primary rounded-full animate-pulse" />
-            )}
-          </button>
-        )}
+          {/* Usage & Accounts — Claude and Codex both surface usage + account mgmt here */}
+          {(isClaudeProvider || isCodexProvider) ? (
+            <button
+              onClick={() => togglePanel("usage")}
+              className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums transition-colors hover:bg-surface-elevated ${
+                activePanel === "usage" ? "bg-primary/10" : ""
+              } ${usageColor}`}
+              title="Usage limits"
+            >
+              <Activity className="size-3" />
+              {usageInfo.activeAccountLabel && (
+                <span className="text-text-secondary font-normal truncate max-w-[60px]">[{usageInfo.activeAccountLabel}]</span>
+              )}
+              <span>5h:{fiveHourPct != null ? `${fiveHourPct}%` : "--%"}</span>
+              <span className="text-text-subtle">·</span>
+              <span>Wk:{sevenDayPct != null ? `${sevenDayPct}%` : "--%"}</span>
+            </button>
+          ) : null}
 
-        {/* Spacer */}
-        <div className="flex-1" />
+          {/* Team activity */}
+          {teamActivity?.hasTeams && (
+            <button
+              onClick={() => {
+                togglePanel("team");
+                onTeamOpen?.();
+              }}
+              className={`shrink-0 relative flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors ${
+                activePanel === "team" ? "text-primary bg-primary/10" : "text-text-secondary hover:text-foreground hover:bg-surface-elevated"
+              }`}
+              title="Team activity"
+            >
+              <Users className="size-3" />
+              <span>Team</span>
+              {(teamActivity.unreadCount ?? 0) > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 size-2 bg-primary rounded-full animate-pulse" />
+              )}
+            </button>
+          )}
 
-        {/* Mark as read */}
-        {hasUnread && sessionId && (
-          <button
-            onClick={() => clearForSession(sessionId)}
-            className="p-1 rounded text-warning hover:text-warning/80 hover:bg-surface-elevated transition-colors"
-            title="Mark as read"
-          >
-            <BellOff className="size-3" />
-          </button>
-        )}
+        </div>
 
-        {/* Mark as unread */}
-        {!hasUnread && sessionId && (
-          <button
-            onClick={() => markUnread(sessionId, projectName)}
-            className="p-1 rounded text-primary hover:text-primary/80 hover:bg-surface-elevated transition-colors"
-            title="Mark as unread"
-          >
-            <Circle className="size-3 fill-current" />
-          </button>
-        )}
-
-        {/* Debug info — copy session IDs + JSONL path */}
-        {sessionId && (
-          <SessionDebugButton sessionId={sessionId} projectName={projectName} />
-        )}
-
+        {/* Pinned controls — always visible, never scrolled away */}
+        <div className="flex shrink-0 items-center gap-1 pl-1">
         {/* Reload messages + connection status */}
         {onReload && (
           <button
@@ -397,7 +375,26 @@ export function ChatHistoryBar({
             <span className={`absolute -top-0.5 -right-0.5 size-1.5 rounded-full ${isConnected ? "bg-success" : "bg-error animate-pulse"}`} />
           </button>
         )}
+
+        {/* Overflow menu — session actions, and the home for future toolbar actions */}
+        {sessionId && (
+          <ChatToolbarOverflowMenu
+            hasUnread={hasUnread}
+            onToggleUnread={() => hasUnread ? clearForSession(sessionId) : markUnread(sessionId, projectName)}
+            onOpenDebug={() => setDebugOpen(true)}
+          />
+        )}
+        </div>
       </div>
+
+      {sessionId && (
+        <SessionDebugDialog
+          sessionId={sessionId}
+          projectName={projectName}
+          open={debugOpen}
+          onOpenChange={setDebugOpen}
+        />
+      )}
 
       {/* Panels — only one visible at a time */}
 

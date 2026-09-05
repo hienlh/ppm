@@ -308,15 +308,30 @@ function TurnUsageHistory({ sessionId, projectName }: { sessionId: string; proje
   );
 }
 
-/** Toolbar button opening the session's debug facts and transcript maintenance. */
-export function SessionDebugButton({ sessionId, projectName }: { sessionId: string; projectName: string }) {
-  const [open, setOpen] = useState(false);
+/**
+ * Session debug facts and transcript maintenance.
+ *
+ * Controlled by the caller so the trigger can live anywhere — including inside a
+ * dropdown menu, which unmounts its own items on select and would take an
+ * internally-owned dialog down with them.
+ */
+export function SessionDebugDialog({
+  sessionId,
+  projectName,
+  open,
+  onOpenChange,
+}: {
+  sessionId: string;
+  projectName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [info, setInfo] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const isMobile = useIsMobile();
 
-  const openPopup = () => {
-    setOpen(true);
+  useEffect(() => {
+    if (!open) return;
     setCopied(false);
     setInfo(null);
     api.get<DebugInfo>(
@@ -333,7 +348,7 @@ export function SessionDebugButton({ sessionId, projectName }: { sessionId: stri
         ...gatherRenderStats(),
       ].filter(Boolean).join("\n"));
     }).catch(() => setInfo("Failed to load debug info"));
-  };
+  }, [open, sessionId, projectName]);
 
   const copy = () => {
     if (!info) return;
@@ -365,27 +380,20 @@ export function SessionDebugButton({ sessionId, projectName }: { sessionId: stri
     </div>
   );
 
+  if (isMobile) {
+    return (
+      <BottomSheet open={open} onClose={() => onOpenChange(false)} className="popover-solid">
+        <div className="max-h-[85vh] overflow-y-auto px-4 pb-4 pt-1">{body}</div>
+      </BottomSheet>
+    );
+  }
+
   return (
-    <>
-      <button
-        onClick={openPopup}
-        className="p-1 rounded text-text-subtle hover:text-text-secondary hover:bg-surface-elevated transition-colors"
-        title="Session debug info"
-      >
-        <Bug className="size-3" />
-      </button>
-      {isMobile ? (
-        <BottomSheet open={open} onClose={() => setOpen(false)} className="popover-solid">
-          <div className="max-h-[85vh] overflow-y-auto px-4 pb-4 pt-1">{body}</div>
-        </BottomSheet>
-      ) : (
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent className="sm:max-w-lg">
-            <DialogTitle className="sr-only">Session debug info</DialogTitle>
-            {body}
-          </DialogContent>
-        </Dialog>
-      )}
-    </>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogTitle className="sr-only">Session debug info</DialogTitle>
+        {body}
+      </DialogContent>
+    </Dialog>
   );
 }
