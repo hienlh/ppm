@@ -44,7 +44,7 @@ export function NamedTunnelSetupPopup() {
           type="button"
           onClick={handleClose}
           aria-label="Close"
-          className="absolute right-3 top-3 size-10 flex items-center justify-center rounded-md hover:bg-surface-elevated transition-colors"
+          className="absolute right-3 top-3 size-11 flex items-center justify-center rounded-md hover:bg-surface-elevated transition-colors"
         >
           <X className="size-4" />
         </button>

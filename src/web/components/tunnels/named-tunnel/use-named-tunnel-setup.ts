@@ -97,7 +97,10 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
         case "tunnel:login_state": {
           const state = detail.state as LoginState;
           dispatch({ type: "login-state", state, message: (detail.message as string | null) ?? null });
-          if (state === "success") loadZone();
+          // Success can mean "cert renewed" (re-login on an already-named
+          // install) as much as "first-time login" — refresh so certState
+          // and mode never sit stale behind the step machine.
+          if (state === "success") { loadZone(); void refreshStatus(); }
           break;
         }
         case "tunnel:setup_step":
@@ -106,9 +109,11 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
         case "tunnel:setup_done":
           cachedNamedHostname = detail.hostname as string;
           dispatch({ type: "setup-done", hostname: detail.hostname as string });
+          void refreshStatus();
           break;
         case "tunnel:setup_pending":
           dispatch({ type: "setup-pending", hostname: detail.hostname as string, message: detail.message as string });
+          void refreshStatus();
           break;
         case "tunnel:setup_error":
           dispatch({ type: "setup-error", message: detail.message as string });
@@ -117,7 +122,7 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
     }
     TUNNEL_EVENT_TYPES.forEach((t) => window.addEventListener(t, handle));
     return () => TUNNEL_EVENT_TYPES.forEach((t) => window.removeEventListener(t, handle));
-  }, [dispatch, loadZone]);
+  }, [dispatch, loadZone, refreshStatus]);
 
   const startLogin = useCallback((relogin: boolean) => {
     dispatch({ type: "answer-yes" });
@@ -125,10 +130,10 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
       .then((snap) => {
         if (snap.url) dispatch({ type: "login-url", url: snap.url });
         dispatch({ type: "login-state", state: snap.state, message: snap.message });
-        if (snap.state === "success") loadZone();
+        if (snap.state === "success") { loadZone(); void refreshStatus(); }
       })
       .catch((e) => dispatch({ type: "login-state", state: "error", message: errorMessage(e) }));
-  }, [dispatch, loadZone]);
+  }, [dispatch, loadZone, refreshStatus]);
 
   const answerYes = useCallback(() => startLogin(false), [startLogin]);
   const retryLogin = useCallback(() => startLogin(false), [startLogin]);
@@ -175,9 +180,13 @@ export function useNamedTunnelSetup(): UseNamedTunnelSetup {
         } else {
           dispatch({ type: "setup-done", hostname: result.hostname });
         }
+        // The done/pending cards are terminal (not in STATUS_RESETTABLE), so
+        // this only ever refreshes the separate `status` snapshot — never
+        // clobbers the card the user is looking at.
+        void refreshStatus();
       })
       .catch((e) => dispatch({ type: "setup-error", message: errorMessage(e) }));
-  }, [dispatch]);
+  }, [dispatch, refreshStatus]);
 
   return {
     step, status, answerYes, answerNo, cancelLogin, retryLogin,

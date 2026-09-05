@@ -46,7 +46,8 @@ export const namedTunnelCopy = {
   },
   needsRelogin: {
     title: "Cần đăng nhập lại Cloudflare",
-    certInvalid: "Phiên đăng nhập Cloudflare đã hết hiệu lực hoặc thuộc tài khoản khác.",
+    certInvalid: "Phiên đăng nhập Cloudflare đã hết hiệu lực.",
+    certMismatch: "Chứng chỉ này thuộc một tài khoản Cloudflare khác — cần đăng nhập lại.",
     action: "Đăng nhập lại",
   },
   hostname: {
@@ -85,5 +86,9 @@ export const namedTunnelCopy = {
     disable: "Chuyển về quick tunnel",
     disableConfirm: "Bấm lần nữa để xác nhận",
     certInvalid: "Cần đăng nhập lại Cloudflare",
+    certMismatch: "Chứng chỉ thuộc tài khoản Cloudflare khác — cần đăng nhập lại",
+    authDisabled: "Bật xác thực PPM để dùng tên miền riêng",
+    /** Small note next to the live-mode badge when the configured mode hasn't landed yet. */
+    configuredAs: (mode: "quick" | "named") => `đã cấu hình: ${mode}`,
   },
 } as const;

@@ -76,14 +76,14 @@ export function NamedTunnelLoginStep({ url, slow, onCancel }: Props) {
             <button
               type="button"
               onClick={() => setBannerAcked(true)}
-              className="flex-1 py-2.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              className="flex-1 min-h-11 py-2.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               {c.keepWaiting}
             </button>
             <button
               type="button"
               onClick={onCancel}
-              className="flex-1 py-2.5 rounded-md border border-border text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
+              className="flex-1 min-h-11 py-2.5 rounded-md border border-border text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
             >
               {c.cancel}
             </button>
@@ -95,7 +95,7 @@ export function NamedTunnelLoginStep({ url, slow, onCancel }: Props) {
         <button
           type="button"
           onClick={onCancel}
-          className="w-full py-3 rounded-lg border border-border text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
+          className="w-full min-h-11 py-3 rounded-lg border border-border text-sm text-text-secondary hover:bg-surface-elevated transition-colors"
         >
           {c.cancel}
         </button>
