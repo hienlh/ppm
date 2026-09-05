@@ -114,6 +114,56 @@ describe("cloudflared-login.service", () => {
     expect(snapshot).toEqual({ state: "success", url: null, message: "already logged in" });
   });
 
+  test("Cloudflare unreachable (fetch throws): cert untouched, returns an error snapshot, no spawn", async () => {
+    writeFileSync(process.env.TUNNEL_ORIGIN_CERT!, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
+    globalThis.fetch = (async () => { throw new TypeError("fetch failed"); }) as typeof fetch;
+    // No fake binary installed — if this wrongly fell through to a spawn
+    // attempt, ensureCloudflared would try a real network download.
+
+    const snapshot = await startLogin();
+    expect(snapshot).toEqual({
+      state: "error",
+      url: null,
+      message: "không kết nối được Cloudflare để kiểm tra đăng nhập — thử lại",
+    });
+    expect(existsSync(process.env.TUNNEL_ORIGIN_CERT!)).toBe(true); // a network blip must never discard a working credential
+  });
+
+  test("Cloudflare unreachable (5xx / 429): same as a fetch throw — cert untouched, error snapshot", async () => {
+    writeFileSync(process.env.TUNNEL_ORIGIN_CERT!, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
+    globalThis.fetch = (async () => new Response("", { status: 503 })) as typeof fetch;
+
+    const snapshot = await startLogin();
+    expect(snapshot.state).toBe("error");
+    expect(existsSync(process.env.TUNNEL_ORIGIN_CERT!)).toBe(true);
+  });
+
+  test("Cloudflare says the token is invalid (401): renames the cert aside and falls through to a fresh spawn", async () => {
+    const certPath = process.env.TUNNEL_ORIGIN_CERT!;
+    writeFileSync(certPath, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
+    globalThis.fetch = (async () => new Response(JSON.stringify({ success: false }), { status: 401 })) as typeof fetch;
+    installFakeCloudflaredBinary();
+
+    const snapshot = await startLogin();
+    expect(snapshot.state).not.toBe("success");
+    expect(existsSync(certPath)).toBe(false);
+    const backups = readdirSync(certDir).filter((f) => f.startsWith("cert.pem.bak-"));
+    expect(backups).toHaveLength(1);
+  }, 15_000);
+
+  test("Cloudflare says the token is invalid (200, success:false): renames the cert aside", async () => {
+    const certPath = process.env.TUNNEL_ORIGIN_CERT!;
+    writeFileSync(certPath, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
+    globalThis.fetch = (async () => new Response(JSON.stringify({ success: false }), { status: 200 })) as typeof fetch;
+    installFakeCloudflaredBinary();
+
+    const snapshot = await startLogin();
+    expect(snapshot.state).not.toBe("success");
+    expect(existsSync(certPath)).toBe(false);
+    const backups = readdirSync(certDir).filter((f) => f.startsWith("cert.pem.bak-"));
+    expect(backups).toHaveLength(1);
+  }, 15_000);
+
   test("cert parsed but pinned zoneID/accountID differ: falls through to a fresh spawn attempt AND renames the mismatched cert aside", async () => {
     const certPath = process.env.TUNNEL_ORIGIN_CERT!;
     writeFileSync(certPath, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
@@ -134,9 +184,12 @@ describe("cloudflared-login.service", () => {
     expect(backups).toHaveLength(1);
   }, 15_000);
 
-  test("relogin renames an existing cert.pem aside before attempting a fresh login", async () => {
+  test("relogin renames an existing cert.pem aside before attempting a fresh login, even fully offline", async () => {
     writeFileSync(process.env.TUNNEL_ORIGIN_CERT!, "old cert contents");
     installFakeCloudflaredBinary();
+    // Explicit ?relogin=1 is the user's deliberate action — it must rename
+    // unconditionally without ever consulting Cloudflare's reachability.
+    globalThis.fetch = (async () => { throw new TypeError("fetch failed"); }) as typeof fetch;
 
     await startLogin({ relogin: true });
 

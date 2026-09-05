@@ -90,20 +90,35 @@ export async function startLogin(opts: { relogin?: boolean } = {}): Promise<Logi
   if (!relogin) {
     const certState = readOriginCertState();
     if (certState.kind === "parsed") {
-      const live = await verifyCertLive(certState.cert.apiToken);
-      if (live && pinsMatch(certState.cert)) {
+      const liveCheck = await verifyCertLive(certState.cert.apiToken);
+
+      // WHY: a network blip must never discard a working credential. Only an
+      // authoritative "Cloudflare said no" (invalid) or a confirmed pin
+      // mismatch earns a rename-aside below; "unreachable" means the check
+      // itself failed to run, so cert.pem is left untouched and the user
+      // gets a clear, retryable error instead of an unwanted fresh login.
+      if (liveCheck === "unreachable") {
+        setTerminal("error", "không kết nối được Cloudflare để kiểm tra đăng nhập — thử lại");
+        return getLoginSnapshot();
+      }
+
+      if (liveCheck === "valid" && pinsMatch(certState.cert)) {
         session = freshSession();
         session.state = "success";
         session.message = "already logged in";
         return getLoginSnapshot();
       }
-      // A dead token or an account/zone pin mismatch means this cert can
-      // never pass the shortcut again as-is — move it aside now instead of
-      // leaving a bad file to keep silently triggering the same fallthrough
-      // on every future login attempt.
+
+      // liveCheck === "invalid" (Cloudflare authoritatively rejected the
+      // token), or valid but pinned to a different account/zone: this cert
+      // can never pass the shortcut again as-is — move it aside now instead
+      // of leaving a bad file to keep silently triggering the same
+      // fallthrough on every future login attempt.
       renameCertAside();
     }
   } else {
+    // Explicit ?relogin=1 — the user deliberately pressed "Đăng nhập lại",
+    // so this renames unconditionally regardless of network reachability.
     renameCertAside();
   }
 

@@ -9,21 +9,39 @@ import { resolveTunnelConfig } from "./named-tunnel-config.ts";
 import { configService } from "../config.service.ts";
 import { extractLoginUrl, isLoginSuccess } from "./login-output-parser.ts";
 
-const VERIFY_TIMEOUT_MS = 10_000;
+const VERIFY_TIMEOUT_MS = 8_000;
 
-/** Live-checks an apiToken against Cloudflare rather than trusting the cert file alone. */
-export async function verifyCertLive(apiToken: string): Promise<boolean> {
+export type CertLiveCheck = "valid" | "invalid" | "unreachable";
+
+/**
+ * Live-checks an apiToken against Cloudflare, distinguishing an authoritative
+ * rejection from simply failing to ask. This distinction is the whole point:
+ * the caller renames a stale cert.pem aside on "invalid" (Cloudflare itself
+ * said the token is dead) but must NOT do that on "unreachable" (a network
+ * blip, timeout, rate limit, or Cloudflare-side outage) — a user on a flaky
+ * connection who presses "Set up" must never have a perfectly working
+ * credential discarded just because the verify call itself didn't land.
+ */
+export async function verifyCertLive(apiToken: string): Promise<CertLiveCheck> {
+  let res: Response;
   try {
-    const res = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
+    res = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
       headers: { Authorization: `Bearer ${apiToken}` },
       signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
     });
-    if (!res.ok) return false;
-    const json = (await res.json().catch(() => null)) as { success?: boolean } | null;
-    return json?.success === true;
   } catch {
-    return false;
+    return "unreachable"; // network error, DNS failure, or the bounded timeout firing
   }
+
+  // 401/403: Cloudflare rejected the token outright. 429/5xx: rate-limited or
+  // Cloudflare's own outage — neither says anything about the token itself.
+  if (res.status === 401 || res.status === 403) return "invalid";
+  if (res.status === 429 || res.status >= 500) return "unreachable";
+
+  const json = (await res.json().catch(() => null)) as { success?: boolean } | null;
+  if (json?.success === true) return "valid";
+  if (json?.success === false) return "invalid";
+  return "unreachable"; // an unexpected response shape is not an authoritative rejection
 }
 
 /** True when no `tunnel` identity is pinned yet, or the cert matches the pinned one. */
