@@ -58,8 +58,8 @@ export function registerAutoStartCommands(program: Command): void {
       const { disableAutoStart } = await import("../../services/autostart-register.ts");
 
       try {
-        await disableAutoStart();
-        console.log("  ✓  Auto-start disabled. PPM will no longer start on boot.\n");
+        const msg = await disableAutoStart();
+        console.log(`  ✓  ${msg}\n`);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`  ✗  Failed to disable auto-start: ${msg}\n`);

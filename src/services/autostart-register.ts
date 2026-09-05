@@ -35,6 +35,23 @@ const METADATA_FILE = resolve(homedir(), ".ppm", "autostart.json");
  * machine-global, so PPM_HOME does not isolate them. Registering or removing
  * one from an isolated run would hijack the user's live service.
  */
+/**
+ * Run a read-only status probe, treating a missing executable as "not registered".
+ *
+ * `Bun.spawnSync` *throws* when the binary is not on PATH — it does not return exit 127 —
+ * and `getAutoStartStatus()` sits on the `ppm start` (`server/index.ts`) and `ppm stop`
+ * paths. So a Linux box without systemd, or any container that has no `systemctl`, died
+ * there instead of falling back to spawning the supervisor directly.
+ */
+function probe(cmd: string[]): { stdout: string; exitCode: number } | null {
+  try {
+    const r = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "ignore" });
+    return { stdout: r.stdout.toString(), exitCode: r.exitCode };
+  } catch {
+    return null;
+  }
+}
+
 function skipIsolated(action: "enable" | "disable"): string {
   const msg = `Auto-start ${action} skipped: PPM_HOME is isolated (${process.env.PPM_HOME}) — refusing to modify the real service manager`;
   console.warn(`  ${msg}`);
@@ -147,17 +164,19 @@ function statusMacOS(): AutoStartStatus {
   const fileExists = existsSync(plistPath);
 
   // Check if loaded
-  const result = Bun.spawnSync({
-    cmd: ["launchctl", "list"],
-    stdout: "pipe", stderr: "ignore",
-  });
-  const output = result.stdout.toString();
-  const isLoaded = output.includes(PLIST_LABEL);
+  const isLoaded = probe(["launchctl", "list"])?.stdout.includes(PLIST_LABEL) ?? false;
+  return mapMacStatus(fileExists, isLoaded, plistPath);
+}
 
-  // Mirror systemd's is-enabled / is-active split: the plist on disk is the
-  // registration, the loaded job is the running state. Tying `enabled` to
-  // `isLoaded` made "enabled && !running" unsatisfiable, so `ppm start` could
-  // never take the launchd path and always spawned the supervisor directly.
+/**
+ * The enabled/running split for launchd, kept pure so it can be tested anywhere.
+ *
+ * Mirrors systemd's is-enabled / is-active split: the plist on disk is the registration,
+ * the loaded job is the running state. Tying `enabled` to `isLoaded` made
+ * "enabled && !running" unsatisfiable, so `ppm start` could never take the launchd path
+ * and always spawned the supervisor directly — the regression this guards.
+ */
+export function mapMacStatus(fileExists: boolean, isLoaded: boolean, plistPath: string): AutoStartStatus {
   return {
     enabled: fileExists,
     running: isLoaded,
@@ -272,18 +291,12 @@ function statusLinux(): AutoStartStatus {
   const fileExists = existsSync(servicePath);
 
   // Check enabled
-  const enabled = Bun.spawnSync({
-    cmd: ["systemctl", "--user", "is-enabled", "ppm.service"],
-    stdout: "pipe", stderr: "ignore",
-  });
-  const isEnabled = enabled.stdout.toString().trim() === "enabled";
+  const enabled = probe(["systemctl", "--user", "is-enabled", "ppm.service"]);
+  const isEnabled = enabled?.stdout.trim() === "enabled";
 
   // Check active
-  const active = Bun.spawnSync({
-    cmd: ["systemctl", "--user", "is-active", "ppm.service"],
-    stdout: "pipe", stderr: "ignore",
-  });
-  const isActive = active.stdout.toString().trim() === "active";
+  const active = probe(["systemctl", "--user", "is-active", "ppm.service"]);
+  const isActive = active?.stdout.trim() === "active";
 
   return {
     enabled: isEnabled,
@@ -361,8 +374,8 @@ function statusWindows(): AutoStartStatus {
   const fileExists = existsSync(vbsPath);
 
   // Check if the scheduled task exists
-  const result = Bun.spawnSync({ cmd: buildSchtasksQueryCommand(), stdout: "pipe", stderr: "ignore" });
-  const taskExists = result.exitCode === 0 && result.stdout.toString().includes(TASK_NAME);
+  const result = probe(buildSchtasksQueryCommand());
+  const taskExists = result?.exitCode === 0 && result.stdout.includes(TASK_NAME);
 
   return {
     enabled: taskExists,
@@ -387,14 +400,19 @@ export async function enableAutoStart(config: AutoStartConfig, opts?: { skipStar
   throw new Error(`Auto-start not supported on ${platform}`);
 }
 
-/** Disable auto-start for the current platform */
-export async function disableAutoStart(): Promise<void> {
-  if (isIsolatedPpmHome()) { skipIsolated("disable"); return; }
+/**
+ * Disable auto-start for the current platform. Returns what happened, so a refusal is
+ * not reported as a success — `ppm autostart disable` printed "Auto-start disabled"
+ * even when the isolation guard had made it do nothing.
+ */
+export async function disableAutoStart(): Promise<string> {
+  if (isIsolatedPpmHome()) return skipIsolated("disable");
   const platform = process.platform;
-  if (platform === "darwin") return disableMacOS();
-  if (platform === "linux") return disableLinux();
-  if (platform === "win32") return disableWindows();
-  throw new Error(`Auto-start not supported on ${platform}`);
+  if (platform === "darwin") await disableMacOS();
+  else if (platform === "linux") await disableLinux();
+  else if (platform === "win32") await disableWindows();
+  else throw new Error(`Auto-start not supported on ${platform}`);
+  return "Auto-start disabled. PPM will no longer start on boot.";
 }
 
 /** Get auto-start status for the current platform */
