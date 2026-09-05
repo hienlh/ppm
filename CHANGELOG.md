@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.18.11] - 2026-09-05
+
+### Added
+- **Open any tab in a floating window** — right-click a tab → "Open in window". The tab moves, it does not reload: terminal scrollback, editor undo history and a streaming chat all carry over. Closing the window puts the tab back where it came from; the window is restored on reload. Desktop only.
+- **Picture-in-picture for every window** — a titlebar button (Chrome/Edge) sends a floating window — Explorer, System Monitor or a popped-out tab — into an always-on-top window that stays over other apps; menus and dialogs open inside it. Close it or press "Bring back" to return.
+
+### Changed
+- **All floating windows share one titlebar** — the macOS/Windows skin chosen for Explorer now applies to every window, so they look alike.
+
+### Fixed
+- Chat pickers, the file picker and slash-command list close and navigate correctly when their tab lives in another window.
+- Closing a window with a caption button no longer logs an error from the abandoned titlebar drag.
+
 ## [0.18.10] - 2026-09-05
 
 ### Added
