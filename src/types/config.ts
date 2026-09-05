@@ -35,6 +35,23 @@ export interface PpmConfig {
   clawbot?: PPMBotConfig;
   cloud_url?: string;
   query_audit: QueryAuditConfig;
+  tunnel: TunnelConfig;
+}
+
+/**
+ * Persisted named-tunnel state. `namedTunnelToken` is secret-by-contract —
+ * guarded by the config-key denylist and never returned unmasked by any route.
+ * `zoneID`/`accountID` are pinned at setup and re-checked on every reuse.
+ */
+export interface TunnelConfig {
+  mode: "quick" | "named";
+  namedTunnelName?: string;
+  namedTunnelHostname?: string;
+  namedTunnelToken?: string;
+  zoneID?: string;
+  accountID?: string;
+  /** User answered "no domain" — popup must never nag again. */
+  dismissed?: boolean;
 }
 
 export interface QueryAuditConfig {
@@ -130,6 +147,9 @@ export const DEFAULT_CONFIG: PpmConfig = {
     show_thinking: false,
     permission_mode: "bypassPermissions",
     debounce_ms: 2000,
+  },
+  tunnel: {
+    mode: "quick",
   },
 };
 
@@ -262,6 +282,17 @@ export function sanitizeConfig(config: PpmConfig): boolean {
       provider.permission_mode = "bypassPermissions";
       dirty = true;
     }
+  }
+
+  // Only repair `tunnel` when storage itself is malformed (wrong type / bad enum).
+  // Never strip namedTunnel*/zoneID/accountID just because mode is "quick" or the
+  // combination looks "incomplete" — that degrade-to-quick judgment belongs to
+  // the runtime resolver (resolveTunnelConfig), or /disable's "keep the config so
+  // Retry works" contract silently breaks.
+  if (typeof config.tunnel !== "object" || config.tunnel === null ||
+      (config.tunnel.mode !== "quick" && config.tunnel.mode !== "named")) {
+    config.tunnel = structuredClone(DEFAULT_CONFIG.tunnel);
+    dirty = true;
   }
 
   return dirty;
