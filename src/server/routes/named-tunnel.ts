@@ -10,6 +10,7 @@ import { resolveTunnelConfig, maskToken } from "../../services/named-tunnel/name
 import { cloudflaredLoginService } from "../../services/named-tunnel/cloudflared-login.service.ts";
 import { namedTunnelSetupService, SetupError } from "../../services/named-tunnel/named-tunnel-setup.service.ts";
 import { broadcastGlobalEvent } from "../ws/global.ts";
+import { readStatus } from "../../services/supervisor-state.ts";
 
 export const namedTunnelRoutes = new Hono();
 
@@ -39,14 +40,23 @@ function assertMutationAllowed(c: Context): Response | null {
 
 namedTunnelRoutes.get("/status", (c) => {
   const resolved = resolveTunnelConfig(configService.get("tunnel"));
+  // Config says what the user *asked for*; the supervisor's status.json says
+  // what is *actually running*. When a named tunnel failed and the supervisor
+  // fell back to quick, the warning it left behind is the only signal the UI
+  // has that the two disagree — surface it instead of a silently wrong URL.
+  const live = readStatus();
+  const liveMode = live.tunnelMode === "named" || live.tunnelMode === "quick" ? live.tunnelMode : null;
+  const tunnelWarning = typeof live.tunnelWarning === "string" ? live.tunnelWarning : null;
   return c.json(ok({
     mode: resolved.mode,
+    liveMode,
     hostname: resolved.hostname,
     tunnelName: resolved.tunnelName,
     tokenMasked: maskToken(resolved.token),
     certState: namedTunnelSetupService.currentCertState(),
     dismissed: resolved.dismissed,
     login: cloudflaredLoginService.getLoginSnapshot(),
+    tunnelWarning,
   }));
 });
 
