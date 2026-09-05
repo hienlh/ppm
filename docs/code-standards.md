@@ -226,10 +226,11 @@ export async function createSession(projectPath: string): Promise<Session> {
   // Shared logic across all callers
 }
 
-// Good: services/config.service.ts
-export const ConfigService = {
-  load: () => YAML.parse(configFile),
-  save: (config) => YAML.stringify(config),
+// Good: services/config.service.ts — config lives in SQLite, not a file
+export const configService = {
+  load: () => readConfigRows(getDb()),
+  get: (key) => configCache[key],
+  set: (key, value) => upsertConfigRow(getDb(), key, value),
 };
 ```
 
@@ -784,53 +785,55 @@ docs/deployment-guide
 When adding new options to CLI commands (e.g., `ppm start`):
 
 **Option Naming:**
-- Use long form: `--foreground` (not short-only)
-- Add short form if common: `-f` (optional)
-- Keep defaults sensible (e.g., daemon mode is default)
-- **Note:** In PPM, `--share` is now deprecated; tunnel is always enabled (see actual implementation in `src/index.ts:27`)
+- Use long form, with a short form only when it is common: `-p, --port <port>`
+- Keep defaults sensible and make the default the no-flag path
+- Retire flags by making them no-ops with a `(deprecated)` description rather than removing them —
+  `-s, --share` still parses, it just no longer does anything (the tunnel is always on)
+- Commander rejects unknown options, so a flag documented but not registered is a hard error, not a
+  silently ignored argument. Never document a flag you have not added to the tree.
 
 **Implementation Pattern:**
 ```typescript
 program
   .command("start")
   .option("-p, --port <port>", "Port to listen on")
-  .option("-f, --foreground", "Run in foreground")
+  .option("--profile <name>", "DB profile name (e.g. 'dev' → ppm.dev.db)")
+  .option("-s, --share", "(deprecated) Tunnel is now always enabled")
   .action(async (options) => {
-    // options.port, options.foreground as booleans
-    // (tunnel is enabled by default in modern PPM)
+    // Lazy-import the implementation so `--help` stays fast and side-effect free
+    const { startServer } = await import("./server/index.ts");
+    await startServer(options);
   });
 ```
 
+Command modules export a `register*Commands(program)` function that `buildProgram()` calls
+(`src/index.ts`). `buildProgram()` assembles the tree **without** parsing argv or invoking any
+action, so build-time tools can walk it — `scripts/lib/generate-cli-reference.ts` generates the
+exported skill's CLI reference from exactly that tree. Keep it side-effect free.
+
 **Server Handling:**
+
+There is one mode: `startServer` spawns a supervisor + daemon child and returns. No foreground
+branch exists, and no flag selects one.
+
 ```typescript
 export async function startServer(options: {
   port?: string;
-  foreground?: boolean;
-  config?: string;
+  share?: boolean;
+  profile?: string;
 }) {
-  const isDaemon = !options.foreground; // Explicit: daemon is default
-
-  if (isDaemon) {
-    // Spawn child process
-    const child = Bun.spawn(/* ... */);
-    // Poll for status.json, show URLs
-  } else {
-    // Foreground: serve with logs
-    const server = Bun.serve(/* ... */);
-  }
-
-  // Tunnel is always started (no conditional needed)
-  // Cloudflared binary auto-downloaded on first start
+  options.share = true;             // tunnel is unconditional
+  // ... spawn supervisor + server child, wait for status.json, print URLs, exit 0
 }
 ```
 
 ### Status File Format
-Daemon process communicates back via JSON file at `~/.ppm/status.json`:
+The daemon communicates back via JSON at `~/.ppm/status.json` (inside `getPpmDir()`):
 
 ```json
 {
   "pid": 12345,
-  "port": 8080,
+  "port": 3210,
   "host": "0.0.0.0",
   "shareUrl": "https://abc-123.trycloudflare.com"
 }

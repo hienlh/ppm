@@ -15,7 +15,7 @@
 ├──────────────────────────────┼────────────────────────────────────────┤
 │                     PPM Server (Bun)                                    │
 │  ┌────────────────────────────────────────────────────────────────┐   │
-│  │              Hono HTTP Framework (Port 8080)                   │   │
+│  │           Hono HTTP Framework (default port 3210)              │   │
 │  ├────────────────────────────────────────────────────────────────┤   │
 │  │  Routes (src/server/routes/)                                   │   │
 │  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │   │
@@ -196,8 +196,8 @@ Tab IDs are deterministic: `{type}:{identifier}` (e.g., `editor:src/index.ts`, `
 | **ChatService** | Session management, message streaming | createSession, streamMessage, getHistory |
 | **SessionBranchService** | Edit-message global branch tree (`session_branches` table) — links forked sessions, resolves version groups, collapses history to per-tree heads. `resolveVersionMap` batches every ordinal's group for a session in 2 queries (the per-ordinal `resolveVersionGroup` walks the ancestor chain with one query per hop) | recordBranch, resolveVersionGroup, resolveVersionMap, collapseTreesToHeads, hasChildren, getTreeByRoot |
 | **TaskStatusAggregator** | Rebuild Claude Task* state from session JSONL (TaskCreate/TaskUpdate/TaskStop tracking) | aggregateTasks |
-| **ConfigService** | Config loading (YAML→SQLite migration) | load, save, getToken |
-| **DbService** | SQLite persistence (10 tables, WAL, connections/accounts/workspace CRUD) | getDb, openTestDb, getWorkspace, setWorkspace, getConnections, insertConnection, deleteConnection, getTableCache |
+| **ConfigService** | Config in SQLite, dotted keys with a typed cache | load, get, set, getToken |
+| **DbService** | SQLite persistence (WAL, schema v41, connections/accounts/workspace CRUD) | getDb, openTestDb, getWorkspace, setWorkspace, getConnections, insertConnection, deleteConnection, getTableCache |
 | **TableCacheService** | Cache table metadata, search tables | syncTables, searchTables, invalidateCache |
 | **GitService** | Git command execution | status, diff, commit, stage, branch |
 | **FileService** | File operations with validation | read, write, tree, delete, mkdir |
@@ -683,7 +683,7 @@ ppm jira track <issue-key>                 — Manually track ticket (insert res
 - Path validation: `projectPath/relativePath` only, reject `..`
 - Caching: Directory trees cached with TTL
 - Error handling: Descriptive messages (file not found, permission denied)
-- Migration: Automatic YAML→SQLite migration on first run with new db.service; schema auto-upgrade on version bump
+- Migration: schema auto-upgrades on version bump (`CURRENT_SCHEMA_VERSION` in `db.service.ts`). The historical YAML config path is gone — `js-yaml` survives only to parse skill frontmatter in `slash-discovery/skill-loader.ts`
 
 ---
 
@@ -844,7 +844,7 @@ When switching projects, workspaces are preserved instead of destroyed:
 ## Authentication Flow
 
 ```
-User opens http://localhost:8080
+User opens http://localhost:3210
     ↓
 App checks localStorage for auth token
     ↓
@@ -864,8 +864,8 @@ For each API request:
 ```
 
 **Token Management:**
-- Generated on `ppm init` → stored in `ppm.yaml`
-- Sent from CLI via `-c <config>` flag
+- Generated on `ppm init` → stored in `~/.ppm/ppm.db` (`auth.token`)
+- Required on the WebSocket handshake too, as `?token=` (browsers cannot set handshake headers)
 - Stored in browser localStorage for session persistence
 - No expiry (single-user, local environment)
 
@@ -873,30 +873,33 @@ For each API request:
 
 ## AI Provider Configuration
 
-PPM exposes AI settings as global configuration (not per-session) via REST API and Settings UI. Configuration is stored in `ppm.yaml` and read fresh per query.
+PPM exposes AI settings as global configuration (not per-session) via REST API and Settings UI. Configuration is stored in SQLite (`~/.ppm/ppm.db`) and read fresh per query.
 
 ### Configuration Shape
-```yaml
-ai:
-  default_provider: claude
-  providers:
-    claude:
-      type: agent-sdk
-      api_key_env: ANTHROPIC_API_KEY
-      model: claude-opus-4-8
-      effort: high
-      max_turns: 100
-      max_budget_usd: 2.00
-      thinking_budget_tokens: 10000
+
+Stored as dotted keys in the `config` table; shown here as a tree for readability. The authoritative
+shape is `DEFAULT_CONFIG` / `PpmConfig` in `src/types/config.ts`.
+
+```
+ai.default_provider                      claude
+ai.providers.claude.type                 agent-sdk
+ai.providers.claude.api_key_env          ANTHROPIC_API_KEY
+ai.providers.claude.model                claude-opus-5
+ai.providers.claude.effort               high
+ai.providers.claude.max_turns            1000
+ai.providers.claude.permission_mode      bypassPermissions
+ai.providers.claude.inherit_claude_mcp   true
 ```
 
 **Fields:**
-- `default_provider`: Active provider name (e.g., `claude`)
+- `default_provider`: Active provider id (`claude`, `codex`, `cursor`). Falls back to `claude` when the configured id matches no registered provider
 - `type`: Provider type (`agent-sdk` or `mock`)
-- `api_key_env`: Environment variable containing API key
-- `model`: Model ID (e.g., `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-4-6`). Default: `claude-opus-4-8`
-- `effort`: Processing level (`low`, `medium`, `high`, `max`)
-- `max_turns`: Maximum interaction turns (1-500, default 100)
+- `api_key_env`: Environment variable holding the API key. Not required when the `claude` CLI is logged in
+- `model`: Model ID (e.g. `claude-opus-5`, `claude-sonnet-5`). Default: `claude-opus-5`
+- `effort`: Reasoning level — `low`, `medium`, `high`, `xhigh`, `max` (validated against `VALID_EFFORTS`; an out-of-enum value is rejected rather than passed through)
+- `max_turns`: Maximum interaction turns. Default 1000
+- `permission_mode`: SDK permission mode, default `bypassPermissions`
+- `inherit_claude_mcp`: Reuse MCP servers configured for Claude Code
 - `max_budget_usd`: Spending limit in USD (optional)
 - `thinking_budget_tokens`: Extended thinking, tri-state (optional). Omitted = adaptive (model picks depth, guided by `effort`); `0` = disabled; a positive number = fixed token budget. Per-session Thinking toggle overrides this.
 
@@ -918,7 +921,7 @@ ai:
 {
   "providers": {
     "claude": {
-      "model": "claude-opus-4-6",
+      "model": "claude-opus-5",
       "max_turns": 50
     }
   }
@@ -2018,11 +2021,10 @@ Main Process                Worker
 
 ### Single-Machine Deployment (Current)
 ```
-Linux/macOS Host
+macOS / Linux / Windows Host
   ├── ppm (compiled binary)
   │   └── Embeds: server code, frontend assets
-  ├── ppm.yaml (config, auto-generated)
-  └── ~/.ppm/ (optional: session cache, logs)
+  └── ~/.ppm/ (ppm.db config, sessions, logs, cloudflared, status.json)
 ```
 
 ### Daemon Mode (Default)
@@ -2034,10 +2036,8 @@ $ ppm start
   → Fallback compat: ppm.pid read/written for backward compatibility
   → Supervisor checks npm registry every 15min for updates, writes availableVersion to status.json
 
-$ ppm start --foreground
-  → Runs in foreground (debugging, CI/CD)
-  → WebSocket and all features fully functional
-  → Tunnel always active (public URL works in foreground)
+(There is no foreground mode — the supervised daemon is the only one.
+ For logs, use `ppm logs -f`; for machine-readable state, `ppm status --json`.)
 
 $ ppm start
   → Daemon mode + Cloudflare Quick Tunnel (always enabled)

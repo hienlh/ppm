@@ -105,7 +105,7 @@ For the user-facing feature list, see the [README](../README.md). For per-releas
 ### Database: SQLite (`bun:sqlite`)
 - **Why:** Richer persistence for config, sessions, accounts, usage, schedules, audit logs; single-file DB suits the single-machine design
 - **Trade-off:** Added dependency; mitigated by Bun's built-in SQLite support
-- **Impact:** All config lives in `~/.ppm/ppm.db` (dev uses `ppm.dev.db`). The YAML era is over — YAML is only read for one-time import. Access it through `getPpmDir()`, never a hand-built `~/.ppm` path, so tests can redirect via `PPM_HOME`
+- **Impact:** All config lives in `~/.ppm/ppm.db` (dev uses `ppm.dev.db`); the YAML config path is fully retired. Access the directory through `getPpmDir()`, never a hand-built `~/.ppm` path, so tests can redirect via `PPM_HOME`
 
 ### Build: Vite 8.0
 - **Why:** ESM-native, fast hot reload, TypeScript support, PWA plugin

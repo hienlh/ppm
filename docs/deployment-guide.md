@@ -3,78 +3,56 @@
 ## Prerequisites
 
 ### System Requirements
-- **OS:** Linux or macOS (Windows support planned for v3)
+- **OS:** macOS, Linux or Windows (all three are supported targets)
 - **RAM:** 512 MB minimum, 2 GB recommended
-- **Disk:** 500 MB for binary + dependencies
-- **Network:** localhost only (single-machine deployment)
+- **Disk:** ~500 MB for the binary, plus ~15 MB for the cloudflared binary PPM downloads on first start
+- **Network:** localhost is enough; internet access is needed for the tunnel and for AI providers
 
 ### Required Software
-- **Bun:** v1.3.6 or later (https://bun.sh)
-- **Git:** v2.0+ (for git operations in chat/CLI)
-- **Node.js or Bun:** For running npm/node commands in terminal
+- **Bun** v1.3.6+ (https://bun.sh) — **only** for the `bunx`/`bun add -g`/from-source paths. The
+  released binary bundles its own runtime and needs nothing installed.
+- **Git** v2.0+ — for the git features
+- **Claude Code** (`claude` CLI, logged in) — for AI chat via the Claude Agent SDK
 
 ### Optional
-- **ngrok or similar:** For exposing to network (not recommended for production)
-- **systemd or launchd:** For daemon management
+- `@openai/codex` or `cursor-agent` on PATH — each registers an extra AI provider when present
+- `ffmpeg` — on-the-fly transcoding for video formats the browser cannot play
+- `psql` / a PostgreSQL server — for the Postgres side of the database viewer
 
 ---
 
 ## Installation
 
-### Option 1: Build from Source (Development)
+### Option 1: Installer script (recommended)
 
-#### Prerequisites
+**macOS / Linux:**
 ```bash
-# Check Bun is installed
-bun --version  # Should be 1.3.6+
+curl -fsSL https://ppm.sh/install | sh
+```
 
-# Clone repository
+**Windows (PowerShell):**
+```powershell
+irm https://ppm.sh/install.ps1 | iex
+```
+
+Downloads the matching release archive, unpacks it to `~/.ppm/bin` (override with `PPM_INSTALL_DIR`)
+and adds it to PATH. Re-run to upgrade, or use `ppm upgrade`.
+
+### Option 2: Via Bun
+
+```bash
+bunx @hienlh/ppm start        # run without installing
+bun add -g @hienlh/ppm        # or install globally
+```
+
+### Option 3: Build from source (development)
+
+```bash
 git clone https://github.com/hienlh/ppm.git
 cd ppm
-```
-
-#### Install & Build
-```bash
-# Install dependencies
 bun install
-
-# Build frontend + CLI binary
-bun run build
-
-# Output: dist/ppm (compiled binary)
-```
-
-#### Run
-```bash
-# Run directly from source (development)
-bun run start
-
-# Or use compiled binary
+bun run build          # frontend + compiled binary → dist/ppm
 ./dist/ppm start
-```
-
----
-
-### Option 2: Pre-built Binary (Production)
-
-#### Download
-```bash
-# Download latest release from GitHub Releases
-wget https://github.com/hienlh/ppm/releases/download/v2.0/ppm-macos-x64
-chmod +x ppm-macos-x64
-
-# Or for Linux
-wget https://github.com/hienlh/ppm/releases/download/v2.0/ppm-linux-x64
-chmod +x ppm-linux-x64
-```
-
-#### Run
-```bash
-# Copy to PATH for global access
-sudo cp ppm-macos-x64 /usr/local/bin/ppm
-
-# Verify installation
-ppm --version
 ```
 
 ---
@@ -84,321 +62,196 @@ ppm --version
 ### Initial Setup
 
 ```bash
-# Generate config and scan for git repositories
-ppm init
-
-# Output: ~/.ppm/ppm.db (SQLite database)
-# Auto-generates auth token
+ppm init          # interactive wizard
+ppm init -y       # non-interactive: defaults + auto-generated password
 ```
+
+Writes `~/.ppm/ppm.db` (SQLite) and generates an auth token. `ppm start` runs the wizard
+automatically if no config exists.
 
 ### Dev vs Production Config
 
-Config is stored in **SQLite** databases:
+| Profile | Database | Conventional port |
+|---|---|---|
+| Production | `~/.ppm/ppm.db` | 3210 (what `ppm init` writes) |
+| Development | `~/.ppm/ppm.dev.db` | 8081 |
 
-- **Production:** `~/.ppm/ppm.db` — port **8080** (default)
-- **Development:** `~/.ppm/ppm.dev.db` — port **8081**
+`bun dev:server` selects the dev database via the `dev` profile; `ppm start --profile dev` does the
+same for a compiled binary. On a new machine run `ppm init`, then `ppm config set port 8081` for dev.
 
-`bun dev:server` automatically uses the dev database. On a new machine, run `ppm init` then `ppm config set port 8081` for dev.
+> Both databases live in the same directory, and so does `.server-port`. Running `dev:server` while
+> production is up can therefore steal the tunnel's route — stop one before starting the other.
 
 ### Config Structure (SQLite)
 
-Config is stored in the `config` table as key-value pairs. Equivalent settings:
+Config lives in the `config` table as dotted key/value pairs. The shape is defined by
+`DEFAULT_CONFIG` in `src/types/config.ts` — that struct is the source of truth:
 
 ```
-port = 8080
-host = 0.0.0.0
-auth.enabled = true
-auth.token = "auto-generated-random-token"
-providers.default = "claude-agent-sdk"
+port                              8080   ← struct default; `ppm init` writes 3210
+host                              0.0.0.0
+theme.style / theme.mode          aurora / system
+auth.enabled / auth.token         true / auto-generated
+ai.default_provider               claude
+ai.providers.claude.model         claude-opus-5
+ai.providers.claude.effort        high
+ai.providers.claude.permission_mode   bypassPermissions
 ```
 
-Projects are stored in a separate `projects` table with `name` and `path` columns.
+Projects, accounts, sessions, schedules, usage and audit logs each live in their own table.
+
+Never build a `~/.ppm` path by hand in service code — import `getPpmDir()` from
+`src/services/ppm-dir.ts` so `PPM_HOME` can redirect it in tests.
 
 ### Customize Configuration
 
-#### Change Port
 ```bash
-# Edit ppm.yaml manually
+# Port
 ppm config set port 3000
+ppm start -p 3000                  # or per-start
 
-# Or start with custom port (CLI flag)
-ppm start --port 3000
-```
-
-#### Add/Remove Projects
-```bash
-# Add project
+# Projects
 ppm projects add my-project /path/to/my-project
-
-# List projects
 ppm projects list
-
-# Remove project
 ppm projects remove my-project
-```
 
-#### Set AI Provider
-```bash
-# Use mock provider (for testing)
-ppm config set providers.default mock
+# AI provider / model
+ppm config set ai.default_provider claude       # claude | codex | cursor
+ppm config set ai.providers.claude.model claude-opus-5
 
-# Switch back to SDK (default)
-ppm config set providers.default claude-agent-sdk
-```
-
-#### Change Authentication Token
-```bash
-# Generate new random token
-ppm config set auth.token "$(openssl rand -hex 32)"
+# Auth
+ppm config set auth.enabled true
 ```
 
 ---
 
 ## Running the Server
 
-### Foreground Mode (Development)
+`ppm start` always runs as a **background daemon under a supervisor**, and always brings up a
+Cloudflare Quick Tunnel. There is no foreground mode.
 
 ```bash
-ppm start
+ppm start                  # daemon + tunnel; blocks until the URL is known, then exits 0
+ppm start -p 4000          # custom port
+ppm start --profile dev    # use ppm.dev.db
 
-# Output:
-# PPM server listening on http://localhost:8080
-# Token: <token from config>
-# Projects: 2
+ppm status                 # human-readable
+ppm status --json          # machine-readable — `.shareUrl` is the public URL
+ppm logs -f                # follow ~/.ppm/ppm.log
+ppm restart                # reload, keeping the tunnel URL
 ```
 
-Server runs in foreground. Press `Ctrl+C` to stop.
+Startup prints `➜  Local`, `➜  Share` and a QR code for the share URL. It waits up to 35s for the
+tunnel; if the URL has not appeared it warns and tells you to check `ppm status`.
 
-### Daemon Mode (Production)
+### Stopping: `stop` vs `down`
 
-**Daemon is now the default** — `ppm start` runs in background. Use `--foreground/-f` to run with logs visible (for debugging).
+| Command | Server | Supervisor | Tunnel / Cloud link |
+|---|---|---|---|
+| `ppm stop` | stopped | **stays alive** (`stopped` state) | **stays up** |
+| `ppm down` (= `ppm stop --kill`) | stopped | stopped | stopped |
+| `ppm stop --all` | stopped | stopped | kills every PPM + cloudflared process, tracked or not |
+
+The split exists so a restart does not rotate the public URL. Use `down` for a real shutdown; use
+`stop --all` only when something is wedged — it kills by scan, not by tracked PID.
+
+### Logs
+
+The daemon writes to `~/.ppm/ppm.log` (inside `getPpmDir()`). `ppm logs -n 200`, `ppm logs -f` and
+`ppm logs --clear` read and manage it. There is no separate logging config.
+
+---
+
+## Start at Boot
+
+Use the built-in command rather than hand-writing a service file:
 
 ```bash
-# Start as background daemon (default)
-ppm start
-
-# Tunnel and public URL are enabled automatically on start
-ppm start
-
-# Start in foreground (debugging, shows logs)
-ppm start --foreground
-
-# Server status stored in ~/.ppm/status.json
-cat ~/.ppm/status.json
-
-# Check if running
-ps aux | grep ppm
-
-# Stop daemon
-ppm stop
-
-# Graceful shutdown: SIGTERM sent, tunnel stopped, cleanup files removed
+ppm autostart enable
+ppm autostart status
+ppm autostart disable
 ```
 
-**Status File Format (v2+):**
-```json
-{
-  "pid": 12345,
-  "port": 8080,
-  "host": "0.0.0.0",
-  "shareUrl": "https://abc-123.trycloudflare.com"
-}
-```
+It generates the right artifact per OS:
 
-**Backward Compatibility:** If `~/.ppm/status.json` doesn't exist, `ppm stop` falls back to reading `~/.ppm/ppm.pid`.
+| OS | Artifact |
+|---|---|
+| macOS | `~/Library/LaunchAgents/com.hienlh.ppm.plist` |
+| Linux | `~/.config/systemd/user/ppm.service` (`Type=notify`) |
+| Windows | Task Scheduler task `PPM`, registered from an XML task definition at logon |
 
-### Public URL Sharing via Cloudflare Tunnel
+`ppm start` enables autostart on first run and migrates a stale systemd unit, so in most cases you
+never call this directly. On Windows the task is created from XML rather than plain `schtasks
+/SC ONLOGON` — that flag cannot target a single user's logon without an all-users change, and it
+would otherwise impose a 72-hour run limit.
 
-**Feature:** `ppm start` automatically enables a public URL via Cloudflare Quick Tunnel.
+---
 
-**How It Works:**
-1. `ppm start` spawns a background daemon
-2. Daemon downloads cloudflared binary to `~/.ppm/bin/` if missing (shows download progress)
-3. Tunnel spawns as a child process
-4. Tunnel URL extracted from stderr (e.g., `https://abc-123.trycloudflare.com`)
-5. URL saved to `~/.ppm/status.json` for easy access
-6. Parent displays public URL in terminal output
+## Public URL Sharing via Cloudflare Tunnel
 
-**Requirements:**
-- Internet connectivity (tunnel uses Cloudflare's infrastructure)
-- ~15 MB disk space for cloudflared binary (downloaded once, cached)
+1. `ppm start` spawns the supervisor and server
+2. cloudflared is downloaded to `~/.ppm/bin/` on first use (~15 MB, cached)
+3. The tunnel runs as a child process; its URL is parsed from stderr
+4. The URL is written to `~/.ppm/status.json` and printed with a QR code
 
-**Security Warning:**
-If `auth.enabled` is false, PPM displays warning:
-```
-⚠ Warning: auth is disabled — your IDE is publicly accessible!
-  Enable auth: run 'ppm config set auth.enabled true' before using tunnel.
-```
+**The quick-tunnel URL rotates on every fresh tunnel.** For a stable address, link the machine to
+PPM Cloud (`ppm cloud login`) and use the permanent alias instead.
 
-Recommended: Always enable auth before sharing your URL.
+**Security:** if `auth.enabled` is false while the tunnel is up, PPM warns that the IDE is publicly
+reachable. Always keep auth on when sharing. The session token is required on the WebSocket
+handshake too, not just on HTTP.
 
-**Example:**
-```bash
-# Start with auto-enabled tunnel and auth
-ppm start                  # Safe: public URL + auth required
-
-# Start without auth (not recommended)
-ppm start                  # Warning: anyone can access your IDE (no password)
-
-# Stop the server (tunnel also stopped)
-ppm stop                   # Tunnel process stopped automatically
-```
-
-**Cleanup:**
-- `ppm stop` gracefully shuts down the tunnel
-- Cloudflared process killed via SIGTERM
-- No dangling tunnels left behind
-
-### Via systemd (Linux)
-
-Create `/etc/systemd/system/ppm.service`:
-
-```ini
-[Unit]
-Description=PPM Web IDE Server
-After=network.target
-
-[Service]
-Type=simple
-User=<username>
-WorkingDirectory=/home/<username>
-ExecStart=/usr/local/bin/ppm start
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then:
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable ppm
-sudo systemctl start ppm
-
-# Check status
-sudo systemctl status ppm
-
-# View logs
-sudo journalctl -u ppm -f
-```
-
-### Via launchd (macOS)
-
-Create `~/Library/LaunchAgents/com.ppm.server.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.ppm.server</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/local/bin/ppm</string>
-        <string>start</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/ppm.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/ppm-error.log</string>
-</dict>
-</plist>
-```
-
-Then:
-```bash
-launchctl load ~/Library/LaunchAgents/com.ppm.server.plist
-launchctl status com.ppm.server
-```
+Per-port forwarding for local dev servers is separate: the dock's Cloudflare Tunnels panel drives
+`/api/tunnels`, which spawns one quick tunnel per port.
 
 ---
 
 ## Environment Variables
 
-### Optional Configuration via ENV
+Only these are read by PPM:
 
-Instead of `ppm.yaml`, configure via environment variables:
+| Variable | Read by | Purpose |
+|---|---|---|
+| `PPM_HOME` | `src/services/ppm-dir.ts` | Override the `~/.ppm` directory. Used for test isolation. |
+| `PPM_CLAUDE_CLI` | Claude provider / CLI resolver | Explicit path to the `claude` binary when discovery fails |
+| `PPM_SKILLS_DIR` | `slash-discovery` | Extra directory to discover skills from |
+| `PPM_TERMINAL` | `ppm cloud` | Set to `1` to force terminal-mode output |
+| `PPM_INSTALL_DIR` | `scripts/install.sh` / `install.ps1` | Install location (default `~/.ppm/bin`) |
+| `PPM_DEV_API` | `vite.config.ts` | Dev-server proxy target (default `http://localhost:8081`) |
 
-```bash
-export PPM_PORT=8080
-export PPM_HOST=0.0.0.0
-export PPM_AUTH_TOKEN="my-secure-token"
-export PPM_DEFAULT_PROVIDER="claude-agent-sdk"
-export PPM_DB_PATH="/etc/ppm/ppm.db"  # Custom database location
+There is **no** `PPM_PORT`, `PPM_HOST`, `PPM_DB_PATH` or `PPM_DEFAULT_PROVIDER` — all of those are
+config keys, set with `ppm config set`.
 
-ppm start
-```
+### AI provider environment
 
-### For Claude Integration
-
-If using Claude Agent SDK:
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."  # Your Anthropic API key
-ppm start
-```
-
-**Note:** On Windows, SDK uses CLI fallback (`claude` binary) for Bun subprocess pipe buffering issues. Ensure `claude` is in PATH.
+The SDK authenticates through the logged-in `claude` CLI; an `ANTHROPIC_API_KEY` is not required.
+Note that a *project's* `.env` containing `ANTHROPIC_API_KEY` can break SDK tool execution, so the
+provider neutralizes those variables for spawned tools. See `lessons-learned.md`.
 
 ---
 
 ## Build & Deployment Commands
 
-### Full Build Pipeline
-
 ```bash
-# 1. Install dependencies
 bun install
-
-# 2. Type check
-bun run typecheck
-
-# 3. Build frontend
-bun run build:web
-
-# 4. Compile CLI binary (single executable)
-bun run build
-
-# Output: dist/ppm (~50-150 MB depending on platform)
-
-# 5. Test (optional, currently partial coverage)
+bun run typecheck        # bunx tsc --noEmit
+bun run build:web        # frontend only
+bun run build            # frontend + compiled binary → dist/ppm
 bun test
 ```
 
 ### Output Artifacts
 
-After `bun run build`:
-
 ```
 dist/
-├── ppm                    # Compiled CLI binary (executable)
-└── web/                   # Frontend assets (embedded in binary)
+├── ppm                    # compiled binary (embeds the runtime)
+└── web/                   # frontend assets served by the binary
     ├── index.html
-    ├── assets/
-    │   ├── index-*.js     # Main JS bundle
-    │   ├── index-*.css    # Tailwind styles
-    │   └── ...            # Other chunks
+    ├── assets/            # JS/CSS chunks
     └── manifest.json      # PWA manifest
 ```
 
-### Size Optimization
-
-```bash
-# Check bundle size before/after
-bun run build:web
-du -sh dist/web/assets/
-
-# Typical sizes:
-# - JS bundles: 200-300 KB gzipped
-# - CSS: 100-150 KB gzipped
-# - Total frontend: 400-500 KB gzipped
-# - CLI binary: 80-120 MB (includes runtime)
-```
+Typical sizes: frontend ~400–500 KB gzipped; binary ~80–120 MB (the runtime dominates).
 
 ---
 
@@ -466,160 +319,130 @@ Every step is idempotent — safe to re-run if it fails partway (e.g. npm alread
 
 ---
 
+## Upgrading
+
+```bash
+ppm upgrade --check     # see whether a newer version exists
+ppm upgrade             # download, verify and swap the binary in place
+```
+
+The supervisor also polls for new versions and surfaces a one-click upgrade banner in the UI. For
+Bun installs, `bun update -g @hienlh/ppm` works as well; for installer-script installs, re-running
+the installer is equivalent.
+
+Config carries over — `~/.ppm/ppm.db` is untouched by an upgrade. Back it up first if you want a
+guaranteed rollback point:
+
+```bash
+cp ~/.ppm/ppm.db ~/.ppm/ppm.db.backup
+```
+
+---
+
 ## First-Time Setup Checklist
 
 ```bash
-# 1. Install Bun
-curl -fsSL https://bun.sh/install | bash
-source ~/.bashrc  # or ~/.zshrc
+# 1. Install
+curl -fsSL https://ppm.sh/install | sh
 
-# 2. Clone/build PPM
-git clone https://github.com/hienlh/ppm.git
-cd ppm
-bun install
-bun run build
+# 2. Initialize (interactive: port, password, scan dir, AI settings)
+ppm init
 
-# 3. Initialize config
-./dist/ppm init
-# Follow prompts to add projects
+# 3. Start — prints Local + Share URLs and a QR code
+ppm start
 
-# 4. Start server
-./dist/ppm start
-# Output: http://localhost:8080 + token
+# 4. Open the printed URL, enter the access password
 
-# 5. Open browser
-# Navigate to http://localhost:8080
-# Enter token from step 4
-# Select project and start using
-
-# 6. Verify functionality
-# - Browse files in file explorer
-# - Open terminal and run commands
-# - Chat with Claude (requires ANTHROPIC_API_KEY)
+# 5. Verify: browse files, open a terminal, run a git status, send a chat message
 ```
 
 ---
 
 ## Troubleshooting
 
-### Port Already in Use
-
+### Port already in use
 ```bash
-# Check what's using port 8080
-lsof -i :8080
-# Kill process
-kill -9 <PID>
-
-# Or use different port
-ppm start --port 3000
+ppm status                 # is PPM itself already running?
+lsof -i :3210              # macOS/Linux
+netstat -ano | findstr :3210   # Windows
+ppm start -p 4000          # or just move
 ```
+If PPM was killed uncleanly the port can stay wedged by an orphaned child. `ppm stop --all` clears
+tracked and untracked PPM/cloudflared processes; on Windows a zombie-port reaper also runs at start.
 
-### Permission Denied (File Operations)
-
+### Server won't start
 ```bash
-# Ensure PPM has read/write access to project directory
-chmod -R u+rw /path/to/project
-
-# Or run PPM with appropriate user
-sudo -u <username> ppm start
-```
-
-### Git Commands Failing
-
-```bash
-# Verify git is installed
-git --version
-
-# Verify project is git repository
-cd /path/to/project
-git status
-
-# If not a repo
-git init
-```
-
-### Terminal Not Working
-
-```bash
-# Verify shell is available
-which bash zsh
-
-# Check PTY support (Linux/macOS only)
-# Windows may require WSL or special configuration
-```
-
-### Chat/Claude Not Responding
-
-```bash
-# Check API key is set
-echo $ANTHROPIC_API_KEY
-
-# Verify network connectivity
-curl https://api.anthropic.com
-
-# Check provider is working
-ppm chat send "test message" 2>&1
-```
-
-### Server Won't Start
-
-```bash
-# Check status (v2+)
-cat ~/.ppm/status.json
-
-# Verify server is running
-ps aux | grep ppm
-
-# View logs (foreground mode only)
-ppm start --foreground    # Shows real-time logs
-
-# Verify config is valid YAML
+ppm status --json
+ppm logs -n 200            # the daemon logs to ~/.ppm/ppm.log
 ppm config get port
-
-# Clear cache and restart
-rm -rf ~/.ppm/cache
-ppm start
+ppm down && ppm start      # full restart, including the supervisor
 ```
 
-**Note:** Daemon mode doesn't write to a log file by default. Use `ppm start --foreground` to see logs for debugging, or set up systemd with log redirection (see "Via systemd" section above).
+### Tunnel URL missing or unreachable
+```bash
+ppm status                 # shareUrl present?
+ls ~/.ppm/bin/cloudflared  # binary downloaded?
+ppm down && ppm start      # re-establish; the URL will change
+```
+A resolver that filters `*.trycloudflare.com` (some VPN/DNS setups) will make a *valid* URL look
+dead — test the same URL from another network before assuming the tunnel failed.
+
+### Chat not responding
+```bash
+claude --version           # is Claude Code installed and logged in?
+ppm logs -f                # provider errors are logged here
+```
+If the CLI cannot be found, set `PPM_CLAUDE_CLI=/path/to/claude`. If the project has an `.env` with
+`ANTHROPIC_API_KEY`, see the SDK note above.
+
+### Terminal not working
+```bash
+which bash zsh             # macOS/Linux
+```
+Windows uses ConPTY via `@skitee3000/bun-pty`; macOS and Linux use Bun's native PTY. Both are behind
+one `PtyHandle` interface in `terminal.service.ts`.
+
+### Git commands failing
+```bash
+git --version
+cd /path/to/project && git status    # is it actually a repo?
+```
+
+### Permission denied on file operations
+Confirm the PPM process user can read/write the project directory. PPM refuses paths outside its
+allowed scope by design — protected system roots and the PPM directory itself are shielded, so a
+403 on `~/.ppm` is expected behaviour, not a bug.
 
 ---
 
 ## Security Checklist
 
-### Before Production Deployment
+- [ ] Keep `auth.enabled` true — mandatory whenever the tunnel is up
+- [ ] Rotate the token if it leaks: `ppm config set auth.token "$(openssl rand -hex 32)"`
+- [ ] Restrict the config DB: `chmod 600 ~/.ppm/ppm.db` (it holds account credentials)
+- [ ] Review which projects are registered: `ppm projects list`
+- [ ] Keep the proxy auth key secret if the API proxy is enabled
+- [ ] Keep Bun and PPM updated: `bun upgrade`, `ppm upgrade`
+- [ ] Prefer the tunnel over opening a firewall port
 
-- [ ] Change default auth token: `ppm config set auth.token "$(openssl rand -hex 32)"`
-- [ ] Verify only necessary projects are in `ppm.yaml`
-- [ ] Set appropriate file permissions: `chmod 600 ~/.ppm/ppm.db`
-- [ ] Keep Bun updated: `bun upgrade`
-- [ ] Keep dependencies updated: `bun update`
-- [ ] Review firewall rules (localhost only recommended)
-- [ ] Disable password-less sudo if running as daemon
-- [ ] Use HTTPS if exposing to network (via reverse proxy, e.g., nginx)
-- [ ] Regularly backup `ppm.yaml` and project data
+### Direct network exposure (not recommended)
 
-### Network Exposure (Not Recommended)
-
-If you must expose to network:
+The tunnel is the supported path. If you must expose the port directly, terminate TLS in front:
 
 ```nginx
-# nginx reverse proxy with SSL
-upstream ppm {
-    server localhost:8080;
-}
+upstream ppm { server localhost:3210; }
 
 server {
     listen 443 ssl http2;
     server_name ppm.example.com;
 
-    ssl_certificate /etc/letsencrypt/live/ppm.example.com/fullchain.pem;
+    ssl_certificate     /etc/letsencrypt/live/ppm.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/ppm.example.com/privkey.pem;
 
     location / {
         proxy_pass http://ppm;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade $http_upgrade;   # WebSocket
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -627,140 +450,60 @@ server {
 }
 ```
 
-Then access via `https://ppm.example.com` with SSL certificate.
-
 ---
 
-## Upgrade Instructions
+## Monitoring
 
-### From v1 to v2
-
+### Health check (no auth)
 ```bash
-# 1. Backup existing config
-cp ~/.ppm/ppm.db ~/.ppm/ppm.db.backup
+curl http://localhost:3210/api/health
+# {"ok":true,"data":{"status":"running"}}
 
-# 2. Stop running server
-ppm stop
-# Or Ctrl+C if foreground
-
-# 3. Download/build v2 binary
-# (See "Installation" section above)
-
-# 4. Verify new binary works
-./dist/ppm --version
-# Should output: v2.0.0
-
-# 5. Start new version
-./dist/ppm start
-
-# 6. Test in browser
-# All projects and auth token should carry over
+curl http://localhost:3210/api/info
+# version, device_name, tunnel_active — used by the login screen
 ```
 
-### Rollback to v1 (If Needed)
+### Host metrics
+`/api/system/resources*` streams CPU, memory, disk, network, GPU and per-process data over SSE, in a
+light and a full tier with leases. It is the backend for the System Monitor window and is behind
+PPM auth. On Windows a single long-lived PowerShell collector serves every tick — never spawn one
+per tick.
 
+### Daemon state
 ```bash
-# 1. Stop v2 server
-ppm stop
-
-# 2. Switch back to v1 binary
-# cp path/to/v1/ppm ./ppm-v1
-# ./ppm-v1 start
-
-# 3. Restore backup if config changed
-# cp ~/.ppm/ppm.db.backup ~/.ppm/ppm.db
+ppm status --json      # pid, port, host, shareUrl, tunnel state
+cat ~/.ppm/status.json # same file the supervisor writes
+ppm logs -f
 ```
 
 ---
 
 ## Performance Tuning
 
-### Increase File Descriptor Limit (Linux)
-
+### File descriptor limit (Linux)
 ```bash
-# Check current limit
-ulimit -n
-
-# Increase to 4096 (temporary)
-ulimit -n 4096
-
-# Permanent: edit /etc/security/limits.conf
-# Add: * soft nofile 4096
-#      * hard nofile 4096
+ulimit -n                  # check
+ulimit -n 4096             # raise for this shell
+# permanent: /etc/security/limits.conf → * soft nofile 4096 / * hard nofile 4096
 ```
 
-### Memory Management
+### File watching
+PPM never registers a recursive watch on a project root — on Linux that is one inotify watch per
+subdirectory, `node_modules` included. Ignored directories are pruned at registration time in
+`src/services/file-watcher/watch-tree.ts`. If you add watch surfaces, keep that invariant or you
+will exhaust the inotify limit.
 
-```bash
-# Monitor memory usage
-# Linux
-ps aux | grep ppm
-free -h
-
-# macOS
-ps aux | grep ppm
-vm_stat | grep page
-
-# If using too much memory:
-# 1. Reduce number of open projects
-# 2. Clear browser cache
-# 3. Restart server
-```
-
-### Network Latency
-
-```bash
-# Test WebSocket latency
-# From browser console:
-console.time('ws');
-ws.send({type: 'message', content: 'ping'});
-// Measure response time
-```
+### Memory
+Long chat sessions are the usual growth source; the transcript is windowed rather than fully
+materialized. If memory climbs, check for orphaned transcode or tunnel children with the System
+Monitor, filtered to PPM's own processes.
 
 ---
 
-## Monitoring
+## Support
 
-### Health Check Endpoint
-
-```bash
-# Health check (no auth required)
-curl http://localhost:8080/api/health
-
-# Output: { ok: true, data: { status: "healthy" } }
-```
-
-### Activity Logging
-
-PPM logs to stdout in foreground mode. In daemon mode, configure:
-
-```yaml
-# ppm.yaml
-logging:
-  level: info  # debug, info, warn, error
-  file: ~/.ppm/server.log
-  rotation: daily
-  retention: 7  # days
-```
-
-### Metrics Collection
-
-For monitoring integrations (Prometheus, DataDog):
-
-```bash
-# Future: /api/metrics endpoint
-# Currently not implemented; planned for v2.1
-```
-
----
-
-## Support & Troubleshooting
-
-### Getting Help
-
-1. **GitHub Issues:** https://github.com/hienlh/ppm/issues
-2. **Logs:** Run `ppm start --foreground` to see real-time logs; check `~/.ppm/status.json` for daemon status
-3. **Configuration:** Validate `ppm.yaml` syntax
-4. **Dependencies:** Ensure Bun, Git, Node are installed and up-to-date
-5. **Tunnel Issues:** Check `~/.ppm/bin/cloudflared` exists; re-download if corrupted
-
+1. **Bug report:** `ppm report` pre-fills a GitHub issue with environment info and recent logs
+2. **Issues:** https://github.com/hienlh/ppm/issues
+3. **Logs:** `ppm logs -f` (`~/.ppm/ppm.log`)
+4. **Status:** `ppm status --json`
+5. **Known traps:** [`lessons-learned.md`](lessons-learned.md)

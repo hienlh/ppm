@@ -308,9 +308,8 @@ src/
 │   └── web/                         # Frontend bundle
 ├── node_modules/
 ├── .env.example                     # Environment template
-├── ppm.yaml                         # Auto-generated project config
 ├── tsconfig.json                    # TS config (strict mode, path aliases)
-├── vite.config.ts                   # Vite config (React, PWA, proxy to :8080)
+├── vite.config.ts                   # Vite config (React, PWA, proxy to dev server :8081)
 ├── tailwind.config.ts               # Tailwind (dark mode, custom colors)
 ├── package.json                     # Dependencies
 ├── bunfig.toml                      # Bun config (root directory)
@@ -322,10 +321,10 @@ src/
 ### CLI Layer (src/cli/)
 - **Responsibility:** Command-line interface for managing PPM
 - **Key Functions:**
-  - `start` — Start Hono server (background by default, tunnel always enabled; --foreground/-f for foreground)
-  - `stop` — Stop daemon (reads status.json first, falls back to ppm.pid)
+  - `start` — Start the server as a supervised background daemon (the only mode); tunnel always enabled. Flags: `-p/--port`, `--profile`, deprecated `-s/--share`
+  - `stop` / `down` — Stop the server keeping the supervisor + tunnel alive / full shutdown (reads status.json, falls back to ppm.pid)
   - `open` — Launch browser to active server
-  - `init` — Scan filesystem for git repos, create ppm.yaml
+  - `init` — Scan filesystem for git repos, write config to `~/.ppm/ppm.db`
   - `projects` — Add/remove/list projects in config
   - `config` — View/edit config values
   - `git` — Run git operations on active project
@@ -347,8 +346,8 @@ src/
 - **Responsibility:** Business logic, data operations, infrastructure (tunneling, database connections)
 - **Services:**
   - **ChatService** — Session lifecycle, message queueing, streaming
-  - **ConfigService** — Config loading (YAML→SQLite migration)
-  - **DbService** — SQLite persistence (9 tables, WAL mode, schema v5, connection/account CRUD, table cache)
+  - **ConfigService** — Config in SQLite (dotted keys, typed cache)
+  - **DbService** — SQLite persistence (WAL mode, schema v41, connection/account CRUD, table cache)
   - **AccountService** — Multi-account management, token encryption/decryption
   - **AccountSelectorService** — Select active account based on config
   - **GitService** — Git commands via simple-git
@@ -526,9 +525,9 @@ All tab routing and rendering components now include fallback guards for unknown
 | hono | HTTP framework | 4.12.8 |
 | simple-git | Git CLI wrapper | 3.33 |
 | @monaco-editor/react | Code editor | 4.7.0 |
-| xterm | Terminal emulator | 6.0 |
+| @xterm/xterm | Terminal emulator | 6.1.0-beta.285 |
 | zustand | State management | 5.0.11 |
-| @anthropic-ai/claude-agent-sdk | AI provider | 0.2.81 |
+| @anthropic-ai/claude-agent-sdk | AI provider | 0.3.251 (pinned) |
 | vite | Frontend bundler | 8.0 |
 | tailwindcss | Utility CSS | 4.2 |
 | radix-ui | Accessible components | 1.4.3 |
@@ -662,18 +661,16 @@ async bootstrapProviders() {
 
 ### Configuration
 
-```yaml
-ai:
-  default_provider: claude
-  providers:
-    claude:
-      type: agent-sdk
-      model: claude-opus-4-8  # default; see listModels() for full list
-      effort: high
-      max_turns: 100
-    cursor:
-      type: cli
-      model: cursor-fast        # from listModels()
+Stored as dotted keys in the `config` table; shown as a tree for readability:
+
+```
+ai.default_provider              claude
+ai.providers.claude.type         agent-sdk
+ai.providers.claude.model        claude-opus-5   # default; see listModels() for the full list
+ai.providers.claude.effort       high            # low|medium|high|xhigh|max
+ai.providers.claude.max_turns    1000
+ai.providers.cursor.type         cli
+ai.providers.cursor.model        cursor-fast     # from listModels()
 ```
 
 ### Testing
