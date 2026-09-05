@@ -802,13 +802,20 @@ chatRoutes.post("/sessions/:id/images/strip", async (c) => {
     const mode: StripMode = (body as { mode?: unknown }).mode === "all" ? "all" : "oversized";
     const includeAttachments = (body as { includeAttachments?: unknown }).includeAttachments === true;
 
-    const { listRunningSessions } = await import("../ws/chat.ts");
+    const { listRunningSessions, dropSubprocessForTranscriptRewrite } = await import("../ws/chat.ts");
     if (listRunningSessions().some((s) => s.sessionId === sessionId)) {
       return c.json(err("Session is running — wait for the turn to finish"), 409);
     }
 
     const found = locateTranscript(sessionId);
     if ("error" in found) return c.json(err(found.error), found.status);
+
+    // A subprocess that is merely idle is not "running", but it still holds the conversation
+    // in memory — including the image being stripped. Leaving it alive means the next turn
+    // re-sends the oversized attachment from memory and fails exactly as before, which is the
+    // failure this endpoint exists to clear. Drop it so the turn is rebuilt from the file we
+    // are about to rewrite.
+    dropSubprocessForTranscriptRewrite(sessionId);
 
     const result = await stripTranscriptImagesFile(found.path, mode, { includeAttachments });
     return c.json(ok({

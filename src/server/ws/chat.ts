@@ -47,9 +47,26 @@ function resolveSessionThinkingEnabled(sessionId: string): boolean {
 }
 
 const PING_INTERVAL_MS = 15_000; // 15s keepalive
-const CLEANUP_TIMEOUT_MS = 5 * 60_000; // 5min after Claude done + no FE
-/** How many clientless sessions may hold a live SDK subprocess at once. */
-const MAX_WARM_IDLE_SESSIONS = 5;
+/**
+ * When an abandoned session's entry is dropped.
+ *
+ * Deliberately *not* derived from the cache window. This timer also drops `activeSessions`
+ * — which carries up to MAX_TURN_EVENTS buffered events per session, tool results included —
+ * plus team watchers and the background-shell registry. Stretching it to the cache window
+ * held all of that for an hour to protect a subprocess it knows nothing about.
+ *
+ * It still must not preempt `scheduleSubprocessRelease`, so when that release is pending the
+ * timer reschedules itself instead of running. The two stay independent, and the long wait
+ * happens only for sessions that actually have a warm subprocess to protect.
+ */
+const CLEANUP_TIMEOUT_MS = 5 * 60_000;
+/**
+ * How many clientless sessions may hold a live SDK subprocess at once.
+ *
+ * This, not the retention window, is what bounds the memory: a longer window keeps these
+ * slots filled for longer but never adds a slot. At ~350MB per subprocess, 10 costs ~3.5GB.
+ */
+const MAX_WARM_IDLE_SESSIONS = 10;
 const MAX_TURN_EVENTS = 10_000; // memory safety cap
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
@@ -116,12 +133,48 @@ function listWarmIdleSessions(): { sessionId: string; entry: SessionEntry; idleS
 /** Release a session's subprocess, if it still has one and nobody is using it. */
 function releaseSubprocess(sessionId: string, reason: string, note: string): void {
   const entry = activeSessions.get(sessionId);
-  if (!entry || entry.clients.size > 0 || entry.isStreamingActive) return;
+  if (!entry) return;
+  // Disarm before deciding anything: past this point the pending release is either being
+  // performed or is moot, and a timer left armed is not merely stale. startCleanupTimer
+  // reschedules itself while `cacheReleaseTimer` is set, so an entry evicted by
+  // enforceWarmIdleCap — which calls straight in here — would outlive its own subprocess by
+  // up to the full TTL, holding its turnEvents buffer, ping interval, team watchers and
+  // shell registry. That is the accumulation the 5-minute cleanup exists to stop, on the one
+  // path that only runs when memory is already tight. Clearing here covers every caller.
+  if (entry.cacheReleaseTimer) {
+    clearTimeout(entry.cacheReleaseTimer);
+    entry.cacheReleaseTimer = undefined;
+  }
+  if (entry.clients.size > 0 || entry.isStreamingActive) return;
   const provider = providerRegistry.get(entry.providerId);
   if (!provider?.hasStreamingSession?.(sessionId)) return;
   provider.abortQuery?.(sessionId, reason);
   console.log(`[chat] session=${sessionId} released subprocess (${reason})`);
   logSessionEvent(sessionId, "INFO", note);
+}
+
+/**
+ * Drop a session's live subprocess so its next turn is rebuilt from the transcript on disk.
+ *
+ * Routes that rewrite the JSONL need this. The subprocess holds the conversation in memory,
+ * so a rewrite it never learns about simply does not apply: the user strips an oversized
+ * image, sends again, and the same image is re-sent from memory and fails identically.
+ * `listRunningSessions()` does not cover it — that skips `phase === "idle"`, and a warm idle
+ * subprocess is exactly this case. Unlike `releaseSubprocess` it does not require the session
+ * to be clientless, because the tab being open is the normal way to reach the strip button.
+ */
+export function dropSubprocessForTranscriptRewrite(sessionId: string): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry) return;
+  const provider = providerRegistry.get(entry.providerId);
+  if (!provider?.hasStreamingSession?.(sessionId)) return;
+  provider.abortQuery?.(sessionId, "transcript_rewritten");
+  if (entry.cacheReleaseTimer) {
+    clearTimeout(entry.cacheReleaseTimer);
+    entry.cacheReleaseTimer = undefined;
+  }
+  console.log(`[chat] session=${sessionId} released subprocess (transcript_rewritten)`);
+  logSessionEvent(sessionId, "INFO", "Subprocess released: the transcript was rewritten, so the next turn is rebuilt from disk");
 }
 
 /** Tear down the longest-idle subprocesses once too many sessions are holding one. */
@@ -153,7 +206,10 @@ function scheduleSubprocessRelease(sessionId: string): void {
   if (!provider?.hasStreamingSession?.(sessionId)) return;
 
   const note = "Subprocess released: its prompt cache has expired, so keeping it warm saves nothing";
-  const delay = cacheReleaseDelayMs(entry.lastTurnEndedAt, Date.now());
+  // The window is the provider's to state: an API-key install's cache dies at five minutes,
+  // so holding the subprocess for an hour there guards nothing and costs ~350MB.
+  const ttlMs = provider.promptCacheTtlMs?.(sessionId);
+  const delay = cacheReleaseDelayMs(entry.lastTurnEndedAt, Date.now(), ttlMs);
   if (delay === 0) {
     releaseSubprocess(sessionId, "cache_expired", note);
     return;
@@ -367,6 +423,13 @@ function startCleanupTimer(sessionId: string): void {
   entry.cleanupTimer = setTimeout(() => {
     // Double-check: don't kill if streaming started while timer was pending
     if (entry.isStreamingActive) return;
+    // A pending release means the subprocess is still worth holding, and dropping the entry
+    // takes it with us. Come back after that timer rather than stretching this one.
+    if (entry.cacheReleaseTimer) {
+      entry.cleanupTimer = undefined;
+      startCleanupTimer(sessionId);
+      return;
+    }
     console.log(`[chat] session=${sessionId} cleanup: idle with no FE for ${CLEANUP_TIMEOUT_MS / 1000}s`);
     logSessionEvent(sessionId, "INFO", "Session cleaned up (idle, no FE reconnected)");
     // Backstop for the subprocess: scheduleSubprocessRelease normally gets there first,

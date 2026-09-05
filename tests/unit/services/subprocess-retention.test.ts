@@ -3,6 +3,8 @@ import {
   cacheReleaseDelayMs,
   selectWarmIdleEvictions,
   PROMPT_CACHE_TTL_MS,
+  SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
+  API_KEY_PROMPT_CACHE_TTL_MS,
 } from "../../../src/services/subprocess-retention.ts";
 
 /**
@@ -20,23 +22,35 @@ describe("cacheReleaseDelayMs", () => {
 
   test("waits out the remainder of the TTL from the last turn, not from now", () => {
     // Turn ended 2 minutes ago → 3 of the 5 minutes remain. Timing this from the disconnect
-    // instead would hold the subprocess for a further full 5 minutes.
+    // instead would hold the subprocess for a further full 5 minutes. The window is passed
+    // explicitly so the assertion states the behaviour, not whatever the default happens to be.
+    const ttl = 5 * 60_000;
     const twoMinutesAgo = now - 2 * 60_000;
-    expect(cacheReleaseDelayMs(twoMinutesAgo, now)).toBe(3 * 60_000);
+    expect(cacheReleaseDelayMs(twoMinutesAgo, now, ttl)).toBe(3 * 60_000);
   });
 
   test("gives the full window to a turn that just finished", () => {
-    expect(cacheReleaseDelayMs(now, now)).toBe(PROMPT_CACHE_TTL_MS);
+    expect(cacheReleaseDelayMs(now, now, SUBSCRIPTION_PROMPT_CACHE_TTL_MS)).toBe(SUBSCRIPTION_PROMPT_CACHE_TTL_MS);
+  });
+
+  test("a provider that states no window gets the short one", () => {
+    // promptCacheTtlMs is optional on the provider interface, so "no opinion" arrives here as
+    // `undefined` — and the providers without an opinion are the ones with no Anthropic
+    // prompt cache to protect. Codex implements hasStreamingSession but not this, so an hour
+    // by default would hold ~350MB per abandoned session guarding a cache it never had.
+    expect(cacheReleaseDelayMs(now, now)).toBe(API_KEY_PROMPT_CACHE_TTL_MS);
+    expect(cacheReleaseDelayMs(now, now, undefined)).toBe(API_KEY_PROMPT_CACHE_TTL_MS);
+    expect(cacheReleaseDelayMs(now, now)).toBeLessThan(SUBSCRIPTION_PROMPT_CACHE_TTL_MS);
   });
 
   test("releases immediately once the cache has already lapsed", () => {
     // The old behaviour — free it on disconnect — is correct in exactly this case.
-    expect(cacheReleaseDelayMs(now - PROMPT_CACHE_TTL_MS, now)).toBe(0);
-    expect(cacheReleaseDelayMs(now - 60 * 60_000, now)).toBe(0);
+    expect(cacheReleaseDelayMs(now - PROMPT_CACHE_TTL_MS, now, PROMPT_CACHE_TTL_MS)).toBe(0);
+    expect(cacheReleaseDelayMs(now - 60 * 60_000, now, PROMPT_CACHE_TTL_MS)).toBe(0);
   });
 
   test("never returns a negative delay", () => {
-    expect(cacheReleaseDelayMs(now - 10 * PROMPT_CACHE_TTL_MS, now)).toBeGreaterThanOrEqual(0);
+    expect(cacheReleaseDelayMs(now - 10 * PROMPT_CACHE_TTL_MS, now, PROMPT_CACHE_TTL_MS)).toBeGreaterThanOrEqual(0);
   });
 
   test("honours a caller-supplied TTL", () => {
