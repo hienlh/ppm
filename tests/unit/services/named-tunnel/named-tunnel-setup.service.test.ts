@@ -129,8 +129,24 @@ describe("named-tunnel-setup.service", () => {
       expect(currentCertState()).toBe("invalid");
     });
 
-    test("ok when the cert parses", () => {
+    test("ok when the cert parses and nothing is pinned yet", () => {
       expect(currentCertState()).toBe("ok");
+    });
+
+    test("ok when the cert matches the pinned zoneID/accountID", () => {
+      configService.set("tunnel", {
+        mode: "named", namedTunnelToken: "tok", namedTunnelHostname: HOSTNAME,
+        zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID,
+      });
+      expect(currentCertState()).toBe("ok");
+    });
+
+    test("mismatch when the parsed cert's zoneID/accountID differ from the pinned config", () => {
+      configService.set("tunnel", {
+        mode: "named", namedTunnelToken: "tok", namedTunnelHostname: HOSTNAME,
+        zoneID: "c".repeat(32), accountID: "d".repeat(32), // different from the cert
+      });
+      expect(currentCertState()).toBe("mismatch");
     });
   });
 
@@ -138,6 +154,14 @@ describe("named-tunnel-setup.service", () => {
     test("throws a 400 SetupError when not logged in", async () => {
       process.env.TUNNEL_ORIGIN_CERT = resolve(certDir, "does-not-exist.pem");
       await expect(readZoneInfo()).rejects.toThrow("Not logged in to Cloudflare");
+    });
+
+    test("throws a 400 SetupError with a clear message on a pin mismatch, no zone fetch", async () => {
+      configService.set("tunnel", {
+        mode: "named", namedTunnelToken: "tok", namedTunnelHostname: HOSTNAME,
+        zoneID: "c".repeat(32), accountID: "d".repeat(32), // different from the cert
+      });
+      await expect(readZoneInfo()).rejects.toThrow("cert belongs to a different Cloudflare account");
     });
 
     test("returns zone + proposed hostname when the cert is parsed", async () => {
@@ -172,14 +196,14 @@ describe("named-tunnel-setup.service", () => {
       fetchState.existingTunnelId = "own-uuid-1234";
       fetchState.dnsRecords = [{ content: "own-uuid-1234.cfargotunnel.com" }];
       const result = await runSetup(HOSTNAME);
-      expect(result.ok).toBe(true);
+      expect(result.ok).toBe("pending"); // reload sent, confirmation is detached (item 11)
       const routeCall = runCalls.find((c) => c.includes("dns"))!;
       expect(routeCall).toContain("--overwrite-dns");
     });
 
     test("no existing record — proceeds without --overwrite-dns", async () => {
       const result = await runSetup(HOSTNAME);
-      expect(result.ok).toBe(true);
+      expect(result.ok).toBe("pending");
       const routeCall = runCalls.find((c) => c.includes("dns"))!;
       expect(routeCall).not.toContain("--overwrite-dns");
     });
@@ -189,7 +213,7 @@ describe("named-tunnel-setup.service", () => {
     test("'already exists' on create is treated as success-by-reuse", async () => {
       runResults.set("create", { code: 1, stdout: "", stderr: "tunnel with name already exists" });
       const result = await runSetup(HOSTNAME);
-      expect(result.ok).toBe(true);
+      expect(result.ok).toBe("pending");
     });
 
     test("a genuine create failure is a 500 SetupError", async () => {
@@ -206,17 +230,37 @@ describe("named-tunnel-setup.service", () => {
     });
   });
 
-  describe("runSetup — persistence and confirmation", () => {
-    test("persists zoneID/accountID/token and confirms via status.json before ok:true", async () => {
-      const captured = captureBroadcasts();
+  describe("runSetup — persistence, and non-blocking confirmation", () => {
+    test("persists zoneID/accountID/token before returning", async () => {
       const result = await runSetup(HOSTNAME);
-      expect(result).toEqual({ ok: true, hostname: HOSTNAME, tunnelName: expect.any(String) });
+      expect(result.ok).toBe("pending"); // a sent reload no longer blocks for a confirmed result
       const tunnel = configService.get("tunnel");
       expect(tunnel.mode).toBe("named");
       expect(tunnel.namedTunnelToken).toBe(VALID_RUN_TOKEN);
       expect(tunnel.zoneID).toBe(FAKE_ZONE_ID);
       expect(tunnel.accountID).toBe(FAKE_ACCOUNT_ID);
-      expect(captured.some((e: any) => e.type === "tunnel:setup_done")).toBe(true);
+    });
+
+    test("returns immediately after a sent reload, never blocking on the up-to-45s confirmation poll", async () => {
+      const start = Date.now();
+      const result = await runSetup(HOSTNAME);
+      expect(Date.now() - start).toBeLessThan(2_000);
+      expect(result.ok).toBe("pending");
+      if (result.ok === "pending") expect(result.hostname).toBe(HOSTNAME);
+    });
+
+    test("broadcasts tunnel:setup_done from a detached background task once status.json confirms", async () => {
+      const captured = captureBroadcasts();
+      const result = await runSetup(HOSTNAME);
+      // The HTTP-facing result is already "pending" by the time this resolves
+      // — setup_done (if it lands at all) can only ever come from the
+      // detached poll's own broadcast, never inline on this return path.
+      expect(result.ok).toBe("pending");
+
+      // beforeEach's STATUS_FILE already matches, so the background poll
+      // confirms on its very first check — give it a turn to run.
+      await Bun.sleep(50);
+      expect(captured.some((e: any) => e.type === "tunnel:setup_done" && e.hostname === HOSTNAME)).toBe(true);
     });
 
     test("pending shape when the supervisor lacks the retunnel capability, config still saved", async () => {

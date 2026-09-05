@@ -57,6 +57,10 @@ namedTunnelRoutes.get("/status", (c) => {
     dismissed: resolved.dismissed,
     login: cloudflaredLoginService.getLoginSnapshot(),
     tunnelWarning,
+    // A stable public hostname needs PPM auth to gate it — the client uses
+    // this to hide the first-run popup entirely on an auth-disabled install
+    // rather than walking the user into a 403 on `POST /login`.
+    authEnabled: configService.get("auth").enabled,
   }));
 });
 

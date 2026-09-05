@@ -21,10 +21,10 @@ export interface NamedTunnelStatus {
   /** Supervisor-side downgrade warning (e.g. named tunnel failed → running quick). */
   tunnelWarning?: string | null;
   /**
-   * Whether PPM authentication is on. Optional only until the server route
-   * lands it — treat a missing value as `true` (fail open to "don't nag",
-   * since the popup and section both already gate mutations behind the same
-   * flag being true elsewhere).
+   * PPM auth toggle — a named tunnel must never be reachable from an
+   * auth-disabled install, so the client hides the popup when this is false.
+   * Optional so older servers (no field) keep the previous "don't nag"
+   * behaviour: the reducer treats a missing value as `true`.
    */
   authEnabled?: boolean;
 }

@@ -38,7 +38,7 @@ const state = {
   startLoginCalls: 0,
   cancelCalls: 0,
   disableCalls: 0,
-  certState: "none" as "none" | "invalid" | "ok",
+  certState: "none" as "none" | "invalid" | "ok" | "mismatch",
   setupThrow: null as { status: number; message: string } | null,
   setupResult: { ok: true as const, hostname: "ppm.example.com", tunnelName: "ppm-host" } as any,
 };
@@ -117,6 +117,23 @@ describe("GET /api/tunnel/named/status", () => {
     setAuth(false);
     const res = await app().request("/api/tunnel/named/status");
     expect(res.status).toBe(200);
+  });
+
+  it("exposes authEnabled so the client can hide the popup on an auth-disabled install", async () => {
+    setAuth(true);
+    const enabledRes = await app().request("/api/tunnel/named/status");
+    expect((await enabledRes.json()).data.authEnabled).toBe(true);
+
+    setAuth(false);
+    const disabledRes = await app().request("/api/tunnel/named/status");
+    expect((await disabledRes.json()).data.authEnabled).toBe(false);
+  });
+
+  it("passes through a cert/pin mismatch as certState:'mismatch'", async () => {
+    state.certState = "mismatch";
+    const res = await app().request("/api/tunnel/named/status");
+    const json = await res.json();
+    expect(json.data.certState).toBe("mismatch");
   });
 });
 
