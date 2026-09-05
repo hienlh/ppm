@@ -106,7 +106,26 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
     }
   },
 
-  clearAll: () => set({ notifications: new Map() }),
+  clearAll: () => {
+    // Read the entries out before the wipe: the request needs their ids, and state no
+    // longer holds them once it is cleared.
+    const entries = [...useNotificationStore.getState().notifications];
+    if (entries.length === 0) return;
+    set({ notifications: new Map() });
+    // One request for the lot, on a route that takes no project. The per-session route is
+    // mounted under /api/project/:projectName, so its middleware 404s for exactly the
+    // entries that most need clearing — a session whose project was renamed or deleted, or
+    // one PPM recorded no project for. Those are the ones that came back on every reload.
+    api.post("/api/chat/sessions/read", { sessionIds: entries.map(([id]) => id) }).catch(() => {
+      // The server still holds them, so a reload would bring them back regardless. Putting
+      // them back now means the button does not quietly claim to have done something.
+      set((s) => {
+        const restored = new Map(s.notifications);
+        for (const [id, entry] of entries) if (!restored.has(id)) restored.set(id, entry);
+        return { notifications: restored };
+      });
+    });
+  },
 
   loadFromServer: async (projectName: string) => {
     try {

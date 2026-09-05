@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
-export const CURRENT_SCHEMA_VERSION = 41;
+export const CURRENT_SCHEMA_VERSION = 42;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -899,6 +899,34 @@ function runMigrations(database: Database): void {
     try { database.exec("ALTER TABLE turn_usage ADD COLUMN account_label TEXT"); } catch { /* column exists */ }
     database.exec("PRAGMA user_version = 41;");
   }
+
+  if (current < 42) {
+    // Unread rows created before `incrementSessionUnread` learned the project name have
+    // `project_name IS NULL`. They could not heal on their own: the bell refuses to open a
+    // session it cannot place, so the connection that would have filled the name never
+    // happens, and the entry comes back on every reload. Fill them from the mapping that
+    // already knows, same shape as the v11 backfill above.
+    database.exec(`
+      UPDATE session_metadata SET
+        project_name = COALESCE(project_name, (
+          SELECT project_name FROM session_map
+          WHERE session_map.sdk_id = session_metadata.session_id
+             OR session_map.ppm_id = session_metadata.session_id
+        )),
+        project_path = COALESCE(project_path, (
+          SELECT project_path FROM session_map
+          WHERE session_map.sdk_id = session_metadata.session_id
+             OR session_map.ppm_id = session_metadata.session_id
+        ))
+      WHERE project_name IS NULL OR project_path IS NULL
+    `);
+    database.exec(`
+      UPDATE session_metadata SET project_path = (
+        SELECT path FROM projects WHERE projects.name = session_metadata.project_name
+      ) WHERE project_path IS NULL AND project_name IS NOT NULL
+    `);
+    database.exec("PRAGMA user_version = 42;");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1161,17 +1189,26 @@ export interface UnreadEntry {
   sessionTitle: string | null;
 }
 
-/** Increment unread count for a session and set the notification type + title snapshot */
-export function incrementSessionUnread(sessionId: string, type: string, title?: string | null): void {
-  if (title) {
-    getDb().query(
-      "UPDATE session_metadata SET unread_count = unread_count + 1, unread_type = ?, last_known_title = ? WHERE session_id = ?",
-    ).run(type, title, sessionId);
-  } else {
-    getDb().query(
-      "UPDATE session_metadata SET unread_count = unread_count + 1, unread_type = ? WHERE session_id = ?",
-    ).run(type, sessionId);
-  }
+/** Increment unread count for a session and set the notification type + title snapshot.
+ *
+ *  Row-creating, like {@link setSessionUnread}. A session PPM did not create — resumed
+ *  here, or started in the CLI — has no `session_metadata` row, and an UPDATE against a
+ *  missing row silently dropped the unread entry altogether.
+ *
+ *  `project_name` is filled in the same statement so the bell can group and open the
+ *  session, and the COALESCE keeps the *stored* name: a name arriving later is not
+ *  evidence the session moved, and letting it win would let a stale name in a persisted
+ *  tab's URL overwrite a good one. */
+export function incrementSessionUnread(sessionId: string, type: string, title?: string | null, projectName?: string | null): void {
+  getDb().query(
+    `INSERT INTO session_metadata (session_id, unread_count, unread_type, last_known_title, project_name)
+     VALUES (?, 1, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       unread_count = session_metadata.unread_count + 1,
+       unread_type = excluded.unread_type,
+       last_known_title = COALESCE(excluded.last_known_title, session_metadata.last_known_title),
+       project_name = COALESCE(session_metadata.project_name, excluded.project_name)`,
+  ).run(sessionId, type, title ?? null, projectName ?? null);
 }
 
 /** Manually mark a session unread (idempotent: SETS count to 1, not increment; row-creating).
@@ -1186,6 +1223,19 @@ export function setSessionUnread(sessionId: string, type: string, title?: string
        last_known_title = COALESCE(excluded.last_known_title, session_metadata.last_known_title),
        project_name = COALESCE(session_metadata.project_name, excluded.project_name)`,
   ).run(sessionId, type, title ?? null, projectName ?? null);
+}
+
+/** Mark several sessions as read in one transaction.
+ *  Clearing is project-agnostic — the read route never looked at the project segment —
+ *  so this works for rows whose project is unknown or names a project that no longer
+ *  exists, which is exactly the set that could not be cleared before. */
+export function clearSessionUnreadMany(sessionIds: string[]): void {
+  if (sessionIds.length === 0) return;
+  const db = getDb();
+  const stmt = db.query("UPDATE session_metadata SET unread_count = 0, unread_type = NULL WHERE session_id = ?");
+  db.transaction(() => {
+    for (const id of sessionIds) stmt.run(id);
+  })();
 }
 
 /** Mark a session as read (reset unread count) */

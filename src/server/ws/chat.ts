@@ -644,7 +644,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         }).catch(() => {});
         // Persist unread to DB + broadcast to all tabs/devices
         const doneSession = chatService.getSession(sessionId);
-        incrementSessionUnread(sessionId, "done", doneSession?.title);
+        // The project comes from the connection, not from a separate write on open: a
+        // session PPM did not create has no metadata row until this runs, and this is the
+        // one place that knows both the session and its project.
+        incrementSessionUnread(sessionId, "done", doneSession?.title, entry.projectName || null);
         broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: "done", projectName: entry.projectName || "", sessionTitle: doneSession?.title || null });
 
         import("../../services/notification.service.ts").then(({ notificationService }) => {
@@ -666,7 +669,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         const nType = isQuestion ? "question" : "approval_request";
         // Persist unread to DB + broadcast to all tabs/devices
         const approvalSession = chatService.getSession(sessionId);
-        incrementSessionUnread(sessionId, nType, approvalSession?.title);
+        incrementSessionUnread(sessionId, nType, approvalSession?.title, entry.projectName || null);
         broadcastGlobalEvent({ type: "session:unread_changed", sessionId, unreadCount: -1, unreadType: nType, projectName: entry.projectName || "", sessionTitle: approvalSession?.title || null });
 
         import("../../services/notification.service.ts").then(({ notificationService }) => {
