@@ -10,8 +10,8 @@ import { namedTunnelCopy } from "./named-tunnel-copy";
 import { NamedTunnelLoginStep } from "./named-tunnel-login-step";
 import { NamedTunnelHostnameField } from "./named-tunnel-hostname-field";
 
-const primaryBtn = "w-full py-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none";
-const secondaryBtn = "w-full py-3 rounded-lg border border-border text-sm text-text-secondary hover:bg-surface-elevated transition-colors";
+const primaryBtn = "w-full min-h-11 py-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none";
+const secondaryBtn = "w-full min-h-11 py-3 rounded-lg border border-border text-sm text-text-secondary hover:bg-surface-elevated transition-colors";
 
 interface Props {
   step: Step;

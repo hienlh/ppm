@@ -3,7 +3,10 @@ import { api } from "./api-client";
 export type LoginState = "idle" | "waiting" | "slow" | "success" | "timeout" | "cancelled" | "error";
 export interface LoginSnapshot { state: LoginState; url: string | null; message: string | null }
 
-export type CertState = "none" | "invalid" | "ok";
+// "mismatch" = a valid, parseable cert whose pinned account/zone no longer
+// matches this setup's pin — same recovery path as "invalid" (re-login), but
+// a different reason to show the user.
+export type CertState = "none" | "invalid" | "ok" | "mismatch";
 
 export interface NamedTunnelStatus {
   mode: "quick" | "named";
@@ -17,6 +20,13 @@ export interface NamedTunnelStatus {
   liveMode?: "quick" | "named" | null;
   /** Supervisor-side downgrade warning (e.g. named tunnel failed → running quick). */
   tunnelWarning?: string | null;
+  /**
+   * Whether PPM authentication is on. Optional only until the server route
+   * lands it — treat a missing value as `true` (fail open to "don't nag",
+   * since the popup and section both already gate mutations behind the same
+   * flag being true elsewhere).
+   */
+  authEnabled?: boolean;
 }
 
 export interface ZoneInfo {

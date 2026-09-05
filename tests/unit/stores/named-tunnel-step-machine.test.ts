@@ -20,9 +20,27 @@ function status(overrides: Partial<NamedTunnelStatus> = {}): NamedTunnelStatus {
 }
 
 describe("initialStepFromStatus", () => {
+  it("stays hidden when authEnabled is explicitly false, regardless of everything else", () => {
+    const s = status({ authEnabled: false, certState: "invalid", mode: "quick", dismissed: false });
+    expect(initialStepFromStatus(s)).toEqual({ k: "hidden" });
+  });
+
+  it("treats a missing authEnabled as true (backward-compatible with a server build that predates the field)", () => {
+    const s = status(); // no `authEnabled` key at all
+    expect(initialStepFromStatus(s)).toEqual({ k: "ask-domain" });
+  });
+
   it("goes to needs-relogin when the cert is invalid, regardless of mode/dismissed", () => {
     const s = status({ certState: "invalid", mode: "named", dismissed: true });
     expect(initialStepFromStatus(s)).toEqual({ k: "needs-relogin", message: expect.any(String) });
+  });
+
+  it("goes to needs-relogin with distinct wording for a cert/account mismatch vs. a plain invalid cert", () => {
+    const mismatchStep = initialStepFromStatus(status({ certState: "mismatch" }));
+    const invalidStep = initialStepFromStatus(status({ certState: "invalid" }));
+    expect(mismatchStep.k).toBe("needs-relogin");
+    expect(invalidStep.k).toBe("needs-relogin");
+    expect((mismatchStep as { message: string }).message).not.toBe((invalidStep as { message: string }).message);
   });
 
   it("stays hidden once mode is named (already set up)", () => {
@@ -178,4 +196,41 @@ describe("reduceStep — misc", () => {
     expect(reduceStep(step, { type: "confirm-zone" })).toEqual(step);
     expect(reduceStep(step, { type: "setup-step", message: "x" })).toEqual(step);
   });
+});
+
+describe("reduceStep — a later status refresh must not clobber committed progress", () => {
+  const committedSteps: Step[] = [
+    { k: "confirm-zone", zone: "example.com" },
+    { k: "choose-hostname", zone: "example.com", prefix: "ppm" },
+    { k: "applying", zone: "example.com", prefix: "ppm", message: "…" },
+    { k: "done", hostname: "ppm.example.com" },
+    { k: "pending", hostname: "ppm.example.com", message: "…" },
+    { k: "no-domain" },
+  ];
+
+  for (const step of committedSteps) {
+    it(`a "status" action leaves ${step.k} untouched (e.g. setup-done/pending refetch must not reset it)`, () => {
+      // Status says the flow hasn't happened yet — the reducer must trust the
+      // committed step over a status snapshot that simply hasn't caught up.
+      const staleStatus = status({ login: { state: "success", url: null, message: null } });
+      expect(reduceStep(step, { type: "status", status: staleStatus })).toEqual(step);
+    });
+  }
+
+  const resettableSteps: Step[] = [
+    { k: "hidden" },
+    { k: "ask-domain" },
+    { k: "login-wait", url: null, slow: false },
+    { k: "login-timeout" },
+    { k: "login-cancelled" },
+    { k: "needs-relogin", message: "renew" },
+    { k: "error", message: "boom" },
+  ];
+
+  for (const step of resettableSteps) {
+    it(`a "status" action re-derives from ${step.k} (recoverable, not yet committed)`, () => {
+      const freshStatus = status({ mode: "named" }); // already set up elsewhere
+      expect(reduceStep(step, { type: "status", status: freshStatus })).toEqual({ k: "hidden" });
+    });
+  }
 });

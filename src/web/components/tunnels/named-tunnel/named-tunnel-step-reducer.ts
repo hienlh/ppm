@@ -46,14 +46,38 @@ export type Action =
 
 /** First step to render once `/status` has been read on mount. */
 export function initialStepFromStatus(status: NamedTunnelStatus): Step {
-  if (status.certState === "invalid") {
-    return { k: "needs-relogin", message: namedTunnelCopy.needsRelogin.certInvalid };
+  // `authEnabled` is optional until the server route lands it — a missing
+  // value must not silently reopen the popup on an auth-disabled install, so
+  // default to "on" only for backward compatibility, never to hide a real
+  // `false`.
+  const authEnabled = status.authEnabled ?? true;
+  if (!authEnabled) {
+    return { k: "hidden" };
+  }
+  if (status.certState === "invalid" || status.certState === "mismatch") {
+    return {
+      k: "needs-relogin",
+      message: status.certState === "mismatch"
+        ? namedTunnelCopy.needsRelogin.certMismatch
+        : namedTunnelCopy.needsRelogin.certInvalid,
+    };
   }
   if (status.mode !== "quick" || status.dismissed) {
     return { k: "hidden" };
   }
   return stepFromLoginState(status.login.state, status.login.url, status.login.message);
 }
+
+/**
+ * Steps a later `/status` refresh is allowed to recompute. Once the user has
+ * committed past login (confirm-zone, choose-hostname, applying) or reached a
+ * terminal card (done, pending, no-domain), a stale or lagging status
+ * snapshot must not silently reset that progress — only these "not yet
+ * committed" steps re-derive from a fresh fetch.
+ */
+const STATUS_RESETTABLE: ReadonlySet<Step["k"]> = new Set([
+  "hidden", "ask-domain", "login-wait", "login-timeout", "login-cancelled", "needs-relogin", "error",
+]);
 
 function stepFromLoginState(state: LoginState, url: string | null, message: string | null): Step {
   switch (state) {
@@ -80,7 +104,7 @@ function stepFromLoginState(state: LoginState, url: string | null, message: stri
 export function reduceStep(step: Step, action: Action): Step {
   switch (action.type) {
     case "status":
-      return initialStepFromStatus(action.status);
+      return STATUS_RESETTABLE.has(step.k) ? initialStepFromStatus(action.status) : step;
 
     case "answer-yes":
       return { k: "login-wait", url: null, slow: false };

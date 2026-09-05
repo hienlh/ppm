@@ -27,6 +27,15 @@ export function NamedTunnelSection() {
   // shows a plain "Set up" button instead, since clicking that button already
   // means "yes".
   const inFlow = t.step.k !== "hidden" && t.step.k !== "ask-domain";
+  // Optional until the server route lands it — default to "on" so this never
+  // hides real functionality on a build that predates the field, but never
+  // reopens it for a genuine `false`.
+  const authEnabled = status.authEnabled ?? true;
+  // What is actually serving traffic, not just what was asked for — a failed
+  // named spawn falls back to quick while `mode` (the persisted request)
+  // still says "named".
+  const displayMode = status.liveMode ?? status.mode;
+  const certNeedsRelogin = status.certState === "invalid" || status.certState === "mismatch";
 
   async function handleDisable() {
     if (!confirmDisable) {
@@ -59,10 +68,13 @@ export function NamedTunnelSection() {
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium text-text-primary">{c.title}</span>
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide ${
-          status.mode === "named" ? "bg-success/10 text-success" : "bg-surface-elevated text-text-secondary"
+          displayMode === "named" ? "bg-success/10 text-success" : "bg-surface-elevated text-text-secondary"
         }`}>
-          {status.mode === "named" ? c.modeNamed : c.modeQuick}
+          {displayMode === "named" ? c.modeNamed : c.modeQuick}
         </span>
+        {status.mode !== displayMode && (
+          <span className="text-[10px] text-text-subtle">({c.configuredAs(status.mode)})</span>
+        )}
       </div>
 
       {status.mode === "named" && status.hostname && (
@@ -73,13 +85,13 @@ export function NamedTunnelSection() {
           <button
             onClick={() => copyHostname(status.hostname!)}
             aria-label="Copy URL"
-            className="shrink-0 size-8 flex items-center justify-center rounded-md hover:bg-surface-elevated transition-colors"
+            className="shrink-0 size-11 flex items-center justify-center rounded-md hover:bg-surface-elevated transition-colors"
           >
             {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5 text-text-secondary" />}
           </button>
           <a
             href={`https://${status.hostname}`} target="_blank" rel="noopener noreferrer"
-            className="shrink-0 size-8 flex items-center justify-center rounded-md hover:bg-surface-elevated transition-colors"
+            className="shrink-0 size-11 flex items-center justify-center rounded-md hover:bg-surface-elevated transition-colors"
           >
             <ExternalLink className="size-3.5 text-text-secondary" />
           </a>
@@ -97,21 +109,23 @@ export function NamedTunnelSection() {
         </div>
       )}
 
-      {status.certState === "invalid" && !inFlow && (
+      {certNeedsRelogin && !inFlow && (
         <div className="flex items-center gap-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2 text-xs text-foreground">
           <ShieldAlert className="size-3.5 text-warning shrink-0" />
-          {c.certInvalid}
+          {status.certState === "mismatch" ? c.certMismatch : c.certInvalid}
         </div>
       )}
 
       {inFlow ? (
         <NamedTunnelSetupContent step={t.step} t={t} />
+      ) : !authEnabled ? (
+        <p className="text-xs text-text-secondary">{c.authDisabled}</p>
       ) : (
         <div className="flex flex-wrap gap-2">
           {status.mode === "quick" && (
             <button
               onClick={t.answerYes}
-              className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+              className="min-h-11 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               {c.setup}
             </button>
@@ -120,7 +134,7 @@ export function NamedTunnelSection() {
             <button
               onClick={handleDisable}
               disabled={disabling}
-              className={`px-3 py-2 rounded-md text-xs transition-colors disabled:opacity-50 ${
+              className={`min-h-11 px-3 py-2 rounded-md text-xs transition-colors disabled:opacity-50 ${
                 confirmDisable ? "bg-destructive/15 text-destructive" : "border border-border text-text-secondary hover:bg-surface-elevated"
               }`}
             >
