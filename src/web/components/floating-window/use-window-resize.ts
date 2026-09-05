@@ -6,6 +6,7 @@
 import { useDrag } from "@use-gesture/react";
 import { applyResize, clampRect, type Rect, type ResizeHandle } from "./window-geometry";
 import {
+  gestureAbandoned,
   gestureDisplacement,
   WINDOW_DRAG_CONFIG,
   type WindowGestureContext,
@@ -14,6 +15,10 @@ import {
 export function useWindowResize(ctx: WindowGestureContext) {
   return useDrag(
     ({ args, xy, initial, first, last, memo }) => {
+      if (gestureAbandoned(first, memo)) {
+        if (last) ctx.onGestureActive(false);
+        return;
+      }
       const handle = args[0] as ResizeHandle;
       const base: Rect = first ? { ...ctx.getRect() } : (memo as Rect);
       if (first) ctx.onGestureActive(true);

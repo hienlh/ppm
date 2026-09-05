@@ -207,6 +207,14 @@ const ChatTab = lazy(() => import("./chat-tab").then(m => ({ default: m.ChatTab 
 </Suspense>
 ```
 
+Every tab is additionally wrapped in a stable-container `createPortal` (`ReparentingTab`,
+`src/web/components/layout/reparenting-tab.tsx`): the wrapper `div` is created once and never
+replaced, so the portal never remounts the tab — that is what lets a panel move, split, dock, or
+detach into a floating window/PiP without losing xterm scrollback, Monaco undo history, or a chat
+stream. A tab's actual React ancestor is `ReparentingTab`, not whatever panel currently renders its
+slot — a provider meant to reach a tab's content (e.g. a portal-container context) must be mounted
+there, not around the panel/window body.
+
 ## Service Patterns
 
 ### Singleton Services

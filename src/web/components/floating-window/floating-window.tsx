@@ -1,16 +1,25 @@
 /**
- * One floating window: geometry, gestures, keyboard, and a chrome slot.
+ * One floating window: geometry, gestures, keyboard, the skinned chrome, and the body
+ * element every kind renders into.
  *
  * Geometry is written straight to the element instead of through React state — a drag emits
  * a pointermove per frame and re-rendering the window (and its content) on each one is what
  * makes a window manager feel heavy. The store is written only when a gesture ends, which is
  * also the moment the rect is rounded to whole pixels.
+ *
+ * Picture-in-picture is a capability of the FRAME, not of any one kind: the body element is
+ * published as this window's PiP slot, so an explorer, a system monitor, a team-member
+ * session and a detached tab all pop out through the same titlebar button.
  */
 
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { DefaultWindowChrome } from "./default-window-chrome";
-import { TITLEBAR_HEIGHT, type WindowChrome } from "./window-chrome-contract";
+import { PortalContainerProvider } from "@/components/ui/portal-container-context";
+import { TITLEBAR_HEIGHT } from "./window-chrome-contract";
+import { useWindowBodyElement } from "./use-window-body-element";
+import { WindowPipPlaceholder } from "./window-pip-placeholder";
+import { WindowSkinChrome } from "./window-skin-chrome";
 import { windowZIndex, type Bounds, type Rect } from "./window-geometry";
 import { useWindowStore, type WindowRuntimeState } from "./window-store";
 import { useWindowDrag } from "./use-window-drag";
@@ -28,8 +37,6 @@ export interface FloatingWindowProps {
   getScale: () => number;
   /** Told when a gesture starts/ends so the layer can raise its capture overlay. */
   onGestureActive: (active: boolean) => void;
-  /** Skin component for the titlebar; owns its own hooks and state. */
-  chrome?: WindowChrome;
   children: ReactNode;
 }
 
@@ -47,7 +54,6 @@ export function FloatingWindow({
   focused,
   getScale,
   onGestureActive,
-  chrome,
   children,
 }: FloatingWindowProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -56,6 +62,8 @@ export function FloatingWindow({
   const maximized = win.state === "maximized";
   const minimized = win.state === "minimized";
   const rect: Rect = maximized ? { x: 0, y: 0, w: bounds.w, h: bounds.h } : win.rect;
+
+  const { body, pip } = useWindowBodyElement(win.id, rootRef, minimized);
 
   // Latest committed geometry, read at the first frame of a gesture (never mid-gesture,
   // where it would compound the cumulative movement).
@@ -112,8 +120,6 @@ export function FloatingWindow({
     movable: !maximized,
   });
 
-  const Chrome = chrome ?? DefaultWindowChrome;
-
   return (
     <div
       ref={rootRef}
@@ -131,7 +137,7 @@ export function FloatingWindow({
         gesturing ? "transition-none" : "transition-[transform,width,height] duration-150 motion-reduce:transition-none",
       )}
     >
-      <Chrome
+      <WindowSkinChrome
         id={win.id}
         kind={win.kind}
         title={title}
@@ -152,15 +158,17 @@ export function FloatingWindow({
         onClose={close}
       />
 
-
-      {/* Always mounted, even minimized — content owns per-window state (explorer history,
-          selection, filter) that a remount would wipe. Hidden via CSS, not unmounted. */}
-      <div className={cn("relative flex-1 min-h-0 overflow-hidden rounded-b-[8px] bg-panel", minimized && "hidden")}>
-        {children}
-      </div>
+      {pip && <WindowPipPlaceholder pip={pip} minimized={minimized} />}
 
       {!maximized && !minimized && (
         <WindowResizeHandles bind={(handle) => bindResize(handle) as Record<string, unknown>} />
+      )}
+
+      {/* Radix primitives inside the content must portal into whichever document the body
+          currently lives in; `undefined` (never `null`) restores the document default. */}
+      {createPortal(
+        <PortalContainerProvider container={pip?.pipWindow.document.body}>{children}</PortalContainerProvider>,
+        body,
       )}
     </div>
   );

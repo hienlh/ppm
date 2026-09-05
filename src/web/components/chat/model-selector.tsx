@@ -50,8 +50,11 @@ export function ModelSelector({ value, onChange, projectName, providerId, disabl
         setOpen(false);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    // The panel's own document — in a picture-in-picture window the main
+    // document never sees these clicks, so the panel would never close.
+    const doc = panelRef.current?.ownerDocument ?? document;
+    doc.addEventListener("mousedown", handler);
+    return () => doc.removeEventListener("mousedown", handler);
   }, [open]);
 
   // Focus current on open

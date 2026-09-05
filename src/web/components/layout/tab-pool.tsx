@@ -1,22 +1,27 @@
 /**
  * TabPool — persistent tab rendering with DOM reparenting.
  *
- * All tab components are mounted ONCE in a hidden off-screen container and
- * never unmounted when moved between panels or split. useLayoutEffect
- * physically moves each tab's wrapper DOM node into the correct panel slot
- * via appendChild (which moves, not clones). Component instances, hooks,
- * and all internal state (xterm buffer, Monaco editor, chat scroll) survive.
+ * All tab components are mounted ONCE and never unmounted when moved between panels or
+ * split. Each tab gets a wrapper element that is created once and portalled into; a
+ * layout effect physically moves that wrapper into the correct panel slot via appendChild
+ * (which moves, not clones). Component instances, hooks, and all internal state (xterm
+ * buffer, Monaco editor, chat scroll) survive.
  *
- * Why not createPortal? Changing a portal's container element causes React
- * to unmount/remount the children — defeating the purpose.
+ * A portal is safe here precisely because the container element is stable: the objection
+ * to portals is that *changing* a portal's container remounts its children, and nothing
+ * ever swaps a wrapper. In exchange React binds its listeners to the wrapper itself, so
+ * they travel with the node — including into another document.
  */
-import { useRef, useLayoutEffect, useEffect, useSyncExternalStore, Suspense, lazy } from "react";
-import { Loader2 } from "lucide-react";
+import { useState, useEffect, useSyncExternalStore, lazy } from "react";
 import { usePanelStore } from "@/stores/panel-store";
 import { useMountedTabsStore } from "@/stores/mounted-tabs-store";
 import type { TabType } from "@/stores/tab-store";
 import { collectTabEntries, filterMountableEntries } from "./tab-pool-collect";
-import { DOCK_PANEL_ID } from "@/stores/panel-utils";
+import { slotRegistry } from "./tab-pool-registry";
+import { ReparentingTab } from "./reparenting-tab";
+import { useWindowPanelReconcile } from "./use-window-panel-reconcile";
+
+export { registerPanelSlot } from "./tab-pool-registry";
 
 // ---------------------------------------------------------------------------
 // Lazy tab components (single source of truth for all tab types)
@@ -39,65 +44,39 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
   group: lazy(() => import("@/components/group-chat/group-chat-tab").then((m) => ({ default: m.GroupChatTab }))),
 };
 
-// ---------------------------------------------------------------------------
-// Slot registry — panels register their content container refs here
-// ---------------------------------------------------------------------------
-type SlotListener = () => void;
-
-class SlotRegistry {
-  private slots = new Map<string, HTMLDivElement>();
-  private listeners = new Set<SlotListener>();
-  private version = 0;
-
-  register(panelId: string, el: HTMLDivElement | null) {
-    if (el) {
-      if (this.slots.get(panelId) === el) return;
-      this.slots.set(panelId, el);
-    } else {
-      if (!this.slots.has(panelId)) return;
-      this.slots.delete(panelId);
-    }
-    this.version++;
-    this.listeners.forEach((fn) => fn());
-  }
-
-  get(panelId: string): HTMLDivElement | undefined {
-    return this.slots.get(panelId);
-  }
-
-  subscribe(fn: SlotListener): () => void {
-    this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
-  }
-
-  getVersion(): number {
-    return this.version;
-  }
-}
-
-const registry = new SlotRegistry();
-
-/** Called by EditorPanel to register its content slot */
-export function registerPanelSlot(panelId: string, el: HTMLDivElement | null) {
-  registry.register(panelId, el);
-}
+const HIDDEN_CONTAINER_STYLE: React.CSSProperties = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  width: 0,
+  height: 0,
+  overflow: "hidden",
+  pointerEvents: "none",
+  visibility: "hidden",
+};
 
 // ---------------------------------------------------------------------------
-// TabPool — renders all tabs in a hidden container, reparents into slots
+// TabPool — renders all tabs into wrappers parked off-screen, reparents into slots
 // ---------------------------------------------------------------------------
 export function TabPool() {
-  const hiddenRef = useRef<HTMLDivElement>(null);
+  // State, not a ref: a tab's wrapper must be appended to a real element on its very
+  // first layout effect, and a parent ref is still null while its children's effects run.
+  const [hiddenContainer, setHiddenContainer] = useState<HTMLDivElement | null>(null);
 
   // Re-render when slots change (panel mount/unmount)
   useSyncExternalStore(
-    (cb) => registry.subscribe(cb),
-    () => registry.getVersion(),
+    (cb) => slotRegistry.subscribe(cb),
+    () => slotRegistry.getVersion(),
   );
 
   const panels = usePanelStore((s) => s.panels);
   const grid = usePanelStore((s) => s.grid);
   const currentProject = usePanelStore((s) => s.currentProject);
   const projectGrids = usePanelStore((s) => s.projectGrids);
+
+  // Detached tabs and their floating windows are persisted separately, so a reload can
+  // restore one without the other; this repairs the mismatch once per project load.
+  useWindowPanelReconcile();
 
   // Collect tabs from ALL mounted projects (not just active) to preserve
   // tab state across project switches (keep-alive). Each project's
@@ -133,118 +112,25 @@ export function TabPool() {
   }, [visibleKey]);
 
   return (
-    // Off-screen mount point. React mounts tab wrappers here, then
-    // useLayoutEffect moves them into panel slots before the browser paints.
-    <div ref={hiddenRef} style={{ position: "fixed", top: 0, left: 0, width: 0, height: 0, overflow: "hidden", pointerEvents: "none", visibility: "hidden" }}>
-      {tabEntries.map((entry) => (
-        <ReparentingTab
-          key={entry.tabId}
-          tabId={entry.tabId}
-          panelId={entry.panelId}
-          type={entry.type}
-          metadata={entry.metadata}
-          isActive={entry.isActive}
-          hiddenContainer={hiddenRef}
-        />
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ReparentingTab — mounts once, physically moves between panel slots
-// ---------------------------------------------------------------------------
-interface ReparentingTabProps {
-  tabId: string;
-  panelId: string;
-  type: TabType;
-  metadata?: Record<string, unknown>;
-  isActive: boolean;
-  hiddenContainer: React.RefObject<HTMLDivElement | null>;
-}
-
-function ReparentingTab({ tabId, panelId, type, metadata, isActive, hiddenContainer }: ReparentingTabProps) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const Component = TAB_COMPONENTS[type];
-
-  // On unmount: move wrapper back to hidden container so React's removeChild
-  // can find it. Without this, the wrapper stays orphaned in the slot (the DOM
-  // patch swallows the NotFoundError) and covers other tabs.
-  useLayoutEffect(() => {
-    return () => {
-      const wrapper = wrapperRef.current;
-      const hidden = hiddenContainer.current;
-      if (wrapper && hidden && wrapper.parentElement !== hidden) {
-        hidden.appendChild(wrapper);
-      }
-    };
-  }, [hiddenContainer]);
-
-  // Imperatively move the wrapper DOM node into the correct panel slot.
-  // appendChild on an already-mounted node moves it (DOM spec — no clone/destroy).
-  // useLayoutEffect runs before paint, so the user never sees the off-screen state.
-  // No deps — must run every render because React's reconciliation may call
-  // insertBefore() to reorder keyed children, moving reparented nodes back
-  // to the hidden container. The early-return guard keeps this cheap.
-  useLayoutEffect(() => {
-    const wrapper = wrapperRef.current;
-    const slot = registry.get(panelId);
-    if (!wrapper) return;
-
-    // Panel slot not mounted (e.g., mobile renders only the focused panel).
-    // Move wrapper back to hidden container so it doesn't overlap in the wrong slot.
-    if (!slot) {
-      const hidden = hiddenContainer.current;
-      if (hidden && wrapper.parentElement !== hidden) {
-        hidden.appendChild(wrapper);
-      }
-      return;
-    }
-
-    if (wrapper.parentElement === slot) return;
-
-    // Save scroll positions — appendChild resets them during the DOM move
-    const scrollables: { el: Element; top: number; left: number }[] = [];
-    wrapper.querySelectorAll("*").forEach((el) => {
-      if (el.scrollTop || el.scrollLeft) {
-        scrollables.push({ el, top: el.scrollTop, left: el.scrollLeft });
-      }
-    });
-
-    slot.appendChild(wrapper);
-
-    // Restore scroll positions synchronously before paint
-    for (const { el, top, left } of scrollables) {
-      el.scrollTop = top;
-      el.scrollLeft = left;
-    }
-  });
-
-  if (!Component) return null;
-
-  return (
-    <div
-      ref={wrapperRef}
-      className="absolute inset-0"
-      style={isActive ? undefined : { display: "none" }}
-      data-tab-pool-id={tabId}
-      onMouseDownCapture={() => {
-        // Tab content is DOM-reparented out of EditorPanel's fiber subtree, so
-        // EditorPanel's onMouseDown never sees clicks on the content body. Set
-        // focus here where panelId is known — keeps focusedPanelId correct for
-        // every tab type. Dock content is excluded so new tabs open in the grid.
-        if (panelId !== DOCK_PANEL_ID) usePanelStore.getState().setFocusedPanel(panelId);
-      }}
-    >
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="size-6 animate-spin text-primary" />
-          </div>
-        }
-      >
-        <Component metadata={metadata} tabId={tabId} />
-      </Suspense>
+    // Off-screen parking spot. Tab wrappers live here until a layout effect moves them
+    // into a panel slot, and come back whenever their panel has no slot mounted.
+    <div ref={setHiddenContainer} style={HIDDEN_CONTAINER_STYLE}>
+      {hiddenContainer &&
+        tabEntries.map((entry) => {
+          const Component = TAB_COMPONENTS[entry.type];
+          if (!Component) return null;
+          return (
+            <ReparentingTab
+              key={entry.tabId}
+              tabId={entry.tabId}
+              panelId={entry.panelId}
+              component={Component}
+              metadata={entry.metadata}
+              isActive={entry.isActive}
+              hiddenContainer={hiddenContainer}
+            />
+          );
+        })}
     </div>
   );
 }

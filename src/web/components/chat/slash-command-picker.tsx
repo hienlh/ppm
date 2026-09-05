@@ -117,8 +117,11 @@ export function SlashCommandPicker({
     const handler = (e: globalThis.KeyboardEvent) => {
       if (handleKeyDown(e)) e.stopPropagation();
     };
-    document.addEventListener("keydown", handler, true);
-    return () => document.removeEventListener("keydown", handler, true);
+    // The list's own document — in a picture-in-picture window the keys are
+    // delivered there, not to the main document.
+    const doc = listRef.current?.ownerDocument ?? document;
+    doc.addEventListener("keydown", handler, true);
+    return () => doc.removeEventListener("keydown", handler, true);
   }, [visible, handleKeyDown]);
 
   const handleRefresh = useCallback(() => {

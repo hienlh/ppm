@@ -40,6 +40,7 @@ import { useTabOverflow, getHiddenUnreadDirection } from "@/hooks/use-tab-overfl
 import { useSettingsStore } from "@/stores/settings-store";
 import { tabRowClass, tabAddButtonClass } from "@/lib/tab-bar-style";
 import { DraggableTab } from "./draggable-tab";
+import { TabPopOutMenuItem } from "./tab-pop-out-menu-item";
 import { cn } from "@/lib/utils";
 import type { Tab } from "@/stores/tab-store";
 import { downloadFile } from "@/lib/file-download";
@@ -394,6 +395,7 @@ export const TabBar = memo(function TabBar({ panelId }: TabBarProps) {
               tagColor={sessionId ? sessionTagMap[sessionId]?.color : undefined}
               extraMenuContent={
                 <>
+                  <TabPopOutMenuItem tab={tab} panelId={effectivePanelId} />
                   {dockMoveMenuItems(tab)}
                   {compareMenuItems(tab)}
                   {sessionId && !notiType && (

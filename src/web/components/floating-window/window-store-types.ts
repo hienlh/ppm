@@ -2,8 +2,14 @@
 
 import type { Rect } from "./window-geometry";
 
-/** Content families the layer can host. The registry maps each kind to its body component. */
-export type WindowKind = "explorer" | "team-member" | "system-monitor";
+/**
+ * Content families the layer can host. The registry maps each kind to its body component.
+ * Single source of truth: the persistence layer filters this list instead of repeating it,
+ * so a new kind can never be silently dropped on reload.
+ */
+export const WINDOW_KINDS = ["explorer", "team-member", "system-monitor", "tab-host"] as const;
+
+export type WindowKind = (typeof WINDOW_KINDS)[number];
 
 export type WindowVisualState = "normal" | "maximized" | "minimized";
 

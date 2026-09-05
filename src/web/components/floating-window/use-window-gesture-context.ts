@@ -26,6 +26,20 @@ export const WINDOW_DRAG_CONFIG = {
 } as const;
 
 /**
+ * True when a gesture event arrives with no rect to work from.
+ *
+ * A gesture can outlive the window it started on: pressing a caption button (close, or
+ * anything that unmounts the frame) begins a drag on the titlebar, and @use-gesture still
+ * delivers a terminating event afterwards — with `first` false and `memo` undefined, because
+ * the frame that would have captured the rect is gone. Reading `memo.x` there is a
+ * `TypeError` on every window close. Nothing is left to move or resize, so the gesture is
+ * abandoned; the caller must still lower the layer's capture overlay on a `last` event.
+ */
+export function gestureAbandoned(first: boolean, memo: unknown): boolean {
+  return !first && memo === undefined;
+}
+
+/**
  * Pointer displacement since the gesture started, corrected for layer scale.
  *
  * Derived from the raw pointer coordinates (`xy` minus `initial`) rather than the

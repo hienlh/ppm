@@ -29,6 +29,42 @@ export const DOCK_PANEL_ID = "__dock__";
  */
 export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-monitor"]);
 
+// ---------------------------------------------------------------------------
+// Floating-window panels
+// ---------------------------------------------------------------------------
+
+/**
+ * Prefix of the reserved panel IDs that host tabs detached into a floating window.
+ * Like the dock, such a panel lives in the `panels` map but is intentionally excluded
+ * from `grid`, so all grid math (MAX_ROWS, split, column count) ignores it. The
+ * window id is the suffix, which is what ties the panel to its window.
+ */
+export const WINDOW_PANEL_PREFIX = "__win__:";
+
+/** Panel ID hosting the tabs of the floating window `windowId`. */
+export function windowPanelId(windowId: string): string {
+  return `${WINDOW_PANEL_PREFIX}${windowId}`;
+}
+
+export function isWindowPanelId(panelId: string): boolean {
+  return panelId.startsWith(WINDOW_PANEL_PREFIX);
+}
+
+/** The window a panel belongs to, or null when it is not a window panel. */
+export function windowIdFromPanelId(panelId: string): string | null {
+  return isWindowPanelId(panelId) ? panelId.slice(WINDOW_PANEL_PREFIX.length) || null : null;
+}
+
+/** Create the off-grid panel for a floating window, with an empty tab list. */
+export function createWindowPanel(windowId: string): Panel {
+  return {
+    id: windowPanelId(windowId),
+    tabs: [],
+    activeTabId: null,
+    tabHistory: [],
+  };
+}
+
 /** Visible/height state for the dock — stored per-project via projectDock map. */
 export interface DockState {
   visible: boolean;

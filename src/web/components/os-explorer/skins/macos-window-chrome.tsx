@@ -1,10 +1,12 @@
 /**
  * Finder-flavoured unified titlebar: traffic lights left (grey when unfocused, hover
- * reveals the glyph), title centred. Height matches the shared `TITLEBAR_HEIGHT` contract
- * constant (not the real Finder 38px) so a minimised window's collapsed height agrees with
- * what `FloatingWindow` reserves for it. The toolbar row (back/forward/view-switch/search)
- * is the existing `ExplorerToolbar` in the window body, tinted by `skins.css` — the chrome
- * slot is only the titlebar itself.
+ * reveals the glyph), title centred, picture-in-picture at the right end. Height matches the
+ * shared `TITLEBAR_HEIGHT` contract constant (not the real Finder 38px) so a minimised
+ * window's collapsed height agrees with what `FloatingWindow` reserves for it.
+ *
+ * Worn by EVERY window kind, not just the explorer: the frame resolves one skin for all of
+ * them. Anything below the titlebar (the explorer's own toolbar row, tinted by `skins.css`)
+ * belongs to the window body — the chrome slot is only the titlebar itself.
  *
  * `data-skin` is set here (not only on the explorer body) because this titlebar is a
  * sibling of the body in the window tree — the `--x-*` vars it reads only resolve on an
@@ -14,6 +16,7 @@
 import { Minus, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
+import { PipCaptionButton } from "@/components/floating-window/pip/pip-caption-button";
 
 /** The traffic-light colours, plus the unfocused grey — the documented hardcoded hexes. */
 const LIGHTS = [
@@ -23,7 +26,7 @@ const LIGHTS = [
 ] as const;
 
 export function MacosWindowChrome({
-  title, focused, titlebarProps, onMinimize, onToggleMaximize, onClose,
+  id, title, focused, titlebarProps, onMinimize, onToggleMaximize, onClose,
 }: WindowChromeProps) {
   const { className, style, ...rest } = titlebarProps;
   const actions = [onClose, onMinimize, onToggleMaximize];
@@ -56,14 +59,20 @@ export function MacosWindowChrome({
           </button>
         ))}
       </div>
+      {/* A flex child, not an absolutely centred span: the title is boxed between the
+          traffic lights and the caption button, so a long title truncates instead of
+          painting over either of them. Centre is a few px off true middle — acceptable. */}
       <span
         className={cn(
-          "pointer-events-none absolute inset-x-0 truncate text-center text-[13px]",
+          "pointer-events-none flex-1 min-w-0 truncate text-center text-[13px] px-2",
           focused ? "text-text" : "text-text-2",
         )}
       >
         {title}
       </span>
+      <div className="flex items-center pr-2">
+        <PipCaptionButton id={id} />
+      </div>
     </div>
   );
 }

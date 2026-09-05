@@ -22,6 +22,7 @@ import type { DbQueryResult } from "../database/use-database";
 // Single source of truth: the explorer decides whether a double-click can open a file at
 // all from these very sets, so they must not be redeclared here.
 import { AUDIO_EXTS, IMAGE_EXTS, SQLITE_EXTS, VIDEO_EXTS } from "@/components/os-explorer/can-open-in-ppm";
+import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 
 const MarkdownRenderer = lazy(() =>
   import("@/components/shared/markdown-renderer").then((m) => ({ default: m.MarkdownRenderer }))
@@ -246,6 +247,12 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
       vv.removeEventListener("scroll", handle);
     };
   }, [isMobile]);
+
+  // Host-driven resize (picture-in-picture): `automaticLayout` never fires for
+  // a size driven by another document, and after the return the editor keeps
+  // the PiP size until it is told to lay out again.
+  // Re-runs on loading/error because the container only exists once the file rendered.
+  useEffect(() => onHostResize(containerRef.current, () => editorRef.current?.layout()), [loading, error]);
 
   // CodeLens: inline Run buttons between SQL statements
   const codeLensDisposable = useRef<MonacoType.IDisposable[]>([]);
@@ -820,10 +827,13 @@ function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab
     e.preventDefault();
     const startY = e.clientY;
     const startH = panelHeight;
+    // The handle's own document — the editor may be living in a PiP window,
+    // where the main document never sees these pointer events.
+    const doc = e.currentTarget.ownerDocument;
     const onMove = (ev: MouseEvent) => setPanelHeight(Math.max(80, startH + (startY - ev.clientY)));
-    const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
+    const onUp = () => { doc.removeEventListener("mousemove", onMove); doc.removeEventListener("mouseup", onUp); };
+    doc.addEventListener("mousemove", onMove);
+    doc.addEventListener("mouseup", onUp);
   }, [panelHeight]);
 
   return (

@@ -8,8 +8,6 @@
  */
 
 import { lazy, type ComponentType, type LazyExoticComponent } from "react";
-import { ExplorerSkinChrome } from "@/components/os-explorer/skins/explorer-skin-chrome";
-import type { WindowChrome } from "./window-chrome-contract";
 import type { WindowKind } from "./window-store-types";
 
 export interface WindowContentProps {
@@ -23,21 +21,8 @@ export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentTyp
   explorer: lazy(() => import("@/components/os-explorer/explorer-window-content")),
   "team-member": lazy(() => import("@/components/chat/team-member-window-content")),
   "system-monitor": lazy(() => import("@/components/system/system-monitor-window-content")),
+  "tab-host": lazy(() => import("./tab-host-window-content")),
 };
-
-/**
- * Per-kind titlebar chrome. `FloatingWindow` renders `chrome` directly with no
- * `<Suspense>` around it, so — unlike `WINDOW_CONTENT` — entries here must be plain,
- * synchronously-renderable components, not `lazy()`.
- */
-export const WINDOW_CHROME: Partial<Record<WindowKind, WindowChrome>> = {
-  explorer: ExplorerSkinChrome,
-};
-
-/** Chrome for a window kind, or `undefined` to fall back to `DefaultWindowChrome`. */
-export function chromeFor(kind: WindowKind): WindowChrome | undefined {
-  return WINDOW_CHROME[kind];
-}
 
 /** Titlebar text for a window. Falls back to the kind's generic name. */
 export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>): string {
@@ -48,6 +33,9 @@ export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>)
     return typeof member === "string" && member ? `Session — ${member}` : "Team member";
   }
   if (kind === "system-monitor") return "System Monitor";
+  // A detached tab carries its title in the payload; the generic name only shows for a
+  // window whose tab has not been resolved yet (restore before the layout is loaded).
+  if (kind === "tab-host") return "Tab";
   const path = payload?.path;
   if (kind === "explorer" && typeof path === "string" && path) {
     const segments = path.split(/[\\/]/).filter(Boolean);

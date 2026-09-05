@@ -1,10 +1,14 @@
 /**
- * Windows 11 File Explorer-flavoured titlebar: window icon + title left, caption buttons
- * right (46px wide, close hover red). Height matches the shared `TITLEBAR_HEIGHT` contract
- * constant (not the real Win11 32px) so a minimised window's collapsed height agrees with
- * what `FloatingWindow` reserves for it. The toolbar row (back/forward/breadcrumb/search) is
- * the existing `ExplorerToolbar` in the window body, tinted by `skins.css` — the chrome slot
- * is only the titlebar itself.
+ * Windows 11 File Explorer-flavoured titlebar: title left, caption buttons right (46px wide,
+ * close hover red), picture-in-picture left of minimize. Height matches the shared
+ * `TITLEBAR_HEIGHT` contract constant (not the real Win11 32px) so a minimised window's
+ * collapsed height agrees with what `FloatingWindow` reserves for it.
+ *
+ * Worn by EVERY window kind, not just the explorer: the frame resolves one skin for all of
+ * them. Hence the folder glyph is drawn only for `kind === "explorer"` — it is the File
+ * Explorer's app icon, and a system monitor wearing it would be a lie. Anything below the
+ * titlebar (the explorer's own toolbar row, tinted by `skins.css`) belongs to the window
+ * body — the chrome slot is only the titlebar itself.
  *
  * `data-skin` is set here (not only on the explorer body) because this titlebar is a
  * sibling of the body in the window tree — the `--x-*` vars it reads (`--x-titlebar-bg`,
@@ -14,6 +18,7 @@
 import { Minus, Square, Copy, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
+import { PipCaptionButton } from "@/components/floating-window/pip/pip-caption-button";
 import { WindowsFolderIcon } from "./folder-icon-windows";
 
 /** Windows metric: 46px wide caption buttons, full titlebar height. */
@@ -23,7 +28,7 @@ const CAPTION_BUTTON =
 const CLOSE_BUTTON = cn(CAPTION_BUTTON, "can-hover:hover:!bg-[#c42b1c] can-hover:hover:!text-white");
 
 export function WindowsWindowChrome({
-  title, state, focused, titlebarProps, onMinimize, onToggleMaximize, onClose,
+  id, kind, title, state, focused, titlebarProps, onMinimize, onToggleMaximize, onClose,
 }: WindowChromeProps) {
   const { className, style, ...rest } = titlebarProps;
   return (
@@ -39,9 +44,10 @@ export function WindowsWindowChrome({
       )}
     >
       <div className="flex flex-1 min-w-0 items-center gap-2 px-2.5 cursor-default">
-        <WindowsFolderIcon className="size-4 shrink-0" />
+        {kind === "explorer" && <WindowsFolderIcon className="size-4 shrink-0" />}
         <span className={cn("truncate text-[12px]", focused ? "text-text" : "text-text-2")}>{title}</span>
       </div>
+      <PipCaptionButton id={id} className={CAPTION_BUTTON} />
       <button type="button" aria-label="Minimize window" className={CAPTION_BUTTON} onClick={onMinimize}>
         <Minus className="size-3.5" />
       </button>
