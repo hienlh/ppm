@@ -8,22 +8,49 @@ import { RecreatedDirPoller } from "./recreated-dir-poller.ts";
  * near the number of *interesting* ones.
  *
  * `fs.watch(root, { recursive: true })` is a single call, but on Linux the runtime
- * expands it into one inotify watch per subdirectory — dependency trees included.
- * Filtering those events on arrival (what this service used to do) still pays the
- * full cost, which is how a handful of projects reached ~360k watches and pushed
- * the machine against `fs.inotify.max_user_watches`.
+ * expands it into one inotify watch per *entry* — every file as well as every
+ * directory, dependency trees included. Filtering those events on arrival (what this
+ * service used to do) still pays the full cost, which is how a handful of projects
+ * reached ~360k watches and pushed the machine against `fs.inotify.max_user_watches`.
  *
- * So coverage is chosen up front: a subtree with no ignored directory anywhere
- * inside it gets one native recursive watch (cheap, and the runtime tracks new
- * directories for us); any subtree that contains an ignored directory gets a
- * non-recursive watch plus per-child recursion, so the ignored branch is never
- * handed to the runtime. That keeps the watcher count small — which also keeps
- * `fs.inotify.max_user_instances` out of play — while pruning ~92% of the
- * directories in a typical repo.
+ * So coverage is chosen up front, and the shape depends on what the platform's
+ * recursive watch actually is.
+ *
+ * On Windows and macOS it is a kernel-side subtree watch (`ReadDirectoryChangesW`,
+ * FSEvents): one handle covers a whole subtree, it tracks directories created later,
+ * and it does not traverse reparse points. Measured on Windows 11 / Bun 1.3.10 over a
+ * 2,441-directory tree, one recursive handle attaches in 80ms for +7.0MB where one
+ * handle per directory takes 965ms for +25.2MB. So a subtree with no ignored directory
+ * inside it gets a single recursive watch there.
+ *
+ * On Linux there is no such call. Bun emulates it by walking the tree and opening a
+ * watch per entry, and that cost does not depend on the shape: measured over 4
+ * directories holding 600 files, one recursive handle and one non-recursive handle per
+ * directory both come to 604 descriptors on a single inotify instance. So this split
+ * buys nothing in inotify terms — the handle count was never what `max_user_instances`
+ * counts — and it is not why Linux takes a handle per directory.
+ *
+ * What it buys is coverage. The emulation differs from this scan in two ways: it does
+ * not pick up directories created after it attached, and it walks through symlinks this
+ * scan deliberately skips — a pnpm workspace with a symlinked `node_modules` had its
+ * whole store watched, one open descriptor per file, which exhausted the process at
+ * ~724k descriptors.
+ *
+ * Either way the walk below is what prunes ~92% of the directories in a typical repo,
+ * and an ignored branch is never handed to the runtime.
  */
 
 /** Coalesce a burst of directory churn into a single subtree rebuild. */
 const REBUILD_DEBOUNCE_MS = 500;
+
+/**
+ * Whether `{ recursive: true }` is a real subtree watch rather than a per-directory walk.
+ * Named platforms rather than `!== "linux"`, so a runtime nobody has measured here —
+ * freebsd, say — takes the conservative walk instead of inheriting a promise about
+ * `ReadDirectoryChangesW`. `RecreatedDirPoller` is derived from this for the same reason:
+ * the emulation is a different mechanism with different defects.
+ */
+const NATIVE_RECURSIVE = process.platform === "win32" || process.platform === "darwin";
 
 export interface WatchTreeOptions {
   /** Absolute path of the directory to watch. */
@@ -81,7 +108,10 @@ export class WatchTree {
   constructor(private readonly options: WatchTreeOptions) {
     // Only Bun on Linux has the stale-watch defect; elsewhere re-watching works
     // and paying for polling would be pure waste.
-    this.poller = process.platform === "linux"
+    // Tied to NATIVE_RECURSIVE rather than re-testing the platform: the poller stands in
+    // for a defect of the same emulation, and `attach()` relies on exactly one of the two
+    // being in play. Deriving it here keeps that from drifting apart.
+    this.poller = !NATIVE_RECURSIVE
       ? new RecreatedDirPoller({ onChange: (abs) => this.reportAbs(abs) })
       : null;
   }
@@ -135,13 +165,23 @@ export class WatchTree {
     }
 
     for (const entry of entries) {
-      // isDirectory() is false for symlinks, which keeps link cycles and
-      // duplicate coverage (pnpm stores, workspace links) out of the walk.
-      if (!entry.isDirectory()) continue;
-      if (isIgnoredDirName(entry.name)) {
+      // A symlink named like an ignored directory still has to mark the subtree, or an
+      // ancestor takes a recursive watch over a `node_modules` this walk never entered —
+      // which is how a pnpm store got watched through the link. Tested before
+      // isDirectory(), which is false for symlinks. Plain files are deliberately left out:
+      // IGNORED_DIRS holds names like `build`, `out` and `target`, and a compiled binary
+      // called `build` is no reason to cost everything around it its recursive coverage.
+      // A symlink to a *file* is caught here too, since telling it from a link to a
+      // directory needs a stat() the walk would otherwise never make. It holds no subtree,
+      // so marking it only forfeits recursive coverage — the safe direction, and it takes
+      // a file named exactly `node_modules` or `target` to happen at all.
+      if (isIgnoredDirName(entry.name) && (entry.isDirectory() || entry.isSymbolicLink())) {
         node.hasIgnored = true;
         continue;
       }
+      // isDirectory() is false for symlinks, which keeps link cycles and
+      // duplicate coverage (pnpm stores, workspace links) out of the walk.
+      if (!entry.isDirectory()) continue;
       if (budget.left <= 0) {
         // Unscanned directories remain: mark the node so no ancestor covers them
         // recursively, since we cannot know what they hold.
@@ -161,23 +201,17 @@ export class WatchTree {
   private attach(node: ScanNode): void {
     const fitsWholeSubtree = this.covered + node.size <= this.options.maxDirs;
 
-    // A path we have watched before is being re-attached, so this directory was
-    // deleted and recreated. On Bun + Linux its watcher will never fire again:
-    // poll its own entries, and cover the subtree non-recursively so each child
-    // gets a watcher on a path the runtime still honours.
-    if (this.poller && this.everAttached.has(node.path)) {
-      this.poller.add(node.path);
-      if (this.covered + 1 > this.options.maxDirs) {
-        this.truncated = true;
-        return;
-      }
-      this.addWatcher(node.path, false, 1);
-      for (const child of node.dirs) this.attach(child);
-      return;
-    }
+    // A path we have watched before is being re-attached, so this directory was deleted
+    // and recreated, and on Bun + Linux its watcher will never fire again — poll its own
+    // entries instead. It needs no special coverage beyond that: the poller only exists
+    // where the recursive branch below is off, so the per-directory walk it falls through
+    // to is already the watch-on-a-path-the-runtime-still-honours this case wants.
+    if (this.poller && this.everAttached.has(node.path)) this.poller.add(node.path);
 
-    // One recursive watch for a subtree the runtime can safely expand on its own.
-    if (!node.hasIgnored && fitsWholeSubtree && this.addWatcher(node.path, true, node.size)) return;
+    // One recursive watch for a subtree the runtime can safely expand on its own —
+    // only where that is a kernel-side subtree watch rather than a per-directory walk.
+    if (NATIVE_RECURSIVE && !node.hasIgnored && fitsWholeSubtree
+        && this.addWatcher(node.path, true, node.size)) return;
 
     // Otherwise cover this directory alone and recurse — a failed recursive attach
     // falls through to here too, so one unwatchable directory cannot silently drop
