@@ -379,10 +379,11 @@ accountsRoutes.patch("/:id", async (c) => {
     else if (body.status === "active") {
       const wasParked = accountService.list().find((a) => a.id === id)?.status === "disabled";
       // Enabling is where this machine claims the token, so prove it *before* the account
-      // becomes selectable rather than after. postRefreshGrant retries 3x15s with backoff;
-      // enabling first would leave the account active with an unproven token for most of a
-      // minute — long enough for accountSelector.next() or the proxy to pick it — and the
-      // re-park would land after that turn had already failed. Refreshing while still
+      // becomes selectable rather than after. postRefreshGrant is three 15s attempts with
+      // 2s and 6s backoff between them — 53s worst case — so enabling first would leave the
+      // account active with an unproven token for most of a minute, long enough for
+      // accountSelector.next() or the proxy to pick it, and the re-park would land only
+      // after that turn had already failed. Refreshing while still
       // parked needs no rollback at all: on failure setEnabled() simply never runs.
       //
       // Only for an account that has a refresh token: a temporary one has nothing to prove,

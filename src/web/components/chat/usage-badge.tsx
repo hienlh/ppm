@@ -154,11 +154,12 @@ function formatLastUpdated(ts: number | null | undefined): string | null {
   return `${days}d ago`;
 }
 
-function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, onExport, onViewProfile, flash, fullscreen }: {
+function AccountUsageCard({ entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash, fullscreen }: {
   entry: AccountUsageEntry;
   isActive: boolean;
   accountInfo?: AccountInfo;
   onToggle?: (id: string, status: string) => void;
+  toggling?: boolean;
   onDelete?: (id: string, display: string) => void;
   onExport?: (id: string) => void;
   onViewProfile?: (profile: OAuthProfileData, accountId: string) => void;
@@ -207,7 +208,7 @@ function AccountUsageCard({ entry, isActive, accountInfo, onToggle, onDelete, on
             <Switch
               checked={status !== "disabled"}
               onCheckedChange={() => onToggle(entry.accountId, status)}
-              disabled={status === "cooldown"}
+              disabled={toggling || status === "cooldown"}
               className="scale-[0.6] cursor-pointer"
             />
           )}
@@ -269,6 +270,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const [exportPreselect, setExportPreselect] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const prevUsagesRef = useRef<AccountUsageEntry[]>([]);
 
@@ -345,7 +347,18 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const fsRows = Math.ceil(fsCount / fsCols);
 
   async function handleToggle(id: string, status: string) {
-    await patchAccount(id, { status: status === "disabled" ? "active" : "disabled" });
+    // Enabling a parked account proves its token server-side first, which is a network
+    // round trip that can come back 400 — and patchAccount throws on that. Without the
+    // catch the message the server takes care to write reaches nobody: unhandled
+    // rejection, no toast, no reload, and the Switch silently snaps back. The pending
+    // flag is because that round trip can take most of a minute in the worst case.
+    setTogglingId(id);
+    try {
+      await patchAccount(id, { status: status === "disabled" ? "active" : "disabled" });
+    } catch (e) {
+      showMessage((e as Error).message);
+    }
+    setTogglingId(null);
     loadAll();
     onReload?.();
   }
@@ -440,6 +453,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
                 isActive={entry.accountId === (activeAccountId ?? usage.activeAccountId)}
                 accountInfo={accountMap.get(entry.accountId)}
                 onToggle={handleToggle}
+                toggling={togglingId === entry.accountId}
                 onDelete={(id, display) => setDeleteTarget({ id, display })}
                 onExport={(id) => { setExportPreselect(id); setShowExportDialog(true); }}
                 onViewProfile={(profile, accountId) => setProfileView({ profile, accountId })}
