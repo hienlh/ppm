@@ -49,6 +49,8 @@ export interface AIProvider {
   getUsage?(): Promise<UsageInfo>;
   /** True when a live streaming subprocess exists for this session */
   hasStreamingSession?(sessionId: string): boolean;
+  /** Prompt-cache lifetime for this session, in ms — how long holding its subprocess pays. */
+  promptCacheTtlMs?(sessionId: string): number;
 }
 
 export interface ModelOption {

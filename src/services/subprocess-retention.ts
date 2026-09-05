@@ -13,13 +13,24 @@
  */
 
 /**
- * Anthropic's default prompt-cache lifetime. A prefix not re-sent within this window has to
- * be written to the cache again, so a subprocess older than this is worth nothing.
+ * Anthropic's prompt-cache lifetime, per auth mode. From the SDK's own typings: "1 hour on a
+ * Claude subscription within its usage limits, 5 minutes on an API key, Bedrock, Vertex or
+ * Foundry."
  *
- * Named here rather than inlined because the retention window is *derived* from it — the two
- * were previously equal by coincidence, which read as if the teardown delay were arbitrary.
+ * Both are named here because the retention window is *derived* from whichever applies — the
+ * delay was previously equal to the TTL by coincidence, which read as arbitrary.
+ *
+ * Which one a session gets is not a constant: PPM supports settings `api_key` and a custom
+ * `base_url` as first-class options, and "within its usage limits" excludes exactly the
+ * accounts the rotation exists for. Holding a subprocess for an hour on an API-key install
+ * guards a cache that died at minute five, at ~350MB a session. The provider decides; these
+ * are the two values it picks between.
  */
-export const PROMPT_CACHE_TTL_MS = 5 * 60_000;
+export const SUBSCRIPTION_PROMPT_CACHE_TTL_MS = 60 * 60_000;
+export const API_KEY_PROMPT_CACHE_TTL_MS = 5 * 60_000;
+
+/** The longer of the two — what a timer that must outlast any cache window has to clear. */
+export const PROMPT_CACHE_TTL_MS = SUBSCRIPTION_PROMPT_CACHE_TTL_MS;
 
 /**
  * Milliseconds until a session's prompt cache lapses.
