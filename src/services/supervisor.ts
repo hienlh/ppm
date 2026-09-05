@@ -690,6 +690,35 @@ export function buildTunnelAttempts(config: ResolvedTunnelConfig, port: number):
   ];
 }
 
+/**
+ * Decide the `tunnelWarning` field (if any) for a spawnTunnel success write.
+ *
+ * - `downgraded` (named was attempted first but failed, quick succeeded as
+ *   THIS spawn's fallback) is the only case a spawn ever WRITES a warning —
+ *   that text must persist until the user acts, so it is the sole owner here.
+ * - A quick success that was NOT a downgrade means the persisted config
+ *   itself resolved to quick outright (`attempts` was quick-only) — whether
+ *   that spawn was triggered by a deliberate retunnel-to-quick, a cold boot,
+ *   or any later regen while quick stays configured, it reconfirms the user
+ *   is no longer on named mode, so any warning left over from before they
+ *   switched (e.g. a stale "hostname unreachable") no longer applies.
+ * - A plain named success (not a downgrade) never touches the warning —
+ *   clearing a NAMED-mode warning is exclusively the probe's job once it
+ *   confirms the hostname is actually reachable (`named-tunnel-probe-state.ts`).
+ */
+export function tunnelWarningPatchForSpawnSuccess(
+  successfulMode: TunnelMode,
+  downgraded: boolean,
+): { tunnelWarning: string | null } | Record<string, never> {
+  if (downgraded) {
+    return { tunnelWarning: "Named tunnel failed to start — using a temporary quick URL" };
+  }
+  if (successfulMode === "quick") {
+    return { tunnelWarning: null };
+  }
+  return {};
+}
+
 export async function spawnTunnel(port: number, generation: number = ++tunnelGeneration): Promise<void> {
   tunnelPort = port; // remember origin port so resume/port-move can re-point
   // Refresh the cached config here (not just at startup) — a fresh named
@@ -793,11 +822,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     updateStatus({
       shareUrl: resolvedUrl, tunnelPid: winPid, tunnelPort: port,
       tunnelMode: successfulMode,
-      // Only ever WRITES a warning here (the downgrade case); clearing one is
-      // exclusively the probe's job once it confirms the hostname is actually
-      // reachable — omitting the key (not writing `null`) leaves a prior
-      // "hostname unreachable" warning intact until that proof arrives.
-      ...(downgraded ? { tunnelWarning: "Named tunnel failed to start — using a temporary quick URL" } : {}),
+      ...tunnelWarningPatchForSpawnSuccess(successfulMode, downgraded),
     });
     log("INFO", `Tunnel ready: ${resolvedUrl} (PID: ${winPid}, detached${downgraded ? ", downgraded from named" : ""})`);
     await syncUrlToCloud(resolvedUrl);
@@ -881,9 +906,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   updateStatus({
     shareUrl: resolvedUrl, tunnelPid: child.pid, tunnelPort: port,
     tunnelMode: successfulMode,
-    // Only ever WRITES a warning here (the downgrade case) — clearing one is
-    // exclusively the probe's job; omitting the key leaves a prior warning intact.
-    ...(downgraded ? { tunnelWarning: "Named tunnel failed to start — using a temporary quick URL" } : {}),
+    ...tunnelWarningPatchForSpawnSuccess(successfulMode, downgraded),
   });
   log("INFO", `Tunnel ready: ${resolvedUrl} (PID: ${child.pid}${downgraded ? ", downgraded from named" : ""})`);
 
@@ -1041,7 +1064,10 @@ function startTunnelProbe() {
       switch (action.type) {
         case "healthy":
           tunnelRestarts = 0;
-          updateStatus({ tunnelWarning: null });
+          // Only write when there's actually a warning to clear — otherwise
+          // this fires every healthy 30s tick forever (tmp-write + rename on
+          // every single cycle) even though nothing ever changes.
+          if (readStatus().tunnelWarning != null) updateStatus({ tunnelWarning: null });
           return;
         case "watch":
           return;
