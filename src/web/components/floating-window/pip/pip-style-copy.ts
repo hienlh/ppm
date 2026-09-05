@@ -61,11 +61,17 @@ export function copyDocumentStyles(src: Document, dst: Document): void {
   dst.head.append(base);
 }
 
-/** Copy `<html>` class + inline theme vars and `<body>` class, once. */
+/**
+ * Copy `<html>` class + inline theme vars and `<body>` class + inline style, once.
+ * The page background is an inline `background: var(--bg)` on `<body>` (index.html),
+ * not a class — without it the PiP body stays browser-default white and every
+ * transparent region of the moved tab shows through as light.
+ */
 function copyThemeOnce(src: Document, dst: Document): void {
   dst.documentElement.className = src.documentElement.className;
   dst.documentElement.style.cssText = src.documentElement.style.cssText;
   dst.body.className = src.body.className;
+  dst.body.style.cssText = src.body.style.cssText;
 }
 
 /**

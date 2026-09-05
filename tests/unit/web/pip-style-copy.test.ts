@@ -1,8 +1,18 @@
 import { describe, it, expect } from "bun:test";
 import {
   collectStyleNodes,
+  syncThemeToPip,
   type StyleNodeSource,
 } from "../../../src/web/components/floating-window/pip/pip-style-copy.ts";
+
+/** Minimal document shape for the theme mirror (no defaultView → no subscription). */
+function themeDoc(html: { className: string; cssText: string }, body: { className: string; cssText: string }) {
+  return {
+    documentElement: { className: html.className, style: { cssText: html.cssText } },
+    body: { className: body.className, style: { cssText: body.cssText } },
+    defaultView: null,
+  } as unknown as Document;
+}
 
 /** Fake document that records the selector and answers with fixed nodes. */
 function fakeDoc(nodes: unknown[]): StyleNodeSource & { selectors: string[] } {
@@ -41,5 +51,22 @@ describe("collectStyleNodes", () => {
     expect(Array.isArray(result)).toBe(true);
     nodes.push({ id: "b" });
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("syncThemeToPip", () => {
+  it("mirrors html class + vars and body class + inline background", () => {
+    const src = themeDoc(
+      { className: "dark", cssText: "--bg: #0b0f14; --text: #fff;" },
+      { className: "text-text font-sans", cssText: "background: var(--bg);" },
+    );
+    const dst = themeDoc({ className: "", cssText: "" }, { className: "", cssText: "" });
+    syncThemeToPip(src, dst);
+    expect(dst.documentElement.className).toBe("dark");
+    expect(dst.documentElement.style.cssText).toBe("--bg: #0b0f14; --text: #fff;");
+    expect(dst.body.className).toBe("text-text font-sans");
+    // The page background lives in body's inline style, not a class — a PiP body
+    // without it stays browser-default white behind any transparent tab region.
+    expect(dst.body.style.cssText).toBe("background: var(--bg);");
   });
 });
