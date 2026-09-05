@@ -1,6 +1,10 @@
 # PPM Project Roadmap
 
-**Last Updated:** April 4, 2026
+**Last Updated:** September 5, 2026 · **Current release:** v0.18.x
+
+> `CHANGELOG.md` is the authoritative release history. This file tracks *direction* — what shipped,
+> what is still open, and why. Where a version table below disagrees with the changelog, the
+> changelog wins.
 
 ## Vision
 
@@ -10,24 +14,32 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 
 ## Completed Milestones
 
-### Tab pop-out → floating window → Document Picture-in-Picture (implemented, branch `feat/tab-popout-pip`, not yet merged/released)
-- Any desktop tab detaches from its panel into an in-app floating window (same chrome as OS
-  Explorer), and from there into an always-on-top browser Document Picture-in-Picture window —
-  both directions reversible, terminal/editor/chat state survives every move (no tab remount)
-- All tab types except `system-monitor` (has its own window kind); Radix dropdowns/tooltips/dialogs
-  follow a popped-out tab into the PiP document
-- Mobile unaffected: pop-out and PiP are desktop-only, hidden entirely below `md`
-- See `docs/system-architecture.md` → "Tab-host windows and Document PiP" for the mechanism
+### v0.18 — Windows, floating windows, whole-machine tooling (Released)
+- **Tab pop-out → floating window → Document Picture-in-Picture** — any desktop tab detaches into an
+  in-app floating window and from there into an always-on-top browser PiP window; both directions
+  reversible, terminal/editor/chat state survives every move (no tab remount). Radix
+  dropdowns/tooltips/dialogs follow a popped-out tab into the PiP document. Desktop only.
+  See `docs/system-architecture.md` → "Tab-host windows and Document PiP".
+- **System Monitor became a whole-machine task manager** — CPU per core, RAM, disk, network and
+  NVIDIA GPU charts; every process grouped by app with live CPU/RAM/disk/GPU; end a process or a
+  whole app group (PPM's own, its tunnel and OS-critical processes are refused). Works on Windows,
+  where the previous monitor showed nothing. One long-lived PowerShell collector — never per tick.
+- **Unified window chrome** — the macOS/Windows skin chosen for Explorer applies to every window.
+- **File upload** — toolbar/mobile picker/OS drag-and-drop, per-file progress with cancel, queued
+  collision prompts with "Apply to all", Replace routes the old file to Trash first.
+- **Agent teams surfaced in chat** — live "who is working" bar under the conversation with step and
+  elapsed time; tap to replay a teammate's whole session (floating window on desktop, sheet on mobile).
+- **Media** — video player with rotate/flip, speed, volume and keyboard shortcuts; on-the-fly
+  transcoding for unsupported formats, seek-safe over a tunnel.
+- **Windows autostart** works for standard accounts (task-definition registration, no 72h run limit).
 
-### v0.17 — OS File Explorer Window (Released)
+### v0.17–v0.18.0 — OS File Explorer Window (Released)
 - Floating, OS-skinned file explorer window (Windows 11 / macOS Finder chrome, Linux → macOS skin) — drag, 8-way resize, multi-instance, persisted rect
 - Browses the whole host filesystem via `/api/fs`, hardened to whole-disk scope (protected roots, PPM-dir shield, single-use path-bound download tokens)
 - List / Icons (thumbnails) / Column (Miller) views; sidebar with drives, known folders, OS-pinned folders (Quick Access / Finder Favorites / GTK+KDE), PPM pins
 - Double-click opens PPM-viewable files (incl. external `.db` via the host SQLite viewer) in the existing tab system; OS-style actions otherwise (Cut/Copy/Paste, Rename, Trash/Delete permanently, New, Properties)
 - Mouse drag-and-drop of entries across explorer windows, sidebar, and the project tree (move / Ctrl-copy)
 - Mobile: full-screen bottom-sheet variant of the same body (long-press menu, Select mode, single-column view)
-
-*(Note: this roadmap's version-table sections below (v0.8–v1.0) predate this entry and are not kept in sync with the shipped version — see `CHANGELOG.md` for the authoritative release history.)*
 
 ### v0.1–v0.5 — Foundation (Released)
 - Bun runtime, Hono server, React + Vite frontend
@@ -41,7 +53,7 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 - Auto-generate chat session titles, inline rename
 - Database adapters, connection UI, query execution
 
-### v0.7 — Multi-Account & Mobile (Current — v0.7.25)
+### v0.7 — Multi-Account & Mobile (Released)
 - Multi-account credential management (OAuth + API key)
 - Account routing (round-robin, fill-first)
 - Usage tracking per account with visual dashboard
@@ -49,123 +61,61 @@ PPM is the **lightest path from phone to code** — a self-hosted, BYOK, multi-d
 - Mobile UX: horizontal tab scroll, long-press context menus, touch optimization
 - Cloudflare tunnel, push notifications, Telegram alerts
 
+### v0.8.0 — "Always On" (Released)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **PPM Cloud** | ✅ Done | Device registry + tunnel URL sync, Google OAuth, phone dashboard, remote restart. `ppm cloud login/status/devices/alias/logout`. Stores email + machine names + tunnel URLs only. |
+| **Auto-start** | ✅ Done | launchd / systemd / Windows Task Scheduler. `ppm autostart enable\|disable\|status`. Auto-enabled on first `ppm start`; stale systemd units are migrated. |
+| **Auto-upgrade** | ✅ Done | Supervisor polls the npm registry, UI banner, one-click upgrade via API or CLI, supervisor self-replaces. (v0.8.54) |
+| **Supervisor Always Alive** | ✅ Done | Soft stop (`ppm stop`) vs full shutdown (`ppm down`); `stopped` state keeps Cloud WS + tunnel alive. (v0.9.11) |
+| **AI Chat enhancements** | ✅ Done | Provider/model selector, reasoning effort, permission mode, system prompt customization, collapsible tool calls, durable replayable streams. |
+| **Scheduled Agents** | ✅ Done | Cron scheduler: persistent session per job + rotation >80% context, concurrency guard, budgets, CLI `ppm schedule`, REST `/api/schedules`, Settings UI, Telegram summary. |
+
+### v0.9.0 — "Open Platform" (Released)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Multi-provider AI** | ✅ Done | ProviderInterface + registry; Claude Agent SDK built in, Cursor CLI and OpenAI Codex auto-register when their binaries exist. |
+| **MCP Management** | ✅ Done | REST CRUD + import, SQLite storage, Settings UI, auto-import from `~/.claude.json`, SDK integration. |
+| **Extension architecture** | ✅ Done | VSCode-compatible npm extensions, Bun Worker isolation, RPC protocol, state persistence, contribution registry, CLI + dev mode, `@ppm/vscode-compat` shim, StatusBar/TreeView/Webview/QuickPick/InputBox, WS bridge. First extension: `ext-database`. See `docs/extension-development-guide.md`. |
+
+**v0.9.x polish (post-release):**
+- File download (v0.9.2) — single-file + folder-as-zip with short-lived tokens
+- Agent Team UI (v0.9.9) — team activity button, members + messages panel
+- Git-Graph UI (v0.9.85+) — faithful SVG graph (vscode-git-graph port), interactive stage/unstage/commit/stash, branch filters, auto-fetch, mobile support
+- Git Workflow (v0.9.86+) — stash management, rebase from context menu, conflict detection, inline Monaco conflict resolution, worktree CRUD
+
+### v0.10.0 — "Enhanced Workflow" (Released)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Agent Team** | ✅ Done | Live member activity (status, current step, model, elapsed), Members/Messages tabs, both directions of the team conversation, replay any member's session. Teams are read from agent transcripts, not `~/.claude/teams` config — see `src/services/team-member-activity/`. |
+| **Group chat** | ✅ Done | Multi-agent group conversation with turn engine, responder routing, context-window management and transcript archiving. |
+| **Advanced Git Operations** | ◐ Partial | Rebase, stash, conflict resolution and worktrees shipped. Cherry-pick exists as `POST /git/cherry-pick` with **no UI**. Interactive-rebase UI and merge-strategy selection not started. |
+
 ---
 
 ## Upcoming Roadmap
 
-### v0.8.0 — "Always On" (Q2 2026)
-
-**Theme:** Multi-device access + AI chat improvements. Solve the "I can't reach my PPM from my phone" problem.
+### v0.11.0 — "Intelligence" (open)
 
 | Feature | Priority | Status | Description |
 |---------|----------|--------|-------------|
-| **PPM Cloud** | Critical | — | Separate cloud service for device registry + tunnel URL sync. Google OAuth login. CLI `ppm cloud link` syncs tunnel URL. Open cloud dashboard on any device → see machines → tap to connect. NO code/data through cloud — only URLs + metadata. |
-| **Auto-start** | High | — | PPM starts on boot. macOS launchd, Linux systemd, Windows Task Scheduler. CLI: `ppm autostart enable/disable`. Required for "always accessible" story. |
-| **Auto-upgrade** | High | ✅ Done | Supervisor checks npm registry every 15min. UI banner shows when update available. One-click upgrade via API or CLI. Supervisor self-replaces after install (no OS autostart dependency). **Completed in v0.8.54** |
-| **Supervisor Always Alive** | High | ✅ Done | Soft stop (server shutdown, supervisor stays) vs full shutdown. New `stopped` state. Cloud WS + tunnel stay active when stopped. `ppm start` resumes without supervisor restart. Modularized: supervisor.ts, supervisor-state.ts, supervisor-stopped-page.ts. **Completed in v0.9.11** |
-| **AI Chat enhancements** | High | — | Tool allow/deny config per session. Chat modes (plan/code/ask). Model selector (opus/sonnet/haiku). Effort level. Max turns. System prompt customization. Better streaming UX (collapsible tool calls). |
-| **Scheduled Agents** | High | ✅ Done | Cron scheduler inside PPM server: periodically wakes Claude sessions to work unattended. 1 persistent session per job + rotation >80% context, concurrency guard, budgets (max turns/timeout), CLI `ppm schedule`, REST `/api/schedules`, Settings UI, Telegram summary. **Completed 2026-06-13** |
-
-**PPM Cloud — scope guard:**
-- Cloud is OPTIONAL convenience, never a dependency. PPM works 100% without it.
-- Razor-thin: device registry + tunnel URL sync + heartbeat. Nothing more.
-- Hosting: Cloudflare Workers or Fly.io
-- CLI: `ppm cloud link`, `ppm cloud unlink`, `ppm cloud status`
-- Dashboard: list machines, status (online/offline), click to open
-
----
-
-### v0.9.0 — "Open Platform" (Q2–Q3 2026)
-
-**Theme:** Multi-provider AI (Claude + Cursor) + extension system. Ship a focused release, expand providers later.
-
-**Overall progress: 100%** (All 3 core features complete)
-
-| Feature | Priority | Status | Description |
-|---------|----------|--------|-------------|
-| **Multi-provider AI** | Critical | ✅ Done | ProviderInterface, registry, Cursor CLI, CLI provider base, UI provider/model selector, permission mode selector, system prompt customization, comprehensive tests — all on beta branch. |
-| **MCP Management** | Medium | ✅ Done | REST API (CRUD + import), SQLite storage, Settings UI, auto-import from `~/.claude.json`, validation, SDK integration. |
-| **Extension architecture (Phase 1-6)** | High | ✅ Done | VSCode-compatible npm extensions, Bun Worker isolation, RPC protocol, state persistence, contribution registry, CLI support, dev mode. @ppm/vscode-compat API shim (commands, window, workspace). UI components (StatusBar, TreeView, WebviewPanel, QuickPick, InputBox). WS bridge for real-time ext↔browser communication. First extension: ext-database with tree view + SQL query panel. Unit tests + extension dev guide. |
-
-**v0.9.x polish (post-release):**
-- File download feature (v0.9.2) — Single-file + folder-as-zip downloads with short-lived tokens, context menu + toolbar UI
-- Agent Team UI (v0.9.9) — Real-time team monitoring dashboard: REST API + fs.watch inbox events, team activity button with unread pulse, popover/drawer with members + messages, team management in Settings
-- Git-Graph UI Improvements (v0.9.85+) — ✅ Faithful SVG graph rendering (vscode-git-graph port), interactive git workflow (stage/unstage/commit/stash), branch filters, auto-fetch, mobile support, tab system safety guards, UX refinements (branch context menu, dblclick checkout, toast notifications, SVG icons)
-- Git Workflow Enhancements (v0.9.86+) — ✅ Stash management (popover with Apply/Pop/Drop), rebase from context menu, conflict detection (merge/rebase/cherry-pick states), inline conflict resolution editor (Monaco with visual highlighting + Accept buttons), worktree full CRUD (create/remove/prune with project integration)
-
-**Multi-provider — v0.9 scope (reduced):**
-- Tier 1 (full agentic): Claude Agent SDK — file edit, terminal, git, full autonomy
-- Tier 2 (agentic CLI): Cursor — agentic via its own tool system
-- Provider interface is clean enough to add more providers later without refactor
-
-**Deferred to v0.9.5+ (Multi-Provider Phase 2):**
-- Gemini CLI (Tier 2)
-- OpenAI Codex (Tier 2) — ✅ implemented (codex app-server JSON-RPC provider; streaming/multi-turn/resume/models; approval bridge dormant under default Full access)
-- Tier 3 (chat-only): Any OpenAI-compatible API
-- Chinese providers (DeepSeek, Qwen) — v1.0+
-
-**Extension System — remaining for v0.10+:**
-- Settings UI auto-generation from manifest
-- Hot reload during dev (`ppm ext dev --watch`)
-- Extension template scaffold (`ppm ext create <name>`)
-- Extension marketplace (v1.0)
-
-**Extension architecture — design principles:**
-- Extensions are npm packages: `ppm ext install @ppm/ext-database`
-- Extension manifest defines: skills, UI panels, sidebar tabs, routes, settings schema
-- DB viewer = first official extension, proves the architecture
-- Keep PPM core lightweight, features are opt-in via extensions
-- No marketplace yet (just npm), marketplace comes in v1.0
-
----
-
-### v0.10.0 — "Enhanced Workflow" (Q3 2026)
-
-**Theme:** Agent collaboration + advanced git workflow. High-impact, independent features that ship fast.
-
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| **Agent Team** | High | Multi-agent collaboration within PPM. Spawn agent teams for parallel task execution — lead agent delegates to specialist agents (coder, tester, reviewer). Task coordination, file ownership, progress tracking. |
-| **Advanced Git Operations** | Medium | Interactive rebase UI, cherry-pick workflow, merge strategy selection. (Worktree management completed in v0.9.86) |
-
----
-
-### v0.11.0 — "Intelligence" (Q3–Q4 2026)
-
-**Theme:** Event system + PPM's own AI layer + Telegram bot. Hooks → Skills API → Clawbot dependency chain.
-
-| Feature | Priority | Status | Description |
-|---------|----------|--------|-------------|
-| **Telegram Bot (PPMBot Coordinator)** | High | ✅ Done (v0.9.11) | Redesigned: Coordinator session per chat delegates project tasks to subagents. Single persistent identity in `~/.ppm/bot/coordinator.md`. Task execution in isolation. CLI-driven delegation via `ppm bot` commands. Cross-provider support. **Completed in v0.9.11**. |
-| **Hooks system** | High | — | Event hooks for PPM lifecycle (file save, git commit, chat message, etc.). Foundation for Skills API and deeper extension integration. |
-| **PPM Skills API** | High | — | Stable internal API for AI to control PPM: file.read/write/search, terminal.run, git.status/commit/diff, db.query, editor.open/goto, project.switch. Skills are the bridge between AI and PPM features. |
-| **Built-in Clawbot** | High | — | Lightweight AI agent built into PPM using Anthropic Messages API (not Agent SDK). Uses Skills API + MCP tools. Instant response, no external CLI deps. For quick tasks: file search, code explanation, simple refactors. |
-| **More providers** | Medium | — | Gemini CLI (Tier 2), OpenAI Codex (Tier 2), Tier 3 chat-only (any OpenAI-compatible API). Provider interface already clean from v0.9. |
-
-**Built-in Clawbot — why it matters:**
-- Claude Agent SDK spawns subprocess — heavy, slow startup, requires CLI installed
-- Clawbot = instant, lightweight, works with any LLM via Messages API
-- Users can use Clawbot to create extensions → zero-friction extension authoring
-- Foundation for "AI creates extensions on demand" vision
-
-**Telegram Bot — why it matters:**
-- Extends PPM beyond the web UI → reach users on mobile, messaging apps
-- Long-polling avoids webhooks — simpler for self-hosted, no public URL needed
-- Paired devices enable secure multi-user access — owner controls who can use the bot
-- Persistent memory in FTS5 — bot learns conversation context over time
-
----
+| **Telegram Bot (PPMBot Coordinator)** | High | ✅ Done (v0.9.11) | Coordinator session per chat delegates project tasks to subagents. Persistent identity in `~/.ppm/bot/coordinator.md`. CLI-driven delegation via `ppm bot`. Cross-provider. |
+| **Hooks system** | High | — | Event hooks for PPM lifecycle (file save, git commit, chat message). Foundation for a Skills API and deeper extension integration. No implementation yet. |
+| **PPM Skills API** | Medium | ◐ Redirected | Shipped as an *external* surface instead: `ppm export skill` generates a Claude Code skill that drives PPM through its CLI, HTTP API and SQLite config DB. A stable *internal* AI-facing API is still unbuilt — decide whether it is still wanted before scheduling. |
+| **Built-in Clawbot** | Medium | — | Lightweight in-process agent on the Messages API. Superseded in practice by the multi-provider registry + PPMBot; keep only if the "AI authors extensions" story is still a goal. |
+| **More providers** | Medium | ◐ Partial | Codex ✅, Cursor ✅. Gemini CLI and Tier-3 (any OpenAI-compatible API) not started — note PPM already *serves* an OpenAI-compatible endpoint via the proxy, it just does not *consume* one. |
 
 ### v1.0.0 — "Production Ready" (Q4 2026)
 
-**Theme:** Enterprise, marketplace, stability.
-
 | Feature | Priority | Description |
 |---------|----------|-------------|
-| **Self-hosted PPM Cloud** | High | Docker image of PPM Cloud for enterprise/team. Same codebase, self-hosted config flag. `docker-compose up` and it works. LDAP/SSO integration. |
-| **PPM Marketplace** | High | Publish/install/update extensions. Browse community extensions. Revenue sharing for paid extensions. Clawbot can create extension → test → publish in minutes. |
-| **Stability & hardening** | Critical | Security audit, performance optimization, comprehensive test coverage (>80%), documentation for contributors, CI/CD pipeline. |
-| **Inline SQL** | Medium | Select text in Monaco → run as SQL. Connection picker in editor context menu. Results panel below editor. Leverages existing DB service. |
+| **Self-hosted PPM Cloud** | High | Docker image of PPM Cloud for enterprise/team. Same codebase, self-hosted config flag. LDAP/SSO. |
+| **PPM Marketplace** | High | Publish/install/update extensions, browse community extensions. Today extensions install from npm only. |
+| **Stability & hardening** | Critical | Security audit, performance work, test coverage, contributor docs, CI/CD. |
+| **Inline SQL** | Medium | Select text in Monaco → run as SQL, connection picker in the editor context menu, results panel below the editor. Not started. |
 
 ---
 
@@ -177,33 +127,36 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 |---------|----------|-------------|
 | **Collaborative viewing** | Social | Read-only live session sharing via tunnel. Others watch terminal/editor real-time. High demo value. |
 | **Workspace snapshots** | UX | Save/restore full state (open files, terminals, chat). Critical for mobile where browser kills tabs. |
-| **Ollama / local models** | AI | Run AI offline with local models. No API cost, privacy-first. Plugs into Clawbot as a provider. |
+| **Ollama / local models** | AI | Run AI offline with local models. No API cost, privacy-first. |
 | **Project templates** | DX | `ppm init --template react/nest/go`. Community templates from Marketplace. |
-| **AI command palette** | AI | Natural language commands ("deploy production", "run tests") → Skills API. |
-| **Notification hub** | UX | Push notification "AI task finished" on mobile. Webhook integrations (Slack, Discord). |
+| **AI command palette** | AI | Natural language commands ("deploy production", "run tests"). |
 | **Layout customization** | UX | User arranges panels freely. Save separate desktop vs mobile layouts. |
-| **Git advanced** | Git | Interactive rebase UI, cherry-pick, stash management, conflict resolution. |
 | **Performance profiling** | DevTools | Flamegraph viewer, memory tracking, network waterfall. |
 | **Multi-user workspace** | Enterprise | Shared project access, role-based permissions, team features. |
 | **Mobile terminal UX** | Mobile | Virtual keyboard shortcuts, gesture controls, better touch input. |
 | **CI/CD integration** | DevOps | GitHub Actions / pipeline status in PPM, trigger builds from UI. |
-| **Cross-platform binaries** | Distribution | Compile macOS/Linux/Windows binaries via `bun build --compile`. `npx ppm` without Bun. |
 | **OLED dark mode** | UX | True black background for OLED screens. |
 | **Collaborative editing** | Social | Real-time multi-user file editing with CRDT (yjs/automerge). |
-| **Custom domain** | Cloud | Map custom domain to PPM Cloud tunnel URL. DNS CNAME + SSL via Let's Encrypt or Cloudflare. Access PPM at `code.yourdomain.com`. |
+| **Custom domain** | Cloud | Map a custom domain to the PPM Cloud tunnel URL, so PPM answers at `code.yourdomain.com`. Named-tunnel-via-`cloudflared login` design is drafted; blocked on the user owning a zone. |
+
+*(Shipped from this backlog: notification hub → cloud push + Telegram; git advanced → stash/rebase/conflicts; cross-platform binaries → `bun build --compile` + `ppm.sh/install`.)*
 
 ---
 
 ## Release Schedule
 
-| Version | Theme | Key Features | Target |
+| Version | Theme | Key Features | Status |
 |---------|-------|-------------|--------|
-| **v0.7** | Multi-Account & Mobile | Account management, usage tracking, mobile UX | ✅ Current |
-| **v0.8** | Always On | PPM Cloud, auto-start, AI chat enhancements | Q2 2026 |
-| **v0.9** | Open Platform | Multi-provider (Claude + Cursor), extension architecture, MCP | Q2–Q3 2026 |
-| **v0.10** | Enhanced Workflow | Agent Team, worktree management | Q3 2026 |
-| **v0.11** | Intelligence | Hooks, Skills API, Clawbot, more providers (Gemini/Codex/Tier 3) | Q3–Q4 2026 |
+| **v0.7** | Multi-Account & Mobile | Account management, usage tracking, mobile UX | ✅ Released |
+| **v0.8** | Always On | PPM Cloud, auto-start, auto-upgrade, scheduled agents | ✅ Released |
+| **v0.9** | Open Platform | Multi-provider, extension architecture, MCP | ✅ Released |
+| **v0.10** | Enhanced Workflow | Agent teams, group chat, git workflow | ✅ Released |
+| **v0.17–v0.18** | Whole Machine | OS File Explorer, floating windows + PiP, system monitor, Windows parity | ✅ Released (current) |
+| **v0.11 (renumbered — open)** | Intelligence | Hooks, internal Skills API, Gemini/Tier-3 providers | Open |
 | **v1.0** | Production Ready | Self-hosted Cloud, Marketplace, stability, inline SQL | Q4 2026 |
+
+> The v0.8–v0.11 themes were planned before the version line ran ahead of them. Numbering is kept
+> for continuity; the *content* of v0.11 is the only forward-looking table left.
 
 ---
 
@@ -211,10 +164,10 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 
 1. **Own "phone to code"** — PPM wins on multi-device access. Don't chase Cursor/Windsurf feature parity.
 2. **PPM Cloud stays razor-thin** — Device registry + tunnel URLs only. No code storage. No cloud execution.
-3. **Multi-provider is tiered** — v0.9: Claude SDK (Tier 1) + Cursor (Tier 2). v0.11: Gemini, Codex, Tier 3. Clean interface for future providers.
-4. **Extensions keep core lightweight** — Features are opt-in. DB viewer, future tools = extensions. Core stays fast.
-5. **Clawbot enables the ecosystem** — Users create extensions with AI, publish to Marketplace. Zero-friction.
-6. **Self-hosted first, always** — Cloud is optional convenience. PPM works 100% offline/local.
+3. **Multi-provider is tiered** — Claude SDK (Tier 1), Cursor + Codex (Tier 2), Tier 3 chat-only still open. Clean interface for future providers.
+4. **Extensions keep core lightweight** — Features are opt-in. Core stays fast.
+5. **Self-hosted first, always** — Cloud is optional convenience. PPM works 100% offline/local.
+6. **Mobile is not a port** — every feature ships with its touch form (bottom sheet, long-press), not a shrunk desktop layout.
 
 ---
 
@@ -222,11 +175,12 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| ~~Refactor ProviderInterface for multi-provider~~ | ~~High~~ | ✅ Done on beta branch (v0.9.0-beta.5) |
+| ~~Refactor ProviderInterface for multi-provider~~ | ~~High~~ | ✅ Done (v0.9.0-beta.5) |
+| ~~Windows terminal support~~ | ~~Medium~~ | ✅ Done — `bun-pty` on Windows, Bun native PTY on macOS/Linux, behind one `PtyHandle` interface |
 | Simplify ChatService streaming | Medium | Reduce async generator complexity |
 | Extract WebSocket common logic | Low | DRY for chat/terminal WS |
 | Round-robin cursor bug in AccountSelector | Medium | Positional cursor not advancing correctly |
-| Windows terminal support | Medium | Evaluate node-pty or WSL fallback |
+| Deprecated port-forwarding routes | Low | `/api/preview/tunnel*` superseded by `/api/tunnels`; kept for compatibility, still owns the ghost-cleanup timer |
 
 ---
 
@@ -235,8 +189,10 @@ Features to pick from after v1.0. Will be reviewed and scheduled based on user f
 | Dependency | Version | Risk | Notes |
 |-----------|---------|------|-------|
 | Bun | 1.3.6+ | Medium | Check security advisories weekly |
-| Claude Agent SDK | 0.2.76+ | Medium | Follow for API changes, new features |
+| Claude Agent SDK | 0.3.251 | Medium | Pinned exactly — follow for API changes, new features |
 | React | 19.2.4 | Low | Monitor breaking changes |
-| TypeScript | 5.9.3+ | Low | Quarterly upgrades |
-| xterm.js | 6.0 | Low | Terminal rendering bugs |
+| Hono | 4.12.8 | Low | Server + WS |
+| Vite | 8.0 | Low | Build + PWA plugin |
+| Tailwind | 4.2.1 | Low | v4 engine |
+| xterm.js | 6.1.0-beta.285 | Medium | Beta pin — terminal rendering bugs |
 | Monaco Editor | 4.7.0+ | Low | Accessibility improvements |

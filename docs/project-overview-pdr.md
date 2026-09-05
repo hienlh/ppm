@@ -2,15 +2,17 @@
 
 ## Project Description
 
-**PPM** (Personal Project Manager) is a full-stack, mobile-first web IDE designed for developers to manage code projects with AI-powered assistance. It combines a responsive web interface, real-time terminal access, AI chat with tool support, and Git integration into a cohesive development environment.
+**PPM** (Personal Project Manager) is a full-stack, mobile-first web IDE designed for developers to manage code projects with AI-powered assistance. It combines a responsive web interface, real-time terminal access, AI chat with tool support, Git integration, database tooling and whole-machine file/process management into a cohesive development environment reachable from any browser.
 
 Built on the **Bun runtime** for performance, PPM enables developers to:
-- Browse and edit project files with Monaco Editor syntax highlighting
-- Execute commands via xterm.js terminal with full PTY support
-- Chat with Claude AI with file attachments and slash commands
-- View Git status, diffs, and commit graphs in real-time
+- Browse and edit project files with Monaco Editor syntax highlighting, plus viewers for images, PDF, CSV and video
+- Execute commands via xterm.js terminal with full PTY support on macOS, Linux and Windows
+- Chat with multiple AI agents (Claude Agent SDK, OpenAI Codex, Cursor CLI) with file attachments, slash commands, skills, subagents and agent teams
+- View Git status, diffs, and commit graphs in real-time, and resolve conflicts inline
+- Query SQLite and PostgreSQL databases with an audit trail
+- Browse the whole host filesystem and monitor every process on the machine
 - Manage multiple projects via a project registry
-- Access the IDE from mobile, tablet, or desktop browsers
+- Access the IDE from mobile, tablet, or desktop browsers — including through a Cloudflare tunnel
 
 ## Target Users
 
@@ -22,28 +24,51 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 
 ## Key Features
 
-### Core Features (Implemented v2)
-- **Project Management** — Create, switch, and manage multiple projects via CLI and web UI
-- **File Explorer** — Browse directory trees, create/edit/delete files with path traversal protection
-- **Code Editor** — Monaco Editor with syntax highlighting, IntelliSense, diff viewer, theme support (dark/light)
-- **Terminal** — Full xterm.js with Bun PTY, resize handling, multiple terminal sessions per project
-- **AI Chat** — Streaming Claude messages with tool use (file read/write, git commands), file attachments, slash commands, auto-generated session titles
-- **Git Integration** — Status, diffs, commit graphs, branch management, staging/committing
-- **PWA** — Installable web app with offline support
-- **Authentication** — Token-based auth with auto-generated tokens in config
-- **Multi-Session** — Independent terminal and chat sessions per project tab
+For the user-facing feature list, see the [README](../README.md). For per-release detail, see
+[`CHANGELOG.md`](../CHANGELOG.md). This section records only what the product *is committed to*.
 
-### Planned Features (v3+)
-- Collaborative editing (WebSocket sync)
-- Custom tool registry for AI
-- Plugin architecture for providers
-- Mobile-optimized git graph
-- Performance profiling UI
+### Implemented
+
+**AI**
+- Chat with streaming, tool use, file attachments, session history/search/branching, drafts, and durable replayable turns (an unmounted tab never loses output)
+- Multi-provider registry — Claude Agent SDK built in; Cursor CLI and OpenAI Codex register when their binaries are present; provider, model, reasoning effort and permission mode are per-session
+- Slash commands, skills and plugin items discovered from the user's `~/.claude` directory
+- Agent teams (live member activity, session replay) and multi-agent group chat
+- MCP server management, with auto-import from `~/.claude.json`
+- Scheduled agents — cron jobs that wake a session to work unattended, with budgets and notifications
+- Multi-account credential storage with rotation and usage tracking
+- Anthropic- and OpenAI-compatible API proxy over the stored accounts, with its own auth key and request log
+
+**Workspace**
+- Project registry, project-scoped API, keep-alive workspace switching
+- File explorer with upload (progress, collision prompts), download, and drag-and-drop
+- OS File Explorer — a floating window browsing the whole host filesystem, with OS-native chrome, three view modes and full file actions
+- Monaco editor with diff viewer and inline merge-conflict resolution
+- Terminal — multiple PTY sessions per project plus a dock terminal on any folder
+- Git — status, diff, stage, commit, push/pull, branches, merge, rebase, stash, worktrees, commit graph
+- SQLite + PostgreSQL viewer with query editor, cell editing and a query audit log
+- System Monitor — CPU/RAM/disk/network/GPU charts and per-app process control
+- Floating windows, tab pop-out and Document Picture-in-Picture
+- VSCode-compatible extension system running in isolated Bun workers
+
+**Platform**
+- Token-based auth, path-traversal protection, PPM-directory shield, single-use download tokens
+- Supervisor with auto-restart, auto-upgrade and OS autostart registration
+- Cloudflare tunnel for public access, plus per-port forwarding tunnels
+- Optional PPM Cloud device registry; Telegram bot; Jira watchers; cloud push notifications
+- Themes including VSCode theme import; command palette; PWA
+
+### Not yet built (see [roadmap](project-roadmap.md))
+- Lifecycle hooks system, and a stable *internal* AI-facing Skills API
+- Gemini CLI / Tier-3 OpenAI-compatible providers as *consumers*
+- Interactive-rebase UI, merge-strategy selection, cherry-pick UI (the REST route exists)
+- Inline SQL in the editor, extension marketplace, self-hosted PPM Cloud
+- Collaborative editing
 
 ## Product Decisions & Rationale
 
 ### Runtime: Bun v1.3.6+
-- **Why:** Native TypeScript support, bundled HTTP server, PTY module, blazing-fast startup
+- **Why:** Native TypeScript support, bundled HTTP server, PTY module, blazing-fast startup, `bun build --compile` for dependency-free binaries
 - **Trade-off:** Smaller ecosystem vs Deno/Node; mitigated by npm compatibility
 - **Impact:** Simplified tooling, single binary deployment
 
@@ -57,117 +82,102 @@ Built on the **Bun runtime** for performance, PPM enables developers to:
 - **Trade-off:** Client-side routing vs server-side; mitigated by URL sync hook
 - **Impact:** Fast, responsive UI with minimal store complexity
 
-### UI Stack: Tailwind + Radix UI + shadcn/ui
+### UI Stack: Tailwind 4 + Radix UI + shadcn/ui
 - **Why:** Utility-first CSS (Tailwind), accessible components (Radix), pre-built New York style (shadcn)
 - **Trade-off:** Larger CSS bundle; mitigated by tree-shaking, critical CSS extraction
-- **Impact:** Consistent, accessible, maintainable UI with dark/light theme support
+- **Impact:** Consistent, accessible, maintainable UI with theming and dark/light support
 
 ### Editor: Monaco Editor (@monaco-editor/react)
 - **Why:** Superior IntelliSense, syntax highlighting, built-in diff viewer, industry-standard code editor
 - **Trade-off:** Larger bundle size; justified by feature richness and developer experience
-- **Impact:** 50+ languages, IntelliSense, word wrap toggle (Alt+Z), Monaco diff viewer
+- **Impact:** 50+ languages, IntelliSense, word wrap toggle (Alt+Z), Monaco diff viewer, conflict editor
 
-### Terminal: xterm.js + Bun PTY
-- **Why:** xterm.js is industry-standard terminal emulator; Bun PTY avoids node-pty complexity
-- **Trade-off:** Limited Windows support (PTY); justified by Linux/macOS target
-- **Impact:** Full terminal experience, proper signal handling, resize support
+### Terminal: xterm.js + PTY (Bun native / bun-pty)
+- **Why:** xterm.js is the industry-standard terminal emulator; Bun's native PTY avoids node-pty build complexity on macOS/Linux
+- **Trade-off:** Bun's PTY does not cover Windows, so a second backend (`bun-pty`) is needed there; both sit behind one `PtyHandle` interface in `terminal.service.ts`
+- **Impact:** Full terminal experience with proper signal handling and resize on all three platforms
 
-### AI Provider: Anthropic Claude Agent SDK
-- **Why:** Native async/await streaming, tool use, built-in token tracking, multi-turn context
-- **Trade-off:** Anthropic-specific; can swap via provider registry pattern
-- **Impact:** Rich conversation capabilities, reliable streaming, tool approval flow
+### AI: provider registry over a single vendor
+- **Why:** The Claude Agent SDK gives native streaming, tool use, token tracking and multi-turn context; a registry in front of it keeps PPM from being welded to one vendor
+- **Trade-off:** Every provider must be mapped onto one event shape, so provider-specific niceties are levelled down
+- **Impact:** Claude (Tier 1, full agentic), Cursor and Codex (Tier 2, agentic CLIs) coexist; CLI providers are registered only when their binary is found, so a missing binary degrades to "provider absent", never an error
 
-### Database: SQLite (migrating from YAML)
-- **Why:** Richer persistence for sessions, usage tracking, audit logs; single-file DB suits single-machine design
-- **Trade-off:** Added dependency; mitigated by Bun's built-in SQLite support (bun:sqlite)
-- **Impact:** Session mapping, push subscriptions, usage history, config storage with YAML backward compat
+### Database: SQLite (`bun:sqlite`)
+- **Why:** Richer persistence for config, sessions, accounts, usage, schedules, audit logs; single-file DB suits the single-machine design
+- **Trade-off:** Added dependency; mitigated by Bun's built-in SQLite support
+- **Impact:** All config lives in `~/.ppm/ppm.db` (dev uses `ppm.dev.db`). The YAML era is over — YAML is only read for one-time import. Access it through `getPpmDir()`, never a hand-built `~/.ppm` path, so tests can redirect via `PPM_HOME`
 
 ### Build: Vite 8.0
 - **Why:** ESM-native, fast hot reload, TypeScript support, PWA plugin
 - **Trade-off:** Requires modern JS support; justified by target audience
 - **Impact:** <1s dev refresh, optimized bundles
 
+### Notifications: cloud push, not local Web Push
+- **Why:** Local Web Push needs a stable public origin and per-browser subscription bookkeeping; a machine behind a rotating quick-tunnel has neither
+- **Trade-off:** Push requires the optional PPM Cloud link; Telegram covers the un-linked case
+- **Impact:** One dispatch path in `notification.service.ts` fans out to both channels, but they are gated differently: cloud push always fires, while Telegram fires **only when no browser client is connected** — so an active user is not double-notified
+
 ## Non-Functional Requirements
 
 | Requirement | Target | Implementation |
 |---|---|---|
 | **Performance** | Page load <2s, terminal <100ms latency | Vite code splitting, streaming APIs |
-| **Availability** | 99.9% uptime for local deployments | Stateless server, git-based state |
-| **Scalability** | Support 10+ concurrent projects | Stateless, horizontal if needed |
-| **Security** | Token-based auth, path traversal protection | Middleware, filename validation |
+| **Availability** | Survives crash, logout and reboot | Supervisor + OS autostart, soft-stop state |
+| **Scalability** | Support 10+ concurrent projects | Per-project session registries, lazy tabs |
+| **Security** | Token auth on HTTP *and* WebSocket, path-traversal protection, PPM-dir shield, single-use download tokens, secret redaction in logs | Middleware, `fs-path-guard.service.ts`, `redact-secrets.ts` |
 | **Accessibility** | WCAG 2.1 AA | Radix UI primitives, semantic HTML |
-| **Cross-platform** | macOS, Linux, Windows | Bun compatibility + PWA fallback |
-| **Mobile** | iOS Safari, Android Chrome | Responsive design, touch-friendly UI |
+| **Cross-platform** | macOS, Linux, Windows | Bun + per-OS providers for PTY, metrics, host info, autostart |
+| **Mobile** | iOS Safari, Android Chrome | Responsive design, bottom sheets, long-press menus, 44px touch targets |
 | **Offline** | Basic file browsing, editor | Service worker caching (PWA) |
+| **Resource safety** | No unbounded watches or spawns | Pruned watch tree (never recursive on a project root), one long-lived metrics collector, bounded transcode slots |
 
-## CLI Commands (v2+)
+## CLI
+
+The command surface is defined in `src/index.ts` and `src/cli/commands/*.ts` — that Commander tree is
+the single source of truth and is what `scripts/generate-ppm-skill.ts` introspects to generate the
+exported skill. The [README](../README.md#cli) lists the commands for humans.
+
+Two behaviours worth stating here because they are product decisions, not implementation detail:
 
 ### ppm start
-Start the server in **background daemon mode** (default) or foreground. Includes automatic public URL sharing via Cloudflare Quick Tunnel.
+Starts the server as a **background daemon** under a supervisor, and always brings up a Cloudflare
+Quick Tunnel. There is no foreground flag: the daemon is the only mode. The command blocks until the
+tunnel URL is known (up to 35s), prints `➜  Local` / `➜  Share` plus a QR code, and exits 0. Scripts
+read the URL back from `ppm status --json` → `shareUrl`.
 
-**Syntax:**
-```bash
-ppm start [options]
-```
+- Options: `-p/--port`, `--profile <name>` (DB profile, e.g. `dev` → `ppm.dev.db`), `-s/--share` (deprecated no-op — the tunnel is always on)
+- If no config exists, the setup wizard runs first
+- If auth is disabled while the tunnel is up, it warns that the IDE is publicly reachable
+- On first start it also registers OS autostart, so PPM survives a terminal close and a reboot
 
-**Options:**
-- `-p, --port <port>` — Port to listen on (default: from SQLite config)
-- `-f, --foreground` — Run in foreground (blocking, shows logs). Default: background daemon.
-- `-d, --daemon` — Explicit daemon flag (kept for compatibility, no-op since daemon is default)
-- `-s, --share` — (deprecated) Tunnel is now always enabled
-- `-c, --config <path>` — Path to legacy YAML config to import (migrates to SQLite on load)
-
-**Behavior:**
-- **Background (default):** Process exits immediately. Daemon runs with output to null. Status saved to `~/.ppm/status.json`. Parent polls for status (up to 30s).
-- **Foreground:** Blocks with logs displayed. All WebSocket and tunnel features work normally.
-- **Tunnel (always enabled):** Downloads cloudflared binary to `~/.ppm/bin/` if missing (shows progress). Spawns tunnel in separate child. URL extracted from stderr and saved to status.json.
-- **Auth warning:** If tunnel is enabled without auth, warns user that IDE is publicly accessible.
-
-**Example:**
-```bash
-ppm start                      # Daemon + tunnel (both automatic)
-ppm start --foreground         # Foreground for debugging
-ppm start -p 3000 -f           # Custom port + foreground
-```
-
-### ppm stop
-Stop the background daemon gracefully.
-
-**Syntax:**
-```bash
-ppm stop
-```
-
-**Behavior:**
-- Reads `~/.ppm/status.json` (new format) or falls back to `~/.ppm/ppm.pid` (legacy)
-- Sends SIGTERM to process
-- Cleans up status.json and ppm.pid files
-- Tunnel process (if running) killed via signal handler
-
-**Example:**
-```bash
-ppm stop                       # Stop daemon
-```
+### ppm stop / ppm down
+`stop` shuts the server down but **leaves the supervisor alive** — the tunnel URL and Cloud link
+survive, and `ppm start` resumes without a new supervisor. `down` (or `stop --kill`) is the full
+shutdown. This split exists so a restart does not rotate the public URL.
 
 ## Architecture Highlights
 
 ```
 ┌─────────────────────────────────────┐
-│         CLI (Commander.js)          │  Start/stop daemon, manage projects
-│  ├─ ppm start [--foreground]        │
-│  └─ ppm stop                        │
+│         CLI (Commander.js)          │  Daemon control, projects, git, db,
+│                                     │  chat, schedules, extensions, cloud
 ├─────────────────────────────────────┤
-│  Hono Server (Bun.serve + WebSocket)│  REST API, WS for terminal/chat
-│  ├─ Tunnel Service (Cloudflare)     │  Always-on public URL sharing
-│  └─ Daemon Mode (background process)│
+│  Supervisor (own process)           │  Restart, upgrade, soft-stop state
+├─────────────────────────────────────┤
+│  Hono Server (Bun.serve + WebSocket)│  REST API, WS for chat/terminal/global
+│  ├─ Tunnel Service (Cloudflare)     │  Always-on public URL + port forwarding
+│  └─ Extension Host (Bun Workers)    │  Isolated VSCode-compatible extensions
 ├────────────────────┬────────────────┤
-│  Services Layer    │  Providers      │  Business logic, AI adapters
+│  Services Layer    │  Provider       │  Business logic │ Claude / Codex /
+│                    │  Registry       │                 │ Cursor adapters
 ├────────────────────┴────────────────┤
-│  Filesystem + Git  + Config          │  Project data, auth tokens
+│  SQLite (~/.ppm/ppm.db) + Filesystem + Git             │
 ├─────────────────────────────────────┤
-│   React UI (Vite)                   │  Frontend, installed as PWA
+│   React UI (Vite)                   │  Tabs, floating windows, PWA
 └─────────────────────────────────────┘
 ```
+
+See [`system-architecture.md`](system-architecture.md) for layers, protocols and data flows.
 
 ## Success Metrics
 
@@ -181,9 +191,9 @@ ppm stop                       # Stop daemon
 
 - **Team Size:** Solo developer (open source, community contributions)
 - **Deployment:** Local/single-machine only (no cloud infrastructure required)
-- **State:** Stateless server (config stored locally on disk)
-- **Compatibility:** Linux/macOS primary, Windows secondary
-- **Scope:** Project IDE, not CI/CD platform or cloud collaboration
+- **State:** All state on the local machine — PPM Cloud never receives code or chats
+- **Compatibility:** macOS, Linux and Windows are all supported targets
+- **Scope:** Project IDE, not a CI/CD platform or a cloud collaboration service
 
 ## Version History
 
@@ -191,15 +201,11 @@ ppm stop                       # Stop daemon
 |---------|--------|-------|------|
 | **v1** | Complete | Initial prototype (single project, basic chat, terminal) | Feb 2025 |
 | **v2** | Complete (v0.5.21) | Multi-project, Monaco Editor, auto-title sessions, daemon mode, Cloudflare tunnel, SQLite migration | Mar 2026 |
-| **v3** | Planned | Collaborative editing, plugin architecture | Q2 2026 |
+| **v0.7** | Complete | Multi-account credentials, usage tracking, mobile UX | — |
+| **v0.8** | Complete | PPM Cloud, autostart, auto-upgrade, supervisor, scheduled agents | — |
+| **v0.9** | Complete | Multi-provider AI, MCP management, extension architecture | — |
+| **v0.10** | Complete | Agent teams, group chat, git workflow depth | — |
+| **v0.17–v0.18** | Complete (current) | OS File Explorer, floating windows + PiP, whole-machine system monitor, Windows parity | Sep 2026 |
 
-### v2 Changes (Mar 2026)
-- **Daemon Mode as Default:** `ppm start` runs background daemon by default. `--foreground/-f` flag for debugging.
-- **Public URL Sharing:** Cloudflare Quick Tunnel always enabled (public URL auto-generated). Cloudflared binary auto-downloaded on first start.
-- **Monaco Editor:** Migrated from CodeMirror 6 to Monaco Editor with IntelliSense and diff viewer.
-- **Auto-Title Sessions:** Chat sessions auto-generate titles from SDK summary after first message.
-- **SQLite Persistence:** Migrating from YAML to SQLite for config, sessions, usage, push subscriptions.
-- **Web Push Notifications:** Push notification support via Service Worker.
-- **Session Logging:** Audit trail with sensitive data redaction.
-- **Status File:** `~/.ppm/status.json` (new format) replaces `ppm.pid` with backward compatibility.
-
+Per-release detail lives in [`CHANGELOG.md`](../CHANGELOG.md); forward-looking scope lives in
+[`project-roadmap.md`](project-roadmap.md).
