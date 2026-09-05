@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import type { PpmConfig } from "../../types/config.ts";
+import { isSecretConfigKey } from "../../services/config-secret-keys.ts";
 
 const C = {
   reset: "\x1b[0m",
@@ -65,6 +66,10 @@ export function registerConfigCommands(program: Command): void {
     .description("Get a config value (e.g. port, auth.enabled)")
     .action(async (key: string) => {
       try {
+        if (isSecretConfigKey(key)) {
+          console.log("(secret — use the API's masked status endpoint)");
+          return;
+        }
         const { configService } = await import("../../services/config.service.ts");
         configService.load();
         const all = configService.getAll();

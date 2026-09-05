@@ -96,17 +96,40 @@ export function isChatUploadPath(resolved: string): boolean {
 }
 
 /**
- * Refuse the PPM directory subtree on read-style doors. It stores the config
- * database with provider credentials and auth tokens, which must never be
+ * True when the path is `~/.cloudflared` or anything inside it. Real
+ * `homedir()` is a deliberate exception to the getPpmDir()-only rule (see
+ * CLAUDE.md "PPM Directory"): `cloudflared`, not PPM, decides this location,
+ * and it holds `cert.pem` — an account-level Cloudflare login credential that
+ * must never be servable through a generic file route, same as the PPM
+ * config DB. `isInside` is a prefix match against this exact resolved path,
+ * not a substring test, so an unrelated folder that merely contains
+ * ".cloudflared" as a path segment elsewhere does not match.
+ */
+export function isCloudflaredDirPath(resolved: string): boolean {
+  return isInside(resolved, resolve(homedir(), ".cloudflared"));
+}
+
+/** True when the path holds credential material a generic file route must never serve. */
+export function isCredentialPath(resolved: string): boolean {
+  return isPpmDirPath(resolved) || isCloudflaredDirPath(resolved);
+}
+
+/**
+ * Refuse the PPM directory subtree and `~/.cloudflared` on read-style doors.
+ * The former stores the config database with provider credentials and auth
+ * tokens; the latter stores the Cloudflare login cert. Neither may be
  * downloadable through a generic file route.
  *
- * Chat uploads are the one exception. Every caller applies this to the
- * requested path *and* to its real path, so a symlink parked in the uploads
- * directory still fails on the second call and cannot reach the rest of the
- * PPM dir through the exception.
+ * Chat uploads are the one exception, and only for the PPM-dir branch — chat
+ * uploads always live under `getPpmDir()`, never under `~/.cloudflared`, so
+ * the exception is a no-op for the cloudflared branch. Every caller applies
+ * this to the requested path *and* to its real path, so a symlink parked in
+ * the uploads directory still fails on the second call and cannot reach the
+ * rest of the PPM dir through the exception, and a symlink pointing at
+ * `~/.cloudflared/cert.pem` fails the same way.
  */
 export function assertNotPpmDir(resolved: string): void {
-  if (isPpmDirPath(resolved) && !isChatUploadPath(resolved)) {
+  if (isCredentialPath(resolved) && !isChatUploadPath(resolved)) {
     throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
 }
