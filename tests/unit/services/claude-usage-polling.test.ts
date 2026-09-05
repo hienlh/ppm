@@ -220,6 +220,25 @@ describe("multi-account polling", () => {
     expect(tokens).toContain(OAUTH_TOKEN_2);
   });
 
+  it("routes a parked account through ensureFreshToken like any other", async () => {
+    // This is the life support that stops a long park from ever reaching a dead token:
+    // startAutoRefresh skips disabled accounts, so if the poller also reached around
+    // ensureFreshToken to getWithTokens — which is what "do not spend a parked account's
+    // refresh token" looks like in code — nothing would keep a parked account alive and a
+    // long enough park would run its token out for good.
+    //
+    // Asserting on the spy rather than on a POST to /oauth/token is deliberate: beforeEach
+    // stubs ensureFreshToken, so no refresh ever reaches fetch and an assertion about
+    // /oauth/token would pass whatever this function did.
+    const id = addOAuthAccount("parked", OAUTH_TOKEN_1);
+    accountService.setDisabled(id);
+    mockUsageApi(USAGE_RESPONSE);
+
+    await refreshUsageNow();
+
+    expect(ensureSpy.mock.calls.flat()).toContain(id);
+  });
+
   it("skips non-OAuth tokens (API keys)", async () => {
     accountService.add({
       email: "apikey@test.com",

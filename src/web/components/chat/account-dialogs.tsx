@@ -70,9 +70,14 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess }: AddAccountDi
     try {
       let code = oauthCode.trim();
       if (code.includes("#")) code = code.split("#")[0] ?? code;
-      await exchangeOAuthCode(code, oauthState);
+      const acc = await exchangeOAuthCode(code, oauthState);
       handleClose();
-      onSuccess("Account connected via OAuth!");
+      // Signing in again on an account this machine parked carries the token in but
+      // deliberately leaves it out of the rotation. A flat success over a toggle that is
+      // still off reads as a bug, and this is the only place the user finds out otherwise.
+      onSuccess(acc?.status === "disabled"
+        ? "Signed in. This account is still disabled — enable it to use it."
+        : "Account connected via OAuth!");
     } catch (e) {
       setAddError((e as Error).message);
     }
@@ -84,9 +89,11 @@ export function AddAccountDialog({ open, onOpenChange, onSuccess }: AddAccountDi
     setAdding(true);
     setAddError(null);
     try {
-      await addAccount({ apiKey: newToken.trim(), label: newLabel.trim() || undefined });
+      const acc = await addAccount({ apiKey: newToken.trim(), label: newLabel.trim() || undefined });
       handleClose();
-      onSuccess("Account added!");
+      onSuccess(acc?.status === "disabled"
+        ? "Token updated. This account is still disabled — enable it to use it."
+        : "Account added!");
     } catch (e) {
       setAddError((e as Error).message);
     }

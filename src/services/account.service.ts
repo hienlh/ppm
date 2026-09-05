@@ -131,21 +131,36 @@ class AccountService {
    * Returns the refreshed account with fresh tokens, or null if refresh failed.
    */
   async ensureFreshToken(id: string): Promise<AccountWithTokens | null> {
+    return (await this.ensureFreshTokenChecked(id)).account;
+  }
+
+  /**
+   * `ensureFreshToken`, keeping the reason it failed.
+   *
+   * `rejected` means the OAuth server turned the refresh token itself down (`invalid_grant`
+   * / `invalid_request`): nothing local recovers from that, only a fresh sign-in. Anything
+   * else — a network drop, a 429, a decrypt failure — is transient and worth retrying,
+   * which is a different sentence to put in front of a user. `ensureFreshToken` collapses
+   * the two because its callers are background loops with nobody to tell; the one caller
+   * that has a user in front of it (`PATCH /api/accounts/:id`) uses this.
+   */
+  async ensureFreshTokenChecked(id: string): Promise<{ account: AccountWithTokens | null; rejected: boolean }> {
     const acc = this.getWithTokens(id);
-    if (!acc) return null;
+    if (!acc) return { account: null, rejected: false };
     // Only OAuth tokens need refresh
-    if (!acc.accessToken.startsWith("sk-ant-oat")) return acc;
-    if (!acc.expiresAt) return acc;
+    if (!acc.accessToken.startsWith("sk-ant-oat")) return { account: acc, rejected: false };
+    if (!acc.expiresAt) return { account: acc, rejected: false };
     const nowS = Math.floor(Date.now() / 1000);
     const REFRESH_BUFFER_S = 3600; // 1 hour — refresh proactively before expiry
-    if (acc.expiresAt - nowS > REFRESH_BUFFER_S) return acc; // still fresh
+    if (acc.expiresAt - nowS > REFRESH_BUFFER_S) return { account: acc, rejected: false }; // still fresh
     try {
       console.log(`[accounts] Pre-flight refresh for ${acc.email ?? id} (expires in ${acc.expiresAt - nowS}s, buffer=${REFRESH_BUFFER_S}s)`);
       await this.refreshAccessToken(id, false, false, REFRESH_BUFFER_S);
-      return this.getWithTokens(id);
+      return { account: this.getWithTokens(id), rejected: false };
     } catch (e) {
-      console.error(`[accounts] Pre-flight refresh failed for ${id}: ${(e as Error).message ?? e}`);
-      return null;
+      const msg = (e as Error).message ?? String(e);
+      console.error(`[accounts] Pre-flight refresh failed for ${id}: ${msg}`);
+      return { account: null, rejected: /invalid_grant|invalid_request/.test(msg) };
     }
   }
 
@@ -183,6 +198,8 @@ class AccountService {
       }
       if (params.label) updateAccount(dup.id, { label: params.label });
       if (params.email) updateAccount(dup.id, { email: params.email });
+      // After the email lands, or the first re-add of a row that had none logs a UUID.
+      this.noteParkSurvivedReAdd(dup.id);
       return this.toAccount(getAccountById(dup.id)!);
     }
 
@@ -284,9 +301,18 @@ class AccountService {
     // Check for duplicate — update tokens on existing account
     const dup = this.findDuplicate(email, info.profileData);
     if (dup) {
-      updateAccount(dup.id, { access_token: encrypt(params.apiKey), status: "active", cooldown_until: null });
+      // Mirrors updateTokens(): a fresh token ends a cooldown, but a park is a decision
+      // about the rotation and pasting the token in again does not reverse it. This was the
+      // one door left that force-enabled, which is how the two paths disagreed.
+      const parked = getAccountById(dup.id)?.status === "disabled";
+      updateAccount(dup.id, {
+        access_token: encrypt(params.apiKey),
+        cooldown_until: null,
+        ...(parked ? {} : { status: "active" as const }),
+      });
       if (info.profileData) updateAccount(dup.id, { profile_json: JSON.stringify(info.profileData) });
       if (email) updateAccount(dup.id, { email });
+      this.noteParkSurvivedReAdd(dup.id);
       return this.toAccount(getAccountById(dup.id)!);
     }
 
@@ -326,13 +352,37 @@ class AccountService {
   }
 
   updateTokens(id: string, accessToken: string, refreshToken: string, expiresAt: number): void {
+    // A disabled account keeps that status. Usage polling refreshes parked accounts on
+    // purpose (a GET costs no quota), and export does the same before writing a backup;
+    // activating here put them back in the chat rotation behind the user's back, so the
+    // toggle looked like it had been forgotten — most visibly after a restart, which
+    // polls immediately. Cooldown still clears for everything else: a fresh token is
+    // precisely what ends a cooldown.
+    const parked = getAccountById(id)?.status === "disabled";
     updateAccount(id, {
       access_token: encrypt(accessToken),
       refresh_token: encrypt(refreshToken),
       expires_at: expiresAt,
-      status: "active",
+      // The cooldown clears either way — a fresh token is what ends one, and leaving the
+      // timestamp on a parked account would resurrect it the moment the park is lifted.
       cooldown_until: null,
+      ...(parked ? {} : { status: "active" as const }),
     });
+  }
+
+  /**
+   * Both re-add doors land here once the new tokens are stored. Neither lifts a park —
+   * disabling is a decision about the rotation, and carrying credentials in does not reverse
+   * it — but landing tokens and then showing nothing is exactly what made the OAuth path look
+   * like a no-op. Saying so is the whole point; keeping it in one place is what stops the two
+   * doors from drifting apart again.
+   */
+  private noteParkSurvivedReAdd(id: string): void {
+    const row = getAccountById(id);
+    if (row?.status !== "disabled") return;
+    console.log(
+      `[accounts] Tokens updated for ${row.email ?? id} — account stays disabled; enable it in Settings`,
+    );
   }
 
   setCooldown(id: string, untilMs: number): void {
@@ -352,7 +402,11 @@ class AccountService {
       const acc = this.list().find((a) => a.id === id);
       const nowS = Math.floor(Date.now() / 1000);
       if (acc?.expiresAt && acc.expiresAt < nowS) {
-        throw new Error("Cannot re-enable expired temporary account. Please login again or import a fresh backup.");
+        // Signing in again refreshes the tokens but no longer re-enables anything, so the
+        // text says what actually happens: get a live token in, then flip it back on here.
+        throw new Error(
+          "Cannot re-enable expired temporary account. Sign in again or import a fresh backup to refresh its tokens, then enable it here.",
+        );
       }
     }
     updateAccount(id, { status: "active", cooldown_until: null });
@@ -552,9 +606,15 @@ class AccountService {
 
   /**
    * POST the refresh grant, retrying transient failures with backoff.
-   * A network blip (e.g. waking from sleep) must not cost a whole refresh cycle —
-   * Anthropic's refresh token dies shortly after the access token, so the retry
-   * window before it lapses for good is narrow.
+   * A network blip (e.g. waking from sleep) must not cost a whole refresh cycle: this
+   * runs at or past access-token expiry, so a dropped attempt leaves the account unable
+   * to serve a turn until the next sweep.
+   *
+   * It is *not* that the refresh token is about to lapse with it. Measured against a
+   * live install's history: 324 refreshes, zero `invalid_grant`, and one that succeeded
+   * after a 58-hour gap — 50 hours past the 8-hour access-token expiry. Refresh tokens
+   * outlive their access tokens by days, which is what makes freezing a parked account
+   * (see `startAutoRefresh`) safe rather than a slow way to kill it.
    */
   private async postRefreshGrant(refreshToken: string, label: string): Promise<Response> {
     const backoffMs = [2_000, 6_000];
@@ -664,7 +724,8 @@ class AccountService {
    * Export accounts backup.
    * @param includeRefreshToken - if true, includes refresh tokens (full transfer).
    *   Source keeps its refresh token; it will be auto-cleared if it becomes invalid.
-   *   Default false = temporary export (access-only, ~1h).
+   *   Default false = temporary export (access-only, ~1h — see `refreshBeforeExport`,
+   *   which freshens the access token first so the window starts at export time).
    */
   exportEncrypted(password: string, accountIds?: string[], includeRefreshToken = false): string {
     const rows = accountIds?.length
@@ -709,14 +770,25 @@ class AccountService {
           let accessToken = row.access_token;
           if (!looksEncrypted(accessToken)) accessToken = encrypt(accessToken);
           const refreshToken = looksEncrypted(row.refresh_token) ? row.refresh_token : encrypt(row.refresh_token);
+          // An account parked on THIS machine stays parked: the import carries tokens, not
+          // the local decision about who is in the rotation. A new account still takes the
+          // backup's status below, since there is no local decision to respect. An account
+          // the failed-refresh path disabled is recoverable in one click — the import gives
+          // it back a live refresh token, which is what setEnabled() checks for.
+          const parked = existing.status === "disabled";
           updateAccount(existing.id, {
             access_token: accessToken,
             refresh_token: refreshToken,
             expires_at: row.expires_at,
-            status: "active",
+            ...(parked ? {} : { status: "active" as const }),
           });
           imported++;
-          fullTransferIds.push(existing.id);
+          // The usage poller and export both refresh a parked account, because a token
+          // nothing ever refreshes eventually dies. This one is different: it is not
+          // keeping the token alive, it is claiming ownership of it — and claiming a token
+          // for an account this machine has taken out of the rotation buys nothing here
+          // while invalidating the machine still using it. Enabling the account claims it.
+          if (!parked) fullTransferIds.push(existing.id);
           console.log(`[accounts] Updated ${row.email ?? existing.id} tokens from import`);
         }
         continue; // skip if import doesn't have refresh token
@@ -726,6 +798,11 @@ class AccountService {
       let accessToken = row.access_token;
       if (!looksEncrypted(accessToken)) accessToken = encrypt(accessToken);
       const refreshToken = hasRefresh ? (looksEncrypted(row.refresh_token) ? row.refresh_token : encrypt(row.refresh_token)) : encrypt("");
+      // The column has no CHECK constraint and the blob is user-supplied, so anything
+      // outside the three real statuses lands as active. A stray value reads as *on* in
+      // the UI (`status !== "disabled"`) while never being selectable for a turn.
+      const importedStatus =
+        row.status === "disabled" || row.status === "cooldown" ? row.status : "active";
       insertAccount({
         id: row.id,
         label: row.label,
@@ -733,7 +810,7 @@ class AccountService {
         access_token: accessToken,
         refresh_token: refreshToken,
         expires_at: row.expires_at,
-        status: row.status ?? "active",
+        status: importedStatus,
         cooldown_until: row.cooldown_until,
         priority: row.priority ?? 0,
         total_requests: row.total_requests ?? 0,
@@ -741,7 +818,7 @@ class AccountService {
         profile_json: row.profile_json ?? null,
       });
       imported++;
-      if (hasRefresh) fullTransferIds.push(row.id);
+      if (hasRefresh && importedStatus !== "disabled") fullTransferIds.push(row.id);
     }
 
     // Immediately refresh full-transfer accounts to claim ownership
@@ -781,11 +858,17 @@ class AccountService {
       const accounts = this.list();
       const nowS = Math.floor(Date.now() / 1000);
       for (const acc of accounts) {
-        // Freeze disabled accounts: skip background refresh entirely.
-        // Refreshing rotates the OAuth refresh token; when the same account is
-        // shared across machines/processes the rotation races and one side gets
-        // invalid_grant, killing an account the user only meant to park. Leaving
-        // a disabled account untouched keeps its token intact until re-enabled.
+        // Skip disabled accounts: this timer exists to keep the chat rotation supplied and
+        // a parked account is not in it. Refreshing rotates the OAuth refresh token; when
+        // the same account is shared across machines the rotation races and one side gets
+        // invalid_grant, killing an account the user only meant to park.
+        //
+        // A preference, not a guarantee, and worth knowing before relying on it: the usage
+        // poller runs on the same 5-minute cadence with the same 1-hour buffer and does not
+        // skip parked accounts — deliberately, because a token nothing ever refreshes does
+        // eventually die. So while polling is on, a parked account's token still rotates
+        // here-or-there; this skip only declines to be the one that does it. Enabling the
+        // account proves the token either way (`PATCH /api/accounts/:id`).
         if (acc.status === "disabled") continue;
         if (!acc.expiresAt) continue;
         if (acc.expiresAt - nowS > REFRESH_BUFFER_S) continue;

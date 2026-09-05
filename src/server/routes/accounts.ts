@@ -376,8 +376,36 @@ accountsRoutes.patch("/:id", async (c) => {
   const body = await c.req.json<{ status?: string }>();
   try {
     if (body.status === "disabled") accountService.setDisabled(id);
-    else if (body.status === "active") accountService.setEnabled(id);
-    else return c.json(err("status must be active or disabled"), 400);
+    else if (body.status === "active") {
+      const wasParked = accountService.list().find((a) => a.id === id)?.status === "disabled";
+      // Enabling is where this machine claims the token, so prove it *before* the account
+      // becomes selectable rather than after. postRefreshGrant is three 15s attempts with
+      // 2s and 6s backoff between them — 53s worst case — so enabling first would leave the
+      // account active with an unproven token for most of a minute, long enough for
+      // accountSelector.next() or the proxy to pick it, and the re-park would land only
+      // after that turn had already failed. Refreshing while still
+      // parked needs no rollback at all: on failure setEnabled() simply never runs.
+      //
+      // Only for an account that has a refresh token: a temporary one has nothing to prove,
+      // and setEnabled()'s own guard says something more useful than a refresh error would.
+      if (wasParked && accountService.hasRefreshToken(id)) {
+        const proof = await accountService.ensureFreshTokenChecked(id);
+        if (!proof.account) {
+          // Worth splitting: invalid_grant means the token is gone and only a fresh sign-in
+          // brings it back, while a network drop or a 429 is worth trying again in a minute.
+          // Telling someone to re-authenticate because their wifi blinked is a bad trade.
+          return c.json(
+            err(
+              proof.rejected
+                ? "This account's login was rejected — it stays disabled. Sign in again to give it a live token, then enable it."
+                : "Could not reach Anthropic to check this account — it stays disabled. Try again in a moment.",
+            ),
+            400,
+          );
+        }
+      }
+      accountService.setEnabled(id);
+    } else return c.json(err("status must be active or disabled"), 400);
   } catch (e) {
     return c.json(err((e as Error).message), 400);
   }
