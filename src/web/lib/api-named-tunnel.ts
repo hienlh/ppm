@@ -13,6 +13,12 @@ export interface NamedTunnelStatus {
   certState: CertState;
   dismissed: boolean;
   login: LoginSnapshot;
+  /**
+   * Supervisor-side downgrade warning (e.g. "named tunnel failed to start").
+   * Not yet threaded from `status.json` into this route — optional so the UI
+   * degrades to "no banner" instead of a type error once it is.
+   */
+  tunnelWarning?: string | null;
 }
 
 export interface ZoneInfo {
