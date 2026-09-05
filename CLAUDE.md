@@ -60,6 +60,8 @@ Exceptions (intentionally use real `homedir()`):
 - `fs-browse.service.ts`, `git-dirs.service.ts` — file browser starting from real home
 - `ppmbot/` — bot files in real home
 - `slash-discovery/` — discovers skills from real home
+- `named-tunnel/cloudflared-cert.ts` — `~/.cloudflared` is where `cloudflared` itself writes `cert.pem`, not PPM's directory
+- `fs-credential-path-guard.ts` — refuses `~/.cloudflared` (alongside the PPM dir) on every fs read/write/transfer door
 
 ## Known Gotchas
 
@@ -104,3 +106,4 @@ Before planning or implementing a new feature, read `docs/project-roadmap.md` to
 - `src/services/fs-ops/` — Guarded whole-disk filesystem operations (`/api/fs/*`) behind PPM auth
 - `src/services/host-info/` — Per-OS drives/known-folders/pinned-folders providers (`/api/system/host`)
 - `src/services/system-metrics/` — Task Manager backend (`/api/system/resources*`): per-OS collectors, one long-lived PowerShell child on Windows (never spawn per tick — 32 MiB commit leak each), light/full SSE tiers with leases, guarded kill. UI in `src/web/components/system/` (floating window on desktop, tab on mobile)
+- `src/services/named-tunnel/` — Named tunnel (stable `https://<prefix>.<zone>` URL via Cloudflare login), orchestrated from `src/server/routes/named-tunnel.ts`, spawned/probed by the supervisor; UI in `src/web/components/tunnels/named-tunnel/`

@@ -364,6 +364,23 @@ src/
   - **SessionLogService** — Audit logs with sensitive data redaction
   - **CloudflaredService** — Download/cache cloudflared binary (platform-aware)
   - **TunnelService** — Spawn tunnel, extract URL, cleanup on exit
+  - **named-tunnel/** (ADDED) — Named-tunnel (stable custom-domain) setup + runtime, orchestrated from
+    the server, spawned/probed by the supervisor: `cloudflared-cert.ts` (parse-based `~/.cloudflared/cert.pem`
+    state, never a bare `existsSync`), `cloudflared-login.service.ts` (login session state machine —
+    60s slow banner, 5min kill, uncapped retry), `named-tunnel-setup.service.ts` (zone → precheck →
+    create → route → token → persist, background-confirmed via `retunnel`), `named-tunnel-args.ts`
+    (argv builders — run token via `--token-file` only, never argv), `named-tunnel-probe-state.ts`
+    (pure restart-once-then-warn decision function for the supervisor's health probe),
+    `hostname-rules.ts` (one label above the zone, no apex/`www`), `cloudflare-zone-api.ts` /
+    `cloudflare-dns-api.ts` (Cloudflare REST lookups for zone name + DNS collision precheck).
+    Routes: `src/server/routes/named-tunnel.ts` (`/api/tunnel/named/*`; mutations 403 unless PPM auth
+    is enabled). UI: `src/web/components/tunnels/named-tunnel/` (first-run popup + permanent Tunnel
+    Manager section, sharing one step-reducer-driven flow).
+  - **fs-credential-path-guard.ts** (ADDED) — Refuses `~/.cloudflared` (Cloudflare login cert)
+    alongside the PPM dir on every fs read/write/transfer door, symlink-resolved
+  - **config-secret-keys.ts** (ADDED) — Denylist + deep redaction for config-dump surfaces
+    (`ppm config get`, extension RPC `workspace:config:get`) — masks a secret leaf even when the
+    caller asked for an ancestor object (e.g. `get tunnel` still masks `namedTunnelToken`)
   - **TableCacheService** — Cache table metadata across connections, search tables by name
   - **DatabaseAdapterRegistry** — Register/retrieve DatabaseAdapter implementations (extensible pattern)
   - **SQLiteAdapter** — SQLite connection/query execution with readonly checks
