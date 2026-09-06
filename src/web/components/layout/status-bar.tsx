@@ -6,6 +6,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ResourceStatusBar } from "@/components/system/resource-status-bar";
+import { RemoteDesktopStatusButton } from "@/components/remote-desktop/remote-desktop-status-button";
 import { ThemePicker } from "@/components/settings/theme-picker";
 import { UpgradeButton } from "@/components/layout/upgrade-button";
 import { countDockTabs } from "@/components/layout/dock-tabs";
@@ -38,6 +39,8 @@ export const StatusBar = memo(function StatusBar() {
       <div className="flex items-center gap-3 min-w-0">
         {/* CPU/MEM moved here from the sidebar resource strip. */}
         <ResourceStatusBar compact />
+        {/* Hidden unless REMOTE_DESKTOP_ENABLED is set server-side (dev entry point for the slice). */}
+        <RemoteDesktopStatusButton />
         {right.map((item) => (
           <StatusBarEntry key={item.id} item={item} />
         ))}
