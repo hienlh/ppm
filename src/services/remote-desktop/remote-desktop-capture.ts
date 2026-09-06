@@ -45,8 +45,11 @@ export interface CaptureHandle {
 export interface StartCaptureOptions {
   onAccessUnit: (au: AccessUnit) => void;
   /** Called once the process exits, whether via `stop()` or on its own (crash/killed
-   *  externally) — lets the session registry clean up without polling. */
-  onExit?: (code: number | null) => void;
+   *  externally) — lets the session registry clean up without polling. `reason` is a short
+   *  stderr tail, present only when ffmpeg died on its own (e.g. gdigrab access denied on a
+   *  disconnected session) so the caller can surface *why* to the client instead of a bare
+   *  disconnect. */
+  onExit?: (code: number | null, reason?: string) => void;
 }
 
 /** Start gdigrab capture. Rejects immediately if ffmpeg is not on PATH. */
@@ -70,12 +73,20 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
   // Drain stderr so ffmpeg never blocks on a full pipe; keep a short tail for diagnostics.
   const stderrTail = new Response(proc.stderr).text().catch(() => "");
   proc.exited.then(async (code) => {
+    // Read `stopped` BEFORE overwriting it: this is the only reliable "did WE ask ffmpeg to
+    // die" signal. `proc.killed` is NOT reliable for that — Bun sets it `true` even when
+    // ffmpeg exits on its own with a nonzero code (verified: gdigrab "access denied" on a
+    // disconnected session exits with `killed: true` despite `stop()` never having been
+    // called), which previously suppressed this warning — and any client-facing error —
+    // for exactly the crash this exists to report.
+    const diedOnItsOwn = !stopped;
     stopped = true;
-    if (code !== 0 && code !== null && !proc.killed) {
-      const tail = (await stderrTail).trim().split("\n").slice(-3).join(" | ");
-      console.warn(`[remote-desktop] ffmpeg exited ${code}: ${tail}`);
+    let reason: string | undefined;
+    if (diedOnItsOwn && code !== 0 && code !== null) {
+      reason = (await stderrTail).trim().split("\n").slice(-3).join(" | ");
+      console.warn(`[remote-desktop] ffmpeg exited ${code}: ${reason}`);
     }
-    opts.onExit?.(code);
+    opts.onExit?.(code, reason);
   });
 
   const assembler = new AccessUnitAssembler();

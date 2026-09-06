@@ -54,7 +54,7 @@ export default function RemoteDesktopWindowContent(_props: WindowContentProps) {
       }
       if (cancelled) return;
 
-      const url = resolveRemoteDesktopWsUrl(window.location, import.meta.env.DEV);
+      const url = resolveRemoteDesktopWsUrl(window.location, import.meta.env.DEV, import.meta.env.VITE_DEV_API_PORT);
       const ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
@@ -104,8 +104,12 @@ export default function RemoteDesktopWindowContent(_props: WindowContentProps) {
           : null;
 
   return (
-    <div className="relative flex h-full w-full items-center justify-center bg-black">
-      <canvas ref={canvasRef} className="max-h-full max-w-full outline-none" />
+    <div
+      className="relative flex h-full w-full items-center justify-center bg-black"
+      data-testid="remote-desktop-window"
+      data-conn-state={connState}
+    >
+      <canvas ref={canvasRef} data-testid="remote-desktop-canvas" className="max-h-full max-w-full outline-none" />
       {overlayMessage && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 text-sm text-white">
           <MonitorX className="size-6 opacity-70" />

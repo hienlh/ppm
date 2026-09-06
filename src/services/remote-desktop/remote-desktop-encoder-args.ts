@@ -24,6 +24,12 @@ export function captureEncoderArgs(): string[] {
     "-profile:v", "main",
     "-level", "4.0",
     "-bf", "0",
+    // `-tune zerolatency` turns on x264's sliced-threads, which splits one picture into
+    // multiple slice NALs. access-unit-assembler.ts treats every VCL NAL as a new AU
+    // boundary (true for one-slice-per-frame libx264 output), so multi-slice pictures would
+    // get chopped into partial-picture "access units" WebCodecs can't decode. Force back to
+    // one slice per frame so that assumption holds.
+    "-x264-params", "sliced-threads=0:slices=1",
     "-b:v", "4M", "-maxrate", "4M", "-bufsize", "2M",
     "-g", String(CAPTURE_GOP_FRAMES),
     "-pix_fmt", "yuv420p",

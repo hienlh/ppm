@@ -45,9 +45,18 @@ export class RemoteDesktopSession {
   async start(): Promise<void> {
     this.capture = await startCapture({
       onAccessUnit: (au) => this.handleAccessUnit(au),
-      onExit: () => {
+      // `reason` is only set when ffmpeg died on its own (crash, access denied, etc) — tell
+      // the client *why* before closing instead of leaving it to guess from a bare
+      // disconnect (this is exactly what happens today for e.g. gdigrab failing against a
+      // disconnected Windows session: "Failed to capture image (error 5)").
+      onExit: (_code, reason) => {
         this.exitResolve?.();
-        if (!this.closed) this.close();
+        if (!this.closed) {
+          if (reason) {
+            try { this.ws.send(JSON.stringify({ type: "error", message: `Capture failed: ${reason}` })); } catch { /* closing anyway */ }
+          }
+          this.close();
+        }
       },
     });
     this.heartbeatTimer = setInterval(() => this.checkHeartbeat(), HEARTBEAT_INTERVAL_MS);
@@ -81,9 +90,21 @@ export class RemoteDesktopSession {
       return;
     }
     if (msg.type === "releaseAll") {
-      this.heldKeyCodes.clear();
-      await releaseAllModifiers();
+      await this.releaseHeldKeys();
     }
+  }
+
+  /** Force a keyup for every key this session has tracked as held, then run the modifier
+   *  backstop too — `heldKeyCodes` covers whatever the client actually pressed (letters,
+   *  digits, etc, not just modifiers); `releaseAllModifiers()` is a second backstop for a
+   *  modifier that raced a disconnect before its keydown was ever tracked. Previously this
+   *  only ran the modifier backstop and *cleared* `heldKeyCodes` without releasing them,
+   *  so a held non-modifier key (e.g. a letter) stayed logically down on the host. */
+  private async releaseHeldKeys(): Promise<void> {
+    const codes = [...this.heldKeyCodes];
+    this.heldKeyCodes.clear();
+    await Promise.all(codes.map((code) => injectKey(code, false).catch(() => {})));
+    await releaseAllModifiers();
   }
 
   close(): void {
@@ -93,8 +114,7 @@ export class RemoteDesktopSession {
     this.capture?.stop();
     activeSessions.delete(this);
     if (this.heldKeyCodes.size > 0) {
-      this.heldKeyCodes.clear();
-      releaseAllModifiers().catch(() => {});
+      this.releaseHeldKeys().catch(() => {});
     }
     try { this.ws.close(); } catch { /* already closing */ }
   }
