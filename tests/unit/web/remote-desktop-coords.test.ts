@@ -1,6 +1,6 @@
 // Run in Docker if the host segfaults: docker run --rm -v "$PWD":/app -w /app oven/bun bun test tests/unit/web/remote-desktop-coords.test.ts
 import { describe, it, expect } from "bun:test";
-import { fractionFromPoint } from "../../../src/web/components/remote-desktop/remote-desktop-coords.ts";
+import { fractionFromPoint, fractionFromZoomedPoint } from "../../../src/web/components/remote-desktop/remote-desktop-coords.ts";
 
 describe("fractionFromPoint", () => {
   it("maps the canvas center to 0.5/0.5", () => {
@@ -23,5 +23,38 @@ describe("fractionFromPoint", () => {
     // documents that guarantee so a future edit can't silently reintroduce it.
     const rect = { left: 0, top: 0, width: 100, height: 100 };
     expect(fractionFromPoint(50, 50, rect)).toEqual({ xFrac: 0.5, yFrac: 0.5 });
+  });
+});
+
+describe("fractionFromZoomedPoint", () => {
+  const rect = { left: 0, top: 0, width: 800, height: 600 };
+
+  it("matches fractionFromPoint at the identity transform (scale 1, no pan)", () => {
+    const identity = { scale: 1, panX: 0, panY: 0 };
+    expect(fractionFromZoomedPoint(200, 150, rect, identity)).toEqual(fractionFromPoint(200, 150, rect));
+  });
+
+  it("a 2x zoom about the container center maps a screen point closer to center", () => {
+    // Container center is (400, 300). A point at (600, 300) is 200px right of center on
+    // screen; at 2x zoom the same host point is only 100px right of center pre-zoom.
+    const zoomed = { scale: 2, panX: 0, panY: 0 };
+    const { xFrac } = fractionFromZoomedPoint(600, 300, rect, zoomed);
+    expect(xFrac).toBeCloseTo(0.5 + 100 / 800, 5);
+  });
+
+  it("panning shifts the mapped point by the pan amount, reversed", () => {
+    // Pan moved the view +50px right on screen — a screen point must be read 50px further
+    // left in host space to land on the same host pixel it did before panning.
+    const panned = { scale: 1, panX: 50, panY: 0 };
+    const base = fractionFromZoomedPoint(400, 300, rect, { scale: 1, panX: 0, panY: 0 });
+    const withPan = fractionFromZoomedPoint(450, 300, rect, panned);
+    expect(withPan.xFrac).toBeCloseTo(base.xFrac, 5);
+  });
+
+  it("clamps a point the transform maps past the container edge to 0..1", () => {
+    // An extreme pan pushes the reverse-mapped point far past the container's right edge.
+    const panned = { scale: 1, panX: -10_000, panY: 0 };
+    const { xFrac } = fractionFromZoomedPoint(400, 300, rect, panned);
+    expect(xFrac).toBe(1);
   });
 });
