@@ -14,6 +14,7 @@ import { useRemoteDesktopTouch, type RemoteDesktopInputMode } from "./use-remote
 import { useRemoteDesktopVirtualKeyboard } from "./use-remote-desktop-virtual-keyboard";
 import { RemoteDesktopMobileToolbar } from "./remote-desktop-mobile-toolbar";
 import { RemoteDesktopMobileKeyBar } from "./remote-desktop-mobile-key-bar";
+import { RemoteDesktopMobileDebugHud } from "./remote-desktop-mobile-debug-hud";
 import { letterboxedContentRect } from "./remote-desktop-coords";
 
 export interface RemoteDesktopMobileViewProps {
@@ -26,7 +27,7 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   const [mode, setMode] = useState<RemoteDesktopInputMode>("mouse");
   const [keyBarOpen, setKeyBarOpen] = useState(false);
 
-  const { connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect } =
+  const { connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect, getBinaryMessageCount, getFrameCount } =
     useRemoteDesktopConnection(canvasRef);
   const streaming = connState === "streaming";
 
@@ -79,12 +80,16 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
 
   return (
     <div className="relative h-full w-full bg-black" data-testid="remote-desktop-mobile-view" data-conn-state={connState}>
-      {/* Full-screen always — the keyboard never shrinks this, only the bar below floats up
-          over it (see `keyboardInset` below). */}
+      {/* Shrinks to the space above the on-screen keyboard (`bottom: keyboardInset`) so the
+          whole desktop stays visible, just smaller — `object-contain` on the canvas then
+          refits the video into whatever's left, same as it does for the bottom toolbar/notch
+          insets on a normal phone. `top:0` + explicit `bottom` (not `inset-0`) is what lets
+          `bottom` do that shrinking; gesture hit-testing already reads this element's own
+          `getBoundingClientRect()` fresh per gesture, so it stays correct as the box resizes. */}
       <div
         ref={containerRef}
-        className="absolute inset-0 flex items-center justify-center overflow-hidden"
-        style={{ touchAction: "none" }}
+        className="absolute inset-x-0 top-0 flex items-center justify-center overflow-hidden"
+        style={{ touchAction: "none", bottom: keyboardInset }}
         data-testid="remote-desktop-mobile-stage-container"
       >
         {/* `h-full w-full` on both this stage and the canvas below is load-bearing: it gives
@@ -169,6 +174,17 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
           onClose={onClose}
         />
       </div>
+
+      {/* TEMPORARY — diagnosing the "video freezes on mobile" report. Rip out (this component +
+          the getBinaryMessageCount/getFrameCount plumbing in use-remote-desktop-connection.ts
+          and use-h264-canvas-decoder.ts) once that's root-caused. */}
+      <RemoteDesktopMobileDebugHud
+        connState={connState}
+        decoderStatus={decoderStatus}
+        decoderErrorMessage={decoderErrorMessage}
+        getBinaryMessageCount={getBinaryMessageCount}
+        getFrameCount={getFrameCount}
+      />
     </div>
   );
 }

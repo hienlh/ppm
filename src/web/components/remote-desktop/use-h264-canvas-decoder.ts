@@ -21,6 +21,11 @@ export interface UseH264CanvasDecoderResult {
   /** Feed one access unit (header byte already stripped by the caller) to the decoder. */
   decodeAccessUnit: (bytes: Uint8Array, isKey: boolean) => void;
   reset: () => void;
+  /** Total frames the decoder has handed to `output()` (and drawn, or attempted to) since the
+   *  last `reset()`. Ref-backed, not React state — read it from a poll (e.g. a debug HUD), not
+   *  a render dependency, so every decoded frame doesn't force a re-render. Temporary-debug use;
+   *  safe to keep permanently too (near-zero cost), but nothing else needs it today. */
+  getFrameCount: () => number;
 }
 
 export function useH264CanvasDecoder(
@@ -31,6 +36,7 @@ export function useH264CanvasDecoder(
   const decoderRef = useRef<VideoDecoder | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const decodedAnyKeyRef = useRef(false);
+  const frameCountRef = useRef(0);
 
   const fail = useCallback((message: string) => {
     setStatus("error");
@@ -60,6 +66,7 @@ export function useH264CanvasDecoder(
     decodedAnyKeyRef.current = false;
     const decoder = new VideoDecoder({
       output: (frame) => {
+        frameCountRef.current += 1;
         const canvas = canvasRef.current;
         if (canvas) {
           if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
@@ -109,9 +116,12 @@ export function useH264CanvasDecoder(
     try { decoderRef.current?.close(); } catch { /* discarding regardless */ }
     decoderRef.current = null;
     decodedAnyKeyRef.current = false;
+    frameCountRef.current = 0;
     setStatus("idle");
     setErrorMessage(null);
   }, []);
 
-  return { status, errorMessage, configure, decodeAccessUnit, reset };
+  const getFrameCount = useCallback(() => frameCountRef.current, []);
+
+  return { status, errorMessage, configure, decodeAccessUnit, reset, getFrameCount };
 }
