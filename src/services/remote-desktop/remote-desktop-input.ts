@@ -63,7 +63,21 @@ type User32Symbols = {
   CloseDesktop: (hdesk: number | bigint) => boolean;
   OpenWindowStationW: (name: number | bigint, inherit: boolean, access: number) => number | bigint;
   SetProcessWindowStation: (hwinsta: number | bigint) => boolean;
+  GetCursorPos: (point: number | bigint) => boolean;
+  GetSystemMetrics: (index: number) => number;
 };
+
+/** Local-input yield: if the real cursor jumps to a spot we did NOT inject, a person at the
+ *  physical machine is moving the mouse — pause injected MOVES for this long so the two don't
+ *  fight over one cursor (the classic remote-desktop tug-of-war). Clicks still go through. */
+const YIELD_MS = 800;
+/** How far (in 0..65535 absolute units, ~a handful of px) the cursor must have drifted from our
+ *  last injected position to count as "a human grabbed the mouse" rather than rounding noise. */
+const YIELD_THRESHOLD = 250;
+const SM_XVIRTUALSCREEN = 76;
+const SM_YVIRTUALSCREEN = 77;
+const SM_CXVIRTUALSCREEN = 78;
+const SM_CYVIRTUALSCREEN = 79;
 
 let ffiModule: FfiModule | null = null;
 let user32: User32Symbols | null = null;
@@ -82,6 +96,8 @@ async function loadUser32(): Promise<{ ffi: FfiModule; lib: User32Symbols }> {
       CloseDesktop: { args: [FFIType.ptr], returns: FFIType.bool },
       OpenWindowStationW: { args: [FFIType.ptr, FFIType.bool, FFIType.u32], returns: FFIType.ptr },
       SetProcessWindowStation: { args: [FFIType.ptr], returns: FFIType.bool },
+      GetCursorPos: { args: [FFIType.ptr], returns: FFIType.bool },
+      GetSystemMetrics: { args: [FFIType.i32], returns: FFIType.i32 },
     }).symbols as unknown as User32Symbols;
   }
   if (!dpiAwarenessAttempted) {
@@ -157,18 +173,60 @@ async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
   if (sent !== count) console.warn(`[remote-desktop] SendInput accepted ${sent}/${count} events`);
 }
 
+/** Last absolute (0..65535) position we injected, so a move the remote did NOT cause can be
+ *  told apart from our own. Null until the first injected move. */
+let lastInjectedX: number | null = null;
+let lastInjectedY: number | null = null;
+/** While `Date.now() < yieldUntil`, injected MOVES are suppressed — a local user has the mouse. */
+let yieldUntil = 0;
+
+/** Physical cursor position normalized to the 0..65535 virtual-screen space injectPointer works
+ *  in, or null if the read/metrics fail. Lets us detect a human moving the mouse. */
+function cursorNorm(ffi: FfiModule, lib: User32Symbols): { x: number; y: number } | null {
+  const pt = new Uint8Array(8);
+  if (!lib.GetCursorPos(ffi.ptr(pt))) return null;
+  const dv = new DataView(pt.buffer);
+  const vx = lib.GetSystemMetrics(SM_XVIRTUALSCREEN);
+  const vy = lib.GetSystemMetrics(SM_YVIRTUALSCREEN);
+  const vw = lib.GetSystemMetrics(SM_CXVIRTUALSCREEN);
+  const vh = lib.GetSystemMetrics(SM_CYVIRTUALSCREEN);
+  if (vw <= 0 || vh <= 0) return null;
+  return { x: ((dv.getInt32(0, true) - vx) / vw) * 65535, y: ((dv.getInt32(4, true) - vy) / vh) * 65535 };
+}
+
 /** Move the cursor and, if this is a click, press/release the button — one absolute move
  *  per call so the button acts at the position the client actually clicked. `xFrac`/`yFrac`
  *  are 0..1 fractions of the capture (client already dropped devicePixelRatio; only the
- *  canvas-relative fraction is meaningful for host coordinates). */
+ *  canvas-relative fraction is meaningful for host coordinates).
+ *
+ *  Local-input priority: on a pure move, if the real cursor has drifted from where we last put
+ *  it, someone at the physical machine is driving — we hold off injected moves for `YIELD_MS`
+ *  so the two inputs don't tug the cursor back and forth. Clicks are always injected. */
 export async function injectPointer(
   xFrac: number,
   yFrac: number,
   button: "left" | "right" | null,
   down: boolean | null,
 ): Promise<void> {
+  const { ffi, lib } = await loadUser32();
   const xAbs = Math.round(Math.min(Math.max(xFrac, 0), 1) * 65535);
   const yAbs = Math.round(Math.min(Math.max(yFrac, 0), 1) * 65535);
+
+  if (button === null) {
+    const cur = cursorNorm(ffi, lib);
+    if (
+      cur && lastInjectedX !== null && lastInjectedY !== null &&
+      (Math.abs(cur.x - lastInjectedX) > YIELD_THRESHOLD || Math.abs(cur.y - lastInjectedY) > YIELD_THRESHOLD)
+    ) {
+      // A human moved the cursor. Re-arm the yield and track their position, so we only re-yield
+      // on *fresh* movement (not perpetually against a stale base once they stop).
+      yieldUntil = Date.now() + YIELD_MS;
+      lastInjectedX = cur.x;
+      lastInjectedY = cur.y;
+    }
+    if (Date.now() < yieldUntil) return; // stand down while the local user has the mouse
+  }
+
   let flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
   if (button === "left") flags |= down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
   else if (button === "right") flags |= down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
@@ -176,6 +234,8 @@ export async function injectPointer(
   const buf = new Uint8Array(INPUT_STRUCT_SIZE);
   writeMouseInput(new DataView(buf.buffer), 0, xAbs, yAbs, flags);
   await sendRaw(buf, 1);
+  lastInjectedX = xAbs;
+  lastInjectedY = yAbs;
 }
 
 /** Scroll the wheel. `deltaY` is in `WHEEL_DELTA` (120) units — positive rotates the wheel
