@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { buildCaptureArgs } from "../../../../src/services/remote-desktop/remote-desktop-capture.ts";
+import { captureEncoderArgs } from "../../../../src/services/remote-desktop/remote-desktop-encoder-args.ts";
 
 describe("buildCaptureArgs", () => {
   it("captures the desktop via gdigrab into an Annex-B H.264 pipe", () => {
@@ -19,5 +20,34 @@ describe("buildCaptureArgs", () => {
     const args = buildCaptureArgs("ffmpeg");
     const bf = args.indexOf("-bf");
     expect(args[bf + 1]).toBe("0");
+  });
+
+  it("adds low-latency demux/mux flags so ffmpeg does not buffer frames before emitting", () => {
+    const args = buildCaptureArgs("ffmpeg");
+    const nb = args.indexOf("-fflags");
+    expect(args[nb + 1]).toBe("nobuffer");
+    const fp = args.indexOf("-flush_packets");
+    expect(args[fp + 1]).toBe("1");
+  });
+
+  it("uses the detected hardware encoder args when one is passed", () => {
+    const args = buildCaptureArgs("ffmpeg", "h264_nvenc");
+    expect(args).toContain("h264_nvenc");
+    expect(args).not.toContain("libx264");
+  });
+});
+
+describe("captureEncoderArgs", () => {
+  it("emits low-latency NVENC args for h264_nvenc (still -bf 0 for one slice/frame)", () => {
+    const a = captureEncoderArgs("h264_nvenc");
+    expect(a).toEqual(expect.arrayContaining(["-c:v", "h264_nvenc", "-tune", "ll", "-rc", "cbr"]));
+    expect(a[a.indexOf("-bf") + 1]).toBe("0");
+  });
+
+  it("falls back to low-latency libx264 with sliced-threads disabled when no hw encoder", () => {
+    const a = captureEncoderArgs();
+    expect(a).toContain("libx264");
+    expect(a).toContain("zerolatency");
+    expect(a.join(" ")).toContain("sliced-threads=0");
   });
 });

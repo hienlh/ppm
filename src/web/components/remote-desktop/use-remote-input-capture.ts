@@ -29,14 +29,39 @@ export function useRemoteInputCapture(
     // the host — force a release on every path that could lose the matching keyup.
     const releaseAll = () => sendMessage({ type: "releaseAll" });
 
+    // Coalesce moves to one message per animation frame (~60Hz). Raw pointermove fires per
+    // pixel — unthrottled that floods the WS, and over a relayed tunnel the move backlog
+    // starves the button down/up that follow (clicks "don't land"). Down/up/keys are never
+    // throttled so they stay prompt.
+    let pendingMove: { x: number; y: number } | null = null;
+    let rafId = 0;
+    const flushMove = () => {
+      rafId = 0;
+      if (pendingMove) {
+        sendPointer(pendingMove.x, pendingMove.y, null, null);
+        pendingMove = null;
+      }
+    };
+    const flushPendingNow = () => {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+      if (pendingMove) { sendPointer(pendingMove.x, pendingMove.y, null, null); pendingMove = null; }
+    };
+
     const onPointerDown = (e: PointerEvent) => {
       e.preventDefault();
       canvas.setPointerCapture(e.pointerId);
       canvas.focus();
+      flushPendingNow(); // land any queued move at the press position first
       sendPointer(e.clientX, e.clientY, toButton(e.button), true);
     };
-    const onPointerMove = (e: PointerEvent) => sendPointer(e.clientX, e.clientY, null, null);
-    const onPointerUp = (e: PointerEvent) => sendPointer(e.clientX, e.clientY, toButton(e.button), false);
+    const onPointerMove = (e: PointerEvent) => {
+      pendingMove = { x: e.clientX, y: e.clientY };
+      if (!rafId) rafId = requestAnimationFrame(flushMove);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      flushPendingNow();
+      sendPointer(e.clientX, e.clientY, toButton(e.button), false);
+    };
     const onContextMenu = (e: MouseEvent) => e.preventDefault();
     const onKeyDown = (e: KeyboardEvent) => { e.preventDefault(); sendMessage({ type: "key", code: e.code, down: true }); };
     const onKeyUp = (e: KeyboardEvent) => { e.preventDefault(); sendMessage({ type: "key", code: e.code, down: false }); };
@@ -53,6 +78,7 @@ export function useRemoteInputCapture(
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
+      if (rafId) cancelAnimationFrame(rafId);
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);

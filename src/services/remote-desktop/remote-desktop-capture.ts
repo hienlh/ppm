@@ -21,13 +21,19 @@ export class CaptureUnavailableError extends Error {
   }
 }
 
-/** Build the gdigrab argv; pure so it can be asserted on without spawning a process. */
-export function buildCaptureArgs(ffmpeg: string): string[] {
+/** Build the gdigrab argv; pure so it can be asserted on without spawning a process.
+ *  `-fflags nobuffer -flags low_delay` + `-flush_packets 1` stop ffmpeg from holding frames in
+ *  its demux/mux buffers before emitting — on a fast/LAN transport that buffering is a big slice
+ *  of the felt lag. `encoder` selects the H.264 encoder args (hardware NVENC/QSV/AMF when the
+ *  capability probe found one, else libx264). */
+export function buildCaptureArgs(ffmpeg: string, encoder: string = "libx264"): string[] {
   return [
     ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
+    "-fflags", "nobuffer", "-flags", "low_delay",
     "-f", "gdigrab", "-framerate", String(CAPTURE_FRAMERATE), "-i", "desktop",
     "-vf", "scale=-2:720",
-    ...captureEncoderArgs(),
+    ...captureEncoderArgs(encoder),
+    "-flush_packets", "1",
     "-f", "h264", "pipe:1",
   ];
 }
@@ -57,7 +63,7 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
   const caps = await getFfmpegCapabilities();
   if (!caps.ffmpeg) throw new CaptureUnavailableError();
 
-  const proc = Bun.spawn(buildCaptureArgs(caps.ffmpeg), {
+  const proc = Bun.spawn(buildCaptureArgs(caps.ffmpeg, caps.encoder ?? "libx264"), {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
