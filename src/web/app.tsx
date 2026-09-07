@@ -48,6 +48,9 @@ const MobileExplorerSheet = lazy(() =>
 const TeamMemberSheet = lazy(() =>
   import("@/components/chat/team-member-sheet").then((m) => ({ default: m.TeamMemberSheet })),
 );
+const RemoteDesktopMobileSheet = lazy(() =>
+  import("@/components/remote-desktop/remote-desktop-mobile-sheet").then((m) => ({ default: m.RemoteDesktopMobileSheet })),
+);
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
@@ -355,6 +358,11 @@ export function App() {
         {/* Mobile stand-in for the team-member window, which WindowLayer never renders below md */}
         <Suspense fallback={null}>
           <TeamMemberSheet />
+        </Suspense>
+
+        {/* Mobile full-screen remote-desktop viewer — same reason as TeamMemberSheet above */}
+        <Suspense fallback={null}>
+          <RemoteDesktopMobileSheet />
         </Suspense>
 
         {/* Global bug report popup */}

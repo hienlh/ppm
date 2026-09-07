@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { X, Bug as BugIcon, Cloud, FolderTree } from "lucide-react";
+import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -23,6 +23,8 @@ import { CloudSharePopover } from "@/components/layout/cloud-share-popover";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
+import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
+import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +49,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
   const sidebarTabOrder = useSettingsStore((s) => s.sidebarTabOrder);
   const setSidebarTabOrder = useSettingsStore((s) => s.setSidebarTabOrder);
   const contributions = useExtensionStore((s) => s.contributions);
+  const { available: remoteDesktopAvailable } = useRemoteDesktopAvailable();
+  const openRemoteDesktop = useOpenRemoteDesktop();
   const [activeTab, setActiveTab] = useState<SidebarActiveTab>(initialTab ?? "explorer");
   const [cloudOpen, setCloudOpen] = useState(false);
 
@@ -151,6 +155,16 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
                 <span>Files</span>
                 <FeatureBadge id="os-explorer" className="text-[7px] px-1" />
               </button>
+              {remoteDesktopAvailable && (
+                <button
+                  onClick={() => { onClose(); openRemoteDesktop(); }}
+                  className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
+                >
+                  <MonitorSmartphone className="size-3" />
+                  <span>Remote</span>
+                  <FeatureBadge id="remote-desktop" className="text-[7px] px-1" />
+                </button>
+              )}
               <button
                 onClick={() => setCloudOpen(true)}
                 className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
