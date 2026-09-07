@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **A second PPM on the same machine can no longer hijack your domain** — a dev instance under its own `PPM_HOME` derived the same tunnel name, joined the production tunnel, and the hostname then answered from whichever instance Cloudflare picked. Names now include the PPM_HOME, and setup refuses a tunnel another instance is already serving.
+
 ## [0.18.15] - 2026-09-08
 
 ### Added
