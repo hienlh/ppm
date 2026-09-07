@@ -36,6 +36,13 @@ Show auto-start status
 **Options:**
 - `--json` — Output as JSON
 
+## `ppm backup`
+
+Snapshot the PPM config database now
+
+**Options:**
+- `--json` — Output as JSON
+
 ## `ppm bot`
 
 PPMBot utilities
@@ -695,6 +702,17 @@ Restart the server (keeps tunnel alive)
 **Options:**
 - `--force` — Force resume from paused state
 
+## `ppm restore`
+
+Restore the PPM config database from a snapshot
+
+**Options:**
+- `--list` — List available snapshots and exit
+- `--force` — Restore even while PPM is running (stop it first when you can)
+- `--json` — Output as JSON
+
+**Usage:** `ppm restore [options] [backup]`
+
 ## `ppm schedule`
 
 Scheduled Claude agents (cron)
@@ -763,7 +781,7 @@ Show recent runs for a schedule
 Manage and inspect discovered skills & commands
 
 **Options:**
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 **Usage:** `ppm skills [options] [command]`
 
@@ -773,7 +791,7 @@ List all discovered skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 ### `ppm skills search`
 
@@ -781,7 +799,7 @@ Fuzzy search skills and commands
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 **Usage:** `ppm skills search [options] <query>`
 
@@ -791,7 +809,7 @@ Show detailed info for a specific skill
 
 **Options:**
 - `--json` — JSON output
-- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm-release"`)
+- `--project <path>` — Project path (default: `"C:\\Users\\PC\\ppm"`)
 
 **Usage:** `ppm skills info [options] <name>`
 
