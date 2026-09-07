@@ -34,11 +34,21 @@ const KEYEVENTF_KEYUP = 0x0002;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4n;
 /** Each `INPUT` struct is 40 bytes on x64 (8-byte `type` slot + 32-byte union). */
 const INPUT_STRUCT_SIZE = 40;
+/** Desktop access rights for input injection. `SendInput` silently no-ops (accepts the event
+ *  but nothing moves) when the calling thread is not attached to the *input* desktop with
+ *  journal-playback rights — the exact failure the phase-01 slice hit. GENERIC_ALL alone does
+ *  NOT imply DESKTOP_JOURNALPLAYBACK, so it's OR-ed in explicitly. */
+const GENERIC_ALL = 0x10000000;
+const DESKTOP_JOURNALPLAYBACK = 0x0800;
+const INPUT_DESKTOP_ACCESS = GENERIC_ALL | DESKTOP_JOURNALPLAYBACK;
 
 type FfiModule = typeof import("bun:ffi");
 type User32Symbols = {
   SendInput: (count: number, ptr: number | bigint, size: number) => number;
   SetProcessDpiAwarenessContext: (ctx: bigint) => boolean;
+  OpenInputDesktop: (flags: number, inherit: boolean, access: number) => number | bigint;
+  SetThreadDesktop: (hdesk: number | bigint) => boolean;
+  CloseDesktop: (hdesk: number | bigint) => boolean;
 };
 
 let ffiModule: FfiModule | null = null;
@@ -53,6 +63,9 @@ async function loadUser32(): Promise<{ ffi: FfiModule; lib: User32Symbols }> {
     user32 = dlopen("user32.dll", {
       SendInput: { args: [FFIType.u32, FFIType.ptr, FFIType.i32], returns: FFIType.u32 },
       SetProcessDpiAwarenessContext: { args: [FFIType.i64], returns: FFIType.bool },
+      OpenInputDesktop: { args: [FFIType.u32, FFIType.bool, FFIType.u32], returns: FFIType.ptr },
+      SetThreadDesktop: { args: [FFIType.ptr], returns: FFIType.bool },
+      CloseDesktop: { args: [FFIType.ptr], returns: FFIType.bool },
     }).symbols as unknown as User32Symbols;
   }
   if (!dpiAwarenessAttempted) {
@@ -81,8 +94,32 @@ function writeKeyInput(dv: DataView, offset: number, vk: number, keyUp: boolean)
   dv.setUint32(offset + 16, 0, true); // time
 }
 
+/** Handle of the desktop this thread is currently attached to, so we can close the previous one
+ *  when the active input desktop changes (lock/unlock/UAC switches it). One handle in flight. */
+let attachedDesktop: number | bigint | null = null;
+
+/** Attach the calling thread to the *current* input desktop before injecting. Re-run every send
+ *  because the input desktop changes on lock/unlock; `CreateProcessAsUser`/process start only
+ *  fixes the initial desktop, not later switches. Best-effort: on failure we still try SendInput
+ *  (it just no-ops), and log once rather than per-event spam. */
+function attachToInputDesktop(lib: User32Symbols): void {
+  const hdesk = lib.OpenInputDesktop(0, false, INPUT_DESKTOP_ACCESS);
+  if (!hdesk) return; // NULL — couldn't open (e.g. secure desktop); leave thread as-is
+  const ok = lib.SetThreadDesktop(hdesk);
+  if (ok) {
+    if (attachedDesktop && attachedDesktop !== hdesk) {
+      try { lib.CloseDesktop(attachedDesktop); } catch { /* ignore */ }
+    }
+    attachedDesktop = hdesk;
+  } else {
+    // SetThreadDesktop fails if this thread owns windows/hooks — shouldn't for the server thread.
+    try { lib.CloseDesktop(hdesk); } catch { /* ignore */ }
+  }
+}
+
 async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
   const { ffi, lib } = await loadUser32();
+  attachToInputDesktop(lib);
   const sent = lib.SendInput(count, ffi.ptr(buf), INPUT_STRUCT_SIZE);
   if (sent !== count) console.warn(`[remote-desktop] SendInput accepted ${sent}/${count} events`);
 }
