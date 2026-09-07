@@ -88,4 +88,22 @@ describe("named-tunnel-args", () => {
     expect(name.length).toBeLessThanOrEqual(32);
     expect(name).toMatch(/^ppm-[a-z0-9-]+$/);
   });
+
+  test("a non-default PPM_HOME gets its own tunnel name", () => {
+    // Two PPM installations on one machine must never derive the same name, or
+    // the second registers a connector on the first one's tunnel and the
+    // production hostname starts answering from the wrong instance.
+    const previous = process.env.PPM_HOME;
+    try {
+      process.env.PPM_HOME = resolve(tmpdir(), ".ppm-nt-test");
+      _resetPpmDir();
+      const isolated = tunnelNameForHost();
+      expect(isolated).toMatch(/-ppm-nt-test$/);
+      expect(isolated.length).toBeLessThanOrEqual(32);
+      expect(isolated).toMatch(/^ppm-[a-z0-9-]+$/);
+    } finally {
+      if (previous === undefined) delete process.env.PPM_HOME; else process.env.PPM_HOME = previous;
+      _resetPpmDir();
+    }
+  });
 });

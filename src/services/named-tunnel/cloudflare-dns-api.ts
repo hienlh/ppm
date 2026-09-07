@@ -31,10 +31,26 @@ export async function fetchDnsRecords(zoneID: string, apiToken: string, name: st
   return Array.isArray(json.result) ? json.result : [];
 }
 
+export interface ExistingTunnel {
+  id: string;
+  /** Connectors currently registered on it — non-zero means something is serving it right now. */
+  activeConnections: number;
+}
+
+/** An existing, non-deleted tunnel named `name` — null if none exists yet. */
+export async function fetchTunnelByName(
+  accountID: string,
+  apiToken: string,
+  name: string,
+): Promise<ExistingTunnel | null> {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountID)}/cfd_tunnel?name=${encodeURIComponent(name)}&is_deleted=false`;
+  const json = await cfGet<{ success: true; result?: Array<{ id?: string; connections?: unknown[] }> }>(url, apiToken);
+  const found = (json.result ?? []).find((t) => typeof t.id === "string" && t.id);
+  if (!found?.id) return null;
+  return { id: found.id, activeConnections: Array.isArray(found.connections) ? found.connections.length : 0 };
+}
+
 /** UUID of an existing, non-deleted tunnel named `name` — null if none exists yet. */
 export async function fetchTunnelIdByName(accountID: string, apiToken: string, name: string): Promise<string | null> {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountID)}/cfd_tunnel?name=${encodeURIComponent(name)}&is_deleted=false`;
-  const json = await cfGet<{ success: true; result?: Array<{ id?: string }> }>(url, apiToken);
-  const found = (json.result ?? []).find((t) => typeof t.id === "string" && t.id);
-  return found?.id ?? null;
+  return (await fetchTunnelByName(accountID, apiToken, name))?.id ?? null;
 }

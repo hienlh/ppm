@@ -53,7 +53,7 @@ function captureBroadcasts(): unknown[] {
 }
 
 /** Fake Cloudflare REST responses for fetchZoneName/fetchDnsRecords/fetchTunnelIdByName. */
-const fetchState = { zone: "example.com", dnsRecords: [] as { content: string }[], existingTunnelId: null as string | null };
+const fetchState = { zone: "example.com", dnsRecords: [] as { content: string }[], existingTunnelId: null as string | null, existingTunnelConnections: 0 };
 const originalFetch = globalThis.fetch;
 function installFetchStub(): void {
   globalThis.fetch = (async (url: string | URL) => {
@@ -65,7 +65,9 @@ function installFetchStub(): void {
       return new Response(JSON.stringify({ success: true, result: fetchState.dnsRecords }), { status: 200 });
     }
     if (u.includes("/cfd_tunnel")) {
-      const result = fetchState.existingTunnelId ? [{ id: fetchState.existingTunnelId }] : [];
+      const result = fetchState.existingTunnelId
+        ? [{ id: fetchState.existingTunnelId, connections: Array.from({ length: fetchState.existingTunnelConnections }, () => ({})) }]
+        : [];
       return new Response(JSON.stringify({ success: true, result }), { status: 200 });
     }
     throw new Error(`unexpected fetch in test: ${u}`);
@@ -93,6 +95,7 @@ describe("named-tunnel-setup.service", () => {
     writeFileSync(process.env.TUNNEL_ORIGIN_CERT!, pemWithPayload({ zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID, apiToken: FAKE_API_TOKEN }));
     installFetchStub();
     fetchState.zone = "example.com";
+    fetchState.existingTunnelConnections = 0;
     fetchState.dnsRecords = [];
     fetchState.existingTunnelId = null;
 
@@ -224,6 +227,35 @@ describe("named-tunnel-setup.service", () => {
     test("a genuine create failure is a 500 SetupError", async () => {
       runResults.set("create", { code: 1, stdout: "", stderr: "permission denied" });
       await expect(runSetup(HOSTNAME)).rejects.toThrow("cloudflared tunnel create failed");
+    });
+  });
+
+  describe("runSetup — a tunnel already served by another instance", () => {
+    test("refuses to take over a same-named tunnel that has live connectors", async () => {
+      fetchState.existingTunnelId = "e".repeat(32);
+      fetchState.existingTunnelConnections = 4; // another PPM is serving it right now
+      await expect(runSetup(HOSTNAME)).rejects.toThrow("already running elsewhere");
+      expect(runCalls.filter((c) => c.includes("create"))).toHaveLength(0); // stopped before touching Cloudflare
+      expect(configService.get("tunnel").mode).not.toBe("named");
+    });
+
+    test("allows re-setup when this installation already owns that tunnel", async () => {
+      const { tunnelNameForHost } = await import("../../../../src/services/named-tunnel/named-tunnel-args.ts");
+      configService.set("tunnel", {
+        mode: "named", namedTunnelName: tunnelNameForHost(), namedTunnelToken: "tok",
+        namedTunnelHostname: HOSTNAME, zoneID: FAKE_ZONE_ID, accountID: FAKE_ACCOUNT_ID,
+      });
+      fetchState.existingTunnelId = "e".repeat(32);
+      fetchState.existingTunnelConnections = 4; // our own connectors
+      const result = await runSetup(HOSTNAME);
+      expect(result.hostname).toBe(HOSTNAME);
+    });
+
+    test("allows a first-time setup when the same-named tunnel exists but is idle", async () => {
+      fetchState.existingTunnelId = "e".repeat(32);
+      fetchState.existingTunnelConnections = 0;
+      const result = await runSetup(HOSTNAME);
+      expect(result.hostname).toBe(HOSTNAME);
     });
   });
 

@@ -8,7 +8,7 @@
  */
 import { readOriginCertState } from "./cloudflared-cert.ts";
 import { fetchZoneName } from "./cloudflare-zone-api.ts";
-import { fetchDnsRecords, fetchTunnelIdByName } from "./cloudflare-dns-api.ts";
+import { fetchDnsRecords, fetchTunnelByName } from "./cloudflare-dns-api.ts";
 import { proposeHostname, validateHostname } from "./hostname-rules.ts";
 import { createTunnelArgs, routeDnsArgs, tunnelTokenArgs, tunnelNameForHost } from "./named-tunnel-args.ts";
 import { runCloudflared } from "./cloudflared-exec.ts";
@@ -110,7 +110,25 @@ async function runSetupInner(hostname: string): Promise<SetupOutcome> {
   const tunnelName = tunnelNameForHost();
 
   broadcastGlobalEvent({ type: "tunnel:setup_step", step: "precheck", message: "checking for a DNS collision" });
-  const existingId = await fetchTunnelIdByName(accountID, apiToken, tunnelName);
+  const existing = await fetchTunnelByName(accountID, apiToken, tunnelName);
+  const existingId = existing?.id ?? null;
+
+  // Reusing a same-named tunnel is normal (re-running setup, changing the
+  // prefix). Reusing one that ANOTHER PPM is currently serving is not: both
+  // connectors register on the same tunnel and Cloudflare spreads requests
+  // across them, so each hostname on that tunnel intermittently answers from
+  // the wrong instance. Only the installation that already owns this tunnel in
+  // its own config may take it over.
+  // Read the raw row, not `resolveTunnelConfig`: that degrades to "quick" when
+  // named mode is off, which would hide the fact that this installation still
+  // owns the tunnel and would wrongly block its own re-setup.
+  const ownsTunnelAlready = configService.get("tunnel")?.namedTunnelName === tunnelName;
+  if (existing && existing.activeConnections > 0 && !ownsTunnelAlready) {
+    throw new SetupError(
+      409,
+      `a tunnel named "${tunnelName}" is already running elsewhere — stop that PPM instance first, or run this one with its own PPM_HOME`,
+    );
+  }
   const records = await fetchDnsRecords(zoneID, apiToken, hostname);
   let overwrite = false;
   if (records.length > 0) {

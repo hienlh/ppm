@@ -8,10 +8,10 @@
  * passed via `--token-file`, so it can't leak through `ppm status`, a process
  * list, or a crash dump that captures cmdlines.
  */
-import { resolve } from "node:path";
+import { resolve, basename } from "node:path";
 import { hostname as osHostname } from "node:os";
 import { existsSync, mkdirSync, writeFileSync, chmodSync } from "node:fs";
-import { getPpmDir } from "../ppm-dir.ts";
+import { getPpmDir, isIsolatedPpmHome } from "../ppm-dir.ts";
 import { getOriginCertPath } from "./cloudflared-cert.ts";
 
 const namedTunnelConfigPath = () => resolve(getPpmDir(), "cloudflared-named.yml");
@@ -106,5 +106,19 @@ export function namedRunArgs(token: string, port: number): string[] {
 /** Stable, DNS-safe tunnel name derived from this machine's hostname. */
 export function tunnelNameForHost(): string {
   const sanitized = osHostname().toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  return `ppm-${sanitized}`.slice(0, 32);
+  // A second PPM on the same machine (a dev instance under its own PPM_HOME)
+  // would otherwise derive the identical name, "reuse" the production tunnel,
+  // and register a second connector on it — Cloudflare then load-balances the
+  // production hostname across both, so the domain intermittently serves the
+  // wrong instance. Observed live. The PPM_HOME directory is what actually
+  // distinguishes the two, so it belongs in the name.
+  const suffix = ppmHomeSuffix();
+  return `ppm-${sanitized}${suffix}`.slice(0, 32);
+}
+
+/** `-<dir>` for a non-default PPM_HOME, empty for the real `~/.ppm`. */
+function ppmHomeSuffix(): string {
+  if (!isIsolatedPpmHome()) return "";
+  const dir = basename(getPpmDir()).toLowerCase().replace(/^\.+/, "").replace(/[^a-z0-9-]/g, "-");
+  return dir ? `-${dir}` : "-alt";
 }
