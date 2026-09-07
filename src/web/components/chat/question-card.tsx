@@ -90,7 +90,11 @@ function useQuestionKeyboard(config: {
   useEffect(() => {
     if (!config.enabled) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isTyping = document.activeElement === config.customInputRef.current;
+      // Resolve focus from the input's OWN document: this card can be rendered inside a
+      // picture-in-picture window, and the module-global `document` is always the main one —
+      // there the input is never active, so every printable key would be treated as a shortcut.
+      const input = config.customInputRef.current;
+      const isTyping = !!input && input.ownerDocument.activeElement === input;
 
       // Number keys 1-9
       if (!isTyping && e.key >= "1" && e.key <= "9") {
@@ -132,7 +136,10 @@ function useQuestionKeyboard(config: {
     if (el) {
       el.addEventListener("keydown", handleKeyDown);
       el.setAttribute("tabindex", "0");
-      if (!el.contains(document.activeElement)) el.focus();
+      // Same reason: asking the main document whether focus is already inside the card answers
+      // "no" for a card living in another document, and this effect re-runs on every render —
+      // which would yank focus out of the custom input after each keystroke.
+      if (!el.contains(el.ownerDocument.activeElement)) el.focus();
     }
     return () => { el?.removeEventListener("keydown", handleKeyDown); };
   }, [config, focusedOption]);
