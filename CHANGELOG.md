@@ -2,8 +2,21 @@
 
 ## [Unreleased]
 
+## [0.18.15] - 2026-09-08
+
+### Added
+- **Remote Desktop (experimental, opt-in)** — stream and control this machine's desktop from any browser or phone: a floating window on desktop, a full-screen view on mobile with touch and trackpad-style mouse modes, pinch-zoom, two-finger scroll, and an on-screen keyboard with function/combo keys. Off by default; turn it on with the `REMOTE_DESKTOP_ENABLED` env var and PPM auth enabled. Still hardening — not for a public tunnel yet.
+- **Verified database backups** — hourly `VACUUM INTO` snapshots of the config DB with grandfather-father-son retention, plus `ppm backup` / `ppm restore`.
+
 ### Fixed
 - **Named tunnel setup is in English** like the rest of the interface — the first-run popup and Tunnel Manager section shipped in Vietnamese by mistake.
+- **Nested subagent activity shows on the Agent card** instead of the card freezing on the forking step while a sub-subagent runs.
+- **Picture-in-picture keeps a question card's custom input focused**, so you can keep typing an answer after popping the tab out.
+- **Tab favicon and title stay scoped to their own window's project** instead of following whichever project was focused last.
+- **A disabled account stays disabled** across token refresh, re-add and import; a parked account's token is proven before it re-enters the rotation.
+
+### Changed
+- **A clientless AI session holds its subprocess for the real prompt-cache lifetime**, so the next prompt reuses the warm cache instead of paying a cold start.
 
 ## [0.18.14] - 2026-09-07
 
