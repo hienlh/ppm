@@ -34,13 +34,21 @@ const KEYEVENTF_KEYUP = 0x0002;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4n;
 /** Each `INPUT` struct is 40 bytes on x64 (8-byte `type` slot + 32-byte union). */
 const INPUT_STRUCT_SIZE = 40;
-/** Desktop access rights for input injection. `SendInput` silently no-ops (accepts the event
- *  but nothing moves) when the calling thread is not attached to the *input* desktop with
- *  journal-playback rights — the exact failure the phase-01 slice hit. GENERIC_ALL alone does
- *  NOT imply DESKTOP_JOURNALPLAYBACK, so it's OR-ed in explicitly. */
-const GENERIC_ALL = 0x10000000;
-const DESKTOP_JOURNALPLAYBACK = 0x0800;
-const INPUT_DESKTOP_ACCESS = GENERIC_ALL | DESKTOP_JOURNALPLAYBACK;
+/** Desktop access rights for input injection. `SendInput` silently no-ops when the calling
+ *  thread is not attached to the *input* desktop; attaching needs the READ/WRITE/SWITCH rights
+ *  plus JOURNALPLAYBACK so the desktop accepts injected input. These MUST be the real DESKTOP_*
+ *  bit values — an invalid mask (e.g. an out-of-range bit) makes `OpenInputDesktop` return NULL
+ *  and the attach silently fails, leaving SendInput pointed at the wrong desktop. */
+const DESKTOP_READOBJECTS = 0x0001;
+const DESKTOP_JOURNALPLAYBACK = 0x0020;
+const DESKTOP_WRITEOBJECTS = 0x0080;
+const DESKTOP_SWITCHDESKTOP = 0x0100;
+const INPUT_DESKTOP_ACCESS =
+  DESKTOP_READOBJECTS | DESKTOP_JOURNALPLAYBACK | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP; // 0x1A1
+
+/** WINSTA_ALL_ACCESS — enough to open the interactive window station and make it this process's
+ *  station so its input desktop becomes reachable. */
+const WINSTA_ALL_ACCESS = 0x37f;
 
 type FfiModule = typeof import("bun:ffi");
 type User32Symbols = {
@@ -49,6 +57,8 @@ type User32Symbols = {
   OpenInputDesktop: (flags: number, inherit: boolean, access: number) => number | bigint;
   SetThreadDesktop: (hdesk: number | bigint) => boolean;
   CloseDesktop: (hdesk: number | bigint) => boolean;
+  OpenWindowStationW: (name: number | bigint, inherit: boolean, access: number) => number | bigint;
+  SetProcessWindowStation: (hwinsta: number | bigint) => boolean;
 };
 
 let ffiModule: FfiModule | null = null;
@@ -66,6 +76,8 @@ async function loadUser32(): Promise<{ ffi: FfiModule; lib: User32Symbols }> {
       OpenInputDesktop: { args: [FFIType.u32, FFIType.bool, FFIType.u32], returns: FFIType.ptr },
       SetThreadDesktop: { args: [FFIType.ptr], returns: FFIType.bool },
       CloseDesktop: { args: [FFIType.ptr], returns: FFIType.bool },
+      OpenWindowStationW: { args: [FFIType.ptr, FFIType.bool, FFIType.u32], returns: FFIType.ptr },
+      SetProcessWindowStation: { args: [FFIType.ptr], returns: FFIType.bool },
     }).symbols as unknown as User32Symbols;
   }
   if (!dpiAwarenessAttempted) {
@@ -102,9 +114,26 @@ let attachedDesktop: number | bigint | null = null;
  *  because the input desktop changes on lock/unlock; `CreateProcessAsUser`/process start only
  *  fixes the initial desktop, not later switches. Best-effort: on failure we still try SendInput
  *  (it just no-ops), and log once rather than per-event spam. */
-function attachToInputDesktop(lib: User32Symbols): void {
+/** Attach the PROCESS to the interactive window station ("winsta0") once, so its input desktop
+ *  is reachable. Without this, a PPM process launched from a non-interactive station (a service,
+ *  or some spawners) can't OpenInputDesktop at all — SendInput then goes nowhere. No-op when the
+ *  process is already on winsta0 (the normal case for PPM started inside the user's session). */
+let stationEnsured = false;
+function ensureInteractiveStation(ffi: FfiModule, lib: User32Symbols): void {
+  if (stationEnsured) return;
+  stationEnsured = true;
+  const name = "winsta0";
+  const wide = new Uint16Array(name.length + 1);
+  for (let i = 0; i < name.length; i++) wide[i] = name.charCodeAt(i);
+  const hwinsta = lib.OpenWindowStationW(ffi.ptr(wide), false, WINSTA_ALL_ACCESS);
+  if (!hwinsta) return; // already on it, or no access — OpenInputDesktop below will tell us
+  lib.SetProcessWindowStation(hwinsta);
+}
+
+function attachToInputDesktop(ffi: FfiModule, lib: User32Symbols): void {
+  ensureInteractiveStation(ffi, lib);
   const hdesk = lib.OpenInputDesktop(0, false, INPUT_DESKTOP_ACCESS);
-  if (!hdesk) return; // NULL — couldn't open (e.g. secure desktop); leave thread as-is
+  if (!hdesk) return; // couldn't open the input desktop (e.g. secure/lock desktop); leave thread as-is
   const ok = lib.SetThreadDesktop(hdesk);
   if (ok) {
     if (attachedDesktop && attachedDesktop !== hdesk) {
@@ -119,7 +148,7 @@ function attachToInputDesktop(lib: User32Symbols): void {
 
 async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
   const { ffi, lib } = await loadUser32();
-  attachToInputDesktop(lib);
+  attachToInputDesktop(ffi, lib);
   const sent = lib.SendInput(count, ffi.ptr(buf), INPUT_STRUCT_SIZE);
   if (sent !== count) console.warn(`[remote-desktop] SendInput accepted ${sent}/${count} events`);
 }

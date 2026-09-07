@@ -2,9 +2,12 @@
  * Remote Desktop window body: mints a session nonce, opens the WS, feeds binary access
  * units to the H.264 decoder, and wires pointer/keyboard capture back over the same socket.
  *
- * Connection is one-shot (no auto-reconnect) — a lost connection just shows "disconnected"
- * with a manual reconnect button. Auto-reconnect here would fight the server's "one session
- * per host" eviction (a flaky link reconnecting in a loop keeps kicking itself).
+ * Connection is one-shot — a lost connection shows "disconnected" with a manual reconnect
+ * button. We deliberately do NOT auto-reconnect on every close (a flaky link reconnecting in a
+ * loop would fight the server's "one session per host" eviction). The one exception is the tab
+ * becoming visible again: browsers throttle the ping `setInterval` in a backgrounded tab, so a
+ * user who glances away can trip the server's heartbeat timeout — on return we re-ping (or, if
+ * the session already died, reconnect once). That's a discrete user-driven event, not a loop.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RotateCw, MonitorX } from "lucide-react";
@@ -83,8 +86,20 @@ export default function RemoteDesktopWindowContent(_props: WindowContentProps) {
       ws.onclose = () => { if (!cancelled) setConnState((s) => (s === "error" ? s : "closed")); };
     })();
 
+    // A backgrounded tab throttles the ping interval, which can trip the server heartbeat. When
+    // the tab is visible again, re-ping immediately; if the session already died, reconnect once
+    // (bumping generation re-runs this effect). Fires only on the visible transition — not a loop.
+    const onVisibility = () => {
+      if (document.hidden || cancelled) return;
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+      else setGeneration((g) => g + 1);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
       if (pingTimer) clearInterval(pingTimer);
       wsRef.current?.close();
       wsRef.current = null;

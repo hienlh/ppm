@@ -20,7 +20,10 @@ export interface RemoteDesktopSocket {
 /** App-level heartbeat, independent of Bun's 960s socket `idleTimeout` — a dead tunnel or a
  * sleeping laptop must not leave ffmpeg + input access live for minutes unattended. */
 const HEARTBEAT_INTERVAL_MS = 5_000;
-const HEARTBEAT_TIMEOUT_MS = 15_000;
+// 30s (6 missed 5s pings): tolerant of brief network jitter and of a client whose ping timer
+// is throttled while its tab is briefly backgrounded, without leaving an unattended session
+// (ffmpeg + input access) live for long. The client also re-pings the moment its tab is visible.
+const HEARTBEAT_TIMEOUT_MS = 30_000;
 /** Above this many buffered bytes, drop delta AUs until the next keyframe rather than
  *  queueing forever — a slow WAN/tunnel link must degrade to "waits ~2s for a keyframe",
  *  never to unbounded memory growth or an ever-growing latency queue. */
