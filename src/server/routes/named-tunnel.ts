@@ -28,9 +28,12 @@ function assertMutationAllowed(c: Context): Response | null {
   }
   const origin = c.req.header("origin");
   if (origin) {
+    // Compare hostname only, not host:port: a 2-process dev setup (Vite proxy rewrites
+    // Host without X-Forwarded-Host) always differs by port, so a full-host compare rejects
+    // every dev request. Origin is browser-set, so a real cross-site attacker still can't forge it.
     let originHost: string | null = null;
-    try { originHost = new URL(origin).host; } catch { originHost = null; }
-    const requestHost = new URL(c.req.url).host;
+    try { originHost = new URL(origin).hostname; } catch { originHost = null; }
+    const requestHost = new URL(c.req.url).hostname;
     if (!originHost || originHost !== requestHost) {
       return c.json(err("cross-origin request rejected"), 403);
     }
