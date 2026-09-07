@@ -3,8 +3,9 @@
  * virtual keyboard, zoom reset, close. Every button is a 44px+ touch target per
  * `docs/design-guidelines.md`'s Mobile-First UI Rules.
  */
-import { Hand, MousePointer2, Keyboard, ZoomOut, X } from "lucide-react";
+import { Hand, MousePointer2, Keyboard, ZoomOut, Gauge, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSettingsStore } from "@/stores/settings-store";
 import type { RemoteDesktopInputMode } from "./use-remote-desktop-touch";
 
 export interface RemoteDesktopMobileToolbarProps {
@@ -50,6 +51,9 @@ export function RemoteDesktopMobileToolbar({
   onResetZoom,
   onClose,
 }: RemoteDesktopMobileToolbarProps) {
+  const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
+  const toggleStats = useSettingsStore((s) => s.toggleRemoteDesktopStatsVisible);
+
   return (
     <div
       className="flex shrink-0 items-stretch gap-1 border-t border-white/10 bg-black/90 px-2 pb-[max(0.375rem,env(safe-area-inset-bottom))] pt-1.5"
@@ -63,6 +67,9 @@ export function RemoteDesktopMobileToolbar({
       </ToolbarButton>
       <ToolbarButton onClick={onResetZoom} label="Reset zoom">
         <ZoomOut className="size-5" />
+      </ToolbarButton>
+      <ToolbarButton onClick={toggleStats} label="Stats" active={statsVisible}>
+        <Gauge className="size-5" />
       </ToolbarButton>
       <ToolbarButton onClick={onClose} label="Close">
         <X className="size-5" />

@@ -39,6 +39,9 @@ interface SettingsState {
   dockPosition: DockPosition;
   dbSidebarExpanded: DbSidebarExpanded;
   explorerSkin: ExplorerSkinPref;
+  /** Show/hide the small fps/KB-per-s/resolution overlay on the remote-desktop viewer
+   *  (desktop window and mobile full-screen view both read this same flag). */
+  remoteDesktopStatsVisible: boolean;
   deviceName: string | null;
   version: string | null;
   tunnelActive: boolean;
@@ -63,6 +66,7 @@ interface SettingsState {
   setDockPosition: (position: DockPosition) => void;
   setDbSidebarExpanded: (next: DbSidebarExpanded) => void;
   setExplorerSkin: (pref: ExplorerSkinPref) => void;
+  toggleRemoteDesktopStatsVisible: () => void;
   fetchServerInfo: () => Promise<void>;
   /** Re-push the in-memory theme selection to the server (see the action for why). */
   syncThemeToServer: () => Promise<void>;
@@ -86,6 +90,7 @@ interface PersistedSettings {
   dockPosition?: DockPosition;
   dbSidebarExpanded?: DbSidebarExpanded;
   explorerSkin?: ExplorerSkinPref;
+  remoteDesktopStatsVisible?: boolean;
 }
 
 const VALID_STYLES: PpmThemeStyle[] = ["aurora", "slate", "precision", "custom"];
@@ -238,6 +243,7 @@ function applyServerUiPrefs(data: Record<string, unknown>) {
   if (data.explorerSkin === "auto" || data.explorerSkin === "windows" || data.explorerSkin === "macos") {
     patch.explorerSkin = data.explorerSkin;
   }
+  if (typeof data.remoteDesktopStatsVisible === "boolean") patch.remoteDesktopStatsVisible = data.remoteDesktopStatsVisible;
   const dbExpanded = sanitizeDbExpanded(data.dbSidebarExpanded);
   if (dbExpanded) patch.dbSidebarExpanded = dbExpanded;
   if (Object.keys(patch).length === 0) return;
@@ -265,6 +271,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   dockPosition: (_initial.dockPosition === "left" || _initial.dockPosition === "right") ? _initial.dockPosition : "bottom",
   dbSidebarExpanded: sanitizeDbExpanded(_initial.dbSidebarExpanded) ?? DEFAULT_DB_EXPANDED,
   explorerSkin: (_initial.explorerSkin === "windows" || _initial.explorerSkin === "macos") ? _initial.explorerSkin : "auto",
+  remoteDesktopStatsVisible: _initial.remoteDesktopStatsVisible ?? false,
   deviceName: null,
   version: null,
   tunnelActive: false,
@@ -376,6 +383,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = !get().tabWrap;
     persistUiPref({ tabWrap: next });
     set({ tabWrap: next });
+  },
+
+  toggleRemoteDesktopStatsVisible: () => {
+    const next = !get().remoteDesktopStatsVisible;
+    persistUiPref({ remoteDesktopStatsVisible: next });
+    set({ remoteDesktopStatsVisible: next });
   },
 
   setEditorTabStyle: (style) => {

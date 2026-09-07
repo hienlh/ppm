@@ -33,14 +33,6 @@ export function shouldDecodeAccessUnit(hasSeenKeyframeThisInstance: boolean, isK
   return isKey || hasSeenKeyframeThisInstance;
 }
 
-/** The real WebCodecs error message plus which frame it died on — `status`/`errorMessage`
- *  only reflect a PERMANENT failure (recovery exhausted or impossible), so this is the one place
- *  a transient error that WAS recovered from is still visible (e.g. in a debug HUD). */
-export interface LastDecoderError {
-  message: string;
-  frameIndex: number;
-}
-
 export interface UseH264CanvasDecoderResult {
   status: DecoderStatus;
   errorMessage: string | null;
@@ -51,15 +43,9 @@ export interface UseH264CanvasDecoderResult {
   decodeAccessUnit: (bytes: Uint8Array, isKey: boolean) => void;
   reset: () => void;
   /** Total frames the decoder has handed to `output()` (and drawn, or attempted to) since the
-   *  last `reset()`. Ref-backed, not React state — read it from a poll (e.g. a debug HUD), not
-   *  a render dependency, so every decoded frame doesn't force a re-render. */
+   *  last `reset()`. Ref-backed, not React state — read it from a poll (e.g. the stats overlay),
+   *  not a render dependency, so every decoded frame doesn't force a re-render. */
   getFrameCount: () => number;
-  /** The most recent decode error, recovered or not, or null if none yet this session. */
-  getLastError: () => LastDecoderError | null;
-  /** How many times a decode error has been auto-recovered from (fresh decoder + wait for next
-   *  keyframe) since the last `reset()`. Repeated recovery roughly once per GOP points at a
-   *  systemic decoder incompatibility rather than a one-off glitch. */
-  getRecoveredCount: () => number;
 }
 
 export function useH264CanvasDecoder(
@@ -74,8 +60,6 @@ export function useH264CanvasDecoder(
   const frameIndexRef = useRef(0); // per-decoder-instance timestamp counter, see decodeAccessUnit
   const lastCodecRef = useRef<string | null>(null);
   const activeRef = useRef(false); // false once reset()/unmount has torn this session down
-  const lastErrorRef = useRef<LastDecoderError | null>(null);
-  const recoveredCountRef = useRef(0);
 
   const fail = useCallback((message: string) => {
     setStatus("error");
@@ -135,15 +119,13 @@ export function useH264CanvasDecoder(
 
   /** Shared by the decoder's async `error` callback and `decodeAccessUnit`'s synchronous catch
    *  (a `.decode()` call can also throw directly) — both are "this decoder just broke", handled
-   *  identically: record the real message + frame it died on, then recreate rather than give up,
-   *  unless the session has already been torn down (`reset()`/unmount) or there is no cached
-   *  codec to recreate with (should not happen — codec is cached before any decode is possible). */
+   *  identically: recreate rather than give up, unless the session has already been torn down
+   *  (`reset()`/unmount) or there is no cached codec to recreate with (should not happen — codec
+   *  is cached before any decode is possible). */
   const recoverOrFail = useCallback((message: string) => {
-    lastErrorRef.current = { message, frameIndex: frameCountRef.current };
     if (!activeRef.current) return; // torn down already — nothing to recover into
     const codec = lastCodecRef.current;
     if (!codec) { fail(message); return; }
-    recoveredCountRef.current += 1;
     try { decoderRef.current?.close(); } catch { /* discarding the errored instance regardless */ }
     decoderRef.current = null;
     void configure(codec); // recreate; configure() itself resets decodedAnyKeyRef, so decode
@@ -176,15 +158,11 @@ export function useH264CanvasDecoder(
     decodedAnyKeyRef.current = false;
     frameCountRef.current = 0;
     frameIndexRef.current = 0;
-    lastErrorRef.current = null;
-    recoveredCountRef.current = 0;
     setStatus("idle");
     setErrorMessage(null);
   }, []);
 
   const getFrameCount = useCallback(() => frameCountRef.current, []);
-  const getLastError = useCallback(() => lastErrorRef.current, []);
-  const getRecoveredCount = useCallback(() => recoveredCountRef.current, []);
 
   return {
     status,
@@ -193,7 +171,5 @@ export function useH264CanvasDecoder(
     decodeAccessUnit,
     reset,
     getFrameCount,
-    getLastError,
-    getRecoveredCount,
   };
 }

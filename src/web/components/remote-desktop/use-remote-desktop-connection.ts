@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { resolveRemoteDesktopWsUrl } from "./remote-desktop-ws-url";
-import { useH264CanvasDecoder, type DecoderStatus, type LastDecoderError } from "./use-h264-canvas-decoder";
+import { useH264CanvasDecoder, type DecoderStatus } from "./use-h264-canvas-decoder";
 
 export type RemoteDesktopConnState = "connecting" | "streaming" | "error" | "closed";
 
@@ -31,26 +31,19 @@ export interface UseRemoteDesktopConnectionResult {
   sendMessage: (msg: Record<string, unknown>) => void;
   /** Force a fresh connection (e.g. a manual "Reconnect" button). */
   reconnect: () => void;
-  /** Total binary (access-unit) WS messages received since the last (re)connect. Ref-backed —
-   *  poll it (e.g. a debug HUD), don't treat it as a render dependency. Tells apart "frames stop
-   *  ARRIVING" (this stalls) from "frames arrive but stop DRAWING" (`getFrameCount` below stalls
-   *  instead) when diagnosing a frozen stream. */
-  getBinaryMessageCount: () => number;
-  /** Forwards the decoder's own frame counter (see `use-h264-canvas-decoder.ts`) — the other
-   *  half of the arriving-vs-drawing split above. */
+  /** Total bytes of binary (access-unit) WS messages received since the last (re)connect.
+   *  Ref-backed — poll it (e.g. the stats overlay), don't treat it as a render dependency. Feeds
+   *  the KB/s stat; frame count below feeds fps. */
+  getTotalBytes: () => number;
+  /** Forwards the decoder's own frame counter (see `use-h264-canvas-decoder.ts`). */
   getFrameCount: () => number;
-  /** Forwards the decoder's last (recovered-or-not) decode error — the REAL WebCodecs message,
-   *  not the generic "decoder failure" `decoderErrorMessage` shows once recovery is exhausted. */
-  getLastDecoderError: () => LastDecoderError | null;
-  /** Forwards how many times the decoder has auto-recovered from a decode error. */
-  getRecoveredCount: () => number;
 }
 
 export function useRemoteDesktopConnection(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
 ): UseRemoteDesktopConnectionResult {
   const wsRef = useRef<WebSocket | null>(null);
-  const binaryCountRef = useRef(0);
+  const totalBytesRef = useRef(0);
   const [connState, setConnState] = useState<RemoteDesktopConnState>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0); // bump to force a manual reconnect
@@ -67,7 +60,7 @@ export function useRemoteDesktopConnection(
     let pingTimer: ReturnType<typeof setInterval> | null = null;
     setConnState("connecting");
     setErrorMessage(null);
-    binaryCountRef.current = 0;
+    totalBytesRef.current = 0;
     decoder.reset();
 
     (async () => {
@@ -106,7 +99,7 @@ export function useRemoteDesktopConnection(
         }
         const bytes = new Uint8Array(event.data as ArrayBuffer);
         if (bytes.length < 1) return;
-        binaryCountRef.current += 1;
+        totalBytesRef.current += bytes.length;
         decoder.decodeAccessUnit(bytes.subarray(1), bytes[0] === 1);
       };
       ws.onerror = () => { if (!cancelled) { setConnState("error"); setErrorMessage("WebSocket error"); } };
@@ -139,7 +132,7 @@ export function useRemoteDesktopConnection(
   }, [generation]);
 
   const reconnect = useCallback(() => setGeneration((g) => g + 1), []);
-  const getBinaryMessageCount = useCallback(() => binaryCountRef.current, []);
+  const getTotalBytes = useCallback(() => totalBytesRef.current, []);
 
   return {
     connState,
@@ -148,9 +141,7 @@ export function useRemoteDesktopConnection(
     decoderErrorMessage: decoder.errorMessage,
     sendMessage,
     reconnect,
-    getBinaryMessageCount,
+    getTotalBytes,
     getFrameCount: decoder.getFrameCount,
-    getLastDecoderError: decoder.getLastError,
-    getRecoveredCount: decoder.getRecoveredCount,
   };
 }

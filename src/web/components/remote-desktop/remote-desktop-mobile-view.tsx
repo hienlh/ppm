@@ -14,7 +14,7 @@ import { useRemoteDesktopTouch, type RemoteDesktopInputMode } from "./use-remote
 import { useRemoteDesktopVirtualKeyboard } from "./use-remote-desktop-virtual-keyboard";
 import { RemoteDesktopMobileToolbar } from "./remote-desktop-mobile-toolbar";
 import { RemoteDesktopMobileKeyBar } from "./remote-desktop-mobile-key-bar";
-import { RemoteDesktopMobileDebugHud } from "./remote-desktop-mobile-debug-hud";
+import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { letterboxedContentRect } from "./remote-desktop-coords";
 
 export interface RemoteDesktopMobileViewProps {
@@ -29,7 +29,7 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
 
   const {
     connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect,
-    getBinaryMessageCount, getFrameCount, getLastDecoderError, getRecoveredCount,
+    getTotalBytes, getFrameCount,
   } = useRemoteDesktopConnection(canvasRef);
   const streaming = connState === "streaming";
 
@@ -177,18 +177,7 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
         />
       </div>
 
-      {/* TEMPORARY — diagnosing the "video freezes on mobile" report. Rip out (this component +
-          the getBinaryMessageCount/getFrameCount plumbing in use-remote-desktop-connection.ts
-          and use-h264-canvas-decoder.ts) once that's root-caused. */}
-      <RemoteDesktopMobileDebugHud
-        connState={connState}
-        decoderStatus={decoderStatus}
-        decoderErrorMessage={decoderErrorMessage}
-        getBinaryMessageCount={getBinaryMessageCount}
-        getFrameCount={getFrameCount}
-        getLastDecoderError={getLastDecoderError}
-        getRecoveredCount={getRecoveredCount}
-      />
+      <RemoteDesktopStatsOverlay canvasRef={canvasRef} getFrameCount={getFrameCount} getTotalBytes={getTotalBytes} />
     </div>
   );
 }
