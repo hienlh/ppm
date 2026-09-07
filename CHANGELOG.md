@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.18.16] - 2026-09-08
+
 ### Changed
 - **Remote Desktop is on by default** — the nav entry now shows on any host with ffmpeg, and opening it first shows a warning (whole screen + input, anyone signed in can use it, beta limits) with a "don't show again" option. Set `REMOTE_DESKTOP_ENABLED=0` to remove the feature from a host entirely.
 
