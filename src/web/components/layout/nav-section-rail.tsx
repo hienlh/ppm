@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Bug, Cloud, FolderTree } from "lucide-react";
+import { Settings, Bug, Cloud, FolderTree, MonitorSmartphone } from "lucide-react";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
+import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
+import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -147,6 +149,9 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
     return () => window.removeEventListener("open-cloud-share", open);
   }, []);
 
+  const openRemoteDesktop = useOpenRemoteDesktop();
+  const { available: remoteDesktopAvailable } = useRemoteDesktopAvailable();
+
   const handleReportBug = () => openBugReportPopup(version);
 
   // Rail tab click: collapsed → open on any tab; open → clicking the active tab closes it.
@@ -209,8 +214,11 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           </>,
           document.body,
         )}
-        {/* Not a sidebar tab — the explorer lives in its own floating window. */}
+        {/* Not sidebar tabs — these open their own floating windows. */}
         <FooterUtil icon={FolderTree} label="File Explorer" featureBadge="os-explorer" onClick={() => void openExplorer()} />
+        {remoteDesktopAvailable && (
+          <FooterUtil icon={MonitorSmartphone} label="Remote Desktop" featureBadge="remote-desktop" onClick={openRemoteDesktop} />
+        )}
         <FooterUtil icon={Bug} label="Report Bug" onClick={handleReportBug} />
         <FooterUtil icon={Settings} label="Settings" active={sidebarActiveTab === "settings"} onClick={() => handleTabClick("settings")} />
       </div>

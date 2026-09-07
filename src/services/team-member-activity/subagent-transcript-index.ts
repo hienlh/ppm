@@ -26,6 +26,15 @@ export interface SubagentTranscriptEntry {
   model?: string;
   /** tool_use id of the spawning Agent call — links back to the chat card. */
   toolUseId?: string;
+  /** Raw id from the `agent-<id>` file stem — the form `parentAgentId` uses. */
+  agentId: string;
+  /**
+   * agentId of the agent that spawned this one. Set on nested agents (a
+   * subagent that itself called Agent/Skill); those metas carry no toolUseId
+   * because the spawning tool_use lives in the parent agent's transcript, not
+   * the session's.
+   */
+  parentAgentId?: string;
   /** Absolute path of the agent's JSONL transcript. */
   transcriptPath: string;
   /** Transcript size in bytes — the cheap "how much work" signal. */
@@ -69,10 +78,57 @@ export function listSubagentTranscripts(subagentsDir: string): SubagentTranscrip
       description: typeof meta.description === "string" ? meta.description : undefined,
       model: typeof meta.model === "string" ? meta.model : undefined,
       toolUseId: typeof meta.toolUseId === "string" ? meta.toolUseId : undefined,
+      agentId: file.replace(/^agent-/, "").replace(/\.meta\.json$/, ""),
+      parentAgentId: typeof meta.parentAgentId === "string" ? meta.parentAgentId : undefined,
       transcriptPath,
       sizeBytes,
       modifiedAt,
     });
+  }
+  return out;
+}
+
+/**
+ * Group every transcript under the session-level Agent card it belongs to.
+ *
+ * The CLI only stamps `toolUseId` on agents the session itself spawned. A
+ * nested agent (spawned by another agent, e.g. a reviewer running a skill that
+ * forks its own worker) has only `parentAgentId`, and the SDK streams none of
+ * its activity — so the card's transcript group is the only place its work can
+ * surface. Walk each chain up to the root and key by that root's toolUseId.
+ * Entries are ordered root first, then descendants by depth.
+ */
+export function groupSubagentsByCard(subagentsDir: string): Map<string, SubagentTranscriptEntry[]> {
+  const entries = listSubagentTranscripts(subagentsDir);
+  const byId = new Map(entries.map((e) => [e.agentId, e]));
+  const rootOf = (entry: SubagentTranscriptEntry): { root: SubagentTranscriptEntry; depth: number } | null => {
+    let cur = entry;
+    let depth = 0;
+    const seen = new Set<string>();
+    while (cur.parentAgentId) {
+      if (seen.has(cur.agentId)) return null; // cyclic metas — corrupt, skip
+      seen.add(cur.agentId);
+      const parent = byId.get(cur.parentAgentId);
+      if (!parent) return null; // parent meta missing — cannot attach anywhere
+      cur = parent;
+      depth++;
+    }
+    return cur.toolUseId ? { root: cur, depth } : null;
+  };
+
+  const groups = new Map<string, Array<{ entry: SubagentTranscriptEntry; depth: number }>>();
+  for (const entry of entries) {
+    const resolved = rootOf(entry);
+    if (!resolved) continue;
+    const key = resolved.root.toolUseId!;
+    const list = groups.get(key) ?? [];
+    list.push({ entry, depth: resolved.depth });
+    groups.set(key, list);
+  }
+  const out = new Map<string, SubagentTranscriptEntry[]>();
+  for (const [key, list] of groups) {
+    list.sort((a, b) => a.depth - b.depth);
+    out.set(key, list.map((l) => l.entry));
   }
   return out;
 }

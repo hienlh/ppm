@@ -114,6 +114,7 @@ const UI_PREF_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   wordWrap: (v) => typeof v === "boolean",
   tabWrap: (v) => typeof v === "boolean",
   sidebarCollapsed: (v) => typeof v === "boolean",
+  remoteDesktopStatsVisible: (v) => typeof v === "boolean",
   sidebarWidth: (v) => typeof v === "number" && v >= 200 && v <= 600,
   gitStatusViewMode: (v) => v === "flat" || v === "tree",
   editorTabStyle: (v) => v === "default" || v === "boxed" || v === "pill",
