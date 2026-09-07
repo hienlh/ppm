@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import { useStreamingStore, selectAnyStreaming } from "../../../src/web/stores/streaming-store.ts";
+import { useStreamingStore, selectProjectStreaming } from "../../../src/web/stores/streaming-store.ts";
 
 /**
  * The streaming set drives the tab-strip spinner and the title/favicon
@@ -16,11 +16,32 @@ describe("streaming store — project-scoped sync", () => {
     const { setStreaming } = useStreamingStore.getState();
     setStreaming("s1", true, "ppm");
     expect(useStreamingStore.getState().sessions.has("s1")).toBe(true);
-    expect(selectAnyStreaming(useStreamingStore.getState())).toBe(true);
+    expect(selectProjectStreaming("ppm")(useStreamingStore.getState())).toBe(true);
 
     setStreaming("s1", false);
     expect(useStreamingStore.getState().sessions.has("s1")).toBe(false);
-    expect(selectAnyStreaming(useStreamingStore.getState())).toBe(false);
+    expect(selectProjectStreaming("ppm")(useStreamingStore.getState())).toBe(false);
+  });
+
+  it("a busy project does not make another project's window look busy", () => {
+    // The bug this selector exists for: /ws/global carries phase changes for every project,
+    // so "is anything streaming" was true in every open window. Three workspaces in three
+    // PWA windows, one of them working, three identical busy icons.
+    const { setStreaming } = useStreamingStore.getState();
+    setStreaming("s1", true, "boilerplate");
+
+    const state = useStreamingStore.getState();
+    expect(selectProjectStreaming("boilerplate")(state)).toBe(true);
+    expect(selectProjectStreaming("nxsys-workspace")(state)).toBe(false);
+    expect(selectProjectStreaming("UnlockEd")(state)).toBe(false);
+  });
+
+  it("reports nothing before a project is known", () => {
+    // First paint, before the active project resolves: an undefined project matches nothing
+    // rather than everything.
+    const { setStreaming } = useStreamingStore.getState();
+    setStreaming("s1", true, "ppm");
+    expect(selectProjectStreaming(undefined)(useStreamingStore.getState())).toBe(false);
   });
 
   it("keeps a recorded project when a later call omits it", () => {
