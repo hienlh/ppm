@@ -26,6 +26,7 @@ import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
 import { FeatureBadge } from "@/components/ui/feature-badge";
+import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { cn } from "@/lib/utils";
 
 // Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
@@ -34,6 +35,24 @@ const MOBILE_SUPPORTED = new Set<string>([
   "history", "teams", "explorer", "git", "database", "tunnels", "ai-resources", "settings", "jira",
 ]);
 const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
+
+/** One utility tile in the drawer footer grid — icon over a short single-line label, with an
+ *  optional corner feature badge. Uniform size so the grid wraps cleanly as tiles are added,
+ *  instead of a single cramped row where long labels ("Cloud & Share") wrapped and overflowed. */
+function FooterTile({ icon: Icon, label, badge, onClick }: {
+  icon: React.ElementType; label: string; badge?: FeatureBadgeId; onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="group relative flex flex-col items-center justify-center gap-1 rounded-lg py-2.5 text-text-subtle hover:bg-surface-elevated hover:text-text-secondary transition-colors"
+    >
+      <Icon className="size-4" />
+      <span className="text-[10px] leading-none">{label}</span>
+      <FeatureBadge id={badge} variant="corner" />
+    </button>
+  );
+}
 
 interface MobileDrawerProps {
   isOpen: boolean;
@@ -142,43 +161,18 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
             onReorder={setSidebarTabOrder}
           />
 
-          {/* Files (OS explorer) + Report Bug + Cloud & Share + Version / Upgrade */}
-          <div className="flex items-center justify-between px-4 py-2 border-t border-border text-[11px]">
-            <UpgradeButton align="left" />
-            <div className="flex items-center gap-3">
+          {/* Footer: version/upgrade on its own line, then a uniform wrapping grid of utility
+              tiles (opens explorer/remote/cloud, report bug) — scales cleanly as tiles are added. */}
+          <div className="border-t border-border px-3 py-2 space-y-1.5">
+            <div className="px-1 text-[11px]"><UpgradeButton align="left" /></div>
+            <div className="grid grid-cols-4 gap-1">
               {/* Not a sidebar tab — the explorer opens as its own full-screen sheet. */}
-              <button
-                onClick={() => { onClose(); void openExplorer(); }}
-                className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
-              >
-                <FolderTree className="size-3" />
-                <span>Files</span>
-                <FeatureBadge id="os-explorer" className="text-[7px] px-1" />
-              </button>
+              <FooterTile icon={FolderTree} label="Files" badge="os-explorer" onClick={() => { onClose(); void openExplorer(); }} />
               {remoteDesktopAvailable && (
-                <button
-                  onClick={() => { onClose(); openRemoteDesktop(); }}
-                  className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
-                >
-                  <MonitorSmartphone className="size-3" />
-                  <span>Remote</span>
-                  <FeatureBadge id="remote-desktop" className="text-[7px] px-1" />
-                </button>
+                <FooterTile icon={MonitorSmartphone} label="Remote" badge="remote-desktop" onClick={() => { onClose(); openRemoteDesktop(); }} />
               )}
-              <button
-                onClick={() => setCloudOpen(true)}
-                className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
-              >
-                <Cloud className="size-3" />
-                <span>Cloud &amp; Share</span>
-              </button>
-              <button
-                onClick={handleReportBug}
-                className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-secondary transition-colors"
-              >
-                <BugIcon className="size-3" />
-                <span>Report Bug</span>
-              </button>
+              <FooterTile icon={Cloud} label="Cloud" onClick={() => setCloudOpen(true)} />
+              <FooterTile icon={BugIcon} label="Bug" onClick={handleReportBug} />
             </div>
           </div>
         </div>
