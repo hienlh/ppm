@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **Remote Desktop is on by default** — the nav entry now shows on any host with ffmpeg, and opening it first shows a warning (whole screen + input, anyone signed in can use it, beta limits) with a "don't show again" option. Set `REMOTE_DESKTOP_ENABLED=0` to remove the feature from a host entirely.
+
 ### Fixed
 - **A second PPM on the same machine can no longer hijack your domain** — a dev instance under its own `PPM_HOME` derived the same tunnel name, joined the production tunnel, and the hostname then answered from whichever instance Cloudflare picked. Names now include the PPM_HOME, and setup refuses a tunnel another instance is already serving.
 

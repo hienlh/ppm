@@ -425,12 +425,18 @@ async function main() {
   await waitFor(cdp, `document.querySelector('[data-testid="status-bar-resources"]')`, "status bar mounted", 30_000);
   await Bun.sleep(500);
 
-  await scenario("capabilities: videoAvailable is true, status bar button renders", async () => {
-    await waitFor(cdp, `document.querySelector('[data-testid="status-bar-remote-desktop"]')`, "remote desktop status button (requires capabilities.videoAvailable)", 15_000);
+  // The entry point lives in the nav rail footer (aria-label only, no testid) — it renders only
+  // once /api/remote-desktop/capabilities reports videoAvailable.
+  const RAIL_BUTTON = `document.querySelector('button[aria-label="Remote Desktop"]')`;
+  await scenario("capabilities: videoAvailable is true, nav rail button renders", async () => {
+    await waitFor(cdp, RAIL_BUTTON, "remote desktop nav rail button (requires capabilities.videoAvailable)", 15_000);
   });
 
-  await scenario("open Remote Desktop window from the status bar", async () => {
-    await clickTestId(cdp, "status-bar-remote-desktop");
+  await scenario("open Remote Desktop window from the nav rail, past the warning gate", async () => {
+    await cdp.evaluate(`${RAIL_BUTTON}.click()`);
+    await waitFor(cdp, `document.querySelector('[data-testid="remote-desktop-warning-gate"]')`, "warning gate", 10_000);
+    await cdp.screenshot(join(SHOTS, "remote-desktop-00-warning-gate.png"));
+    await clickTestId(cdp, "remote-desktop-warning-continue");
     await waitFor(cdp, `document.querySelector('[data-testid="remote-desktop-window"]')`, "remote desktop window", 10_000);
     const isFloatingWindow = await cdp.evaluate(
       `!!document.querySelector('[role="group"][aria-roledescription="window"]')`,

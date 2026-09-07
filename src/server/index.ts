@@ -177,7 +177,7 @@ app.route("/api/system", resourceRoutes);
 import { hostInfoRoutes } from "./routes/host-info.ts";
 app.route("/api/system", hostInfoRoutes);
 
-// Remote desktop (video capture + input) — feature-flagged off by default, see remote-desktop-flag.ts
+// Remote desktop (video capture + input) — on by default, opt-out via REMOTE_DESKTOP_ENABLED=0, see remote-desktop-flag.ts
 import { remoteDesktopRoutes } from "./routes/remote-desktop.ts";
 app.route("/api/remote-desktop", remoteDesktopRoutes);
 

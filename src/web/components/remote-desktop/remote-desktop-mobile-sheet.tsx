@@ -16,12 +16,15 @@
  * reads `visualViewport` itself and floats just its toolbar/key-bar row above the keyboard.
  *
  * The heavy viewer (canvas, WebCodecs decoder, gesture engine) is a nested lazy import, same as
- * `TeamMemberSheet` does for its content — nothing here loads until the sheet actually opens.
+ * `TeamMemberSheet` does for its content — nothing here loads until the sheet actually opens,
+ * and the lazy chunk itself sits behind `RemoteDesktopWarningGate`, so it isn't even fetched
+ * until the user continues past the warning.
  */
 import { Suspense, lazy } from "react";
 import { createPortal } from "react-dom";
 import { usePortalContainer } from "@/components/ui/portal-container-context";
 import { useRemoteDesktopMobileOpenState } from "./use-remote-desktop-mobile-open-state";
+import { RemoteDesktopWarningGate } from "./remote-desktop-warning-gate";
 
 const RemoteDesktopMobileView = lazy(() => import("./remote-desktop-mobile-view"));
 
@@ -34,9 +37,11 @@ export function RemoteDesktopMobileSheet() {
 
   return createPortal(
     <div className="fixed inset-0 z-[45] bg-black" data-testid="remote-desktop-mobile-sheet">
-      <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-text-2">Loading…</div>}>
-        <RemoteDesktopMobileView onClose={close} />
-      </Suspense>
+      <RemoteDesktopWarningGate onCancel={close}>
+        <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-text-2">Loading…</div>}>
+          <RemoteDesktopMobileView onClose={close} />
+        </Suspense>
+      </RemoteDesktopWarningGate>
     </div>,
     portalContainer ?? document.getElementById("root") ?? document.body,
   );

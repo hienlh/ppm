@@ -1,8 +1,8 @@
 /**
  * Fetches remote-desktop capabilities once and reports whether the feature should surface in
- * the UI. Returns `available=false` when the server feature flag is off (the endpoint 404s) or
- * video capture is unavailable, so the nav entry stays hidden unless `REMOTE_DESKTOP_ENABLED`
- * is set and ffmpeg can capture.
+ * the UI. Returns `available=false` when the host opted out (`REMOTE_DESKTOP_ENABLED=0` — the
+ * endpoint 404s) or video capture is unavailable (no ffmpeg), so the nav entry stays hidden on
+ * hosts that can't or won't stream.
  */
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api-client";

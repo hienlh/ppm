@@ -1,18 +1,32 @@
 /**
  * Remote Desktop window body: thin wrapper around `useRemoteDesktopConnection` (WS/nonce/ping/
  * decode, shared with the mobile viewer) that renders the canvas, overlay states, and wires
- * pointer/keyboard capture over the connection's `sendMessage`.
+ * pointer/keyboard capture over the connection's `sendMessage`. Sits behind
+ * `RemoteDesktopWarningGate`, so the connection hook (and its session nonce) only runs once the
+ * user has read the warning.
  */
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 import { RotateCw, MonitorX, Gauge } from "lucide-react";
 import type { WindowContentProps } from "@/components/floating-window/window-content-registry";
+import { useWindowStore } from "@/components/floating-window/window-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { cn } from "@/lib/utils";
 import { useRemoteDesktopConnection } from "./use-remote-desktop-connection";
 import { useRemoteInputCapture } from "./use-remote-input-capture";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
+import { RemoteDesktopWarningGate } from "./remote-desktop-warning-gate";
 
-export default function RemoteDesktopWindowContent(_props: WindowContentProps) {
+export default function RemoteDesktopWindowContent({ id }: WindowContentProps) {
+  const closeWindow = useWindowStore((s) => s.close);
+  const onCancel = useCallback(() => closeWindow(id), [closeWindow, id]);
+  return (
+    <RemoteDesktopWarningGate onCancel={onCancel}>
+      <RemoteDesktopViewer />
+    </RemoteDesktopWarningGate>
+  );
+}
+
+function RemoteDesktopViewer() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect, getFrameCount, getTotalBytes } =
     useRemoteDesktopConnection(canvasRef);

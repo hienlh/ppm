@@ -17,7 +17,7 @@ export const remoteDesktopRoutes = new Hono();
 
 function assertSessionAllowed(c: Context): Response | null {
   if (!isRemoteDesktopEnabled()) {
-    return c.json(err("remote desktop is disabled (set REMOTE_DESKTOP_ENABLED=1)"), 404);
+    return c.json(err("remote desktop is disabled on this host (REMOTE_DESKTOP_ENABLED=0)"), 404);
   }
   if (!configService.get("auth").enabled) {
     return c.json(err("remote desktop requires PPM authentication to be enabled"), 403);

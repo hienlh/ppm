@@ -8,20 +8,24 @@ describe("isRemoteDesktopEnabled", () => {
     else process.env.REMOTE_DESKTOP_ENABLED = original;
   });
 
-  it("defaults to disabled when unset", () => {
+  it("defaults to enabled when unset", () => {
     delete process.env.REMOTE_DESKTOP_ENABLED;
+    expect(isRemoteDesktopEnabled()).toBe(true);
+  });
+
+  it("is disabled for '0' or 'false' (any casing / surrounding whitespace)", () => {
+    process.env.REMOTE_DESKTOP_ENABLED = "0";
+    expect(isRemoteDesktopEnabled()).toBe(false);
+    process.env.REMOTE_DESKTOP_ENABLED = " False ";
     expect(isRemoteDesktopEnabled()).toBe(false);
   });
 
-  it("is disabled for any value other than '1'/'true'", () => {
-    process.env.REMOTE_DESKTOP_ENABLED = "yes";
-    expect(isRemoteDesktopEnabled()).toBe(false);
-  });
-
-  it("is enabled for '1' or 'true'", () => {
+  it("stays enabled for '1', 'true' and unrelated values", () => {
     process.env.REMOTE_DESKTOP_ENABLED = "1";
     expect(isRemoteDesktopEnabled()).toBe(true);
     process.env.REMOTE_DESKTOP_ENABLED = "true";
+    expect(isRemoteDesktopEnabled()).toBe(true);
+    process.env.REMOTE_DESKTOP_ENABLED = "yes";
     expect(isRemoteDesktopEnabled()).toBe(true);
   });
 });
