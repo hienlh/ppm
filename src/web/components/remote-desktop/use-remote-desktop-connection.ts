@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
 import { resolveRemoteDesktopWsUrl } from "./remote-desktop-ws-url";
-import { useH264CanvasDecoder, type DecoderStatus } from "./use-h264-canvas-decoder";
+import { useH264CanvasDecoder, type DecoderStatus, type LastDecoderError } from "./use-h264-canvas-decoder";
 
 export type RemoteDesktopConnState = "connecting" | "streaming" | "error" | "closed";
 
@@ -39,6 +39,11 @@ export interface UseRemoteDesktopConnectionResult {
   /** Forwards the decoder's own frame counter (see `use-h264-canvas-decoder.ts`) — the other
    *  half of the arriving-vs-drawing split above. */
   getFrameCount: () => number;
+  /** Forwards the decoder's last (recovered-or-not) decode error — the REAL WebCodecs message,
+   *  not the generic "decoder failure" `decoderErrorMessage` shows once recovery is exhausted. */
+  getLastDecoderError: () => LastDecoderError | null;
+  /** Forwards how many times the decoder has auto-recovered from a decode error. */
+  getRecoveredCount: () => number;
 }
 
 export function useRemoteDesktopConnection(
@@ -145,5 +150,7 @@ export function useRemoteDesktopConnection(
     reconnect,
     getBinaryMessageCount,
     getFrameCount: decoder.getFrameCount,
+    getLastDecoderError: decoder.getLastError,
+    getRecoveredCount: decoder.getRecoveredCount,
   };
 }

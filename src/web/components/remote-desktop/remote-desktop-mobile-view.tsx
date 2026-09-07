@@ -27,8 +27,10 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   const [mode, setMode] = useState<RemoteDesktopInputMode>("mouse");
   const [keyBarOpen, setKeyBarOpen] = useState(false);
 
-  const { connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect, getBinaryMessageCount, getFrameCount } =
-    useRemoteDesktopConnection(canvasRef);
+  const {
+    connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect,
+    getBinaryMessageCount, getFrameCount, getLastDecoderError, getRecoveredCount,
+  } = useRemoteDesktopConnection(canvasRef);
   const streaming = connState === "streaming";
 
   const { transform, virtualCursor, resetZoom } = useRemoteDesktopTouch({
@@ -184,6 +186,8 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
         decoderErrorMessage={decoderErrorMessage}
         getBinaryMessageCount={getBinaryMessageCount}
         getFrameCount={getFrameCount}
+        getLastDecoderError={getLastDecoderError}
+        getRecoveredCount={getRecoveredCount}
       />
     </div>
   );
