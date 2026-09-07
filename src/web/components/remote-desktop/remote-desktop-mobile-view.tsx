@@ -8,11 +8,13 @@
  */
 import { useRef, useState, useCallback } from "react";
 import { RotateCw, MonitorX } from "lucide-react";
+import { useVisualViewport } from "@/hooks/use-visual-viewport";
 import { useRemoteDesktopConnection } from "./use-remote-desktop-connection";
 import { useRemoteDesktopTouch, type RemoteDesktopInputMode } from "./use-remote-desktop-touch";
 import { useRemoteDesktopVirtualKeyboard } from "./use-remote-desktop-virtual-keyboard";
 import { RemoteDesktopMobileToolbar } from "./remote-desktop-mobile-toolbar";
 import { RemoteDesktopMobileKeyBar } from "./remote-desktop-mobile-key-bar";
+import { letterboxedContentRect } from "./remote-desktop-coords";
 
 export interface RemoteDesktopMobileViewProps {
   onClose: () => void;
@@ -30,11 +32,18 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
 
   const { transform, virtualCursor, resetZoom } = useRemoteDesktopTouch({
     containerRef,
+    canvasRef,
     mode,
     sendMessage,
     enabled: streaming,
   });
   const { inputRef: keyboardInputRef, show: showKeyboard } = useRemoteDesktopVirtualKeyboard(sendMessage, streaming);
+
+  // Lifts the toolbar/key-bar row above the on-screen keyboard instead of the whole sheet
+  // shrinking to make room for it (that was the previous, since-reverted behavior — see
+  // remote-desktop-mobile-sheet.tsx's header comment for why it was wrong here).
+  const viewportInsets = useVisualViewport(true);
+  const keyboardInset = viewportInsets?.keyboardInset ?? 0;
 
   const toggleMode = useCallback(() => setMode((m) => (m === "mouse" ? "touch" : "mouse")), []);
   const openKeyboard = useCallback(() => { showKeyboard(); setKeyBarOpen(true); }, [showKeyboard]);
@@ -51,31 +60,54 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
 
   const stageStyle = { transform: `translate(${transform.panX}px, ${transform.panY}px) scale(${transform.scale})` };
 
+  // Positions the virtual-cursor marker (mouse mode) at the video's actual displayed pixel,
+  // not a raw percentage of the stage — the canvas is letterboxed (object-contain) inside the
+  // stage whenever the capture's aspect ratio doesn't match the phone's, so a naive `left:
+  // xFrac*100%` would land inside the letterbox bars instead of on the video. Mirrors exactly
+  // what the gesture engine does for hit-testing (`letterboxedContentRect`), just forward
+  // instead of inverse. Reading layout here (not in an effect) is fine: it only feeds a cosmetic
+  // overlay position, recomputed on every render the cursor itself changes, which already
+  // happens on every drag frame.
+  let cursorLeft = `${(virtualCursor?.xFrac ?? 0.5) * 100}%`;
+  let cursorTop = `${(virtualCursor?.yFrac ?? 0.5) * 100}%`;
+  if (virtualCursor && containerRef.current && canvasRef.current?.width && canvasRef.current.height) {
+    const box = containerRef.current.getBoundingClientRect();
+    const videoRect = letterboxedContentRect({ left: 0, top: 0, width: box.width, height: box.height }, canvasRef.current.width, canvasRef.current.height);
+    cursorLeft = `${videoRect.left + virtualCursor.xFrac * videoRect.width}px`;
+    cursorTop = `${videoRect.top + virtualCursor.yFrac * videoRect.height}px`;
+  }
+
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-black" data-testid="remote-desktop-mobile-view" data-conn-state={connState}>
+    <div className="relative h-full w-full bg-black" data-testid="remote-desktop-mobile-view" data-conn-state={connState}>
+      {/* Full-screen always — the keyboard never shrinks this, only the bar below floats up
+          over it (see `keyboardInset` below). */}
       <div
         ref={containerRef}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+        className="absolute inset-0 flex items-center justify-center overflow-hidden"
         style={{ touchAction: "none" }}
         data-testid="remote-desktop-mobile-stage-container"
       >
-        {/* `h-full w-full` here is load-bearing, not decorative: it makes this element's own
-            box exactly match `containerRef`'s (rather than shrink-wrapping the canvas), so (1)
-            `max-h-full`/`max-w-full` below has a definite ancestor size to resolve against — the
-            unsized version of this div let the canvas render at its native capture resolution,
-            hugely overflowing the phone screen so only a clipped corner was ever visible (looked
-            like "frozen video" — it was decoding fine, just not on screen), and (2) the CSS
-            transform's default `transform-origin: 50% 50%` then lands exactly on
-            `containerRef`'s center, which is the same point `fractionFromZoomedPoint` assumes —
-            a size mismatch here is what made zoomed taps land in the wrong place. */}
+        {/* `h-full w-full` on both this stage and the canvas below is load-bearing: it gives
+            the canvas a definite box to be letterboxed within (`object-contain` needs one), and
+            keeps the CSS transform's default `transform-origin: 50% 50%` exactly at this
+            container's center — the same point `fractionFromZoomedPoint` assumes. `min-h-0
+            min-w-0` on the canvas defeats the flex-item automatic-minimum-size floor (a
+            well-known flexbox gotcha for replaced elements): without it, a flex item's implicit
+            `min-height/width: auto` can hold the canvas at its intrinsic capture resolution
+            despite `height/width: 100%`, which is what made the video render oversized and get
+            clipped instead of actually shrinking to fit. */}
         <div className="relative flex h-full w-full items-center justify-center" style={stageStyle}>
-          <canvas ref={canvasRef} data-testid="remote-desktop-canvas" className="max-h-full max-w-full outline-none" />
+          <canvas
+            ref={canvasRef}
+            data-testid="remote-desktop-canvas"
+            className="block h-full w-full min-h-0 min-w-0 object-contain outline-none"
+          />
           {mode === "mouse" && virtualCursor && streaming && (
             <div
               className="pointer-events-none absolute rounded-full border-2 border-white bg-primary shadow-[0_0_0_1px_rgba(0,0,0,0.6)]"
               style={{
-                left: `${virtualCursor.xFrac * 100}%`,
-                top: `${virtualCursor.yFrac * 100}%`,
+                left: cursorLeft,
+                top: cursorTop,
                 width: 14,
                 height: 14,
                 // Counter-scale by 1/zoom: this marker lives inside the zoomed stage, so
@@ -120,15 +152,23 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
         />
       </div>
 
-      {keyBarOpen && <RemoteDesktopMobileKeyBar sendMessage={sendMessage} />}
-
-      <RemoteDesktopMobileToolbar
-        mode={mode}
-        onToggleMode={toggleMode}
-        onOpenKeyboard={openKeyboard}
-        onResetZoom={resetZoom}
-        onClose={onClose}
-      />
+      {/* Floats above the on-screen keyboard via `keyboardInset` instead of the sheet shrinking
+          to make room — `translateY` rather than `bottom` so it animates smoothly and needs no
+          extra reflow. Sits at the true bottom (translateY(0)) once the keyboard is closed. */}
+      <div
+        className="absolute inset-x-0 bottom-0"
+        style={keyboardInset > 0 ? { transform: `translateY(-${keyboardInset}px)` } : undefined}
+        data-testid="remote-desktop-mobile-bottom-bar"
+      >
+        {keyBarOpen && <RemoteDesktopMobileKeyBar sendMessage={sendMessage} />}
+        <RemoteDesktopMobileToolbar
+          mode={mode}
+          onToggleMode={toggleMode}
+          onOpenKeyboard={openKeyboard}
+          onResetZoom={resetZoom}
+          onClose={onClose}
+        />
+      </div>
     </div>
   );
 }

@@ -11,7 +11,9 @@
  * keystrokes — nothing here needs to stay visible above it, and shrinking the canvas viewport
  * every time the toolbar's Keyboard button is tapped is exactly the wrong behavior. It also
  * wires swipe-to-dismiss on touchstart/move/end, which fights the gesture engine's own
- * `stopPropagation()`-based touch handling. A plain `fixed inset-0` portal sidesteps both.
+ * `stopPropagation()`-based touch handling. A plain `fixed inset-0` portal sidesteps both —
+ * this stays full-viewport no matter what the keyboard does; `remote-desktop-mobile-view.tsx`
+ * reads `visualViewport` itself and floats just its toolbar/key-bar row above the keyboard.
  *
  * The heavy viewer (canvas, WebCodecs decoder, gesture engine) is a nested lazy import, same as
  * `TeamMemberSheet` does for its content — nothing here loads until the sheet actually opens.

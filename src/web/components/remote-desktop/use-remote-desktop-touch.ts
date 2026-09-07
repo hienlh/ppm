@@ -15,7 +15,7 @@
  * for its inline-rename case.
  */
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { ZoomPanTransform, Fraction } from "./remote-desktop-coords";
+import { letterboxedContentRect, type ZoomPanTransform, type Fraction, type Rect } from "./remote-desktop-coords";
 import {
   beginSingleTouch, advanceSingleTouch, resolveSingleTouchEnd,
   beginTwoFingerTouch, advanceTwoFingerTouch, resolveTwoFingerEnd,
@@ -31,9 +31,15 @@ const WHEEL_PIXELS_PER_NOTCH = 40;
 const WHEEL_DELTA = 120;
 
 export interface UseRemoteDesktopTouchOptions {
-  /** The never-transformed element gestures are measured against — must fill the same box the
-   *  "stage" (canvas) sits in at `scale=1, pan=0`. */
+  /** The never-transformed element touch listeners attach to and whose rect is the reference
+   *  frame at `scale=1, pan=0` — must fill the same box the "stage" (canvas) sits in at rest. */
   containerRef: React.RefObject<HTMLElement | null>;
+  /** The canvas actually being drawn into. Its CSS box is the same size as `containerRef` (it
+   *  fills the stage, which fills the container), but its drawing-buffer size (`.width`/
+   *  `.height`, the real capture resolution) is almost never the same *aspect ratio* — a tap
+   *  must be measured against the letterboxed video rect this produces inside the container,
+   *  not the container's full box, or it lands off by however big the letterbox bars are. */
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   mode: RemoteDesktopInputMode;
   sendMessage: (msg: Record<string, unknown>) => void;
   enabled: boolean;
@@ -50,6 +56,7 @@ export interface UseRemoteDesktopTouchResult {
 
 export function useRemoteDesktopTouch({
   containerRef,
+  canvasRef,
   mode,
   sendMessage,
   enabled,
@@ -102,10 +109,23 @@ export function useRemoteDesktopTouch({
     let two: TwoFingerTrack | null = null;
     const sendAll = (msgs: Record<string, unknown>[]) => msgs.forEach(sendMessage);
 
+    // The container's rect (never transformed) is only the OUTER box the video is letterboxed
+    // within — `object-fit: contain` (or the matching sizing on the canvas) means the canvas
+    // element's CSS box fills that outer box, but the pixels it actually draws are narrower or
+    // shorter depending on how the capture's aspect ratio compares to the phone's. Without this,
+    // gestures were measured against the full outer box, so a tap landed at the finger's raw
+    // screen position instead of the corresponding video pixel whenever there was a letterbox.
+    const getVideoRect = (): Rect => {
+      const box = container.getBoundingClientRect();
+      const canvas = canvasRef.current;
+      if (!canvas || !canvas.width || !canvas.height) return box;
+      return letterboxedContentRect(box, canvas.width, canvas.height);
+    };
+
     const onTouchStart = (e: TouchEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      const rect = container.getBoundingClientRect();
+      const rect = getVideoRect();
       if (e.touches.length === 1) {
         two = null;
         const t = e.touches[0]!;
@@ -169,7 +189,7 @@ export function useRemoteDesktopTouch({
         single = null;
       }
       if (two) {
-        sendAll(resolveTwoFingerEnd(two, container.getBoundingClientRect(), transformRef.current));
+        sendAll(resolveTwoFingerEnd(two, getVideoRect(), transformRef.current));
         two = null;
       }
     };
@@ -198,7 +218,7 @@ export function useRemoteDesktopTouch({
       container.removeEventListener("touchend", onTouchEnd);
       container.removeEventListener("touchcancel", onTouchCancel);
     };
-  }, [containerRef, enabled, sendMessage, schedule]);
+  }, [containerRef, canvasRef, enabled, sendMessage, schedule]);
 
   return { transform, virtualCursor: mode === "mouse" ? virtualCursor : null, resetZoom };
 }

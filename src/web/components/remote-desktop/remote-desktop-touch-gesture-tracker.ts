@@ -6,7 +6,7 @@
  * the hook does that with whatever these functions return.
  */
 import { classifyTwoFingerGesture, isTapGesture, touchDistance, touchMidpoint, type PointerSample } from "./remote-desktop-gesture-classifiers";
-import { fractionFromZoomedPoint, type ZoomPanTransform, type Fraction } from "./remote-desktop-coords";
+import { fractionFromZoomedPoint, type ZoomPanTransform, type Fraction, type Rect } from "./remote-desktop-coords";
 
 export type RemoteDesktopInputMode = "touch" | "mouse";
 
@@ -35,11 +35,12 @@ export interface SingleTrack {
   start: PointerSample;
   last: { x: number; y: number };
   moved: boolean;
-  /** The container's bounding rect at gesture start — cached because it does not change mid-drag. */
-  rect: DOMRect;
+  /** The displayed video's rect (post letterbox) at gesture start — cached because it does not
+   *  change mid-drag. */
+  rect: Rect;
 }
 
-export function beginSingleTouch(x: number, y: number, rect: DOMRect): SingleTrack {
+export function beginSingleTouch(x: number, y: number, rect: Rect): SingleTrack {
   return { start: { x, y, t: performance.now() }, last: { x, y }, moved: false, rect };
 }
 
@@ -183,7 +184,7 @@ export function advanceTwoFingerTouch(
 
 export function resolveTwoFingerEnd(
   track: TwoFingerTrack,
-  rect: DOMRect,
+  rect: Rect,
   transform: ZoomPanTransform,
 ): Record<string, unknown>[] {
   if (track.gesture === null && performance.now() - track.startTime <= TAP_MAX_DURATION_MS) {
