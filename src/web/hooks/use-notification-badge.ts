@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
-import { useNotificationStore, selectTotalUnread } from "@/stores/notification-store";
+import { useNotificationStore, selectProjectUnread } from "@/stores/notification-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
-import { useStreamingStore, selectAnyStreaming } from "@/stores/streaming-store";
+import { useStreamingStore, selectProjectStreaming } from "@/stores/streaming-store";
 import { setFavicon, STREAM_FRAME_COUNT } from "@/lib/favicon";
 
 function buildTitle(unread: number, projectName?: string, deviceName?: string): string {
@@ -11,25 +11,33 @@ function buildTitle(unread: number, projectName?: string, deviceName?: string): 
 }
 
 /** Syncs document.title and favicon with unread notification count + streaming state.
- * When any chat is streaming, favicon alternates between blue and amber every 800ms.
- * Uses direct Zustand subscription to update immediately even in background tabs. */
+ * When a chat in this window's project is streaming, favicon alternates between blue and
+ * amber every 800ms. Uses direct Zustand subscription to update immediately even in
+ * background tabs.
+ *
+ * Everything here is scoped to `activeProject`, because the title bar and the tab icon
+ * describe *this* window and a window shows one project. Both inputs used to be app-wide:
+ * `/ws/global` delivers phase and unread changes for every project, so opening three
+ * workspaces in three PWA windows gave all three the same count and the same streaming
+ * animation whenever any one of them was busy. */
 export function useNotificationBadge(): void {
   const activeProject = useProjectStore((s) => s.activeProject);
   const deviceName = useSettingsStore((s) => s.deviceName);
-  const anyStreaming = useStreamingStore(selectAnyStreaming);
+  const projectName = activeProject?.name;
+  const projectStreaming = useStreamingStore(selectProjectStreaming(projectName));
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    const getHasBadge = () => selectTotalUnread(useNotificationStore.getState()) > 0;
+    const unreadHere = () => selectProjectUnread(projectName)(useNotificationStore.getState());
+    const getHasBadge = () => unreadHere() > 0;
 
     const updateTitle = () => {
-      const unread = selectTotalUnread(useNotificationStore.getState());
-      document.title = buildTitle(unread, activeProject?.name, deviceName ?? undefined);
+      document.title = buildTitle(unreadHere(), projectName, deviceName ?? undefined);
     };
 
     updateTitle();
 
-    if (anyStreaming) {
+    if (projectStreaming) {
       // Cycle through typing-dots frames (3 dots + 1 rest frame, Messenger style) every 300ms
       let frame = 0;
       setFavicon(getHasBadge(), frame);
@@ -45,7 +53,7 @@ export function useNotificationBadge(): void {
     const unsub = useNotificationStore.subscribe(() => {
       updateTitle();
       // Static favicon update only when not streaming (interval handles streaming)
-      if (!anyStreaming) setFavicon(getHasBadge());
+      if (!projectStreaming) setFavicon(getHasBadge());
     });
 
     return () => {
@@ -55,5 +63,5 @@ export function useNotificationBadge(): void {
         intervalRef.current = null;
       }
     };
-  }, [activeProject?.name, deviceName, anyStreaming]);
+  }, [projectName, deviceName, projectStreaming]);
 }
