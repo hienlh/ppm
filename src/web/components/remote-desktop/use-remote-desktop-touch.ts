@@ -128,13 +128,32 @@ export function useRemoteDesktopTouch({
         const t = e.touches[0]!;
         const r = advanceSingleTouch(single, t.clientX, t.clientY, modeRef.current, transformRef.current, cursorRef.current);
         if (r.message) sendMessage(r.message);
-        if (r.cursor) { pendingRef.current.cursor = r.cursor; pendingRef.current.sendCursorMove = !!r.sendCursorMove; schedule(); }
+        if (r.cursor) {
+          // Mouse mode is DELTA-based (each call moves the cursor *relative* to `cursorRef`).
+          // rAF coalesces the state-commit + wire-send below to once per frame, but the delta
+          // math itself must not wait for that — updating `cursorRef.current` only inside
+          // `flush()` meant back-to-back touchmove events landing in the same animation frame
+          // each recomputed their delta against the SAME stale base position, so only the last
+          // one "counted" and most of the finger's movement was silently dropped (the host
+          // cursor barely moved). Updating the ref here, synchronously, makes every event
+          // compound on the last regardless of how many land before the next flush.
+          cursorRef.current = r.cursor;
+          pendingRef.current.cursor = r.cursor;
+          pendingRef.current.sendCursorMove = !!r.sendCursorMove;
+          schedule();
+        }
         return;
       }
       if (two && e.touches.length === 2) {
         const [a, b] = [e.touches[0]!, e.touches[1]!];
         const r = advanceTwoFingerTouch(two, { x: a.clientX, y: a.clientY }, { x: b.clientX, y: b.clientY }, transformRef.current);
-        if (r.transform) { pendingRef.current.transform = r.transform; schedule(); }
+        if (r.transform) {
+          // Same reasoning as the cursor above: pan is delta-based off `transformRef`, so it
+          // must be updated eagerly too, not just inside the throttled flush.
+          transformRef.current = r.transform;
+          pendingRef.current.transform = r.transform;
+          schedule();
+        }
         if (r.wheelDeltaPx) { pendingRef.current.wheelPx += r.wheelDeltaPx; schedule(); }
       }
     };
