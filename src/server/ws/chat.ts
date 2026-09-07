@@ -10,11 +10,13 @@ import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 // — a chat socket is not guaranteed to exist now that chat tabs mount lazily.
 import { broadcastGlobalEvent } from "./global.ts";
 import { bashOutputSpy } from "../../services/bash-output-spy.ts";
+import { nestedSubagentSpy } from "../../services/nested-subagent-spy.ts";
+import { resolveSessionDir } from "../../services/subagent-transcript-merger.ts";
 import { backgroundShellRegistry } from "../../services/background-shell-registry.ts";
 import { basename } from "node:path";
 import { configService } from "../../services/config.service.ts";
 import { formatTurnUsageLog } from "../../shared/turn-usage.ts";
-import { isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
+import { isAsyncAgentLaunchAck, isTerminalAgentStatus } from "../../shared/background-agent-status.ts";
 import { cacheReleaseDelayMs, selectWarmIdleEvictions } from "../../services/subprocess-retention.ts";
 
 /** Resolve the SESSION's provider config — not the global default provider's.
@@ -51,6 +53,12 @@ const CLEANUP_TIMEOUT_MS = 5 * 60_000; // 5min after Claude done + no FE
 /** How many clientless sessions may hold a live SDK subprocess at once. */
 const MAX_WARM_IDLE_SESSIONS = 5;
 const MAX_TURN_EVENTS = 10_000; // memory safety cap
+/**
+ * Share of the turn buffer nested-agent children may take. They are restored
+ * from disk on reload anyway; this only keeps a chatty grandchild from evicting
+ * the turn's own later events out of a reconnecting client's replay.
+ */
+const MAX_NESTED_TURN_EVENTS = 2_000;
 const BUFFERABLE_TYPES = new Set([
   "text", "thinking", "tool_use", "tool_result",
   "approval_request", "error", "done", "account_info", "account_retry",
@@ -91,8 +99,10 @@ interface SessionEntry {
   lastImplicitTeamProbe?: number;
   /** Compact indicator state — sticky until turn ends or boundary received, synced on reconnect */
   compactStatus?: "compacting" | null;
-  /** toolUseIds of Bash calls launched with run_in_background — spy is kept alive for these */
+  /** toolUseIds of Bash/Agent calls launched with run_in_background — their spy outlives the tool_result */
   backgroundToolUseIds?: Set<string>;
+  /** Nested-agent children buffered into turnEvents this turn (see MAX_NESTED_TURN_EVENTS) */
+  nestedBuffered?: number;
   /** When the last client left, for evicting the least recently used warm subprocess */
   idleSince?: number;
   /** When the last turn completed — the moment this session's prompt cache was last written */
@@ -271,6 +281,24 @@ function bufferAndBroadcast(sessionId: string, event: unknown): void {
   broadcast(sessionId, event);
 }
 
+/**
+ * Emit a nested-agent child read off disk. Buffered for reconnect replay only
+ * while its turn is still in flight and under the nested budget; a background
+ * agent that outlives the turn streams its children unbuffered, since the next
+ * turn's replay is not the place for them and reload restores them from disk.
+ */
+function emitNestedChild(sessionId: string, child: unknown): void {
+  const entry = activeSessions.get(sessionId);
+  if (!entry) return;
+  const inFlight = entry.isStreamingActive && entry.phase !== "idle";
+  if (inFlight && (entry.nestedBuffered ?? 0) < MAX_NESTED_TURN_EVENTS) {
+    entry.nestedBuffered = (entry.nestedBuffered ?? 0) + 1;
+    bufferAndBroadcast(sessionId, child);
+  } else {
+    broadcast(sessionId, child);
+  }
+}
+
 /** How often a session may stat ~/.claude/teams looking for an implicit team. */
 const IMPLICIT_TEAM_PROBE_INTERVAL_MS = 3_000;
 
@@ -405,6 +433,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
   entry.isStreamingActive = true;
   entry.pendingApprovalEvent = undefined;
   entry.turnEvents = [];
+  entry.nestedBuffered = 0;
   setPhase(sessionId, "connecting");
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -484,6 +513,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           // the card can settle. Harmless for background bash tasks: no card matches them.
           if (sub === "task_notification" && taskToolUseId && isTerminalAgentStatus(taskStatus)) {
             broadcast(sessionId, { type: "subagent_status", toolUseId: taskToolUseId, status: taskStatus });
+            // The agent is done, so its nested workers are too — release the tail.
+            nestedSubagentSpy.stopSpy(taskToolUseId);
+            entry.backgroundToolUseIds?.delete(taskToolUseId);
           }
           if (taskId) {
             // Ensure the shell is registered even if the spy missed the file (fallback).
@@ -549,6 +581,18 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           entry.pendingTeamCreate = ev.toolUseId;
           console.log(`[chat] session=${sessionId} TeamCreate tool_use detected, toolUseId=${ev.toolUseId}`);
         }
+        // A session-level Agent card: the SDK streams its agent's own steps, but
+        // nothing from agents that agent spawns in turn. Tail those nested
+        // transcripts from disk so the card keeps moving instead of freezing on
+        // the step that forked them. Claude-SDK-only — the layout is the CLI's.
+        if (providerId === "claude" && (ev.tool === "Agent" || ev.tool === "Task") && ev.toolUseId && !ev.parentToolUseId) {
+          const sessionDir = resolveSessionDir(sessionId, entry.projectPath);
+          if (sessionDir) {
+            nestedSubagentSpy.startSpy(sessionId, ev.toolUseId, sessionDir, (events) => {
+              for (const child of events) emitNestedChild(sessionId, child);
+            });
+          }
+        }
         // Start output spy for real-time streaming (Bash on Linux/macOS, PowerShell on Windows).
         // Claude-SDK-only: it tails the SDK's per-tool output file. Other providers
         // (codex/cursor) run commands in their own subprocess with no such file.
@@ -600,10 +644,18 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
       } else if (evType === "tool_result") {
         logSessionEvent(sessionId, "TOOL_RESULT", `error=${ev.isError ?? false} ${(ev.output ?? "").slice(0, 300)}`);
         console.log(`[chat] session=${sessionId} tool_result: toolUseId=${ev.toolUseId} pendingTeamCreate=${entry.pendingTeamCreate} output=${(ev.output ?? "").slice(0, 200)}`);
+        // A backgrounded Agent's tool_result is only a launch ack while the agent
+        // runs on — keep its nested spy until the terminal task_notification.
+        // Keyed off the ack text: `input.run_in_background` is optional and absent
+        // from most recorded calls (see background-agent-status.ts).
+        if (ev.toolUseId && !ev.parentToolUseId && isAsyncAgentLaunchAck(ev.output)) {
+          (entry.backgroundToolUseIds ??= new Set()).add(ev.toolUseId);
+        }
         // Stop bash output spy for this tool — EXCEPT background commands, whose
         // process keeps running after tool_result; keep tailing their .output.
         if (ev.toolUseId && !entry.backgroundToolUseIds?.has(ev.toolUseId)) {
           bashOutputSpy.stopSpy(ev.toolUseId);
+          nestedSubagentSpy.stopSpy(ev.toolUseId);
         }
         // Detect team creation from TeamCreate tool_result (legacy explicit teams)
         if (entry.pendingTeamCreate && entry.pendingTeamCreate === ev.toolUseId) {
@@ -689,6 +741,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
           console.log(`[chat] session_migrated: ${sessionId} → ${newId}`);
           // Stop spies tagged with old session ID before re-keying
           bashOutputSpy.stopAllForSession(sessionId);
+          nestedSubagentSpy.stopAllForSession(sessionId);
           backgroundShellRegistry.clearSession(sessionId);
           const oldEntry = activeSessions.get(sessionId);
           if (oldEntry) {
@@ -741,6 +794,9 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     bufferAndBroadcast(sessionId, { type: "error", message: errMsg });
   } finally {
     if (heartbeat) clearInterval(heartbeat);
+    // Drain nested-agent tails while their turn buffer still exists, so the last
+    // records land in this turn's replay instead of the head of the next one.
+    nestedSubagentSpy.stopAllForSession(sessionId);
     entry.isStreamingActive = false;
     entry.turnEvents = [];
     // Force-clear compact status on stream teardown (error, close, etc.)
