@@ -163,8 +163,7 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
 
           {/* Footer: version/upgrade on its own line, then a uniform wrapping grid of utility
               tiles (opens explorer/remote/cloud, report bug) — scales cleanly as tiles are added. */}
-          <div className="border-t border-border px-3 py-2 space-y-1.5">
-            <div className="px-1 text-[11px]"><UpgradeButton align="left" /></div>
+          <div className="border-t border-border px-3 py-2">
             <div className="grid grid-cols-4 gap-1">
               {/* Not a sidebar tab — the explorer opens as its own full-screen sheet. */}
               <FooterTile icon={FolderTree} label="Files" badge="os-explorer" onClick={() => { onClose(); void openExplorer(); }} />
@@ -173,6 +172,10 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
               )}
               <FooterTile icon={Cloud} label="Cloud" onClick={() => setCloudOpen(true)} />
               <FooterTile icon={BugIcon} label="Bug" onClick={handleReportBug} />
+            </div>
+            {/* Version / upgrade pinned at the very bottom, under a divider. */}
+            <div className="mt-2 pt-2 border-t border-border px-1 text-[11px]">
+              <UpgradeButton align="left" />
             </div>
           </div>
         </div>
