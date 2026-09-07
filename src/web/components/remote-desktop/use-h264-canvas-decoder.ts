@@ -103,7 +103,10 @@ export function useH264CanvasDecoder(
   }, [fail]);
 
   const reset = useCallback(() => {
-    decoderRef.current?.close();
+    // Closing an already-errored/half-configured decoder can throw in some browsers; this runs
+    // from a React effect cleanup, and an uncaught throw there crashes the whole tree (no error
+    // boundary catches effect-cleanup errors) — swallow it, we're discarding the decoder anyway.
+    try { decoderRef.current?.close(); } catch { /* discarding regardless */ }
     decoderRef.current = null;
     decodedAnyKeyRef.current = false;
     setStatus("idle");

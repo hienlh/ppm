@@ -112,9 +112,12 @@ export function useRemoteDesktopConnection(
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisibility);
       if (pingTimer) clearInterval(pingTimer);
-      wsRef.current?.close();
+      // A throw here (e.g. closing a socket/decoder mid-teardown) runs inside an effect cleanup,
+      // which no error boundary catches — left unguarded it can blank the entire app on unmount,
+      // not just this component (this is what closing the mobile sheet used to do).
+      try { wsRef.current?.close(); } catch { /* tearing down regardless */ }
       wsRef.current = null;
-      decoder.reset();
+      try { decoder.reset(); } catch { /* tearing down regardless */ }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect is driven by `generation`
   }, [generation]);
