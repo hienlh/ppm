@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { isInputAvailable, injectPointer, injectKey, RemoteInputUnavailableError } from "../../../../src/services/remote-desktop/remote-desktop-input.ts";
+import { isInputAvailable, injectPointer, injectKey, injectWheel, RemoteInputUnavailableError } from "../../../../src/services/remote-desktop/remote-desktop-input.ts";
 
 /**
  * This module must be importable — and its non-Windows-guarded functions must fail cleanly
@@ -17,5 +17,14 @@ describe("remote-desktop-input — non-Windows safety", () => {
     if (process.platform === "win32") return;
     await expect(injectPointer(0.5, 0.5, null, null)).rejects.toBeInstanceOf(RemoteInputUnavailableError);
     await expect(injectKey("KeyA", true)).rejects.toBeInstanceOf(RemoteInputUnavailableError);
+  });
+
+  it("rejects wheel injection off Windows too (a non-zero delta still reaches SendInput)", async () => {
+    if (process.platform === "win32") return;
+    await expect(injectWheel(120)).rejects.toBeInstanceOf(RemoteInputUnavailableError);
+  });
+
+  it("no-ops for a zero delta without touching SendInput at all", async () => {
+    await expect(injectWheel(0)).resolves.toBeUndefined();
   });
 });

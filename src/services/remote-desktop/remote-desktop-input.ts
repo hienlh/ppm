@@ -28,6 +28,10 @@ const MOUSEEVENTF_RIGHTDOWN = 0x0008;
 const MOUSEEVENTF_RIGHTUP = 0x0010;
 const MOUSEEVENTF_ABSOLUTE = 0x8000;
 const MOUSEEVENTF_VIRTUALDESK = 0x4000;
+const MOUSEEVENTF_WHEEL = 0x0800;
+/** One notch of a real mouse wheel — `mouseData` for `MOUSEEVENTF_WHEEL` is a signed multiple
+ *  of this constant, not a raw pixel delta. */
+const WHEEL_DELTA = 120;
 const KEYEVENTF_KEYUP = 0x0002;
 /** `((DPI_AWARENESS_CONTEXT)-4)` — PER_MONITOR_AWARE_V2. Not a real pointer; the x64 ABI
  *  passes it in the same register/slot as a pointer arg would, bit pattern only. */
@@ -89,11 +93,11 @@ async function loadUser32(): Promise<{ ffi: FfiModule; lib: User32Symbols }> {
   return { ffi: ffiModule, lib: user32 };
 }
 
-function writeMouseInput(dv: DataView, offset: number, xAbs: number, yAbs: number, flags: number): void {
+function writeMouseInput(dv: DataView, offset: number, xAbs: number, yAbs: number, flags: number, mouseData = 0): void {
   dv.setUint32(offset, INPUT_MOUSE, true);
   dv.setInt32(offset + 8, xAbs, true);
   dv.setInt32(offset + 12, yAbs, true);
-  dv.setUint32(offset + 16, 0, true); // mouseData (wheel delta) — unused
+  dv.setInt32(offset + 16, mouseData, true); // wheel delta for MOUSEEVENTF_WHEEL, unused otherwise
   dv.setUint32(offset + 20, flags >>> 0, true);
   dv.setUint32(offset + 24, 0, true); // time: 0 lets the system supply it
 }
@@ -171,6 +175,19 @@ export async function injectPointer(
 
   const buf = new Uint8Array(INPUT_STRUCT_SIZE);
   writeMouseInput(new DataView(buf.buffer), 0, xAbs, yAbs, flags);
+  await sendRaw(buf, 1);
+}
+
+/** Scroll the wheel. `deltaY` is in `WHEEL_DELTA` (120) units — positive rotates the wheel
+ *  forward (scrolls up/away from the user), negative rotates backward (scrolls down). The
+ *  client accumulates raw two-finger-drag pixels into this unit before sending, so this layer
+ *  stays a dumb relay: round + clamp to a safe i16 range so a runaway client value can't wrap
+ *  into a huge or negative-looking mouseData field. */
+export async function injectWheel(deltaY: number): Promise<void> {
+  const clamped = Math.max(-32768, Math.min(32767, Math.round(deltaY)));
+  if (clamped === 0) return;
+  const buf = new Uint8Array(INPUT_STRUCT_SIZE);
+  writeMouseInput(new DataView(buf.buffer), 0, 0, 0, MOUSEEVENTF_WHEEL, clamped);
   await sendRaw(buf, 1);
 }
 

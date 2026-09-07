@@ -7,7 +7,7 @@
 import { startCapture, type CaptureHandle } from "./remote-desktop-capture.ts";
 import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
-import { injectPointer, injectKey, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
+import { injectPointer, injectKey, injectWheel, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
 
 /** Minimal socket surface this module needs — matches Bun's `ServerWebSocket` shape closely
  *  enough to be faked in a unit test without a real connection. */
@@ -82,6 +82,11 @@ export class RemoteDesktopSession {
         const btn = button === "left" || button === "right" ? button : null;
         await injectPointer(xFrac, yFrac, btn, typeof down === "boolean" ? down : null);
       }
+      return;
+    }
+    if (msg.type === "wheel") {
+      const { dy } = msg as { dy?: unknown };
+      if (typeof dy === "number" && Number.isFinite(dy)) await injectWheel(dy);
       return;
     }
     if (msg.type === "key") {
