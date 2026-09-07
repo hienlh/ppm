@@ -177,7 +177,14 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
         />
       </div>
 
-      <RemoteDesktopStatsOverlay canvasRef={canvasRef} getFrameCount={getFrameCount} getTotalBytes={getTotalBytes} />
+      {/* Pushed below the app's top-left device-name pill + the notch safe-area (they overlap a
+          plain top-1 position on the phone). */}
+      <RemoteDesktopStatsOverlay
+        canvasRef={canvasRef}
+        getFrameCount={getFrameCount}
+        getTotalBytes={getTotalBytes}
+        positionClassName="left-1 top-[calc(env(safe-area-inset-top,0px)+2.75rem)]"
+      />
     </div>
   );
 }

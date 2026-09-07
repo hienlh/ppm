@@ -18,9 +18,12 @@ export interface RemoteDesktopStatsOverlayProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   getFrameCount: () => number;
   getTotalBytes: () => number;
+  /** Position utility classes (default top-left). The mobile viewer overrides this to sit below
+   *  the app's top-left device-name pill + the notch safe-area, which otherwise cover it. */
+  positionClassName?: string;
 }
 
-export function RemoteDesktopStatsOverlay({ canvasRef, getFrameCount, getTotalBytes }: RemoteDesktopStatsOverlayProps) {
+export function RemoteDesktopStatsOverlay({ canvasRef, getFrameCount, getTotalBytes, positionClassName = "left-1 top-1" }: RemoteDesktopStatsOverlayProps) {
   const visible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
   const [display, setDisplay] = useState({ fps: 0, kbps: 0, width: 0, height: 0 });
   const lastSampleRef = useRef<RemoteDesktopStatsSample>({ frameCount: 0, totalBytes: 0, atMs: 0 });
@@ -42,7 +45,7 @@ export function RemoteDesktopStatsOverlay({ canvasRef, getFrameCount, getTotalBy
 
   return (
     <div
-      className="pointer-events-none absolute left-1 top-1 z-40 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-white/80"
+      className={`pointer-events-none absolute z-40 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] text-white/80 ${positionClassName}`}
       data-testid="remote-desktop-stats-overlay"
     >
       {Math.round(display.fps)} fps · {Math.round(display.kbps)} KB/s · {display.width}×{display.height}
