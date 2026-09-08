@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import { buildCaptureArgs } from "../../../../src/services/remote-desktop/remote-desktop-capture.ts";
 import { captureEncoderArgs } from "../../../../src/services/remote-desktop/remote-desktop-encoder-args.ts";
+import { captureInputForPlatform } from "../../../../src/services/remote-desktop/remote-desktop-capture-input.ts";
 
 describe("buildCaptureArgs", () => {
   it("captures the desktop via gdigrab into an Annex-B H.264 pipe", () => {
@@ -34,6 +35,32 @@ describe("buildCaptureArgs", () => {
     const args = buildCaptureArgs("ffmpeg", "h264_nvenc");
     expect(args).toContain("h264_nvenc");
     expect(args).not.toContain("libx264");
+  });
+
+  it("captures a macOS screen via avfoundation by device NAME (indices shift at runtime), cursor included", () => {
+    const args = buildCaptureArgs("ffmpeg", "h264_videotoolbox", { kind: "avfoundation", screen: "Capture screen 0" });
+    expect(args).toContain("avfoundation");
+    expect(args).not.toContain("gdigrab");
+    expect(args[args.indexOf("-i") + 1]).toBe("Capture screen 0");
+    expect(args[args.indexOf("-capture_cursor") + 1]).toBe("1");
+    expect(args[args.indexOf("-pixel_format") + 1]).toBe("nv12");
+    expect(args).toContain("h264_videotoolbox");
+  });
+
+  it("caps avfoundation to the target frame rate (device ignores -framerate, delivers at refresh rate)", () => {
+    const args = buildCaptureArgs("ffmpeg", "h264_videotoolbox", { kind: "avfoundation", screen: "Capture screen 0" });
+    expect(args[args.indexOf("-use_wallclock_as_timestamps") + 1]).toBe("1");
+    expect(args[args.indexOf("-vf") + 1]).toBe("fps=30,scale=-2:720");
+    // gdigrab honours -framerate, so it keeps the plain scale filter
+    expect(buildCaptureArgs("ffmpeg")[buildCaptureArgs("ffmpeg").indexOf("-vf") + 1]).toBe("scale=-2:720");
+  });
+});
+
+describe("captureInputForPlatform", () => {
+  it("maps win32 → gdigrab, darwin → avfoundation main screen by name, others → null", () => {
+    expect(captureInputForPlatform("win32")).toEqual({ kind: "gdigrab" });
+    expect(captureInputForPlatform("darwin")).toEqual({ kind: "avfoundation", screen: "Capture screen 0" });
+    expect(captureInputForPlatform("linux")).toBeNull();
   });
 });
 

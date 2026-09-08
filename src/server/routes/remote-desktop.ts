@@ -12,6 +12,7 @@ import { getFfmpegCapabilities } from "../../services/media-transcode/ffmpeg-cap
 import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-desktop-flag.ts";
 import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-desktop-nonce.ts";
 import { isInputAvailable } from "../../services/remote-desktop/remote-desktop-input.ts";
+import { captureInputForPlatform } from "../../services/remote-desktop/remote-desktop-capture-input.ts";
 
 export const remoteDesktopRoutes = new Hono();
 
@@ -51,7 +52,7 @@ remoteDesktopRoutes.get("/capabilities", async (c) => {
   const caps = await getFfmpegCapabilities();
   return c.json(ok({
     ffmpegAvailable: !!caps.ffmpeg,
-    videoAvailable: process.platform === "win32" && !!caps.ffmpeg,
+    videoAvailable: captureInputForPlatform() !== null && !!caps.ffmpeg,
     inputAvailable: isInputAvailable(),
     authRequired: configService.get("auth").enabled,
   }));
