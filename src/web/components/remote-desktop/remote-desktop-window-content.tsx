@@ -15,13 +15,16 @@ import { useRemoteDesktopConnection } from "./use-remote-desktop-connection";
 import { useRemoteInputCapture } from "./use-remote-input-capture";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { RemoteDesktopWarningGate } from "./remote-desktop-warning-gate";
+import { RemoteDesktopReadinessGate } from "./remote-desktop-readiness-gate";
 
 export default function RemoteDesktopWindowContent({ id }: WindowContentProps) {
   const closeWindow = useWindowStore((s) => s.close);
   const onCancel = useCallback(() => closeWindow(id), [closeWindow, id]);
   return (
     <RemoteDesktopWarningGate onCancel={onCancel}>
-      <RemoteDesktopViewer />
+      <RemoteDesktopReadinessGate onCancel={onCancel}>
+        <RemoteDesktopViewer />
+      </RemoteDesktopReadinessGate>
     </RemoteDesktopWarningGate>
   );
 }

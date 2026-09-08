@@ -208,10 +208,6 @@ async function releaseAllModifiers(): Promise<void> {
 
 export const win32InputBackend: RemoteInputBackend = {
   id: "win32-sendinput",
-  // Presence of the interactive desktop cannot be probed without injecting; the known failure
-  // (agent-spawned server on a phantom desktop, HANDOFF lesson 1) still streams video, so
-  // there is nothing cheap to report here beyond "this is Windows".
-  availability: async () => ({ available: true }),
   pointer: injectPointer,
   wheel: injectWheel,
   key: injectKey,

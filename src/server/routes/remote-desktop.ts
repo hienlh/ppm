@@ -1,6 +1,8 @@
 /**
- * `GET /api/remote-desktop/capabilities` (read-only, always answerable) and
- * `POST /api/remote-desktop/session` (mints the single-use WS nonce). Guard style mirrors
+ * `GET /api/remote-desktop/capabilities` (read-only, always answerable — includes the host's
+ * requirements checklist), `POST /api/remote-desktop/requirements/:id/:action` (host-side
+ * fixes: OS permission prompt, open its Settings pane) and `POST /api/remote-desktop/session` (mints the single-use WS
+ * nonce). Guard style mirrors
  * `named-tunnel.ts`: `authMiddleware` already passes every request through when PPM auth is
  * disabled, so a feature that hands out host control must enforce `auth.enabled` itself, plus
  * a same-origin check so a foreign page can't drive it via ambient browser credentials.
@@ -11,8 +13,7 @@ import { configService } from "../../services/config.service.ts";
 import { getFfmpegCapabilities } from "../../services/media-transcode/ffmpeg-capabilities.ts";
 import { isRemoteDesktopEnabled } from "../../services/remote-desktop/remote-desktop-flag.ts";
 import { mintRemoteDesktopNonce } from "../../services/remote-desktop/remote-desktop-nonce.ts";
-import { isInputAvailable } from "../../services/remote-desktop/remote-desktop-input.ts";
-import { captureInputForPlatform } from "../../services/remote-desktop/remote-desktop-capture-input.ts";
+import { remoteDesktopReadiness, runHostAction } from "../../services/remote-desktop/remote-desktop-requirements.ts";
 
 export const remoteDesktopRoutes = new Hono();
 
@@ -49,13 +50,26 @@ function assertSessionAllowed(c: Context): Response | null {
 
 remoteDesktopRoutes.get("/capabilities", async (c) => {
   if (!isRemoteDesktopEnabled()) return c.json(err("remote desktop is disabled"), 404);
-  const caps = await getFfmpegCapabilities();
+  const [caps, readiness] = await Promise.all([getFfmpegCapabilities(), remoteDesktopReadiness()]);
   return c.json(ok({
+    // Flat booleans kept for existing clients/tests; `readiness` is the source of truth.
     ffmpegAvailable: !!caps.ffmpeg,
-    videoAvailable: captureInputForPlatform() !== null && !!caps.ffmpeg,
-    inputAvailable: isInputAvailable(),
+    videoAvailable: readiness.videoReady,
+    inputAvailable: readiness.inputReady,
     authRequired: configService.get("auth").enabled,
+    ...readiness,
   }));
+});
+
+// Same guards as /session: these pop dialogs / open panes on the host, which is host control too.
+remoteDesktopRoutes.post("/requirements/:id/:action", async (c) => {
+  const rejected = assertSessionAllowed(c);
+  if (rejected) return rejected;
+  const action = c.req.param("action");
+  if (action !== "request" && action !== "open-settings") return c.json(err("unknown action"), 404);
+  const okNow = await runHostAction(c.req.param("id"), action);
+  if (okNow === null) return c.json(err("this requirement has no host action"), 404);
+  return c.json(ok({ ok: okNow }));
 });
 
 remoteDesktopRoutes.post("/session", (c) => {

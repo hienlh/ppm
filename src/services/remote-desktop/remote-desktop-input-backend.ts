@@ -8,17 +8,11 @@
  * Keys are KeyboardEvent `code`s (physical, layout-independent); the backend owns the table.
  */
 
-export type InputAvailability =
-  | { available: true }
-  /** `reason` is user-facing: what to do so injection starts working (grant a permission…). */
-  | { available: false; reason: string };
-
 export interface RemoteInputBackend {
-  /** Short id surfaced in `/capabilities` for diagnostics (`"win32-sendinput"`, `"darwin-cgevent"`). */
+  /** Short id for logs/diagnostics (`"win32-sendinput"`, `"darwin-cgevent"`). Whether injection
+   *  would actually work right now (OS permissions) is a *requirement* in
+   *  `remote-desktop-requirements.ts`, not a backend concern. */
   readonly id: string;
-  /** Whether injected events would actually reach the desktop *right now*. Cheap; may be
-   *  polled by the capabilities route. Platform presence alone is not enough on macOS (TCC). */
-  availability(): Promise<InputAvailability>;
   pointer(xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null): Promise<void>;
   /** `deltaY` in wheel-notch units of 120 (positive = away from the user). */
   wheel(deltaY: number): Promise<void>;

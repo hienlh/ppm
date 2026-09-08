@@ -8,13 +8,9 @@
  */
 import { win32InputBackend } from "./remote-desktop-input-win32.ts";
 import { darwinInputBackend } from "./remote-desktop-input-darwin.ts";
-import {
-  RemoteInputUnavailableError,
-  type InputAvailability,
-  type RemoteInputBackend,
-} from "./remote-desktop-input-backend.ts";
+import { RemoteInputUnavailableError, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 
-export { RemoteInputUnavailableError, type InputAvailability, type RemoteInputBackend };
+export { RemoteInputUnavailableError, type RemoteInputBackend };
 
 const BACKENDS: Partial<Record<NodeJS.Platform, RemoteInputBackend>> = {
   win32: win32InputBackend,
@@ -27,18 +23,10 @@ export function getInputBackend(platform: NodeJS.Platform = process.platform): R
 }
 
 /** Sync, cheap: does this platform have an injector at all? Used on the per-event hot path to
- *  drop input messages early. "Would it actually work" is `inputAvailability()`. */
+ *  drop input messages early. "Would it actually work" (OS permissions) is answered by
+ *  `remote-desktop-requirements.ts`. */
 export function isInputAvailable(): boolean {
   return getInputBackend() !== null;
-}
-
-/** Full picture for `/capabilities`: supported on this OS, and usable right now (permissions). */
-export async function inputAvailability(): Promise<
-  { supported: false } | ({ supported: true; backend: string } & InputAvailability)
-> {
-  const backend = getInputBackend();
-  if (!backend) return { supported: false };
-  return { supported: true, backend: backend.id, ...(await backend.availability()) };
 }
 
 function required(): RemoteInputBackend {

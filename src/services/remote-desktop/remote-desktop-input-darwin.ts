@@ -9,7 +9,7 @@
  *   and x86_64 (xmm0,xmm1) ABIs, integer args keep their own registers. Struct *returns* are
  *   not expressible, so nothing here reads the cursor back.
  * - Injection needs the Accessibility grant on the `bun` executable (TCC); without it every
- *   post is a silent no-op — `availability()` reports that via `AXIsProcessTrusted`.
+ *   post is a silent no-op — `remote-desktop-macos-permissions.ts` pre-flights that.
  * - Coordinates are logical points of the main display (`CGDisplayPixelsWide/High` return
  *   points despite the name); the capture is that same display, so fractions map directly.
  * - Modifier state is carried on every event as `CGEventFlags`; a modifier keyDown alone is
@@ -19,7 +19,6 @@ import { codeToCgKey, CGKEY_MODIFIER_FLAG, MODIFIER_CGKEY_CODES } from "./remote
 import { RemoteInputUnavailableError, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 
 const CG = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
-const APP_SERVICES = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices";
 const CORE_FOUNDATION = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
 
 // CGEventType
@@ -47,7 +46,6 @@ type Symbols = {
   CGMainDisplayID: () => number;
   CGDisplayPixelsWide: (display: number) => bigint;
   CGDisplayPixelsHigh: (display: number) => bigint;
-  AXIsProcessTrusted: () => boolean;
   CFRelease: (obj: Ptr) => void;
 };
 
@@ -71,9 +69,8 @@ async function load() {
     CGDisplayPixelsWide: { args: [T.u32], returns: T.u64 },
     CGDisplayPixelsHigh: { args: [T.u32], returns: T.u64 },
   }).symbols;
-  const ax = dlopen(APP_SERVICES, { AXIsProcessTrusted: { args: [], returns: T.bool } }).symbols;
   const cf = dlopen(CORE_FOUNDATION, { CFRelease: { args: [T.ptr], returns: T.void } }).symbols;
-  loaded = { ffi, lib: { ...cg, ...ax, ...cf } as unknown as Symbols };
+  loaded = { ffi, lib: { ...cg, ...cf } as unknown as Symbols };
   return loaded;
 }
 
@@ -190,11 +187,5 @@ async function releaseAllModifiers(): Promise<void> {
 
 export const darwinInputBackend: RemoteInputBackend = {
   id: "darwin-cgevent",
-  availability: async () => {
-    const { lib } = await load();
-    return lib.AXIsProcessTrusted()
-      ? { available: true }
-      : { available: false, reason: "Grant Accessibility to the PPM process (System Settings → Privacy & Security → Accessibility)" };
-  },
   pointer, wheel, key, text, releaseAllModifiers,
 };

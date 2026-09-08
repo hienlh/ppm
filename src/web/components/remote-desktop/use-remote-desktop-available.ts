@@ -1,29 +1,12 @@
 /**
- * Fetches remote-desktop capabilities once and reports whether the feature should surface in
- * the UI. Returns `available=false` when the host opted out (`REMOTE_DESKTOP_ENABLED=0` — the
- * endpoint 404s) or video capture is unavailable (no ffmpeg), so the nav entry stays hidden on
- * hosts that can't or won't stream.
+ * Whether the Remote Desktop entry should surface in the UI. Hidden only when the host opted
+ * out (`REMOTE_DESKTOP_ENABLED=0` — the endpoint 404s) or the OS has no capture path at all.
+ * Everything the user can fix in place — ffmpeg missing, a macOS permission not granted — keeps
+ * the entry visible; `RemoteDesktopReadinessGate` walks them through it after the warning.
  */
-import { useEffect, useState } from "react";
-import { api } from "@/lib/api-client";
-
-interface Capabilities {
-  ffmpegAvailable: boolean;
-  videoAvailable: boolean;
-  inputAvailable: boolean;
-  authRequired: boolean;
-}
+import { useRemoteDesktopReadiness } from "./use-remote-desktop-readiness";
 
 export function useRemoteDesktopAvailable(): { available: boolean; authRequired: boolean } {
-  const [caps, setCaps] = useState<Capabilities | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    api.get<Capabilities>("/api/remote-desktop/capabilities")
-      .then((c) => { if (!cancelled) setCaps(c); })
-      .catch(() => { if (!cancelled) setCaps(null); }); // 404 (flag off) or network error — stay hidden
-    return () => { cancelled = true; };
-  }, []);
-
-  return { available: !!caps?.videoAvailable, authRequired: !!caps?.authRequired };
+  const { caps } = useRemoteDesktopReadiness(false);
+  return { available: !!caps?.platformSupported, authRequired: !!caps?.authRequired };
 }
