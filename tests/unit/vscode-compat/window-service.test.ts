@@ -206,6 +206,34 @@ describe("WindowService", () => {
       expect(rpc.timedRequests[0]!.timeoutMs).toBe(600_000);
     });
 
+    it("showQuickPick sends plain strings as { label } objects — the browser dialog has no other shape", async () => {
+      await window.showQuickPick(["dm", "off"]);
+      expect(rpc.timedRequests[0]!.params[0]).toEqual([{ label: "dm" }, { label: "off" }]);
+    });
+
+    it("showQuickPick unwraps the browser's array: string in → string out, object in → the same object out", async () => {
+      const answering = createMockRpc();
+      answering.requestWithTimeout = async <T,>(_m: string, _t: number, ...params: unknown[]) => {
+        const items = params[0] as { label: string }[];
+        return [items[1]] as T; // the browser always answers with an array
+      };
+      const w = new WindowService(answering, "test-ext");
+
+      expect(await w.showQuickPick(["dm", "off"])).toBe("off");
+
+      const objects = [{ label: "Me", description: "acc-1" }, { label: "Thang", description: "acc-2" }];
+      expect(await w.showQuickPick(objects)).toBe(objects[1]);
+
+      expect(await w.showQuickPick(["dm", "off"], { canPickMany: true })).toEqual(["off"]);
+    });
+
+    it("showQuickPick returns undefined when the dialog is cancelled", async () => {
+      const cancelling = createMockRpc();
+      cancelling.requestWithTimeout = async <T,>() => null as T;
+      const w = new WindowService(cancelling, "test-ext");
+      expect(await w.showQuickPick(["dm", "off"])).toBeUndefined();
+    });
+
     it("showComposer calls requestWithTimeout with 600000", async () => {
       await window.showComposer({ prompt: "test" });
 

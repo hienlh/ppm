@@ -52,7 +52,9 @@ function QuickPickModal({
     return items
       .map((item, i) => ({ item, originalIdx: i }))
       .filter(({ item }) =>
-        item.label.toLowerCase().includes(q) ||
+        // Defensive: a label is required by the type but a stray non-object item
+        // must degrade to "no match", not take the whole dialog down mid-wizard.
+        (item.label ?? "").toLowerCase().includes(q) ||
         item.description?.toLowerCase().includes(q) ||
         item.detail?.toLowerCase().includes(q),
       );

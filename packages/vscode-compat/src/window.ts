@@ -113,11 +113,33 @@ export class WindowService {
   // this worker-side timeout must stay >= whatever browser-side timeout the server passes to
   // requestFromBrowser for the same round trip.
 
+  /**
+   * VSCode contract: plain strings in → the chosen string out; objects in → the
+   * chosen object out; `canPickMany` → an array of them. The browser dialog only
+   * understands `{ label }` objects and always answers with an array, so both
+   * directions are translated here rather than crashing the picker on a string.
+   */
   async showQuickPick(
     items: string[] | QuickPickItem[],
     options?: QuickPickOptions,
-  ): Promise<string | QuickPickItem | undefined> {
-    return this.rpc.requestWithTimeout("window:showQuickPick", 600_000, items, options ?? {});
+  ): Promise<string | QuickPickItem | (string | QuickPickItem)[] | undefined> {
+    const asStrings = items.every((item) => typeof item === "string");
+    const wireItems: QuickPickItem[] = (items as (string | QuickPickItem)[]).map((item) =>
+      typeof item === "string" ? { label: item } : item,
+    );
+    const selected = await this.rpc.requestWithTimeout<QuickPickItem[] | null | undefined>(
+      "window:showQuickPick", 600_000, wireItems, options ?? {},
+    );
+    if (!selected || selected.length === 0) return undefined;
+
+    // Hand back the caller's own objects (they may carry extra fields the wire dropped).
+    const picked = selected.map((sel) => {
+      const original = (items as (string | QuickPickItem)[]).find((item) =>
+        typeof item === "string" ? item === sel.label : item.label === sel.label,
+      );
+      return original ?? (asStrings ? sel.label : sel);
+    });
+    return options?.canPickMany ? picked : picked[0];
   }
 
   async showInputBox(options?: InputBoxOptions): Promise<string | undefined> {
