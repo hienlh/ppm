@@ -23,7 +23,7 @@ const CORE_FOUNDATION = "/System/Library/Frameworks/CoreFoundation.framework/Cor
 
 // CGEventType
 const LEFT_DOWN = 1, LEFT_UP = 2, RIGHT_DOWN = 3, RIGHT_UP = 4, MOUSE_MOVED = 5;
-const LEFT_DRAGGED = 6, RIGHT_DRAGGED = 7, KEY_DOWN = 10, KEY_UP = 11, FLAGS_CHANGED = 12;
+const LEFT_DRAGGED = 6, RIGHT_DRAGGED = 7, FLAGS_CHANGED = 12;
 const HID_EVENT_TAP = 0;
 const BUTTON_LEFT = 0, BUTTON_RIGHT = 1;
 const SCROLL_UNIT_LINE = 1;

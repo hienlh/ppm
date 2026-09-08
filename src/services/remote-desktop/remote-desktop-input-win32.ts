@@ -27,6 +27,8 @@ const MOUSEEVENTF_WHEEL = 0x0800;
  *  of this constant, not a raw pixel delta. */
 const WHEEL_DELTA = 120;
 const KEYEVENTF_KEYUP = 0x0002;
+/** `wScan` carries a UTF-16 unit instead of a scan code; `wVk` must be 0. */
+const KEYEVENTF_UNICODE = 0x0004;
 /** `((DPI_AWARENESS_CONTEXT)-4)` — PER_MONITOR_AWARE_V2. Not a real pointer; the x64 ABI
  *  passes it in the same register/slot as a pointer arg would, bit pattern only. */
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4n;
@@ -101,6 +103,14 @@ function writeKeyInput(dv: DataView, offset: number, vk: number, keyUp: boolean)
   dv.setUint16(offset + 8, vk, true);
   dv.setUint16(offset + 10, 0, true); // wScan — unused, we inject by VK not scan code
   dv.setUint32(offset + 12, keyUp ? KEYEVENTF_KEYUP : 0, true);
+  dv.setUint32(offset + 16, 0, true); // time
+}
+
+function writeUnicodeKeyInput(dv: DataView, offset: number, unit: number, keyUp: boolean): void {
+  dv.setUint32(offset, INPUT_KEYBOARD, true);
+  dv.setUint16(offset + 8, 0, true); // wVk — must be 0 with KEYEVENTF_UNICODE
+  dv.setUint16(offset + 10, unit, true);
+  dv.setUint32(offset + 12, KEYEVENTF_UNICODE | (keyUp ? KEYEVENTF_KEYUP : 0), true);
   dv.setUint32(offset + 16, 0, true); // time
 }
 
@@ -206,10 +216,27 @@ async function releaseAllModifiers(): Promise<void> {
   try { await sendRaw(buf, MODIFIER_VK_CODES.length); } catch { /* best-effort */ }
 }
 
+/** Type text as Unicode via `KEYEVENTF_UNICODE` — one down/up pair per UTF-16 unit (surrogate
+ *  halves are sent as two units, which is what Windows expects), all in a single `SendInput`
+ *  call so nothing interleaves. Written against the documented struct layout on the Mac side of
+ *  the port; exercised by the e2e harness on Windows, not by unit tests. */
+async function injectText(text: string): Promise<void> {
+  if (text.length === 0) return;
+  const buf = new Uint8Array(INPUT_STRUCT_SIZE * text.length * 2);
+  const dv = new DataView(buf.buffer);
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    writeUnicodeKeyInput(dv, (i * 2) * INPUT_STRUCT_SIZE, unit, false);
+    writeUnicodeKeyInput(dv, (i * 2 + 1) * INPUT_STRUCT_SIZE, unit, true);
+  }
+  await sendRaw(buf, text.length * 2);
+}
+
 export const win32InputBackend: RemoteInputBackend = {
   id: "win32-sendinput",
   pointer: injectPointer,
   wheel: injectWheel,
   key: injectKey,
+  text: injectText,
   releaseAllModifiers,
 };

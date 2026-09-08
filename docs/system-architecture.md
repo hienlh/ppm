@@ -357,6 +357,25 @@ HTTP/1.1 200 OK
 3. Server sends: `{ type: "output", data: "file1 file2\n" }`
 4. Client sends: `{ type: "resize", cols: 80, rows: 24 }`
 
+**Remote Desktop Flow** (`src/services/remote-desktop/`, on by default, `REMOTE_DESKTOP_ENABLED=0` opts out):
+1. Client reads `GET /api/remote-desktop/capabilities` → `platformSupported`, `videoReady`, `inputReady` and a
+   `requirements[]` checklist (ffmpeg, macOS Screen Recording / Accessibility). Each item carries generic
+   `actions`: `terminal` (type an install command into a PPM dock terminal — the host's shell), `link`
+   (client opens), `host` (`POST /requirements/:id/:action` — OS permission prompt or Settings pane, run on the
+   host). The UI renders the list as-is and never branches on OS; adding a requirement = one item in
+   `remote-desktop-requirements.ts`.
+2. `POST /api/remote-desktop/session` (auth + same-origin) mints a single-use nonce; client connects
+   `WS /ws/remote-desktop?token=` and sends `{ type: "auth", nonce }` as its first message.
+3. Server spawns one ffmpeg per session — `buildCaptureArgs(ffmpeg, encoder, input)` = shared low-latency flags +
+   per-platform input (`remote-desktop-capture-input.ts`: gdigrab on Windows, avfoundation `"Capture screen 0"`
+   on macOS) + per-encoder args (`remote-desktop-encoder-args.ts`: NVENC/QSV/AMF/VideoToolbox/libx264) — and
+   splits Annex-B H.264 into access units. First text frame `{ type: "config", codec: "avc1.…" }` (derived from
+   the real SPS), then binary frames `[keyFlag][AU bytes]` decoded client-side with WebCodecs.
+4. Client input `{ pointer | wheel | key | text | releaseAll | ping }` goes to `remote-desktop-input.ts`, a
+   facade over a per-platform registry (`remote-desktop-input-win32.ts` = user32 `SendInput`,
+   `remote-desktop-input-darwin.ts` = CoreGraphics `CGEventPost`, both via `bun:ffi`, no helper binary).
+   Coordinates are 0..1 fractions of the frame; keys are `KeyboardEvent.code` mapped per OS.
+
 ---
 
 ## Authentication Flow
