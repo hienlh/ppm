@@ -7,7 +7,7 @@
 import { startCapture, type CaptureHandle } from "./remote-desktop-capture.ts";
 import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
-import { injectPointer, injectKey, injectWheel, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
+import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
 
 /** Minimal socket surface this module needs — matches Bun's `ServerWebSocket` shape closely
  *  enough to be faked in a unit test without a real connection. */
@@ -28,6 +28,8 @@ const HEARTBEAT_TIMEOUT_MS = 30_000;
  *  queueing forever — a slow WAN/tunnel link must degrade to "waits ~2s for a keyframe",
  *  never to unbounded memory growth or an ever-growing latency queue. */
 const BACKPRESSURE_THRESHOLD_BYTES = 512 * 1024;
+/** Longest `text` message injected in one go — a paste, not a file; anything bigger is dropped. */
+const MAX_TEXT_CHARS = 1024;
 
 export class RemoteDesktopSession {
   private capture: CaptureHandle | null = null;
@@ -95,6 +97,13 @@ export class RemoteDesktopSession {
         if (down) this.heldKeyCodes.add(code); else this.heldKeyCodes.delete(code);
         await injectKey(code, down);
       }
+      return;
+    }
+    if (msg.type === "text") {
+      // Layout-independent text entry (mobile keyboards, non-ASCII). Backends without a text
+      // path report false and the message is dropped — the client keeps its per-key fallback.
+      const { text } = msg as { text?: unknown };
+      if (typeof text === "string" && text.length > 0 && text.length <= MAX_TEXT_CHARS) await injectText(text);
       return;
     }
     if (msg.type === "releaseAll") {
