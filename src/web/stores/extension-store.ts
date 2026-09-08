@@ -48,7 +48,7 @@ export interface WebviewPanelUI {
 
 export interface QuickPickState {
   items: QuickPickItemUI[];
-  options: { placeholder?: string; canPickMany?: boolean };
+  options: { title?: string; placeholder?: string; canPickMany?: boolean };
   resolve: (selected: QuickPickItemUI[] | undefined) => void;
 }
 
@@ -60,7 +60,7 @@ export interface QuickPickItemUI {
 }
 
 export interface InputBoxState {
-  options: { prompt?: string; value?: string; placeholder?: string; password?: boolean };
+  options: { title?: string; prompt?: string; value?: string; placeholder?: string; password?: boolean };
   resolve: (value: string | undefined) => void;
 }
 

@@ -80,7 +80,7 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       {
         type: "quickpick:show", requestId,
         items: items as { label: string; description?: string; detail?: string; picked?: boolean }[],
-        options: (options ?? {}) as { placeholder?: string; canPickMany?: boolean },
+        options: normalizeDialogOptions(options) as { title?: string; placeholder?: string; canPickMany?: boolean },
       },
       requestId,
     );
@@ -93,7 +93,7 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
     const value = await requestFromBrowser<string | null>(
       {
         type: "inputbox:show", requestId,
-        options: (options ?? {}) as { prompt?: string; value?: string; placeholder?: string; password?: boolean },
+        options: normalizeDialogOptions(options) as { title?: string; prompt?: string; value?: string; placeholder?: string; password?: boolean },
       },
       requestId,
     );
@@ -357,6 +357,17 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       throw new Error(`process:spawn failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   });
+}
+
+/**
+ * Extensions write VSCode-style options (`placeHolder`), the web dialogs read
+ * `placeholder`; without this bridge the hint silently never renders.
+ */
+function normalizeDialogOptions(options: unknown): Record<string, unknown> {
+  const o = (options ?? {}) as Record<string, unknown>;
+  const { placeHolder, ...rest } = o;
+  if (placeHolder !== undefined && rest.placeholder === undefined) rest.placeholder = placeHolder;
+  return rest;
 }
 
 /** Get a nested value from an object by dot-separated key */

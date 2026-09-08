@@ -76,8 +76,8 @@ export type ExtServerMsg =
   | { type: "statusbar:update"; item: StatusBarItemMsg }
   | { type: "statusbar:remove"; itemId: string }
   | { type: "notification"; id: string; level: "info" | "warn" | "error"; message: string; actions?: string[] }
-  | { type: "quickpick:show"; requestId: string; items: QuickPickItemMsg[]; options?: { placeholder?: string; canPickMany?: boolean } }
-  | { type: "inputbox:show"; requestId: string; options: { prompt?: string; value?: string; placeholder?: string; password?: boolean } }
+  | { type: "quickpick:show"; requestId: string; items: QuickPickItemMsg[]; options?: { title?: string; placeholder?: string; canPickMany?: boolean } }
+  | { type: "inputbox:show"; requestId: string; options: { title?: string; prompt?: string; value?: string; placeholder?: string; password?: boolean } }
   | { type: "webview:create"; panelId: string; extensionId: string; viewType: string; title: string; projectPath?: string; projectName?: string }
   | { type: "webview:html"; panelId: string; html: string }
   | { type: "webview:dispose"; panelId: string }

@@ -22,7 +22,7 @@ function InputBoxModal({
   onConfirm,
   onCancel,
 }: {
-  options: { prompt?: string; value?: string; placeholder?: string; password?: boolean };
+  options: { title?: string; prompt?: string; value?: string; placeholder?: string; password?: boolean };
   onConfirm: (value: string) => void;
   onCancel: () => void;
 }) {
@@ -53,9 +53,14 @@ function InputBoxModal({
         className="relative z-10 w-full max-w-md rounded-t-xl md:rounded-xl border border-border bg-background shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Title — what this dialog is for; without it a bare input is unreadable */}
+        {options.title && (
+          <div className="px-3 pt-3 text-sm font-medium text-text-primary">{options.title}</div>
+        )}
+
         {/* Prompt */}
         {options.prompt && (
-          <div className="px-3 pt-3 pb-1 text-sm text-text-primary">{options.prompt}</div>
+          <div className={`px-3 pb-1 text-sm ${options.title ? "pt-1 text-text-secondary" : "pt-3 text-text-primary"}`}>{options.prompt}</div>
         )}
 
         {/* Input */}

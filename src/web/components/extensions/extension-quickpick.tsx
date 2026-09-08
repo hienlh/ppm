@@ -27,7 +27,7 @@ function QuickPickModal({
   onCancel,
 }: {
   items: QuickPickItemUI[];
-  options: { placeholder?: string; canPickMany?: boolean };
+  options: { title?: string; placeholder?: string; canPickMany?: boolean };
   onSelect: (selected: QuickPickItemUI[]) => void;
   onCancel: () => void;
 }) {
@@ -118,6 +118,11 @@ function QuickPickModal({
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
+        {/* Title — tells the user what they are picking; the search box alone does not */}
+        {options.title && (
+          <div className="px-3 pt-3 pb-1 text-sm font-medium text-text-primary">{options.title}</div>
+        )}
+
         {/* Search input */}
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
           <Search className="size-4 text-text-subtle shrink-0" />
