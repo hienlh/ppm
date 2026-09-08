@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-09-09
+
+### Fixed
+- **Remote Desktop no longer claims ffmpeg is missing on a Mac that has it** — a PPM started by launchd inherits a bare `PATH` without `/opt/homebrew/bin`; ffmpeg is now also looked for in the usual Homebrew / winget / chocolatey / apt locations, and a "not installed" answer is re-checked instead of being cached until restart, so the checklist really does update once `brew install ffmpeg` finishes.
+- **"Session not found" when opening a terminal from outside a project** — the remote-desktop checklist's install button opened a shell with no project; such a terminal now starts in your home directory.
+
 ## [0.19.0] - 2026-09-08
 
 ### Added

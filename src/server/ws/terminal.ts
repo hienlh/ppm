@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import { homedir } from "node:os";
 import { terminalService } from "../../services/terminal.service.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { assertAllowed, resolvePath } from "../../services/fs-path-guard.service.ts";
@@ -7,6 +8,9 @@ import { assertAllowed, resolvePath } from "../../services/fs-path-guard.service
  * Where a new shell starts. An explicit `cwd` (explorer "Open in Terminal") wins
  * over the project root and goes through the same allowlist as the filesystem
  * API, so a terminal cannot be spawned anywhere the explorer could not browse.
+ * Neither given (a project-less "run this command" — the remote-desktop
+ * checklist's `brew install ffmpeg` button) → the user's home, the same place the
+ * OS explorer starts browsing from.
  */
 function resolveStartDir(projectName: string | undefined, cwd: string | undefined): string {
   if (cwd) {
@@ -16,7 +20,7 @@ function resolveStartDir(projectName: string | undefined, cwd: string | undefine
     return resolved;
   }
   if (projectName) return resolveProjectPath(projectName);
-  throw new Error("Session not found");
+  return homedir();
 }
 
 /** Control message prefix for resize commands */
@@ -36,8 +40,10 @@ export const terminalWebSocket = {
 
     let session = id !== "new" ? terminalService.get(id) : undefined;
 
-    // If session doesn't exist and a start directory is known, create one
-    if (!session && (projectName || cwd)) {
+    // A fresh socket ("new") always gets a shell — project root, explicit cwd, or home — and
+    // so does a stale id that still knows its project/cwd (tab reopened after a restart).
+    // Only a stale id with no context left is "Session not found".
+    if (!session && (id === "new" || projectName || cwd)) {
       try {
         const startDir = resolveStartDir(projectName, cwd);
         // Create session with the requested ID — but TerminalService generates its own ID.
