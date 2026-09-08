@@ -87,6 +87,7 @@ export class WindowService {
         color: treeItem.color,
         badge: treeItem.badge,
         actions: treeItem.actions,
+        wrap: treeItem.wrap,
         contextValue: treeItem.contextValue,
       });
     }

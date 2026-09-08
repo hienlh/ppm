@@ -162,9 +162,12 @@ function TreeNode({ item, depth, viewId }: { item: TreeItemUI; depth: number; vi
           />
         )}
 
-        {/* Label — click to toggle or execute command */}
+        {/* Label — click to toggle or execute command. Prose rows (guides, warnings)
+            opt into wrapping: in a narrow sidebar the truncated tail is the instruction. */}
         <button
-          className="flex-1 text-left text-xs truncate hover:text-primary transition-colors"
+          className={`flex-1 text-left text-xs hover:text-primary transition-colors ${
+            item.wrap ? "whitespace-normal break-words leading-snug py-0.5" : "truncate"
+          }`}
           onClick={handleClick}
         >
           {item.label}

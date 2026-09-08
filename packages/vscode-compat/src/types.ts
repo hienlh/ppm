@@ -52,6 +52,8 @@ export interface TreeItem {
   badge?: string | number;
   /** Arguments passed on row click; wins over `command.arguments`. */
   commandArgs?: unknown[];
+  /** Wrap the label instead of truncating — for sentence-like rows in a narrow sidebar. */
+  wrap?: boolean;
 }
 
 /** Inline action rendered on a tree row; icon names are the fixed set the web UI knows. */

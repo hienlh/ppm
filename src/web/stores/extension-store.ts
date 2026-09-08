@@ -34,6 +34,8 @@ export interface TreeItemUI {
   commandArgs?: unknown[];
   children?: TreeItemUI[];
   contextValue?: string;
+  /** Wrap the label onto several lines instead of truncating (for sentence-like rows). */
+  wrap?: boolean;
 }
 
 export interface WebviewPanelUI {
