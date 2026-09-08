@@ -16,6 +16,7 @@ import {
   captureInputArgs, captureVideoFilter, captureInputForPlatform, type CaptureInput,
 } from "./remote-desktop-capture-input.ts";
 import { AccessUnitAssembler, type AccessUnit } from "./access-unit-assembler.ts";
+import type { RemoteDisplay } from "./remote-desktop-displays.ts";
 
 export class CaptureUnavailableError extends Error {
   constructor(msg = "ffmpeg is not installed (screen capture requires it)") {
@@ -56,6 +57,8 @@ export interface CaptureHandle {
 }
 
 export interface StartCaptureOptions {
+  /** Which display to grab; null/undefined = the platform default (primary / whole desktop). */
+  display?: RemoteDisplay | null;
   onAccessUnit: (au: AccessUnit) => void;
   /** Called once the process exits, whether via `stop()` or on its own (crash/killed
    *  externally) — lets the session registry clean up without polling. `reason` is a short
@@ -70,7 +73,7 @@ export interface StartCaptureOptions {
 export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHandle> {
   const caps = await getFfmpegCapabilities();
   if (!caps.ffmpeg) throw new CaptureUnavailableError();
-  const input = captureInputForPlatform();
+  const input = captureInputForPlatform(process.platform, opts.display?.captureIndex ?? 0);
   if (!input) throw new CaptureUnavailableError(`no screen capture input on ${process.platform}`);
 
   const proc = Bun.spawn(buildCaptureArgs(caps.ffmpeg, caps.encoder ?? "libx264", input), {

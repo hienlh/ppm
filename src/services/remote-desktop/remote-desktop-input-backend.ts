@@ -8,12 +8,16 @@
  * Keys are KeyboardEvent `code`s (physical, layout-independent); the backend owns the table.
  */
 
+/** Where the captured frame sits in the OS's global logical coordinates — what a 0..1 fraction
+ *  is a fraction *of*. null = the backend's default surface (primary display / virtual desktop). */
+export interface InputTargetRect { x: number; y: number; width: number; height: number }
+
 export interface RemoteInputBackend {
   /** Short id for logs/diagnostics (`"win32-sendinput"`, `"darwin-cgevent"`). Whether injection
    *  would actually work right now (OS permissions) is a *requirement* in
    *  `remote-desktop-requirements.ts`, not a backend concern. */
   readonly id: string;
-  pointer(xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null): Promise<void>;
+  pointer(xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null, target: InputTargetRect | null): Promise<void>;
   /** `deltaY` in wheel-notch units of 120 (positive = away from the user). */
   wheel(deltaY: number): Promise<void>;
   /** Returns false for a `code` the backend has no mapping for (caller drops it). */

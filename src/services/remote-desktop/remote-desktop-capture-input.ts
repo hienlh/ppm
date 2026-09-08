@@ -24,8 +24,10 @@ export type CaptureInput =
   | { kind: "gdigrab" }
   | { kind: "avfoundation"; screen: string };
 
-/** avfoundation's name for the main display. */
-export const AVFOUNDATION_MAIN_SCREEN = "Capture screen 0";
+/** avfoundation's name for the N-th display in `CGGetActiveDisplayList` order (0 = main). */
+export function avfoundationScreenName(captureIndex: number): string {
+  return `Capture screen ${captureIndex}`;
+}
 
 /** ffmpeg args from `-f <grabber>` through `-i <source>` for the given input. */
 export function captureInputArgs(input: CaptureInput): string[] {
@@ -48,11 +50,13 @@ export function captureVideoFilter(input: CaptureInput): string {
 
 /** Pick the capture input for this host; null on platforms without a grabber. Whether the
  *  grabber actually works (ffmpeg built without it, no display) surfaces through ffmpeg's
- *  own exit + stderr tail in `startCapture`, the same way gdigrab failures do. */
-export function captureInputForPlatform(platform: NodeJS.Platform = process.platform): CaptureInput | null {
+ *  own exit + stderr tail in `startCapture`, the same way gdigrab failures do.
+ *  `captureIndex` selects the display on backends that capture one at a time (avfoundation);
+ *  gdigrab always grabs the whole virtual desktop. */
+export function captureInputForPlatform(platform: NodeJS.Platform = process.platform, captureIndex = 0): CaptureInput | null {
   switch (platform) {
     case "win32": return { kind: "gdigrab" };
-    case "darwin": return { kind: "avfoundation", screen: AVFOUNDATION_MAIN_SCREEN };
+    case "darwin": return { kind: "avfoundation", screen: avfoundationScreenName(captureIndex) };
     default: return null;
   }
 }

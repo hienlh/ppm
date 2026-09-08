@@ -3,12 +3,16 @@
  * virtual keyboard, zoom reset, close. Every button is a 44px+ touch target per
  * `docs/design-guidelines.md`'s Mobile-First UI Rules.
  */
-import { Hand, MousePointer2, Keyboard, ZoomOut, Gauge, X } from "lucide-react";
+import { Hand, MousePointer2, Keyboard, ZoomOut, Gauge, Monitor, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSettingsStore } from "@/stores/settings-store";
 import type { RemoteDesktopInputMode } from "./use-remote-desktop-touch";
 
 export interface RemoteDesktopMobileToolbarProps {
+  /** Current display's name on a multi-monitor host; null hides the button (single display). */
+  displayLabel: string | null;
+  /** Cycle to the next display — one tap per hop beats a dropdown in the thumb zone. */
+  onNextDisplay: () => void;
   mode: RemoteDesktopInputMode;
   onToggleMode: () => void;
   onOpenKeyboard: () => void;
@@ -45,6 +49,8 @@ function ToolbarButton({
 }
 
 export function RemoteDesktopMobileToolbar({
+  displayLabel,
+  onNextDisplay,
   mode,
   onToggleMode,
   onOpenKeyboard,
@@ -68,6 +74,11 @@ export function RemoteDesktopMobileToolbar({
       <ToolbarButton onClick={onResetZoom} label="Reset zoom">
         <ZoomOut className="size-5" />
       </ToolbarButton>
+      {displayLabel !== null && (
+        <ToolbarButton onClick={onNextDisplay} label={displayLabel.length > 10 ? `${displayLabel.slice(0, 9)}…` : displayLabel}>
+          <Monitor className="size-5" />
+        </ToolbarButton>
+      )}
       <ToolbarButton onClick={toggleStats} label="Stats" active={statsVisible}>
         <Gauge className="size-5" />
       </ToolbarButton>

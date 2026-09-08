@@ -8,9 +8,9 @@
  */
 import { win32InputBackend } from "./remote-desktop-input-win32.ts";
 import { darwinInputBackend } from "./remote-desktop-input-darwin.ts";
-import { RemoteInputUnavailableError, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
+import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 
-export { RemoteInputUnavailableError, type RemoteInputBackend };
+export { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend };
 
 const BACKENDS: Partial<Record<NodeJS.Platform, RemoteInputBackend>> = {
   win32: win32InputBackend,
@@ -35,8 +35,10 @@ function required(): RemoteInputBackend {
   return backend;
 }
 
-export function injectPointer(xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null): Promise<void> {
-  return required().pointer(xFrac, yFrac, button, down);
+export function injectPointer(
+  xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null, target: InputTargetRect | null = null,
+): Promise<void> {
+  return required().pointer(xFrac, yFrac, button, down, target);
 }
 
 export function injectWheel(deltaY: number): Promise<void> {

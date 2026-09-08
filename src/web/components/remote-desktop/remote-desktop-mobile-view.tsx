@@ -16,6 +16,7 @@ import { RemoteDesktopMobileToolbar } from "./remote-desktop-mobile-toolbar";
 import { RemoteDesktopMobileKeyBar } from "./remote-desktop-mobile-key-bar";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { letterboxedContentRect } from "./remote-desktop-coords";
+import { useRemoteDesktopDisplayChoice } from "./use-remote-desktop-display-choice";
 
 export interface RemoteDesktopMobileViewProps {
   onClose: () => void;
@@ -26,11 +27,12 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [mode, setMode] = useState<RemoteDesktopInputMode>("mouse");
   const [keyBarOpen, setKeyBarOpen] = useState(false);
+  const display = useRemoteDesktopDisplayChoice();
 
   const {
     connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect,
     getTotalBytes, getFrameCount,
-  } = useRemoteDesktopConnection(canvasRef);
+  } = useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
   const streaming = connState === "streaming";
 
   const { transform, virtualCursor, resetZoom } = useRemoteDesktopTouch({
@@ -169,6 +171,8 @@ export default function RemoteDesktopMobileView({ onClose }: RemoteDesktopMobile
       >
         {keyBarOpen && <RemoteDesktopMobileKeyBar sendMessage={sendMessage} />}
         <RemoteDesktopMobileToolbar
+          displayLabel={display.displays.length > 1 ? display.current?.label ?? null : null}
+          onNextDisplay={display.next}
           mode={mode}
           onToggleMode={toggleMode}
           onOpenKeyboard={openKeyboard}

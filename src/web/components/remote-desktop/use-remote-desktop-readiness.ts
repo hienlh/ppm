@@ -24,7 +24,16 @@ export interface RemoteDesktopRequirement {
   actions: RequirementAction[];
 }
 
+export interface RemoteDisplay {
+  id: string;
+  label: string;
+  primary: boolean;
+  width: number;
+  height: number;
+}
+
 export interface RemoteDesktopCapabilities {
+  displays: RemoteDisplay[];
   ffmpegAvailable: boolean;
   videoAvailable: boolean;
   inputAvailable: boolean;

@@ -6,7 +6,8 @@
  * token already travels as `?token=` on every WS URL (`isWsUpgradeAuthorized`,
  * `src/server/index.ts`) and proves nothing beyond "holds the one reusable app token", so a
  * single-use short-TTL nonce (`POST /api/remote-desktop/session`) must be presented as the
- * client's *first* message — `{type:"auth", nonce}` — before capture or input starts. Kept out
+ * client's *first* message — `{type:"auth", nonce, displayId?}` — before capture or input
+ * starts. `displayId` picks one of `/capabilities`' `displays`; absent/unknown = primary. Kept out
  * of the query string (unlike the coarse token) so it never lands in proxy/tunnel access logs.
  *
  * Both the feature flag and `auth.enabled` are re-checked here even though
@@ -57,7 +58,8 @@ async function authenticateFirstMessage(ws: RemoteDesktopWs, text: string): Prom
       getBufferedAmount: ws.getBufferedAmount ? () => ws.getBufferedAmount!() : undefined,
       close: (code, reason) => ws.close(code, reason),
     };
-    ws.data.session = await createRemoteDesktopSession(socket);
+    const displayId = typeof parsed.displayId === "string" ? parsed.displayId : undefined;
+    ws.data.session = await createRemoteDesktopSession(socket, displayId);
   } catch (e) {
     console.error(`[remote-desktop] failed to start capture: ${(e as Error).message}`);
     ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));

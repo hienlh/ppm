@@ -16,7 +16,7 @@
  *   not enough, so held modifiers are tracked and OR-ed onto each subsequent event.
  */
 import { codeToCgKey, CGKEY_MODIFIER_FLAG, MODIFIER_CGKEY_CODES } from "./remote-desktop-cg-key-map.ts";
-import { RemoteInputUnavailableError, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
+import { RemoteInputUnavailableError, type InputTargetRect, type RemoteInputBackend } from "./remote-desktop-input-backend.ts";
 
 const CG = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
 const CORE_FOUNDATION = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
@@ -94,16 +94,25 @@ function post(lib: Symbols, ev: Ptr, type?: number): void {
   lib.CFRelease(ev);
 }
 
-/** Fraction → logical point on the main display, clamped so a wild client value stays on screen. */
-function toPoint(lib: Symbols, xFrac: number, yFrac: number): { x: number; y: number } {
-  const display = lib.CGMainDisplayID();
-  const w = Number(lib.CGDisplayPixelsWide(display)), h = Number(lib.CGDisplayPixelsHigh(display));
-  return { x: Math.min(Math.max(xFrac, 0), 1) * w, y: Math.min(Math.max(yFrac, 0), 1) * h };
+/** Fraction → global logical point on the target display (main display when none given),
+ *  clamped so a wild client value stays on that screen. A secondary display's origin can be
+ *  negative in CG's global space (one here sits at −929,−1440). */
+function toPoint(lib: Symbols, xFrac: number, yFrac: number, target: InputTargetRect | null): { x: number; y: number } {
+  const rect = target ?? (() => {
+    const display = lib.CGMainDisplayID();
+    return { x: 0, y: 0, width: Number(lib.CGDisplayPixelsWide(display)), height: Number(lib.CGDisplayPixelsHigh(display)) };
+  })();
+  return {
+    x: rect.x + Math.min(Math.max(xFrac, 0), 1) * rect.width,
+    y: rect.y + Math.min(Math.max(yFrac, 0), 1) * rect.height,
+  };
 }
 
-async function pointer(xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null): Promise<void> {
+async function pointer(
+  xFrac: number, yFrac: number, button: "left" | "right" | null, down: boolean | null, target: InputTargetRect | null,
+): Promise<void> {
   const { lib } = await load();
-  const { x, y } = toPoint(lib, xFrac, yFrac);
+  const { x, y } = toPoint(lib, xFrac, yFrac, target);
   if (button === null || down === null) {
     // Pure move: a drag while a button is held, else a plain move.
     const type = heldButton === "left" ? LEFT_DRAGGED : heldButton === "right" ? RIGHT_DRAGGED : MOUSE_MOVED;

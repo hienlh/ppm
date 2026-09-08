@@ -4,6 +4,7 @@
 
 ### Added
 - **Remote Desktop works on macOS hosts** — the screen is captured with avfoundation and encoded by VideoToolbox, mouse and keyboard are injected through CoreGraphics (no helper binary to install or sign). Typing from a phone's soft keyboard now goes through as text — Android keyboards send no key codes, so until now nothing arrived — and accented or CJK characters land intact on both macOS (CoreGraphics Unicode events) and Windows (`KEYEVENTF_UNICODE`).
+- **Remote Desktop can switch between the host's displays** — a dropdown in the window (top-right, next to the stats toggle) and a Monitor button in the mobile toolbar cycle through them; mouse and touch land on the chosen screen even when it sits at negative coordinates. macOS only for now; Windows keeps streaming the whole virtual desktop.
 - **Remote Desktop tells you what the host is missing** instead of hiding the entry or showing a black screen: a checklist before connecting covers ffmpeg (one tap types `brew install ffmpeg` / `winget install …` into a PPM terminal) and, on macOS, the Screen Recording and Accessibility permissions (buttons open the right System Settings pane on the host). Missing input permission still lets you watch in view-only mode.
 
 ### Fixed

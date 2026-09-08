@@ -8,6 +8,7 @@ import { startCapture, type CaptureHandle } from "./remote-desktop-capture.ts";
 import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
 import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
+import { resolveDisplay, type RemoteDisplay } from "./remote-desktop-displays.ts";
 
 /** Minimal socket surface this module needs — matches Bun's `ServerWebSocket` shape closely
  *  enough to be faked in a unit test without a real connection. */
@@ -43,12 +44,13 @@ export class RemoteDesktopSession {
   /** Resolves once the underlying ffmpeg process has actually exited (not merely asked to). */
   readonly exited: Promise<void>;
 
-  constructor(private readonly ws: RemoteDesktopSocket) {
+  constructor(private readonly ws: RemoteDesktopSocket, private readonly display: RemoteDisplay | null) {
     this.exited = new Promise((resolve) => { this.exitResolve = resolve; });
   }
 
   async start(): Promise<void> {
     this.capture = await startCapture({
+      display: this.display,
       onAccessUnit: (au) => this.handleAccessUnit(au),
       // `reason` is only set when ffmpeg died on its own (crash, access denied, etc) — tell
       // the client *why* before closing instead of leaving it to guess from a bare
@@ -82,7 +84,7 @@ export class RemoteDesktopSession {
       const { xFrac, yFrac, button, down } = msg as { xFrac?: unknown; yFrac?: unknown; button?: unknown; down?: unknown };
       if (typeof xFrac === "number" && typeof yFrac === "number") {
         const btn = button === "left" || button === "right" ? button : null;
-        await injectPointer(xFrac, yFrac, btn, typeof down === "boolean" ? down : null);
+        await injectPointer(xFrac, yFrac, btn, typeof down === "boolean" ? down : null, this.display);
       }
       return;
     }
@@ -173,12 +175,12 @@ const activeSessions = new Set<RemoteDesktopSession>();
 
 /** Evict any previous session (awaiting its ffmpeg exit, capped so a wedged process can't
  *  hang a reconnect) before starting the new one. */
-export async function createRemoteDesktopSession(ws: RemoteDesktopSocket): Promise<RemoteDesktopSession> {
+export async function createRemoteDesktopSession(ws: RemoteDesktopSocket, displayId?: string): Promise<RemoteDesktopSession> {
   for (const existing of [...activeSessions]) {
     existing.close();
     await Promise.race([existing.exited, Bun.sleep(2000)]);
   }
-  const session = new RemoteDesktopSession(ws);
+  const session = new RemoteDesktopSession(ws, await resolveDisplay(displayId));
   await session.start();
   activeSessions.add(session);
   return session;

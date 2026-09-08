@@ -164,7 +164,8 @@ async function sendRaw(buf: Uint8Array, count: number): Promise<void> {
 /** Move the cursor and, if this is a click, press/release the button — one absolute move
  *  per call so the button acts at the position the client actually clicked. `xFrac`/`yFrac`
  *  are 0..1 fractions of the capture (client already dropped devicePixelRatio; only the
- *  canvas-relative fraction is meaningful for host coordinates). */
+ *  canvas-relative fraction is meaningful for host coordinates). The target rect is ignored:
+ *  gdigrab captures the whole virtual desktop and `MOUSEEVENTF_VIRTUALDESK` maps onto it. */
 async function injectPointer(
   xFrac: number,
   yFrac: number,

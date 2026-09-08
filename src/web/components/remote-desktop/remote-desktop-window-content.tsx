@@ -16,6 +16,7 @@ import { useRemoteInputCapture } from "./use-remote-input-capture";
 import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { RemoteDesktopWarningGate } from "./remote-desktop-warning-gate";
 import { RemoteDesktopReadinessGate } from "./remote-desktop-readiness-gate";
+import { useRemoteDesktopDisplayChoice } from "./use-remote-desktop-display-choice";
 
 export default function RemoteDesktopWindowContent({ id }: WindowContentProps) {
   const closeWindow = useWindowStore((s) => s.close);
@@ -31,8 +32,9 @@ export default function RemoteDesktopWindowContent({ id }: WindowContentProps) {
 
 function RemoteDesktopViewer() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const display = useRemoteDesktopDisplayChoice();
   const { connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect, getFrameCount, getTotalBytes } =
-    useRemoteDesktopConnection(canvasRef);
+    useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
   const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
   const toggleStats = useSettingsStore((s) => s.toggleRemoteDesktopStatsVisible);
 
@@ -56,6 +58,21 @@ function RemoteDesktopViewer() {
     >
       <canvas ref={canvasRef} data-testid="remote-desktop-canvas" className="max-h-full max-w-full outline-none" />
       <RemoteDesktopStatsOverlay canvasRef={canvasRef} getFrameCount={getFrameCount} getTotalBytes={getTotalBytes} />
+      {/* Multi-monitor hosts: pick which display to stream. Left of the stats toggle, same
+          corner cluster; a single-display host renders nothing here. */}
+      {display.displays.length > 1 && (
+        <select
+          value={display.current?.id ?? ""}
+          onChange={(e) => display.select(e.target.value)}
+          aria-label="Display"
+          className="absolute right-8 top-1 z-40 h-6 max-w-[45%] rounded bg-black/40 px-1.5 text-xs text-white/80 hover:bg-black/60"
+          data-testid="remote-desktop-display-select"
+        >
+          {display.displays.map((d) => (
+            <option key={d.id} value={d.id}>{d.label}{d.primary ? " (main)" : ""} · {d.width}×{d.height}</option>
+          ))}
+        </select>
+      )}
       {/* Small corner toggle for the stats overlay above — top-right so it never collides with
           the overlay itself (top-left) or the window's own title bar/controls above this body. */}
       <button
