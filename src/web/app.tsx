@@ -47,6 +47,7 @@ import { BackgroundOutputPanel } from "@/components/chat/background-output-panel
 import { ConnectionLostOverlay } from "@/components/shared/connection-lost-overlay";
 import { ExtensionQuickPick } from "@/components/extensions/extension-quickpick";
 import { ExtensionInputBox } from "@/components/extensions/extension-inputbox";
+import { ExtensionComposer } from "@/components/extensions/extension-composer";
 import { useExtensionWs } from "@/hooks/use-extension-ws";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { UploadProgressPanel } from "@/components/os-explorer/upload/upload-progress-panel";
@@ -445,9 +446,10 @@ export function App() {
         {/* Global background-command output panel */}
         <BackgroundOutputPanel />
 
-        {/* Extension modals (QuickPick, InputBox) */}
+        {/* Extension modals (QuickPick, InputBox, Composer) */}
         <ExtensionQuickPick />
         <ExtensionInputBox />
+        <ExtensionComposer />
 
         {/* Connection lost overlay — shown when API unreachable for >15s */}
         <ConnectionLostOverlay />

@@ -215,6 +215,30 @@ describe("extensionWebSocket", () => {
       expect(result).toBe("user input");
     });
 
+    it("resolves with composer response", async () => {
+      const msg: ExtServerMsg = {
+        type: "composer:show",
+        requestId: "req-composer",
+        options: { title: "Debug" },
+      };
+
+      const promise = requestFromBrowser(msg, "req-composer", 1000);
+
+      setTimeout(() => {
+        extensionWebSocket.message(
+          { data: { type: "ext" }, send: () => {} } as any,
+          JSON.stringify({
+            type: "composer:resolve",
+            requestId: "req-composer",
+            result: { content: "hello", permissionMode: "bypassPermissions" },
+          }),
+        );
+      }, 50);
+
+      const result = await promise;
+      expect(result).toEqual({ content: "hello", permissionMode: "bypassPermissions" });
+    });
+
     it("resolves with notification action response", async () => {
       const msg: ExtServerMsg = {
         type: "notification",
@@ -319,6 +343,54 @@ describe("extensionWebSocket", () => {
 
       const result = await promise;
       expect(result).toBe("OK");
+    });
+
+    it("handles composer:resolve message", async () => {
+      const msg: ExtServerMsg = {
+        type: "composer:show",
+        requestId: "req-composer-2",
+        options: {},
+      };
+
+      const promise = requestFromBrowser(msg, "req-composer-2", 1000);
+
+      const ws = { data: { type: "ext" }, send: () => {} };
+      await extensionWebSocket.message(
+        ws as any,
+        JSON.stringify({
+          type: "composer:resolve",
+          requestId: "req-composer-2",
+          result: null,
+        }),
+      );
+
+      const result = await promise;
+      expect(result).toBeNull();
+    });
+
+    it("ignores composer:resolve for a mismatched (unknown) requestId", async () => {
+      const msg: ExtServerMsg = {
+        type: "composer:show",
+        requestId: "req-composer-3",
+        options: {},
+      };
+
+      const promise = requestFromBrowser(msg, "req-composer-3", 200);
+
+      const ws = { data: { type: "ext" }, send: () => {} };
+      // A resolve for a DIFFERENT requestId must not settle this pending request —
+      // the original request is left to its own timeout.
+      await extensionWebSocket.message(
+        ws as any,
+        JSON.stringify({
+          type: "composer:resolve",
+          requestId: "some-other-request",
+          result: { content: "wrong one", permissionMode: "bypassPermissions" },
+        }),
+      );
+
+      const result = await promise;
+      expect(result).toBeUndefined();
     });
 
     it("ignores resolves for unknown request IDs", async () => {

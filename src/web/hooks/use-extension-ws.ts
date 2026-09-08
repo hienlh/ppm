@@ -177,6 +177,23 @@ export function useExtensionWs(enabled = true) {
           });
           break;
 
+        case "composer:show":
+          store.showComposer(msg.requestId, msg.options).then((result) => {
+            // Only reached when THIS tab's dialog actually resolved (Send/Cancel) —
+            // a `composer:dismiss` broadcast closes it without ever settling this
+            // promise, so a losing tab never sends its own composer:resolve.
+            send({
+              type: "composer:resolve",
+              requestId: msg.requestId,
+              result: result ?? null,
+            });
+          });
+          break;
+
+        case "composer:dismiss":
+          store.dismissComposer(msg.requestId);
+          break;
+
         case "webview:create": {
           const viewTypeSlug = msg.viewType.replace(/\.view$/, "");
           const locallyRequested = takeLocalDispatch(viewTypeSlug, msg.projectPath);

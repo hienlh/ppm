@@ -64,6 +64,35 @@ export interface InputBoxState {
   resolve: (value: string | undefined) => void;
 }
 
+/** Options accepted by window.showComposer(). No `projectName` — the composer always
+ * authors against the currently active project (mirrors ComposerOptions in vscode-compat). */
+export interface ComposerOptionsUI {
+  title?: string;
+  prompt?: string;
+  value?: string;
+  permissionMode?: string;
+  model?: string;
+}
+
+/** Result handed back to the extension once the user sends — mirrors ComposerResult in
+ * vscode-compat. No `images`: attachments are already folded into `content`. */
+export interface ComposerResultUI {
+  content: string;
+  model?: string;
+  effort?: string;
+  thinking?: boolean;
+  permissionMode: string;
+}
+
+export interface ComposerState {
+  /** Tracks which round trip this dialog belongs to — lets a stale `resolveComposer`/
+   * `dismissComposer` call (e.g. from a request this tab never actually opened) no-op
+   * instead of resolving/closing the wrong prompt. */
+  requestId: string;
+  options: ComposerOptionsUI;
+  resolve: (result: ComposerResultUI | undefined) => void;
+}
+
 // --- Store ---
 
 interface ExtensionStore {
@@ -102,6 +131,12 @@ interface ExtensionStore {
   inputBox: InputBoxState | null;
   showInputBox: (options?: InputBoxState["options"]) => Promise<string | undefined>;
   resolveInputBox: (value: string | undefined) => void;
+
+  // Composer dialog (window.showComposer())
+  composer: ComposerState | null;
+  showComposer: (requestId: string, options: ComposerOptionsUI) => Promise<ComposerResultUI | undefined>;
+  resolveComposer: (requestId: string, result: ComposerResultUI | undefined) => void;
+  dismissComposer: (requestId: string) => void;
 
   // Cleanup
   clearExtension: (extensionId: string) => void;
@@ -197,6 +232,36 @@ export const useExtensionStore = create<ExtensionStore>((set, get) => ({
     if (ib) {
       ib.resolve(value);
       set({ inputBox: null });
+    }
+  },
+
+  // --- Composer ---
+  composer: null,
+  showComposer: (requestId, options) => {
+    // Resolve any existing composer first (prevents promise leak) — mirrors the
+    // quickpick/inputbox guard above.
+    const existing = get().composer;
+    if (existing) existing.resolve(undefined);
+    return new Promise((resolve) => {
+      set({ composer: { requestId, options, resolve } });
+    });
+  },
+  resolveComposer: (requestId, result) => {
+    const c = get().composer;
+    // A resolve for a request this tab isn't showing (e.g. arrives after this tab
+    // already dismissed) must not touch whatever dialog is showing now.
+    if (c && c.requestId === requestId) {
+      c.resolve(result);
+      set({ composer: null });
+    }
+  },
+  dismissComposer: (requestId) => {
+    const c = get().composer;
+    if (c && c.requestId === requestId) {
+      // Close WITHOUT resolving: another tab already answered (or the request timed
+      // out), so this tab must not also send its own composer:resolve. The dialog's
+      // promise is simply left pending and garbage-collected with the closure.
+      set({ composer: null });
     }
   },
 

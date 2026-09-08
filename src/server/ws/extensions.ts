@@ -155,6 +155,15 @@ async function handleMessage(ws: ExtWsSocket, raw: string | Buffer): Promise<voi
       break;
     }
 
+    case "composer:resolve": {
+      const resolver = pendingRequests.get(msg.requestId);
+      if (resolver) {
+        pendingRequests.delete(msg.requestId);
+        resolver(msg.result);
+      }
+      break;
+    }
+
     case "notification:action": {
       const resolver = pendingRequests.get(msg.id);
       if (resolver) {

@@ -6,9 +6,10 @@
 import { resolve } from "node:path";
 import type { RpcChannel } from "./extension-rpc.ts";
 import { contributionRegistry } from "./contribution-registry.ts";
-import { broadcastExtMsg, requestFromBrowser } from "../server/ws/extensions.ts";
+import { broadcastExtMsg, requestFromBrowser, getExtClientCount } from "../server/ws/extensions.ts";
 import { getProjects } from "./db.service.ts";
 import { isSecretConfigKey, redactSecretConfigValue } from "./config-secret-keys.ts";
+import type { ComposerOptionsMsg, ComposerResultMsg } from "../types/extension-messages.ts";
 import { createLogger } from "./logger.ts";
 
 /** Same scope as the extension host's own forwarded console: what an extension did or said. */
@@ -97,6 +98,23 @@ export function registerVscodeCompatHandlers(rpc: RpcChannel): void {
       requestId,
     );
     return value;
+  });
+
+  rpc.onRequest("window:showComposer", async (params) => {
+    const [options] = params as [ComposerOptionsMsg | undefined];
+    // No browser tab is connected to answer — fail fast instead of blocking the
+    // extension worker for the full 600s timeout it sets on this call.
+    if (getExtClientCount() === 0) return undefined;
+    const requestId = nextRequestId();
+    const result = await requestFromBrowser<ComposerResultMsg | null>(
+      { type: "composer:show", requestId, options: options ?? {} },
+      requestId,
+      600_000,
+    );
+    // A prompt authored in one browser tab must not linger open in the others —
+    // broadcast the dismiss whether this settled by resolve or by timeout.
+    broadcastExtMsg({ type: "composer:dismiss", requestId });
+    return result ?? undefined;
   });
 
   // --- status bar (forwarded to browser via WS bridge) ---
