@@ -3,6 +3,7 @@ import { EventEmitter } from "./event-emitter.ts";
 import type {
   RpcClient, StatusBarItem, StatusBarAlignment, QuickPickItem,
   QuickPickOptions, InputBoxOptions, OutputChannel, ViewColumn,
+  ComposerOptions, ComposerResult,
 } from "./types.ts";
 import { StatusBarAlignment as SBAlign } from "./types.ts";
 
@@ -105,19 +106,34 @@ export class WindowService {
     return this.rpc.request<string | undefined>("window:showMessage", "error", message, items);
   }
 
-  // --- Quick Pick / Input ---
+  // --- Quick Pick / Input / Composer ---
+  //
+  // These three verbs wait on a human in the browser, so they use a 600s timeout instead of
+  // the RPC default (10s) — see sendRequestWithTimeout's ordering rule in extension-rpc.ts:
+  // this worker-side timeout must stay >= whatever browser-side timeout the server passes to
+  // requestFromBrowser for the same round trip.
 
   async showQuickPick(
     items: string[] | QuickPickItem[],
     options?: QuickPickOptions,
   ): Promise<string | QuickPickItem | undefined> {
-    return this.rpc.request("window:showQuickPick", items, options ?? {});
+    return this.rpc.requestWithTimeout("window:showQuickPick", 600_000, items, options ?? {});
   }
 
   async showInputBox(options?: InputBoxOptions): Promise<string | undefined> {
     // Remove non-serializable validateInput before sending over RPC
     const { validateInput, ...serializableOpts } = options ?? {};
-    return this.rpc.request<string | undefined>("window:showInputBox", serializableOpts);
+    return this.rpc.requestWithTimeout<string | undefined>("window:showInputBox", 600_000, serializableOpts);
+  }
+
+  /**
+   * Show the real chat composer and return the message the user sent, or `undefined` on
+   * cancel/dismiss/timeout. Client-side stub only — the host-side RPC handler, WS round trip
+   * and dialog UI land in a later phase; until then this call always times out or errors with
+   * "No handler for method" against a worker that has no `window:showComposer` handler wired.
+   */
+  async showComposer(options?: ComposerOptions): Promise<ComposerResult | undefined> {
+    return this.rpc.requestWithTimeout<ComposerResult | undefined>("window:showComposer", 600_000, options ?? {});
   }
 
   // --- Status Bar ---

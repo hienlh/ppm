@@ -163,5 +163,33 @@ export class ThemeIcon {
 
 export interface RpcClient {
   request<T = unknown>(method: string, ...params: unknown[]): Promise<T>;
+  /**
+   * Same as `request`, but with an explicit timeout instead of the RPC channel's default.
+   * Required (not optional) — an optional member here would let a caller silently fall back
+   * to the 10s default and reintroduce the timeout bug on interactive verbs.
+   */
+  requestWithTimeout<T = unknown>(method: string, timeoutMs: number, ...params: unknown[]): Promise<T>;
   notify(event: string, data: unknown): void;
+}
+
+// --- Composer (window.showComposer) ---
+
+/** Options accepted by window.showComposer(). No `projectName` — the composer always
+ * authors against the currently active project. */
+export interface ComposerOptions {
+  title?: string;
+  prompt?: string;
+  value?: string;
+  permissionMode?: string;
+  model?: string;
+}
+
+/** Result returned by window.showComposer() once the user sends a message, or `undefined`
+ * on cancel/dismiss/timeout. No `images` — attachments are already folded into `content`. */
+export interface ComposerResult {
+  content: string;
+  model?: string;
+  effort?: string;
+  thinking?: boolean;
+  permissionMode: string;
 }

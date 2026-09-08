@@ -16,6 +16,16 @@ export interface StatusBarItemMsg {
   extensionId?: string;
 }
 
+/** Wire shape for a row action button — mirrors TreeItemAction in
+ * src/web/stores/extension-store.ts exactly; that FE type is the source of truth for what
+ * ActionButton actually renders. */
+export interface TreeItemActionMsg {
+  icon: "refresh" | "edit" | "trash" | "plus" | "search";
+  tooltip: string;
+  command: string;
+  commandArgs?: unknown[];
+}
+
 export interface TreeItemMsg {
   id: string;
   label: string;
@@ -24,8 +34,11 @@ export interface TreeItemMsg {
   icon?: string;
   /** Label wraps instead of truncating — for rows whose text is the content. */
   wrap?: boolean;
+  badge?: string;
   collapsibleState: "none" | "collapsed" | "expanded";
   command?: string;
+  commandArgs?: unknown[];
+  actions?: TreeItemActionMsg[];
   children?: TreeItemMsg[];
   contextValue?: string;
 }
@@ -35,6 +48,24 @@ export interface QuickPickItemMsg {
   description?: string;
   detail?: string;
   picked?: boolean;
+}
+
+// --- Composer ---
+
+export interface ComposerOptionsMsg {
+  title?: string;
+  prompt?: string;
+  value?: string;
+  permissionMode?: string;
+  model?: string;
+}
+
+export interface ComposerResultMsg {
+  content: string;
+  model?: string;
+  effort?: string;
+  thinking?: boolean;
+  permissionMode: string;
 }
 
 // --- Server → Client messages ---
@@ -53,7 +84,9 @@ export type ExtServerMsg =
   | { type: "webview:postMessage"; panelId: string; message: unknown }
   | { type: "tab:open"; tabType: string; title: string; projectId: string | null; closable?: boolean; metadata?: Record<string, unknown> }
   | { type: "project:switch"; projectName: string }
-  | { type: "contributions:update"; contributions: ExtensionContributes; activationErrors?: Record<string, string> };
+  | { type: "contributions:update"; contributions: ExtensionContributes; activationErrors?: Record<string, string> }
+  | { type: "composer:show"; requestId: string; options: ComposerOptionsMsg }
+  | { type: "composer:dismiss"; requestId: string };
 
 // --- Client → Server messages ---
 
@@ -66,4 +99,5 @@ export type ExtClientMsg =
   | { type: "webview:close"; panelId: string }
   | { type: "quickpick:resolve"; requestId: string; selected: QuickPickItemMsg[] | null }
   | { type: "inputbox:resolve"; requestId: string; value: string | null }
-  | { type: "notification:action"; id: string; action: string | null };
+  | { type: "notification:action"; id: string; action: string | null }
+  | { type: "composer:resolve"; requestId: string; result: ComposerResultMsg | null };

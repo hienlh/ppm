@@ -72,6 +72,8 @@ rpc.onRequest("ext:activate", async (params) => {
   // Create RpcClient adapter for vscode-compat (Worker's RPC → vscode-compat interface)
   const rpcClient = {
     request: <T = unknown>(method: string, ...p: unknown[]) => rpc.sendRequest<T>(method, ...p),
+    requestWithTimeout: <T = unknown>(method: string, timeoutMs: number, ...p: unknown[]) =>
+      rpc.sendRequestWithTimeout<T>(method, timeoutMs, p),
     notify: (event: string, data: unknown) => rpc.sendEvent(event, data),
   };
 
