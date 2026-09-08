@@ -115,14 +115,53 @@ class ExtensionService {
       log.error("Worker error:", event.message);
     });
     // The only sign the host thread is gone: an uncaught exception in any extension ends it
-    // (code 1), and `terminateWorker` is the one expected way out.
+    // (code 1), and `terminateWorker` is the one expected way out. Only the current worker
+    // dying triggers a rebuild: `terminateWorker` clears `this.worker` before terminating, so
+    // the close event it causes (including the one inside recovery) never re-enters it.
     worker.addEventListener("close", (event) => {
       const code = (event as Event & { code?: number }).code;
-      if (this.worker === worker) log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
-      else log.debug(`Extension host worker stopped code=${code}`);
+      if (this.worker === worker) {
+        log.error(`Extension host worker exited code=${code} active=${this.activatedIds.size}`);
+        void this.recoverWorker("close");
+      } else {
+        log.debug(`Extension host worker stopped code=${code}`);
+      }
     });
 
     return { worker: this.worker, rpc: this.rpc };
+  }
+
+  private recovering = false;
+  private recoveryTimes: number[] = [];
+
+  /**
+   * A terminated worker leaves `this.worker` non-null, so every later RPC waits
+   * the full timeout and fails. Rebuild the host and re-activate whatever was
+   * enabled; bounded so a crash-on-activate extension cannot restart-loop.
+   */
+  private async recoverWorker(reason: string): Promise<void> {
+    if (this.recovering) return;
+    const now = Date.now();
+    this.recoveryTimes = this.recoveryTimes.filter((t) => now - t < 5 * 60_000);
+    if (this.recoveryTimes.length >= 3) {
+      log.error(`Worker ${reason} again — 3 recoveries in 5 min, giving up until restart`);
+      return;
+    }
+    this.recovering = true;
+    this.recoveryTimes.push(now);
+    try {
+      const toReactivate = getExtensions().filter((row) => row.enabled === 1).map((row) => row.id);
+      log.warn(`Worker ${reason} — rebuilding host and re-activating ${toReactivate.length} extension(s)`);
+      await this.terminateWorker();
+      for (const id of toReactivate) {
+        try { await this.activate(id); } catch (e) {
+          this.activationErrors.set(id, e instanceof Error ? e.message : String(e));
+          log.error(`Failed to re-activate ${id} after worker ${reason}:`, e);
+        }
+      }
+    } finally {
+      this.recovering = false;
+    }
   }
 
   private async terminateWorker(): Promise<void> {

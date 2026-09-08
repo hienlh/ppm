@@ -191,9 +191,8 @@ export class WindowService {
     this._treeProviders.set(viewId, { provider });
     // Initial tree data push — serialize via getTreeItem
     if (provider.getChildren) {
-      this._getTreeChildren(viewId).then((items) => {
-        rpc.request("window:tree:update", viewId, items);
-      }).catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
+      this._getTreeChildren(viewId).then((items) => rpc.request("window:tree:update", viewId, items))
+        .catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
     }
     // Subscribe to onDidChangeTreeData — re-push entire tree on change.
     // `Event<T>` is documented (and implemented by `vscode.EventEmitter`) to return
@@ -203,9 +202,8 @@ export class WindowService {
     let changeUnsub: (() => void) | { dispose(): void } | undefined;
     if (provider.onDidChangeTreeData) {
       changeUnsub = provider.onDidChangeTreeData(() => {
-        this._getTreeChildren(viewId).then((items) => {
-          rpc.request("window:tree:update", viewId, items);
-        }).catch((e) => console.error(`[vscode-compat] tree refresh error (${viewId}):`, e));
+        this._getTreeChildren(viewId).then((items) => rpc.request("window:tree:update", viewId, items))
+          .catch((e) => console.error(`[vscode-compat] tree refresh error (${viewId}):`, e));
       });
     }
     return new Disposable(() => {
@@ -213,7 +211,7 @@ export class WindowService {
       else changeUnsub?.dispose();
       this._treeProviders.delete(viewId);
       this._treeElementCache.delete(viewId);
-      rpc.request("window:tree:refresh", viewId);
+      rpc.request("window:tree:refresh", viewId).catch(() => {});
     });
   }
 

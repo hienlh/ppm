@@ -58,6 +58,18 @@ self.addEventListener("message", (event: MessageEvent<RpcMessage>) => {
   rpc.handleMessage(event.data);
 });
 
+// All extensions share this one worker. Without these guards a single
+// forgotten `.catch()` in any of them terminates the worker and takes every
+// other extension down with it — log and keep serving instead.
+self.addEventListener("unhandledrejection", (event: Event & { reason?: unknown; preventDefault?: () => void }) => {
+  event.preventDefault?.();
+  console.error("[ExtHost] unhandled rejection (swallowed to keep the host alive):", event.reason);
+});
+self.addEventListener("error", (event: Event & { error?: unknown; message?: string; preventDefault?: () => void }) => {
+  event.preventDefault?.();
+  console.error("[ExtHost] uncaught error (swallowed to keep the host alive):", event.error ?? event.message);
+});
+
 // --- RPC handlers ---
 
 rpc.onRequest("ext:activate", async (params) => {
