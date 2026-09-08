@@ -195,8 +195,12 @@ export class WindowService {
         rpc.request("window:tree:update", viewId, items);
       }).catch((e) => console.error(`[vscode-compat] tree init error (${viewId}):`, e));
     }
-    // Subscribe to onDidChangeTreeData — re-push entire tree on change
-    let changeUnsub: (() => void) | undefined;
+    // Subscribe to onDidChangeTreeData — re-push entire tree on change.
+    // `Event<T>` is documented (and implemented by `vscode.EventEmitter`) to return
+    // a `Disposable` object, not a bare unsubscribe function — a provider that
+    // builds its event off `vscode.EventEmitter` hands back `{ dispose() }`, so
+    // calling the result as a function throws at teardown. Accept either shape.
+    let changeUnsub: (() => void) | { dispose(): void } | undefined;
     if (provider.onDidChangeTreeData) {
       changeUnsub = provider.onDidChangeTreeData(() => {
         this._getTreeChildren(viewId).then((items) => {
@@ -205,7 +209,8 @@ export class WindowService {
       });
     }
     return new Disposable(() => {
-      if (changeUnsub) changeUnsub();
+      if (typeof changeUnsub === "function") changeUnsub();
+      else changeUnsub?.dispose();
       this._treeProviders.delete(viewId);
       this._treeElementCache.delete(viewId);
       rpc.request("window:tree:refresh", viewId);

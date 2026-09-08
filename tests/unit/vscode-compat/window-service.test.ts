@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "bun:test";
 import { WindowService } from "../../../packages/vscode-compat/src/window.ts";
+import { EventEmitter } from "../../../packages/vscode-compat/src/event-emitter.ts";
 import type { RpcClient } from "../../../packages/vscode-compat/src/types.ts";
 
 function createMockRpc(): RpcClient & {
@@ -77,6 +78,36 @@ describe("WindowService", () => {
     it("returns empty for unknown viewId", async () => {
       const items = await (window as any)._getTreeChildren("nonexistent");
       expect(items).toEqual([]);
+    });
+  });
+
+  describe("createTreeView disposal", () => {
+    it("disposes cleanly when the provider's onDidChangeTreeData is backed by vscode.EventEmitter", () => {
+      // EventEmitter.event returns a Disposable object ({ dispose() }), not a bare
+      // unsubscribe function. Before the fix, dispose() called it as a function and
+      // threw "changeUnsub is not a function" for any provider built this way.
+      const emitter = new EventEmitter<void>();
+      const provider = {
+        getChildren: () => [],
+        getTreeItem: (el: unknown) => el,
+        onDidChangeTreeData: emitter.event,
+      };
+
+      const view = window.createTreeView("emitter-view", { treeDataProvider: provider });
+
+      expect(() => view.dispose()).not.toThrow();
+    });
+
+    it("still disposes cleanly when onDidChangeTreeData returns a bare unsubscribe function", () => {
+      const provider = {
+        getChildren: () => [],
+        getTreeItem: (el: unknown) => el,
+        onDidChangeTreeData: (_listener: () => void) => () => {},
+      };
+
+      const view = window.createTreeView("fn-view", { treeDataProvider: provider });
+
+      expect(() => view.dispose()).not.toThrow();
     });
   });
 

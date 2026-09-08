@@ -153,12 +153,19 @@ describe("RpcChannel", () => {
     });
 
     it("clears the timer on response so it never fires afterwards", async () => {
+      // Not-throwing proves nothing here — a stray fired timer would just call
+      // reject() on an already-resolved promise, which is silently a no-op. Spy on
+      // clearTimeout instead: it must fire exactly once, for the timer this
+      // response actually cleared, and never again once nothing is pending.
+      const clearSpy = jest.spyOn(globalThis, "clearTimeout");
       const promise = channel.sendRequest("method");
       await channel.handleMessage({ type: "response", id: 1, result: "ok" });
       expect(await promise).toBe("ok");
+      expect(clearSpy).toHaveBeenCalledTimes(1);
 
-      // Advancing well past the timeout must be a no-op now the timer was cleared.
-      expect(() => jest.advanceTimersByTime(20_000)).not.toThrow();
+      jest.advanceTimersByTime(20_000);
+      expect(clearSpy).toHaveBeenCalledTimes(1);
+      clearSpy.mockRestore();
     });
   });
 

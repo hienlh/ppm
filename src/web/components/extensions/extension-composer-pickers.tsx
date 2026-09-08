@@ -1,7 +1,7 @@
 /**
  * Slash/file picker state + handlers for <ExtensionComposer>, split out of that file to
- * keep it under the project's file-size guideline. No JSX lives here (the .tsx extension
- * only matches this phase's file-ownership glob) — it is a plain hook.
+ * keep it under the project's file-size guideline. No JSX lives here — it is a plain
+ * hook, kept as `.tsx` only to match its sibling `extension-composer.tsx`.
  *
  * MessageInput renders no pickers itself; it only emits state-change callbacks and
  * consumes the selected item (see message-input.tsx). Every host that embeds MessageInput

@@ -3,12 +3,14 @@ import { X } from "@/lib/icons";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
+import { getAISettings } from "@/lib/api-settings";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { MessageInput, type ChatAttachment } from "@/components/chat/message-input";
 import { SlashCommandPicker } from "@/components/chat/slash-command-picker";
 import { FilePicker } from "@/components/chat/file-picker";
 import { buildMessageWithAttachments } from "@/components/chat/build-message-with-attachments";
 import { useExtensionComposerPickers } from "./extension-composer-pickers";
+import { resolveComposerPermissionMode } from "./extension-composer-permission-mode";
 
 /**
  * Extension-driven composer dialog: an extension called `window.showComposer()` and is
@@ -37,10 +39,21 @@ export function ExtensionComposer() {
   // selection from a previous prompt must not leak into the next one.
   useEffect(() => {
     if (!composer) return;
-    setPermissionMode(composer.options.permissionMode ?? "bypassPermissions");
+    const optionMode = composer.options.permissionMode;
+    setPermissionMode(resolveComposerPermissionMode(optionMode));
     setModel(composer.options.model ?? null);
     setEffort(null);
     setThinking(false);
+    if (optionMode) return;
+    // No explicit mode: fall back to the configured provider default rather than
+    // the hardcoded bypassPermissions just seeded. `cancelled` because this effect
+    // re-runs per request — a slow settings response for request A must not
+    // overwrite the mode of request B that opened while it was in flight.
+    let cancelled = false;
+    getAISettings()
+      .then((s) => { if (!cancelled) setPermissionMode(resolveComposerPermissionMode(undefined, s)); })
+      .catch(() => { /* keep the bypassPermissions fallback already seeded */ });
+    return () => { cancelled = true; };
   }, [composer?.requestId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCancel = useCallback(() => {
@@ -111,7 +124,12 @@ export function ExtensionComposer() {
         onClose={pickers.handleFileClose}
         visible={pickers.showFilePicker}
       />
+      {/* Keyed on requestId: the store resolves request A and sets B in the same
+          render (composer is never null in between), so MessageInput never
+          unmounts on its own between two requests and would otherwise keep
+          whatever the user had typed for the previous one. */}
       <MessageInput
+        key={composer.requestId}
         onSend={handleSend}
         autoFocus
         initialValue={composer.options.value}
