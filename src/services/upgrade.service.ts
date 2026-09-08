@@ -117,10 +117,15 @@ let upgradeInProgress = false;
 
 /** Build the global-install command. Absolute runtime path (not a bare
  *  "bun"/"npm") because autostart (launchd/systemd) may not have the runtime's
- *  bin dir on $PATH, where a bare name fails with "Executable not found". */
+ *  bin dir on $PATH, where a bare name fails with "Executable not found".
+ *
+ *  bun gets `--no-cache`: it resolves versions from a cached package manifest
+ *  and, right after a release, that manifest predates the version the update
+ *  check just found — `bun install -g pkg@new` then fails with "No version
+ *  matching … (but package exists)" until the cache happens to expire. */
 export function buildUpgradeCommand(method: "bun" | "npm", pkg: string): string[] {
   return method === "bun"
-    ? [process.execPath, "install", "-g", pkg]
+    ? [process.execPath, "install", "-g", "--no-cache", pkg]
     : [resolveNpmBin(), "install", "-g", pkg];
 }
 

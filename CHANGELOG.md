@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`ppm upgrade` right after a release no longer fails with "No version matching … (but package exists)"** — bun resolved the new version against a cached package manifest that predated it; the upgrade install now bypasses that cache.
+
 ## [0.19.1] - 2026-09-09
 
 ### Fixed
