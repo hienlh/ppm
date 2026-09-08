@@ -25,6 +25,7 @@ import { createPortal } from "react-dom";
 import { usePortalContainer } from "@/components/ui/portal-container-context";
 import { useRemoteDesktopMobileOpenState } from "./use-remote-desktop-mobile-open-state";
 import { RemoteDesktopWarningGate } from "./remote-desktop-warning-gate";
+import { RemoteDesktopReadinessGate } from "./remote-desktop-readiness-gate";
 
 const RemoteDesktopMobileView = lazy(() => import("./remote-desktop-mobile-view"));
 
@@ -38,9 +39,11 @@ export function RemoteDesktopMobileSheet() {
   return createPortal(
     <div className="fixed inset-0 z-[45] bg-black" data-testid="remote-desktop-mobile-sheet">
       <RemoteDesktopWarningGate onCancel={close}>
-        <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-text-2">Loading…</div>}>
-          <RemoteDesktopMobileView onClose={close} />
-        </Suspense>
+        <RemoteDesktopReadinessGate onCancel={close}>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-text-2">Loading…</div>}>
+            <RemoteDesktopMobileView onClose={close} />
+          </Suspense>
+        </RemoteDesktopReadinessGate>
       </RemoteDesktopWarningGate>
     </div>,
     portalContainer ?? document.getElementById("root") ?? document.body,

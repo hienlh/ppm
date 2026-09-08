@@ -49,7 +49,9 @@ const WEB = `http://localhost:${WEB_PORT}`;
 const CDP_PORT = 9232;
 const DEV_DB = join(homedir(), ".ppm", "ppm.dev.db");
 const SHOTS = process.env.PPM_E2E_SHOTS || join(REPO, "plans", "reports", "screenshots");
-const CHROME = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const CHROME = process.env.CHROME_PATH || (process.platform === "darwin"
+  ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  : "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe");
 const KEEP = !!process.env.PPM_E2E_KEEP;
 const NO_SERVERS = !!process.env.PPM_E2E_NO_SERVERS;
 const TOKEN_KEY = "ppm-auth-token"; // src/web/lib/api-client.ts
@@ -372,11 +374,20 @@ async function waitForRealFrame(cdp, { meanThreshold = 5, varianceThreshold = 30
   throw new Error(`no real frame within ${timeoutMs}ms — last stats: ${JSON.stringify(last)}`);
 }
 
-/** Host cursor position via a PowerShell one-liner — this harness runs ON the machine
- *  gdigrab captures, so it can independently verify SendInput actually moved the real OS
- *  cursor (not just something inside the browser sandbox) without any CDP mouse emulation
- *  being mistaken for the remote-desktop's own input path. */
+/** Host cursor position — this harness runs ON the captured machine, so it can independently
+ *  verify the injector actually moved the real OS cursor (not just something inside the browser
+ *  sandbox) without any CDP mouse emulation being mistaken for the remote-desktop's own input
+ *  path. PowerShell on Windows; on macOS a JXA one-liner, because `CGEventGetLocation` returns
+ *  a struct by value that bun:ffi cannot express. */
 function hostCursorPos() {
+  if (process.platform === "darwin") {
+    const proc = Bun.spawnSync(["osascript", "-l", "JavaScript", "-e",
+      'ObjC.import("CoreGraphics"); const p = $.CGEventGetLocation($.CGEventCreate(null)); `${Math.round(p.x)},${Math.round(p.y)}`']);
+    const out = proc.stdout.toString().trim();
+    const m = out.match(/(-?\d+),(-?\d+)/);
+    if (!m) throw new Error(`could not parse host cursor position from: ${out}`);
+    return { x: Number(m[1]), y: Number(m[2]) };
+  }
   const proc = Bun.spawnSync([
     "powershell", "-NoProfile", "-Command",
     "Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; Write-Output \"$($p.X),$($p.Y)\"",
@@ -387,7 +398,17 @@ function hostCursorPos() {
   return { x: Number(m[1]), y: Number(m[2]) };
 }
 
+/** Bounds the capture maps 0..1 onto: the whole virtual screen on Windows (gdigrab `desktop`),
+ *  the main display in logical points on macOS (avfoundation "Capture screen 0" + CG points). */
 function hostVirtualScreen() {
+  if (process.platform === "darwin") {
+    const proc = Bun.spawnSync(["osascript", "-l", "JavaScript", "-e",
+      'ObjC.import("CoreGraphics"); const d = $.CGMainDisplayID(); `0,0,${$.CGDisplayPixelsWide(d)},${$.CGDisplayPixelsHigh(d)}`']);
+    const out = proc.stdout.toString().trim();
+    const m = out.match(/(-?\d+),(-?\d+),(-?\d+),(-?\d+)/);
+    if (!m) throw new Error(`could not parse main display bounds from: ${out}`);
+    return { x: Number(m[1]), y: Number(m[2]), width: Number(m[3]), height: Number(m[4]) };
+  }
   const proc = Bun.spawnSync([
     "powershell", "-NoProfile", "-Command",
     "Add-Type -AssemblyName System.Windows.Forms; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; Write-Output \"$($b.X),$($b.Y),$($b.Width),$($b.Height)\"",
@@ -458,7 +479,7 @@ async function main() {
 
   step("4. Best-effort input round trip (1b)");
   let inputResult = "not attempted";
-  const inputScenarioName = "synthetic pointer click round-trips to the real host cursor (SendInput)";
+  const inputScenarioName = "synthetic pointer click round-trips to the real host cursor (SendInput / CGEvent)";
   if (!(await cdp.evaluate(`document.querySelector('[data-testid="remote-desktop-window"]')?.dataset.connState === "streaming"`))) {
     inputResult = "SKIP: not streaming (video pipe did not reach streaming state — see scenario above)";
     record(inputScenarioName, false, inputResult);

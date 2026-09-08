@@ -39,8 +39,15 @@ export interface UseRemoteDesktopConnectionResult {
   getFrameCount: () => number;
 }
 
+export interface UseRemoteDesktopConnectionOptions {
+  /** One of `/capabilities`' `displays[].id`; undefined = the host's primary display. Changing it
+   *  tears the session down and reconnects on the new display — one ffmpeg per display. */
+  displayId?: string;
+}
+
 export function useRemoteDesktopConnection(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  { displayId }: UseRemoteDesktopConnectionOptions = {},
 ): UseRemoteDesktopConnectionResult {
   const wsRef = useRef<WebSocket | null>(null);
   const totalBytesRef = useRef(0);
@@ -82,7 +89,7 @@ export function useRemoteDesktopConnection(
       wsRef.current = ws;
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({ type: "auth", nonce }));
+        ws.send(JSON.stringify({ type: "auth", nonce, ...(displayId ? { displayId } : {}) }));
         pingTimer = setInterval(() => sendMessage({ type: "ping" }), PING_INTERVAL_MS);
       };
       ws.onmessage = (event) => {
@@ -128,8 +135,8 @@ export function useRemoteDesktopConnection(
       wsRef.current = null;
       try { decoder.reset(); } catch { /* tearing down regardless */ }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect is driven by `generation`
-  }, [generation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reconnect is driven by `generation` + the display pick
+  }, [generation, displayId]);
 
   const reconnect = useCallback(() => setGeneration((g) => g + 1), []);
   const getTotalBytes = useCallback(() => totalBytesRef.current, []);

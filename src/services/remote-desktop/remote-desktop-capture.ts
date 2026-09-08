@@ -1,5 +1,5 @@
 /**
- * Spawn ffmpeg (`gdigrab` → H.264 Annex-B on `pipe:1`) and turn its stdout into access units.
+ * Spawn ffmpeg (platform grabber → H.264 Annex-B on `pipe:1`) and turn its stdout into access units.
  *
  * Teardown is `proc.kill()` only — never `reader.cancel()`, never `for await (chunk of
  * proc.stdout) { ... break }`. Both of those cancel the underlying stream reader, which
@@ -11,27 +11,35 @@
  * its own — it is never cancelled from outside.
  */
 import { getFfmpegCapabilities } from "../media-transcode/ffmpeg-capabilities.ts";
-import { captureEncoderArgs, CAPTURE_FRAMERATE } from "./remote-desktop-encoder-args.ts";
+import { captureEncoderArgs } from "./remote-desktop-encoder-args.ts";
+import {
+  captureInputArgs, captureVideoFilter, captureInputForPlatform, type CaptureInput,
+} from "./remote-desktop-capture-input.ts";
 import { AccessUnitAssembler, type AccessUnit } from "./access-unit-assembler.ts";
+import type { RemoteDisplay } from "./remote-desktop-displays.ts";
 
 export class CaptureUnavailableError extends Error {
-  constructor(msg = "ffmpeg is not installed (gdigrab capture requires it)") {
+  constructor(msg = "ffmpeg is not installed (screen capture requires it)") {
     super(msg);
     this.name = "CaptureUnavailableError";
   }
 }
 
-/** Build the gdigrab argv; pure so it can be asserted on without spawning a process.
+/** Build the capture argv; pure so it can be asserted on without spawning a process.
  *  `-fflags nobuffer -flags low_delay` + `-flush_packets 1` stop ffmpeg from holding frames in
  *  its demux/mux buffers before emitting — on a fast/LAN transport that buffering is a big slice
- *  of the felt lag. `encoder` selects the H.264 encoder args (hardware NVENC/QSV/AMF when the
- *  capability probe found one, else libx264). */
-export function buildCaptureArgs(ffmpeg: string, encoder: string = "libx264"): string[] {
+ *  of the felt lag. `encoder` selects the H.264 encoder args (hardware NVENC/QSV/AMF/VideoToolbox
+ *  when the capability probe found one, else libx264); `input` selects the platform grabber. */
+export function buildCaptureArgs(
+  ffmpeg: string,
+  encoder: string = "libx264",
+  input: CaptureInput = { kind: "gdigrab" },
+): string[] {
   return [
     ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
     "-fflags", "nobuffer", "-flags", "low_delay",
-    "-f", "gdigrab", "-framerate", String(CAPTURE_FRAMERATE), "-i", "desktop",
-    "-vf", "scale=-2:720",
+    ...captureInputArgs(input),
+    "-vf", captureVideoFilter(input),
     ...captureEncoderArgs(encoder),
     "-flush_packets", "1",
     "-f", "h264", "pipe:1",
@@ -49,6 +57,8 @@ export interface CaptureHandle {
 }
 
 export interface StartCaptureOptions {
+  /** Which display to grab; null/undefined = the platform default (primary / whole desktop). */
+  display?: RemoteDisplay | null;
   onAccessUnit: (au: AccessUnit) => void;
   /** Called once the process exits, whether via `stop()` or on its own (crash/killed
    *  externally) — lets the session registry clean up without polling. `reason` is a short
@@ -58,12 +68,15 @@ export interface StartCaptureOptions {
   onExit?: (code: number | null, reason?: string) => void;
 }
 
-/** Start gdigrab capture. Rejects immediately if ffmpeg is not on PATH. */
+/** Start screen capture. Rejects immediately if ffmpeg is not on PATH or the platform has
+ *  no supported grabber. */
 export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHandle> {
   const caps = await getFfmpegCapabilities();
   if (!caps.ffmpeg) throw new CaptureUnavailableError();
+  const input = captureInputForPlatform(process.platform, opts.display?.captureIndex ?? 0);
+  if (!input) throw new CaptureUnavailableError(`no screen capture input on ${process.platform}`);
 
-  const proc = Bun.spawn(buildCaptureArgs(caps.ffmpeg, caps.encoder ?? "libx264"), {
+  const proc = Bun.spawn(buildCaptureArgs(caps.ffmpeg, caps.encoder ?? "libx264", input), {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -73,7 +86,11 @@ export async function startCapture(opts: StartCaptureOptions): Promise<CaptureHa
   const stop = () => {
     if (stopped) return;
     stopped = true;
-    if (!proc.killed) proc.kill();
+    // SIGKILL, not the default SIGTERM: ffmpeg's avfoundation input hangs on SIGTERM/SIGINT
+    // during capture-session teardown (verified on macOS 26 — the process stayed alive for
+    // minutes after both) and would leak one screen-capture ffmpeg per remote-desktop session.
+    // On Windows Bun's kill is TerminateProcess either way, so the semantics are unchanged.
+    if (!proc.killed) proc.kill("SIGKILL");
   };
 
   // Drain stderr so ffmpeg never blocks on a full pipe; keep a short tail for diagnostics.

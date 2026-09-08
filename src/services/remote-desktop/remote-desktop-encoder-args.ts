@@ -32,6 +32,13 @@ export function captureEncoderArgs(encoder: string = "libx264"): string[] {
       return ["-c:v", "h264_qsv", "-preset", "veryfast", "-low_power", "1", "-bufsize", "512k", ...common];
     case "h264_amf":
       return ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cbr", "-bufsize", "512k", ...common];
+    case "h264_videotoolbox":
+      // macOS hardware encode. `-realtime 1` asks VT to hit the deadline over quality,
+      // `-prio_speed 1` likewise; `-allow_sw 1` keeps it working on hosts where the hardware
+      // encoder is busy/unavailable rather than failing the session. Verified on macOS 26:
+      // emits SPS/PPS/SEI before every IDR and one slice per frame, so the AU assembler's
+      // assumptions hold unchanged.
+      return ["-c:v", "h264_videotoolbox", "-realtime", "1", "-prio_speed", "1", "-allow_sw", "1", ...common];
     default:
       // libx264 low-latency. `-tune zerolatency` enables sliced-threads (multi-slice NALs);
       // access-unit-assembler.ts assumes one slice/frame, so force it back with sliced-threads=0.

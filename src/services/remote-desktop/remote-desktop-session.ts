@@ -7,7 +7,8 @@
 import { startCapture, type CaptureHandle } from "./remote-desktop-capture.ts";
 import { avc1CodecString } from "./avc1-codec-string.ts";
 import type { AccessUnit } from "./access-unit-assembler.ts";
-import { injectPointer, injectKey, injectWheel, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
+import { injectPointer, injectKey, injectWheel, injectText, releaseAllModifiers, isInputAvailable } from "./remote-desktop-input.ts";
+import { resolveDisplay, type RemoteDisplay } from "./remote-desktop-displays.ts";
 
 /** Minimal socket surface this module needs — matches Bun's `ServerWebSocket` shape closely
  *  enough to be faked in a unit test without a real connection. */
@@ -28,6 +29,8 @@ const HEARTBEAT_TIMEOUT_MS = 30_000;
  *  queueing forever — a slow WAN/tunnel link must degrade to "waits ~2s for a keyframe",
  *  never to unbounded memory growth or an ever-growing latency queue. */
 const BACKPRESSURE_THRESHOLD_BYTES = 512 * 1024;
+/** Longest `text` message injected in one go — a paste, not a file; anything bigger is dropped. */
+const MAX_TEXT_CHARS = 1024;
 
 export class RemoteDesktopSession {
   private capture: CaptureHandle | null = null;
@@ -41,12 +44,13 @@ export class RemoteDesktopSession {
   /** Resolves once the underlying ffmpeg process has actually exited (not merely asked to). */
   readonly exited: Promise<void>;
 
-  constructor(private readonly ws: RemoteDesktopSocket) {
+  constructor(private readonly ws: RemoteDesktopSocket, private readonly display: RemoteDisplay | null) {
     this.exited = new Promise((resolve) => { this.exitResolve = resolve; });
   }
 
   async start(): Promise<void> {
     this.capture = await startCapture({
+      display: this.display,
       onAccessUnit: (au) => this.handleAccessUnit(au),
       // `reason` is only set when ffmpeg died on its own (crash, access denied, etc) — tell
       // the client *why* before closing instead of leaving it to guess from a bare
@@ -80,7 +84,7 @@ export class RemoteDesktopSession {
       const { xFrac, yFrac, button, down } = msg as { xFrac?: unknown; yFrac?: unknown; button?: unknown; down?: unknown };
       if (typeof xFrac === "number" && typeof yFrac === "number") {
         const btn = button === "left" || button === "right" ? button : null;
-        await injectPointer(xFrac, yFrac, btn, typeof down === "boolean" ? down : null);
+        await injectPointer(xFrac, yFrac, btn, typeof down === "boolean" ? down : null, this.display);
       }
       return;
     }
@@ -95,6 +99,13 @@ export class RemoteDesktopSession {
         if (down) this.heldKeyCodes.add(code); else this.heldKeyCodes.delete(code);
         await injectKey(code, down);
       }
+      return;
+    }
+    if (msg.type === "text") {
+      // Layout-independent text entry (mobile keyboards, non-ASCII). Backends without a text
+      // path report false and the message is dropped — the client keeps its per-key fallback.
+      const { text } = msg as { text?: unknown };
+      if (typeof text === "string" && text.length > 0 && text.length <= MAX_TEXT_CHARS) await injectText(text);
       return;
     }
     if (msg.type === "releaseAll") {
@@ -164,12 +175,12 @@ const activeSessions = new Set<RemoteDesktopSession>();
 
 /** Evict any previous session (awaiting its ffmpeg exit, capped so a wedged process can't
  *  hang a reconnect) before starting the new one. */
-export async function createRemoteDesktopSession(ws: RemoteDesktopSocket): Promise<RemoteDesktopSession> {
+export async function createRemoteDesktopSession(ws: RemoteDesktopSocket, displayId?: string): Promise<RemoteDesktopSession> {
   for (const existing of [...activeSessions]) {
     existing.close();
     await Promise.race([existing.exited, Bun.sleep(2000)]);
   }
-  const session = new RemoteDesktopSession(ws);
+  const session = new RemoteDesktopSession(ws, await resolveDisplay(displayId));
   await session.start();
   activeSessions.add(session);
   return session;
