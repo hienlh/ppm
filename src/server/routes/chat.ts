@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { resolve, join, basename } from "node:path";
 import { existsSync, readdirSync, statSync, readFileSync, writeFileSync } from "node:fs";
+import { unlink } from "node:fs/promises";
 import { ensureUploadsDir, resolveUploadPath } from "../../services/chat-upload-storage.service.ts";
 import { chatService } from "../../services/chat.service.ts";
 import { draftService } from "../../services/draft.service.ts";
@@ -791,9 +792,10 @@ chatRoutes.get("/sessions/:id/images", async (c) => {
  * would be lost by the rewrite.
  *
  * `includeAttachments` also clears images the user attached to their own messages. It is
- * opt-in because the transcript usually holds the only copy, but it has to be reachable: one
- * oversized attachment makes every later turn of the session fail, and nothing else can
- * remove it.
+ * opt-in because an attachment that arrived without an uploaded copy has no other source, but
+ * it has to be reachable: one oversized attachment makes every later turn of the session fail,
+ * and nothing else can remove it. Attachments PPM sent itself keep a copy in the uploads
+ * directory, with the path still in the message text, so those stay readable afterwards.
  */
 chatRoutes.post("/sessions/:id/images/strip", async (c) => {
   try {
@@ -894,6 +896,29 @@ chatRoutes.post("/upload", async (c) => {
       results.push({ name: entry.name, path: dest, type: entry.type, size: entry.size });
     }
     return c.json(ok(results), 201);
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * DELETE /chat/uploads/:filename — discard an upload that was never sent.
+ *
+ * Removing an attachment from the composer used to leave its uploaded file behind with
+ * nothing referencing it, and uploads are kept indefinitely because chat history points at
+ * them. Only a file the user just abandoned is deletable this way; one already named in a
+ * message is reachable from the transcript and is not this route's business.
+ */
+chatRoutes.delete("/uploads/:filename", async (c) => {
+  try {
+    const filename = c.req.param("filename");
+    if (!filename || filename.includes("/") || filename.includes("..")) {
+      return c.json(err("Invalid filename"), 400);
+    }
+    const filePath = resolveUploadPath(filename);
+    // Already gone is the outcome the caller wanted, so it is not an error.
+    if (filePath) await unlink(filePath).catch(() => {});
+    return c.json(ok({ deleted: true }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

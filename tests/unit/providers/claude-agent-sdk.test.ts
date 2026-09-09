@@ -123,6 +123,53 @@ describe("ClaudeAgentSdkProvider", () => {
       expect(done).toBeTruthy();
     });
 
+    /**
+     * The regression that shipped was the *call site*, not the helper: buildMessageParam was
+     * always correct, and the opening turn simply never passed it the images. So this asserts
+     * on what the SDK actually receives — the first message pushed into the stream — because
+     * a test of the helper alone passes either way.
+     *
+     * That turn is the one a new tab, a resumed session and the first message after a server
+     * restart all take, which is the commonest way anyone attaches anything.
+     */
+    it("pushes an attached image on the very first message of a session", async () => {
+      let firstPushed: any;
+      mockQueryFn.mockImplementation((args: any) => {
+        // The provider pushes before it calls query(), so the message is already queued and
+        // this resolves without waiting on the turn.
+        void args.prompt[Symbol.asyncIterator]().next().then((r: any) => { firstPushed = r.value; });
+        return createMockQueryIterator([{ type: "result" }]);
+      });
+
+      const session = await provider.createSession({});
+      const images = [{ data: "aGVsbG8=", mediaType: "image/png" }];
+      for await (const _ of provider.sendMessage(session.id, "what is this", { images })) {
+        // drain
+      }
+
+      expect(firstPushed).toBeTruthy();
+      expect(firstPushed.message.content).toEqual([
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } },
+        { type: "text", text: "what is this" },
+      ]);
+    });
+
+    it("leaves the first message as plain text when nothing was attached", async () => {
+      let firstPushed: any;
+      mockQueryFn.mockImplementation((args: any) => {
+        void args.prompt[Symbol.asyncIterator]().next().then((r: any) => { firstPushed = r.value; });
+        return createMockQueryIterator([{ type: "result" }]);
+      });
+
+      const session = await provider.createSession({});
+      for await (const _ of provider.sendMessage(session.id, "hi")) {
+        // drain
+      }
+
+      expect(firstPushed.message.content).toBe("hi");
+    });
+
+
     it("yields tool_use events from assistant messages", async () => {
       const iter = createMockQueryIterator([
         {

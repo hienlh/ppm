@@ -2,6 +2,8 @@ import { useState, useRef, useCallback, useEffect, memo, type KeyboardEvent, typ
 import { ArrowUp, Square, Paperclip, Loader2, Mic, MicOff, Zap, ListOrdered, Clock, Bot, X } from "lucide-react";
 import { useVoiceInput } from "@/hooks/use-voice-input";
 import { api, projectUrl, getAuthToken } from "@/lib/api-client";
+import { downscaleImage } from "@/lib/image-resize";
+import { INLINE_IMAGE_LIMITS } from "@/lib/image-resize-limits";
 import { randomId } from "@/lib/utils";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
 import { SEND_TO_CHAT_EVENT, SEND_TO_CHAT_ACK_EVENT, type SendToChatDetail } from "@/lib/send-to-chat";
@@ -17,6 +19,29 @@ import { fetchSlashItems, clearSlashItemsCache } from "@/lib/slash-items-cache";
 import type { FileNode } from "../../../types/project";
 import { useFileStore } from "@/stores/file-store";
 
+/**
+ * Base64 payload for an image file, or undefined when it cannot be read.
+ *
+ * Reads through FileReader rather than assembling the string by hand: a phone photo is
+ * millions of characters, and building it in chunks on the main thread freezes the composer
+ * for as long as it takes.
+ */
+async function readImageData(file: File): Promise<{ data: string; mediaType: string } | undefined> {
+  try {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const comma = dataUrl.indexOf(",");
+    const data = comma >= 0 ? dataUrl.slice(comma + 1) : "";
+    return data ? { data, mediaType: file.type || "image/png" } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface ChatAttachment {
   id: string;
   name: string;
@@ -27,6 +52,16 @@ export interface ChatAttachment {
   serverPath?: string;
   /** Inline text content (e.g. terminal output) — no upload needed */
   textContent?: string;
+  /**
+   * Base64 payload for an image, sent as part of the message itself.
+   *
+   * Passing the path instead would make the model spend a whole extra round trip calling Read
+   * to fetch it, and every round trip re-sends the entire transcript. The uploaded copy is
+   * still kept, so removing the payload from a transcript later stays recoverable.
+   */
+  imageData?: { data: string; mediaType: string };
+  /** Dimensions before and after downscaling, when one happened — surfaced in the chip. */
+  resized?: { from: { width: number; height: number }; to: { width: number; height: number } };
   status: "uploading" | "ready" | "error";
 }
 
@@ -436,6 +471,27 @@ export const MessageInput = memo(function MessageInput({
     onExternalPathsConsumed?.();
   }, [externalPaths]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Delete an upload the user removed before sending. Best effort — nothing depends on it. */
+  const discardUpload = useCallback(
+    async (serverPath: string) => {
+      if (!projectName) return;
+      const filename = serverPath.split(/[\\/]/).pop();
+      if (!filename) return;
+      try {
+        const headers: HeadersInit = {};
+        const token = getAuthToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        await fetch(`${projectUrl(projectName)}/chat/uploads/${encodeURIComponent(filename)}`, {
+          method: "DELETE",
+          headers,
+        });
+      } catch {
+        // An orphaned file is not worth surfacing to the user.
+      }
+    },
+    [projectName],
+  );
+
   /** Upload a single file to the server, return server path */
   const uploadFile = useCallback(
     async (file: File): Promise<string | null> => {
@@ -466,32 +522,64 @@ export const MessageInput = memo(function MessageInput({
   /** Process files — always uploads to server. Path resolution only happens via @ picker. */
   const processFiles = useCallback(
     async (files: File[]) => {
-      for (const file of files) {
+      for (const original of files) {
         const id = randomId();
-        const isImg = isImageFile(file);
-        const previewUrl = isImg ? URL.createObjectURL(file) : undefined;
+        const isImg = isImageFile(original);
 
         const att: ChatAttachment = {
           id,
-          name: file.name,
-          file,
+          name: original.name,
+          file: original,
           isImage: isImg,
-          previewUrl,
+          previewUrl: isImg ? URL.createObjectURL(original) : undefined,
           status: "uploading",
         };
 
         setAttachments((prev) => [...prev, att]);
 
-        // Upload in background
-        uploadFile(file).then((serverPath) => {
+        // Shrink first, so the upload, the preview and the message all carry the same
+        // already-reduced image — an oversized original must not reach the transcript.
+        //
+        // Only a `scaled` or `inlineable` result is attached inline. An image that could not
+        // be measured or re-encoded travels by path alone: sending unverified dimensions
+        // inline risks a payload the API refuses, and that refusal outlives the turn, since
+        // the transcript replays it into every later one.
+        try {
+          const outcome = isImg ? await downscaleImage(original) : null;
+          const file = outcome?.file ?? original;
+          // Point the thumbnail at the reduced file and let the original go. It is the larger
+          // of the two and nothing needs it once the resize is done, but it stayed alive until
+          // the message was sent because the preview still referenced it.
+          const previewUrl = isImg && file !== original ? URL.createObjectURL(file) : undefined;
+          const serverPath = await uploadFile(file);
+          const inlineable = outcome ? outcome.kind !== "asis" : false;
+          const imageData = inlineable ? await readImageData(file) : undefined;
+          const withinPayloadCap =
+            !!imageData && imageData.data.length <= INLINE_IMAGE_LIMITS.maxBase64PerImage;
+
+          if (previewUrl && att.previewUrl) URL.revokeObjectURL(att.previewUrl);
           setAttachments((prev) =>
             prev.map((a) =>
               a.id === id
-                ? { ...a, serverPath: serverPath ?? undefined, status: serverPath ? "ready" : "error" }
+                ? {
+                    ...a,
+                    file,
+                    ...(previewUrl && { previewUrl }),
+                    serverPath: serverPath ?? undefined,
+                    imageData: withinPayloadCap ? imageData : undefined,
+                    resized: outcome?.to ? { from: outcome.from!, to: outcome.to } : undefined,
+                    // An image can still be sent inline when the upload failed; anything
+                    // else has nothing left to send without its path.
+                    status: serverPath || withinPayloadCap ? "ready" : "error",
+                  }
                 : a,
             ),
           );
-        });
+        } catch {
+          // Nothing here may leave an attachment stuck on "uploading" — both the send button
+          // and the auto-send effect wait on that state, so a swallowed throw hangs the composer.
+          setAttachments((prev) => prev.map((a) => (a.id === id ? { ...a, status: "error" } : a)));
+        }
       }
       (mobileTextareaRef.current ?? textareaRef.current)?.focus();
     },
@@ -502,9 +590,12 @@ export const MessageInput = memo(function MessageInput({
     setAttachments((prev) => {
       const att = prev.find((a) => a.id === id);
       if (att?.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      // Uploads are never swept, because chat history points at them indefinitely, so one
+      // abandoned before it was ever sent would sit there with nothing referencing it.
+      if (att?.serverPath) void discardUpload(att.serverPath);
       return prev.filter((a) => a.id !== id);
     });
-  }, []);
+  }, [discardUpload]);
 
   /** Execute the actual send (called directly or after uploads complete) */
   const executeSend = useCallback(() => {

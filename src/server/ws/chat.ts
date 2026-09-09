@@ -485,7 +485,7 @@ function startCleanupTimer(sessionId: string): void {
  * First message creates the query; follow-ups push into the provider's
  * message channel. Events from ALL turns flow through this single loop.
  */
-async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string): Promise<void> {
+async function startSessionConsumer(sessionId: string, providerId: string, content: string, permissionMode?: string, images?: Array<{ data: string; mediaType: string }>, model?: string, imagePaths?: string[]): Promise<void> {
   const entry = activeSessions.get(sessionId);
   if (!entry) {
     console.error(`[chat] session=${sessionId} startSessionConsumer: no entry — aborting`);
@@ -549,7 +549,7 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
     // provider config: omit so the provider falls back. thinking 0 = explicit OFF (overrides config).
     const effortOverride = getSessionEffort(sessionId) ?? undefined;
     const thinkingBudget = getSessionThinking(sessionId);
-    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }) })) {
+    for await (const event of chatService.sendMessage(providerId, sessionId, content, { permissionMode, images, ...(imagePaths?.length && { imagePaths }), ...(model && { model }), ...(effortOverride && { effort: effortOverride }), ...(thinkingBudget != null && { thinkingBudget }) })) {
       eventCount++;
       const ev = event as any;
       const evType = ev.type ?? "unknown";
@@ -1083,7 +1083,10 @@ export const chatWebSocket = {
     }
 
     if (parsed.type === "message") {
-      if (typeof parsed.content !== "string" || !parsed.content.trim()) {
+      // Images count as content: a message may carry only a picture, with nothing typed.
+      const hasInlineImages = Array.isArray((parsed as { images?: unknown }).images)
+        && ((parsed as { images: unknown[] }).images.length > 0);
+      if (typeof parsed.content !== "string" || (!parsed.content.trim() && !hasInlineImages)) {
         ws.send(JSON.stringify({ type: "error", message: "Message content is required" }));
         return;
       }
@@ -1213,9 +1216,10 @@ export const chatWebSocket = {
         const permMode = entry.permissionMode;
         const msgModel = entry.model;
         const msgImages = parsed.type === "message" ? parsed.images : undefined;
+        const msgImagePaths = parsed.type === "message" ? parsed.imagePaths : undefined;
         entry.streamPromise = new Promise<void>((resolve) => {
           setTimeout(() => {
-            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel).then(resolve, resolve);
+            startSessionConsumer(sessionId, providerId, parsed.content, permMode, msgImages, msgModel, msgImagePaths).then(resolve, resolve);
           }, 0);
         });
       } else {
@@ -1224,6 +1228,7 @@ export const chatWebSocket = {
           (provider as any).pushMessage(sessionId, parsed.content, {
             priority: parsed.priority ?? 'next',
             images: parsed.images,
+            imagePaths: parsed.imagePaths,
           });
         }
         // Clear turn events for new turn display + transition phase

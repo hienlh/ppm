@@ -1,3 +1,4 @@
+import type { StripMode } from "../services/transcript-images.ts";
 import {
   query,
   listSessions as sdkListSessions,
@@ -167,7 +168,7 @@ function parseUsageLimitReset(text: string): { text?: string; atMs?: number } | 
 }
 
 /** Build a MessageParam with optional image content blocks */
-function buildMessageParam(
+export function buildMessageParam(
   text: string,
   images?: Array<{ data: string; mediaType: string }>,
 ): { role: 'user'; content: string | any[] } {
@@ -345,12 +346,14 @@ export class ClaudeAgentSdkProvider implements AIProvider {
    * place these images live, and the CLI replays it verbatim, so editing the file is the only
    * way to stop them being re-sent.
    *
-   * `includeAttachments` is the second, lossier pass: images the user attached are normally
-   * left alone, but once they are what is failing every turn, keeping them costs the whole
-   * session.
+   * `includeAttachments` reaches the images the user attached, which are normally left alone;
+   * `mode` decides whether only images at or over the API's dimension cap go, or all of them.
+   * Both widen what is removed, and the caller escalates through them in order — once images
+   * are what fails every turn, keeping them costs the whole session.
    */
   private async stripSessionImages(
     sessionId: string,
+    mode: StripMode,
     includeAttachments: boolean,
   ): Promise<{ removed: number; bytesFreed: number; reason: string; failed: boolean }> {
     const dir = resolve(CLAUDE_PROJECTS_DIR);
@@ -364,19 +367,16 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
     try {
       const { stripTranscriptImagesFile } = await import("../services/transcript-images-file.ts");
-      const r = await stripTranscriptImagesFile(jsonlPath, "oversized", { includeAttachments });
+      const r = await stripTranscriptImagesFile(jsonlPath, mode, { includeAttachments });
       if (r.removed > 0) return { removed: r.removed, bytesFreed: r.bytesFreed, reason: "", failed: false };
-      // Only images at or over the measurable cap are ever removed automatically. Falling back
-      // to "all" here would delete in-range images too, on nothing better than a guess that the
-      // API is applying a cap we cannot see — and for an attachment the transcript holds the
-      // only copy. When no image measures oversized, stop and let the user decide from the
-      // session debug dialog, which still offers the unrestricted removal.
       return {
         removed: 0,
         bytesFreed: 0,
-        reason: includeAttachments
-          ? "no image measures over the dimension cap"
-          : "no oversized images found",
+        reason: mode === "all"
+          ? "no images left in the transcript"
+          : includeAttachments
+            ? "no image measures over the dimension cap"
+            : "no oversized images found",
         failed: false,
       };
     } catch (e) {
@@ -1132,10 +1132,13 @@ export class ClaudeAgentSdkProvider implements AIProvider {
 
       crashRetryLoop: for (;;) {
       try {
-      // Streaming input: create message channel and persistent query
+      // Streaming input: create message channel and persistent query.
+      // The images ride on this first message too: a session's opening turn is the common
+      // case for attaching one (new tab, paste, send), and leaving them off here sent the
+      // model a bare path instead — the round trip the caller passed them in to avoid.
       const firstMsg = {
         type: 'user' as const,
-        message: buildMessageParam(message),
+        message: buildMessageParam(message, opts?.images),
         parent_tool_use_id: null,
         session_id: sessionId,
       };
@@ -1231,11 +1234,21 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       // Allow 2 refresh attempts per turn (token can rotate mid-conversation).
       // Counter resets on successful turn (see result handler) so next turn gets a fresh budget.
       const MAX_AUTH_RETRIES = 2;
-      // Two passes: oversized images first, then attachments. A third would have nothing left.
-      const MAX_IMAGE_RETRIES = 2;
+      // Ordered strip passes, each lossier than the last, tried in turn until one actually
+      // removes something. The final pass takes in-range images too, which the previous two
+      // could not: an attachment is downscaled below the API's cap before it is sent, so the
+      // "oversized" passes never match one, and a refusal that is not about dimensions had
+      // nowhere left to go. Removing them is recoverable — a tool result can be produced
+      // again by re-reading its file, and an attachment this composer sent keeps an uploaded
+      // copy with its path still in the message text.
+      const STRIP_PASSES: Array<{ mode: StripMode; includeAttachments: boolean; label: string }> = [
+        { mode: "oversized", includeAttachments: false, label: "Removing oversized images..." },
+        { mode: "oversized", includeAttachments: true, label: "Removing attached images..." },
+        { mode: "all", includeAttachments: true, label: "Removing all images..." },
+      ];
       let retryCount = 0;
       let rateLimitRetryCount = 0;
-      let imageRetryCount = 0;
+      let stripPass = 0;
       let authRetryCount = 0;
       let hadAnyEvents = false;
       // Accounts that hit a hard usage/session limit this turn — never retried again here.
@@ -1644,37 +1657,32 @@ export class ClaudeAgentSdkProvider implements AIProvider {
             // replaying the file — so the payload is taken out of the transcript and the turn
             // is retried against the trimmed history.
             //
-            // Escalates: first pass drops only images at or over the dimension cap, which is
-            // lossless because the API already refuses them. Only if that changed nothing does
-            // it take the attachments too, since by then the session is unusable either way and
-            // a lost screenshot beats a dead conversation.
+            // Walks STRIP_PASSES from wherever the last attempt left off, taking the first one
+            // that actually removes something. A pass that comes up empty is not a retry: the
+            // transcript is unchanged, so there is nothing new to send.
             if (assistantError === "image_limit") {
-              if (imageRetryCount >= MAX_IMAGE_RETRIES) {
-                console.warn(`[sdk] session=${sessionId} image limit persists after ${imageRetryCount} strip attempt(s) — stopping`);
-                yield { type: "error", message: "The API keeps refusing an image in this conversation, and removing the offending images did not clear it. Start a new session, or use /compact to summarise the history away." };
-                break;
-              }
-              const escalate = imageRetryCount > 0;
-              imageRetryCount++;
-              yield { type: "status_update", phase: "retrying", message: escalate ? "Removing attached images..." : "Removing oversized images..." };
               // Close the subprocess before touching the file it appends to. Rewriting a
               // transcript underneath a live CLI drops whatever it wrote in the meantime,
               // which breaks the parentUuid chain and hides the history from that point back.
               closeCurrentStream();
-              let stripped = await this.stripSessionImages(sessionId, escalate);
-              // Nothing oversized among the tool results, but an attachment can be over the cap
-              // too and only the opt-in pass reaches those. Skipped when the strip failed rather
-              // than came up empty — a refused rewrite is not evidence that attachments are the
-              // problem, and this pass is the one that deletes the only copy of them.
-              if (stripped.removed === 0 && !escalate && !stripped.failed) {
-                console.warn(`[sdk] session=${sessionId} nothing oversized to strip — escalating to attachments`);
-                imageRetryCount++;
-                yield { type: "status_update", phase: "retrying", message: "Removing attached images..." };
-                stripped = await this.stripSessionImages(sessionId, true);
+
+              let stripped: Awaited<ReturnType<typeof this.stripSessionImages>> | null = null;
+              while (stripPass < STRIP_PASSES.length) {
+                const pass = STRIP_PASSES[stripPass]!;
+                stripPass++;
+                yield { type: "status_update", phase: "retrying", message: pass.label };
+                stripped = await this.stripSessionImages(sessionId, pass.mode, pass.includeAttachments);
+                if (stripped.removed > 0) break;
+                // A refused rewrite says nothing about what is in the file, so escalating on
+                // it would delete more than the evidence justifies. Stop and report instead.
+                if (stripped.failed) break;
+                console.warn(`[sdk] session=${sessionId} strip pass ${stripPass}/${STRIP_PASSES.length} removed nothing (${stripped.reason})`);
               }
-              if (stripped.removed === 0) {
-                console.warn(`[sdk] session=${sessionId} nothing left to strip (${stripped.reason}) — stopping`);
-                yield { type: "error", message: `The API refused an image in this conversation, but nothing could be removed automatically (${stripped.reason}). Open Session debug to remove images yourself, start a new session, or use /compact to summarise the history away.` };
+
+              if (!stripped || stripped.removed === 0) {
+                const reason = stripped?.reason || "no images left to remove";
+                console.warn(`[sdk] session=${sessionId} nothing left to strip (${reason}) — stopping`);
+                yield { type: "error", message: `The API refused an image in this conversation, but nothing could be removed automatically (${reason}). Open Session debug to remove images yourself, start a new session, or use /compact to summarise the history away.` };
                 break;
               }
               console.warn(`[sdk] session=${sessionId} stripped ${stripped.removed} image(s), ${(stripped.bytesFreed / 1048576).toFixed(2)}MB — retrying turn`);

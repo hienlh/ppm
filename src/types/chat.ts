@@ -2,6 +2,12 @@ export interface SendMessageOpts {
   permissionMode?: import("./config").PermissionMode | string;
   priority?: 'now' | 'next' | 'later';
   images?: Array<{ data: string; mediaType: string }>;
+  /**
+   * Uploaded paths for the same attachments, for providers that take a file rather than a
+   * payload. Codex's turn input accepts `localImage` by path and has no base64 form, so an
+   * image reaches it this way or not at all.
+   */
+  imagePaths?: string[];
   /** Per-session model override; falls back to provider config model when absent */
   model?: string;
   /** Override the provider's 1M-context setting for this call (false = never add the

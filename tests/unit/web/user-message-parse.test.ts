@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from "bun:test";
 
-import { parseUserMessage, toComposerDraft } from "../../../src/web/components/chat/user-message-parse";
+import { parseUserMessage, toComposerDraft, parseUserAttachments } from "../../../src/web/components/chat/user-message-parse.ts";
 
 describe("parseUserMessage", () => {
   it("leaves plain text untouched", () => {
@@ -98,5 +98,45 @@ describe("toComposerDraft", () => {
 
   it("gives back an empty draft for an attachment-only message", () => {
     expect(toComposerDraft("[Attached file: /tmp/a.png]")).toEqual({ agent: null, text: "" });
+  });
+});
+
+/**
+ * An image sent inline carries a different marker from one sent by path — the model must not
+ * be told to open a file it was already handed. Both still name the path, because the chat
+ * re-renders from the transcript and the path is what a thumbnail is drawn from.
+ */
+describe("parseUserAttachments — inline image marker", () => {
+  const inline = (p: string) => `[Attached image (contents included in this message): ${p}]`;
+
+  it("extracts the path from an inline-image marker", () => {
+    const out = parseUserAttachments(`${inline("C:/up/a.png")}\n\nwhat is this?`);
+    expect(out.files).toEqual(["C:/up/a.png"]);
+    expect(out.text).toBe("what is this?");
+  });
+
+  it("handles several inline images on one message", () => {
+    const out = parseUserAttachments(`${inline("/up/a.png")}\n${inline("/up/b.png")}\n\nboth`);
+    expect(out.files).toEqual(["/up/a.png", "/up/b.png"]);
+    expect(out.text).toBe("both");
+  });
+
+  // A HEIC that could not be downscaled travels by path in the same message as a PNG that could.
+  it("mixes an inline image with a plain file attachment", () => {
+    const out = parseUserAttachments(`${inline("/up/a.png")}\n\n[Attached file: /up/b.heic]\n\nhi`);
+    expect(out.files).toEqual(["/up/a.png", "/up/b.heic"]);
+    expect(out.text).toBe("hi");
+  });
+
+  it("an inline image with no text leaves the text empty", () => {
+    const out = parseUserAttachments(inline("/up/a.png"));
+    expect(out.files).toEqual(["/up/a.png"]);
+    expect(out.text).toBe("");
+  });
+
+  it("the plain file marker still parses as before", () => {
+    const out = parseUserAttachments("[Attached file: /up/a.txt]\n\nread it");
+    expect(out.files).toEqual(["/up/a.txt"]);
+    expect(out.text).toBe("read it");
   });
 });

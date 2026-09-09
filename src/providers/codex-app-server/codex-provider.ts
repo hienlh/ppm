@@ -33,6 +33,7 @@ import type {
   JsonRpcNotification,
   ToolRequestUserInputResponse,
   Thread,
+  UserInput,
 } from "./codex-protocol.ts";
 
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
@@ -260,7 +261,12 @@ export class CodexAppServerProvider implements AIProvider {
     live.transcript.push({ id: nextRolloutId(live), role: "user", content: message, timestamp: new Date().toISOString() });
     live.currentAssistant = "";
     live.currentEvents = [];
-    const input = [{ type: "text" as const, text: message, text_elements: [] }];
+    // Codex takes an image as a path, never as a payload, so the uploaded copy is what it
+    // gets. Images lead: the text usually refers to them ("what is this?").
+    const input: UserInput[] = [
+      ...(opts?.imagePaths ?? []).map((path) => ({ type: "localImage" as const, path })),
+      { type: "text" as const, text: message, text_elements: [] },
+    ];
     const turnModel = codexModel(opts?.model);
     live.client.request("turn/start", {
       threadId: live.threadId,

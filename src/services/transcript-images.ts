@@ -1,5 +1,6 @@
 import { readImageDimensions } from "./image-dimensions.ts";
 import { base64ByteLength, imagePlaceholderText } from "../shared/tool-result-content.ts";
+import { MAX_IMAGE_DIMENSION } from "../shared/image-limits.ts";
 
 /**
  * Auditing and removal of image payloads inside a Claude Code session transcript.
@@ -11,9 +12,14 @@ import { base64ByteLength, imagePlaceholderText } from "../shared/tool-result-co
  *
  * Images live in two places, and they are not equally safe to remove. A tool result can be
  * produced again by re-reading the file it came from, so those are removed by default. An
- * image the user attached to a message usually exists nowhere else, so it is left alone
- * unless the caller opts in — which it must be able to do, because a single oversized
- * attachment is enough to make every later turn of the session fail outright.
+ * attachment is left alone unless the caller opts in.
+ *
+ * That default is now more cautious than it needs to be for images this app sent itself: the
+ * composer uploads a copy before embedding the payload, and leaves the path in the message, so
+ * such an attachment is as re-readable as a tool result. It stays opt-in because a transcript
+ * also collects attachments from elsewhere — another client, an older build, a session shared
+ * with the CLI — and for those the payload really is the last copy. The caller must be able to
+ * reach it either way: one oversized attachment fails every later turn of the session.
  *
  * A tool result's payload sits at `message.content[].content[]`; an attachment sits directly
  * at `message.content[]`. A record also carries an image-shaped echo at the top-level
@@ -28,7 +34,7 @@ import { base64ByteLength, imagePlaceholderText } from "../shared/tool-result-co
  * Comparisons here are `>=` rather than `>` for that reason: treating 2000px as acceptable
  * hides the one image the API is rejecting and makes a cleanup look like a no-op.
  */
-export const MANY_IMAGE_DIMENSION_LIMIT = 2000;
+export const MANY_IMAGE_DIMENSION_LIMIT = MAX_IMAGE_DIMENSION;
 
 /** Base64 characters decoded to inspect a header — a JPEG frame can sit behind EXIF. */
 const HEADER_CHARS = 4096;
@@ -38,9 +44,10 @@ export type StripMode = "oversized" | "all";
 /** Which of the two image locations a scan or strip should cover. */
 export interface ImageScopeOpts {
   /**
-   * Also cover images the user attached to their own messages. Off by default: the payload
-   * in the transcript is typically the only remaining copy, so removing it is lossy in a way
-   * removing a tool result is not.
+   * Also cover images the user attached to their own messages. Off by default, because a
+   * transcript may hold attachments this app never uploaded — from another client or an older
+   * build — for which the embedded payload is the last copy. Attachments the composer sent
+   * keep an uploaded file and its path, so removing those is recoverable.
    */
   includeAttachments?: boolean;
 }

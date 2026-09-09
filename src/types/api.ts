@@ -23,7 +23,9 @@ export type TerminalWsMessage =
 
 /** WebSocket message types (chat) */
 export type ChatWsClientMessage =
-  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; model?: string; effort?: string; thinking?: boolean }
+  | { type: "message"; content: string; permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>;
+  /** Uploaded paths for the same images, for providers that take a file not a payload. */
+  imagePaths?: string[]; model?: string; effort?: string; thinking?: boolean }
   | { type: "cancel" }
   | { type: "set_model"; model: string }
   | { type: "set_effort"; effort: string }

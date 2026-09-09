@@ -90,7 +90,7 @@ interface UseChatReturn {
   backgroundShells: BackgroundShell[];
   killBackgroundShell: (shellId: string) => void;
   findBackgroundShellByOutput: (name: string) => BackgroundShell | undefined;
-  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => void;
+  sendMessage: (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] }) => void;
   respondToApproval: (requestId: string, approved: boolean, data?: unknown) => void;
   cancelStreaming: () => void;
   reconnect: () => void;
@@ -1035,8 +1035,10 @@ export function useChat(sessionId: string | null, providerId = "claude", project
   }, [sessionId, providerId, projectName, updateTeamActivity, loadTeamDetail]);
 
   const sendMessage = useCallback(
-    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }> }) => {
-      if (!content.trim()) return;
+    (content: string, opts?: { permissionMode?: string; priority?: 'now' | 'next' | 'later'; images?: Array<{ data: string; mediaType: string }>; imagePaths?: string[] }) => {
+      // An attachment-only message is legitimate now that images travel with it: the
+      // caller may have nothing to say beyond the picture.
+      if (!content.trim() && !opts?.images?.length) return;
 
       const isFollowUp = phaseRef.current !== "idle";
 
@@ -1089,6 +1091,7 @@ export function useChat(sessionId: string | null, providerId = "claude", project
         permissionMode: opts?.permissionMode,
         priority: opts?.priority,
         images: opts?.images,
+        imagePaths: opts?.imagePaths,
         ...(modelRef.current && { model: modelRef.current }),
         ...(effortRef.current && { effort: effortRef.current }),
         ...(thinkingRef.current !== null && { thinking: thinkingRef.current }),

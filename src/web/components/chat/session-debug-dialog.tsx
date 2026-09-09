@@ -147,7 +147,8 @@ function TranscriptImages({ sessionId, projectName }: { sessionId: string; proje
               {audit.oversizedAttachments} of those {audit.oversizedAttachments === 1 ? "is an image you" : "are images you"}
               {" "}attached yourself, so the buttons below leave {audit.oversizedAttachments === 1 ? "it" : "them"} in place.
               While {audit.oversizedAttachments === 1 ? "it stays" : "they stay"}, every turn in this session keeps failing.
-              The transcript holds the only copy — removing {audit.oversizedAttachments === 1 ? "it" : "them"} cannot be undone.
+              Removing {audit.oversizedAttachments === 1 ? "it" : "them"} cannot be undone: an attachment PPM sent keeps
+              a copy on disk with its path still in the message, but one from another client does not.
             </span>
           </div>
           <Button

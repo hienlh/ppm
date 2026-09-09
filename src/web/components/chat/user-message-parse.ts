@@ -82,24 +82,46 @@ export function parseIdeOpenedFile(text: string): { idePath: string | null; clea
   return { idePath, cleanText };
 }
 
-/** Parse user message content, extracting attached file paths and the actual text */
+/**
+ * Parse user message content, extracting attached file paths and the actual text.
+ *
+ * Two markers mean the same thing to the reader and different things to the model. An image
+ * sent inline says so — the payload is already in the message, and a bare path would invite
+ * the model to spend a round trip opening what it was handed. Either way the path is what the
+ * chat draws a thumbnail from, so both forms have to be recognised here.
+ */
 export function parseUserAttachments(content: string): { files: string[]; text: string } {
-  // Match: [Attached file: /path] or [Attached files:\n/path1\n/path2\n]
-  // Trailing newlines are optional — an attachment-only message has the marker
-  // trimmed to the end of the string (extractTerminalBlocks trims), so the
-  // separator newlines may be absent.
-  const singleMatch = content.match(/^\[Attached file: (.+?)\]\n*/);
+  // Trailing newlines are optional — an attachment-only message has the marker trimmed to the
+  // end of the string (extractTerminalBlocks trims), so the separator newlines may be absent.
+  const files: string[] = [];
+  let rest = content;
+  for (;;) {
+    const inline = rest.match(/^\[Attached image \(contents included in this message\): (.+?)\]\n*/);
+    if (inline) {
+      files.push(inline[1]!);
+      rest = rest.slice(inline[0].length);
+      continue;
+    }
+    break;
+  }
+  if (files.length > 0) {
+    // A message may pair inline images with plain file attachments.
+    const tail = parseUserAttachments(rest);
+    return { files: [...files, ...tail.files], text: tail.text };
+  }
+
+  const singleMatch = rest.match(/^\[Attached file: (.+?)\]\n*/);
   if (singleMatch) {
-    return { files: [singleMatch[1]!], text: content.slice(singleMatch[0].length) };
+    return { files: [singleMatch[1]!], text: rest.slice(singleMatch[0].length) };
   }
 
-  const multiMatch = content.match(/^\[Attached files:\n([\s\S]+?)\]\n*/);
+  const multiMatch = rest.match(/^\[Attached files:\n([\s\S]+?)\]\n*/);
   if (multiMatch) {
-    const files = multiMatch[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
-    return { files, text: content.slice(multiMatch[0].length) };
+    const list = multiMatch[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
+    return { files: list, text: rest.slice(multiMatch[0].length) };
   }
 
-  return { files: [], text: content };
+  return { files: [], text: rest };
 }
 
 /** Extract leading terminal code fences from message text */

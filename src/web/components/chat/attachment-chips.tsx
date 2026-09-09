@@ -52,6 +52,16 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
               <Loader2 className="size-3 shrink-0 animate-spin text-text-subtle" />
             ) : att.status === "error" ? (
               <span className="text-error shrink-0" title="Upload failed">!</span>
+            ) : att.resized ? (
+              // Says what happened to the image. A screenshot arriving at the model smaller
+              // than the one that was pasted is worth stating rather than leaving to be
+              // discovered, and the measurement was already being recorded for nothing.
+              <span
+                className="shrink-0 text-[10px] text-text-subtle"
+                title={`Shrunk from ${att.resized.from.width}x${att.resized.from.height} to ${att.resized.to.width}x${att.resized.to.height}`}
+              >
+                {att.resized.to.width}&times;{att.resized.to.height}
+              </span>
             ) : null}
 
             {/* Remove button */}
