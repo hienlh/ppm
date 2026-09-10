@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- **Your custom domain comes back on its own after the machine wakes up** — the connector used to start before Wi-Fi was ready, time out, and fall back to a temporary URL until PPM was restarted, leaving the domain dead. PPM now waits for the network first and retries the domain on its own.
 - **`ppm upgrade` right after a release no longer fails with "No version matching … (but package exists)"** — bun resolved the new version against a cached package manifest that predated it; the upgrade install now bypasses that cache.
 
 ## [0.19.1] - 2026-09-09
