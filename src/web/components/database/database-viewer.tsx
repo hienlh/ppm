@@ -7,6 +7,7 @@ import { useConnections } from "./use-connections";
 import { SqlQueryEditor } from "./sql-query-editor";
 import { ExportButton } from "./export-button";
 import { GlideDataGrid } from "./glide-data-grid";
+import { extractQueryTable } from "./extract-query-table";
 import type { SchemaInfo } from "./sql-completion-provider";
 
 /** Parse WHERE "col" ILIKE '%val%' clauses from SQL */
@@ -140,6 +141,8 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
 
   // Track whether user ran a custom query (show results instead of table grid)
   const [showingQueryResult, setShowingQueryResult] = useState(!!initialSql);
+  // SQL behind the currently displayed query result — tells us where to write edits back to
+  const [executedSql, setExecutedSql] = useState<string | null>(initialSql ?? null);
   const handleExecuteQuery = useCallback((sql: string) => {
     const trimmed = sql.trim();
     // Check if query is a simple SELECT on the current table — stay in table grid mode
@@ -154,6 +157,7 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
       }
     }
     setShowingQueryResult(true);
+    setExecutedSql(trimmed);
     db.executeQuery(sql);
   }, [db.executeQuery, db.queryAsTable, db.selectedTable]);
 
@@ -170,6 +174,18 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
     setShowingQueryResult(false);
     db.setPage(p);
   }, [db.setPage]);
+
+  // Ad-hoc query results are editable only when the result maps to one table and
+  // the connection allows writes — otherwise the grid stays read-only so edits
+  // can't pile up with nowhere to save them to.
+  const queryEditTable = useMemo(
+    () => (conn && !conn.readonly && executedSql ? extractQueryTable(executedSql, db.selectedSchema) : null),
+    [conn, executedSql, db.selectedSchema],
+  );
+  const handleQueryCellUpdate = useCallback((pkCol: string, pkVal: unknown, col: string, val: unknown) => {
+    if (!queryEditTable) return;
+    db.updateCellIn(queryEditTable.table, queryEditTable.schema, pkCol, pkVal, col, val);
+  }, [queryEditTable, db.updateCellIn]);
 
   const qr = db.queryResult;
   const showQueryResults = showingQueryResult && !!(qr || db.queryError);
@@ -246,7 +262,8 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
           )}
 
           {showQueryResults && (
-            <QueryResultPanel result={qr} error={db.queryError} loading={db.queryLoading} schema={db.schema} connectionName={connectionName} />
+            <QueryResultPanel result={qr} error={db.queryError} loading={db.queryLoading} schema={db.schema}
+              connectionName={connectionName} onCellUpdate={queryEditTable ? handleQueryCellUpdate : undefined} />
           )}
 
           {showInitialLoading && (
@@ -262,27 +279,32 @@ export function DatabaseViewer({ metadata, tabId }: Props) {
 
 const NOOP = () => {};
 
-/** Read-only result panel for ad-hoc query results — uses DataGrid for SELECT to get checkboxes + export */
-function QueryResultPanel({ result, error, loading, schema, connectionName }: {
+/** Result panel for ad-hoc query results — uses DataGrid for SELECT to get checkboxes + export.
+ *  Editable only when the caller supplies onCellUpdate (single-table SELECT on a writable connection). */
+function QueryResultPanel({ result, error, loading, schema, connectionName, onCellUpdate }: {
   result: { columns: string[]; rows: Record<string, unknown>[]; rowsAffected: number; changeType: "select" | "modify"; executionTimeMs?: number } | null;
   error: string | null;
   loading?: boolean;
   schema?: DbColumnInfo[];
   connectionName?: string;
+  onCellUpdate?: (pkCol: string, pkVal: unknown, col: string, val: unknown) => void;
 }) {
-  // Build a read-only DataGrid-compatible tableData from query result
+  // Build a DataGrid-compatible tableData from query result
   const queryTableData = useMemo(() => (
     result?.changeType === "select" && result.rows.length > 0
       ? { columns: result.columns, rows: result.rows, total: result.rows.length, limit: result.rows.length }
       : null
   ), [result]);
 
-  // Use schema if available, otherwise build minimal schema from column names
-  const querySchema = useMemo(() => (
-    schema?.length ? schema : (result?.columns ?? []).map((c) => ({
-      name: c, type: "text", nullable: true, pk: false, defaultValue: null,
-    }))
-  ), [schema, result?.columns]);
+  // Use the sidebar table's schema only when it describes every result column —
+  // it belongs to the selected table, which may not be what the query returned.
+  // The grid drops columns missing from its schema, so a mismatch hides data.
+  const querySchema = useMemo(() => {
+    const cols = result?.columns ?? [];
+    const names = new Set((schema ?? []).map((c) => c.name));
+    if (schema?.length && cols.every((c) => names.has(c))) return schema;
+    return cols.map((c) => ({ name: c, type: "text", nullable: true, pk: false, defaultValue: null }));
+  }, [schema, result?.columns]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden text-xs">
@@ -301,7 +323,8 @@ function QueryResultPanel({ result, error, loading, schema, connectionName }: {
             columns={queryTableData.columns} rows={queryTableData.rows}
             total={queryTableData.total} limit={queryTableData.limit}
             schema={querySchema} loading={!!loading}
-            page={1} onPageChange={NOOP} onCellUpdate={NOOP}
+            page={1} onPageChange={NOOP}
+            onCellUpdate={onCellUpdate ?? NOOP} readOnly={!onCellUpdate}
             orderBy={null} orderDir="ASC" onToggleSort={NOOP}
             connectionName={connectionName}
           />

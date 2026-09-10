@@ -16,6 +16,9 @@ import { GlideSaveBar } from "./glide-save-bar";
 import { GlideGridPagination } from "./glide-grid-pagination";
 import { GlideDataPreviewPanel } from "./glide-data-preview-panel";
 
+/** Swallows edits (paste, context-menu actions) while the grid is read-only. */
+const NOOP_EDIT = () => {};
+
 const HEADER_ICONS: Record<string, (p: { fgColor: string }) => string> = {
   sortAsc: (p) => `<svg viewBox="0 0 16 16" fill="${p.fgColor}"><path d="M8 4l4 6H4z"/></svg>`,
   sortDesc: (p) => `<svg viewBox="0 0 16 16" fill="${p.fgColor}"><path d="M8 12l4-6H4z"/></svg>`,
@@ -31,7 +34,7 @@ export function GlideDataGrid(props: GlideGridProps) {
     columns: rawColumnNames, rows, total, limit, schema, loading,
     page, onPageChange, onCellUpdate, onRowDelete, onBulkDelete, onInsertRow,
     orderBy, orderDir, onToggleSort, onClearSort, columnFilters = {}, onColumnFilter,
-    connectionId, selectedTable, selectedSchema, connectionName,
+    connectionId, selectedTable, selectedSchema, connectionName, readOnly,
   } = props;
 
   const theme = useGlideTheme();
@@ -78,14 +81,18 @@ export function GlideDataGrid(props: GlideGridProps) {
   }, [pinnedCount, pkCol, searchTerm, displayRows, pinnedPks]);
 
   // Hooks
+  // Without a primary key there is no way to address a row in an UPDATE, so
+  // edits could never be saved — don't let the user make them in the first place.
+  const cellsReadOnly = !!readOnly || !pkCol;
+
   const { pendingRef, addEdit, commitAll, discardAll, hasPending, pendingCount, committedRef } = useGlidePendingEdits(pkCol, onCellUpdate, onInsertRow);
   const { columns, freezeColumns, columnOrder } = useGlideColumns(schema, columnNames, pinnedCols, colWidths, displayRows, orderBy, orderDir);
-  const { getCellContent, onCellEdited } = useGlideCellContent(displayRows, columnOrder, schema, pkCol, addEdit, pendingRef);
+  const { getCellContent, onCellEdited } = useGlideCellContent(displayRows, columnOrder, schema, pkCol, addEdit, pendingRef, cellsReadOnly);
   const { gridSelection, onGridSelectionChange, selectedRowIndices, clearSelection } = useGlideSelection();
   const {
     previewData, closePreview, openRowPreview, openCellPreview, openPreviewInTab,
     handlePaste, getContextFk, isCellViewable, openFkTable,
-  } = useGlideGridActions({ displayRows, columnOrder, schema, pkCol, connectionId, connectionName, selectedTable, selectedSchema, addEdit, gridSelection, containerRef });
+  } = useGlideGridActions({ displayRows, columnOrder, schema, pkCol, connectionId, connectionName, selectedTable, selectedSchema, addEdit: cellsReadOnly ? NOOP_EDIT : addEdit, gridSelection, containerRef });
 
   useEffect(() => {
     if (committedRef.current) { committedRef.current = false; discardAll(); setInsertedRows([]); }
@@ -166,7 +173,7 @@ export function GlideDataGrid(props: GlideGridProps) {
       <div className="flex-1 min-h-0">
         <DataEditor ref={gridRef} columns={columns} rows={displayRows.length}
           getCellContent={getCellContent} getCellsForSelection={true}
-          onCellEdited={onCellEdited} onPaste={handlePaste}
+          onCellEdited={onCellEdited} onPaste={cellsReadOnly ? false : handlePaste}
           theme={theme} freezeColumns={freezeColumns} freezeTrailingRows={frozenTrailingRows}
           rowMarkers={pkCol ? "checkbox-visible" : "number"}
           gridSelection={gridSelection} onGridSelectionChange={onGridSelectionChange}

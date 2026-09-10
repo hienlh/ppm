@@ -49,7 +49,12 @@ export function useGlideCellContent(
   pkCol: string | null,
   addPendingEdit: (pkVal: unknown, col: string, newVal: unknown) => void,
   pendingRef: React.RefObject<Map<string, PendingEdit>>,
+  readOnly = false,
 ): UseGlideCellContentResult {
+  // Read through a ref: getCellContent is stable (canvas render loop) and must
+  // still see the current mode without being re-created.
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const colOrderRef = useRef(columnOrder);
@@ -106,7 +111,7 @@ export function useGlideCellContent(
       }
       return {
         kind: GridCellKind.Text, data: "", displayData: placeholder,
-        allowOverlay: !isPk, readonly: isPk,
+        allowOverlay: !isPk, readonly: isPk || readOnlyRef.current,
         themeOverride: hasPending ? PENDING_THEME : (isNewRow || placeholder !== "NULL" ? { textDark: "#9ca3af" } : { textDark: "#6b7280" }),
       };
     }
@@ -115,27 +120,27 @@ export function useGlideCellContent(
     if (kind === GridCellKind.Number && typeof val === "number") {
       return {
         kind: GridCellKind.Number, data: val, displayData: String(val),
-        allowOverlay: !isPk, readonly: isPk,
+        allowOverlay: !isPk, readonly: isPk || readOnlyRef.current,
         themeOverride: hasPending ? PENDING_THEME : undefined,
       };
     }
 
     // Boolean cells
     if (kind === GridCellKind.Boolean && typeof val === "boolean") {
-      return { kind: GridCellKind.Boolean, data: val, readonly: isPk, allowOverlay: false };
+      return { kind: GridCellKind.Boolean, data: val, readonly: isPk || readOnlyRef.current, allowOverlay: false };
     }
 
     // Text cell
     const strVal = formatCellValue(val);
     return {
       kind: GridCellKind.Text, data: strVal, displayData: truncateDisplay(strVal),
-      allowOverlay: !isPk, readonly: isPk,
+      allowOverlay: !isPk, readonly: isPk || readOnlyRef.current,
       themeOverride: hasPending ? PENDING_THEME : undefined,
     };
   }, []); // stable — reads from refs
 
   const onCellEdited = useCallback(([colIdx, rowIdx]: Item, newValue: EditableGridCell) => {
-    if (!pkCol) return;
+    if (!pkCol || readOnly) return;
     const colName = colOrderRef.current[colIdx];
     const row = rowsRef.current[rowIdx];
     if (!colName || !row) return;
@@ -153,7 +158,7 @@ export function useGlideCellContent(
     }
 
     addPendingEdit(pkVal, colName, parsed);
-  }, [pkCol, addPendingEdit]);
+  }, [pkCol, readOnly, addPendingEdit]);
 
   return { getCellContent, onCellEdited };
 }

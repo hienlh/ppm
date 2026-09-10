@@ -232,12 +232,27 @@ export function useDatabase(connectionId: number) {
     fetchTableData();
   }, [executeQuery, queryAsTable, fetchTableData]);
 
+  /** Update a cell in an explicitly named table, then reload the current view.
+   *  Used by ad-hoc query results, where the target table comes from the SQL
+   *  rather than the sidebar selection. */
+  const updateCellIn = useCallback(async (
+    table: string, tableSchema: string,
+    pkColumn: string, pkValue: unknown, column: string, value: unknown,
+  ) => {
+    try {
+      await api.put(`${base}/cell`, { table, schema: tableSchema, pkColumn, pkValue, column, value });
+      reload();
+    } catch (e) {
+      failMutation("Update cell", e);
+    }
+  }, [base, reload, failMutation]);
+
   return {
     selectedTable, selectedSchema, selectTable, tableData, schema,
     loading, error, page, setPage: changePage,
     orderBy, orderDir, toggleSort, clearSort,
     queryResult, queryError, queryLoading, executeQuery,
-    updateCell, deleteRow, bulkDelete, insertRow,
+    updateCell, updateCellIn, deleteRow, bulkDelete, insertRow,
     refreshData: fetchTableData, queryAsTable, reload,
   };
 }

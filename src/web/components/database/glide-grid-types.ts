@@ -29,6 +29,10 @@ export interface GlideGridProps {
   onPageChange: (page: number) => void;
   /** Cell edit: (pkColumn, pkValue, editedColumn, newValue) */
   onCellUpdate: (pkCol: string, pkVal: unknown, col: string, val: unknown) => void;
+  /** Block all cell editing — cells stay viewable/copyable but cannot be changed.
+   *  Set when there is nowhere to write the edit back to (ad-hoc query results
+   *  whose source table can't be determined, readonly connections). */
+  readOnly?: boolean;
   onRowDelete?: (pkCol: string, pkVal: unknown) => void;
   onBulkDelete?: (pkCol: string, pkValues: unknown[]) => void;
   onInsertRow?: (values: Record<string, unknown>) => Promise<void>;
