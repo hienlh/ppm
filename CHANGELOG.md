@@ -1,8 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.19.2] - 2026-09-10
 
 ### Fixed
+- **A `▷ Run` button in a `.sql` file now runs one statement, not everything after it** — a comment trailing the semicolon used to leave the statement open, so one Run could fire an `UPDATE` and the rollback written below it in a single go. Semicolons inside strings, comments and `$$` blocks no longer split a statement early either.
+- **Editing a cell in a SQL query result saves** — the Save button did nothing and the "pending edits" bar never cleared. Results that can't be traced back to a single table, or tables with no primary key, are now read-only instead of collecting edits that could never be saved.
 - **Your custom domain comes back on its own after the machine wakes up** — the connector used to start before Wi-Fi was ready, time out, and fall back to a temporary URL until PPM was restarted, leaving the domain dead. PPM now waits for the network first and retries the domain on its own.
 - **`ppm upgrade` right after a release no longer fails with "No version matching … (but package exists)"** — bun resolved the new version against a cached package manifest that predated it; the upgrade install now bypasses that cache.
 
