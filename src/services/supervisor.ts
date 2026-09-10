@@ -22,6 +22,8 @@ import {
 import type { ResolvedTunnelConfig, TunnelMode } from "./named-tunnel/named-tunnel-config.ts";
 import { readTunnelConfigFresh, chooseTunnelSpawn } from "./named-tunnel/named-tunnel-runtime.ts";
 import { waitForLogLine } from "./named-tunnel/named-tunnel-readiness.ts";
+import { nextNamedRetryDelayMs } from "./named-tunnel/named-tunnel-retry.ts";
+import { waitForCloudflareReachable } from "./named-tunnel/network-ready.ts";
 import { decideNamedProbeAction, publicHostnameIsOurs } from "./named-tunnel/named-tunnel-probe-state.ts";
 import { isCloudflaredPid } from "./tunnel-registry.service.ts";
 import { getQuickTunnelArgs } from "./cloudflared.service.ts";
@@ -102,6 +104,18 @@ let namedTunnelMode: ResolvedTunnelConfig | null = null;
 // but live=quick, and every status write / throttle / restart decision must
 // key off what's actually running.
 let lastSpawnMode: TunnelMode = "quick";
+// How long to wait for the network before attempting a named tunnel.
+const NETWORK_WAIT_MS = 60_000;
+// Falling back to quick used to be permanent until the next supervisor start.
+// These drive a bounded set of retries so a transient failure (network not up
+// yet after a resume) heals itself instead of leaving the hostname dark.
+let namedRetryAttempt = 0;
+let namedRetryTimer: ReturnType<typeof setTimeout> | null = null;
+// A retry that finds the machine still offline re-arms the same rung instead
+// of burning it. Bounded so a laptop left off the network doesn't log a
+// deferral every minute for the rest of its uptime.
+let namedRetryDeferrals = 0;
+const MAX_NAMED_RETRY_DEFERRALS = 10;
 // Set once the named probe has already tried a restart-and-hope; a second
 // consecutive failure then warns and stops instead of looping kills forever.
 let namedProbeRestartAttempted = false;
@@ -293,6 +307,72 @@ async function ensureBindablePort(preferred: number, host: string): Promise<numb
  * The trycloudflare URL will change — unavoidable, the old quick-tunnel session
  * is dead. Fire-and-forget: spawnTunnel's own loop owns liveness afterwards.
  */
+/** Cancel a pending named retry — a newer decision supersedes it. */
+function cancelNamedRetry(): void {
+  if (namedRetryTimer) { clearTimeout(namedRetryTimer); namedRetryTimer = null; }
+}
+
+/**
+ * After a downgrade to quick, try named again on a bounded backoff.
+ *
+ * Re-checks everything at fire time rather than trusting the state captured
+ * when the timer was set: the user may have switched to quick deliberately, a
+ * `retunnel` may already have restored named, or the supervisor may be going
+ * down. Any of those makes the retry pointless or actively wrong.
+ */
+function scheduleNamedRetry(port: number): void {
+  cancelNamedRetry();
+  const delay = nextNamedRetryDelayMs(namedRetryAttempt);
+  if (delay === null) {
+    log("WARN", "Named tunnel still failing after the last retry — staying on the quick URL");
+    return;
+  }
+  const attemptNumber = namedRetryAttempt + 1;
+  log("INFO", `Named tunnel downgraded to quick — retrying in ${Math.round(delay / 1000)}s (#${attemptNumber})`);
+  namedRetryTimer = setTimeout(() => {
+    namedRetryTimer = null;
+    if (shuttingDown || getState() !== "running") return;
+    if (namedTunnelMode?.mode !== "named") return; // user switched to quick meanwhile
+    if (lastSpawnMode === "named") return;         // already recovered
+    // Restarting tears down the quick tunnel that is currently serving the
+    // machine, so only do it once the network can actually carry a connector —
+    // otherwise a still-offline laptop loses its working temporary URL too and
+    // gets a new one for nothing. Offline: re-arm the same rung, don't burn it.
+    void waitForCloudflareReachable({ timeoutMs: 5_000, intervalMs: 1_000 }).then((reachable) => {
+      if (shuttingDown || getState() !== "running") return;
+      if (namedTunnelMode?.mode !== "named" || lastSpawnMode === "named") return;
+      if (!reachable) {
+        if (++namedRetryDeferrals > MAX_NAMED_RETRY_DEFERRALS) {
+          log("WARN", "Named retry abandoned — network still down after repeated attempts");
+          return;
+        }
+        log("INFO", `Named retry #${attemptNumber} deferred — network still down`);
+        scheduleNamedRetry(port);
+        return;
+      }
+      namedRetryDeferrals = 0;
+      namedRetryAttempt = attemptNumber;
+      log("INFO", `Retrying the named tunnel (#${attemptNumber})`);
+      restartTunnel(port);
+    });
+  }, delay);
+  namedRetryTimer.unref?.();
+}
+
+/**
+ * Called once per successful spawn: arm the retry ladder when we had to fall
+ * back to quick, clear it the moment named is actually live again.
+ */
+function noteSpawnOutcomeForNamedRetry(mode: TunnelMode, downgraded: boolean, port: number): void {
+  if (mode === "named") {
+    cancelNamedRetry();
+    namedRetryAttempt = 0;
+    namedRetryDeferrals = 0;
+    return;
+  }
+  if (downgraded) scheduleNamedRetry(port);
+}
+
 function restartTunnel(port: number) {
   lastTunnelRegenAt = Date.now();
   if (tunnelChild) { try { tunnelChild.kill(); } catch {} tunnelChild = null; }
@@ -744,6 +824,15 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   }
 
   const attempts = buildTunnelAttempts(namedTunnelMode, port);
+  // Only the named path pays for this: its failure costs the user their fixed
+  // address, while a quick tunnel just retries with a new URL. Spawning a
+  // connector before the machine's network is back is the difference between
+  // "reconnects in 5s" and "hostname dark until someone notices".
+  if (attempts[0]?.mode === "named") {
+    const reachable = await waitForCloudflareReachable({ timeoutMs: NETWORK_WAIT_MS });
+    if (!reachable) log("WARN", `Cloudflare unreachable after ${NETWORK_WAIT_MS / 1000}s — attempting the tunnel anyway`);
+    if (generation !== tunnelGeneration) return; // superseded while waiting
+  }
   const logPath = cloudflaredLogPath();
   // Truncate stale content from a prior generation; best-effort — Windows can
   // silently fail this while a previous detached cloudflared still holds the
@@ -821,6 +910,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
     adoptedTunnelPid = winPid;
     tunnelChild = null;
     lastSpawnMode = successfulMode;
+    noteSpawnOutcomeForNamedRetry(successfulMode, downgraded, port);
     // `namedProbeRestartAttempted` is deliberately NOT touched here — see the
     // probe's `decideNamedProbeAction` state machine. A successful spawn only
     // proves cloudflared reconnected to Cloudflare's edge, not that the
@@ -908,6 +998,7 @@ export async function spawnTunnel(port: number, generation: number = ++tunnelGen
   }
 
   lastSpawnMode = successfulMode;
+  noteSpawnOutcomeForNamedRetry(successfulMode, downgraded, port);
   // `namedProbeRestartAttempted` is deliberately NOT touched here — see the
   // probe's `decideNamedProbeAction` state machine and the win32 branch above
   // for why a bare spawn success must never re-arm the one-restart budget.
@@ -1708,6 +1799,7 @@ export async function softStop() {
 export function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
+  cancelNamedRetry();
   log("INFO", "Supervisor shutting down");
 
   // Unblock if paused
@@ -1910,6 +2002,10 @@ export async function runSupervisor(opts: {
         // over from the outage trips "restart once" after a handful of probes.
         namedProbeRestartAttempted = false;
         tunnelFailCount = 0;
+        // A deliberate retunnel supersedes any pending automatic retry, and
+        // restarts the ladder so a later transient failure gets a full budget.
+        cancelNamedRetry();
+        namedRetryAttempt = 0;
         restartTunnel(_opts.port);
         // Deliberate fall-through (no return): a bare `ppm restart` sends a
         // bare SIGUSR2 with no command file of its own, and a `retunnel` that
@@ -2059,6 +2155,8 @@ export async function runSupervisor(opts: {
           // rather than inheriting a stale exhausted one (flag AND counter).
           namedProbeRestartAttempted = false;
           tunnelFailCount = 0;
+          cancelNamedRetry();
+          namedRetryAttempt = 0;
           restartTunnel(_opts.port);
         });
       }
