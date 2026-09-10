@@ -22,6 +22,8 @@ export interface TreeItemMsg {
   description?: string;
   tooltip?: string;
   icon?: string;
+  /** Label wraps instead of truncating — for rows whose text is the content. */
+  wrap?: boolean;
   collapsibleState: "none" | "collapsed" | "expanded";
   command?: string;
   children?: TreeItemMsg[];
