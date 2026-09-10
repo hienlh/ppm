@@ -12,6 +12,8 @@ export const FEATURE_BADGES = {
   teams: "beta",
   /** Floating OS-style file explorer window / mobile sheet, shipped in 0.18.0. */
   "os-explorer": "new",
+  /** Remote Desktop — stream + control the host desktop in a floating window. */
+  "remote-desktop": "beta",
 } as const satisfies Record<string, FeatureBadgeKind>;
 
 export type FeatureBadgeId = keyof typeof FEATURE_BADGES;

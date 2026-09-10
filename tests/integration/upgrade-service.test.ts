@@ -104,9 +104,9 @@ describe("checkForUpdate", () => {
 // ─── buildUpgradeCommand (pure) ─────────────────────────────────────────
 
 describe("buildUpgradeCommand", () => {
-  it("bun uses the running runtime path", () => {
+  it("bun uses the running runtime path and bypasses the stale manifest cache", () => {
     const cmd = buildUpgradeCommand("bun", "@hienlh/ppm@9.9.9");
-    expect(cmd).toEqual([process.execPath, "install", "-g", "@hienlh/ppm@9.9.9"]);
+    expect(cmd).toEqual([process.execPath, "install", "-g", "--no-cache", "@hienlh/ppm@9.9.9"]);
   });
   it("npm resolves an npm bin and installs globally", () => {
     const cmd = buildUpgradeCommand("npm", "@hienlh/ppm@9.9.9");
@@ -133,7 +133,7 @@ describe("applyUpgrade regression (bun/npm)", () => {
       spawnFn: spy,
     });
     expect(res).toEqual({ success: true, newVersion: "9.9.9" });
-    expect(spawnedCmd).toEqual([process.execPath, "install", "-g", "@hienlh/ppm@9.9.9"]);
+    expect(spawnedCmd).toEqual([process.execPath, "install", "-g", "--no-cache", "@hienlh/ppm@9.9.9"]);
   });
 
   it("returns 'already on latest' when no update available", async () => {

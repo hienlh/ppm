@@ -30,6 +30,8 @@ import { chatWebSocket } from "./ws/chat.ts";
 import { extensionWebSocket } from "./ws/extensions.ts";
 import { globalWebSocket } from "./ws/global.ts";
 import { groupChatWebSocket } from "./ws/group-chat.ts";
+import { remoteDesktopWebSocket } from "./ws/remote-desktop.ts";
+import { isRemoteDesktopEnabled } from "../services/remote-desktop/remote-desktop-flag.ts";
 import { ok, err } from "../types/api.ts";
 
 /** Tee console.log/error to ~/.ppm/ppm.log while preserving terminal output */
@@ -174,6 +176,10 @@ app.route("/api/system", resourceRoutes);
 // Host OS facts for the file explorer (platform, drives, known + pinned folders)
 import { hostInfoRoutes } from "./routes/host-info.ts";
 app.route("/api/system", hostInfoRoutes);
+
+// Remote desktop (video capture + input) — on by default, opt-out via REMOTE_DESKTOP_ENABLED=0, see remote-desktop-flag.ts
+import { remoteDesktopRoutes } from "./routes/remote-desktop.ts";
+app.route("/api/remote-desktop", remoteDesktopRoutes);
 
 // Finishes an OAuth loopback login started from another device
 import { loopbackRoutes } from "./routes/oauth-loopback.ts";
@@ -860,6 +866,20 @@ if (process.argv.includes("__serve__")) {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
 
+      if (url.pathname === "/ws/remote-desktop") {
+        // Explicit branch so this socket can never fall through to the terminal (shell)
+        // handler's default case. Feature flag + `auth.enabled` are re-checked here
+        // independently of `isWsUpgradeAuthorized` above, which returns true unconditionally
+        // when PPM auth is disabled — a live keyboard/mouse channel must not inherit that.
+        if (!isRemoteDesktopEnabled()) return new Response("Not Found", { status: 404 });
+        if (!configService.get("auth").enabled) {
+          return new Response("Forbidden: remote desktop requires PPM authentication to be enabled", { status: 403 });
+        }
+        const upgraded = server.upgrade(req, { data: { type: "remote-desktop" } });
+        if (upgraded) return undefined;
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+
       if (url.pathname.startsWith("/ws/project/")) {
         const parts = url.pathname.split("/");
         const projectName = decodeURIComponent(parts[3] ?? "");
@@ -901,25 +921,32 @@ if (process.argv.includes("__serve__")) {
       sendPong: true,
       perMessageDeflate: false,
       open(ws: any) {
-        if (ws.data?.type === "chat") chatWebSocket.open(ws);
-        else if (ws.data?.type === "group") groupChatWebSocket.open(ws);
-        else if (ws.data?.type === "extensions") extensionWebSocket.open(ws);
-        else if (ws.data?.type === "global") globalWebSocket.open(ws);
-        else terminalWebSocket.open(ws);
+        const t = ws.data?.type;
+        if (t === "chat") chatWebSocket.open(ws);
+        else if (t === "group") groupChatWebSocket.open(ws);
+        else if (t === "extensions") extensionWebSocket.open(ws);
+        else if (t === "global") globalWebSocket.open(ws);
+        else if (t === "remote-desktop") remoteDesktopWebSocket.open(ws);
+        else if (t === "terminal") terminalWebSocket.open(ws);
+        else ws.close(1008, "unknown socket type");
       },
       message(ws: any, msg: any) {
-        if (ws.data?.type === "chat") chatWebSocket.message(ws, msg);
-        else if (ws.data?.type === "group") groupChatWebSocket.message(ws, msg);
-        else if (ws.data?.type === "extensions") extensionWebSocket.message(ws, msg);
-        else if (ws.data?.type === "global") globalWebSocket.message(ws, msg);
-        else terminalWebSocket.message(ws, msg);
+        const t = ws.data?.type;
+        if (t === "chat") chatWebSocket.message(ws, msg);
+        else if (t === "group") groupChatWebSocket.message(ws, msg);
+        else if (t === "extensions") extensionWebSocket.message(ws, msg);
+        else if (t === "global") globalWebSocket.message(ws, msg);
+        else if (t === "remote-desktop") remoteDesktopWebSocket.message(ws, msg);
+        else if (t === "terminal") terminalWebSocket.message(ws, msg);
       },
       close(ws: any) {
-        if (ws.data?.type === "chat") chatWebSocket.close(ws);
-        else if (ws.data?.type === "group") groupChatWebSocket.close(ws);
-        else if (ws.data?.type === "extensions") extensionWebSocket.close(ws);
-        else if (ws.data?.type === "global") globalWebSocket.close(ws);
-        else terminalWebSocket.close(ws);
+        const t = ws.data?.type;
+        if (t === "chat") chatWebSocket.close(ws);
+        else if (t === "group") groupChatWebSocket.close(ws);
+        else if (t === "extensions") extensionWebSocket.close(ws);
+        else if (t === "global") globalWebSocket.close(ws);
+        else if (t === "remote-desktop") remoteDesktopWebSocket.close(ws);
+        else if (t === "terminal") terminalWebSocket.close(ws);
       },
     } as Parameters<typeof Bun.serve>[0] extends { websocket?: infer W } ? W : never,
   });

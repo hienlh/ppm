@@ -192,6 +192,14 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `PATCH  /api/projects/:name`
 - `DELETE /api/projects/:name`
 
+## /api/remote-desktop
+
+- `GET    /api/remote-desktop/auth`
+- `GET    /api/remote-desktop/capabilities`
+- `GET    /api/remote-desktop/auth`
+- `POST   /api/remote-desktop/requirements/:id/:action`
+- `POST   /api/remote-desktop/session`
+
 ## /api/schedules
 
 - `GET    /api/schedules`
@@ -327,4 +335,4 @@ _Base URL: `http://localhost:8080` (default; override via `ppm config set port <
 - `ws://<host>/ws/terminal` — PTY terminal multiplexer
 - `ws://<host>/ws/extensions` — extension host channel
 
-<!-- Generated from src/server/routes/ for PPM v0.18.14 -->
+<!-- Generated from src/server/routes/ for PPM v0.19.1 -->

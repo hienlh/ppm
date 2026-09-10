@@ -5,6 +5,11 @@ import { configService } from "../../../src/services/config.service.ts";
 import { DEFAULT_CONFIG } from "../../../src/types/config.ts";
 import { openTestDb, setDb } from "../../../src/services/db.service.ts";
 import { accountService } from "../../../src/services/account.service.ts";
+import { setSessionAccount } from "../../../src/services/db.service.ts";
+import {
+  SUBSCRIPTION_PROMPT_CACHE_TTL_MS,
+  API_KEY_PROMPT_CACHE_TTL_MS,
+} from "../../../src/services/subprocess-retention.ts";
 
 /**
  * Helper: create an async iterable from an array of items with optional delay.
@@ -622,6 +627,84 @@ describe("ClaudeAgentSdkProvider", () => {
 
       const opts = mockQueryFn.mock.calls[0]![0].options;
       expect(opts.env.ANTHROPIC_API_KEY).toBe("sk-ant-settings-wins");
+    });
+  });
+
+  // This decides whether ~350MB of subprocess is held for five minutes or an hour, and it is
+  // a second copy of buildQueryEnv's precedence rather than a call into it — so the branches
+  // are asserted one by one. A divergence between the two would otherwise surface as memory
+  // growth on an API-key install, not as a red test.
+  describe("promptCacheTtlMs", () => {
+    const savedEnv: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      setDb(openTestDb());
+      savedEnv.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+      savedEnv.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      delete process.env.ANTHROPIC_BASE_URL;
+      delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    });
+
+    afterEach(() => {
+      if (savedEnv.ANTHROPIC_BASE_URL !== undefined) process.env.ANTHROPIC_BASE_URL = savedEnv.ANTHROPIC_BASE_URL;
+      else delete process.env.ANTHROPIC_BASE_URL;
+      if (savedEnv.CLAUDE_CODE_OAUTH_TOKEN !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = savedEnv.CLAUDE_CODE_OAUTH_TOKEN;
+      else delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      (configService as any).config.ai = structuredClone(DEFAULT_CONFIG.ai);
+    });
+
+    /** Bind an account to a session the way accountSelector does at selection time. */
+    function sessionWithToken(sessionId: string, accessToken: string): void {
+      const acc = accountService.add({
+        email: `${sessionId}@test.com`, accessToken, refreshToken: "r", expiresAt: 9999999999,
+      });
+      setSessionAccount(sessionId, acc.id);
+    }
+
+    it("gives a subscription account the hour", () => {
+      sessionWithToken("s-oauth", "sk-ant-oat01-subscription");
+      expect(provider.promptCacheTtlMs("s-oauth")).toBe(SUBSCRIPTION_PROMPT_CACHE_TTL_MS);
+    });
+
+    it("gives an account holding an API key the five minutes", () => {
+      // The account rotation carries both kinds; only the OAuth ones are subscriptions.
+      sessionWithToken("s-apikey", "sk-ant-api03-not-a-subscription");
+      expect(provider.promptCacheTtlMs("s-apikey")).toBe(API_KEY_PROMPT_CACHE_TTL_MS);
+    });
+
+    it("settings api_key wins over the session's account", () => {
+      // Matches buildQueryEnv: the settings key is what the subprocess actually authenticates
+      // with, so the account's OAuth token is not the credential in play.
+      sessionWithToken("s-settings", "sk-ant-oat01-subscription");
+      (configService as any).config.ai.providers.claude.api_key = "sk-ant-settings-key";
+      expect(provider.promptCacheTtlMs("s-settings")).toBe(API_KEY_PROMPT_CACHE_TTL_MS);
+    });
+
+    it("a custom base_url is not the subscription API, whatever the credential", () => {
+      sessionWithToken("s-baseurl", "sk-ant-oat01-subscription");
+      (configService as any).config.ai.providers.claude.base_url = "https://gateway.example.com";
+      expect(provider.promptCacheTtlMs("s-baseurl")).toBe(API_KEY_PROMPT_CACHE_TTL_MS);
+    });
+
+    it("treats a shell base_url the same, except PPM's own proxy", () => {
+      sessionWithToken("s-shell-url", "sk-ant-oat01-subscription");
+      process.env.ANTHROPIC_BASE_URL = "https://gateway.example.com";
+      expect(provider.promptCacheTtlMs("s-shell-url")).toBe(API_KEY_PROMPT_CACHE_TTL_MS);
+      // Self-proxy still reaches Anthropic with the account's own token, so the hour holds.
+      process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:3210/proxy";
+      expect(provider.promptCacheTtlMs("s-shell-url")).toBe(SUBSCRIPTION_PROMPT_CACHE_TTL_MS);
+    });
+
+    it("falls back to the shell's own credentials when no account is recorded", () => {
+      // The first turn of a session, before accountSelector has written one.
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = "sk-ant-oat01-shell";
+      expect(provider.promptCacheTtlMs("s-none")).toBe(SUBSCRIPTION_PROMPT_CACHE_TTL_MS);
+    });
+
+    it("takes the short window when nothing identifies the credential", () => {
+      // The CLI's own auth, which this layer cannot classify — hold memory on evidence, not
+      // on a guess.
+      expect(provider.promptCacheTtlMs("s-unknown")).toBe(API_KEY_PROMPT_CACHE_TTL_MS);
     });
   });
 

@@ -41,5 +41,24 @@ export const useStreamingStore = create<StreamingStore>((set) => ({
     }),
 }));
 
-/** Selector: true if any session is streaming */
-export const selectAnyStreaming = (s: StreamingStore) => s.sessions.size > 0;
+/**
+ * Selector: true if a session *belonging to this project* is streaming.
+ *
+ * Scoped, because the thing it drives — the favicon and the document title — belongs to one
+ * window, and a window shows one project. `/ws/global` carries `session:phase_changed` for
+ * every project, so an unscoped "is anything streaming" made every open workspace animate
+ * whenever any one of them was working: three PWA windows, one busy, three busy-looking
+ * icons, and no way to tell which.
+ *
+ * No new state is needed for this. The map already records the project per session so
+ * `replaceProjectStreaming` can reconcile one project without touching another's entries.
+ */
+export const selectProjectStreaming =
+  (projectName: string | undefined) =>
+  (s: StreamingStore): boolean => {
+    if (!projectName) return false;
+    for (const project of s.sessions.values()) {
+      if (project === projectName) return true;
+    }
+    return false;
+  };

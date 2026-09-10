@@ -3,7 +3,48 @@
 ## [Unreleased]
 
 ### Fixed
+- **Your custom domain comes back on its own after the machine wakes up** — the connector used to start before Wi-Fi was ready, time out, and fall back to a temporary URL until PPM was restarted, leaving the domain dead. PPM now waits for the network first and retries the domain on its own.
+- **`ppm upgrade` right after a release no longer fails with "No version matching … (but package exists)"** — bun resolved the new version against a cached package manifest that predated it; the upgrade install now bypasses that cache.
+
+## [0.19.1] - 2026-09-09
+
+### Fixed
+- **Remote Desktop no longer claims ffmpeg is missing on a Mac that has it** — a PPM started by launchd inherits a bare `PATH` without `/opt/homebrew/bin`; ffmpeg is now also looked for in the usual Homebrew / winget / chocolatey / apt locations, and a "not installed" answer is re-checked instead of being cached until restart, so the checklist really does update once `brew install ffmpeg` finishes.
+- **"Session not found" when opening a terminal from outside a project** — the remote-desktop checklist's install button opened a shell with no project; such a terminal now starts in your home directory.
+
+## [0.19.0] - 2026-09-08
+
+### Added
+- **Remote Desktop works on macOS hosts** — the screen is captured with avfoundation and encoded by VideoToolbox, mouse and keyboard are injected through CoreGraphics (no helper binary to install or sign). Typing from a phone's soft keyboard now goes through as text — Android keyboards send no key codes, so until now nothing arrived — and accented or CJK characters land intact on both macOS (CoreGraphics Unicode events) and Windows (`KEYEVENTF_UNICODE`).
+- **Remote Desktop can switch between the host's displays** — a dropdown in the window (top-right, next to the stats toggle) and a Monitor button in the mobile toolbar cycle through them; mouse and touch land on the chosen screen even when it sits at negative coordinates. macOS only for now; Windows keeps streaming the whole virtual desktop.
+- **Remote Desktop tells you what the host is missing** instead of hiding the entry or showing a black screen: a checklist before connecting covers ffmpeg (one tap types `brew install ffmpeg` / `winget install …` into a PPM terminal) and, on macOS, the Screen Recording and Accessibility permissions (buttons open the right System Settings pane on the host). Missing input permission still lets you watch in view-only mode.
+
+### Fixed
+- **A screen-capture ffmpeg no longer outlives its session on macOS** — the process ignores SIGTERM there and would have leaked one per connection.
+
+## [0.18.16] - 2026-09-08
+
+### Changed
+- **Remote Desktop is on by default** — the nav entry now shows on any host with ffmpeg, and opening it first shows a warning (whole screen + input, anyone signed in can use it, beta limits) with a "don't show again" option. Set `REMOTE_DESKTOP_ENABLED=0` to remove the feature from a host entirely.
+
+### Fixed
+- **A second PPM on the same machine can no longer hijack your domain** — a dev instance under its own `PPM_HOME` derived the same tunnel name, joined the production tunnel, and the hostname then answered from whichever instance Cloudflare picked. Names now include the PPM_HOME, and setup refuses a tunnel another instance is already serving.
+
+## [0.18.15] - 2026-09-08
+
+### Added
+- **Remote Desktop (experimental, opt-in)** — stream and control this machine's desktop from any browser or phone: a floating window on desktop, a full-screen view on mobile with touch and trackpad-style mouse modes, pinch-zoom, two-finger scroll, and an on-screen keyboard with function/combo keys. Off by default; turn it on with the `REMOTE_DESKTOP_ENABLED` env var and PPM auth enabled. Still hardening — not for a public tunnel yet.
+- **Verified database backups** — hourly `VACUUM INTO` snapshots of the config DB with grandfather-father-son retention, plus `ppm backup` / `ppm restore`.
+
+### Fixed
 - **Named tunnel setup is in English** like the rest of the interface — the first-run popup and Tunnel Manager section shipped in Vietnamese by mistake.
+- **Nested subagent activity shows on the Agent card** instead of the card freezing on the forking step while a sub-subagent runs.
+- **Picture-in-picture keeps a question card's custom input focused**, so you can keep typing an answer after popping the tab out.
+- **Tab favicon and title stay scoped to their own window's project** instead of following whichever project was focused last.
+- **A disabled account stays disabled** across token refresh, re-add and import; a parked account's token is proven before it re-enters the rotation.
+
+### Changed
+- **A clientless AI session holds its subprocess for the real prompt-cache lifetime**, so the next prompt reuses the warm cache instead of paying a cold start.
 
 ## [0.18.14] - 2026-09-07
 
