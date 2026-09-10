@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { ok, err } from "../../types/api.ts";
 import { listCodexAccounts, removeCodexAccount, getAllCodexUsages, getCodexStrategy, setCodexStrategy, type CodexStrategy } from "../../services/codex-account.service.ts";
-import { addApiKeyAccount, startDeviceLogin, awaitDeviceLogin } from "../../services/codex-account-login.ts";
+import { addApiKeyAccount, startDeviceLogin, getDeviceLoginStatus, cancelDeviceLogin } from "../../services/codex-account-login.ts";
 import { exportCodexEncrypted, importCodexEncrypted } from "../../services/codex-account-portability.ts";
 
 /** Codex multi-account management. Mounted under /api/codex-accounts (auth-guarded). */
@@ -36,10 +36,14 @@ codexAccountsRoutes.post("/device-login", async (c) => {
   catch (e) { return c.json(err((e as Error).message), 400); }
 });
 
-/** Long-poll until the device login completes; persists the account on success. */
-codexAccountsRoutes.post("/device-login/:id/await", async (c) => {
-  try { return c.json(ok(await awaitDeviceLogin(c.req.param("id"))), 201); }
-  catch (e) { return c.json(err((e as Error).message), 400); }
+/** Poll a device login. Answers immediately: holding the connection open for the
+ * whole authorization made a dropped socket look like a failed login. */
+codexAccountsRoutes.get("/device-login/:id/status", (c) => c.json(ok(getDeviceLoginStatus(c.req.param("id")))));
+
+/** Abandon a device login the user closed out of. */
+codexAccountsRoutes.delete("/device-login/:id", (c) => {
+  cancelDeviceLogin(c.req.param("id"));
+  return c.json(ok({ cancelled: true }));
 });
 
 /** Download a password-encrypted backup of codex accounts (auth.json + apiKey creds). */

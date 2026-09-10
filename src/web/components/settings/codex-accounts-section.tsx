@@ -6,6 +6,13 @@ type Strategy = "round-robin" | "fill-first" | "lowest-usage";
 interface CodexAccount { id: string; label: string; type: string; planType?: string | null }
 interface Usage { fiveHour?: number; sevenDay?: number }
 interface DevicePending { id: string; userCode: string; verificationUrl: string }
+type DeviceStatus = { state: "pending" } | { state: "done" } | { state: "error"; error: string };
+
+/** Gap between status polls. Each poll answers immediately, so a request lost to
+ * a flaky proxy costs one tick instead of the whole login. */
+const DEVICE_POLL_MS = 2000;
+/** Give up a little after the server's own reap window so its message wins. */
+const DEVICE_POLL_DEADLINE_MS = 210_000;
 
 const STRATEGIES: { value: Strategy; label: string }[] = [
   { value: "round-robin", label: "Round-robin" },
@@ -33,6 +40,9 @@ export function CodexAccountsSection() {
   const [importing, setImporting] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const stopPollRef = useRef<(() => void) | null>(null);
+  /** Id of the login still owed a result, so unmount can release it. */
+  const devicePendingIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,14 +64,44 @@ export function CodexAccountsSection() {
     } catch (e) { setErr((e as Error).message); } finally { setAdding(false); }
   };
 
+  const pollDevice = useCallback((id: string) => {
+    const deadline = Date.now() + DEVICE_POLL_DEADLINE_MS;
+    let stopped = false;
+    stopPollRef.current = () => { stopped = true; };
+    const finish = (message?: string) => {
+      stopped = true; stopPollRef.current = null; devicePendingIdRef.current = null;
+      if (message) setErr(message);
+      setDevice(null); setDeviceWaiting(false);
+    };
+    const tick = async () => {
+      if (stopped) return;
+      let s: DeviceStatus | null = null;
+      // A failed poll is not a failed login — the outcome is held server-side,
+      // so keep asking until the deadline instead of aborting the flow.
+      try { s = await api.get<DeviceStatus>(`/api/codex-accounts/device-login/${id}/status`); } catch { /* retry */ }
+      if (stopped) return;
+      if (s?.state === "done") { finish(); setLabel(""); await load(); return; }
+      if (s?.state === "error") { finish(s.error); return; }
+      if (Date.now() > deadline) { finish("Device login timed out."); return; }
+      setTimeout(tick, DEVICE_POLL_MS);
+    };
+    void tick();
+  }, [load]);
+
+  // Abandoning the panel mid-login stops the polling and releases the
+  // server-side app-server instead of leaving it to age out.
+  useEffect(() => () => {
+    stopPollRef.current?.();
+    const id = devicePendingIdRef.current;
+    if (id) api.del(`/api/codex-accounts/device-login/${id}`).catch(() => {});
+  }, []);
+
   const startDevice = async () => {
     setErr(null);
     try {
       const d = await api.post<DevicePending>("/api/codex-accounts/device-login", { label: label.trim() || undefined });
-      setDevice(d); setDeviceWaiting(true);
-      api.post(`/api/codex-accounts/device-login/${d.id}/await`)
-        .then(async () => { setDevice(null); setDeviceWaiting(false); setLabel(""); await load(); })
-        .catch((e) => { setErr((e as Error).message); setDevice(null); setDeviceWaiting(false); });
+      setDevice(d); setDeviceWaiting(true); devicePendingIdRef.current = d.id;
+      pollDevice(d.id);
     } catch (e) { setErr((e as Error).message); }
   };
 
