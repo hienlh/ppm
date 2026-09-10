@@ -58,15 +58,9 @@ export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const isMobileViewport = useIsMobile();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | "settings" | undefined>();
+  const [drawerTab, setDrawerTab] = useState<"explorer" | "git" | undefined>();
   const [projectSheetOpen, setProjectSheetOpen] = useState(false);
 
-  // Listen for "open-mobile-settings" event (from project bottom sheet)
-  useEffect(() => {
-    const handler = () => { setDrawerTab("settings"); setDrawerOpen(true); };
-    window.addEventListener("open-mobile-settings", handler);
-    return () => window.removeEventListener("open-mobile-settings", handler);
-  }, []);
   const [mountedProjects, setMountedProjects] = useState<Set<string>>(
     () => new Set(["__global__"]),
   );

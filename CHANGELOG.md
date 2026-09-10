@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Settings opens as its own window instead of squeezing into the sidebar** — a category list on the left, the settings themselves on the right, so panes have room to grow. On a phone it opens as a tab you drill into, and the duplicate gear icon in the sidebar rail is gone (there was one in the tab list and one in the footer).
+- **Settings categories are grouped** — General and Appearance up top, then AI & Accounts, Integrations and Advanced, instead of one flat list with loose toggles above it.
+- **Claude accounts are managed in Settings → Accounts** — adding, removing, enabling, exporting, importing and rotation settings moved out of the popup behind the chat usage chip, which had to fit an account list and four dialogs into a 350px strip. The chip still shows usage and links across. Adding or removing an account now happens in one place rather than two that could disagree.
+- **Both account tabs now look the same** — the Codex pane was a different design from the Claude one: raw buttons instead of the shared ones, forms sitting inline down the page instead of dialogs, usage printed as text rather than drawn as bars, and its own colours for the same messages. Switching sub-tabs looked like switching apps. Adding, exporting, importing and rotation are now the same four buttons with the same dialogs on both sides, and both draw accounts as the same card with the same usage bars.
+- **Codex sign-ins moved next to the Claude ones** — Settings → Accounts now has a sub-tab per configured provider instead of hiding Codex accounts inside AI Provider’s Codex tab. That tab keeps the provider settings and links across. A provider’s sub-tab only appears once you have configured it.
+- **A settings tab can no longer be detached into a second window** — it has a window of its own, so detaching only produced a duplicate with its own remembered position.
+
+### Fixed
+- **The mobile menu button is now labelled for screen readers** — it was an icon with no accessible name.
+
 ## [0.19.2] - 2026-09-10
 
 ### Fixed

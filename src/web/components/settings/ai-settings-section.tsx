@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { ExternalLink, RefreshCw, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { getAISettings, updateAISettings, type AISettings } from "@/lib/api-settings";
 import { api } from "@/lib/api-client";
 import { ProviderBadge } from "@/components/chat/provider-selector";
-import { CodexAccountsSection } from "./codex-accounts-section";
+import { openSettings } from "./open-settings";
 import type { ModelOption } from "../../../types/chat";
 
 const EFFORT_OPTIONS = [
@@ -137,8 +137,18 @@ export function AISettingsSection({ compact }: { compact?: boolean } = {}) {
       )}
 
       <div className={innerGap}>
-        {/* Codex account login/management lives here (codex auth is per-CODEX_HOME) */}
-        {activeTab === "codex" && <CodexAccountsSection />}
+        {/* Codex sign-ins moved to the Accounts pane, next to the Claude ones — this tab is
+            about how the provider runs, not which accounts it has. */}
+        {activeTab === "codex" && (
+          <button
+            type="button"
+            onClick={() => openSettings("accounts")}
+            className="w-full flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-2 text-left cursor-pointer hover:bg-surface-elevated transition-colors"
+          >
+            <span className={`${labelSize} text-text-secondary`}>Codex accounts &amp; login</span>
+            <ExternalLink className="size-3.5 text-text-subtle shrink-0" />
+          </button>
+        )}
 
         {/* Model selector — dynamic, works for all providers */}
         {models.length > 0 && (

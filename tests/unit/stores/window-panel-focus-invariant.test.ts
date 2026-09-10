@@ -8,6 +8,11 @@
  * The writers exercised here all pick a panel by scanning the WHOLE `panels` map, which
  * includes the off-grid window panels: the chat-session dedupe, the singleton dedupe,
  * `setActiveTab` with no panel id, and the last-tab-close focus fallback.
+ *
+ * The singleton cases use `git-log`, not `settings`: settings owns a window kind of its own
+ * and so is refused by `popOutTab` outright (asserted at the bottom of this file). `git-log`
+ * is the other member of the singleton set and is still detachable, which is what these
+ * cases actually need.
  */
 import { describe, it, expect, beforeEach } from "bun:test";
 
@@ -77,15 +82,15 @@ beforeEach(() => {
 describe("focus never lands on a window panel", () => {
   it("survives re-opening a popped-out singleton through the singleton dedupe", () => {
     seedStore(
-      [makePanel("panel-A", [{ id: "settings", type: "settings" }, { id: "editor:/a.ts", type: "editor" }])],
+      [makePanel("panel-A", [{ id: "git-log", type: "git-log" }, { id: "editor:/a.ts", type: "editor" }])],
       [["panel-A"]],
       "panel-A",
     );
-    const windowId = usePanelStore.getState().popOutTab("settings", "panel-A")!;
+    const windowId = usePanelStore.getState().popOutTab("git-log", "panel-A")!;
     expect(usePanelStore.getState().panels[windowPanelId(windowId)]?.tabs).toHaveLength(1);
 
     // Clicking "Settings" in the nav rail while it is detached.
-    usePanelStore.getState().openTab({ type: "settings", title: "Settings", projectId: "proj1", closable: true });
+    usePanelStore.getState().openTab({ type: "git-log", title: "Git Log", projectId: "proj1", closable: true });
 
     expectFocusOnGrid();
 
@@ -95,19 +100,19 @@ describe("focus never lands on a window panel", () => {
     });
     const state = usePanelStore.getState();
     expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).toContain("editor:/b.ts");
-    expect(state.panels[windowPanelId(windowId)]?.tabs.map((t) => t.id)).toEqual(["settings"]);
+    expect(state.panels[windowPanelId(windowId)]?.tabs.map((t) => t.id)).toEqual(["git-log"]);
   });
 
   it("survives setActiveTab on a popped-out singleton", () => {
     seedStore(
-      [makePanel("panel-A", [{ id: "settings", type: "settings" }, { id: "editor:/a.ts", type: "editor" }])],
+      [makePanel("panel-A", [{ id: "git-log", type: "git-log" }, { id: "editor:/a.ts", type: "editor" }])],
       [["panel-A"]],
       "panel-A",
     );
-    const windowId = usePanelStore.getState().popOutTab("settings", "panel-A")!;
+    const windowId = usePanelStore.getState().popOutTab("git-log", "panel-A")!;
 
     // Any caller that activates a tab by id alone: send-to-chat, open-resource-tab, URL sync.
-    usePanelStore.getState().setActiveTab("settings");
+    usePanelStore.getState().setActiveTab("git-log");
 
     expectFocusOnGrid();
 
@@ -116,7 +121,7 @@ describe("focus never lands on a window panel", () => {
     });
     const state = usePanelStore.getState();
     expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).toContain("editor:/b.ts");
-    expect(state.panels[windowPanelId(windowId)]?.tabs.map((t) => t.id)).toEqual(["settings"]);
+    expect(state.panels[windowPanelId(windowId)]?.tabs.map((t) => t.id)).toEqual(["git-log"]);
   });
 
   it("survives re-opening a popped-out chat session through the sessionId dedupe", () => {
@@ -165,16 +170,30 @@ describe("focus never lands on a window panel", () => {
 
   it("never persists a window panel id as the focused panel", () => {
     seedStore(
-      [makePanel("panel-A", [{ id: "settings", type: "settings" }, { id: "editor:/a.ts", type: "editor" }])],
+      [makePanel("panel-A", [{ id: "git-log", type: "git-log" }, { id: "editor:/a.ts", type: "editor" }])],
       [["panel-A"]],
       "panel-A",
     );
-    usePanelStore.getState().popOutTab("settings", "panel-A");
-    usePanelStore.getState().setActiveTab("settings");
+    usePanelStore.getState().popOutTab("git-log", "panel-A");
+    usePanelStore.getState().setActiveTab("git-log");
 
     const raw = localStorageStub.getItem("ppm-panels-proj1");
     expect(raw).toBeTruthy();
     const layout = JSON.parse(raw!) as { focusedPanelId: string };
     expect(isWindowPanelId(layout.focusedPanelId)).toBe(false);
+  });
+
+  /** Guards the reason the cases above had to stop using `settings` as their singleton. */
+  it("refuses to detach a tab whose type already owns a window kind", () => {
+    seedStore(
+      [makePanel("panel-A", [{ id: "settings", type: "settings" }, { id: "editor:/a.ts", type: "editor" }])],
+      [["panel-A"]],
+      "panel-A",
+    );
+    expect(usePanelStore.getState().popOutTab("settings", "panel-A")).toBeNull();
+    // Refused, not half-done: the tab stays put and no window panel is created.
+    const state = usePanelStore.getState();
+    expect(state.panels["panel-A"]?.tabs.map((t) => t.id)).toContain("settings");
+    expect(Object.keys(state.panels).filter(isWindowPanelId)).toHaveLength(0);
   });
 });

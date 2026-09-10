@@ -1054,22 +1054,24 @@ async function scenario8() {
     return raw ? (JSON.parse(raw).focusedPanelId ?? null) : null;
   })()`;
 
-  // --- singleton (settings) ---
-  await openTab({ type: "settings", title: "Settings", projectId: PROJECT_NAME, closable: true, metadata: {} });
+  // --- singleton (git-log) ---
+  // Not `settings`: it owns a window kind of its own, so popOutTab refuses it outright.
+  // git-log is the other singleton type and is still detachable, which is what this needs.
+  await openTab({ type: "git-log", title: "Git Log", projectId: PROJECT_NAME, closable: true, metadata: {} });
   await sleep(800);
-  const { winId } = await popOutViaMenu("settings");
+  const { winId } = await popOutViaMenu("git-log");
   const afterPopOut = await snapshot();
   assert(
-    panelOf(afterPopOut, "settings") === `__win__:${winId}`,
-    "[8] settings tab detached into the window panel",
-    `panel=${panelOf(afterPopOut, "settings")}`,
+    panelOf(afterPopOut, "git-log") === `__win__:${winId}`,
+    "[8] git-log tab detached into the window panel",
+    `panel=${panelOf(afterPopOut, "git-log")}`,
   );
 
   // Re-trigger the singleton the way the nav/command path does, twice over: openTab's
   // dedupe branch and a bare setActiveTab with no panelId.
-  await ev(`${PANELS}.getState().openTab({ type: 'settings', title: 'Settings', projectId: ${JSON.stringify(PROJECT_NAME)}, closable: true, metadata: {} })`);
+  await ev(`${PANELS}.getState().openTab({ type: 'git-log', title: 'Git Log', projectId: ${JSON.stringify(PROJECT_NAME)}, closable: true, metadata: {} })`);
   await sleep(500);
-  await ev(`${PANELS}.getState().setActiveTab('settings')`);
+  await ev(`${PANELS}.getState().setActiveTab('git-log')`);
   await sleep(700);
 
   const afterActivate = await snapshot();
@@ -1079,9 +1081,9 @@ async function scenario8() {
     `focused=${afterActivate.focused} grid=${JSON.stringify(afterActivate.grid)}`,
   );
   assert(
-    panelOf(afterActivate, "settings") === `__win__:${winId}`,
-    "[8] the settings tab stayed in the window (activation did not pull it home)",
-    `panel=${panelOf(afterActivate, "settings")}`,
+    panelOf(afterActivate, "git-log") === `__win__:${winId}`,
+    "[8] the git-log tab stayed in the window (activation did not pull it home)",
+    `panel=${panelOf(afterActivate, "git-log")}`,
   );
 
   // The consequence the invariant exists for: a new tab with no panelId must land in the grid.
@@ -1105,7 +1107,7 @@ async function scenario8() {
     "[8] persisted ppm-panels-<project> holds no __win__ focusedPanelId",
     `persisted focusedPanelId=${focusOnDisk}`,
   );
-  await screenshot("08-focus-invariant.png", { scenarioId: "8", step: "settings detached, new tab landed in the grid" });
+  await screenshot("08-focus-invariant.png", { scenarioId: "8", step: "git-log detached, new tab landed in the grid" });
   await closeWindowChrome();
 
   // --- chat, deduped by sessionId (the other focus-setting branch) ---

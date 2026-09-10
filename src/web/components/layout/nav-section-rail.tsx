@@ -4,6 +4,7 @@ import { Settings, Bug, Cloud, FolderTree, MonitorSmartphone } from "lucide-reac
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
+import { openSettings } from "@/components/settings/open-settings";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
@@ -220,7 +221,7 @@ export const NavSectionRail = memo(function NavSectionRail({ className }: { clas
           <FooterUtil icon={MonitorSmartphone} label="Remote Desktop" featureBadge="remote-desktop" onClick={openRemoteDesktop} />
         )}
         <FooterUtil icon={Bug} label="Report Bug" onClick={handleReportBug} />
-        <FooterUtil icon={Settings} label="Settings" active={sidebarActiveTab === "settings"} onClick={() => handleTabClick("settings")} />
+        <FooterUtil icon={Settings} label="Settings" onClick={() => openSettings()} />
       </div>
     </div>
   );

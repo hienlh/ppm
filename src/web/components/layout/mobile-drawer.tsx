@@ -1,12 +1,11 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone } from "lucide-react";
+import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone, Settings } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
-import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { JiraPanel } from "@/components/jira/jira-panel";
 import { AiResourcesPanel } from "@/components/ai-resources/ai-resources-panel";
@@ -25,6 +24,7 @@ import { isMobileDevice } from "@/hooks/use-is-mobile";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";
+import { openSettings } from "@/components/settings/open-settings";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 // Tab ids the mobile drawer can render content for. `search` is desktop-only for now;
 // ext views are supported via the `ext:` prefix.
 const MOBILE_SUPPORTED = new Set<string>([
-  "history", "teams", "explorer", "git", "database", "tunnels", "ai-resources", "settings", "jira",
+  "history", "teams", "explorer", "git", "database", "tunnels", "ai-resources", "jira",
 ]);
 const isMobileSupported = (id: SidebarActiveTab) => MOBILE_SUPPORTED.has(id) || id.startsWith("ext:");
 
@@ -148,7 +148,6 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
           {activeTab === "tunnels" && <TunnelManagerTab />}
           {activeTab === "jira" && <JiraPanel />}
           {activeTab === "ai-resources" && <AiResourcesPanel />}
-          {activeTab === "settings" && <SettingsTab />}
           {activeTab.startsWith("ext:") && <ExtensionTreeView viewId={activeTab.slice(4)} className="h-full" />}
         </div>
 
@@ -171,6 +170,8 @@ export function MobileDrawer({ isOpen, onClose, initialTab }: MobileDrawerProps)
                 <FooterTile icon={MonitorSmartphone} label="Remote" badge="remote-desktop" onClick={() => { onClose(); openRemoteDesktop(); }} />
               )}
               <FooterTile icon={Cloud} label="Cloud" onClick={() => setCloudOpen(true)} />
+              {/* Also not a sidebar tab — settings open as their own tab here, window on desktop. */}
+              <FooterTile icon={Settings} label="Settings" onClick={() => { onClose(); openSettings(); }} />
               <FooterTile icon={BugIcon} label="Bug" onClick={handleReportBug} />
             </div>
             {/* Version / upgrade pinned at the very bottom, under a divider. */}

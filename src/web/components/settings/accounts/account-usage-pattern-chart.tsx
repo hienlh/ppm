@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Loader2 } from "lucide-react";
-import { getUsageHistory, type UsageSnapshot } from "../../lib/api-settings";
+import { getUsageHistory, type UsageSnapshot } from "../../../lib/api-settings";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const HOUR_LABELS = Array.from({ length: 24 }, (_, i) => i);

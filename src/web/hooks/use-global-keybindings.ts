@@ -6,6 +6,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useKeybindingsStore, parseCombo, eventMatchesCombo } from "@/stores/keybindings-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { useCompareStore } from "@/stores/compare-store";
+import { openSettings } from "@/components/settings/open-settings";
 import { basename } from "@/lib/utils";
 
 /** Dispatch this event to open the command palette from anywhere, optionally with initial query */
@@ -171,12 +172,10 @@ export function useGlobalKeybindings() {
         }
       }
 
-      // Open settings (sidebar)
+      // Open settings — its own window on desktop, a tab on mobile.
       if (match(e, "open-settings")) {
         e.preventDefault();
-        const settings = useSettingsStore.getState();
-        if (settings.sidebarCollapsed) settings.toggleSidebar();
-        settings.setSidebarActiveTab("settings");
+        openSettings();
         return;
       }
 

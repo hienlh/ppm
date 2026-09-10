@@ -23,6 +23,7 @@ export const WINDOW_CONTENT: Record<WindowKind, LazyExoticComponent<ComponentTyp
   "system-monitor": lazy(() => import("@/components/system/system-monitor-window-content")),
   "tab-host": lazy(() => import("./tab-host-window-content")),
   "remote-desktop": lazy(() => import("@/components/remote-desktop/remote-desktop-window-content")),
+  settings: lazy(() => import("@/components/settings/settings-window-content")),
 };
 
 /** Titlebar text for a window. Falls back to the kind's generic name. */
@@ -35,6 +36,7 @@ export function windowTitle(kind: WindowKind, payload?: Record<string, unknown>)
   }
   if (kind === "system-monitor") return "System Monitor";
   if (kind === "remote-desktop") return "Remote Desktop";
+  if (kind === "settings") return "Settings";
   // A detached tab carries its title in the payload; the generic name only shows for a
   // window whose tab has not been resolved yet (restore before the layout is loaded).
   if (kind === "tab-host") return "Tab";

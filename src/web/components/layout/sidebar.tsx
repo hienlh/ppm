@@ -5,7 +5,6 @@ import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";
 import { FileTree } from "@/components/explorer/file-tree";
 import { GitStatusPanel } from "@/components/git/git-status-panel";
-import { SettingsTab } from "@/components/settings/settings-tab";
 import { DatabaseSidebar } from "@/components/database/database-sidebar";
 import { SearchPanel } from "@/components/explorer/search-panel";
 import { ExtensionTreeView } from "@/components/extensions/extension-tree-view";
@@ -137,7 +136,6 @@ export const Sidebar = memo(function Sidebar() {
             {sidebarActiveTab === "tunnels" && <TunnelManagerTab />}
             {sidebarActiveTab === "jira" && <JiraPanel />}
             {sidebarActiveTab === "ai-resources" && <AiResourcesPanel />}
-            {sidebarActiveTab === "settings" && <SettingsTab />}
             {typeof sidebarActiveTab === "string" && sidebarActiveTab.startsWith("ext:") && (
               <ExtensionTreeView viewId={sidebarActiveTab.slice(4)} className="h-full" />
             )}

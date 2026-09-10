@@ -1,37 +1,25 @@
-import { useState, useEffect, useRef } from "react";
-import { Activity, RefreshCw, Eye, Download, Upload, Plus, X, Settings, Trash2, Maximize2, Minimize2 } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
-import type { UsageInfo, LimitBucket } from "../../../types/chat";
-import {
-  getAccounts,
-  getActiveAccount,
-  getAllAccountUsages,
-  patchAccount,
-  deleteAccount,
-  type AccountInfo,
-  type AccountUsageEntry,
-  type OAuthProfileData,
-} from "../../lib/api-settings";
-import { AddAccountDialog, ExportAccountsDialog, ImportAccountsDialog } from "./account-dialogs";
-import { AccountRotationSettings } from "./account-rotation-settings";
-import { UsagePatternChart } from "./usage-pattern-chart";
+/**
+ * The chat header's usage chip and the panel it opens.
+ *
+ * Display only. Adding, removing, enabling, exporting and rotating accounts all live in
+ * Settings → Accounts; this panel links there instead of carrying its own copy of those
+ * controls, which is what let the two drift apart. The account cards are the same component
+ * the Settings pane renders — passing no action callbacks is what makes them read-only, so
+ * there is one card implementation rather than a display twin.
+ */
+
+import { Activity, ExternalLink, RefreshCw, X } from "lucide-react";
+import type { UsageInfo } from "../../../types/chat";
+import { openSettings } from "@/components/settings/open-settings";
+import { AccountCard } from "@/components/settings/accounts/account-card";
+import { AccountBucketRow } from "@/components/settings/accounts/account-bucket-row";
+import { useAccountsData } from "@/components/settings/accounts/use-accounts-data";
+import { formatLastUpdated, pctColor } from "@/components/settings/accounts/account-usage-format";
 
 interface UsageBadgeProps {
   usage: UsageInfo;
   loading?: boolean;
   onClick?: () => void;
-}
-
-function pctColor(pct: number): string {
-  if (pct >= 90) return "text-error";
-  if (pct >= 70) return "text-warning";
-  return "text-success";
-}
-
-function barColor(pct: number): string {
-  if (pct >= 90) return "bg-error";
-  if (pct >= 70) return "bg-warning";
-  return "bg-success";
 }
 
 export function UsageBadge({ usage, loading, onClick }: UsageBadgeProps) {
@@ -69,413 +57,80 @@ interface UsageDetailPanelProps {
   lastFetchedAt?: string | null;
 }
 
-function formatResetTime(bucket?: LimitBucket): string | null {
-  if (!bucket) return null;
-  let totalMins: number | null = null;
-  if (bucket.resetsInMinutes != null) {
-    totalMins = bucket.resetsInMinutes;
-  } else if (bucket.resetsInHours != null) {
-    totalMins = Math.round(bucket.resetsInHours * 60);
-  } else if (bucket.resetsAt) {
-    const diff = new Date(bucket.resetsAt).getTime() - Date.now();
-    totalMins = diff > 0 ? Math.ceil(diff / 60_000) : 0;
-  }
-  if (totalMins == null) return null;
-  if (totalMins <= 0) return "now";
-  const d = Math.floor(totalMins / 1440);
-  const h = Math.floor((totalMins % 1440) / 60);
-  const m = totalMins % 60;
-  if (d > 0) return m > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${d}d ${h}h` : `${d}d`;
-  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  return `${m}m`;
-}
-
-function BucketRow({ label, bucket }: { label: string; bucket?: LimitBucket }) {
-  if (!bucket) return null;
-  const pct = Math.round(bucket.utilization * 100);
-  const reset = formatResetTime(bucket);
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-text-primary">{label}</span>
-        {reset && (
-          <span className="text-[10px] text-text-subtle" title="Resets in">↻ {reset}</span>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-2 rounded-full bg-border overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${barColor(pct)}`}
-            style={{ width: `${Math.min(pct, 100)}%` }}
-          />
-        </div>
-        <span className={`text-xs font-medium tabular-nums w-10 text-right ${pctColor(pct)}`}>
-          {pct}%
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function formatExpiry(expiresAt: number): string {
-  const diff = expiresAt - Date.now();
-  if (diff <= 0) return "expired";
-  const mins = Math.ceil(diff / 60_000);
-  const h = Math.floor(mins / 60);
-  const d = Math.floor(h / 24);
-  if (d > 0) return `${d}d ${h % 24}h`;
-  if (h > 0) return `${h}h ${mins % 60}m`;
-  return `${mins}m`;
-}
-
-/** Derive a human-readable token status from account info */
-function tokenStatus(info?: AccountInfo): { label: string; tip: string; color: string } {
-  if (!info) return { label: "unknown", tip: "No account info available", color: "text-text-subtle" };
-  if (!info.expiresAt) return { label: "key", tip: "API key (no expiry)", color: "text-text-subtle" };
-  const expired = info.expiresAt * 1000 < Date.now(); // expiresAt is seconds
-  if (expired && info.hasRefreshToken) return { label: "expired", tip: "Token expired but has refresh token — will auto-renew", color: "text-warning" };
-  if (expired) return { label: "expired", tip: "Token expired, no refresh token", color: "text-error" };
-  if (info.hasRefreshToken) return { label: "long-lived", tip: "OAuth token with refresh — long-lived", color: "text-success" };
-  return { label: "temp", tip: "Temporary token without refresh — will expire", color: "text-warning" };
-}
-
-function formatLastUpdated(ts: number | null | undefined): string | null {
-  if (!ts) return null;
-  const secs = Math.round((Date.now() - ts) / 1000);
-  if (secs < 5) return "just now";
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  const remainMins = mins % 60;
-  if (hrs < 24) return remainMins > 0 ? `${hrs}h ${remainMins}m ago` : `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
-function AccountUsageCard({ entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash, fullscreen }: {
-  entry: AccountUsageEntry;
-  isActive: boolean;
-  accountInfo?: AccountInfo;
-  onToggle?: (id: string, status: string) => void;
-  toggling?: boolean;
-  onDelete?: (id: string, display: string) => void;
-  onExport?: (id: string) => void;
-  onViewProfile?: (profile: OAuthProfileData, accountId: string) => void;
-  flash?: boolean;
-  fullscreen?: boolean;
-}) {
-  const { usage } = entry;
-  const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
-  const status = accountInfo?.status ?? entry.accountStatus;
-  // Expired: has expiresAt in the past AND no refresh token to auto-renew
-  const isExpired = !!(accountInfo && !accountInfo.hasRefreshToken && accountInfo.expiresAt && accountInfo.expiresAt < Math.floor(Date.now() / 1000));
-
-  return (
-    <div className={`rounded-md border p-2 transition-colors duration-500 ${fullscreen ? "flex flex-col gap-1.5 overflow-hidden" : "space-y-1.5 min-w-[200px] shrink-0 snap-start"} ${isExpired ? "opacity-50" : ""} ${flash ? "bg-primary/10 border-primary/40" : ""} ${isActive ? "border-primary/30 bg-primary/5" : "border-border/50"}`}>
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs font-medium truncate flex-1 min-w-0">
-          {entry.accountLabel ?? entry.accountId.slice(0, 8)}
-        </span>
-        {isExpired && (
-          <span className="text-[9px] text-error shrink-0 font-medium">Expired</span>
-        )}
-        {!entry.isOAuth && !isExpired && (
-          <span className="text-[9px] text-text-subtle shrink-0">API key</span>
-        )}
-        {/* Account controls */}
-        <div className="flex items-center gap-0.5 shrink-0">
-          {!isExpired && onViewProfile && accountInfo?.profileData && (
-            <button
-              className="p-1 rounded cursor-pointer text-text-subtle hover:text-foreground hover:bg-surface-elevated transition-colors"
-              onClick={() => onViewProfile(accountInfo.profileData!, entry.accountId)}
-              title="View profile"
-            >
-              <Eye className="size-3" />
-            </button>
-          )}
-          {!isExpired && onExport && entry.isOAuth && (
-            <button
-              className="p-1 rounded cursor-pointer text-text-subtle hover:text-primary hover:bg-surface-elevated transition-colors"
-              onClick={() => onExport(entry.accountId)}
-              title="Export this account"
-            >
-              <Download className="size-3" />
-            </button>
-          )}
-          {!isExpired && onToggle && (
-            <Switch
-              checked={status !== "disabled"}
-              onCheckedChange={() => onToggle(entry.accountId, status)}
-              disabled={toggling || status === "cooldown"}
-              className="scale-[0.6] cursor-pointer"
-            />
-          )}
-          {onDelete && (
-            <button
-              className="p-1 rounded cursor-pointer text-text-subtle hover:text-error hover:bg-surface-elevated transition-colors"
-              onClick={() => onDelete(entry.accountId, entry.accountLabel ?? entry.accountId.slice(0, 8))}
-              title="Remove account"
-            >
-              <Trash2 className="size-3" />
-            </button>
-          )}
-        </div>
-      </div>
-      {hasBuckets ? (
-        <div className={fullscreen ? "flex-1 flex flex-col justify-evenly min-h-0" : "space-y-1.5"}>
-          <BucketRow label="5-Hour Session" bucket={usage.session} />
-          <BucketRow label="Weekly" bucket={usage.weekly} />
-          <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
-          <BucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
-        </div>
-      ) : (
-        <p className="text-[10px] text-text-subtle">
-          {entry.isOAuth ? "No usage data yet" : "Usage tracking not available for API keys"}
-        </p>
-      )}
-      {/* Footer: updated · expires · type */}
-      {(() => {
-        const ts = tokenStatus(accountInfo);
-        return (
-          <div className="flex items-center gap-1.5 text-[9px] text-text-subtle flex-wrap">
-            {usage.lastFetchedAt && (
-              <span title="Last usage data update">↻ {formatLastUpdated(new Date(usage.lastFetchedAt).getTime())}</span>
-            )}
-            {accountInfo?.expiresAt && accountInfo.expiresAt * 1000 > Date.now() && (
-              <span title="Token expires in">⏱ {formatExpiry(accountInfo.expiresAt * 1000)}</span>
-            )}
-            <span className={ts.color} title={ts.tip}>© {ts.label}</span>
-          </div>
-        );
-      })()}
-    </div>
-  );
-}
-
 export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, lastFetchedAt }: UsageDetailPanelProps) {
-  const [allUsages, setAllUsages] = useState<AccountUsageEntry[]>([]);
-  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
-  const [profileView, setProfileView] = useState<{ profile: OAuthProfileData; accountId: string } | null>(null);
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [showExportDialog, setShowExportDialog] = useState(false);
-  const [showImportDialog, setShowImportDialog] = useState(false);
-  const [showRotationSettings, setShowRotationSettings] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; display: string } | null>(null);
-  const [exportPreselect, setExportPreselect] = useState<string | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
-  const msgTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const prevUsagesRef = useRef<AccountUsageEntry[]>([]);
-
-  function showMessage(msg: string) {
-    if (msgTimer.current) clearTimeout(msgTimer.current);
-    setMessage(msg);
-    msgTimer.current = setTimeout(() => setMessage(null), 4000);
-  }
-
-  function handleSuccess(msg?: string) {
-    loadAll();
-    if (msg) showMessage(msg);
-  }
-
-  async function loadAll() {
-    const isRefresh = allUsages.length > 0;
-    if (isRefresh) setRefreshing(true); else setInitialLoading(true);
-
-    const [usages, accs, active] = await Promise.allSettled([
-      getAllAccountUsages(), getAccounts(), getActiveAccount(),
-    ]);
-
-    if (usages.status === "fulfilled") {
-      const newUsages = usages.value;
-      // Detect which accounts changed usage values
-      if (isRefresh && prevUsagesRef.current.length > 0) {
-        const changed = new Set<string>();
-        const prevMap = new Map(prevUsagesRef.current.map(u => [u.accountId, u]));
-        for (const nu of newUsages) {
-          const prev = prevMap.get(nu.accountId);
-          if (!prev) { changed.add(nu.accountId); continue; }
-          const pu = prev.usage, cu = nu.usage;
-          if (pu.session?.utilization !== cu.session?.utilization
-            || pu.weekly?.utilization !== cu.weekly?.utilization
-            || pu.weeklyOpus?.utilization !== cu.weeklyOpus?.utilization
-            || pu.weeklySonnet?.utilization !== cu.weeklySonnet?.utilization) {
-            changed.add(nu.accountId);
-          }
-        }
-        if (changed.size > 0) {
-          setFlashIds(changed);
-          setTimeout(() => setFlashIds(new Set()), 1500);
-        }
-      }
-      prevUsagesRef.current = newUsages;
-      setAllUsages(newUsages);
-    }
-    if (accs.status === "fulfilled") setAccounts(accs.value);
-    if (active.status === "fulfilled") setActiveAccountId(active.value?.id ?? null);
-    setInitialLoading(false);
-    setRefreshing(false);
-  }
-
-  useEffect(() => {
-    if (!visible) return;
-    loadAll();
-  }, [visible]);
-
-  // Re-fetch account usages after parent refreshes from Anthropic API
-  useEffect(() => {
-    if (!visible || !lastFetchedAt) return;
-    loadAll();
-  }, [lastFetchedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Fetching is gated on visibility: the panel is collapsed most of the time, and its
+  // usage endpoint is the expensive one.
+  const { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload } = useAccountsData(visible);
 
   if (!visible) return null;
 
   const accountMap = new Map(accounts.map((a) => [a.id, a]));
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
-  const hasMultipleAccounts = allUsages.length > 0;
-
-  // Grid dimensions for fullscreen: cards fill viewport without scroll
-  const fsCount = allUsages.length || 1;
-  const fsCols = Math.ceil(Math.sqrt(fsCount));
-  const fsRows = Math.ceil(fsCount / fsCols);
-
-  async function handleToggle(id: string, status: string) {
-    // Enabling a parked account proves its token server-side first, which is a network
-    // round trip that can come back 400 — and patchAccount throws on that. Without the
-    // catch the message the server takes care to write reaches nobody: unhandled
-    // rejection, no toast, no reload, and the Switch silently snaps back. The pending
-    // flag is because that round trip can take most of a minute in the worst case.
-    setTogglingId(id);
-    try {
-      await patchAccount(id, { status: status === "disabled" ? "active" : "disabled" });
-    } catch (e) {
-      showMessage((e as Error).message);
-    }
-    setTogglingId(null);
-    loadAll();
-    onReload?.();
-  }
-
-  async function confirmDeleteAccount() {
-    if (!deleteTarget) return;
-    try {
-      await deleteAccount(deleteTarget.id);
-      showMessage(`Account "${deleteTarget.display}" removed.`);
-      loadAll();
-      onReload?.();
-    } catch (e) {
-      showMessage(`Failed to remove: ${(e as Error).message}`);
-    }
-    setDeleteTarget(null);
-  }
-
-  function openExportAll() {
-    setExportPreselect(null);
-    setShowExportDialog(true);
-  }
+  const hasPerAccountUsage = usages.length > 0;
 
   return (
-    <div className={`relative border-b border-border bg-surface px-3 py-2.5 ${isFullscreen ? "fixed inset-0 z-50 flex flex-col gap-2.5 overflow-hidden" : "space-y-2.5 max-h-[350px] overflow-y-auto"}`}>
+    <div className="relative border-b border-border bg-surface px-3 py-2.5 space-y-2.5 max-h-[350px] overflow-y-auto">
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-text-primary">Usage & Accounts</span>
+          <span className="text-xs font-semibold text-text-primary">Usage</span>
           {lastFetchedAt && (
             <span className="text-[10px] text-text-subtle">{formatLastUpdated(new Date(lastFetchedAt).getTime())}</span>
           )}
         </div>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setShowRotationSettings(true)}
-            className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
-            title="Rotation & retry settings"
+            onClick={() => openSettings("accounts")}
+            className="flex items-center gap-1 text-[10px] text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+            title="Add, remove or rotate accounts"
           >
-            <Settings className="size-3" />
+            Manage accounts <ExternalLink className="size-3" />
           </button>
-          {hasMultipleAccounts && (
-            <button
-              onClick={() => setIsFullscreen((v) => !v)}
-              className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
-              title={isFullscreen ? "Exit fullscreen" : "Fullscreen view"}
-            >
-              {isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
-            </button>
-          )}
           {onReload && (
             <button
-              onClick={() => { onReload(); loadAll(); }}
+              onClick={() => { onReload(); void reload(); }}
               disabled={loading || refreshing}
               className="text-xs text-text-subtle hover:text-text-primary px-1 disabled:opacity-50 cursor-pointer"
               title="Refresh"
+              aria-label="Refresh usage"
             >
               <RefreshCw className={`size-3 ${(loading || refreshing) ? "animate-spin" : ""}`} />
             </button>
           )}
           <button
-            onClick={() => { setIsFullscreen(false); onClose(); }}
+            onClick={onClose}
             className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+            aria-label="Close usage panel"
           >
             <X className="size-3" />
           </button>
         </div>
       </div>
 
-      {message && (
-        <div className="text-[11px] p-1.5 rounded bg-success/10 text-success text-center animate-in fade-in duration-200">
-          {message}
-        </div>
-      )}
-
-      {(hasMultipleAccounts || initialLoading) ? (
-        <div
-          className={isFullscreen
-            ? "flex-1 min-h-0 grid gap-2 overflow-hidden"
-            : "flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 snap-x snap-mandatory scrollbar-thin"
-          }
-          style={isFullscreen ? {
-            gridTemplateColumns: `repeat(${fsCols}, minmax(0, 1fr))`,
-            gridTemplateRows: `repeat(${fsRows}, minmax(0, 1fr))`,
-          } : undefined}
-        >
+      {hasPerAccountUsage || initialLoading ? (
+        <div className="space-y-1.5">
           {initialLoading ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
           ) : (
-            allUsages.map((entry) => (
-              <AccountUsageCard
+            usages.map((entry) => (
+              <AccountCard
                 key={entry.accountId}
                 entry={entry}
                 isActive={entry.accountId === (activeAccountId ?? usage.activeAccountId)}
                 accountInfo={accountMap.get(entry.accountId)}
-                onToggle={handleToggle}
-                toggling={togglingId === entry.accountId}
-                onDelete={(id, display) => setDeleteTarget({ id, display })}
-                onExport={(id) => { setExportPreselect(id); setShowExportDialog(true); }}
-                onViewProfile={(profile, accountId) => setProfileView({ profile, accountId })}
                 flash={flashIds.has(entry.accountId)}
-                fullscreen={isFullscreen}
               />
             ))
           )}
         </div>
+      ) : usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet ? (
+        <div className="space-y-2.5">
+          <AccountBucketRow label="5-Hour Session" bucket={usage.session} />
+          <AccountBucketRow label="Weekly" bucket={usage.weekly} />
+          <AccountBucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
+          <AccountBucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
+        </div>
       ) : (
-        <>
-          {usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet ? (
-            <div className="space-y-2.5">
-              <BucketRow label="5-Hour Session" bucket={usage.session} />
-              <BucketRow label="Weekly" bucket={usage.weekly} />
-              <BucketRow label="Weekly (Opus)" bucket={usage.weeklyOpus} />
-              <BucketRow label="Weekly (Sonnet)" bucket={usage.weeklySonnet} />
-            </div>
-          ) : (
-            <p className="text-xs text-text-subtle">No usage data available</p>
-          )}
-        </>
+        <p className="text-xs text-text-subtle">No usage data available</p>
       )}
 
       {hasCost && (
@@ -498,65 +153,6 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
           )}
         </div>
       )}
-
-      {/* Inline profile popup */}
-      {profileView && (
-        <div className="border-t border-border pt-2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] font-medium text-text-subtle">Profile</span>
-            <button className="text-text-subtle hover:text-foreground cursor-pointer" onClick={() => setProfileView(null)}>
-              <X className="size-3" />
-            </button>
-          </div>
-          <div className="grid grid-cols-[70px_1fr] gap-x-2 gap-y-0.5 text-[10px]">
-            {profileView.profile.account?.display_name && <><span className="text-text-subtle">Name</span><span>{profileView.profile.account.display_name}</span></>}
-            {profileView.profile.account?.email && <><span className="text-text-subtle">Email</span><span>{profileView.profile.account.email}</span></>}
-            {profileView.profile.organization?.name && <><span className="text-text-subtle">Org</span><span>{profileView.profile.organization.name}</span></>}
-            {profileView.profile.organization?.organization_type && <><span className="text-text-subtle">Type</span><span>{profileView.profile.organization.organization_type}</span></>}
-            {profileView.profile.organization?.rate_limit_tier && <><span className="text-text-subtle">Tier</span><span>{profileView.profile.organization.rate_limit_tier}</span></>}
-            {profileView.profile.organization?.subscription_status && <><span className="text-text-subtle">Status</span><span>{profileView.profile.organization.subscription_status}</span></>}
-          </div>
-          <UsagePatternChart accountId={profileView.accountId} />
-        </div>
-      )}
-
-      {/* Action buttons */}
-      <div className="border-t border-border pt-2 flex gap-1.5 shrink-0">
-        <button onClick={() => setShowAddDialog(true)} className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer">
-          <Plus className="size-3" /> Add
-        </button>
-        <button onClick={openExportAll} className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer">
-          <Download className="size-3" /> Export
-        </button>
-        <button onClick={() => setShowImportDialog(true)} className="flex-1 flex items-center justify-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-surface-hover transition-colors cursor-pointer">
-          <Upload className="size-3" /> Import
-        </button>
-      </div>
-
-      {/* Delete confirmation overlay */}
-      {deleteTarget && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm rounded-md">
-          <div className="bg-surface border border-border rounded-lg shadow-lg p-4 mx-4 max-w-[280px] w-full space-y-3">
-            <p className="text-xs text-text-primary text-center">
-              Remove <strong className="text-foreground">{deleteTarget.display}</strong>?
-            </p>
-            <div className="flex gap-2">
-              <button onClick={() => setDeleteTarget(null)} className="flex-1 px-3 py-1.5 rounded-md text-xs border border-border text-text-secondary hover:bg-surface-hover cursor-pointer transition-colors">
-                Cancel
-              </button>
-              <button onClick={confirmDeleteAccount} className="flex-1 px-3 py-1.5 rounded-md text-xs bg-error text-white hover:bg-error/80 cursor-pointer transition-colors">
-                Remove
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Account dialogs */}
-      <AddAccountDialog open={showAddDialog} onOpenChange={setShowAddDialog} onSuccess={handleSuccess} />
-      <ExportAccountsDialog open={showExportDialog} onOpenChange={(v) => { setShowExportDialog(v); if (!v) setExportPreselect(null); }} accounts={accounts} preselectId={exportPreselect} onMessage={showMessage} />
-      <ImportAccountsDialog open={showImportDialog} onOpenChange={setShowImportDialog} onSuccess={handleSuccess} />
-      <AccountRotationSettings open={showRotationSettings} onOpenChange={setShowRotationSettings} />
     </div>
   );
 }

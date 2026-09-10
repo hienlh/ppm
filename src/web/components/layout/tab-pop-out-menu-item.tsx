@@ -15,6 +15,7 @@ import { isDocumentPipSupported } from "@/components/floating-window/pip/pip-sup
 import { ContextMenuItem, ContextMenuSeparator } from "@/components/ui/context-menu";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { usePanelStore } from "@/stores/panel-store";
+import { NON_POPPABLE_TAB_TYPES } from "@/stores/panel-utils";
 import type { Tab } from "@/stores/tab-store";
 
 interface TabPopOutMenuItemProps {
@@ -25,9 +26,9 @@ interface TabPopOutMenuItemProps {
 
 export function TabPopOutMenuItem({ tab, panelId }: TabPopOutMenuItemProps) {
   const isMobile = useIsMobile();
-  // The monitor already has a window kind of its own; detaching it would open a second,
+  // Some tabs already have a window kind of their own; detaching one would open a second,
   // duplicate presentation of the same data.
-  if (isMobile || tab.type === "system-monitor") return null;
+  if (isMobile || NON_POPPABLE_TAB_TYPES.has(tab.type)) return null;
 
   return (
     <>

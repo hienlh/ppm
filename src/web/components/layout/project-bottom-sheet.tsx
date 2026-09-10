@@ -12,6 +12,7 @@ import { formatRelativeDate } from "@/lib/format-date";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
+import { openSettings } from "@/components/settings/open-settings";
 
 interface ProjectBottomSheetProps {
   isOpen: boolean;
@@ -96,15 +97,8 @@ export function ProjectBottomSheet({ isOpen, onClose }: ProjectBottomSheetProps)
 
   function handleSettings() {
     handleClose();
-    // Mobile: open drawer with settings tab
-    if (window.innerWidth < 768) {
-      window.dispatchEvent(new Event("open-mobile-settings"));
-      return;
-    }
-    // Desktop: open sidebar settings tab
-    const { sidebarCollapsed, toggleSidebar, setSidebarActiveTab } = useSettingsStore.getState();
-    if (sidebarCollapsed) toggleSidebar();
-    setSidebarActiveTab("settings");
+    // No viewport branch here: the hook routes to a window or a tab on its own.
+    openSettings();
   }
 
   async function handleRename() {

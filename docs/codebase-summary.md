@@ -157,9 +157,12 @@ src/
     │   │   └── ... (6 other chat components)
     │   ├── settings/
     │   │   ├── ai-settings-section.tsx # UPDATED: Per-provider tabs, dynamic model dropdowns
-    │   │   ├── mcp-settings-section.tsx # ADDED: MCP servers tab (list, add, edit, delete)
     │   │   ├── mcp-server-dialog.tsx    # ADDED: Add/Edit MCP server dialog
-    │   │   ├── settings-tab.tsx # UPDATED: Added Jira Watcher tab
+    │   │   ├── settings-body.tsx # UPDATED: split/stacked shell chosen by @container width
+    │   │   ├── settings-categories.ts # UPDATED: grouped category tree (5 groups)
+    │   │   ├── settings-window-content.tsx # ADDED: floating-window body, category on payload
+    │   │   ├── open-settings.ts # ADDED: window on desktop, tab below md
+    │   │   ├── accounts/ # ADDED: single home for Claude account management (12 files)
     │   │   └── jira/                  # ADDED: Jira Watcher components
     │   │       ├── jira-settings-tab.tsx
     │   │       ├── jira-config-form.tsx
@@ -268,10 +271,11 @@ src/
 │           │   ├── connection-color-picker.tsx # WCAG contrast-aware color picker
 │           │   └── use-connections.ts # Hook for connection CRUD operations
 │           ├── projects/            # Project management (339 LOC, 2 files)
-│           ├── settings/            # Settings panel (theme + AI provider + accounts config UI)
-│           │   ├── settings-tab.tsx # Main settings panel with tabs
+│           ├── settings/            # Settings as its own window kind (tab below md)
+│           │   ├── settings-body.tsx # Shared shell: rail + pane, layout from @container
+│           │   ├── settings-tab.tsx # Thin tab wrapper over settings-body
 │           │   ├── ai-settings-section.tsx # AI provider configuration
-│           │   └── accounts-settings-section.tsx # Multi-account management (add, edit, delete, activate)
+│           │   └── accounts/        # Multi-account management (add, delete, enable, export, import, rotation, token test)
 │           ├── terminal/            # xterm.js wrapper (143 LOC, 2 files)
 │           ├── shared/              # Shared components (2 files)
 │           │   ├── markdown-renderer.tsx # Render Markdown with syntax highlighting

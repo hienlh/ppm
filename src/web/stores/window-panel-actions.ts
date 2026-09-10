@@ -16,6 +16,7 @@ import type { Panel } from "./panel-utils";
 import {
   createWindowPanel,
   isWindowPanelId,
+  NON_POPPABLE_TAB_TYPES,
   windowIdFromPanelId,
   windowPanelId,
 } from "./panel-utils";
@@ -27,9 +28,6 @@ import type { PanelStore } from "./panel-store";
 
 type Set = StoreApi<PanelStore>["setState"];
 type Get = StoreApi<PanelStore>["getState"];
-
-/** Tab types that never detach — the monitor already owns a window kind of its own. */
-const NON_POPPABLE_TAB_TYPES = new Set(["system-monitor"]);
 
 /**
  * A grid panel to hold focus: the preferred one when it is still in the grid, else the

@@ -21,6 +21,7 @@ import {
   AppWindow,
 } from "lucide-react";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
+import { openSettings } from "@/components/settings/open-settings";
 import { useTabStore, type TabType } from "@/stores/tab-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -226,8 +227,7 @@ export function CommandPalette({ open, onClose, initialQuery = "" }: { open: boo
       {
         id: "settings", label: "Settings", icon: Settings,
         action: () => {
-          if (sidebarCollapsed) toggleSidebar();
-          setSidebarActiveTab("settings");
+          openSettings();
           onClose();
         },
         keywords: "config preferences theme",

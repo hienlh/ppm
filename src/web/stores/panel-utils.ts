@@ -34,6 +34,17 @@ export const DOCK_ALLOWED_TAB_TYPES = new Set<TabType>(["terminal", "system-moni
 // ---------------------------------------------------------------------------
 
 /**
+ * Tab types that never detach into a floating window, because each already owns a window
+ * kind of its own — detaching would open a second, duplicate presentation of the same thing
+ * with its own separate geometry to keep in sync.
+ *
+ * Single source for both enforcement points: the action that performs the detach, and the
+ * context-menu item that offers it. Split across two files, adding a window kind meant
+ * remembering both, and one of them was always the one that got forgotten.
+ */
+export const NON_POPPABLE_TAB_TYPES = new Set<TabType>(["system-monitor", "settings"]);
+
+/**
  * Prefix of the reserved panel IDs that host tabs detached into a floating window.
  * Like the dock, such a panel lives in the `panels` map but is intentionally excluded
  * from `grid`, so all grid math (MAX_ROWS, split, column count) ignores it. The

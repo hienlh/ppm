@@ -8,7 +8,7 @@ import {
   getAccountSettings,
   updateAccountSettings,
   type AccountSettings,
-} from "../../lib/api-settings";
+} from "../../../lib/api-settings";
 
 interface AccountRotationSettingsProps {
   open: boolean;

@@ -1,5 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useTabStore, type TabType } from "@/stores/tab-store";
+import { useWindowStore } from "@/components/floating-window/window-store";
+import { openSettings } from "@/components/settings/open-settings";
+import { isMobileDevice } from "@/hooks/use-is-mobile";
 
 // ---------------------------------------------------------------------------
 // URL state types
@@ -146,12 +149,39 @@ function buildTitleFromUrl(type: TabType, identifier: string | null): string {
   }
 }
 
+/**
+ * Settings has no desktop tab — it opens as its own floating window, so a URL naming it has
+ * to go through the same router every other entry point uses.
+ *
+ * The wait matters: `restoreAll` REPLACES the window map when the desktop layer mounts, so a
+ * window opened before that runs is silently discarded and the URL looks like it did nothing.
+ * This is reachable in practice because the URL open happens inside async project resolution,
+ * which can beat the layer's layout effect. Mobile needs no wait — it gets a tab, and the
+ * window layer never mounts (so `restored` would never flip and this would hang).
+ */
+function openSettingsOnceWindowLayerIsReady(): void {
+  if (isMobileDevice() || useWindowStore.getState().restored) {
+    openSettings();
+    return;
+  }
+  const unsubscribe = useWindowStore.subscribe((state) => {
+    if (!state.restored) return;
+    unsubscribe();
+    openSettings();
+  });
+}
+
 /** Auto-open or focus a tab based on URL state */
 export function autoOpenFromUrl(
   tabType: TabType,
   tabIdentifier: string | null,
   projectName: string,
 ): void {
+  if (tabType === "settings") {
+    openSettingsOnceWindowLayerIsReady();
+    return;
+  }
+
   const { tabs, setActiveTab, openTab } = useTabStore.getState();
   const expectedId = tabIdFromUrl(tabType, tabIdentifier);
 

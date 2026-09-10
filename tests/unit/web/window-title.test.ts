@@ -39,4 +39,9 @@ describe("windowTitle", () => {
   it("names the system monitor", () => {
     expect(windowTitle("system-monitor")).toBe("System Monitor");
   });
+
+  it("names settings, and does not let its category payload leak into the title", () => {
+    expect(windowTitle("settings")).toBe("Settings");
+    expect(windowTitle("settings", { category: "accounts" })).toBe("Settings");
+  });
 });

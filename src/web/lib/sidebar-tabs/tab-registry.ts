@@ -1,5 +1,5 @@
 import {
-  FolderOpen, GitBranch, Settings, Database, Search, Puzzle, Bug, Sparkles, BotMessageSquare, Globe, Users,
+  FolderOpen, GitBranch, Database, Search, Puzzle, Bug, Sparkles, BotMessageSquare, Globe, Users,
 } from "lucide-react";
 import type { SidebarActiveTab } from "@/stores/settings-store";
 import type { FeatureBadgeId } from "@/lib/feature-badges";
@@ -32,13 +32,16 @@ export const BUILTIN_SIDEBAR_TABS: SidebarTabDef[] = [
   { id: "database", label: "Database", icon: Database },
   { id: "tunnels", label: "Cloudflare Tunnels", shortLabel: "Tunnels", icon: Globe },
   { id: "ai-resources", label: "AI Resources", shortLabel: "AI", icon: Sparkles },
-  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 /**
- * Full available tab set given the current runtime state: built-ins + Jira (when
- * enabled, inserted before Settings) + extension sidebar views appended at end.
- * Mirrors the merge logic previously inlined in nav-section-rail.tsx.
+ * Full available tab set given the current runtime state: built-ins + Jira (when enabled) +
+ * extension sidebar views appended at end. Mirrors the merge logic previously inlined in
+ * nav-section-rail.tsx.
+ *
+ * Jira goes after the built-ins and before extension views. It used to be spliced in ahead of
+ * a Settings entry that no longer exists here — Settings opens its own window now — and the
+ * resulting position is the same one, so the splice became a plain append.
  */
 export function getAvailableTabs(opts: {
   jiraEnabled: boolean;
@@ -47,10 +50,7 @@ export function getAvailableTabs(opts: {
   const tabs: SidebarTabDef[] = [...BUILTIN_SIDEBAR_TABS];
 
   if (opts.jiraEnabled) {
-    const settingsIdx = tabs.findIndex((t) => t.id === "settings");
-    const jira: SidebarTabDef = { id: "jira", label: "Jira", icon: Bug };
-    if (settingsIdx >= 0) tabs.splice(settingsIdx, 0, jira);
-    else tabs.push(jira);
+    tabs.push({ id: "jira", label: "Jira", icon: Bug });
   }
 
   const views = opts.contributions?.views;

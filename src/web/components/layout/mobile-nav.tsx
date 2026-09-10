@@ -261,7 +261,11 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
       <div className="flex items-center h-12">
         {/* Fixed cluster: Menu | Project | Terminal | + */}
         <div className="flex items-center shrink-0 border-r border-border">
-          <button onClick={onMenuPress} className="flex items-center justify-center size-12 shrink-0 text-text-secondary">
+          <button
+            onClick={onMenuPress}
+            aria-label="Open menu"
+            className="flex items-center justify-center size-12 shrink-0 text-text-secondary"
+          >
             <Menu className="size-5" />
           </button>
 

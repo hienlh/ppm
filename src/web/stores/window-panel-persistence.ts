@@ -16,9 +16,14 @@ const STORAGE_KEY = "ppm-window-panels";
 
 /**
  * Tab types a persisted window panel may bring back. Written as an exhaustive record so
- * adding a TabType is a compile error here rather than a silent gap. `system-monitor` is
- * false because it can never be popped out; everything else a crafted blob names is
- * rejected, so it cannot mount an arbitrary component in the privileged window slot.
+ * adding a TabType is a compile error here rather than a silent gap. `system-monitor` and
+ * `settings` are false because they can never be popped out (each owns a window kind of its
+ * own); everything else a crafted blob names is rejected, so it cannot mount an arbitrary
+ * component in the privileged window slot.
+ *
+ * Kept as its own record rather than derived from `NON_POPPABLE_TAB_TYPES`: this one guards
+ * untrusted localStorage input and must stay exhaustive over `TabType`, so a new tab type
+ * fails the build here instead of defaulting to "restorable".
  */
 const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   terminal: true,
@@ -28,7 +33,7 @@ const POPPABLE_TAB_TYPES: Record<TabType, boolean> = {
   sqlite: true,
   postgres: true,
   "git-diff": true,
-  settings: true,
+  settings: false,
   extension: true,
   "extension-webview": true,
   "conflict-editor": true,
