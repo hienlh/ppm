@@ -2,7 +2,8 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as MonacoType from "monaco-editor";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { createSqlCompletionProvider, clearCompletionCache, getStatementAtCursor, type SchemaInfo } from "./sql-completion-provider";
+import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "./sql-completion-provider";
+import { getStatementAtCursor } from "./split-sql-statements";
 
 interface SqlQueryEditorProps {
   onExecute: (sql: string) => void;

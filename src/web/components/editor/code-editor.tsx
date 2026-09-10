@@ -14,7 +14,8 @@ import { EditorToolbar } from "./editor-toolbar";
 import { EditorLanguagePicker } from "./editor-language-picker";
 import { SaveAsDialog } from "./save-as-dialog";
 import { EditorMobileToolbar } from "./editor-mobile-toolbar";
-import { createSqlCompletionProvider, clearCompletionCache, getStatementAtCursor, type SchemaInfo } from "../database/sql-completion-provider";
+import { createSqlCompletionProvider, clearCompletionCache, type SchemaInfo } from "../database/sql-completion-provider";
+import { getStatementAtCursor, splitSqlStatements } from "../database/split-sql-statements";
 import { useConnections, type Connection } from "../database/use-connections";
 import { GlideDataGrid } from "../database/glide-data-grid";
 import type { GridColumnSchema } from "../database/glide-grid-types";
@@ -509,75 +510,48 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             if (model !== thisModel) return { lenses: [], dispose: () => {} };
 
             const lenses: MonacoType.languages.CodeLens[] = [];
-            const text = model.getValue();
-            const lines = text.split("\n");
-            let stmtStartLine = -1;
-            let stmtLines: string[] = [];
-            let dollarBlock = false; // Track DO $$ ... $$ blocks
-
-            // Transaction block tracking: group BEGIN...COMMIT into single Run Transaction
-            const txPattern = /^(BEGIN|COMMIT|ROLLBACK|END)(;|\s|$)/i;
-            let txBlockStartLine = -1;
-            let txBlockStmts: string[] = [];
 
             const addLens = (line: number, stmt: string, title = "\u25B7 Run") => {
               const trimmed = stmt.trim();
-              if (!trimmed || trimmed.startsWith("--")) return;
+              if (!trimmed) return;
               lenses.push({
                 range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
                 command: { id: cmdId, title, arguments: [trimmed] },
               });
             };
 
-            for (let i = 0; i < lines.length; i++) {
-              const trimmed = lines[i]!.trim();
-              if (stmtStartLine === -1) {
-                if (!trimmed || trimmed.startsWith("--")) continue;
-                stmtStartLine = i + 1;
-                stmtLines = [];
-              }
-              stmtLines.push(lines[i]!);
+            // Transaction block tracking: group BEGIN...COMMIT into single Run Transaction
+            const txPattern = /^(BEGIN|COMMIT|ROLLBACK|END)(;|\s|$)/i;
+            let txBlockStartLine = -1;
+            let txBlockStmts: string[] = [];
 
-              // Detect $$ dollar-quoted block start/end
-              const dollarMatches = (trimmed.match(/\$\$/g) || []).length;
-              if (dollarMatches % 2 === 1) dollarBlock = !dollarBlock;
+            for (const { sql, startLine } of splitSqlStatements(model.getValue())) {
+              const isTxStart = /^BEGIN(;|\s|$)/i.test(sql);
+              const isTxEnd = /^(COMMIT|ROLLBACK|END)(;|\s|$)/i.test(sql);
 
-              // Only split on ; when NOT inside a $$ block
-              if (!dollarBlock && trimmed.endsWith(";")) {
-                const stmt = stmtLines.join("\n").trim();
-                const isTxStart = /^BEGIN(;|\s|$)/i.test(stmt);
-                const isTxEnd = /^(COMMIT|ROLLBACK|END)(;|\s|$)/i.test(stmt);
-
-                if (txBlockStartLine === -1 && isTxStart) {
-                  // Start collecting transaction block
-                  txBlockStartLine = stmtStartLine;
-                  txBlockStmts = [stmt];
-                } else if (txBlockStartLine > -1) {
-                  txBlockStmts.push(stmt);
-                  // Individual Run for non-tx-control statements inside block
-                  if (!isTxEnd && !txPattern.test(stmt)) {
-                    addLens(stmtStartLine, stmt);
-                  }
-                  if (isTxEnd) {
-                    // Complete block — add Run Transaction at BEGIN line
-                    addLens(txBlockStartLine, txBlockStmts.join("\n"), "\u25B7 Run Transaction");
-                    txBlockStartLine = -1;
-                    txBlockStmts = [];
-                  }
-                } else {
-                  addLens(stmtStartLine, stmt);
+              if (txBlockStartLine === -1 && isTxStart) {
+                // Start collecting transaction block
+                txBlockStartLine = startLine;
+                txBlockStmts = [sql];
+              } else if (txBlockStartLine > -1) {
+                txBlockStmts.push(sql);
+                // Individual Run for non-tx-control statements inside block
+                if (!isTxEnd && !txPattern.test(sql)) {
+                  addLens(startLine, sql);
                 }
-
-                stmtStartLine = -1;
-                stmtLines = [];
+                if (isTxEnd) {
+                  // Complete block — add Run Transaction at BEGIN line
+                  addLens(txBlockStartLine, txBlockStmts.join("\n"), "\u25B7 Run Transaction");
+                  txBlockStartLine = -1;
+                  txBlockStmts = [];
+                }
+              } else {
+                addLens(startLine, sql);
               }
             }
             // Unclosed transaction block — still offer Run Transaction
             if (txBlockStartLine > -1 && txBlockStmts.length > 1) {
               addLens(txBlockStartLine, txBlockStmts.join("\n"), "\u25B7 Run Transaction");
-            }
-            if (stmtStartLine > 0 && stmtLines.join("").trim()) {
-              addLens(stmtStartLine, stmtLines.join("\n"));
             }
             return { lenses, dispose: () => {} };
           },
@@ -878,7 +852,7 @@ function SqlResultPanel({ result, error, loading, connName, onClose, onOpenInTab
           <GlideDataGrid
             columns={tableData.columns} rows={tableData.rows} total={tableData.total} limit={tableData.limit}
             schema={querySchema} loading={false}
-            page={1} onPageChange={NOOP} onCellUpdate={NOOP}
+            page={1} onPageChange={NOOP} onCellUpdate={NOOP} readOnly
             orderBy={null} orderDir="ASC" onToggleSort={NOOP}
             connectionName={connName}
           />
