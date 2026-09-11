@@ -1,4 +1,4 @@
-import { Play, RotateCcw, Square, ExternalLink, Trash2, Loader2, MoreHorizontal } from "lucide-react";
+import { Play, RotateCcw, Square, ExternalLink, Trash2, Loader2, MoreHorizontal } from "@/lib/icons";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";

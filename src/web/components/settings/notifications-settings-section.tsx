@@ -5,7 +5,7 @@
  * PPMBot, which is where alerts actually get delivered today.
  */
 
-import { Bell } from "lucide-react";
+import { Bell } from "@/lib/icons";
 import { Separator } from "@/components/ui/separator";
 
 export function NotificationsSettingsSection() {

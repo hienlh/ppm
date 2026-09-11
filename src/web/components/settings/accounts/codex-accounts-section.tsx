@@ -7,7 +7,7 @@
  */
 
 import { useState } from "react";
-import { CircleHelp, Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "lucide-react";
+import { CircleHelp, Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";

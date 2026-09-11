@@ -5,7 +5,7 @@
  */
 
 import { useRef } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 

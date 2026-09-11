@@ -1,5 +1,5 @@
 import { useMemo, useRef, useEffect } from "react";
-import { ChevronRight, Folder, File, FileCode, FileJson, FileText, FileType } from "lucide-react";
+import { ChevronRight, Folder, File, FileCode, FileJson, FileText, FileType } from "@/lib/icons";
 import {
   DropdownMenu,
   DropdownMenuContent,

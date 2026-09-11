@@ -45,7 +45,7 @@ import {
   ExternalLink,
   Slash,
   Pencil,
-} from "lucide-react";
+} from "@/lib/icons";
 import { ChatWelcome } from "./chat-welcome";
 import { ChatScrollNav } from "./chat-scroll-nav";
 import { MessageActionBar, ActionButton } from "./message-action-bar";

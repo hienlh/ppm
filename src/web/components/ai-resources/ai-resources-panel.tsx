@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Search, Sparkles, FolderOpen } from "lucide-react";
+import { RefreshCw, Search, Sparkles, FolderOpen } from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";

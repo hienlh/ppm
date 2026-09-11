@@ -18,7 +18,7 @@
  * while every turn on them failed. The sign-in deadline replaced it.
  */
 
-import { CircleHelp, Download, Eye, KeyRound, RefreshCw, Trash2 } from "lucide-react";
+import { CircleHelp, Download, Eye, KeyRound, RefreshCw, Trash2 } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
 import type { AccountInfo, AccountUsageEntry, OAuthProfileData } from "../../../lib/api-settings";
 import { AccountBucketRow } from "./account-bucket-row";

@@ -5,12 +5,12 @@
  * buildTabSwitcherGroups helper; this file is presentation + wiring only.
  */
 import { useState, useRef, useCallback } from "react";
-import { Search, X, Plus, Columns2 } from "lucide-react";
+import { Search, X, Plus, Columns2, MessageCircle } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { usePanelStore } from "@/stores/panel-store";
 import { useNotificationStore, notificationColor } from "@/stores/notification-store";
 import { useStreamingStore } from "@/stores/streaming-store";
-import { getTabTypeIcon } from "@/lib/tab-type-icons";
+import { getTabIcon } from "@/lib/tab-type-icons";
 import { buildTabSwitcherGroups, type TabSortMode } from "./tab-switcher-groups";
 import type { Tab } from "@/stores/tab-store";
 import { cn } from "@/lib/utils";
@@ -148,7 +148,7 @@ export function MobileTabSwitcherSheet({
                 </div>
               )}
               {group.tabs.map((tab) => {
-                const Icon = getTabTypeIcon(tab.type);
+                const Icon = getTabIcon(tab);
                 const isActive = tab.id === activeTabId;
                 const sessionId = tab.type === "chat" ? (tab.metadata?.sessionId as string | undefined) : undefined;
                 const tagColor = sessionId ? sessionTagMap[sessionId]?.color : undefined;
@@ -165,6 +165,10 @@ export function MobileTabSwitcherSheet({
                     onTouchStart={() => startLongPress(tab.id)}
                     onTouchEnd={cancelLongPress}
                     onTouchMove={cancelLongPress}
+                    // Scrolling this list is what it is for, and a scroll fires
+                    // `touchcancel` and then stops sending move/end here — so
+                    // without this the timer completes into the moving list.
+                    onTouchCancel={cancelLongPress}
                     onContextMenu={(e) => e.preventDefault()}
                     className={cn(
                       "relative flex items-center gap-2.5 w-full h-11 rounded-lg pl-3.5 pr-2 transition-colors",
@@ -179,7 +183,12 @@ export function MobileTabSwitcherSheet({
                     />
                     {/* Icon with streaming typing-dots / unread notification badge */}
                     <span className={cn("relative shrink-0", isStreaming && "text-warning")}>
-                      <Icon className={cn("size-4", isStreaming ? undefined : isActive ? "text-primary" : "text-text-secondary")} />
+                      {/* Empty bubble while streaming so the dots below have room — see draggable-tab.tsx */}
+                      {isStreaming ? (
+                        <MessageCircle className="size-4" />
+                      ) : (
+                        <Icon className={cn("size-4", isActive ? "text-primary" : "text-text-secondary")} />
+                      )}
                       {isStreaming ? (
                         <span aria-hidden className="absolute inset-0 flex items-center justify-center gap-[1.5px]">
                           <span className="tab-typing-dot size-[2px] rounded-full bg-current" />

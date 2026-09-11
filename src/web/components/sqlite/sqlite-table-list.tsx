@@ -1,4 +1,4 @@
-import { Table, RefreshCw } from "lucide-react";
+import { Table, RefreshCw } from "@/lib/icons";
 import type { TableInfo } from "./use-sqlite";
 
 interface Props {

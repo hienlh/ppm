@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import {
   Plus,
   Minus,
@@ -16,7 +16,7 @@ import {
   GitBranch,
   Check,
   SquareDashedMousePointer,
-} from "lucide-react";
+} from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { api, projectUrl } from "@/lib/api-client";
 import { basename } from "@/lib/utils";
@@ -26,12 +26,20 @@ import { useSettingsStore } from "@/stores/settings-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
 import { useGitRepo } from "@/hooks/use-git-repo";
+import { FileIcon } from "@/lib/file-icons";
 import { useExtensionStore } from "@/stores/extension-store";
 import { GitWorktreePanel } from "./git-worktree-panel";
 import { HunkStageDialog, type HunkStageTarget } from "./hunk-stage-dialog";
 import { GitRepoBar, GitRepoChoice, GitNoRepo } from "./git-repo-picker";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/adaptive-context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +56,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { GitStatus, GitFileChange } from "../../../types/git";
+import { buildTree, compactTree, collectFiles, type TreeNode } from "@/lib/git-file-tree";
 
 interface GitStatusPanelProps {
   metadata?: Record<string, unknown>;
@@ -67,54 +76,37 @@ const STATUS_COLORS: Record<string, string> = {
   "?": "text-text-3",
 };
 
-/** Build a tree structure from flat file paths */
-interface TreeNode {
-  name: string;
-  fullPath: string;
-  file?: GitFileChange;
-  children: TreeNode[];
-}
+/** Indent per nesting level, and where that level's guide line sits inside it. */
+const TREE_INDENT = 14;
+const TREE_GUIDE_X = 7;
 
-function buildTree(files: GitFileChange[]): TreeNode[] {
-  const root: TreeNode[] = [];
-
-  for (const f of files) {
-    const parts = f.path.split("/");
-    let current = root;
-
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i]!;
-      const fullPath = parts.slice(0, i + 1).join("/");
-      const isFile = i === parts.length - 1;
-
-      let existing = current.find((n) => n.name === part);
-      if (!existing) {
-        existing = {
-          name: part,
-          fullPath,
-          file: isFile ? f : undefined,
-          children: [],
-        };
-        current.push(existing);
-      }
-      if (isFile) {
-        existing.file = f;
-      }
-      current = existing.children;
-    }
-  }
-
-  return root;
-}
-
-/** Collect all file paths under a tree node (recursively) */
-function collectFiles(node: TreeNode): GitFileChange[] {
-  const result: GitFileChange[] = [];
-  if (node.file) result.push(node.file);
-  for (const child of node.children) {
-    result.push(...collectFiles(child));
-  }
-  return result;
+/**
+ * Ellipsize a name from its *start* instead of its end.
+ *
+ * These names are distinguished by their suffix, and `text-overflow: ellipsis`
+ * cuts the wrong end: `remote-desktop-capture-input.ts` and
+ * `remote-desktop-capture-args.ts` are identical for 23 characters, so a column
+ * of right-truncated siblings renders as the same row repeated — which is the
+ * bug this replaced.
+ *
+ * A right-to-left box ellipsizes at its end edge, which is the left one, and
+ * `<bdi>` isolates the name so it still *reads* left to right. That matters for
+ * a leading dot: outside an isolate, the `.` of `.gitignore` is a neutral
+ * character at a run boundary and takes the paragraph's direction, so it hops
+ * to the other end and the name renders as `gitignore.`.
+ *
+ * Preferred over splitting the name in two and pinning the tail beside an
+ * ellipsized head: flex hands the head a fractional width while the ellipsis
+ * lands on a whole character, and the remainder shows as a ragged gap in the
+ * middle of every truncated name. Measured — `text-align` does not close it,
+ * because alignment does not apply to overflowing content.
+ */
+function StartEllipsis({ children, className }: { children: string; className?: string }) {
+  return (
+    <span dir="rtl" className={`truncate text-left ${className ?? ""}`}>
+      <bdi>{children}</bdi>
+    </span>
+  );
 }
 
 export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelProps) {
@@ -841,44 +833,6 @@ function FileSection({
 }
 
 /* ------------------------------------------------------------------ */
-/*  useLongPress — tap vs long-press on mobile                         */
-/* ------------------------------------------------------------------ */
-
-function useLongPress(onLongPress: () => void, onTap: () => void, delay = 400) {
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const movedRef = useRef(false);
-  const firedRef = useRef(false);
-
-  const clear = useCallback(() => {
-    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-  }, []);
-
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    movedRef.current = false;
-    firedRef.current = false;
-    timerRef.current = setTimeout(() => {
-      firedRef.current = true;
-      onLongPress();
-    }, delay);
-  }, [onLongPress, delay]);
-
-  const onTouchMove = useCallback(() => {
-    movedRef.current = true;
-    clear();
-  }, [clear]);
-
-  const onTouchEnd = useCallback((e: React.TouchEvent) => {
-    clear();
-    if (!movedRef.current && !firedRef.current) {
-      e.preventDefault();
-      onTap();
-    }
-  }, [clear, onTap]);
-
-  return { onTouchStart, onTouchMove, onTouchEnd };
-}
-
-/* ------------------------------------------------------------------ */
 /*  FileRow                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -907,84 +861,72 @@ function FileRow({
   onRevert?: (f: GitFileChange) => void;
   displayName?: string;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  const longPressHandlers = useLongPress(
-    useCallback(() => setMenuOpen(true), []),
-    useCallback(() => onClickFile(file), [onClickFile, file]),
-  );
-
-  const row = (
-    <div className="group relative flex items-center gap-1 hover:bg-muted/50 rounded pl-1 py-px w-full min-w-0">
-      <span
-        className={`text-xs font-mono w-4 text-center shrink-0 ${STATUS_COLORS[file.status] ?? ""}`}
-      >
-        {file.status}
-      </span>
-      {/* Desktop: click opens diff */}
-      <button
-        type="button"
-        className="hidden md:block flex-1 text-left text-xs font-mono truncate hover:underline min-w-0"
-        onClick={() => onClickFile(file)}
-        title={file.path}
-      >
-        {displayName ?? file.path}
-      </button>
-      {/* Mobile: plain text (long-press opens menu, tap opens diff) */}
-      <span className="md:hidden flex-1 text-left text-xs font-mono truncate min-w-0 select-none">
-        {displayName ?? file.path}
-      </span>
-      <ActionButtons
-        showRevert={showRevert}
-        onRevert={onRevert ? () => onRevert(file) : undefined}
-        onOpenFile={onOpenFile ? () => onOpenFile(file) : undefined}
-        onPickHunks={onPickHunks ? () => onPickHunks(file) : undefined}
-        onAction={() => onAction(file)}
-        actionIcon={actionIcon}
-        actionTitle={actionTitle}
-        disabled={disabled}
-      />
-    </div>
-  );
-
   return (
-    <>
-      {/* Desktop — just the row */}
-      <div className="hidden md:block">{row}</div>
-      {/* Mobile — tap opens diff, long-press opens menu */}
-      <div className="md:hidden select-none" {...longPressHandlers}>
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger asChild>{row}</DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-40">
-            <DropdownMenuItem onClick={() => onClickFile(file)}>
-              View Diff
-            </DropdownMenuItem>
-            {onOpenFile && (
-              <DropdownMenuItem onClick={() => onOpenFile(file)}>
-                Open File
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onClick={() => onAction(file)} disabled={disabled}>
-              {actionTitle}
-            </DropdownMenuItem>
-            {onPickHunks && (
-              <DropdownMenuItem onClick={() => onPickHunks(file)} disabled={disabled}>
-                {actionTitle} Lines…
-              </DropdownMenuItem>
-            )}
-            {showRevert && onRevert && (
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onClick={() => onRevert(file)}
-                disabled={disabled}
-              >
-                Discard Changes
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        {/* One row for both platforms: the adaptive menu is what differs, and
+            the tap that opens the diff is the filename button itself rather
+            than a hand-rolled tap detector — so a press that became a scroll,
+            or one that opened the sheet, cannot also open a diff. */}
+        {/* 44px of row on a touch screen, compact where there is a pointer. */}
+        <div className="group relative flex items-center gap-1.5 hover:bg-muted/50 rounded pl-1 py-2.5 md:py-1 w-full min-w-0 select-none">
+          <span
+            className={`text-xs font-mono w-3.5 text-center shrink-0 ${STATUS_COLORS[file.status] ?? ""}`}
+          >
+            {file.status}
+          </span>
+          <FileIcon name={file.path} className="size-4 shrink-0" />
+          <button
+            type="button"
+            className="flex-1 flex min-w-0 text-left text-sm can-hover:hover:underline"
+            onClick={() => onClickFile(file)}
+            title={file.path}
+          >
+            <StartEllipsis className="min-w-0 flex-1">
+              {displayName ?? file.path}
+            </StartEllipsis>
+          </button>
+          <ActionButtons
+            showRevert={showRevert}
+            onRevert={onRevert ? () => onRevert(file) : undefined}
+            onOpenFile={onOpenFile ? () => onOpenFile(file) : undefined}
+            onPickHunks={onPickHunks ? () => onPickHunks(file) : undefined}
+            onAction={() => onAction(file)}
+            actionIcon={actionIcon}
+            actionTitle={actionTitle}
+            disabled={disabled}
+          />
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="min-w-40">
+        <ContextMenuItem onClick={() => onClickFile(file)}>View Diff</ContextMenuItem>
+        {onOpenFile && (
+          <ContextMenuItem onClick={() => onOpenFile(file)}>Open File</ContextMenuItem>
+        )}
+        <ContextMenuItem onClick={() => onAction(file)} disabled={disabled}>
+          {actionTitle}
+        </ContextMenuItem>
+        {onPickHunks && (
+          <ContextMenuItem onClick={() => onPickHunks(file)} disabled={disabled}>
+            {actionTitle} Lines…
+          </ContextMenuItem>
+        )}
+        {showRevert && onRevert && (
+          <>
+            {/* Set apart, because on a sheet these rows are 44px tall and sit
+                where the thumb already is. */}
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              variant="destructive"
+              onClick={() => onRevert(file)}
+              disabled={disabled}
+            >
+              Discard Changes
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -1019,7 +961,7 @@ function TreeView({
   onRevert?: (f: GitFileChange) => void;
   onFolderRevert?: (files: GitFileChange[], folderName: string) => void;
 }) {
-  const tree = useMemo(() => buildTree(files), [files]);
+  const tree = useMemo(() => compactTree(buildTree(files)), [files]);
 
   return (
     <div>
@@ -1028,7 +970,6 @@ function TreeView({
           key={node.fullPath}
           node={node}
           depth={0}
-          isLast={i === tree.length - 1}
           actionIcon={actionIcon}
           actionTitle={actionTitle}
           onAction={onAction}
@@ -1053,7 +994,6 @@ function TreeView({
 function TreeNodeView({
   node,
   depth,
-  isLast,
   actionIcon,
   actionTitle,
   onAction,
@@ -1068,7 +1008,6 @@ function TreeNodeView({
 }: {
   node: TreeNode;
   depth: number;
-  isLast: boolean;
   actionIcon: React.ReactNode;
   actionTitle: string;
   onAction: (f: GitFileChange) => void;
@@ -1084,23 +1023,9 @@ function TreeNodeView({
   const [expanded, setExpanded] = useState(true);
   const isDir = node.children.length > 0 && !node.file;
 
-  // Connector style constants
-  const railX = depth * 12 - 6; // parent's vertical rail x position
-  const connectorCls = "absolute border-dashed border-border";
-
   if (node.file) {
     return (
-      <div className="relative" style={{ paddingLeft: depth * 12 }}>
-        {depth > 0 && (
-          <>
-            {/* Vertical segment — stops at row center for last child */}
-            <div className={`${connectorCls} border-l`}
-              style={{ left: railX, top: 0, bottom: isLast ? "50%" : 0 }} />
-            {/* Horizontal branch to content */}
-            <div className={`${connectorCls} border-t`}
-              style={{ left: railX, top: "50%", width: 6 }} />
-          </>
-        )}
+      <div style={{ paddingLeft: depth * TREE_INDENT }}>
         <FileRow
           file={node.file}
           displayName={node.name}
@@ -1120,38 +1045,48 @@ function TreeNodeView({
 
   if (isDir) {
     const folderFiles = collectFiles(node);
+    const lastSlash = node.name.lastIndexOf("/");
+    const folderPrefix = lastSlash >= 0 ? node.name.slice(0, lastSlash + 1) : "";
+    const folderLeaf = lastSlash >= 0 ? node.name.slice(lastSlash + 1) : node.name;
 
     return (
-      <div className="relative">
-        {depth > 0 && (
-          <>
-            {/* Vertical segment — full height for non-last, stops at folder row center for last */}
-            <div className={`${connectorCls} border-l`}
-              style={{ left: railX, top: 0, ...(isLast ? { height: 13 } : { bottom: 0 }) }} />
-            {/* Horizontal branch to folder label */}
-            <div className={`${connectorCls} border-t`}
-              style={{ left: railX, top: 13, width: 8 }} />
-          </>
-        )}
-        {/* Folder row */}
-        {(() => {
-          const folderRow = (
+      <div>
+        {/* Folder row. The menu used to be a plain dropdown whose trigger was
+            the whole row, which on a touch screen opens on *tap* — so tapping
+            a folder opened a menu instead of expanding it, and there was no
+            way to expand one at all. Long-press is the gesture for a menu. */}
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
             <div
-              className="group relative flex items-center hover:bg-muted/50 rounded py-0.5"
-              style={{ paddingLeft: depth * 12 + 2 }}
+              // 44px of row on a touch screen, compact where there is a pointer.
+              className="group relative flex items-center hover:bg-muted/50 rounded py-2.5 md:py-1 select-none"
+              style={{ paddingLeft: depth * TREE_INDENT }}
             >
               <button
                 type="button"
-                className="flex items-center gap-1 flex-1 min-w-0 text-xs font-mono text-muted-foreground"
+                className="flex items-center gap-1.5 flex-1 min-w-0 text-sm text-muted-foreground"
                 onClick={() => setExpanded(!expanded)}
               >
                 {expanded ? (
-                  <ChevronDown className="size-3.5 shrink-0" />
+                  <ChevronDown className="size-4 shrink-0" />
                 ) : (
-                  <ChevronRight className="size-3.5 shrink-0" />
+                  <ChevronRight className="size-4 shrink-0" />
                 )}
-                <span className="truncate font-semibold">{node.name}</span>
-                <span className="text-[10px] opacity-60 shrink-0">
+                {/*
+                 * A compacted name is a path, and for a path the last segment is
+                 * the specific one — so the leading ones are what may be dropped,
+                 * and they are dimmed to read as context rather than as the
+                 * folder's own name. One inline flow inside the isolate, not two
+                 * flex children: the row's `gap-1.5` would otherwise open a space
+                 * inside the path, between `web/` and `components`.
+                 */}
+                <span dir="rtl" className="flex-1 min-w-0 truncate text-left">
+                  <bdi>
+                    {folderPrefix && <span className="opacity-55">{folderPrefix}</span>}
+                    <span className="font-medium">{folderLeaf}</span>
+                  </bdi>
+                </span>
+                <span className="text-xs opacity-55 shrink-0">
                   ({folderFiles.length})
                 </span>
               </button>
@@ -1168,41 +1103,46 @@ function TreeNodeView({
                 disabled={disabled}
               />
             </div>
-          );
-          return (
-            <>
-              <div className="hidden md:block">{folderRow}</div>
-              <div className="md:hidden">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>{folderRow}</DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-40">
-                    <DropdownMenuItem onClick={() => onFolderAction?.(folderFiles)} disabled={disabled}>
-                      {actionTitle} {node.name}/
-                    </DropdownMenuItem>
-                    {onFolderRevert && (
-                      <DropdownMenuItem
-                        className="text-destructive focus:text-destructive"
-                        onClick={() => onFolderRevert(folderFiles, node.fullPath)}
-                        disabled={disabled}
-                      >
-                        Discard Changes
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </>
-          );
-        })()}
-        {/* Children — each child draws its own connector segment */}
+          </ContextMenuTrigger>
+          <ContextMenuContent className="min-w-40">
+            <ContextMenuItem onClick={() => onFolderAction?.(folderFiles)} disabled={disabled}>
+              {actionTitle} {node.name}/
+            </ContextMenuItem>
+            {onFolderRevert && (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  variant="destructive"
+                  onClick={() => onFolderRevert(folderFiles, node.fullPath)}
+                  disabled={disabled}
+                >
+                  Discard Changes
+                </ContextMenuItem>
+              </>
+            )}
+          </ContextMenuContent>
+        </ContextMenu>
+        {/*
+         * One continuous guide per level, drawn here by the parent rather than
+         * as a segment per child. The old version gave every row its own elbow
+         * positioned by hand — a file's branch at `top: 50%`, a folder's at a
+         * fixed `top: 13`, against rows of two different heights — so the
+         * pieces never met and the rails read as broken. A single line owned by
+         * the container it groups cannot drift from it, and dropping the elbows
+         * is what VS Code's own tree does.
+         */}
         {expanded && (
-          <div>
+          <div className="relative">
+            <span
+              aria-hidden
+              className="absolute top-0 bottom-0 w-px bg-border/70"
+              style={{ left: depth * TREE_INDENT + TREE_GUIDE_X }}
+            />
             {node.children.map((child, i) => (
               <TreeNodeView
                 key={child.fullPath}
                 node={child}
                 depth={depth + 1}
-                isLast={i === node.children.length - 1}
                 actionIcon={actionIcon}
                 actionTitle={actionTitle}
                 onAction={onAction}

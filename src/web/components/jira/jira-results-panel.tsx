@@ -6,7 +6,7 @@ import { JiraStatusBadge } from "./jira-status-badge";
 import { JiraTicketDetail } from "./jira-ticket-detail";
 import { JiraDebugPromptDialog } from "./jira-debug-prompt-dialog";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Trash2, Loader2, Play } from "lucide-react";
+import { RefreshCw, Trash2, Loader2, Play } from "@/lib/icons";
 import { toast } from "sonner";
 import type { JiraWatchResult, JiraResultStatus } from "../../../../src/types/jira";
 

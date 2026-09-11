@@ -1,4 +1,4 @@
-import { AlertCircle, ChevronUp, History, Loader2 } from "lucide-react";
+import { AlertCircle, ChevronUp, History, Loader2 } from "@/lib/icons";
 
 /** Detects a JSONL transcript path in Claude's compact summary message text. */
 const JSONL_PATH_RE = /read the full transcript at:\s*(\S+\.jsonl)/i;

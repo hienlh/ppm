@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRelativeDate } from "@/lib/format-date";
 import { copyToClipboard } from "@/lib/clipboard";

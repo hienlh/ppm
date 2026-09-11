@@ -4,7 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useJiraStore } from "@/stores/jira-store";
 import { JiraWatcherForm } from "./jira-watcher-form";
-import { Plus, Trash2, Play, Loader2, Pencil } from "lucide-react";
+import { Plus, Trash2, Play, Loader2, Pencil } from "@/lib/icons";
 import { toast } from "sonner";
 import type { JiraWatcher } from "../../../../src/types/jira";
 

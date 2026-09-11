@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { KeyRound, Check, Eye, EyeOff } from "lucide-react";
+import { KeyRound, Check, Eye, EyeOff } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";

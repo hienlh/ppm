@@ -2,7 +2,7 @@
  * One file row in the change tray / sheet. Shared by both presentations; `dense`
  * switches from the 52px touch row to the 38px desktop row.
  */
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { FileChangeOp, TurnFileChange } from "@/lib/aggregate-turn-file-changes";
 

@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
-import { Eye, Sparkles, WrapText, ExternalLink, X, GripHorizontal } from "lucide-react";
+import { Eye, Sparkles, WrapText, ExternalLink, X, GripHorizontal } from "@/lib/icons";
 import Editor from "@monaco-editor/react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
 
 export interface PreviewData {

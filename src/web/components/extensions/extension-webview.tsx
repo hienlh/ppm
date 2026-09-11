@@ -5,7 +5,7 @@ import { THEME_CHANGE_EVENT } from "@/theme/apply-theme";
 import { HOST_THEME_MESSAGE, injectHostTheme, readHostTheme } from "./webview-theme";
 import { commandRunsGit } from "@/lib/git-repo-scope";
 import { resolveGitRoot } from "@/stores/git-repo-store";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 
 /** Inject acquireVsCodeApi() shim so extension webviews can postMessage to parent */
 const VSCODE_API_SHIM = `<script>

@@ -1,6 +1,6 @@
 /** Add a Codex account through browser login, device code, or an API key. */
 
-import { ExternalLink, KeyRound, Loader2, MonitorSmartphone } from "lucide-react";
+import { ExternalLink, KeyRound, Loader2, MonitorSmartphone } from "@/lib/icons";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";

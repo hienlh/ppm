@@ -4,7 +4,7 @@ import { useShallow } from "zustand/shallow";
 import { useNotificationStore, selectTotalUnread, notificationTint } from "@/stores/notification-store";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
-import { Bell, BellOff } from "lucide-react";
+import { Bell, BellOff } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { resolveProjectColor } from "@/lib/project-palette";
 

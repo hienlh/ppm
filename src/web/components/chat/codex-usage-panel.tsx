@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { AccountCard } from "@/components/settings/accounts/account-card";
 import { AccountCardShell } from "@/components/settings/accounts/accounts-pane-header";
