@@ -14,8 +14,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
+/** Ctrl/Cmd + C or X, by `code` rather than by button label so renaming a button cannot
+ *  silently stop the host clipboard being fetched. */
+function isCopyChord(codes: readonly string[]): boolean {
+  const mod = codes.includes("ControlLeft") || codes.includes("MetaLeft");
+  return mod && (codes.includes("KeyC") || codes.includes("KeyX"));
+}
+
 export interface RemoteDesktopMobileKeyBarProps {
   sendMessage: (msg: Record<string, unknown>) => void;
+  /** Fired after a copy/cut combo — the touch equivalent of the desktop's Ctrl+C cue, since
+   *  none of these buttons goes through `use-remote-input-capture`'s key handler. */
+  onCopyCombo?: () => void;
 }
 
 const MODIFIERS = [
@@ -73,7 +83,7 @@ function KeyBarButton({
   );
 }
 
-export function RemoteDesktopMobileKeyBar({ sendMessage }: RemoteDesktopMobileKeyBarProps) {
+export function RemoteDesktopMobileKeyBar({ sendMessage, onCopyCombo }: RemoteDesktopMobileKeyBarProps) {
   const [held, setHeld] = useState<ReadonlySet<string>>(new Set());
   const heldRef = useRef(held);
   heldRef.current = held;
@@ -106,7 +116,8 @@ export function RemoteDesktopMobileKeyBar({ sendMessage }: RemoteDesktopMobileKe
     // chord (last key down first key up would read as a different shortcut on some apps).
     codes.forEach((code) => sendMessage({ type: "key", code, down: true }));
     [...codes].reverse().forEach((code) => sendMessage({ type: "key", code, down: false }));
-  }, [sendMessage]);
+    if (isCopyChord(codes)) onCopyCombo?.();
+  }, [sendMessage, onCopyCombo]);
 
   return (
     <div

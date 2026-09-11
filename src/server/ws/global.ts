@@ -58,7 +58,7 @@ function setWatch(ws: GlobalWsSocket, projectName: string): void {
   const project = configService.get("projects").find((p) => p.name === projectName);
   if (!project) return;
 
-  startWatching(projectName, project.path);
+  void startWatching(projectName, project.path);
   watchedProject.set(ws, projectName);
 }
 

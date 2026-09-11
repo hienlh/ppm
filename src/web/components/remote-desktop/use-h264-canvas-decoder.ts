@@ -46,6 +46,13 @@ export interface UseH264CanvasDecoderResult {
    *  last `reset()`. Ref-backed, not React state — read it from a poll (e.g. the stats overlay),
    *  not a render dependency, so every decoded frame doesn't force a re-render. */
   getFrameCount: () => number;
+  /** Pixel size of the decoded picture — what `canvas.width`/`height` were last set to, 0×0
+   *  before the first frame. Real state rather than a ref (unlike the counter above) because
+   *  the `original`/`custom` scale modes size the *element* from it, and it changes once per
+   *  rung rather than once per frame. Deliberately kept across a `reset()`: a rung switch
+   *  respawns the host encoder, and blanking this mid-switch would collapse the canvas to
+   *  nothing for ~400ms before the new resolution arrives. */
+  frameSize: { width: number; height: number };
 }
 
 export function useH264CanvasDecoder(
@@ -53,6 +60,7 @@ export function useH264CanvasDecoder(
 ): UseH264CanvasDecoderResult {
   const [status, setStatus] = useState<DecoderStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
   const decoderRef = useRef<VideoDecoder | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const decodedAnyKeyRef = useRef(false);
@@ -97,6 +105,8 @@ export function useH264CanvasDecoder(
           if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
             canvas.width = frame.displayWidth;
             canvas.height = frame.displayHeight;
+            // Inside the size guard, so this is one setState per resolution change, not per frame.
+            setFrameSize({ width: frame.displayWidth, height: frame.displayHeight });
           }
           if (!ctxRef.current) ctxRef.current = canvas.getContext("2d");
           ctxRef.current?.drawImage(frame, 0, 0, canvas.width, canvas.height);
@@ -171,5 +181,6 @@ export function useH264CanvasDecoder(
     decodeAccessUnit,
     reset,
     getFrameCount,
+    frameSize,
   };
 }

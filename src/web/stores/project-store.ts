@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, getAuthToken } from "@/lib/api-client";
 import { resizeImageToWebp } from "@/lib/resize-image";
+import { useProjectFrameworkStore } from "@/stores/project-framework-store";
 
 export interface Project {
   name: string;
@@ -207,6 +208,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   setActiveProject: (project) => {
     touchRecent(project.name);
     set({ activeProject: project });
+    // Which naming convention the file icons resolve `.service.ts` through.
+    useProjectFrameworkStore.getState().detect(project.name);
   },
 
   addProject: async (path, name) => {
@@ -214,7 +217,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await get().fetchProjects();
     // Auto-select the newly added project
     const added = get().projects.find((p) => p.name === (name ?? project.name) || p.path === path);
-    if (added) set({ activeProject: added });
+    if (added) {
+      set({ activeProject: added });
+      useProjectFrameworkStore.getState().detect(added.name);
+    }
     return project;
   },
 

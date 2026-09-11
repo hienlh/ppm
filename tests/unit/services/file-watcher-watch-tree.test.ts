@@ -15,11 +15,13 @@ function makeRoot(): string {
   return root;
 }
 
-function open(root: string, maxDirs = 1000): { tree: WatchTree; changes: string[] } {
+async function open(root: string, maxDirs = 1000): Promise<{ tree: WatchTree; changes: string[] }> {
   const changes: string[] = [];
   const tree = new WatchTree({ root, maxDirs, onChange: (p) => changes.push(p) });
   trees.push(tree);
-  tree.start();
+  // Covering hands the event loop back as it walks, so coverage is only
+  // complete once this resolves — every assertion on `stats()` needs it.
+  await tree.start();
   return { tree, changes };
 }
 
@@ -62,7 +64,7 @@ describe("ignore rules", () => {
 });
 
 describe("WatchTree coverage", () => {
-  it("never covers ignored directories", () => {
+  it("never covers ignored directories", async () => {
     const root = makeRoot();
     mkdirSync(join(root, "src", "components"), { recursive: true });
     mkdirSync(join(root, "docs"), { recursive: true });
@@ -71,13 +73,13 @@ describe("WatchTree coverage", () => {
     }
     mkdirSync(join(root, ".git", "objects"), { recursive: true });
 
-    const { tree } = open(root);
+    const { tree } = await open(root);
     // root + src + src/components + docs — the 82 dirs under node_modules/.git are pruned.
     expect(tree.stats().dirs).toBe(4);
     expect(tree.stats().truncated).toBe(false);
   });
 
-  it("covers a clean subtree with one handle, or one per directory on Linux", () => {
+  it("covers a clean subtree with one handle, or one per directory on Linux", async () => {
     const root = makeRoot();
     for (let i = 0; i < 5; i++) {
       mkdirSync(join(root, "src", `mod-${i}`, "nested"), { recursive: true });
@@ -87,7 +89,7 @@ describe("WatchTree coverage", () => {
     // watch is kernel-side the whole clean tree costs one handle; on Linux it is emulated
     // per directory, which buys nothing and misses directories created later, so coverage
     // is attached here and the handle count tracks the directory count.
-    const { tree } = open(root);
+    const { tree } = await open(root);
     expect(tree.stats()).toEqual({
       dirs: 12,
       watchers: NATIVE_RECURSIVE ? 1 : 12,
@@ -96,7 +98,7 @@ describe("WatchTree coverage", () => {
     });
   });
 
-  it("leaves an ignored directory and everything under it unwatched", () => {
+  it("leaves an ignored directory and everything under it unwatched", async () => {
     const root = makeRoot();
     mkdirSync(join(root, "src", "deep", "deeper"), { recursive: true });
     mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
@@ -104,7 +106,7 @@ describe("WatchTree coverage", () => {
     // root + src + deep + deeper: node_modules and its package are never covered. The
     // ignored entry forces root itself to be watched alone on every platform; the clean
     // src subtree below it can still be one recursive handle where that is native.
-    const { tree } = open(root);
+    const { tree } = await open(root);
     expect(tree.stats()).toEqual({
       dirs: 4,
       watchers: NATIVE_RECURSIVE ? 2 : 4,
@@ -124,7 +126,7 @@ describe("WatchTree coverage", () => {
     // A pnpm workspace links node_modules elsewhere, and the store must not be watched:
     // on Bun/Linux every watched file costs an open descriptor, and a store reached this
     // way is what exhausted the process.
-    const { tree, changes } = open(root);
+    const { tree, changes } = await open(root);
     expect(tree.stats().dirs).toBe(2); // root + src
     // Two handles is the assertion that fails against a build without the symlink mark:
     // there the root looks clean and takes a single recursive watch. `dirs` and the
@@ -145,7 +147,7 @@ describe("WatchTree coverage", () => {
   it("reports a file created in a directory that appeared after the watch started", async () => {
     const root = makeRoot();
     mkdirSync(join(root, "src"), { recursive: true });
-    const { tree, changes } = open(root);
+    const { tree, changes } = await open(root);
 
     mkdirSync(join(root, "src", "feature"));
     // On Linux the new directory needs its own handle before the file lands, so wait for
@@ -158,22 +160,22 @@ describe("WatchTree coverage", () => {
     expect(await waitFor(() => changes.some((p) => p.endsWith("feature/index.ts")))).toBe(true);
   });
 
-  it("stops at the directory budget and reports truncation", () => {
+  it("stops at the directory budget and reports truncation", async () => {
     const root = makeRoot();
     for (let i = 0; i < 30; i++) mkdirSync(join(root, `dir-${i}`), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });
 
-    const { tree } = open(root, 5);
+    const { tree } = await open(root, 5);
     expect(tree.stats().dirs).toBeLessThanOrEqual(5);
     expect(tree.stats().truncated).toBe(true);
   });
 
-  it("releases every watcher on close", () => {
+  it("releases every watcher on close", async () => {
     const root = makeRoot();
     mkdirSync(join(root, "src"), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });
 
-    const { tree } = open(root);
+    const { tree } = await open(root);
     expect(tree.stats().watchers).toBeGreaterThan(0);
     tree.close();
     expect(tree.stats()).toEqual({ dirs: 0, watchers: 0, truncated: false, polledDirs: 0 });
@@ -185,7 +187,7 @@ describe("WatchTree events", () => {
     const root = makeRoot();
     mkdirSync(join(root, "src"), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });
-    const { changes } = open(root);
+    const { changes } = await open(root);
 
     writeFileSync(join(root, "src", "main.ts"), "export const a = 1;");
     expect(await waitFor(() => changes.includes("src/main.ts"))).toBe(true);
@@ -195,7 +197,7 @@ describe("WatchTree events", () => {
     const root = makeRoot();
     mkdirSync(join(root, "src"), { recursive: true });
     mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
-    const { changes } = open(root);
+    const { changes } = await open(root);
 
     writeFileSync(join(root, "node_modules", "pkg", "index.js"), "module.exports = 1;");
     // Prove the watcher is alive first, otherwise silence would prove nothing.
@@ -208,7 +210,7 @@ describe("WatchTree events", () => {
     const root = makeRoot();
     mkdirSync(join(root, "src"), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });
-    const { tree, changes } = open(root);
+    const { tree, changes } = await open(root);
     const before = tree.stats().dirs;
 
     mkdirSync(join(root, "extra", "inner"), { recursive: true });
@@ -222,7 +224,7 @@ describe("WatchTree events", () => {
     const root = makeRoot();
     mkdirSync(join(root, "gone", "inner"), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });
-    const { tree } = open(root);
+    const { tree } = await open(root);
     const before = tree.stats().dirs;
 
     rmSync(join(root, "gone"), { recursive: true, force: true });
@@ -237,7 +239,7 @@ describe("WatchTree events", () => {
     const root = makeRoot();
     mkdirSync(join(root, "swap"), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });
-    const { changes } = open(root);
+    const { changes } = await open(root);
 
     rmSync(join(root, "swap"), { recursive: true, force: true });
     await settle(300);
@@ -252,7 +254,7 @@ describe("WatchTree events", () => {
     const root = makeRoot();
     mkdirSync(join(root, "packages", "app", "src"), { recursive: true });
     mkdirSync(join(root, "node_modules"), { recursive: true });
-    const { tree, changes } = open(root);
+    const { tree, changes } = await open(root);
     const before = tree.stats().dirs;
 
     for (let i = 0; i < 20; i++) {
@@ -274,8 +276,8 @@ describe("file watcher service", () => {
     mkdirSync(join(root, "src"), { recursive: true });
     mkdirSync(join(root, "node_modules", "pkg"), { recursive: true });
 
-    startWatching("proj", root);
-    startWatching("proj", root); // second client shares the same tree
+    await startWatching("proj", root);
+    await startWatching("proj", root); // second client shares the same tree
 
     writeFileSync(join(root, "src", "a.ts"), "1");
     expect(await waitFor(() => seen.includes("proj:src/a.ts"))).toBe(true);
@@ -293,5 +295,35 @@ describe("file watcher service", () => {
     writeFileSync(join(root, "src", "d.ts"), "1");
     await settle(1200);
     expect(seen.length).toBe(afterStop);
+  });
+});
+
+describe("covering a tree does not hold the event loop", () => {
+  it("hands the thread back while it walks and attaches", async () => {
+    // The measured symptom this exists for: starting a 12,000-directory project
+    // held the loop for 2.95s, and the lag monitor billed it to us at ratio 1.38
+    // across two independent restarts. Nothing else in PPM could run for that
+    // whole time — not a request, not a WebSocket frame.
+    const root = makeRoot();
+    for (let i = 0; i < 1200; i++) mkdirSync(join(root, `d${i}`));
+
+    let fires = 0;
+    const probe = setInterval(() => { fires++; }, 1);
+    try {
+      // Prove the probe is alive before the measurement, or "0 fires during"
+      // means nothing.
+      await new Promise((r) => setTimeout(r, 20));
+      const before = fires;
+      expect(before).toBeGreaterThan(0);
+
+      const tree = new WatchTree({ root, maxDirs: 2000, onChange: () => {} });
+      trees.push(tree);
+      await tree.start();
+
+      expect(fires - before).toBeGreaterThan(0);
+      expect(tree.stats().dirs).toBeGreaterThan(1000); // it really did the work
+    } finally {
+      clearInterval(probe);
+    }
   });
 });
