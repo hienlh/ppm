@@ -3,43 +3,25 @@
  * Visualizes git commit history as an interactive graph in a webview.
  */
 import type { ExtensionContext } from "@ppm/vscode-compat";
-import type { SpawnResult } from "@ppm/vscode-compat/src/process.ts";
 import type { GitGraphSettings, WebviewToExt, Worktree } from "./types.ts";
 import { DEFAULT_SETTINGS } from "./types.ts";
 import { getWebviewHtml } from "./webview-html.ts";
-
-interface VscodeApi {
-  commands: {
-    registerCommand(command: string, callback: (...args: unknown[]) => unknown): { dispose(): void };
-  };
-  window: {
-    showErrorMessage(message: string, ...items: string[]): Promise<string | undefined>;
-    showInformationMessage(message: string, ...items: string[]): Promise<string | undefined>;
-    openTab(tabType: string, title: string, projectId: string | null, metadata?: Record<string, unknown>): Promise<void>;
-    switchProject(projectName: string): Promise<void>;
-    createWebviewPanel(viewType: string, title: string, showOptions: unknown, options?: { projectPath?: string }): {
-      webview: {
-        html: string;
-        onDidReceiveMessage: (listener: (msg: unknown) => void) => { dispose(): void };
-        postMessage(message: unknown): Promise<boolean>;
-      };
-      onDidDispose: (listener: () => void) => { dispose(): void };
-      dispose(): void;
-    };
-  };
-  process: {
-    spawn(cmd: string, args: string[], cwd: string, options?: { timeout?: number; env?: Record<string, string> }): Promise<SpawnResult>;
-  };
-  ViewColumn: { Active: number };
-}
-
-let baseUrl = "";
-let authToken = "";
-
-// One live panel per project. Opening git graph for another project must not
-// dispose or hijack an existing project's panel (multi-tab, multi-project usage).
-type WebviewPanel = ReturnType<VscodeApi["window"]["createWebviewPanel"]>;
-const panelsByProject = new Map<string, WebviewPanel>();
+import type { VscodeApi } from "./git-exec.ts";
+import {
+  assertSafeFilePaths, assertValidHash, assertValidRef, assertValidRemote, spawnGit,
+} from "./git-exec.ts";
+import { authHeaders, getBaseUrl, initPpmApi, resolveProjectName } from "./ppm-api.ts";
+import { registerBlameView } from "./blame-view.ts";
+import { registerFileHistoryView } from "./file-history-view.ts";
+import { registerCompareView } from "./compare-view.ts";
+import { registerRebaseView } from "./rebase-view.ts";
+import { registerReflogView } from "./reflog-view.ts";
+import { parseSubmoduleStatus } from "./submodule-parser.ts";
+import { openPanel } from "./panel-registry.ts";
+import { detectMergeState } from "./git-state.ts";
+import { navigateToPanel } from "./panel-nav.ts";
+import { registerViewCommand } from "./register-view-command.ts";
+import { buildSearchArgs, isSearchMode, parseSearchResults } from "./commit-search.ts";
 
 function getSettings(context: ExtensionContext): GitGraphSettings {
   return { ...DEFAULT_SETTINGS, ...(context.globalState.get<Partial<GitGraphSettings>>("settings") || {}) };
@@ -60,28 +42,21 @@ async function saveSetting(context: ExtensionContext, key: string, value: unknow
 }
 
 export function activate(context: ExtensionContext, vscode: VscodeApi): void {
-  baseUrl = (globalThis as any).__PPM_BASE_URL__ || "";
-  authToken = (globalThis as any).__PPM_AUTH_TOKEN__ || "";
+  initPpmApi();
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("git-graph.view", async (...args: unknown[]) => {
-      const projectPath = args[0] as string | undefined;
-      console.log(`[ext-git-graph] git-graph.view command received, projectPath=${projectPath ?? "(none)"}`);
-      const resolvedPath = projectPath || await resolveProjectPath();
-      if (!resolvedPath) {
-        console.warn("[ext-git-graph] no project path resolved");
-        await vscode.window.showErrorMessage("Git Graph: No project selected. Open a project first, then try again.");
-        return;
-      }
-      try {
-        await openGitGraph(vscode, context, resolvedPath);
-        console.log("[ext-git-graph] webview panel created");
-      } catch (e) {
-        console.error("[ext-git-graph] openGitGraph failed:", e);
-        throw e;
-      }
-    }),
-  );
+  registerViewCommand({
+    context,
+    vscode,
+    command: "git-graph.view",
+    label: "Git Graph",
+    open: (projectPath) => openGitGraph(vscode, context, projectPath),
+  });
+
+  registerBlameView(context, vscode);
+  registerFileHistoryView(context, vscode);
+  registerCompareView(context, vscode);
+  registerRebaseView(context, vscode);
+  registerReflogView(context, vscode);
 
   console.log("[ext-git-graph] activated");
 }
@@ -90,75 +65,29 @@ export function deactivate(): void {
   console.log("[ext-git-graph] deactivated");
 }
 
-/** Build fetch options with auth header when token is available */
-function authHeaders(): RequestInit {
-  return authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {};
-}
-
-/** Resolve project path from PPM API as fallback */
-async function resolveProjectPath(): Promise<string | null> {
-  try {
-    const res = await fetch(`${baseUrl}/api/projects`, authHeaders());
-    const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
-    if (!json.ok || !json.data || json.data.length === 0) return null;
-    // Single project — safe to auto-select
-    if (json.data.length === 1) return json.data[0].path;
-    // Multiple projects — cannot guess which is active, return null
-    return null;
-  } catch {}
-  return null;
-}
-
-/** Resolve project name from path via PPM API */
-async function resolveProjectName(projectPath: string): Promise<string> {
-  try {
-    const res = await fetch(`${baseUrl}/api/projects`, authHeaders());
-    const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
-    if (json.ok && json.data) {
-      const match = json.data.find((p) => p.path === projectPath);
-      if (match) return match.name;
-    }
-  } catch {}
-  // Fallback to directory name
-  return projectPath.split(/[\\/]/).filter(Boolean).pop() || "project";
-}
-
-/** Spawn git and return result */
-async function spawnGit(
-  vscode: VscodeApi,
-  args: string[],
-  cwd: string,
-  timeout = 30_000,
-): Promise<SpawnResult> {
-  return vscode.process.spawn("git", args, cwd, {
-    timeout,
-    env: { GIT_TERMINAL_PROMPT: "0" },
-  });
-}
-
 function openGitGraph(
   vscode: VscodeApi,
   context: ExtensionContext,
   projectPath: string,
 ): void {
-  // Dispose stale panel for THIS project only, to avoid browser/server desync.
-  // On page reload the browser's WS close message can be lost, leaving the map
-  // referencing a panel the browser no longer knows about. Other projects'
-  // panels stay alive.
-  panelsByProject.get(projectPath)?.dispose(); // fires onDidDispose → clears map entry & timers
-
   const dirName = projectPath.split(/[\\/]/).filter(Boolean).pop() || "Git Graph";
-  const panel = vscode.window.createWebviewPanel(
-    "git-graph.view",
-    `Git Graph: ${dirName}`,
-    vscode.ViewColumn.Active,
-    { projectPath },
-  );
-  panelsByProject.set(projectPath, panel);
 
-  panel.webview.html = getWebviewHtml();
+  // Declared before openPanel so the message handler can reach the panel it is
+  // attached to without threading it through every handler signature.
+  let uncommittedPollTimer: ReturnType<typeof setInterval> | undefined;
+  let disposed = false;
 
-  const msgDisposable = panel.webview.onDidReceiveMessage(async (raw: unknown) => {
+  const panel = openPanel({
+    vscode,
+    viewType: "git-graph.view",
+    title: `Git Graph: ${dirName}`,
+    projectPath,
+    html: getWebviewHtml(),
+    onDispose: () => {
+      disposed = true;
+      if (uncommittedPollTimer) clearInterval(uncommittedPollTimer);
+    },
+    onMessage: async (raw: unknown) => {
     const msg = raw as WebviewToExt;
     // Panel is bound to its project for life — reopening a project recreates
     // the panel, so the closure path is always current.
@@ -171,6 +100,7 @@ function openGitGraph(
           handleUncommittedStatus(vscode, panel, pp); // fire-and-forget
           handleWorktrees(vscode, panel, pp); // fire-and-forget
           handleStashes(vscode, panel, pp); // fire-and-forget
+          handleSubmodules(vscode, panel, pp); // fire-and-forget
           break;
         case "requestRepoInfo":
           await handleRepoInfo(vscode, panel, pp);
@@ -281,6 +211,103 @@ function openGitGraph(
         case "requestStashes":
           await handleStashes(vscode, panel, pp);
           break;
+        case "requestSubmodules":
+          await handleSubmodules(vscode, panel, pp);
+          break;
+        case "updateSubmodule": {
+          // A path from the webview, so it gets the same treatment as any other.
+          // `--` keeps a path that starts with a dash out of the option list.
+          const subPath = String(msg.path || "");
+          assertSafeFilePaths([subPath], pp);
+          const updateRes = await spawnGit(
+            vscode,
+            ["submodule", "update", "--init", "--recursive", "--", subPath],
+            pp,
+            180_000,
+          );
+          if (updateRes.exitCode !== 0) {
+            throw new Error(updateRes.stderr.trim() || "git could not update that submodule.");
+          }
+          await handleSubmodules(vscode, panel, pp);
+          break;
+        }
+        case "openSubmodule": {
+          const subPath = String(msg.path || "");
+          assertSafeFilePaths([subPath], pp);
+          await openProjectAt(vscode, `${pp}/${subPath}`, "submodule");
+          break;
+        }
+        case "searchCommits": {
+          if (!isSearchMode(msg.mode)) throw new Error(`Unknown search mode: "${msg.mode}"`);
+          const searchArgs = buildSearchArgs({ mode: msg.mode, text: msg.text }, 200, pp);
+          const searchRes = await spawnGit(vscode, searchArgs, pp, 60_000);
+          if (searchRes.exitCode !== 0) {
+            throw new Error(searchRes.stderr.trim() || "Search failed.");
+          }
+          await panel.webview.postMessage({
+            command: "loadSearchResults",
+            data: { mode: msg.mode, text: msg.text, hits: parseSearchResults(searchRes.stdout) },
+          });
+          break;
+        }
+        case "openBlame": {
+          assertSafeFilePaths([msg.filePath], pp);
+          const fileName = msg.filePath.split(/[\\/]/).pop() || msg.filePath;
+          await navigateToPanel({
+            vscode,
+            context,
+            viewType: "git-graph.blame",
+            title: `Blame: ${fileName}`,
+            projectPath: pp,
+            target: { filePath: msg.filePath, rev: msg.hash ? assertValidHash(msg.hash) : undefined },
+          });
+          break;
+        }
+        case "openFileHistory": {
+          assertSafeFilePaths([msg.filePath], pp);
+          const fileName = msg.filePath.split(/[\\/]/).pop() || msg.filePath;
+          await navigateToPanel({
+            vscode,
+            context,
+            viewType: "git-graph.fileHistory",
+            title: `History: ${fileName}`,
+            projectPath: pp,
+            target: { filePath: msg.filePath },
+          });
+          break;
+        }
+        case "openCompare":
+          await navigateToPanel({
+            vscode,
+            context,
+            viewType: "git-graph.compare",
+            title: "Compare",
+            projectPath: pp,
+            target: {
+              ...(msg.ref1 ? { ref1: assertValidRef(msg.ref1, "ref1") } : {}),
+              ...(msg.ref2 ? { ref2: assertValidRef(msg.ref2, "ref2") } : {}),
+            },
+          });
+          break;
+        case "openReflog":
+          await navigateToPanel({
+            vscode,
+            context,
+            viewType: "git-graph.reflog",
+            title: "Reflog",
+            projectPath: pp,
+          });
+          break;
+        case "openInteractiveRebase":
+          await navigateToPanel({
+            vscode,
+            context,
+            viewType: "git-graph.interactiveRebase",
+            title: "Interactive Rebase",
+            projectPath: pp,
+            target: msg.base ? { base: assertValidHash(msg.base) } : undefined,
+          });
+          break;
         case "addWorktree": {
           const addArgs = ["worktree", "add"];
           if (msg.newBranch) {
@@ -316,41 +343,9 @@ function openGitGraph(
           if (pruneResult.exitCode === 0) await handleWorktrees(vscode, panel, pp);
           break;
         }
-        case "openWorktree": {
-          // Find project matching worktree path and switch to it
-          try {
-            const res = await fetch(`${baseUrl}/api/projects`, authHeaders());
-            const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
-            const match = json.data?.find((p) => p.path === msg.path);
-            if (match) {
-              await vscode.window.switchProject(match.name);
-            } else {
-              // Worktree not registered — offer to add it as a project
-              const dirName = msg.path.split(/[\\/]/).filter(Boolean).pop() || "worktree";
-              const answer = await vscode.window.showInformationMessage(
-                `Worktree "${dirName}" is not registered as a project. Add it?`,
-                "Yes, add project", "Cancel",
-              );
-              if (answer === "Yes, add project") {
-                const addRes = await fetch(`${baseUrl}/api/projects`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
-                  body: JSON.stringify({ path: msg.path, name: dirName }),
-                });
-                const addJson = await addRes.json() as { ok: boolean; data?: { name: string } };
-                if (addJson.ok) {
-                  const name = addJson.data?.name || dirName;
-                  await vscode.window.switchProject(name);
-                } else {
-                  await vscode.window.showErrorMessage("Failed to add project");
-                }
-              }
-            }
-          } catch {
-            await vscode.window.showErrorMessage("Failed to look up projects");
-          }
+        case "openWorktree":
+          await openProjectAt(vscode, msg.path, "Worktree");
           break;
-        }
         case "openConflictFile": {
           assertSafeFilePaths([msg.filePath], pp);
           const projectName = await resolveProjectName(pp);
@@ -370,24 +365,13 @@ function openGitGraph(
       const errMsg = e instanceof Error ? e.message : String(e);
       await panel.webview.postMessage({ command: "error", message: errMsg });
     }
+    },
   });
-
-  context.subscriptions.push(msgDisposable);
 
   // Poll uncommitted changes every 5 seconds
-  let disposed = false;
-  const uncommittedPollTimer = setInterval(() => {
+  uncommittedPollTimer = setInterval(() => {
     if (!disposed) handleUncommittedStatus(vscode, panel, projectPath);
   }, 5_000);
-
-  panel.onDidDispose(() => {
-    disposed = true;
-    // Only clear the map entry if it still points at this panel — a recreate
-    // for the same project may have already replaced it
-    if (panelsByProject.get(projectPath) === panel) panelsByProject.delete(projectPath);
-    clearInterval(uncommittedPollTimer);
-    msgDisposable.dispose();
-  });
 }
 
 
@@ -526,54 +510,63 @@ async function handleUncommittedStatus(
   }
 }
 
-async function detectMergeState(
+/**
+ * Switch PPM to the project living at `path`, offering to register it first.
+ *
+ * A worktree or a submodule is a git repository PPM may never have been told
+ * about; without this, opening one would silently do nothing.
+ */
+async function openProjectAt(vscode: VscodeApi, path: string, kind: string): Promise<void> {
+  try {
+    const res = await fetch(`${getBaseUrl()}/api/projects`, authHeaders());
+    const json = await res.json() as { ok: boolean; data?: { name: string; path: string }[] };
+    const match = json.data?.find((p) => p.path === path);
+    if (match) {
+      await vscode.window.switchProject(match.name);
+      return;
+    }
+
+    const dirName = path.split(/[\\/]/).filter(Boolean).pop() || kind.toLowerCase();
+    const answer = await vscode.window.showInformationMessage(
+      `${kind} "${dirName}" is not registered as a project. Add it?`,
+      "Yes, add project", "Cancel",
+    );
+    if (answer !== "Yes, add project") return;
+
+    const authInit = authHeaders() as { headers?: Record<string, string> };
+    const addRes = await fetch(`${getBaseUrl()}/api/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(authInit.headers ?? {}) },
+      body: JSON.stringify({ path, name: dirName }),
+    });
+    const addJson = await addRes.json() as { ok: boolean; data?: { name: string } };
+    if (addJson.ok) {
+      await vscode.window.switchProject(addJson.data?.name || dirName);
+    } else {
+      await vscode.window.showErrorMessage("Failed to add project");
+    }
+  } catch {
+    await vscode.window.showErrorMessage("Failed to look up projects");
+  }
+}
+
+/**
+ * The repository's submodules and how far each has drifted.
+ *
+ * A repository with no submodules is the overwhelming majority, and git exits
+ * non-zero for one reason or another in several of the edge cases, so a failure
+ * here reports an empty list rather than an error the user cannot act on.
+ */
+async function handleSubmodules(
   vscode: VscodeApi,
+  panel: ReturnType<VscodeApi["window"]["createWebviewPanel"]>,
   projectPath: string,
-): Promise<import("./types.ts").MergeState | undefined> {
-  // Resolve the actual GIT_DIR (handles worktrees where .git is a pointer file)
-  const gitDirResult = await spawnGit(vscode, ["rev-parse", "--git-dir"], projectPath, 2000);
-  if (gitDirResult.exitCode !== 0) return undefined;
-  let gitDir = gitDirResult.stdout.trim();
-  // Make absolute if relative
-  if (!gitDir.startsWith("/")) gitDir = `${projectPath}/${gitDir}`;
-
-  // Check rebase-merge (interactive rebase)
-  const rebaseMergeDir = `${gitDir}/rebase-merge`;
-  const checkRebase = await vscode.process.spawn("test", ["-d", rebaseMergeDir], projectPath, { timeout: 2000 });
-  if (checkRebase.exitCode === 0) {
-    const [numResult, endResult, msgResult] = await Promise.all([
-      vscode.process.spawn("cat", [`${rebaseMergeDir}/msgnum`], projectPath, { timeout: 2000 }),
-      vscode.process.spawn("cat", [`${rebaseMergeDir}/end`], projectPath, { timeout: 2000 }),
-      vscode.process.spawn("cat", [`${rebaseMergeDir}/message`], projectPath, { timeout: 2000 }),
-    ]);
-    const current = numResult.stdout.trim();
-    const total = endResult.stdout.trim();
-    return {
-      type: "rebase",
-      progress: current && total ? `${current}/${total}` : undefined,
-      message: msgResult.stdout.trim().split("\n")[0] || undefined,
-    };
-  }
-
-  // Check rebase-apply (non-interactive rebase / am)
-  const checkRebaseApply = await vscode.process.spawn("test", ["-d", `${gitDir}/rebase-apply`], projectPath, { timeout: 2000 });
-  if (checkRebaseApply.exitCode === 0) {
-    return { type: "rebase" };
-  }
-
-  // Check merge
-  const checkMerge = await vscode.process.spawn("test", ["-f", `${gitDir}/MERGE_HEAD`], projectPath, { timeout: 2000 });
-  if (checkMerge.exitCode === 0) {
-    return { type: "merge" };
-  }
-
-  // Check cherry-pick
-  const checkCherry = await vscode.process.spawn("test", ["-f", `${gitDir}/CHERRY_PICK_HEAD`], projectPath, { timeout: 2000 });
-  if (checkCherry.exitCode === 0) {
-    return { type: "cherry-pick" };
-  }
-
-  return undefined;
+): Promise<void> {
+  const result = await spawnGit(vscode, ["submodule", "status", "--recursive"], projectPath, 30_000);
+  await panel.webview.postMessage({
+    command: "loadSubmodules",
+    data: result.exitCode === 0 ? parseSubmoduleStatus(result.stdout) : [],
+  });
 }
 
 async function handleWorktrees(
@@ -802,46 +795,6 @@ function parseCommitDetail(stdout: string): import("./types.ts").CommitDetail {
   }
 
   return { hash, parents, author, authorEmail, authorDate, committer, committerEmail, commitDate, message, fileChanges };
-}
-
-// --- Input validation for git actions ---
-
-function assertValidHash(value: unknown): string {
-  const s = String(value || "");
-  if (s === "HEAD") return s;
-  if (!/^[0-9a-f]{4,40}$/i.test(s)) throw new Error(`Invalid commit hash: "${s}"`);
-  return s;
-}
-
-function assertValidRef(value: unknown, label: string): string {
-  const s = String(value || "");
-  if (!s || /[\x00-\x1f\x7f~^:?*[\]\\]/.test(s) || s.startsWith("-") || s.includes("..")) {
-    throw new Error(`Invalid git ref for ${label}: "${s}"`);
-  }
-  return s;
-}
-
-function assertValidRemote(value: unknown): string {
-  const s = String(value || "");
-  if (!s || /[\x00-\x1f\x7f]/.test(s) || s.startsWith("-")) {
-    throw new Error(`Invalid remote name: "${s}"`);
-  }
-  return s;
-}
-
-/** Validate file paths are relative and don't escape the project root */
-function assertSafeFilePaths(files: string[], projectPath: string): void {
-  const { resolve, normalize } = require("path");
-  const root = normalize(projectPath) + "/";
-  for (const f of files) {
-    if (!f || f.startsWith("-") || f.startsWith("/") || /[\x00-\x1f\x7f]/.test(f)) {
-      throw new Error(`Invalid file path: "${f}"`);
-    }
-    const resolved = normalize(resolve(projectPath, f));
-    if (!resolved.startsWith(root) && resolved !== normalize(projectPath)) {
-      throw new Error(`File path escapes project root: "${f}"`);
-    }
-  }
 }
 
 function buildGitActionArgs(action: string, args: Record<string, unknown>): string[] {

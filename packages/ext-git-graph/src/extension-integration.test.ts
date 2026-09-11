@@ -38,8 +38,11 @@ async function initGitRepo(repoPath: string, withRemote = false) {
     GIT_COMMITTER_EMAIL: "committer@example.com",
   };
 
-  // Initialize repo
-  await Bun.spawn(["git", "init"], { cwd: repoPath, env, stdout: "pipe" }).exited;
+  // `-b main` rather than relying on init.defaultBranch: `env` here deliberately
+  // replaces the environment, which drops HOME, and without HOME git never reads
+  // the user's config — so an unnamed init would land on `master` and every
+  // assertion about `main` below would fail.
+  await Bun.spawn(["git", "init", "-b", "main"], { cwd: repoPath, env, stdout: "pipe" }).exited;
 
   // Create initial commit
   writeFileSync(join(repoPath, "README.md"), "# Test Repo\n");
@@ -144,7 +147,7 @@ describe("git-graph extension: integration tests", () => {
 
   it("handles repo with no commits gracefully", async () => {
     // Initialize but don't create commits
-    await Bun.spawn(["git", "init"], { cwd: testRepoDir, stdout: "pipe" }).exited;
+    await Bun.spawn(["git", "init", "-b", "main"], { cwd: testRepoDir, stdout: "pipe" }).exited;
 
     const result = await spawnGit(["log", "--format=%H"], testRepoDir);
     expect(result.exitCode).not.toBe(0); // Will fail with no commits

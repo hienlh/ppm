@@ -18,7 +18,9 @@ import {
   PLIST_LABEL,
   TASK_NAME,
   isCompiledBinary,
+  resolveBunPath,
 } from "../../../src/services/autostart-generator.ts";
+import { resolve } from "node:path";
 
 const isWindows = process.platform === "win32";
 
@@ -184,6 +186,27 @@ describe("generateSystemdService", () => {
     const service = generateSystemdService(TEST_CONFIG);
     expect(service).toContain("Description=PPM");
     expect(service).toContain("Documentation=https://github.com/hienlh/ppm");
+  });
+
+  test("puts bun on PATH even when PPM itself is a compiled binary", () => {
+    // A systemd user unit inherits a PATH without ~/.bun/bin, and the extension installer
+    // spawns bare `bun add` / `bun remove`. Deriving the PATH line from *how PPM was started*
+    // dropped it for every compiled install, so installing or searching extensions failed with
+    // `Executable not found in $PATH: "bun"` — while the launchd plist carried a PATH through.
+    //
+    // The compiled branch has to be forced: under `bun test` execPath is always bun, so
+    // `isCompiledBinary()` is false and the broken path is never reached by a plain call.
+    const real = process.execPath;
+    Object.defineProperty(process, "execPath", { value: "/opt/ppm/ppm", configurable: true });
+    try {
+      expect(isCompiledBinary()).toBe(true);
+      const service = generateSystemdService(TEST_CONFIG);
+      const line = service.split("\n").find((l) => l.startsWith('Environment="PATH='));
+      expect(line).toBeDefined();
+      expect(line).toContain(resolve(resolveBunPath(), ".."));
+    } finally {
+      Object.defineProperty(process, "execPath", { value: real, configurable: true });
+    }
   });
 });
 

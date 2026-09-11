@@ -283,6 +283,14 @@ await context.workspaceState.update("project", "data");
 
 Extensions needing to run external commands use the RPC `process:spawn` handler. This is essential for extensions that interact with CLIs (git, docker, node, etc.).
 
+**Only `git`, `node`, `bun`, `npx` and `sqlite3` may be spawned.** Anything else — including
+coreutils like `test` or `cat` — makes the call *throw*, not return a non-zero exit code. That
+distinction matters: a `try/catch` around the call will swallow the failure and leave the feature
+silently doing nothing. Check existence with `workspace.fs.stat` rather than shelling out to `test`.
+
+`options.env` is merged over the host's environment, so `PATH` survives; `PATH`, `HOME`,
+`LD_PRELOAD`, `DYLD_INSERT_LIBRARIES` and `LD_LIBRARY_PATH` cannot be overridden.
+
 ```typescript
 // Inside your extension (via RPC)
 const rpc = (context as any).rpc;
@@ -406,6 +414,45 @@ emitter.fire("event data");  // Notify listeners
 ### Sandbox
 
 Webviews run in a sandboxed iframe with **`allow-scripts` only** — no inline styles, event handlers, or external scripts. Use a bundler or inline `<style>` tags.
+
+`allow-scripts` alone also means **no `alert`, `confirm` or `prompt`**. The sandbox blocks every
+modal API, and a blocked `prompt()` simply returns `null` — no exception, no console warning — so a
+"Name the new branch" flow written that way looks fine in review and does nothing at runtime.
+Collect the answer in the panel instead: an inline row with an `<input>` and a confirm button, or a
+dialog you render yourself. The reflog panel's `confirmHtml`
+(`packages/ext-git-graph/src/reflog-view.ts`) is the pattern.
+
+### Backticks in webview scripts
+
+Panel HTML is built inside a TypeScript template literal, so **anything in that string that contains
+a backtick ends the literal early**. A `` `code span` `` in a JS comment is the usual culprit, and
+the resulting error points at whatever token happens to follow — `TS1005: ',' expected` a hundred
+lines away — never at the comment. Write those comments without backticks.
+
+### Panels need a tab, and only the frontend can create one
+
+`createWebviewPanel` makes a panel on the server. The frontend only creates a *tab* for it when
+that browser tab is the one that dispatched the command. So a panel your extension opens on its
+own initiative — say, one view navigating to another — exists with nothing to display it.
+
+To open one of your panels from another, ask the frontend for the tab instead:
+
+```typescript
+await vscode.window.openTab("extension", "Blame: app.ts", projectName, {
+  viewType: "my-ext.blame",       // must equal the command that opens it
+  extensionId: context.extensionId,
+  projectName,
+});
+```
+
+The frontend then notices a tab with no panel and dispatches `my-ext.blame` itself, which *is* a
+local dispatch, so the panel binds to the tab. That recovery dispatch passes only the project path,
+so anything else the target panel needs (a file, a pair of refs) must be stashed in the extension
+and picked up when the panel opens.
+
+**The command id and the viewType must be identical.** The frontend derives a tab slug from each by
+stripping a trailing `.view`; if the two slugs differ, no tab is ever created and nothing reports an
+error. One command per viewType, always.
 
 ### Communication
 
