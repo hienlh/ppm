@@ -23,10 +23,15 @@ function agentCall(bgStatus?: "completed" | "failed" | "stopped"): ChatEvent {
   };
 }
 
-/** Lucide renders each icon with its name as a class, so state is readable off the markup. */
-const spinning = (html: string) => html.includes("lucide-loader-circle");
-const checked = (html: string) => html.includes("lucide-circle-check ");
-const crossed = (html: string) => html.includes("lucide-circle-x ");
+/**
+ * Each icon carries its name as `data-icon`, so the card's state is readable off
+ * the markup. (These were lucide's own `lucide-circle-check` classes until the
+ * chrome moved to Fluent; `fluent-icon.tsx` keeps the hook as an attribute
+ * rather than a class, so no stylesheet can come to depend on it.)
+ */
+const spinning = (html: string) => html.includes('data-icon="Loader2"');
+const checked = (html: string) => html.includes('data-icon="CheckCircle2"');
+const crossed = (html: string) => html.includes('data-icon="XCircle"');
 
 describe("ToolCard — backgrounded Agent", () => {
   test("stays running on the launch ack, even after the parent turn ended", () => {

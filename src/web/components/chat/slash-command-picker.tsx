@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type KeyboardEvent } from "react";
-import { Sparkles, Terminal, Zap, Bot, RefreshCw, Clock } from "lucide-react";
+import { Sparkles, Terminal, Zap, Bot, RefreshCw, Clock } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { searchFuzzy } from "../../../shared/fuzzy-search";
 

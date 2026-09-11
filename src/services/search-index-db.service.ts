@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { getPpmDir } from "./ppm-dir.ts";
 
-export const SEARCH_INDEX_SCHEMA_VERSION = 1;
+export const SEARCH_INDEX_SCHEMA_VERSION = 2;
 
 let db: Database | null = null;
 
@@ -75,6 +75,14 @@ function runMigrations(database: Database): void {
 
       CREATE INDEX IF NOT EXISTS idx_session_meta_project ON session_meta(project_path);
     `);
-    database.exec(`PRAGMA user_version = ${SEARCH_INDEX_SCHEMA_VERSION}`);
   }
+  if (row.user_version < 2) {
+    // Records which build of the indexer wrote a row. `isStale` compares it, so
+    // improving what gets indexed re-indexes every session instead of leaving
+    // the old, thinner rows stamped as fresh forever (jsonl_mtime still matches).
+    database.exec(
+      "ALTER TABLE session_meta ADD COLUMN indexer_version INTEGER NOT NULL DEFAULT 0",
+    );
+  }
+  database.exec(`PRAGMA user_version = ${SEARCH_INDEX_SCHEMA_VERSION}`);
 }

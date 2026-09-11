@@ -5,7 +5,7 @@
  * hook's docstring for why two instances stay in sync without a shared store.
  */
 import { useState } from "react";
-import { ExternalLink, Copy, Check, ShieldAlert, AlertTriangle } from "lucide-react";
+import { ExternalLink, Copy, Check, ShieldAlert, AlertTriangle } from "@/lib/icons";
 import { toast } from "sonner";
 import { namedTunnelApi } from "@/lib/api-named-tunnel";
 import { copyToClipboard } from "@/lib/clipboard";

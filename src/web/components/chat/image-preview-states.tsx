@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle } from "@/lib/icons";
 
 /** Metadata label styling, shared with the loaded panel so the skeleton lines up. */
 const LABEL = "text-[var(--img-meta-label)] @max-[470px]:hidden";

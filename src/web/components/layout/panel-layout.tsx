@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, memo } from "react";
 import { Panel, Group, Separator } from "react-resizable-panels";
-import { GripVertical, GripHorizontal } from "lucide-react";
+import { GripVertical, GripHorizontal } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { createPanel } from "@/stores/panel-utils";

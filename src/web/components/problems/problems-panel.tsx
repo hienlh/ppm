@@ -17,7 +17,7 @@
  * empty state rather than left for the user to work out.
  */
 import { useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, CircleX, Info, Lightbulb } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, CircleX, Info, Lightbulb } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { usePanelStore } from "@/stores/panel-store";
 import { useProjectStore } from "@/stores/project-store";
@@ -25,6 +25,7 @@ import { useProblemsStore, filesForProject, problemCounts, problemKey, sortedPro
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import type { LspDiagnostic } from "@/hooks/use-lsp";
 import { cn } from "@/lib/utils";
+import { FileIcon } from "@/lib/file-icons";
 
 export function ProblemsPanel() {
   const allFiles = useProblemsStore(useShallow((s) => s.files));
@@ -151,6 +152,7 @@ export function ProblemsPanel() {
                 ) : (
                   <ChevronDown className="size-3 shrink-0 text-text-subtle" />
                 )}
+                <FileIcon name={file.filePath} className="size-3.5" />
                 <span className="text-xs truncate">{file.filePath.split("/").pop()}</span>
                 <span className="text-[10px] text-text-subtle truncate min-w-0">
                   {dirOf(file.filePath)}

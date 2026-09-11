@@ -1,4 +1,4 @@
-import { Code, Eye, WrapText, Table, Download, RefreshCw, UserRound } from "lucide-react";
+import { Code, Eye, WrapText, Table, Download, RefreshCw, UserRound } from "@/lib/icons";
 import { downloadFile } from "@/lib/file-download";
 
 interface EditorToolbarProps {

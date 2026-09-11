@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, Pencil, ExternalLink, Check, X } from "lucide-react";
+import { Loader2, Pencil, ExternalLink, Check, X } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 
 /** Cloud's slug rules — mirrored here so a bad name fails before a round-trip. */

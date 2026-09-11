@@ -14,7 +14,7 @@
  */
 import { useLayoutEffect, useRef, Suspense, type LazyExoticComponent, type ComponentType } from "react";
 import { createPortal } from "react-dom";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
 import { DOCK_PANEL_ID, isWindowPanelId } from "@/stores/panel-utils";
 import { PortalContainerProvider } from "@/components/ui/portal-container-context";

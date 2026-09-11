@@ -12,7 +12,7 @@
  * staging the wrong lines, and the error says so.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Minus, Plus, Trash2 } from "lucide-react";
+import { Check, Loader2, Minus, Plus, Trash2 } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { basename, cn } from "@/lib/utils";

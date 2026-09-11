@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Loader2, RefreshCw, GitCommitHorizontal } from "lucide-react";
+import { Loader2, RefreshCw, GitCommitHorizontal } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { useProjectStore } from "@/stores/project-store";

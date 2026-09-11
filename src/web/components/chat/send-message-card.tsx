@@ -7,7 +7,7 @@
  * instead of a JSON dump.
  */
 import { useState } from "react";
-import { ArrowRight, Code, Clock, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowRight, Code, Clock, CheckCircle2, XCircle } from "@/lib/icons";
 import { MiniMarkdown } from "./mini-markdown";
 import { TYPE_BADGES } from "./team-message-badges";
 import { normalizeSendMessage, parseSendMessageResult } from "./send-message-parse";

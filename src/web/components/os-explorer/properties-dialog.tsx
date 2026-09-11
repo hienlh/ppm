@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import { fsApi, type FsEntry, type FsStatResult } from "@/lib/fs-api";
 import { Button } from "@/components/ui/button";
 import { ExplorerModalShell } from "./explorer-modal-shell";

@@ -5,7 +5,7 @@
  * mobile. Adaptive shell — Dialog on desktop, BottomSheet on mobile.
  */
 import { useState } from "react";
-import { Globe, Heart, QrCode } from "lucide-react";
+import { Globe, Heart, QrCode } from "@/lib/icons";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { Button } from "@/components/ui/button";

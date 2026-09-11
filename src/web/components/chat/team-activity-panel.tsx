@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { TeamMessageItem } from "@/hooks/use-chat";
 import { useTeamActivityFeed } from "@/hooks/use-team-activity-feed";

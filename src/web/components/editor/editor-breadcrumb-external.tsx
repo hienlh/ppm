@@ -1,5 +1,5 @@
 import { useMemo, useRef, useEffect, useState, useCallback } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight } from "@/lib/icons";
 import {
   DropdownMenu,
   DropdownMenuContent,

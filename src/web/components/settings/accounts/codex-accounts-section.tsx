@@ -7,7 +7,15 @@
  */
 
 import { useState } from "react";
-import { Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "lucide-react";
+import {
+  Download,
+  KeyRound,
+  Loader2,
+  Plus,
+  Settings,
+  Trash2,
+  Upload,
+} from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { AccountCardRow, AccountCardShell, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
 import { AccountUsageBar } from "./account-bucket-row";

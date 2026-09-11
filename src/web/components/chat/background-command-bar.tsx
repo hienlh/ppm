@@ -1,4 +1,4 @@
-import { Loader2, Eye, Square, TerminalSquare } from "lucide-react";
+import { Loader2, Eye, Square, TerminalSquare } from "@/lib/icons";
 import type { BackgroundShell } from "../../../types/api";
 import { useBackgroundOutputStore } from "@/stores/background-output-store";
 

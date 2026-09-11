@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/icons";
 import { ProviderBadge } from "@/components/chat/provider-selector";
 import { getAISettings } from "../../../lib/api-settings";
 import { ClaudeAccountsSection } from "./claude-accounts-section";

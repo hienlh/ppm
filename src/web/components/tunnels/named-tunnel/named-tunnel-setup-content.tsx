@@ -3,7 +3,7 @@
  * Tunnel Manager section render this, so it never assumes it is inside a
  * dialog or a sheet (no close button of its own; the shell owns dismissal).
  */
-import { Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle } from "@/lib/icons";
 import type { Step } from "./named-tunnel-step-reducer";
 import type { UseNamedTunnelSetup } from "./use-named-tunnel-setup";
 import { namedTunnelCopy } from "./named-tunnel-copy";

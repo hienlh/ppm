@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, type MouseEvent } from "react";
-import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "lucide-react";
-import { Activity } from "lucide-react";
+import { History, Settings2, Loader2, MessageSquare, RefreshCw, Search, Pencil, Check, X, Pin, PinOff, Trash2, Users, Bot, Tags, CalendarX2 } from "@/lib/icons";
+import { Activity } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useTabStore } from "@/stores/tab-store";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";

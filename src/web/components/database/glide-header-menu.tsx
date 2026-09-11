@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { Filter, Pin, PinOff, ArrowUp, ArrowDown, X } from "lucide-react";
+import { Filter, Pin, PinOff, ArrowUp, ArrowDown, X } from "@/lib/icons";
 
 interface HeaderMenuProps {
   colName: string;

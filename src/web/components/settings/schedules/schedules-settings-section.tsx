@@ -1,6 +1,6 @@
 /** Settings section: manage scheduled Claude agents (cron). */
 import { useState } from "react";
-import { Plus, CalendarClock } from "lucide-react";
+import { Plus, CalendarClock } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { useSchedules } from "@/hooks/use-schedules";
 import { ScheduleRow } from "./schedule-row";

@@ -1,4 +1,4 @@
-import { FlipHorizontal2, FlipVertical2, RotateCcw, RotateCw, Settings, Undo2 } from "lucide-react";
+import { FlipHorizontal2, FlipVertical2, RotateCcw, RotateCw, Settings, Undo2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

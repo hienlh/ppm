@@ -119,14 +119,18 @@ describe("the fonts every surface asks for", () => {
     expect(rule).toContain("!important");
   });
 
-  it("keeps the terminal on a patched font, and does not bundle one", () => {
+  it("prefers an installed patched font, and bundles the icons rather than a whole one", () => {
     // A prompt is full of powerline separators and devicons that only a Nerd
-    // Font has. The patched faces are over a megabyte each, and a terminal has
-    // to open on a phone, so it is used where installed and never shipped.
+    // Font has. This used to assert that *none* was bundled — the patched
+    // faces are over a megabyte each and a terminal has to open on a phone —
+    // which left every prompt as tofu wherever one was not installed. What is
+    // shipped now is the icons alone, split per icon set so each block is
+    // fetched only when drawn; see `nerd-font.test.ts`. A full patched face is
+    // still never bundled, and an installed one still wins the stack.
     expect(head(TERMINAL_FONT_FAMILY)).toContain("Nerd Font");
     expect(TERMINAL_FONT_FAMILY).toContain("Monaspace Argon");
     expect(entry).not.toContain("Meslo");
-    expect(entry).not.toContain("nerd");
+    expect(entry).toContain("nerd-font.generated.css");
   });
 
   it("re-measures the terminal once a webfont lands", () => {

@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { FeatureBadge } from "@/components/ui/feature-badge";
 import { cn } from "@/lib/utils";
@@ -130,6 +130,15 @@ export function MobileDrawerTabBar({ tabs, activeId, onSelect, onReorder }: Prop
               clearPress();
               if (dragRef.current && dropRef.current) commit(dropRef.current);
               else resetDrag();
+              touchStart.current = null;
+            }}
+            // The browser claiming the gesture for a scroll fires `touchcancel`
+            // and then sends no more move/end here, so the tolerance above never
+            // gets the moves it would have measured — the arm has to be dropped
+            // on this event or the strip enters drag mode under a moving finger.
+            onTouchCancel={() => {
+              clearPress();
+              resetDrag();
               touchStart.current = null;
             }}
           >

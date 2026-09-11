@@ -6,7 +6,7 @@
  * highlight.js + jsdiff stay out of the main chunk.
  */
 import { lazy, Suspense } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp } from "@/lib/icons";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";
 
 const EditDiffPreview = lazy(() => import("./edit-diff-preview"));

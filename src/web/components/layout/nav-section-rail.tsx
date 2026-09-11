@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Bug, Cloud, FolderTree, MonitorSmartphone } from "lucide-react";
+import { Settings, Bug, Cloud, FolderTree, MonitorSmartphone } from "@/lib/icons";
 import { openExplorer } from "@/components/os-explorer/open-explorer";
 import { useOpenRemoteDesktop } from "@/components/remote-desktop/open-remote-desktop";
 import { useRemoteDesktopAvailable } from "@/components/remote-desktop/use-remote-desktop-available";

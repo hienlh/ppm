@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronUp, ChevronDown, ChevronsDown, ChevronsUpDown } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronsDown, ChevronsUpDown } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";

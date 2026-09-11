@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { X, Loader2, TerminalSquare } from "lucide-react";
+import { X, Loader2, TerminalSquare } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import { useBackgroundOutputStore } from "@/stores/background-output-store";
 

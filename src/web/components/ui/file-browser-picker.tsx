@@ -7,10 +7,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api-client";
 import {
-  Folder, File, Database, Home, Monitor, FileText, FolderPlus, Trash2,
+  Home, Monitor, FileText, FolderPlus, Trash2,
   Download, ChevronRight, ArrowLeft, Search, Loader2, Clock, Eye, EyeOff,
-} from "lucide-react";
+} from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { FileIcon } from "@/lib/file-icons";
 import { formatRelativeTime, formatSize } from "@/components/os-explorer/format-file-meta";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -62,10 +63,7 @@ function saveRecent(dirPath: string): void {
 }
 
 function fileIcon(entry: BrowseEntry): React.ReactNode {
-  if (entry.type === "directory") return <Folder className="size-4 text-primary" />;
-  const ext = entry.name.split(".").pop()?.toLowerCase();
-  if (ext && ["db", "sqlite", "sqlite3"].includes(ext)) return <Database className="size-4 text-warning" />;
-  return <File className="size-4 text-text-subtle" />;
+  return <FileIcon name={entry.name} kind={entry.type === "directory" ? "directory" : "file"} />;
 }
 
 function matchesAccept(name: string, accept?: string[]): boolean {

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Palette, Check } from "lucide-react";
+import { Palette, Check } from "@/lib/icons";
 import {
   DropdownMenu,
   DropdownMenuTrigger,

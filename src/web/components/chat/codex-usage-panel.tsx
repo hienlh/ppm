@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { X, Loader2, RefreshCw } from "lucide-react";
+import { X, Loader2, RefreshCw } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 import type { UsageInfo } from "../../../types/chat";
 

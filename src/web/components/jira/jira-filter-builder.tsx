@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { X, Loader2 } from "lucide-react";
+import { X, Loader2 } from "@/lib/icons";
 import { api } from "@/lib/api-client";
 
 interface FilterState {

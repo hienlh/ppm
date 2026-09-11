@@ -7,7 +7,7 @@
  */
 
 import { forwardRef, memo, useMemo, type HTMLAttributes } from "react";
-import { Check } from "lucide-react";
+import { Check } from "@/lib/icons";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/adaptive-context-menu";
 import type { FsEntry } from "@/lib/fs-api";
 import { cn } from "@/lib/utils";

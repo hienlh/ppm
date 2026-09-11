@@ -1,4 +1,4 @@
-import { Bot } from "lucide-react";
+import { Bot } from "@/lib/icons";
 import { SessionListPanel } from "./session-list-panel";
 import type { SessionInfo } from "../../../types/chat";
 

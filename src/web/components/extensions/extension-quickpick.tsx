@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Check, Search } from "lucide-react";
+import { Check, Search } from "@/lib/icons";
 import { useExtensionStore, type QuickPickItemUI } from "@/stores/extension-store";
 import { cn } from "@/lib/utils";
 

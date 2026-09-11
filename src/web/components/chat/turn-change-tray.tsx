@@ -6,7 +6,7 @@
  * Both panes need `min-h-0` or the grid rows refuse to shrink and neither scrolls.
  */
 import { useEffect, useId, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { X } from "@/lib/icons";
 import { copyToClipboard } from "@/lib/clipboard";
 import { ownsGlobalShortcut } from "@/lib/owns-global-shortcut";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";

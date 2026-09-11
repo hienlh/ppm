@@ -8,7 +8,7 @@ import { JiraTicketCard } from "./jira-ticket-card";
 import { JiraWatcherList } from "./jira-watcher-list";
 import { JiraConfigForm } from "./jira-config-form";
 import { JiraDebugPromptDialog } from "./jira-debug-prompt-dialog";
-import { ArrowLeft, Bug, Settings2, Plus, ListFilter, RefreshCw, Loader2 } from "lucide-react";
+import { ArrowLeft, Bug, Settings2, Plus, ListFilter, RefreshCw, Loader2 } from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { toast } from "sonner";
 import type { JiraWatchResult } from "../../../../src/types/jira";

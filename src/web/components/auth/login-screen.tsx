@@ -11,7 +11,7 @@ import {
   Bug,
   Github,
   Coffee,
-} from "lucide-react";
+} from "@/lib/icons";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { openBugReportPopup } from "@/lib/report-bug";

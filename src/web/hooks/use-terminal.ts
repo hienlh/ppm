@@ -353,6 +353,20 @@ export function useTerminal(
       // devicon glyphs only a patched Nerd Font has.
       fontFamily: TERMINAL_FONT_FAMILY,
       theme: currentXtermTheme(),
+      // The two ends of an ANSI palette collapse into the background, and a
+      // prompt cannot know which way round the terminal is. On PPM's light
+      // themes `white` is #e9edf5 against a #f3f7ff background — 1.09:1, i.e.
+      // invisible — and on the dark ones `black` is 1.10:1. oh-my-posh writes
+      // its second prompt line in plain SGR 37, which is correct on the dark
+      // terminal it was designed for and disappeared entirely here.
+      //
+      // Repainting those palette slots is the wrong fix: the same `white` is
+      // also the text *on* a coloured powerline segment, where it is right.
+      // xterm adjusts the foreground per cell against that cell's real
+      // background instead, which leaves every segment untouched and only
+      // rescues the text that had nothing behind it. 4.5 is WCAG AA, and the
+      // value VS Code ships as its own default.
+      minimumContrastRatio: 4.5,
     });
 
     const fitAddon = new FitAddon();
@@ -472,8 +486,32 @@ export function useTerminal(
     window.addEventListener(THEME_CHANGE_EVENT, onThemeChange);
     const unsubTheme = () => window.removeEventListener(THEME_CHANGE_EVENT, onThemeChange);
 
+    // The icon faces are fetched on demand — a `unicode-range` face is not
+    // requested until something lays out a character inside it, which for a
+    // prompt's Private Use Area glyphs is the first time the prompt is drawn.
+    // That is long after `document.fonts.ready` above has resolved, so the
+    // one-shot re-measure cannot see it.
+    //
+    // And nothing else redraws: measured in Chromium, a canvas `fillText` does
+    // start the fetch, but the glyph it painted is tofu and the canvas never
+    // repaints itself — ink stayed identical after the face finished loading
+    // and only tripled on a redraw. So the atlas the WebGL and canvas renderers
+    // baked has to be thrown away by hand, or the prompt is tofu for the rest
+    // of the session with the right font sitting loaded in the page.
+    const onFontLoaded = () => {
+      if (termRef.current !== term) return;
+      try {
+        term.clearTextureAtlas();
+        term.refresh(0, term.rows - 1);
+      } catch {
+        // Disposed between the event and here; nothing left to redraw.
+      }
+    };
+    document.fonts.addEventListener("loadingdone", onFontLoaded);
+
     return () => {
       unsubTheme();
+      document.fonts.removeEventListener("loadingdone", onFontLoaded);
       unsubHostResize();
       if (fitTimer) clearTimeout(fitTimer);
       resizeObserver.disconnect();

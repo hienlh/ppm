@@ -1,4 +1,4 @@
-import { GitBranch, GitCommitHorizontal, FileDiff } from "lucide-react";
+import { GitBranch, GitCommitHorizontal, FileDiff } from "@/lib/icons";
 
 export function GitGraphPlaceholder({
   metadata,

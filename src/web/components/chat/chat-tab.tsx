@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { Loader2, Upload, X } from "lucide-react";
+import { Loader2, Upload, X } from "@/lib/icons";
 import { toast } from "sonner";
 import { api, projectUrl } from "@/lib/api-client";
 import { selectInlineImages } from "@/lib/image-resize-limits";

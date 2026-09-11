@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, FileWarning } from "lucide-react";
+import { Loader2, FileWarning } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 
 interface DocxPreviewProps {
