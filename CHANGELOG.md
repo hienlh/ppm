@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Blame** (`@ppm/ext-git-graph` 0.3.0, `Mod+Shift+B`) — who last touched each line of a file, with an age heatmap down the gutter, an author card per commit, "blame before this commit" to walk back through the file's past, and a jump to that commit's diff. It is a panel of its own rather than annotations inside the editor: PPM's extension API exposes no editor, so an extension cannot draw in the gutter. Reachable from the command palette or by right-clicking a file in the graph's commit details.
+- **File history** — every commit that touched one file, following it through renames (`--follow`), or the history of just a line range (`-L`). Click a commit for its diff of that file, or blame the file as it stood at that commit.
+- **Compare refs** — pick two branches, tags or remotes and see the commits between them beside the files that differ, with ahead/behind counts. Defaults to comparing against the merge base ("since divergence"), which is what a review wants; a direct ref-to-ref diff is one dropdown away.
+- **Interactive rebase** — drag commits to reorder them, then reword, edit, squash, fixup or drop, and run it. Reachable from a commit's context menu ("Interactive rebase from here…"). Reword asks for the new message up front, in the panel: git's own `reword` opens an editor mid-rebase and blocks, which the extension API cannot answer, so the message is applied by an `exec git commit --amend` that reads it from the environment — nothing about the message can be re-read as a shell command.
+- **Inline blame in the code editor** — the line the cursor is on gets a dimmed "Ada, 3 days ago • fix the parser" after its text, the way GitLens does it. Toggle it from the editor toolbar or with `Alt+B`. The whole file is blamed once and indexed by line rather than re-run per keystroke; because that mapping goes stale the moment you type, the annotation hides itself until the file is saved rather than confidently naming the wrong commit.
+- **Stage, unstage and discard individual hunks and lines** — the Source Control panel's file rows gain a "Stage lines…" action that opens the file's diff with a checkbox per changed line. The patch is rebuilt server-side with the `@@` counts recomputed and unselected deletions demoted to context, so `git apply` accepts it; untracked files work too, via `git add -N`. If the file changed since the hunks were listed, git rejects the patch instead of staging the wrong lines.
+- **Reflog** — everywhere HEAD has been, and the way back from a bad rebase, a mistaken reset or a deleted branch. Filter by action, then create a branch at any entry (the safe recovery, offered first), check it out, or reset to it. `reset --hard` needs the short hash typed to confirm *and* refuses to run at all on a dirty worktree — there is no reflog for uncommitted work.
+- **Submodules** — a dropdown in the graph toolbar, shown only when the repository has any, listing each submodule with whether it is checked out, has drifted from the recorded commit, or is conflicted. Update one or all of them, or open one as its own PPM project.
+- **Commit search across the whole history** — the graph's find bar previously matched only the rows already loaded, so a match older than the current page simply did not appear. It can now search messages, authors, code changes (`git log -S`) or a file's history in git itself.
+- **Author avatars and hover cards in the graph** — initials-based, coloured deterministically from the email. Nothing is sent anywhere; a real avatar service would mean handing every committer's email to a third party.
+- **Merge and rebase by dragging a branch badge onto a commit** in the graph, with a confirmation naming exactly what will happen.
+
+### Fixed
+- **Git Graph's integration tests no longer depend on your git config** — they spawn git with a replacing environment, which drops `HOME`, so git never read `init.defaultBranch` and created `master` while every assertion named `main`. The test repository now asks for `main` explicitly.
+- **Conflict detection worked nowhere** — the git-graph extension detected an in-progress merge, rebase or cherry-pick by spawning `test` and `cat`, but extensions may only spawn git, node, bun, npx and sqlite3, so the call threw. The caller's `catch` then discarded the whole uncommitted-changes payload, so a repository with conflicts showed no staged or unstaged files at all — the one case where the panel mattered most. The markers are now read through the workspace filesystem API.
+- **`ppm upgrade` right after a release no longer fails with "No version matching … (but package exists)"** — bun resolved the new version against a cached package manifest that predated it; the upgrade install now bypasses that cache.
+
 ## [0.19.4] - 2026-09-11
 
 ### Fixed

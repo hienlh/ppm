@@ -1,19 +1,37 @@
 {
   "name": "@ppm/ext-git-graph",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "main": "src/extension.ts",
   "engines": { "ppm": ">=0.9.0" },
-  "activationEvents": ["onCommand:git-graph.view"],
+  "activationEvents": [
+    "onCommand:git-graph.view",
+    "onCommand:git-graph.blame",
+    "onCommand:git-graph.fileHistory",
+    "onCommand:git-graph.compare",
+    "onCommand:git-graph.interactiveRebase",
+    "onCommand:git-graph.reflog"
+  ],
   "contributes": {
     "commands": [
-      { "command": "git-graph.view", "title": "Git Graph: View Repository", "icon": "git-branch" }
+      { "command": "git-graph.view", "title": "Git Graph: View Repository", "icon": "git-branch" },
+      { "command": "git-graph.blame", "title": "Git Graph: Blame File", "icon": "users" },
+      { "command": "git-graph.fileHistory", "title": "Git Graph: File History", "icon": "history" },
+      { "command": "git-graph.compare", "title": "Git Graph: Compare Refs", "icon": "git-compare" },
+      { "command": "git-graph.interactiveRebase", "title": "Git Graph: Interactive Rebase", "icon": "list-ordered" },
+      { "command": "git-graph.reflog", "title": "Git Graph: Reflog", "icon": "history" }
     ],
     "keybindings": [
-      { "command": "git-graph.view", "key": "Mod+G" }
+      { "command": "git-graph.view", "key": "Mod+G" },
+      { "command": "git-graph.blame", "key": "Mod+Shift+B" }
     ],
     "menus": {
       "commandPalette": [
-        { "command": "git-graph.view" }
+        { "command": "git-graph.view" },
+        { "command": "git-graph.blame" },
+        { "command": "git-graph.fileHistory" },
+        { "command": "git-graph.compare" },
+        { "command": "git-graph.interactiveRebase" },
+        { "command": "git-graph.reflog" }
       ]
     },
     "configuration": {

@@ -15,6 +15,7 @@ import {
   GitCommitHorizontal,
   GitBranch,
   Check,
+  SquareDashedMousePointer,
 } from "lucide-react";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { api, projectUrl } from "@/lib/api-client";
@@ -26,6 +27,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useGitStatusStore } from "@/stores/git-status-store";
 import { useExtensionStore } from "@/stores/extension-store";
 import { GitWorktreePanel } from "./git-worktree-panel";
+import { HunkStageDialog, type HunkStageTarget } from "./hunk-stage-dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -124,6 +126,8 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
     label: string;
     files: string[];
   } | null>(null);
+  // Non-null while the hunk picker is open, for the file it was opened on.
+  const [hunkTarget, setHunkTarget] = useState<HunkStageTarget | null>(null);
   const { openTab } = useTabStore(useShallow((s) => ({ openTab: s.openTab })));
   const viewMode = useSettingsStore((s) => s.gitStatusViewMode);
   const setViewMode = useSettingsStore((s) => s.setGitStatusViewMode);
@@ -531,6 +535,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
             onFolderAction={(files) => unstageFiles(files.map((f) => f.path))}
             onClickFile={openDiff}
             onOpenFile={openFile}
+            onPickHunks={(f) => setHunkTarget({ filePath: f.path, scope: "index" })}
             disabled={acting}
           />
 
@@ -553,6 +558,7 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
             onFolderAction={(files) => stageFiles(files.map((f) => f.path))}
             onClickFile={openDiff}
             onOpenFile={openFile}
+            onPickHunks={(f) => setHunkTarget({ filePath: f.path, scope: "worktree" })}
             disabled={acting}
             showRevert
             onRevert={(f) =>
@@ -570,6 +576,14 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
 
       {/* Commit block — bottom on mobile */}
       <div className="md:hidden border-t border-border shrink-0">{commitBox}</div>
+
+      {/* Hunk / line picker */}
+      <HunkStageDialog
+        projectName={projectName}
+        target={hunkTarget}
+        onClose={() => setHunkTarget(null)}
+        onApplied={fetchStatus}
+      />
 
       {/* Revert confirmation dialog */}
       <Dialog
@@ -622,6 +636,7 @@ function ActionButtons({
   onRevert,
   onAction,
   onOpenFile,
+  onPickHunks,
   actionIcon,
   actionTitle,
   disabled,
@@ -630,6 +645,7 @@ function ActionButtons({
   onRevert?: () => void;
   onAction: () => void;
   onOpenFile?: () => void;
+  onPickHunks?: () => void;
   actionIcon: React.ReactNode;
   actionTitle: string;
   disabled: boolean;
@@ -645,6 +661,17 @@ function ActionButtons({
           title="Open file"
         >
           <FileText className="size-3" />
+        </button>
+      )}
+      {onPickHunks && (
+        <button
+          type="button"
+          className="flex items-center justify-center size-5 rounded text-muted-foreground hover:text-primary active:scale-95 transition-colors"
+          onClick={(e) => { e.stopPropagation(); onPickHunks(); }}
+          disabled={disabled}
+          title={`${actionTitle} lines…`}
+        >
+          <SquareDashedMousePointer className="size-3" />
         </button>
       )}
       {showRevert && onRevert && (
@@ -689,6 +716,7 @@ function FileSection({
   onFolderAction,
   onClickFile,
   onOpenFile,
+  onPickHunks,
   disabled,
   showRevert,
   onRevert,
@@ -707,6 +735,7 @@ function FileSection({
   onFolderAction?: (files: GitFileChange[]) => void;
   onClickFile: (f: GitFileChange) => void;
   onOpenFile?: (f: GitFileChange) => void;
+  onPickHunks?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -743,6 +772,7 @@ function FileSection({
               onAction={onAction}
               onClickFile={onClickFile}
               onOpenFile={onOpenFile}
+              onPickHunks={onPickHunks}
               disabled={disabled}
               showRevert={showRevert}
               onRevert={onRevert}
@@ -758,6 +788,7 @@ function FileSection({
           onFolderAction={onFolderAction}
           onClickFile={onClickFile}
           onOpenFile={onOpenFile}
+          onPickHunks={onPickHunks}
           disabled={disabled}
           showRevert={showRevert}
           onRevert={onRevert}
@@ -817,6 +848,7 @@ function FileRow({
   onAction,
   onClickFile,
   onOpenFile,
+  onPickHunks,
   disabled,
   showRevert,
   onRevert,
@@ -828,6 +860,7 @@ function FileRow({
   onAction: (f: GitFileChange) => void;
   onClickFile: (f: GitFileChange) => void;
   onOpenFile?: (f: GitFileChange) => void;
+  onPickHunks?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -864,6 +897,7 @@ function FileRow({
         showRevert={showRevert}
         onRevert={onRevert ? () => onRevert(file) : undefined}
         onOpenFile={onOpenFile ? () => onOpenFile(file) : undefined}
+        onPickHunks={onPickHunks ? () => onPickHunks(file) : undefined}
         onAction={() => onAction(file)}
         actionIcon={actionIcon}
         actionTitle={actionTitle}
@@ -892,6 +926,11 @@ function FileRow({
             <DropdownMenuItem onClick={() => onAction(file)} disabled={disabled}>
               {actionTitle}
             </DropdownMenuItem>
+            {onPickHunks && (
+              <DropdownMenuItem onClick={() => onPickHunks(file)} disabled={disabled}>
+                {actionTitle} Lines…
+              </DropdownMenuItem>
+            )}
             {showRevert && onRevert && (
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
@@ -920,6 +959,7 @@ function TreeView({
   onFolderAction,
   onClickFile,
   onOpenFile,
+  onPickHunks,
   disabled,
   showRevert,
   onRevert,
@@ -932,6 +972,7 @@ function TreeView({
   onFolderAction?: (files: GitFileChange[]) => void;
   onClickFile: (f: GitFileChange) => void;
   onOpenFile?: (f: GitFileChange) => void;
+  onPickHunks?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -953,6 +994,7 @@ function TreeView({
           onFolderAction={onFolderAction}
           onClickFile={onClickFile}
           onOpenFile={onOpenFile}
+          onPickHunks={onPickHunks}
           disabled={disabled}
           showRevert={showRevert}
           onRevert={onRevert}
@@ -977,6 +1019,7 @@ function TreeNodeView({
   onFolderAction,
   onClickFile,
   onOpenFile,
+  onPickHunks,
   disabled,
   showRevert,
   onRevert,
@@ -991,6 +1034,7 @@ function TreeNodeView({
   onFolderAction?: (files: GitFileChange[]) => void;
   onClickFile: (f: GitFileChange) => void;
   onOpenFile?: (f: GitFileChange) => void;
+  onPickHunks?: (f: GitFileChange) => void;
   disabled: boolean;
   showRevert?: boolean;
   onRevert?: (f: GitFileChange) => void;
@@ -1024,6 +1068,7 @@ function TreeNodeView({
           onAction={onAction}
           onClickFile={onClickFile}
           onOpenFile={onOpenFile}
+          onPickHunks={onPickHunks}
           disabled={disabled}
           showRevert={showRevert}
           onRevert={onRevert}
@@ -1123,6 +1168,7 @@ function TreeNodeView({
                 onFolderAction={onFolderAction}
                 onClickFile={onClickFile}
                 onOpenFile={onOpenFile}
+                onPickHunks={onPickHunks}
                 disabled={disabled}
                 showRevert={showRevert}
                 onRevert={onRevert}

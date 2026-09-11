@@ -1,4 +1,4 @@
-import { Code, Eye, WrapText, Table, Download, RefreshCw } from "lucide-react";
+import { Code, Eye, WrapText, Table, Download, RefreshCw, UserRound } from "lucide-react";
 import { downloadFile } from "@/lib/file-download";
 
 interface EditorToolbarProps {
@@ -9,6 +9,11 @@ interface EditorToolbarProps {
   onCsvModeChange?: (mode: "table" | "raw") => void;
   wordWrap: boolean;
   onToggleWordWrap: () => void;
+  /** Omitted for buffers git cannot blame (untitled, inline preview). */
+  inlineBlame?: boolean;
+  onToggleInlineBlame?: () => void;
+  /** Blame is on but hidden because the buffer has unsaved edits. */
+  blameStale?: boolean;
   onRefresh?: () => void;
   refreshing?: boolean;
   filePath?: string;
@@ -21,15 +26,18 @@ function ToolbarButton({
   onClick,
   icon: Icon,
   label,
+  title,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ComponentType<{ className?: string }>;
   label: string;
+  title?: string;
 }) {
   return (
     <button
       type="button"
+      title={title}
       onClick={onClick}
       className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${
         active ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
@@ -49,6 +57,9 @@ export function EditorToolbar({
   onCsvModeChange,
   wordWrap,
   onToggleWordWrap,
+  inlineBlame,
+  onToggleInlineBlame,
+  blameStale,
   onRefresh,
   refreshing,
   filePath,
@@ -78,6 +89,19 @@ export function EditorToolbar({
         icon={WrapText}
         label="Wrap"
       />
+      {onToggleInlineBlame && (
+        <ToolbarButton
+          active={inlineBlame === true}
+          onClick={onToggleInlineBlame}
+          icon={UserRound}
+          label="Blame"
+          title={
+            inlineBlame && blameStale
+              ? "Blame is hidden until this file is saved — the line numbers have moved"
+              : "Inline blame (Alt+B)"
+          }
+        />
+      )}
       {onRefresh && (
         <button
           type="button"

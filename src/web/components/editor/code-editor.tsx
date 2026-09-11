@@ -8,6 +8,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useSettingsStore } from "@/stores/settings-store";
 import { basename } from "@/lib/utils";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
+import { useInlineBlame } from "@/hooks/use-inline-blame";
 import { Loader2, FileWarning, Play, Database, ExternalLink, X, GripHorizontal, ShieldCheck, ShieldOff } from "lucide-react";
 import { EditorBreadcrumb } from "./editor-breadcrumb";
 import { EditorToolbar } from "./editor-toolbar";
@@ -73,8 +74,16 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestContentRef = useRef<string>("");
   const editorRef = useRef<MonacoType.editor.IStandaloneCodeEditor | null>(null);
+  // Mirrors editorRef as state, so hooks that must react to the editor existing
+  // (inline blame) re-run on mount instead of reading a ref that is still null.
+  const [mounted, setMounted] = useState<{
+    editor: MonacoType.editor.IStandaloneCodeEditor;
+    monaco: typeof MonacoType;
+  } | null>(null);
   const { tabs, updateTab } = useTabStore(useShallow((s) => ({ tabs: s.tabs, updateTab: s.updateTab })));
   const { wordWrap, toggleWordWrap } = useSettingsStore(useShallow((s) => ({ wordWrap: s.wordWrap, toggleWordWrap: s.toggleWordWrap })));
+  const inlineBlame = useSettingsStore((s) => s.inlineBlame);
+  const toggleInlineBlame = useSettingsStore((s) => s.toggleInlineBlame);
   const monacoTheme = useMonacoTheme();
 
   const isUntitled = metadata?.isUntitled === true;
@@ -367,6 +376,18 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     if (ownTab.title !== newTitle) updateTab(ownTab.id, { title: newTitle });
   }, [unsaved]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // GitLens-style annotation on the cursor's line. Off unless the pref is on,
+  // and never for an untitled buffer or inline (read-only preview) content —
+  // neither has a path git could blame.
+  const canBlame = !isUntitled && inlineContent == null && !!filePath && !!projectName;
+  const blame = useInlineBlame({
+    editor: mounted?.editor ?? null,
+    monaco: mounted?.monaco ?? null,
+    projectName,
+    filePath: canBlame ? filePath : undefined,
+    enabled: inlineBlame && canBlame,
+  });
+
   const saveFile = useCallback(
     async (text: string) => {
       if (!filePath) return;
@@ -378,9 +399,12 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
           await api.put(`${projectUrl(projectName!)}/files/write`, { path: filePath, content: text });
         }
         setUnsaved(false);
+        // The blame line table is keyed by line number, so an edit invalidates
+        // it; a save is the point where a fresh one can be had.
+        blame.refresh();
       } catch { /* Silent — unsaved indicator persists */ }
     },
-    [filePath, projectName, isExternalFile],
+    [filePath, projectName, isExternalFile, blame.refresh], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   function handleChange(value: string | undefined) {
@@ -452,6 +476,7 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     monacoInstanceRef.current = monaco;
+    setMounted({ editor, monaco });
     if (lineNumber && lineNumber > 0) {
       setTimeout(() => revealTarget(), 100);
     }
@@ -465,6 +490,10 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
     editor.addCommand(
       monaco.KeyMod.Alt | monaco.KeyCode.KeyZ,
       () => useSettingsStore.getState().toggleWordWrap(),
+    );
+    editor.addCommand(
+      monaco.KeyMod.Alt | monaco.KeyCode.KeyB,
+      () => useSettingsStore.getState().toggleInlineBlame(),
     );
     monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: true, noSyntaxValidation: true, noSuggestionDiagnostics: true,
@@ -694,6 +723,9 @@ export const CodeEditor = memo(function CodeEditor({ metadata, tabId }: CodeEdit
             onCsvModeChange={setCsvMode}
             wordWrap={wordWrap}
             onToggleWordWrap={toggleWordWrap}
+            inlineBlame={inlineBlame}
+            onToggleInlineBlame={canBlame ? toggleInlineBlame : undefined}
+            blameStale={blame.stale}
             onRefresh={reloadFile}
             refreshing={refreshing}
             filePath={filePath}

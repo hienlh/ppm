@@ -31,6 +31,8 @@ interface SettingsState {
   sidebarCollapsed: boolean;
   sidebarWidth: number;
   gitStatusViewMode: GitStatusViewMode;
+  /** GitLens-style annotation after the cursor's line in the code editor. */
+  inlineBlame: boolean;
   wordWrap: boolean;
   tabWrap: boolean;
   editorTabStyle: EditorTabStyle;
@@ -63,6 +65,7 @@ interface SettingsState {
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
   setGitStatusViewMode: (mode: GitStatusViewMode) => void;
+  toggleInlineBlame: () => void;
   toggleWordWrap: () => void;
   toggleTabWrap: () => void;
   setEditorTabStyle: (style: EditorTabStyle) => void;
@@ -87,6 +90,7 @@ interface PersistedSettings {
   sidebarCollapsed?: boolean;
   sidebarWidth?: number;
   gitStatusViewMode?: GitStatusViewMode;
+  inlineBlame?: boolean;
   wordWrap?: boolean;
   tabWrap?: boolean;
   editorTabStyle?: EditorTabStyle;
@@ -230,6 +234,7 @@ function pushThemeToServer(
 function applyServerUiPrefs(data: Record<string, unknown>) {
   const patch: Partial<PersistedSettings> = {};
   if (typeof data.wordWrap === "boolean") patch.wordWrap = data.wordWrap;
+  if (typeof data.inlineBlame === "boolean") patch.inlineBlame = data.inlineBlame;
   if (typeof data.tabWrap === "boolean") patch.tabWrap = data.tabWrap;
   if (typeof data.sidebarCollapsed === "boolean") patch.sidebarCollapsed = data.sidebarCollapsed;
   if (typeof data.sidebarWidth === "number" && data.sidebarWidth >= 200 && data.sidebarWidth <= 600) {
@@ -270,6 +275,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sidebarCollapsed: _initial.sidebarCollapsed ?? false,
   sidebarWidth: _initial.sidebarWidth ?? 280,
   gitStatusViewMode: _initial.gitStatusViewMode === "flat" ? "flat" : "tree",
+  inlineBlame: _initial.inlineBlame ?? false,
   wordWrap: _initial.wordWrap ?? false,
   tabWrap: _initial.tabWrap ?? false,
   editorTabStyle: (_initial.editorTabStyle === "boxed" || _initial.editorTabStyle === "pill") ? _initial.editorTabStyle : "default",
@@ -380,6 +386,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setGitStatusViewMode: (mode) => {
     persistUiPref({ gitStatusViewMode: mode });
     set({ gitStatusViewMode: mode });
+  },
+
+  toggleInlineBlame: () => {
+    const next = !get().inlineBlame;
+    persistUiPref({ inlineBlame: next });
+    set({ inlineBlame: next });
   },
 
   toggleWordWrap: () => {

@@ -140,7 +140,18 @@ export function getServicePath(): string {
 export function generateSystemdService(config: AutoStartConfig): string {
   const cmd = buildExecCommand(config);
   const execStart = cmd.map(shellEscape).join(" ");
-  const bunDir = isCompiledBinary() ? "" : resolve(resolveBunPath(), "..");
+  // Bun is a runtime dependency even when PPM itself is a compiled binary: the extension
+  // installer spawns bare `bun add` / `bun remove` (extension-installer.ts), and a systemd
+  // user unit inherits a PATH that does not include ~/.bun/bin. Skipping this line whenever
+  // PPM was not started *by* bun left extension install/search failing with
+  // `Executable not found in $PATH: "bun"`. The launchd plist already carries a PATH through
+  // for the same reason.
+  let bunDir = "";
+  try {
+    bunDir = resolve(resolveBunPath(), "..");
+  } catch {
+    // No bun installed — there is no directory to add, and the feature that needs it says so.
+  }
 
   // Build PATH with bun directory prepended
   const envPath = bunDir
