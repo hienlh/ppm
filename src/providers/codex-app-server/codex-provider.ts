@@ -10,17 +10,19 @@ import type {
   UsageInfo,
 } from "../provider.interface.ts";
 import { configService } from "../../services/config.service.ts";
-import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount } from "../../services/db.service.ts";
-import { resolveCodexAccountForSession } from "../../services/codex-account.service.ts";
+import { setSessionMetadata, getSessionProjectPath, setSessionProvider, setSessionCodexAccount, getSessionCodexAccount } from "../../services/db.service.ts";
+import { resolveCodexAccountForSession, getCodexAccount, listCodexAccounts, peekCodexAccount } from "../../services/codex-account.service.ts";
 import { killProcessTree } from "../../services/windows-process-tree.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { CodexJsonRpcClient } from "./codex-jsonrpc-client.ts";
+import { CodexJsonRpcClient, CONTROL_REQUEST_TIMEOUT_MS } from "./codex-jsonrpc-client.ts";
 import { permissionModeToCodex, type CodexPermission } from "./codex-permission-map.ts";
 import { mapCodexEvent } from "./codex-event-mapper.ts";
 import { decisionFor, isApprovalMethod, type ApprovalMethod } from "./codex-approval-decision.ts";
 import { parseModelList } from "./codex-model-parser.ts";
-import { fetchCodexUsage } from "./codex-usage-fetch.ts";
+import { getOrFetchUsage, registerUsageSource } from "../../services/provider-usage/usage-registry.ts";
+import { codexUsageSource } from "./codex-usage-source.ts";
+import { AMBIENT_ACCOUNT_KEY } from "../../services/provider-usage/usage-source.ts";
 import { redactTruncate } from "./codex-redact.ts";
 import {
   listCodexRollouts,
@@ -34,12 +36,50 @@ import type {
   ToolRequestUserInputResponse,
   Thread,
   UserInput,
+  CodexSkill,
 } from "./codex-protocol.ts";
+import { parseSkillList } from "./codex-skill-parser.ts";
 
 const CODEX_SESSIONS_DIR = join(homedir(), ".codex", "sessions");
+
+/**
+ * Every directory a codex rollout for this install could be in, most specific
+ * first.
+ *
+ * `~/.codex/sessions` is only the ambient login's. PPM gives each managed
+ * account its own CODEX_HOME, and the app-server writes that account's
+ * transcripts under it — so a session bound to an account has its history
+ * nowhere near the default directory. Reading only the default is why such a
+ * conversation came back empty once it was no longer live in memory: it was
+ * being served from the in-process transcript, and nothing on disk was ever
+ * found for it.
+ *
+ * `sessionId` narrows to the bound account when there is one; without it the
+ * caller gets every account, which is what listing a project's sessions needs.
+ */
+function codexSessionsDirs(sessionId?: string): string[] {
+  const dirs: string[] = [];
+  const boundId = sessionId ? getSessionCodexAccount(sessionId) : null;
+  const accounts = boundId
+    ? [getCodexAccount(boundId)].filter((a): a is NonNullable<typeof a> => a != null)
+    : listCodexAccounts();
+  for (const account of accounts) dirs.push(join(account.home, "sessions"));
+  dirs.push(CODEX_SESSIONS_DIR);
+  return dirs;
+}
+
+/** First non-empty result across the candidate directories. */
+function fromCodexSessionsDirs<T>(sessionId: string | undefined, read: (dir: string) => T | null): T | null {
+  for (const dir of codexSessionsDirs(sessionId)) {
+    const found = read(dir);
+    if (found != null) return found;
+  }
+  return null;
+}
 const CLIENT_INFO = { name: "ppm", title: "PPM", version: "0.0.0" };
 const CAPABILITIES = { experimentalApi: true, requestAttestation: false, optOutNotificationMethods: null };
 const MODELS_CACHE_TTL = 5 * 60 * 1000;
+const SKILLS_CACHE_TTL = 60 * 1000;
 
 interface PendingApproval {
   codexId: number | string;
@@ -165,6 +205,8 @@ export class CodexAppServerProvider implements AIProvider {
   private sessions = new Map<string, Session>();
   private live = new Map<string, LiveSession>();
   private modelsCache: { models: ModelOption[]; expiry: number } | null = null;
+  /** Keyed by `cwd\0codexHome` — skills differ per workspace AND per account. */
+  private skillsCache = new Map<string, { skills: CodexSkill[]; expiry: number }>();
 
   private get config() {
     try { return configService.get("ai").providers["codex"] ?? null; } catch { return null; }
@@ -208,10 +250,29 @@ export class CodexAppServerProvider implements AIProvider {
   }
 
   async listSessionsByDir(dir: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]> {
-    const sessions = listCodexRollouts(CODEX_SESSIONS_DIR, dir, this.id, opts);
+    const seen = new Set<string>();
+    const sessions: SessionInfo[] = [];
+    for (const sessionsDir of codexSessionsDirs()) {
+      for (const s of listCodexRollouts(sessionsDir, dir, this.id, opts)) {
+        if (seen.has(s.id)) continue;
+        seen.add(s.id);
+        sessions.push(s);
+      }
+    }
     // Backfill provider ownership so reopening a pre-existing codex thread routes
     // to codex (not the default provider) even after a restart.
-    for (const s of sessions) { try { setSessionProvider(s.id, this.id); } catch { /* non-fatal */ } }
+    //
+    // The project path is recorded in the same pass, and it has to be: reading a
+    // session is fail-closed on cwd, so a row registered here without one can
+    // never be read back and the conversation opens blank. `dir` is exactly that
+    // cwd — every rollout listed above matched it — so the attribution is the
+    // one already proven, not a guess.
+    for (const s of sessions) {
+      try {
+        setSessionProvider(s.id, this.id);
+        setSessionMetadata(s.id, s.projectName, dir);
+      } catch { /* non-fatal */ }
+    }
     return sessions;
   }
 
@@ -301,13 +362,13 @@ export class CodexAppServerProvider implements AIProvider {
     client.onClose(() => this.handleClose(live));
     client.start({ cwd, codexHome: account?.home });
 
-    await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
+    await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
     client.notify("initialized");
 
     const resumeBase = { cwd, sandbox: permission.sandbox, approvalPolicy: permission.approvalPolicy, ...(model ? { model } : {}) };
     // Only treat as a resume when a rollout for this id is attributable to THIS
     // project (fail-closed cwd guard) — never resume another project's thread.
-    const isResume = !!findRolloutByThreadId(CODEX_SESSIONS_DIR, sessionId, cwd);
+    const isResume = !!fromCodexSessionsDirs(sessionId, (d) => findRolloutByThreadId(d, sessionId, cwd));
     const result = isResume
       ? await client.request("thread/resume", { threadId: sessionId, ...resumeBase })
       : await client.request("thread/start", resumeBase);
@@ -331,7 +392,10 @@ export class CodexAppServerProvider implements AIProvider {
     }
     // Snapshot persisted history so live message ids continue the rollout-N
     // numbering (empty for a brand-new thread; full prior transcript on resume).
-    live.history = getRolloutMessages(CODEX_SESSIONS_DIR, threadId, cwd);
+    live.history = fromCodexSessionsDirs(threadId, (d) => {
+      const msgs = getRolloutMessages(d, threadId, cwd);
+      return msgs.length > 0 ? msgs : null;
+    }) ?? [];
     return live;
   }
 
@@ -366,7 +430,8 @@ export class CodexAppServerProvider implements AIProvider {
     if (notif.method === "item/completed" && live.compactRequested
         && (notif.params as { item?: { type?: string } })?.item?.type === "contextCompaction") {
       live.compactRequested = false;
-      const file = findRolloutByThreadId(CODEX_SESSIONS_DIR, live.threadId ?? "", live.cwd);
+      const file = fromCodexSessionsDirs(live.threadId ?? undefined,
+        (d) => findRolloutByThreadId(d, live.threadId ?? "", live.cwd));
       if (file) {
         const content = `_Conversation compacted to save context._\n\nread the full transcript at: ${file}`;
         live.channel.push({ type: "text", content });
@@ -473,7 +538,10 @@ export class CodexAppServerProvider implements AIProvider {
     // Fail-closed: only return rollout messages attributable to this project's cwd.
     const cwd = this.sessions.get(sessionId)?.projectPath || getSessionProjectPath(sessionId);
     if (!cwd) return [];
-    return getRolloutMessages(CODEX_SESSIONS_DIR, sessionId, cwd);
+    return fromCodexSessionsDirs(sessionId, (d) => {
+      const msgs = getRolloutMessages(d, sessionId, cwd);
+      return msgs.length > 0 ? msgs : null;
+    }) ?? [];
   }
 
   /**
@@ -501,7 +569,7 @@ export class CodexAppServerProvider implements AIProvider {
     try {
       if (!reuse) {
         client.start({ cwd });
-        await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
+        await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
         client.notify("initialized");
       }
       const forkRes = await client.request<{ thread?: { id?: string; turns?: unknown[] } }>("thread/fork", { threadId: sessionId, cwd });
@@ -540,12 +608,12 @@ export class CodexAppServerProvider implements AIProvider {
     const client = new CodexJsonRpcClient();
     try {
       client.start({ cwd: process.cwd() });
-      await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES });
+      await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
       client.notify("initialized");
       const all: unknown[] = [];
       let cursor: string | null = null;
       do {
-        const res: ModelListResponse = await client.request<ModelListResponse>("model/list", { cursor });
+        const res: ModelListResponse = await client.request<ModelListResponse>("model/list", { cursor }, CONTROL_REQUEST_TIMEOUT_MS);
         if (Array.isArray(res?.data)) all.push(...res.data);
         cursor = res?.nextCursor ?? null;
       } while (cursor);
@@ -559,8 +627,82 @@ export class CodexAppServerProvider implements AIProvider {
     }
   }
 
-  /** Codex quota for the default account (account/rateLimits/read, 60s cache). */
-  async getUsage(): Promise<UsageInfo> {
-    return fetchCodexUsage();
+  /**
+   * The skills codex itself would resolve for `cwd`, asked of codex rather than
+   * discovered from disk.
+   *
+   * Two reasons it has to come from the app-server. Codex's built-ins live under
+   * `$CODEX_HOME/skills/.system/`, and PPM points CODEX_HOME at a per-account
+   * directory — so scanning the ambient `~/.codex` reads a different, possibly
+   * stale set than the session will actually run. And the app-server is the only
+   * source of `enabled` and of the `interface` block (display name, icons) that
+   * the picker shows.
+   *
+   * Cached briefly per (cwd, account): the list changes when the user installs a
+   * skill, which should show up without a restart, but a picker keystroke must
+   * not spawn an app-server.
+   */
+  async listSkills(sessionId?: string): Promise<CodexSkill[]> {
+    const cwd = (sessionId ? getSessionProjectPath(sessionId) : null) || process.cwd();
+    // Reuse the account already bound to the session; resolving afresh here
+    // would advance a round-robin strategy for a mere UI listing.
+    const accountId = sessionId ? getSessionCodexAccount(sessionId) : null;
+    const home = (accountId ? getCodexAccount(accountId)?.home : null) ?? undefined;
+
+    const key = `${cwd}\0${home ?? ""}`;
+    const hit = this.skillsCache.get(key);
+    if (hit && Date.now() < hit.expiry) return hit.skills;
+
+    const client = new CodexJsonRpcClient();
+    try {
+      client.start({ cwd, codexHome: home });
+      await client.request("initialize", { clientInfo: CLIENT_INFO, capabilities: CAPABILITIES }, CONTROL_REQUEST_TIMEOUT_MS);
+      client.notify("initialized");
+      const skills = parseSkillList(await client.request("skills/list", {}, CONTROL_REQUEST_TIMEOUT_MS));
+      if (skills.length > 0) this.skillsCache.set(key, { skills, expiry: Date.now() + SKILLS_CACHE_TTL });
+      return skills;
+    } catch {
+      return [];
+    } finally {
+      client.close();
+    }
+  }
+
+  /** Read the session's account without advancing the account-selection strategy. */
+  async getUsage(sessionId?: string): Promise<UsageInfo> {
+    // Idempotent, and needed because a caller can reach the provider before the
+    // server has started background polling — an unregistered source would make
+    // the shared layer answer {} instead of reading codex.
+    registerUsageSource(codexUsageSource);
+    const accountId = sessionId ? getSessionCodexAccount(sessionId) : null;
+    const bound = accountId ? getCodexAccount(accountId) : null;
+    if (bound) {
+      // Through the shared layer, so this answers from the cache or the stored
+      // snapshot and only reaches codex when nothing is known yet — the same
+      // path Claude's usage takes. It used to spawn an app-server inline on
+      // every miss, on the HTTP request's own thread of control.
+      return {
+        ...await getOrFetchUsage(this.id, bound.id),
+        activeAccountId: bound.id,
+        activeAccountLabel: bound.label,
+      };
+    }
+
+    // Nothing bound yet — a session binds on its first send. Name the account
+    // that will serve it, but do NOT read its quota: that spawns an app-server
+    // against a login which is not yet this session's, and which a round-robin
+    // or lowest-usage pick may never hand it. So the toolbar can say WHO will
+    // answer without PPM touching that account on a session's behalf before
+    // the session owns it. The numbers arrive with the first turn.
+    //
+    // Skipped when the session names an account that no longer exists: naming
+    // a different one there would be a lie about a binding that already failed.
+    const pending = accountId ? null : peekCodexAccount();
+    if (pending) return { activeAccountId: pending.id, activeAccountLabel: pending.label };
+
+    // Managed accounts are assigned on first send; don't show an unrelated
+    // ambient login while that assignment is pending or the binding is missing.
+    if (accountId || listCodexAccounts().length > 0) return {};
+    return getOrFetchUsage(this.id, AMBIENT_ACCOUNT_KEY);
   }
 }

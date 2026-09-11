@@ -4,7 +4,7 @@ import { mkdirSync, existsSync } from "node:fs";
 import { encrypt, decrypt } from "../lib/account-crypto.ts";
 import { getPpmDir } from "./ppm-dir.ts";
 import { backupDbSync } from "./db-backup/db-backup-sync.ts";
-export const CURRENT_SCHEMA_VERSION = 42;
+export const CURRENT_SCHEMA_VERSION = 44;
 
 let db: Database | null = null;
 let dbProfile: string | null = null;
@@ -955,6 +955,92 @@ function runMigrations(database: Database): void {
     `);
     database.exec("PRAGMA user_version = 42;");
   }
+
+  if (current < 43) {
+    // Usage snapshots stopped being Claude's alone: codex (and any later
+    // provider) records its quota through the same store, so a row has to say
+    // which provider it came from. Existing rows are all Claude's, which is
+    // exactly what the default backfills.
+    //
+    // The table keeps its `claude_` name on purpose. Renaming it would read
+    // better, but every reference lives in this file, while a user who rolls
+    // PPM back to an older build would find the table gone — adding a column
+    // is invisible to that build, renaming the table is not.
+    try {
+      database.exec(`ALTER TABLE claude_limit_snapshots ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'`);
+    } catch {
+      // Column already present (re-run after a partial upgrade) — harmless.
+    }
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_limit_snapshots_provider_account
+        ON claude_limit_snapshots(provider, account_id);
+      PRAGMA user_version = 43;
+    `);
+  }
+
+  if (current < 44) {
+    // A provider that mints its own session id leaves the id PPM created behind.
+    // The server re-keys itself and writes the transcript under the provider's
+    // id, but a chat tab keeps whatever id it opened with — and that id owns no
+    // transcript, so the tab reloads into an empty conversation while the real
+    // history sits on disk under the other id. `migrated_to` records the move so
+    // the read path can follow it.
+    try {
+      database.exec(`ALTER TABLE session_metadata ADD COLUMN migrated_to TEXT`);
+    } catch {
+      // Column already present (re-run after a partial upgrade) — harmless.
+    }
+
+    // Backfill the sessions already orphaned by this, which is the only way an
+    // existing conversation becomes reachable again.
+    //
+    // The link was never recorded, so it is inferred: PPM creates the session
+    // and the provider adopts its own id a moment later, leaving two rows in the
+    // same project seconds apart — the abandoned one with no title and no
+    // account binding, the live one carrying both. The pairing is required to be
+    // unique on both sides; anything with two candidates is left alone rather
+    // than guessed at, since a wrong link would show one conversation's history
+    // under another's name.
+    database.exec(`
+      UPDATE session_metadata AS orphan
+      SET migrated_to = (
+        SELECT thread.session_id FROM session_metadata AS thread
+        WHERE thread.provider_id = orphan.provider_id
+          AND thread.session_id <> orphan.session_id
+          AND thread.project_name IS orphan.project_name
+          AND thread.last_known_title IS NOT NULL
+          AND ABS(strftime('%s', thread.created_at) - strftime('%s', orphan.created_at)) <= 3
+      )
+      WHERE orphan.provider_id = 'codex'
+        AND orphan.migrated_to IS NULL
+        AND orphan.last_known_title IS NULL
+        AND orphan.codex_account_id IS NULL
+        -- Exactly one candidate on this side...
+        AND (
+          SELECT COUNT(*) FROM session_metadata AS t2
+          WHERE t2.provider_id = orphan.provider_id
+            AND t2.session_id <> orphan.session_id
+            AND t2.project_name IS orphan.project_name
+            AND t2.last_known_title IS NOT NULL
+            AND ABS(strftime('%s', t2.created_at) - strftime('%s', orphan.created_at)) <= 3
+        ) = 1
+        -- ...and that candidate is claimed by exactly one orphan.
+        AND (
+          SELECT COUNT(*) FROM session_metadata AS o2
+          WHERE o2.provider_id = orphan.provider_id
+            AND o2.last_known_title IS NULL
+            AND o2.codex_account_id IS NULL
+            AND o2.project_name IS orphan.project_name
+            AND ABS(strftime('%s', o2.created_at) - strftime('%s', orphan.created_at)) <= 3
+        ) = 1
+    `);
+
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_session_metadata_migrated_to
+        ON session_metadata(migrated_to);
+      PRAGMA user_version = 44;
+    `);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1124,6 +1210,41 @@ export function getSessionClearedFrom(sessionId: string): string | null {
 
 export function deleteSessionMetadata(sessionId: string): void {
   getDb().query("DELETE FROM session_metadata WHERE session_id = ?").run(sessionId);
+}
+
+/**
+ * Record that a session was superseded by a provider-minted id.
+ *
+ * Called when the provider announces the swap, so a tab still holding the old id
+ * can be pointed at the conversation instead of reloading into an empty one.
+ * Written on the OLD row: the new id is the canonical one from here on.
+ */
+export function setSessionMigratedTo(oldSessionId: string, newSessionId: string): void {
+  if (oldSessionId === newSessionId) return;
+  getDb().query(
+    "INSERT INTO session_metadata (session_id, migrated_to) VALUES (?, ?) " +
+    "ON CONFLICT(session_id) DO UPDATE SET migrated_to = excluded.migrated_to",
+  ).run(oldSessionId, newSessionId);
+}
+
+/**
+ * Follow the migration chain to the id that actually owns the transcript.
+ *
+ * Returns the input unchanged when nothing was migrated. The walk is capped and
+ * tracks what it has seen, so a cycle introduced by bad data cannot spin here.
+ */
+export function resolveMigratedSession(sessionId: string): string {
+  const query = getDb().query("SELECT migrated_to FROM session_metadata WHERE session_id = ?");
+  const seen = new Set<string>([sessionId]);
+  let current = sessionId;
+  for (let hops = 0; hops < 8; hops++) {
+    const row = query.get(current) as { migrated_to: string | null } | null;
+    const next = row?.migrated_to;
+    if (!next || seen.has(next)) return current;
+    seen.add(next);
+    current = next;
+  }
+  return current;
 }
 
 /** Provider that owns a session — source of truth for WS routing across restarts. */
@@ -1530,12 +1651,20 @@ export function getDbFilePath(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Claude limit snapshot helpers
+// Usage limit snapshot helpers
+//
+// Shared by every provider that reports a quota. `provider` scopes a row; the
+// physical table keeps its historical `claude_` name (see migration 43).
+// Each accessor defaults to "claude" so the pre-existing Claude callers read
+// exactly the rows they always did.
 // ---------------------------------------------------------------------------
+
+export const DEFAULT_USAGE_PROVIDER = "claude";
 
 export interface LimitSnapshotRow {
   id: number;
   account_id: string | null;
+  provider: string;
   five_hour_util: number | null;
   five_hour_resets_at: string | null;
   weekly_util: number | null;
@@ -1547,13 +1676,16 @@ export interface LimitSnapshotRow {
   recorded_at: string;
 }
 
-export function insertLimitSnapshot(data: Omit<LimitSnapshotRow, "id" | "recorded_at">): void {
+export function insertLimitSnapshot(
+  data: Omit<LimitSnapshotRow, "id" | "recorded_at" | "provider"> & { provider?: string },
+): void {
   getDb().query(
     `INSERT INTO claude_limit_snapshots
-      (account_id, five_hour_util, five_hour_resets_at, weekly_util, weekly_resets_at,
+      (provider, account_id, five_hour_util, five_hour_resets_at, weekly_util, weekly_resets_at,
        weekly_opus_util, weekly_opus_resets_at, weekly_sonnet_util, weekly_sonnet_resets_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
+    data.provider ?? DEFAULT_USAGE_PROVIDER,
     data.account_id ?? null,
     data.five_hour_util ?? null, data.five_hour_resets_at ?? null,
     data.weekly_util ?? null, data.weekly_resets_at ?? null,
@@ -1562,34 +1694,39 @@ export function insertLimitSnapshot(data: Omit<LimitSnapshotRow, "id" | "recorde
   );
 }
 
-export function getLatestLimitSnapshot(): LimitSnapshotRow | null {
+export function getLatestLimitSnapshot(provider = DEFAULT_USAGE_PROVIDER): LimitSnapshotRow | null {
   return getDb().query(
-    "SELECT * FROM claude_limit_snapshots ORDER BY recorded_at DESC, id DESC LIMIT 1",
-  ).get() as LimitSnapshotRow | null;
+    "SELECT * FROM claude_limit_snapshots WHERE provider = ? ORDER BY recorded_at DESC, id DESC LIMIT 1",
+  ).get(provider) as LimitSnapshotRow | null;
 }
 
-export function getLatestSnapshotForAccount(accountId: string): LimitSnapshotRow | null {
+export function getLatestSnapshotForAccount(
+  accountId: string,
+  provider = DEFAULT_USAGE_PROVIDER,
+): LimitSnapshotRow | null {
   return getDb().query(
-    "SELECT * FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1",
-  ).get(accountId) as LimitSnapshotRow | null;
+    `SELECT * FROM claude_limit_snapshots WHERE account_id = ? AND provider = ?
+     ORDER BY recorded_at DESC, id DESC LIMIT 1`,
+  ).get(accountId, provider) as LimitSnapshotRow | null;
 }
 
-export function getAllLatestSnapshots(): LimitSnapshotRow[] {
+export function getAllLatestSnapshots(provider = DEFAULT_USAGE_PROVIDER): LimitSnapshotRow[] {
   return getDb().query(
     `SELECT s.* FROM claude_limit_snapshots s
      INNER JOIN (
        SELECT account_id, MAX(id) as max_id
-       FROM claude_limit_snapshots WHERE account_id IS NOT NULL
+       FROM claude_limit_snapshots WHERE account_id IS NOT NULL AND provider = ?
        GROUP BY account_id
      ) latest ON s.id = latest.max_id`,
-  ).all() as LimitSnapshotRow[];
+  ).all(provider) as LimitSnapshotRow[];
 }
 
-export function touchSnapshotTimestamp(accountId: string): void {
+export function touchSnapshotTimestamp(accountId: string, provider = DEFAULT_USAGE_PROVIDER): void {
   getDb().query(
     `UPDATE claude_limit_snapshots SET recorded_at = datetime('now')
-     WHERE id = (SELECT id FROM claude_limit_snapshots WHERE account_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1)`,
-  ).run(accountId);
+     WHERE id = (SELECT id FROM claude_limit_snapshots WHERE account_id = ? AND provider = ?
+                 ORDER BY recorded_at DESC, id DESC LIMIT 1)`,
+  ).run(accountId, provider);
 }
 
 export function deleteSnapshotsForAccount(accountId: string): void {
@@ -1597,12 +1734,16 @@ export function deleteSnapshotsForAccount(accountId: string): void {
 }
 
 /** Get all snapshots for an account within the last N hours (default 7 days = 168h) */
-export function getSnapshotHistory(accountId: string, hours = 168): LimitSnapshotRow[] {
+export function getSnapshotHistory(
+  accountId: string,
+  hours = 168,
+  provider = DEFAULT_USAGE_PROVIDER,
+): LimitSnapshotRow[] {
   return getDb().query(
     `SELECT * FROM claude_limit_snapshots
-     WHERE account_id = ? AND recorded_at > datetime('now', '-' || ? || ' hours')
+     WHERE account_id = ? AND provider = ? AND recorded_at > datetime('now', '-' || ? || ' hours')
      ORDER BY recorded_at ASC`,
-  ).all(accountId, hours) as LimitSnapshotRow[];
+  ).all(accountId, provider, hours) as LimitSnapshotRow[];
 }
 
 export function cleanupOldLimitSnapshots(): void {

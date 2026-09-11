@@ -119,8 +119,11 @@ describe("listCodexRollouts (fail-closed cwd filter)", () => {
 
   if (process.platform === "win32") {
     it("matches cwd case-insensitively on win32", () => {
-      const sessions = listCodexRollouts(FIXTURES, PPM_CWD.toLowerCase(), "codex");
-      expect(sessions.length).toBe(1);
+      // Assert membership, not a count: every rollout sharing this cwd matches,
+      // and a fixture added later must not make the case check look broken.
+      const ids = listCodexRollouts(FIXTURES, PPM_CWD.toLowerCase(), "codex").map((s) => s.id);
+      expect(ids).toContain("019eded7-3947-7990-a06e-bf9a29c25f26");
+      expect(ids).not.toContain("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
     });
   }
 });

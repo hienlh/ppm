@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { redactTruncate } from "./codex-redact.ts";
 import { parseApplyPatch, changeToToolUse } from "./codex-patch.ts";
+import { mapRolloutItem } from "./codex-rollout-items.ts";
 
 /**
  * Independent parser for Codex rollout JSONL transcripts
@@ -110,6 +111,15 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
   let i = 0;
   let pendingEvents: ChatEvent[] = [];
 
+  // Newer codex records every finished step as an `item_completed` event AND
+  // keeps the raw model exchange in `response_item` records. Both describe the
+  // same tool calls, so taking both renders every command twice — and the
+  // response_item copy of an image generation carries the whole PNG as base64,
+  // which would land in the transcript. When the item events are present they
+  // are the better source: already assembled, already named the way the live
+  // stream names them.
+  const hasItemEvents = text.includes('"item_completed"');
+
   const flushAssistant = (content: string, ts: string) => {
     if (!content && pendingEvents.length === 0) return;
     const events = pendingEvents.length
@@ -131,6 +141,19 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
         messages.push({ id: `rollout-${i++}`, role: "user", content: p.message, timestamp: ts });
       } else if (p.type === "agent_message" && typeof p.message === "string") {
         flushAssistant(p.message, ts);
+      } else if (p.type === "item_completed") {
+        // Newer codex writes one item per finished step instead of the
+        // user_message/agent_message pair above. Same conversation, different
+        // spelling — see codex-rollout-items.
+        const mapped = mapRolloutItem(p.item);
+        if (mapped.kind === "user") {
+          if (pendingEvents.length) flushAssistant("", ts);
+          messages.push({ id: `rollout-${i++}`, role: "user", content: mapped.text, timestamp: ts });
+        } else if (mapped.kind === "assistant") {
+          flushAssistant(mapped.text, ts);
+        } else if (mapped.kind === "events") {
+          pendingEvents.push(...mapped.events);
+        }
       } else if (p.type === "thread_rolled_back") {
         // codex doesn't truncate the rollout file on rollback/fork — it appends this
         // marker. Drop the last `num_turns` turns (by user-message turn-start) so a
@@ -144,6 +167,7 @@ export function parseRolloutJsonl(text: string, opts?: { preCompact?: boolean })
         }
       }
     } else if (rec.type === "response_item") {
+      if (hasItemEvents) continue; // item_completed already carried these
       if (p.type === "function_call") pendingEvents.push(fnCallToToolUse(p));
       else if (p.type === "function_call_output") pendingEvents.push(fnOutputToToolResult(p));
       // File edits are recorded as custom_tool_call (name=apply_patch) + output.

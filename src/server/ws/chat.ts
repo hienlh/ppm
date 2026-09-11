@@ -3,7 +3,7 @@ import { providerRegistry } from "../../providers/registry.ts";
 import { resolveProjectPath } from "../helpers/resolve-project.ts";
 import { logSessionEvent } from "../../services/session-log.service.ts";
 import { listSessions as sdkListSessions } from "@anthropic-ai/claude-agent-sdk";
-import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking } from "../../services/db.service.ts";
+import { getSessionTitle, incrementSessionUnread, clearSessionUnread, getSessionModel, setSessionModel, getSessionProvider, getSessionEffort, setSessionEffort, getSessionThinking, setSessionThinking, setSessionMigratedTo } from "../../services/db.service.ts";
 import { VALID_EFFORT_VALUES, THINKING_ADAPTIVE, isThinkingEnabled } from "../../providers/claude-agent-sdk-query-options.ts";
 import type { ChatWsClientMessage, SessionPhase } from "../../types/api.ts";
 // File watching and app-wide broadcasts are owned by the global WS (`./global.ts`)
@@ -397,6 +397,40 @@ async function detectImplicitTeam(sessionId: string): Promise<void> {
 }
 
 /** Transition session phase — guards same-phase, broadcasts phase_changed */
+/**
+ * Rewrite a typed `/skill` to the sigil the session's provider recognises, in
+ * place on the parsed message.
+ *
+ * Only providers that own a skill runtime (`listSkills`) are affected, so a
+ * Claude session is left alone entirely. PPM's own built-ins are checked first
+ * and never rewritten: `/clear` and `/version` are handled by PPM regardless of
+ * which provider the tab is on, and must keep their slash to be intercepted.
+ */
+async function rewriteProviderSkillSigil(
+  parsed: { content: string },
+  providerId: string,
+  sessionId: string,
+): Promise<void> {
+  const content = parsed.content.trimStart();
+  if (!content.startsWith("/")) return;
+  const provider = providerRegistry.get(providerId);
+  if (!provider?.listSkills) return;
+
+  const { isPpmHandled } = await import("../../services/slash-discovery/index.ts");
+  const name = content.match(/^\/(\S+)/)?.[1];
+  if (!name || isPpmHandled(name)) return;
+
+  try {
+    const { applySkillSigil } = await import("../../services/slash-discovery/provider-skill-sigil.ts");
+    const skills = await provider.listSkills(sessionId);
+    const rewritten = applySkillSigil(content, new Set(skills.map((s) => s.name)), "$");
+    if (rewritten !== content) parsed.content = rewritten;
+  } catch {
+    // Listing failed (app-server down, account not logged in). Send what the
+    // user typed rather than dropping their message.
+  }
+}
+
 function setPhase(sessionId: string, phase: SessionPhase, elapsed?: number): void {
   const entry = activeSessions.get(sessionId);
   if (!entry || entry.phase === phase) return;
@@ -802,6 +836,10 @@ async function startSessionConsumer(sessionId: string, providerId: string, conte
         const newId = ev.newSessionId as string;
         if (newId && newId !== sessionId) {
           console.log(`[chat] session_migrated: ${sessionId} → ${newId}`);
+          // Persist the link before re-keying. A tab that opened under the old
+          // id keeps it in its own storage, so without this the conversation
+          // becomes unreachable from that tab the moment the turn ends.
+          setSessionMigratedTo(sessionId, newId);
           // Stop spies tagged with old session ID before re-keying
           bashOutputSpy.stopAllForSession(sessionId);
           nestedSubagentSpy.stopAllForSession(sessionId);
@@ -1137,6 +1175,13 @@ export const chatWebSocket = {
         const canonical = rewriteSlashAlias(typedContent, listSlashItems(entry.projectPath ?? ""));
         if (canonical !== typedContent) parsed.content = canonical;
       }
+
+      // Providers with their own skill runtime may not use a leading slash.
+      // Codex resolves a skill from a `$name` mention in the prompt; sent as
+      // `/imagegen` it is inert prose, so the picked skill would silently not
+      // run. Rewritten before the echo for the same reason as the alias above:
+      // other devices and the stored transcript must show what actually ran.
+      await rewriteProviderSkillSigil(parsed, providerId, sessionId);
 
       // Echo the user message to OTHER connected clients (second device/tab).
       // The sender renders it optimistically; without this echo a live-connected

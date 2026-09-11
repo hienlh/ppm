@@ -8,8 +8,9 @@ import { draftService } from "../../services/draft.service.ts";
 import { providerRegistry } from "../../providers/registry.ts";
 import { renameSession as sdkRenameSession } from "@anthropic-ai/claude-agent-sdk";
 import { listSlashItems, searchSlashItems, invalidateCache } from "../../services/slash-items.service.ts";
+import type { SlashItem } from "../../services/slash-discovery/types.ts";
 import { ensureSdkCommands, invalidateSdkCommands } from "../../services/slash-discovery/sdk-commands.ts";
-import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount } from "../../services/db.service.ts";
+import { upsertSlashRecent, getSlashRecents, setSessionClearedFrom, listTurnUsage, getSessionAccount, getSessionProvider, resolveMigratedSession } from "../../services/db.service.ts";
 import type { TurnUsage } from "../../shared/turn-usage.ts";
 import { getCachedUsage, refreshUsageNow } from "../../services/claude-usage.service.ts";
 import { getSessionLog } from "../../services/session-log.service.ts";
@@ -37,10 +38,14 @@ chatRoutes.get("/slash-items", async (c) => {
   try {
     const projectPath = c.get("projectPath");
     const q = c.req.query("q");
-    // Claude's own built-ins need a live SDK session to enumerate; cached 30 min,
-    // so only the first request per project pays for the CLI spawn.
-    await ensureSdkCommands(projectPath);
-    let items = listSlashItems(projectPath);
+    const sessionId = c.req.query("sessionId") || undefined;
+    // A brand-new tab has no DB row yet, so the client's own view of which
+    // provider it is on wins; the stored value is the fallback for reloads.
+    const providerId = c.req.query("providerId")
+      || (sessionId ? getSessionProvider(sessionId) : null)
+      || undefined;
+
+    let items = await listSlashItemsForProvider(projectPath, providerId, sessionId);
     const recentNames = getSlashRecents(projectPath);
     if (q) items = searchSlashItems(items, q, 20, recentNames);
     return c.json(ok({ items, recentNames }));
@@ -48,6 +53,41 @@ chatRoutes.get("/slash-items", async (c) => {
     return c.json(err((e as Error).message), 500);
   }
 });
+
+/**
+ * Slash items a session can actually run.
+ *
+ * A provider that owns its own skill runtime answers for itself, and the
+ * disk-discovered Claude-side list is not merged in: a codex turn cannot
+ * execute a Claude skill, and a Claude turn cannot execute a codex one, so a
+ * combined list would offer entries that quietly do nothing when picked.
+ *
+ * PPM's host-level built-ins ARE kept, because they are intercepted before any
+ * provider runs and therefore work in every tab. Dropping them would have cost
+ * a codex tab `/clear`, `/skills`, and `/version` — commands that do work —
+ * which is a different thing from hiding ones that don't.
+ *
+ * When such a provider reports no skills — app-server failed to spawn, account
+ * not logged in — only the built-ins remain, rather than falling back to the
+ * Claude list; showing runnable-looking Claude entries in a codex tab is the
+ * very confusion this split exists to remove.
+ */
+async function listSlashItemsForProvider(
+  projectPath: string,
+  providerId: string | undefined,
+  sessionId: string | undefined,
+): Promise<SlashItem[]> {
+  const provider = providerId ? providerRegistry.get(providerId) : null;
+  if (provider?.listSkills) {
+    const { codexSkillsToSlashItems } = await import("../../services/slash-discovery/codex-skill-items.ts");
+    const { getHostBuiltinSlashItems } = await import("../../services/slash-discovery/builtin-commands.ts");
+    return [...codexSkillsToSlashItems(await provider.listSkills(sessionId)), ...getHostBuiltinSlashItems()];
+  }
+  // Claude's own built-ins need a live SDK session to enumerate; cached 30 min,
+  // so only the first request per project pays for the CLI spawn.
+  await ensureSdkCommands(projectPath);
+  return listSlashItems(projectPath);
+}
 
 /** DELETE /chat/slash-items/cache — invalidate cached slash items for this project */
 chatRoutes.delete("/slash-items/cache", (c) => {
@@ -78,9 +118,16 @@ chatRoutes.get("/usage", async (c) => {
   // Non-Claude providers expose their own quota via provider.getUsage().
   const providerId = c.req.query("providerId");
   if (providerId && providerId !== "claude") {
-    const provider = providerRegistry.get(providerId) as { getUsage?: () => Promise<unknown> } | undefined;
+    const provider = providerRegistry.get(providerId);
     if (provider?.getUsage) {
-      try { return c.json(ok(await provider.getUsage())); } catch { return c.json(ok({})); }
+      // `?refresh=1` is the user pressing refresh, so drop the cached value
+      // first — otherwise getUsage answers from cache and the button does
+      // nothing visible. Claude's branch below does the same via a sweep.
+      if (c.req.query("refresh")) {
+        const { invalidateUsage } = await import("../../services/provider-usage/usage-registry.ts");
+        invalidateUsage(providerId);
+      }
+      try { return c.json(ok(await provider.getUsage(c.req.query("session")))); } catch { return c.json(ok({})); }
     }
     return c.json(ok({}));
   }
@@ -270,7 +317,11 @@ chatRoutes.get("/search", async (c) => {
 /** GET /chat/sessions/:id/messages — get message history */
 chatRoutes.get("/sessions/:id/messages", async (c) => {
   try {
-    const id = c.req.param("id");
+    const requestedId = c.req.param("id");
+    // A provider that mints its own session id leaves the id PPM created behind,
+    // owning no transcript. Follow the recorded move so a tab that still holds
+    // the old id reads the conversation instead of an empty list.
+    const id = resolveMigratedSession(requestedId);
     const providerId = c.req.query("providerId") ?? "claude";
     const messages = await chatService.getMessages(providerId, id);
     // Forking re-timestamps the copied prefix (both the Claude SDK and codex
@@ -289,7 +340,14 @@ chatRoutes.get("/sessions/:id/messages", async (c) => {
     }
     // versionMap ships with the history so the `‹ n/m ›` switcher needs no
     // per-message request. Ordinals absent from the map have no edited versions.
-    return c.json(ok({ messages, versionMap: resolveVersionMap(id) }));
+    // Hand back the id that actually owns this transcript so the client can
+    // adopt it — otherwise every future read, and the next turn, still targets
+    // the abandoned one.
+    return c.json(ok({
+      messages,
+      versionMap: resolveVersionMap(id),
+      ...(id !== requestedId ? { canonicalSessionId: id } : {}),
+    }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
