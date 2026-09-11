@@ -190,4 +190,13 @@ export type WebviewToExt =
   | { command: "openFile"; filePath: string }
   | { command: "openConflictFile"; filePath: string }
   | { command: "openSourceControl" }
-  | { command: "requestStashes" };
+  | { command: "requestStashes" }
+  | { command: "searchCommits"; mode: string; text: string }
+  | { command: "openBlame"; filePath: string; hash?: string }
+  | { command: "openFileHistory"; filePath: string }
+  | { command: "openCompare"; ref1?: string; ref2?: string }
+  | { command: "openInteractiveRebase"; base?: string }
+  | { command: "openReflog" }
+  | { command: "requestSubmodules" }
+  | { command: "updateSubmodule"; path: string }
+  | { command: "openSubmodule"; path: string };

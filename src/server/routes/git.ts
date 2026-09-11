@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { gitService } from "../../services/git.service.ts";
+import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
+import { gitBlameService } from "../../services/git-blame/git-blame.service.ts";
 import { ok, err } from "../../types/api.ts";
 
 type Env = { Variables: { projectPath: string; projectName: string } };
@@ -158,6 +160,91 @@ gitRoutes.post("/unstage", async (c) => {
     if (!files?.length) return c.json(err("Missing: files"), 400);
     await gitService.unstage(projectPath, files);
     return c.json(ok({ unstaged: files }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * GET /git/blame?path=&rev= — the whole file's blame, for the editor annotation.
+ *
+ * `rev` blames the file as it stood at that revision, which is what each side of
+ * the diff viewer needs; omitted, it blames the working tree.
+ */
+gitRoutes.get("/blame", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("Missing: path"), 400);
+    const rev = c.req.query("rev") || undefined;
+    const result = await gitBlameService.blameFile(projectPath, filePath, rev);
+    // Untracked, or absent at that revision — not an error the UI should show.
+    return c.json(ok(result ?? { lines: [], commits: {} }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** GET /git/hunks?path=&scope=worktree|index — the hunks the UI selects from */
+gitRoutes.get("/hunks", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const filePath = c.req.query("path");
+    if (!filePath) return c.json(err("Missing: path"), 400);
+    const scope = c.req.query("scope") === "index" ? "index" : "worktree";
+    const result = await gitHunksService.getHunks(projectPath, filePath, scope as HunkScope);
+    return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * Hunk-level staging. `hunks` carries indexes into the list `GET /git/hunks`
+ * returned; a hunk without `lines` is taken whole. Indexes are resolved against
+ * a freshly read diff, so an edit in between makes `git apply` fail rather than
+ * stage the wrong lines.
+ */
+function readHunkBody(body: { path?: string; hunks?: HunkRequest[] }): { filePath: string; hunks: HunkRequest[] } | string {
+  if (!body.path) return "Missing: path";
+  if (!Array.isArray(body.hunks) || body.hunks.length === 0) return "Missing: hunks";
+  return { filePath: body.path, hunks: body.hunks };
+}
+
+/** POST /git/stage-hunks { path, hunks: [{ hunk, lines? }] } */
+gitRoutes.post("/stage-hunks", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const parsed = readHunkBody(await c.req.json());
+    if (typeof parsed === "string") return c.json(err(parsed), 400);
+    await gitHunksService.stage(projectPath, parsed.filePath, parsed.hunks);
+    return c.json(ok({ staged: parsed.filePath }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/unstage-hunks { path, hunks: [{ hunk, lines? }] } */
+gitRoutes.post("/unstage-hunks", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const parsed = readHunkBody(await c.req.json());
+    if (typeof parsed === "string") return c.json(err(parsed), 400);
+    await gitHunksService.unstage(projectPath, parsed.filePath, parsed.hunks);
+    return c.json(ok({ unstaged: parsed.filePath }));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/** POST /git/discard-hunks { path, hunks: [{ hunk, lines? }] } — not recoverable */
+gitRoutes.post("/discard-hunks", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const parsed = readHunkBody(await c.req.json());
+    if (typeof parsed === "string") return c.json(err(parsed), 400);
+    await gitHunksService.discard(projectPath, parsed.filePath, parsed.hunks);
+    return c.json(ok({ discarded: parsed.filePath }));
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }
