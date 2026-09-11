@@ -1115,6 +1115,20 @@ function InterleavedEvents({ events, isStreaming, projectName, bashPartialOutput
     if (event.type === "text") {
       textBuffer += event.content;
     } else if (event.type === "tool_use") {
+      // A call may be announced before it has anything to show and re-announced
+      // once it does — image generation starts with no file and no prompt, and
+      // only learns both when it finishes. The later event describes the same
+      // call, so it replaces the card rather than adding a second one.
+      const useId = (event as any).toolUseId;
+      const existing = useId
+        ? groups.find(
+            (g) => g.kind === "tool" && g.tool.type === "tool_use" && (g.tool as any).toolUseId === useId,
+          ) as (EventGroup & { kind: "tool" }) | undefined
+        : undefined;
+      if (existing) {
+        existing.tool = event;
+        continue;
+      }
       if (textBuffer) {
         groups.push({ kind: "text", content: textBuffer });
         textBuffer = "";

@@ -27,6 +27,35 @@ function asObj(v: unknown): Record<string, unknown> {
   return (v && typeof v === "object") ? (v as Record<string, unknown>) : {};
 }
 
+/**
+ * The command text to SHOW for a commandExecution item.
+ *
+ * A commandExecution carries the same command twice. `command` is what codex
+ * hands its exec layer: the interpreter wrapped around the script, with every
+ * backslash in the interpreter path doubled (`C:\\Windows\\System32\\…`), so
+ * rendering it puts `\\` in front of the user. `commandActions[].command` is
+ * the unwrapped script — single backslashes, no interpreter prefix — which is
+ * the part a reader actually cares about.
+ *
+ * Un-escaping `command` instead would be wrong: a legitimate bash script can
+ * contain a real `\\` (regex, escaped path), and rewriting that corrupts the
+ * command the user is being shown.
+ *
+ * Multiple actions are joined by newline; an item with none (or with blank
+ * ones) falls back to the wrapped form, because showing the doubled path still
+ * beats showing an empty card.
+ */
+export function commandDisplayText(item: Item): string {
+  const raw = String(item.command ?? "");
+  const actions = Array.isArray(item.commandActions) ? item.commandActions : [];
+  const parts: string[] = [];
+  for (const a of actions) {
+    const cmd = asObj(a).command;
+    if (typeof cmd === "string" && cmd.trim()) parts.push(cmd);
+  }
+  return parts.length > 0 ? parts.join("\n") : raw;
+}
+
 /** Build the tool_use input payload from a ThreadItem (per-variant fields). */
 export function itemToToolUse(item: Item): ChatEvent {
   const type = item.type ?? "tool";
@@ -35,10 +64,11 @@ export function itemToToolUse(item: Item): ChatEvent {
   switch (type) {
     case "commandExecution": {
       // Map to PPM's canonical shell tools so the chat UI renders the command
-      // (not a raw `commandExecution` JSON blob). Sniff PowerShell vs Bash.
-      const command = String(item.command ?? "");
-      tool = /powershell|pwsh/i.test(command) ? "PowerShell" : "Bash";
-      input = { command, cwd: item.cwd };
+      // (not a raw `commandExecution` JSON blob). Sniff PowerShell vs Bash from
+      // the WRAPPED form — the interpreter only appears there, never in the
+      // unwrapped script that gets displayed.
+      tool = /powershell|pwsh/i.test(String(item.command ?? "")) ? "PowerShell" : "Bash";
+      input = { command: commandDisplayText(item), cwd: item.cwd };
       break;
     }
     case "fileChange": {
@@ -64,6 +94,24 @@ export function itemToToolUse(item: Item): ChatEvent {
     case "webSearch":
       tool = "WebSearch";
       input = { query: item.query };
+      break;
+    case "imageGeneration":
+      // The item carries the finished PNG twice: `result` is the whole file as
+      // base64 (~1.2 MB for a 917 KB image) and `savedPath` points at the copy
+      // codex already wrote to disk. Only the path is kept. `result` must never
+      // reach a ChatEvent — the event is held in the in-RAM turnEvents buffer,
+      // appended to the session JSONL, and broadcast to every connected client,
+      // so carrying the payload would cost all three that megabyte per image
+      // to display a picture that is already readable from `savedPath`.
+      //
+      // `file_path` (not `savedPath`) is deliberate: it is the key the chat's
+      // image-preview path check already reads, so the thumbnail comes for free.
+      tool = "ImageGen";
+      input = {
+        file_path: item.savedPath ?? null,
+        prompt: item.revisedPrompt ?? null,
+        transparentBackground: item.transparentBackground ?? false,
+      };
       break;
     default:
       input = item;
@@ -92,6 +140,13 @@ export function itemToToolResult(item: Item): ChatEvent {
   } else if (type === "dynamicToolCall") {
     output = redactTruncate(item.contentItems ?? "");
     isError = item.success === false;
+  } else if (type === "imageGeneration") {
+    // Same reason as the tool_use side: never let the base64 `result` through.
+    // Falling to the generic branch below would emit 8 KB of truncated base64
+    // as the visible result text.
+    const failure = item.failure;
+    isError = failure != null;
+    output = isError ? redactTruncate(failure) : String(item.savedPath ?? "generated");
   } else {
     output = redactTruncate(item);
   }
@@ -127,7 +182,17 @@ export function mapCodexEvent(notif: Notif, sessionId: string): ChatEvent[] {
     case "item/completed": {
       const item = asObj(p.item) as Item;
       if (item.type === "contextCompaction") return [{ type: "system", subtype: "compact_done" }];
-      if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) return [itemToToolResult(item)];
+      if (item.type && !NON_TOOL_ITEM_TYPES.has(item.type)) {
+        // Image generation is announced before the picture exists: at `started`
+        // there is no saved file and no revised prompt, so the call it produced
+        // can show neither. The finished item carries both, so re-emit the call
+        // alongside its result — the chat replaces the card by tool-use id.
+        // Other tools describe themselves fully at `started`; re-sending those
+        // would only cost a second event in the buffer, the log and every
+        // client's socket.
+        if (item.type === "imageGeneration") return [itemToToolUse(item), itemToToolResult(item)];
+        return [itemToToolResult(item)];
+      }
       return [];
     }
 

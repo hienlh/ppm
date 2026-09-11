@@ -14,6 +14,7 @@ export { realPathOrSelf, realPathOrSelfSync };
 export {
   isPpmDirPath,
   isChatUploadPath,
+  isCodexGeneratedImagePath,
   isCloudflaredDirPath,
   isCredentialPath,
   assertNotPpmDir,

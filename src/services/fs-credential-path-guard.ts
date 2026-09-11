@@ -41,6 +41,28 @@ export function isChatUploadPath(resolved: string): boolean {
 }
 
 /**
+ * Images the codex image-generation tool produced. Codex writes them under its
+ * own CODEX_HOME, which PPM places inside the PPM dir (one home per account),
+ * so `isPpmDirPath` covers them and the chat could not render a picture the
+ * assistant had just made.
+ *
+ * The match is structural rather than a lookup of the account table: the path
+ * must be `<ppmDir>/codex-accounts/<something>/generated_images/<at least one
+ * more segment>`. That keeps the exception to the one subtree codex fills with
+ * generated pictures and leaves the rest of an account home — `auth.json`
+ * above all, but equally the session, log, and memory databases beside it —
+ * refused, since none of those sit under a `generated_images` segment. Callers
+ * pass an already-resolved path, so `..` cannot walk back out of the subtree.
+ */
+export function isCodexGeneratedImagePath(resolved: string): boolean {
+  const root = resolve(getPpmDir(), "codex-accounts");
+  if (!isInside(resolved, root) || resolved === root) return false;
+  const rel = resolved.slice(root.length + 1).split(sep);
+  // [accountId, "generated_images", …at least one file segment]
+  return rel.length >= 3 && rel[1] === "generated_images";
+}
+
+/**
  * True when the path is `~/.cloudflared` or anything inside it. Real
  * `homedir()` is a deliberate exception to the getPpmDir()-only rule (see
  * CLAUDE.md "PPM Directory"): `cloudflared`, not PPM, decides this location,
@@ -79,16 +101,21 @@ export function isCredentialPath(resolved: string): boolean {
  * tokens; the latter stores the Cloudflare login cert. Neither may be
  * downloadable through a generic file route.
  *
- * Chat uploads are the one exception, and only for the PPM-dir branch — chat
- * uploads always live under `getPpmDir()`, never under `~/.cloudflared`, so
- * the exception is a no-op for the cloudflared branch. Every caller applies
- * this to the requested path *and* to its real path, so a symlink parked in
- * the uploads directory still fails on the second call and cannot reach the
- * rest of the PPM dir through the exception, and a symlink pointing at
- * `~/.cloudflared/cert.pem` fails the same way.
+ * Chat uploads and codex-generated images are the exceptions, and only for the
+ * PPM-dir branch — both always live under `getPpmDir()`, never under
+ * `~/.cloudflared`, so the exceptions are a no-op for the cloudflared branch.
+ * Every caller applies this to the requested path *and* to its real path, so a
+ * symlink parked in the uploads directory still fails on the second call and
+ * cannot reach the rest of the PPM dir through the exception, and a symlink
+ * pointing at `~/.cloudflared/cert.pem` fails the same way.
+ *
+ * Both exceptions are read-only on purpose: they are absent from
+ * `assertNotPpmSubtree`, so nothing can be copied, moved, or written INTO
+ * those directories through a generic file route.
  */
 export function assertNotPpmDir(resolved: string): void {
-  if (isCredentialPath(resolved) && !isChatUploadPath(resolved)) {
+  const allowed = isChatUploadPath(resolved) || isCodexGeneratedImagePath(resolved);
+  if (isCredentialPath(resolved) && !allowed) {
     throw Object.assign(new Error("Access denied"), { status: 403, code: "EDENIED" });
   }
 }

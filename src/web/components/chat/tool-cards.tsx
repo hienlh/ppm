@@ -36,6 +36,7 @@ import {
   Clock,
   Send,
   Users,
+  ImagePlus,
 } from "lucide-react";
 
 /**
@@ -86,6 +87,8 @@ function toolChip(
       return { Icon: ClipboardList, cls: "bg-accent-wash text-primary" };
     case "Skill":
       return { Icon: Sparkles, cls: "bg-accent-2/15 text-accent-2" };
+    case "ImageGen":
+      return { Icon: ImagePlus, cls: "bg-accent-2/15 text-accent-2" };
     default:
       return { Icon: Code, cls: "bg-panel-2 text-text-2" };
   }
@@ -115,13 +118,21 @@ function extractToolInfo(tool: ChatEvent): { toolName: string; input: Record<str
   return { toolName, input };
 }
 
+/** Tools whose `file_path` names an image the card should render inline. */
+const IMAGE_PATH_TOOLS = new Set([
+  "Read",
+  // Codex image generation. The picture it just wrote is the whole point of the
+  // card, so it is previewed exactly like a Read of that same file.
+  "ImageGen",
+]);
+
 /**
- * Path of the image a Read call targeted, or null when it is not a displayable image read.
+ * Path of the image a call targeted, or null when it is not a displayable image.
  * Only absolute paths qualify, matching what useBlobUrl can resolve to the external
- * raw-file endpoint — and what the Read tool always supplies.
+ * raw-file endpoint — and what both Read and ImageGen always supply.
  */
 function imageReadPath(tool: ChatEvent): string | null {
-  if (tool.type !== "tool_use" || tool.tool !== "Read") return null;
+  if (tool.type !== "tool_use" || !IMAGE_PATH_TOOLS.has(tool.tool)) return null;
   const path = (tool.input as Record<string, unknown> | undefined)?.file_path;
   if (typeof path !== "string" || !/^(\/|[A-Za-z]:[/\\])/.test(path)) return null;
   return isImageExtension(path) ? path : null;
@@ -187,6 +198,9 @@ export function ToolCard({
   // Hide the text output only when the result really carried an image. Extension is not
   // enough: an SVG or an undecodable format comes back as text that must stay visible.
   const resultIsImage = hasResult && resultHasImagePlaceholder(String((result as any).output ?? ""));
+  // When the card renders the picture, the preview below it already names the
+  // file, so echoing the path as result text just prints it a second time.
+  const previewIsTheResult = !!imagePath;
 
   // Read partial output for streaming Bash/PowerShell tools
   const toolUseId = tool.type === "tool_use" ? (tool as any).toolUseId as string | undefined : undefined;
@@ -264,7 +278,8 @@ export function ToolCard({
           {imagePath && (
             <ToolImagePreview filePath={imagePath} projectName={projectName ?? ""} />
           )}
-          {hasResult && !(isFileMutation && !isError) && !(resultIsImage && !isError) && (
+          {hasResult && !(isFileMutation && !isError) && !(resultIsImage && !isError)
+            && !(previewIsTheResult && !isError) && (
             <ToolResultView toolName={toolName} output={(result as any).output} />
           )}
         </div>
@@ -298,6 +313,19 @@ function ToolSummary({ name, input }: { name: string; input: Record<string, unkn
       return <><Globe className="size-3 inline" /> {name} <span className="text-text-subtle">{truncate(s(input.url), 50)}</span></>;
     case "ToolSearch":
       return <><Search className="size-3 inline" /> {name} <span className="text-text-subtle">{truncate(s(input.query), 50)}</span></>;
+    case "ImageGen": {
+      // The revised prompt codex generated is long and multi-line ("Use case:…
+      // Subject:… Lighting:…"); its first line is the useful label. The
+      // thumbnail below carries the actual result, so the header stays short.
+      const firstLine = s(input.prompt).split("\n").find((l) => l.trim()) ?? "";
+      const label = firstLine || basename(s(input.file_path));
+      return (
+        <>
+          <ImagePlus className="size-3 inline" /> Image
+          <span className="text-text-subtle"> {truncate(label, 50)}</span>
+        </>
+      );
+    }
     case "Agent":
     case "Task": {
       // Lead with the handle when there is one: it is both the identity of the
@@ -562,6 +590,21 @@ function ToolDetails({
         <div className="flex items-center gap-1.5">
           <span className="font-mono text-text-secondary">#{s(input.taskId)}</span>
           <TaskStatusBadge status="stopped" />
+        </div>
+      );
+    case "ImageGen":
+      // The picture is the card. Dumping the input as JSON put the file path on
+      // screen a third time — the thumbnail and the result line already carry
+      // it — and buried the one part worth reading, the prompt, inside quoting
+      // and escaped newlines.
+      return (
+        <div className="space-y-1">
+          {!!input.prompt && (
+            <p className="text-text-secondary whitespace-pre-wrap">{s(input.prompt)}</p>
+          )}
+          {input.transparentBackground === true && (
+            <p className="text-text-subtle">Transparent background</p>
+          )}
         </div>
       );
     default:
