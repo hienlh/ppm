@@ -26,8 +26,10 @@ export const StatusBar = memo(function StatusBar() {
     .sort((a, b) => b.priority - a.priority);
 
   return (
-    <div className="hidden md:flex items-center justify-between h-[26px] px-3.5 bg-panel border-t border-border-soft text-[11px] font-mono text-text-3 select-none shrink-0">
-      <div className="flex items-center gap-3 min-w-0">
+    // `@container`: items compact on the bar's own width, which the sidebar decides, not the viewport.
+    <div className="@container hidden md:flex items-center justify-between gap-3 h-[26px] px-3.5 bg-panel border-t border-border-soft text-[11px] font-mono text-text-3 select-none shrink-0">
+      {/* The side that gives way: the branch name ellipsizes, then the group clips — never paints over the right. */}
+      <div className="flex items-center gap-3 min-w-0 overflow-hidden">
         {/* Git: branch · ahead/behind · synced (design status bar). */}
         <GitStatus />
         {/* Errors/warnings across every open file — VS Code's leftmost item. */}
@@ -38,7 +40,8 @@ export const StatusBar = memo(function StatusBar() {
         {/* Native panel toggle — the sole dock toggle (sidebar/tab-bar toggles removed). */}
         <DockToggle />
       </div>
-      <div className="flex items-center gap-3 min-w-0">
+      {/* Never shrinks: squeezed, CPU/MEM was its only shrinkable item and wrapped onto two lines. */}
+      <div className="flex items-center gap-3 shrink-0">
         {/* CPU/MEM moved here from the sidebar resource strip. */}
         <ResourceStatusBar compact />
         {right.map((item) => (
@@ -63,19 +66,20 @@ const GitStatus = memo(function GitStatus() {
   const synced = !!tracking && ahead === 0 && behind === 0;
 
   return (
-    <span className="flex items-center gap-2 min-w-0 shrink-0">
+    <span className="flex items-center gap-2 min-w-0">
       <span className="flex items-center gap-1 text-primary min-w-0" title={tracking ? `Tracking ${tracking}` : "No upstream"}>
         <GitBranch className="size-3 shrink-0" />
         <span className="truncate max-w-[140px]">{branch}</span>
       </span>
+      {/* On a bar under 36rem the counts give way, so the branch name stays readable. */}
       {(ahead > 0 || behind > 0) && (
-        <span className="flex items-center gap-1.5 shrink-0">
+        <span className="flex items-center gap-1.5 shrink-0 @max-xl:hidden">
           {ahead > 0 && <span className="flex items-center gap-0.5"><ArrowUp className="size-3" />{ahead}</span>}
           {behind > 0 && <span className="flex items-center gap-0.5"><ArrowDown className="size-3" />{behind}</span>}
         </span>
       )}
       {synced && (
-        <span className="flex items-center gap-1 text-success shrink-0">
+        <span className="flex items-center gap-1 text-success shrink-0 @max-xl:hidden">
           <Check className="size-3" />synced
         </span>
       )}

@@ -77,3 +77,37 @@ describe("flattenWithExpansions", () => {
     expect(out.map((m) => m.id)).toEqual(["a"]);
   });
 });
+
+describe("flattenWithExpansions — chained compaction segments", () => {
+  test("an expansion nested inside another expansion is rendered", () => {
+    // Each expansion now arrives as one compaction segment headed by the
+    // summary before it, so expanding that one keys its messages off an id
+    // that only exists *inside* another expansion. A flat pass would fetch
+    // them and render nothing — indistinguishable from the load failing.
+    const messages = [msg("summary-2"), msg("live-1")];
+    const expansions = new Map<string, ChatMessage[]>([
+      ["summary-2", [msg("summary-1"), msg("seg2-a")]],
+      ["summary-1", [msg("oldest"), msg("seg1-a")]],
+    ]);
+
+    const out = flattenWithExpansions(messages, expansions).map((m) => m.id);
+    expect(out).toEqual(["oldest", "seg1-a", "summary-1", "seg2-a", "summary-2", "live-1"]);
+  });
+
+  test("three levels deep still resolve in order", () => {
+    const messages = [msg("s3")];
+    const expansions = new Map<string, ChatMessage[]>([
+      ["s3", [msg("s2")]],
+      ["s2", [msg("s1")]],
+      ["s1", [msg("root")]],
+    ]);
+    expect(flattenWithExpansions(messages, expansions).map((m) => m.id))
+      .toEqual(["root", "s1", "s2", "s3"]);
+  });
+
+  test("a self-referencing expansion cannot spin the walk", () => {
+    const messages = [msg("a")];
+    const expansions = new Map<string, ChatMessage[]>([["a", [msg("a")]]]);
+    expect(() => flattenWithExpansions(messages, expansions)).not.toThrow();
+  });
+});

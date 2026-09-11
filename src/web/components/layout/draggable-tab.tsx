@@ -119,8 +119,10 @@ export function DraggableTab({
          * an indicator that looked broken rather than animated. `MessageCircle` is
          * `chat-empty`: the same bubble, nothing in it. Safe to swap unconditionally
          * because `isStreaming` is only ever set for a chat tab (both tab-bar.tsx and
-         * mobile-tab-switcher-sheet.tsx read `sessionId` only when `type === "chat"`),
-         * whose icon is that same bubble.
+         * mobile-tab-switcher-sheet.tsx read `sessionId` only when `type === "chat"`).
+         * A chat tab at rest now shows its provider's logo, so this is a visible
+         * change of shape — deliberately so: the dots can no more sit on a logo
+         * than they could sit on `chat`'s message lines.
          */}
         {isStreaming ? <MessageCircle className="size-4" /> : <Icon className="size-4" />}
         {isStreaming ? (

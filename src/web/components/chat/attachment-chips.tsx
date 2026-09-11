@@ -11,6 +11,23 @@ interface AttachmentChipsProps {
   onRemove: (id: string) => void;
 }
 
+/**
+ * What a click on the chip *body* should do.
+ *
+ * A named function rather than an inline condition because the bug it fixes was
+ * the condition itself: the handler asked only about `textContent`, which an
+ * image never has, so the chip did nothing for exactly the attachment you most
+ * want to look at before sending. This suite has no DOM renderer, so a decision
+ * left inline here is untestable by construction.
+ *
+ * The remove button is not a case: it stops the event before it gets here.
+ */
+export function chipBodyAction(att: ChatAttachment): "expand" | "preview" | "none" {
+  if (att.textContent) return "expand";
+  if (att.previewUrl) return "preview";
+  return "none";
+}
+
 export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const coarse = usePrefersCoarsePointer();
@@ -69,18 +86,25 @@ export function AttachmentChips({ attachments, onRemove }: AttachmentChipsProps)
             key={att.id}
             className={cn(
               "flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 text-xs text-text-secondary max-w-48",
-              att.textContent && "cursor-pointer hover:border-primary/50",
+              chipBodyAction(att) !== "none" && "cursor-pointer hover:border-primary/50",
               expandedId === att.id && "border-primary/50 bg-surface-elevated",
             )}
-            onClick={() => {
-              if (att.textContent) setExpandedId(expandedId === att.id ? null : att.id);
+            // The whole chip opens the preview, not just the 20px thumbnail — the
+            // filename beside it is most of the chip's width and reads as part of
+            // the same control, so clicking it doing nothing is the bug. Only the
+            // remove button opts out, which it already does by stopping the event.
+            onClick={(e) => {
+              const action = chipBodyAction(att);
+              if (action === "expand") setExpandedId(expandedId === att.id ? null : att.id);
+              else if (action === "preview") preview(att, e.currentTarget);
             }}
           >
             {/* Thumbnail or icon */}
             {att.previewUrl ? (
-              // A real button, not a click handler on the chip: the chip already carries the
-              // remove button, and a button inside a button is invalid. It also means the
-              // preview is reachable by keyboard, which the chip never was.
+              // Still a real button even though the chip around it now opens the same
+              // preview, and for the one thing the chip cannot do: reach it by keyboard.
+              // The chip has to stay a `div` — it carries the remove button, and a button
+              // inside a button is invalid — so this is the only focusable way in.
               //
               // The visible thumbnail stays 20px and only the tap-registering area grows to
               // the 44px minimum, through the same invisible `::before` the explorer toolbar

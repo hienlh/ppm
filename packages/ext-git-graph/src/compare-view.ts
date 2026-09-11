@@ -78,11 +78,19 @@ export function openCompareView(
             assertSafeFilePaths([filePath], projectPath);
             const ref1 = assertValidRef(msg.ref1, "ref1");
             const ref2 = assertValidRef(msg.ref2, "ref2");
+            const mode: CompareMode = msg.mode === "two-dot" ? "two-dot" : "three-dot";
+            // The row was listed by a diff against `base`, so the tab it opens
+            // has to use the same base — in three-dot mode that is the merge
+            // base, not ref1's tip. With ref1 advanced past the branch point,
+            // ref1's own commits otherwise render as deletions in a review of
+            // ref2, and the +/- counts disagree with the row that was clicked.
+            const base = mode === "three-dot" ? await mergeBase(ref1, ref2) : ref1;
             const fileName = filePath.split(/[\\/]/).pop() || filePath;
             const target = await resolveFileTab(projectPath, filePath);
-            await vscode.window.openTab("git-diff", `${fileName} (${ref1}→${ref2})`, target.projectName, {
+            const range = `${ref1}${mode === "three-dot" ? "..." : ".."}${ref2}`;
+            await vscode.window.openTab("git-diff", `${fileName} (${range})`, target.projectName, {
               ...target,
-              ref1,
+              ref1: base,
               ref2,
             });
             break;
@@ -106,6 +114,17 @@ export function openCompareView(
       "refs/tags",
     ], projectPath, 60_000);
     return res.exitCode === 0 ? parseRefList(res.stdout) : [];
+  }
+
+  /**
+   * Where the two refs diverged. Falls back to ref1 when git reports none:
+   * `git diff a...b` fails outright on unrelated histories, so the compare that
+   * listed the file would already have shown that error.
+   */
+  async function mergeBase(ref1: string, ref2: string): Promise<string> {
+    const res = await spawnGit(vscode, ["merge-base", ref1, ref2], projectPath, 60_000);
+    const base = res.stdout.trim();
+    return res.exitCode === 0 && base ? base : ref1;
   }
 
   async function loadCompare(rawRef1: unknown, rawRef2: unknown, mode: CompareMode): Promise<void> {
@@ -257,7 +276,7 @@ document.getElementById('btn-swap').addEventListener('click', () => {
 el.files.addEventListener('click', (e) => {
   const row = e.target.closest('.f-row');
   if (!row) return;
-  vscode.postMessage({ command: 'openDiff', filePath: row.dataset.path, ref1: state.ref1, ref2: state.ref2 });
+  vscode.postMessage({ command: 'openDiff', filePath: row.dataset.path, ref1: state.ref1, ref2: state.ref2, mode: state.mode });
 });
 
 function renderCommits(commits, truncated) {

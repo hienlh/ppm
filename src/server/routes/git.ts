@@ -3,6 +3,7 @@ import { resolve, sep } from "node:path";
 import { gitService } from "../../services/git.service.ts";
 import { gitHunksService, type HunkRequest, type HunkScope } from "../../services/git-hunks/git-hunks.service.ts";
 import { gitBlameService } from "../../services/git-blame/git-blame.service.ts";
+import { branchDiff } from "../../services/git-branch-diff/branch-diff.service.ts";
 import { discoverGitRepos, isGitRepo } from "../../services/git-repos/git-repo-discovery.ts";
 import { ok, err } from "../../types/api.ts";
 
@@ -91,6 +92,32 @@ gitRoutes.get("/diff-stat", async (c) => {
   }
 });
 
+/**
+ * GET /git/branch-diff?base=&head=&mode=three-dot|two-dot
+ *
+ * Every file a branch changed, in one answer, plus the commit those changes
+ * were measured against. The Branch Review tab opens each file's diff at
+ * `mergeBase`, so the list and the viewer can never disagree about the base.
+ *
+ * A bad ref is a 400, not a 500: `base` and `head` come straight from a picker,
+ * and a branch deleted since it was rendered is an ordinary thing to ask about.
+ */
+gitRoutes.get("/branch-diff", async (c) => {
+  const projectPath = c.get("projectPath");
+  const mode = c.req.query("mode") === "two-dot" ? "two-dot" : "three-dot";
+  try {
+    const result = await branchDiff(
+      projectPath,
+      c.req.query("base"),
+      c.req.query("head"),
+      mode,
+    );
+    return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 400);
+  }
+});
+
 /** GET /git/file-diff?file=&ref= */
 gitRoutes.get("/file-diff", async (c) => {
   try {
@@ -105,9 +132,11 @@ gitRoutes.get("/file-diff", async (c) => {
   }
 });
 
-/** GET /git/file-full-diff?file=&ref=
+/** GET /git/file-full-diff?file=&ref=&ref2=&text=1
  *  Returns full file contents (VSCode-style) for both sides:
- *  { original: <ref version>, modified: <working tree> } */
+ *  { original: <ref version>, modified: <working tree> }
+ *  A binary file answers `binary: true` with both sides empty; `text=1` is the
+ *  viewer's "Open Anyway" and asks for the decoded bytes regardless. */
 gitRoutes.get("/file-full-diff", async (c) => {
   try {
     const projectPath = c.get("projectPath");
@@ -115,8 +144,52 @@ gitRoutes.get("/file-full-diff", async (c) => {
     if (!file) return c.json(err("Missing query: file"), 400);
     const ref = c.req.query("ref") || "HEAD";
     const ref2 = c.req.query("ref2") || undefined;
-    const result = await gitService.fileFullDiff(projectPath, file, ref, ref2);
+    const result = await gitService.fileFullDiff(projectPath, file, ref, ref2, {
+      text: c.req.query("text") === "1",
+    });
     return c.json(ok(result));
+  } catch (e) {
+    return c.json(err((e as Error).message), 500);
+  }
+});
+
+/**
+ * The content types `/git/file-blob` will name. Everything outside this list is
+ * served as `application/octet-stream`: a blob URL inherits *this* origin, so
+ * answering with the repository's own `text/html` — or `image/svg+xml`, which
+ * carries script — would let a committed file run code inside the app.
+ */
+const BLOB_IMAGE_TYPES: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif",
+};
+
+/**
+ * GET /git/file-blob?file=&ref=HEAD — the file's bytes at a revision.
+ *
+ * What the binary diff view draws its left-hand pane from: `/files/raw` serves
+ * the working tree, and nothing else reaches the version a commit holds. The
+ * path needs no traversal check of its own — git resolves `ref:path` inside the
+ * repository and refuses anything above it ("is outside repository").
+ */
+gitRoutes.get("/file-blob", async (c) => {
+  try {
+    const projectPath = c.get("projectPath");
+    const file = c.req.query("file");
+    if (!file) return c.json(err("Missing query: file"), 400);
+    const ref = c.req.query("ref") || "HEAD";
+    const bytes = await gitService.fileBlob(projectPath, file, ref);
+    if (!bytes) return c.json(err("File does not exist at that revision"), 404);
+    const ext = file.split(".").pop()?.toLowerCase() ?? "";
+    // Copied into a plain Uint8Array because a Buffer is typed over
+    // ArrayBufferLike, which BodyInit does not accept.
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        "Content-Type": BLOB_IMAGE_TYPES[ext] ?? "application/octet-stream",
+        "Content-Length": String(bytes.length),
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
   } catch (e) {
     return c.json(err((e as Error).message), 500);
   }

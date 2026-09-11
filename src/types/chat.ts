@@ -44,6 +44,10 @@ export interface AIProvider {
   onToolApproval?: (callback: ToolApprovalHandler) => void;
   abortQuery?(sessionId: string, source?: string): void;
   getMessages?(sessionId: string): Promise<ChatMessage[]>;
+  /** Every message in the transcript, including the segments before each compaction.
+   *  `getMessages` answers with the resumable *conversation*; this answers with the
+   *  whole history. Only the search index asks for it — see `indexSession`. */
+  getFullMessages?(sessionId: string): Promise<ChatMessage[]>;
   listSessionsByDir?(dir: string, opts?: { limit?: number; offset?: number }): Promise<SessionInfo[]>;
   ensureProjectPath?(sessionId: string, path: string): void;
   setForkSource?(sessionId: string, sourceSessionId: string): void;

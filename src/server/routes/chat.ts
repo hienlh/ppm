@@ -925,7 +925,9 @@ chatRoutes.get("/pre-compact-messages", async (c) => {
       return c.json(ok(messages));
     }
     const validated = validateJsonlPath(jsonlPath);
-    const messages = await parseJsonlTranscript(validated, beforeUuid);
+    // One compaction segment per request: the client walks further back by
+    // expanding the summary that arrives at the head of each one.
+    const messages = await parseJsonlTranscript(validated, beforeUuid, { oneSegment: true });
     return c.json(ok(messages));
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown error";

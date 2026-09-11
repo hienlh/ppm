@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { ChevronDown, ChevronUp, MessageSquare, Pin, PinOff, Search, X } from "@/lib/icons";
+import { ChevronDown, ChevronUp, Pin, PinOff, Search, X } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useProjectTags, TagChipBar } from "./tag-filter-chips";
 import { SessionContextMenu } from "./session-context-menu";
+import { ProviderBadge } from "./provider-selector";
 import { useNotificationStore, notificationTint } from "@/stores/notification-store";
 import { cn } from "@/lib/utils";
 import type { SessionInfo, ProjectTag } from "../../../types/chat";
@@ -170,7 +171,7 @@ function SessionRow({ session, projectName, projectTags, onSelect, onTogglePin, 
           notif && notificationTint(notif.type),
         )}
       >
-        <MessageSquare className="size-3.5 shrink-0 text-text-subtle" />
+        <ProviderBadge providerId={session.providerId} />
         {session.tag && (
           <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: session.tag.color }} title={session.tag.name} />
         )}

@@ -13,6 +13,7 @@ import {
 import type { ElementType } from "react";
 import type { TabType } from "@/stores/tab-store";
 import { fileIconElement } from "@/lib/file-icons";
+import { PROVIDER_LOGOS } from "@/lib/provider-logos";
 
 export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   terminal: Terminal,
@@ -22,6 +23,7 @@ export const TAB_TYPE_ICONS: Record<TabType, LucideIcon> = {
   sqlite: Database,
   postgres: Database,
   "git-diff": FileDiff,
+  "branch-review": FileDiff,
   settings: Settings,
   extension: Puzzle,
   "extension-webview": Puzzle,
@@ -53,11 +55,20 @@ export interface TabIconSubject {
  * which tab is which, and that is just as true of the dock header and the mobile
  * tab switcher as it is of the desktop strip. The tab's own metadata is
  * preferred over its title, which a rename or a "(hash)" suffix can have edited.
+ *
+ * A chat tab is labelled the same way and for the same reason, with the logo of
+ * the provider running it. A tab carrying no provider is a chat that has not
+ * started yet, and one of those runs Claude — `ChatTab`'s own default — so it is
+ * drawn as one rather than as a question mark.
  */
 export function getTabIcon(tab: TabIconSubject): ElementType {
   if (FILE_TAB_TYPES.has(tab.type)) {
     const path = (tab.metadata?.filePath as string | undefined) || tab.title;
     if (path) return fileIconElement(path);
+  }
+  if (tab.type === "chat") {
+    const logo = PROVIDER_LOGOS[(tab.metadata?.providerId as string | undefined) ?? "claude"];
+    if (logo) return logo;
   }
   return getTabTypeIcon(tab.type);
 }

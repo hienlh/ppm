@@ -218,6 +218,11 @@ export function deriveTabId(type: TabType, metadata?: Record<string, unknown>): 
     }
     case "git-diff":
       return `git-diff:${metadata?.filePath ?? "unknown"}`;
+    // One review per project: the tab carries its own base/head pickers, so
+    // keying by the ref pair would leave a second tab unreachable the moment
+    // someone changed them.
+    case "branch-review":
+      return `branch-review:${metadata?.projectName ?? "unknown"}`;
     case "conflict-editor":
       return `conflict-editor:${metadata?.filePath ?? "unknown"}`;
     case "settings":
