@@ -5,8 +5,8 @@
  * `RemoteDesktopWarningGate`, so the connection hook (and its session nonce) only runs once the
  * user has read the warning.
  */
-import { useCallback, useRef } from "react";
-import { RotateCw, MonitorX, Gauge } from "@/lib/icons";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { RotateCw, MonitorX } from "@/lib/icons";
 import type { WindowContentProps } from "@/components/floating-window/window-content-registry";
 import { useWindowStore } from "@/components/floating-window/window-store";
 import { useSettingsStore } from "@/stores/settings-store";
@@ -17,6 +17,13 @@ import { RemoteDesktopStatsOverlay } from "./remote-desktop-stats-overlay";
 import { RemoteDesktopWarningGate } from "./remote-desktop-warning-gate";
 import { RemoteDesktopReadinessGate } from "./remote-desktop-readiness-gate";
 import { useRemoteDesktopDisplayChoice } from "./use-remote-desktop-display-choice";
+import { RemoteDesktopClipboardNotice } from "./remote-desktop-clipboard-notice";
+import { useRemoteDesktopReadiness } from "./use-remote-desktop-readiness";
+import { RemoteDesktopToolbar } from "./remote-desktop-toolbar";
+import { canvasCssSize } from "./remote-desktop-view-style";
+import { useRemoteDesktopRecorder } from "./use-remote-desktop-recorder";
+import { saveCanvasScreenshot } from "./remote-desktop-recording";
+import { RemoteDesktopCustomQualityDialog } from "./remote-desktop-custom-quality-dialog";
 
 export default function RemoteDesktopWindowContent({ id }: WindowContentProps) {
   const closeWindow = useWindowStore((s) => s.close);
@@ -33,12 +40,53 @@ export default function RemoteDesktopWindowContent({ id }: WindowContentProps) {
 function RemoteDesktopViewer() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const display = useRemoteDesktopDisplayChoice();
-  const { connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect, getFrameCount, getTotalBytes } =
-    useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
+  const {
+    connState, errorMessage, decoderStatus, decoderErrorMessage, sendMessage, reconnect,
+    getFrameCount, getTotalBytes, frameSize, quality, setQuality, setCustomQuality,
+    showCursor, setShowCursor,
+    codec, setCodec, audioOn, setAudioOn, getAudioTracks,
+    privacyOn, privacyError, setPrivacyOn,
+    hostModeId, hostOriginalModeId, resolutionError, setHostMode,
+    pendingHostClipboard, clearHostClipboard, sendClipboard, requestHostClipboard,
+  } = useRemoteDesktopConnection(canvasRef, { displayId: display.displayId });
   const statsVisible = useSettingsStore((s) => s.remoteDesktopStatsVisible);
   const toggleStats = useSettingsStore((s) => s.toggleRemoteDesktopStatsVisible);
+  const viewStyle = useSettingsStore((s) => s.remoteDesktopViewStyle);
+  const customScale = useSettingsStore((s) => s.remoteDesktopCustomScale);
+  const setViewStyle = useSettingsStore((s) => s.setRemoteDesktopViewStyle);
+  const setCustomScale = useSettingsStore((s) => s.setRemoteDesktopCustomScale);
+  const clipboardSync = useSettingsStore((s) => s.remoteDesktopClipboardSync);
+  const qualityChoice = useSettingsStore((s) => s.remoteDesktopQuality);
+  const customPercent = useSettingsStore((s) => s.remoteDesktopCustomQualityPercent);
+  const customFps = useSettingsStore((s) => s.remoteDesktopCustomFps);
+  const customMore = useSettingsStore((s) => s.remoteDesktopCustomQualityMore);
+  const setCustomMore = useSettingsStore((s) => s.setRemoteDesktopCustomQualityMore);
+  const [customQualityOpen, setCustomQualityOpen] = useState(false);
+  const setClipboardSync = useSettingsStore((s) => s.setRemoteDesktopClipboardSync);
+  // One fetch, no polling: this is read only to explain a clipboard that cannot work. The
+  // readiness *gate* above already cleared, so nothing here is allowed to block the viewer.
+  const { caps } = useRemoteDesktopReadiness(false);
+  const [pasteAttempted, setPasteAttempted] = useState(false);
 
-  useRemoteInputCapture(canvasRef, sendMessage, connState === "streaming");
+  // Stable object: `useRemoteInputCapture` lists it as an effect dependency, so a fresh literal
+  // per render would re-bind every canvas listener on every render.
+  //
+  // Undefined with sync off, which is the whole implementation of the toggle: the hook then
+  // stops exempting Ctrl+V from `preventDefault` and forwards it as an ordinary keystroke, so
+  // the host pastes its *own* clipboard and no text crosses the connection either way.
+  const clipboardHooks = useMemo(() => (clipboardSync ? {
+    onPasteText: (text: string, shift: boolean) => { setPasteAttempted(true); sendClipboard(text, true, shift); },
+    onCopyCombo: requestHostClipboard,
+  } : undefined), [clipboardSync, sendClipboard, requestHostClipboard]);
+
+  useRemoteInputCapture(canvasRef, sendMessage, connState === "streaming", clipboardHooks);
+
+  // The recorder muxes the session audio in when it is playing, so one file carries both.
+  const recorder = useRemoteDesktopRecorder(canvasRef, getAudioTracks);
+
+  // null in `adaptive` (and before the first frame): the canvas keeps its `max-*-full` classes
+  // and the browser fits it, which is the path this viewer has always been on.
+  const cssSize = canvasCssSize(viewStyle, customScale, frameSize);
 
   const overlayMessage = decoderStatus === "unsupported"
     ? decoderErrorMessage
@@ -56,37 +104,80 @@ function RemoteDesktopViewer() {
       data-testid="remote-desktop-window"
       data-conn-state={connState}
     >
-      <canvas ref={canvasRef} data-testid="remote-desktop-canvas" className="max-h-full max-w-full outline-none" />
+      {/* The scroll container is a child rather than this root, because the overlays below are
+          absolutely positioned against the root — inside a scroller they would scroll away with
+          the picture. `m-auto` on the canvas rather than `justify-center` on the box: centring
+          an oversized child with `justify-content` puts half the overflow *before* the scroll
+          origin, where no scrollbar can reach it (the top-left of a 1:1 3440×1440 capture in a
+          small window). Auto margins collapse to 0 when the child overflows, so both work. */}
+      <div className={cn("flex h-full w-full", cssSize ? "overflow-auto" : "overflow-hidden")}>
+        <canvas
+          ref={canvasRef}
+          data-testid="remote-desktop-canvas"
+          data-view-style={viewStyle}
+          className={cn("m-auto outline-none", !cssSize && "max-h-full max-w-full")}
+          style={cssSize ? { width: cssSize.width, height: cssSize.height } : undefined}
+        />
+      </div>
       <RemoteDesktopStatsOverlay canvasRef={canvasRef} getFrameCount={getFrameCount} getTotalBytes={getTotalBytes} />
-      {/* Multi-monitor hosts: pick which display to stream. Left of the stats toggle, same
-          corner cluster; a single-display host renders nothing here. */}
-      {display.displays.length > 1 && (
-        <select
-          value={display.current?.id ?? ""}
-          onChange={(e) => display.select(e.target.value)}
-          aria-label="Display"
-          className="absolute right-8 top-1 z-40 h-6 max-w-[45%] rounded bg-black/40 px-1.5 text-xs text-white/80 hover:bg-black/60"
-          data-testid="remote-desktop-display-select"
-        >
-          {display.displays.map((d) => (
-            <option key={d.id} value={d.id}>{d.label}{d.primary ? " (main)" : ""} · {d.width}×{d.height}</option>
-          ))}
-        </select>
-      )}
-      {/* Small corner toggle for the stats overlay above — top-right so it never collides with
-          the overlay itself (top-left) or the window's own title bar/controls above this body. */}
-      <button
-        type="button"
-        onClick={toggleStats}
-        aria-label="Toggle stats overlay"
-        aria-pressed={statsVisible}
-        className={cn(
-          "absolute right-1 top-1 z-40 flex size-6 items-center justify-center rounded bg-black/40 text-white/70 hover:bg-black/60 hover:text-white",
-          statsVisible && "bg-primary/70 text-primary-foreground hover:bg-primary/80",
-        )}
-      >
-        <Gauge className="size-3.5" />
-      </button>
+      <RemoteDesktopToolbar
+        displays={display.displays}
+        currentDisplayId={display.current?.id}
+        onSelectDisplay={display.select}
+        quality={quality}
+        qualityChoice={qualityChoice}
+        onSetQuality={setQuality}
+        onOpenCustomQuality={() => setCustomQualityOpen(true)}
+        codecs={caps?.encoders ?? []}
+        codec={codec}
+        onSetCodec={setCodec}
+        hostModes={caps?.resolutions?.modes ?? []}
+        hostModeId={hostModeId}
+        hostOriginalModeId={hostOriginalModeId}
+        onSetHostMode={setHostMode}
+        canResizeHost={caps?.inputReady ?? false}
+        resolutionError={resolutionError}
+        viewStyle={viewStyle}
+        customScale={customScale}
+        onSetViewStyle={setViewStyle}
+        onSetCustomScale={setCustomScale}
+        showCursor={showCursor}
+        onSetShowCursor={setShowCursor}
+        audioOn={audioOn}
+        audioReason={caps && !caps.audio.available ? caps.audio.reason : null}
+        onSetAudioOn={setAudioOn}
+        privacyOn={privacyOn}
+        privacyReason={privacyError ?? (caps && !caps.privacy.available ? caps.privacy.reason : null)}
+        privacyCanBlank={caps?.privacy?.canBlank ?? false}
+        onSetPrivacyOn={setPrivacyOn}
+        recording={recorder.recording}
+        recordingElapsedSec={recorder.elapsedSec}
+        recordingSupported={recorder.supported}
+        onToggleRecording={recorder.toggle}
+        onScreenshot={() => void saveCanvasScreenshot(canvasRef.current)}
+        clipboardEnabled={clipboardSync}
+        onSetClipboardEnabled={setClipboardSync}
+        statsVisible={statsVisible}
+        onToggleStats={toggleStats}
+      />
+      {/* Only after a real paste attempt: a host with no clipboard tool is not worth a warning
+          until the user actually reaches for it. */}
+      <RemoteDesktopClipboardNotice
+        pendingText={pendingHostClipboard}
+        onDismiss={clearHostClipboard}
+        missingToolAction={pasteAttempted && caps && !caps.clipboard.available ? caps.clipboard.action : null}
+        onDismissMissingTool={() => setPasteAttempted(false)}
+      />
+      <RemoteDesktopCustomQualityDialog
+        open={customQualityOpen}
+        onOpenChange={setCustomQualityOpen}
+        percent={customPercent}
+        fps={customFps}
+        more={customMore}
+        onSetMore={setCustomMore}
+        onCommit={setCustomQuality}
+        frameSize={frameSize}
+      />
       {overlayMessage && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 text-sm text-white">
           <MonitorX className="size-6 opacity-70" />

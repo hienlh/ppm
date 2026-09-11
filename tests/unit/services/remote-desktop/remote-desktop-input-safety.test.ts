@@ -3,14 +3,16 @@ import { isInputAvailable, injectPointer, injectKey, injectWheel, getInputBacken
 
 /**
  * This module must be importable — and its functions must fail cleanly rather than crash the
- * process — on a platform with no backend (the Linux CI/Docker test runner, see
+ * process — on a host with no backend (the Linux CI/Docker test runner, see
  * `docs/lessons-learned.md`: host Bun segfaults, tests run in `oven/bun`). No `dlopen` of
- * `user32.dll` or a macOS framework must ever be attempted there.
+ * `user32.dll`, a macOS framework or libXtst must ever be attempted there.
  *
- * Every injecting case is gated to Linux ONLY: on Windows and macOS these calls reach the real
- * desktop (they would move the developer's mouse mid-test-run).
+ * The gate asks the registry rather than testing `process.platform`, and that matters now that
+ * Linux HAS backends: a developer's Linux desktop resolves an X11 session and these calls would
+ * reach the real screen, moving their mouse mid-test-run. Only a host that genuinely has no
+ * backend — a headless container, which is what CI is — runs the injecting cases.
  */
-const noBackend = process.platform !== "win32" && process.platform !== "darwin";
+const noBackend = getInputBackend() === null;
 
 describe("remote-desktop-input — no-backend platform safety", () => {
   it("reports unavailable where no backend is registered", () => {
@@ -32,7 +34,23 @@ describe("remote-desktop-input — no-backend platform safety", () => {
   it("registers exactly the platforms that have a backend", () => {
     expect(getInputBackend("win32")?.id).toBe("win32-sendinput");
     expect(getInputBackend("darwin")?.id).toBe("darwin-cgevent");
-    expect(getInputBackend("linux")).toBeNull();
+    expect(getInputBackend("freebsd")).toBeNull();
+  });
+
+  it("picks the Linux backend by session type, not by platform", () => {
+    // XTEST is an X server extension, so Wayland has to go in as a virtual input device.
+    expect(getInputBackend("linux", { kind: "x11", display: ":0", xauthority: null })?.id).toBe("linux-xtest");
+    expect(getInputBackend("linux", { kind: "wayland", display: "wayland-0", runtimeDir: "/run/user/1000" })?.id)
+      .toBe("linux-uinput");
+    // No graphical session at all: a headless server, a CI container.
+    expect(getInputBackend("linux", null)).toBeNull();
+  });
+
+  it("uinput has no text path, so the facade tells the caller to fall back to key events", () => {
+    const wayland = getInputBackend("linux", { kind: "wayland", display: "wayland-0", runtimeDir: "/run/user/1000" });
+    // uinput carries key codes, not characters — there is no KEYEVENTF_UNICODE equivalent.
+    expect(wayland?.text).toBeUndefined();
+    expect(getInputBackend("linux", { kind: "x11", display: ":0", xauthority: null })?.text).toBeDefined();
   });
 
   it("no-ops for a zero delta without touching SendInput at all", async () => {
