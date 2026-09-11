@@ -64,6 +64,9 @@
         "zustand": "^5.0.11",
       },
       "devDependencies": {
+        "@fontsource-variable/geist": "^5.3.0",
+        "@fontsource/monaspace-argon": "^5.3.0",
+        "@fontsource/monaspace-krypton": "^5.3.0",
         "@tailwindcss/vite": "^4.2.1",
         "@types/archiver": "^7.0.0",
         "@types/bun": "latest",
@@ -404,6 +407,12 @@
     "@floating-ui/react-dom": ["@floating-ui/react-dom@2.1.8", "", { "dependencies": { "@floating-ui/dom": "^1.7.6" }, "peerDependencies": { "react": ">=16.8.0", "react-dom": ">=16.8.0" } }, "sha512-cC52bHwM/n/CxS87FH0yWdngEZrjdtLW/qVruo68qg+prK7ZQ4YGdut2GyDVpoGeAYe/h899rVeOVm6Oi40k2A=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
+
+    "@fontsource-variable/geist": ["@fontsource-variable/geist@5.3.0", "", {}, "sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA=="],
+
+    "@fontsource/monaspace-argon": ["@fontsource/monaspace-argon@5.3.0", "", {}, "sha512-sfP9wbeL7OLt/vxHCOtssa4AadPFjQAClYg1rl+PybqfJLw8yG86f8q3qtx4dCHpsN82x8Cb2z0BmP7y93QUNQ=="],
+
+    "@fontsource/monaspace-krypton": ["@fontsource/monaspace-krypton@5.3.0", "", {}, "sha512-dAvofm5VNugRpprnOYMOEnlcnlAJWrQXcoy0PEnmdc9NU+fyDeSDYOTFoJPmJBADwcnVqXA6fLgTlz7TUQQx6g=="],
 
     "@glideapps/glide-data-grid": ["@glideapps/glide-data-grid@6.0.3", "", { "dependencies": { "@linaria/react": "^4.5.3", "canvas-hypertxt": "^1.0.3", "react-number-format": "^5.0.0" }, "peerDependencies": { "lodash": "^4.17.19", "marked": "^4.0.10", "react": "^16.12.0 || 17.x || 18.x", "react-dom": "^16.12.0 || 17.x || 18.x", "react-responsive-carousel": "^3.2.7" } }, "sha512-YXKggiNOaEemf0jP0jORq2EQKz+zXms+6mGzZc+q0mLMjmgzzoGLOQC1uYcynXSj1R61bd27JcPFsoH+Gj37Vg=="],
 

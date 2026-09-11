@@ -4,7 +4,8 @@ import { api, projectUrl } from "@/lib/api-client";
 import { useShallow } from "zustand/react/shallow";
 import { useSettingsStore } from "@/stores/settings-store";
 import { useMonacoTheme } from "@/lib/use-monaco-theme";
-import { EDITOR_FONT_FAMILY } from "@/lib/editor-font";
+import { EDITOR_FONT_FAMILY, EDITOR_FONT_LIGATURES, EDITOR_FONT_SIZE } from "@/lib/editor-font";
+import { useGitRepo } from "@/hooks/use-git-repo";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
 import { Loader2, FileCode, WrapText, UserRound } from "lucide-react";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
@@ -51,6 +52,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     })),
   );
   const monacoTheme = useMonacoTheme();
+  const gitRepo = useGitRepo(projectName);
 
   // Measure container height — Monaco needs explicit pixel height on mobile
   const containerRef = useRef<HTMLDivElement>(null);
@@ -114,12 +116,17 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
     // Monaco DiffEditor computes the diff itself, giving full-file view instead
     // of just the changed hunks + 3 lines of context that `git diff` returns.
     if (filePath) {
-      const params = new URLSearchParams({ file: filePath });
+      // git is being run inside the repository, which for a container project
+      // is a subfolder — so the path it is asked about has to be relative to
+      // that, and a file outside it has no diff to show.
+      const inRepo = gitRepo.repoPath(filePath);
+      if (inRepo == null) { setLoading(false); return; }
+      const params = new URLSearchParams({ file: inRepo });
       if (ref1) params.set("ref", ref1);
       if (ref2) params.set("ref2", ref2);
       api
         .get<{ original: string; modified: string }>(
-          `${projectUrl(projectName)}/git/file-full-diff?${params}`,
+          gitRepo.gitUrl(`/file-full-diff?${params}`),
         )
         .then((data) => { setFullFileDiff(data); setLoading(false); })
         .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load diff"); setLoading(false); });
@@ -131,16 +138,16 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
       const params = new URLSearchParams();
       if (ref1) params.set("ref1", ref1);
       if (ref2) params.set("ref2", ref2);
-      url = `${projectUrl(projectName)}/git/diff?${params}`;
+      url = gitRepo.gitUrl(`/diff?${params}`);
     } else {
-      url = `${projectUrl(projectName)}/git/diff`;
+      url = gitRepo.gitUrl("/diff");
     }
 
     api
       .get<{ diff: string }>(url)
       .then((data) => { setDiffText(data.diff); setLoading(false); })
       .catch((err) => { setError(err instanceof Error ? err.message : "Failed to load diff"); setLoading(false); });
-  }, [filePath, projectName, ref1, ref2, file1, file2, isInline]);
+  }, [filePath, projectName, ref1, ref2, file1, file2, isInline, gitRepo]);
 
   const { original, modified } = useMemo(() => {
     if (isInline) return { original: inlineOriginal ?? "", modified: inlineModified ?? "" };
@@ -300,8 +307,9 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
               );
             }}
             options={{
-              fontSize: isMobile ? 11 : 13,
+              fontSize: isMobile ? 11 : EDITOR_FONT_SIZE,
               fontFamily: EDITOR_FONT_FAMILY,
+              fontLigatures: EDITOR_FONT_LIGATURES,
               diffWordWrap: wrapOn ? "on" : "off",
               renderSideBySide,
               useInlineViewWhenSpaceIsLimited: false,
