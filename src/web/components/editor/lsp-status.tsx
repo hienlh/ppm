@@ -21,7 +21,7 @@
  * the on-state chip opens.
  */
 import { useState } from "react";
-import { AlertTriangle, Check, Copy, Loader2, Zap, ZapOff } from "lucide-react";
+import { AlertTriangle, Check, Copy, Loader2, Zap, ZapOff } from "@/lib/icons";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";

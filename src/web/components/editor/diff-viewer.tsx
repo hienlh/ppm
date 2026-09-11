@@ -7,8 +7,9 @@ import { useMonacoTheme } from "@/lib/use-monaco-theme";
 import { EDITOR_FONT_FAMILY, EDITOR_FONT_LIGATURES, EDITOR_FONT_SIZE } from "@/lib/editor-font";
 import { useGitRepo } from "@/hooks/use-git-repo";
 import { onHostResize } from "@/components/floating-window/pip/pip-resize-signal";
-import { Loader2, FileCode, WrapText, UserRound } from "lucide-react";
+import { Loader2, FileCode, WrapText, UserRound } from "@/lib/icons";
 import { useInlineBlame } from "@/hooks/use-inline-blame";
+import { DOTENV_LANGUAGE_ID, isDotenvFile, registerDotenvLanguage } from "@/lib/monaco-dotenv-language";
 
 function getMonacoLanguage(filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -21,7 +22,7 @@ function getMonacoLanguage(filename: string): string {
     yaml: "yaml", yml: "yaml",
     sh: "shell", bash: "shell",
   };
-  return map[ext] ?? "plaintext";
+  return map[ext] ?? (isDotenvFile(filename) ? DOTENV_LANGUAGE_ID : "plaintext");
 }
 
 interface DiffViewerProps {
@@ -288,6 +289,7 @@ export function DiffViewer({ metadata }: DiffViewerProps) {
           <DiffEditor
             height={containerHeight}
             language={language}
+            beforeMount={registerDotenvLanguage}
             original={original}
             modified={modified}
             theme={monacoTheme}

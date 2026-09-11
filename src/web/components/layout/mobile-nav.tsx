@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Terminal, Menu, X, Layers, Plus,
   Copy, Download, Pencil, Trash2, Columns2, Circle, Tag, Check, XSquare, ChevronsRight, ChevronUp,
-} from "lucide-react";
+} from "@/lib/icons";
 import { usePanelStore } from "@/stores/panel-store";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore, resolveOrder } from "@/stores/project-store";
@@ -26,7 +26,7 @@ import { useVisualViewport } from "@/hooks/use-visual-viewport";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { DockPanel } from "@/components/layout/dock-panel";
 import { MobileTabSwitcherSheet } from "@/components/layout/mobile-tab-switcher-sheet";
-import { getTabTypeIcon } from "@/lib/tab-type-icons";
+import { getTabIcon } from "@/lib/tab-type-icons";
 import { countDockTabs } from "@/components/layout/dock-tabs";
 import { DOCK_PANEL_ID } from "@/stores/panel-utils";
 
@@ -254,7 +254,7 @@ export function MobileNav({ onMenuPress, onProjectsPress }: MobileNavProps) {
     ? resolveProjectColor(activeProject.color, activeIdx >= 0 ? activeIdx : 0)
     : "#4f86c6";
 
-  const ActiveTabIcon = activeTab ? getTabTypeIcon(activeTab.type) : null;
+  const ActiveTabIcon = activeTab ? getTabIcon(activeTab) : null;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 md:hidden bg-background border-t border-border z-40 select-none">

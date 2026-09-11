@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { formatRam } from "@/lib/format-bytes";
 import { cpuColor, formatAge, formatDiskCell, formatGpuCell, formatNetCell, sumOptionalBps } from "./process-row-format";

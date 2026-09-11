@@ -13,7 +13,7 @@
  */
 
 import { useState } from "react";
-import { Activity, ExternalLink, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
+import { Activity, ExternalLink, Maximize2, Minimize2, RefreshCw, X } from "@/lib/icons";
 import type { UsageInfo } from "../../../types/chat";
 import { openSettings } from "@/components/settings/open-settings";
 import { AccountCard } from "@/components/settings/accounts/account-card";

@@ -12,6 +12,8 @@ import {
   search,
   toFtsQuery,
   getIndexedCount,
+  messageSearchText,
+  INDEXER_VERSION,
 } from "../../../src/services/chat-search.service.ts";
 import type { ChatMessage } from "../../../src/types/chat.ts";
 
@@ -127,5 +129,78 @@ describe("deleteSession + getIndexedCount", () => {
     expect(getIndexedCount(PROJ_A)).toBe(0);
     expect(search(PROJ_A, "deletable", 10).length).toBe(0);
     expect(isStale("sess-4", 1)).toBe(true);
+  });
+});
+
+describe("messageSearchText — tool-only turns", () => {
+  function toolMsg(id: string, events: ChatMessage["events"]): ChatMessage {
+    return { id, role: "assistant", content: "", events, timestamp: "2026-07-14T00:00:00.000Z" };
+  }
+
+  test("a turn with no prose but a tool call is still indexable", () => {
+    const m = toolMsg("m1", [
+      { type: "tool_use", tool: "Bash", input: { command: "gh pr create --title manual-action" } },
+      { type: "tool_result", output: "https://github.com/acme/api/pull/10232" },
+    ]);
+    // The old indexer read `content` only, so this whole turn was dropped.
+    expect((m.content ?? "").trim()).toBe("");
+    const text = messageSearchText(m);
+    expect(text).toContain("Bash");
+    expect(text).toContain("manual-action");
+    expect(text).toContain("10232");
+  });
+
+  test("nested child events of an Agent card are included", () => {
+    const text = messageSearchText(toolMsg("m2", [
+      {
+        type: "tool_use", tool: "Agent", input: {},
+        children: [{ type: "tool_result", output: "deep-needle" }],
+      },
+    ]));
+    expect(text).toContain("deep-needle");
+  });
+
+  test("thinking is not indexed", () => {
+    const text = messageSearchText(toolMsg("m3", [
+      { type: "thinking", content: "scratch-reasoning" },
+      { type: "text", content: "the answer" },
+    ]));
+    expect(text).not.toContain("scratch-reasoning");
+    expect(text).toContain("the answer");
+  });
+
+  test("a turn with neither content nor usable events stays unindexed", () => {
+    expect(messageSearchText(toolMsg("m4", [{ type: "done", sessionId: "s" }]))).toBe("");
+  });
+
+  test("search matches text that exists only inside a tool result", () => {
+    indexMessages("s-tool", PROJ_A, [toolMsg("m1", [
+      { type: "tool_result", output: "opened pull request 10232" },
+    ])], 1);
+    const hits = search(PROJ_A, "10232", 10);
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.messageId).toBe("m1");
+  });
+});
+
+describe("isStale — indexer version", () => {
+  test("a row written by an older indexer is stale even at the same mtime", () => {
+    indexMessages("s1", PROJ_A, [msg("m1", "user", "hello")], 4242);
+    expect(isStale("s1", 4242)).toBe(false);
+
+    getSearchIndexDb()
+      .query("UPDATE session_meta SET indexer_version = ? WHERE session_id = ?")
+      .run(INDEXER_VERSION - 1, "s1");
+    expect(isStale("s1", 4242)).toBe(true);
+  });
+
+  test("re-indexing clears the staleness", () => {
+    indexMessages("s2", PROJ_A, [msg("m1", "user", "hello")], 7);
+    getSearchIndexDb()
+      .query("UPDATE session_meta SET indexer_version = 0 WHERE session_id = ?")
+      .run("s2");
+    expect(isStale("s2", 7)).toBe(true);
+    indexMessages("s2", PROJ_A, [msg("m1", "user", "hello")], 7);
+    expect(isStale("s2", 7)).toBe(false);
   });
 });

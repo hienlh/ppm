@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone, Settings } from "lucide-react";
+import { X, Bug as BugIcon, Cloud, FolderTree, MonitorSmartphone, Settings } from "@/lib/icons";
 import { useShallow } from "zustand/react/shallow";
 import { useProjectStore } from "@/stores/project-store";
 import { useSettingsStore, type SidebarActiveTab } from "@/stores/settings-store";

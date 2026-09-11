@@ -1,4 +1,4 @@
-import { FileCode } from "lucide-react";
+import { FileCode } from "@/lib/icons";
 
 export function EditorPlaceholder() {
   return (

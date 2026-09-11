@@ -48,6 +48,71 @@
     <div id="portal" style="position: fixed; left: 0; top: 0; z-index: 9999;" /></div>
     <div id="root"></div>
     <script type="module" src="./main.tsx"></script>
+    <!-- Boot watchdog: the last resort, and the only code that can still run.
+         The entry's module graph is ~39 separately-hashed chunks, and if any one
+         of them 404s — an upgrade replaced dist/web, or a stale index.html is
+         still naming last week's hashes — the entry module never executes. No
+         React, no error boundary, no listener: `#root` stays empty and the page
+         shows nothing but the body's background. That is the white screen, and
+         nothing bundled can report it, because nothing bundled ran. Hence
+         inline, dependency-free, and gated on the flag main.tsx sets: a boundary
+         inside React already covers the case where the entry *did* run. -->
+    <script>
+      (function () {
+        var KEY = "ppm:boot-retry";
+        // Every cache, not just this app's: the stale index.html that named the
+        // missing hashes comes from the service worker's *precache*, which is
+        // workbox's to name. It repopulates itself on the next activation.
+        function purge() {
+          if (!window.caches) return Promise.resolve();
+          return caches
+            .keys()
+            .then(function (names) { return Promise.all(names.map(function (n) { return caches.delete(n); })); })
+            .catch(function () {});
+        }
+        function panic() {
+          // The wrapper carries its own background: if the stylesheet was one of
+          // the chunks that went missing, `var(--bg)` on <body> resolves to
+          // nothing and dark-mode text would be white on white.
+          document.getElementById("root").innerHTML =
+            '<div style="min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px;' +
+            'background:var(--bg-solid,#0a0e17);color:var(--text,#eaeefb);font:16px/1.5 system-ui,sans-serif">' +
+            '<div role="alert" style="width:100%;max-width:440px;background:var(--panel,#141820);' +
+            'border:1px solid var(--border,rgba(255,255,255,0.12));border-radius:18px;padding:24px">' +
+            '<h1 style="margin:0;font-size:18px;font-weight:600">PPM could not finish loading</h1>' +
+            '<p style="margin:12px 0 0;color:var(--text-2,#9aa6c2)">Part of the app is missing from the server, ' +
+            'which usually means it was replaced by an upgrade. Reloading fetches the current version.</p>' +
+            '<button id="ppm-boot-retry" type="button" style="min-height:44px;width:100%;margin-top:20px;' +
+            'padding:0 20px;border:0;border-radius:12px;background:var(--accent,#5b8cff);' +
+            'color:var(--accent-fg,#fff);font:inherit;font-weight:600;cursor:pointer">Reload</button>' +
+            "</div></div>";
+          document.getElementById("ppm-boot-retry").onclick = function () {
+            try { sessionStorage.removeItem(KEY); } catch (e) {}
+            purge().then(function () { location.reload(); });
+          };
+        }
+        function check() {
+          // Module scripts execute before `load`, so a flag still unset here is
+          // never going to be set — this cannot misfire on a slow boot.
+          if (window.__ppmEntryRan) return;
+          var retried;
+          try {
+            retried = sessionStorage.getItem(KEY) === "1";
+            sessionStorage.setItem(KEY, "1");
+          } catch (e) {
+            // No storage means no way to count attempts, and an uncounted
+            // reload is a loop. Go straight to the message.
+            retried = true;
+          }
+          // One silent attempt first: index.html is served `no-cache`, so a
+          // reload with this origin's caches dropped is exactly how a tab
+          // holding an upgraded-away chunk list heals itself.
+          if (!retried) { purge().then(function () { location.reload(); }); return; }
+          panic();
+        }
+        window.addEventListener("load", function () { setTimeout(check, 4000); });
+      })();
+    </script>
     <!-- Eruda: mobile console for debugging. Activate with ?debug in URL -->
     <script>
       if (/debug=true|debug(&|$)/.test(location.search)) {

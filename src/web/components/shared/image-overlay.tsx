@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Check, ChevronLeft, ChevronRight, Copy, Download, FlipHorizontal, FlipVertical,
   Maximize2, Minus, Plus, RotateCcw, RotateCw, Scan, X,
-} from "lucide-react";
+} from "@/lib/icons";
 import { useImageOverlay } from "@/stores/image-overlay-store";
 import { useImageTransform } from "@/hooks/use-image-transform";
 import { canCopyImage, copyImageToClipboard } from "@/lib/clipboard";

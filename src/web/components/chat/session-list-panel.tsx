@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { ChevronDown, ChevronUp, MessageSquare, Pin, PinOff, Search, X } from "lucide-react";
+import { ChevronDown, ChevronUp, MessageSquare, Pin, PinOff, Search, X } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { formatRelativeDate } from "@/lib/format-date";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";

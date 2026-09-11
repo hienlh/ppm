@@ -9,7 +9,7 @@
 
 import {
   Columns3, Eye, EyeOff, Info, LayoutGrid, List, Trash2,
-} from "lucide-react";
+} from "@/lib/icons";
 import type { FsEntry } from "@/lib/fs-api";
 import { BottomSheet, BottomSheetItem, BottomSheetSeparator, BottomSheetSubLabel } from "@/components/ui/mobile-bottom-sheet";
 import type { ExplorerActions } from "../actions/use-explorer-actions";

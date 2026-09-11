@@ -1,4 +1,4 @@
-import { FileCode, Database, FolderOpen, Zap } from "lucide-react";
+import { FileCode, Database, FolderOpen, Zap } from "@/lib/icons";
 
 /** Metadata for each command group — label and icon for the filter chip */
 const GROUP_META: Record<string, { label: string; icon: React.ElementType }> = {

@@ -7,7 +7,7 @@
  * screen leaves no backdrop to tap, so swipe-to-dismiss would otherwise be the only way out.
  */
 
-import { X } from "lucide-react";
+import { X } from "@/lib/icons";
 import type { ExplorerSlice } from "../explorer-store";
 
 export interface MobileExplorerTopBarProps {

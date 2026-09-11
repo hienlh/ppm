@@ -6,7 +6,7 @@
  * forms inline down the page — and switching tabs looked like switching apps.
  */
 
-import { RefreshCw, X } from "lucide-react";
+import { RefreshCw, X } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 
 export function AccountsPaneHeader({ description, onRefresh, refreshing, disabled, actions }: {

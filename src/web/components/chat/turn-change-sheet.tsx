@@ -6,7 +6,7 @@
  * The panel is capped; the body scrolls inside it so the sheet itself never does.
  */
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ChevronLeft, X } from "lucide-react";
+import { ArrowUp, ChevronLeft, X } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { TurnFileChange } from "@/lib/aggregate-turn-file-changes";

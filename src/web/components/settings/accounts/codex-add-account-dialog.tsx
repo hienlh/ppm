@@ -9,7 +9,7 @@
  * Mirrors the Claude add dialog: recommended sign-in first, divider, manual key below.
  */
 
-import { ExternalLink, KeyRound, Loader2, MonitorSmartphone } from "lucide-react";
+import { ExternalLink, KeyRound, Loader2, MonitorSmartphone } from "@/lib/icons";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";

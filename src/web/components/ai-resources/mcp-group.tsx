@@ -1,4 +1,4 @@
-import { Plug, Plus, Download } from "lucide-react";
+import { Plug, Plus, Download } from "@/lib/icons";
 import {
   ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 } from "@/components/ui/adaptive-context-menu";

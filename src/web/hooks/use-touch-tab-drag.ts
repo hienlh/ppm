@@ -1,4 +1,4 @@
-import { useCallback, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { setDragging, clearDragging, type DragPayload } from "./use-tab-drag";
 import { usePanelStore } from "@/stores/panel-store";
 import { findPanelPosition, maxColumns, MAX_ROWS } from "@/stores/panel-utils";
@@ -186,5 +186,21 @@ export function useTouchTabDrag(panelId: string) {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
   }, []);
 
-  return { handleTouchStart, handleTouchMove, handleTouchEnd };
+  /**
+   * The *pre-arm* timer's cancel. There is already a document-level
+   * `touchcancel` above, but it belongs to a drag that has begun and is only
+   * registered once `beginDrag` has run — it says nothing about the 200ms
+   * window before that. And that window is exactly where the problem is: a
+   * scroll fires `touchcancel` and then delivers no further `touchmove` or
+   * `touchend` to the tab, so the `MOVE_PX` tolerance never sees the moves it
+   * would have measured and the drag begins under a finger that was scrolling.
+   */
+  const handleTouchCancel = useCallback(() => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    origin.current = null;
+  }, []);
+
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  return { handleTouchStart, handleTouchMove, handleTouchEnd, handleTouchCancel };
 }

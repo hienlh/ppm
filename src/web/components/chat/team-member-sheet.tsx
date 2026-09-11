@@ -7,7 +7,7 @@
  */
 
 import { lazy, Suspense } from "react";
-import { X } from "lucide-react";
+import { X } from "@/lib/icons";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";
 import { useTeamMemberSheet } from "./use-open-team-member";
 

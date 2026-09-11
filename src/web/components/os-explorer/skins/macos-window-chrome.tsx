@@ -13,7 +13,7 @@
  * element that itself carries the attribute.
  */
 
-import { Minus, Plus, X } from "lucide-react";
+import { Minus, Plus, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { TITLEBAR_HEIGHT, type WindowChromeProps } from "@/components/floating-window/window-chrome-contract";
 import { PipCaptionButton } from "@/components/floating-window/pip/pip-caption-button";

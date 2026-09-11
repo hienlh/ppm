@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import { Check, Sparkles, Brain } from "lucide-react";
+import { Check, Sparkles, Brain } from "@/lib/icons";
 import { api, projectUrl } from "@/lib/api-client";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { BottomSheet } from "@/components/ui/mobile-bottom-sheet";

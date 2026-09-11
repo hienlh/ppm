@@ -11,7 +11,7 @@
  */
 
 import { memo } from "react";
-import { Sun } from "lucide-react";
+import { Sun } from "@/lib/icons";
 import { useWakeLockStore } from "@/stores/wake-lock-store";
 
 const LABEL = "Screen awake";

@@ -8,7 +8,15 @@
  */
 
 import { useState } from "react";
-import { Download, KeyRound, Loader2, Plus, Settings, Upload, FlaskConical } from "lucide-react";
+import {
+  Download,
+  KeyRound,
+  Loader2,
+  Plus,
+  Settings,
+  Upload,
+  FlaskConical,
+} from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { AccountCardRow, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
 import { patchAccount, deleteAccount, type OAuthProfileData } from "../../../lib/api-settings";
