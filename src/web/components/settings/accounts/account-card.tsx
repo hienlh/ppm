@@ -1,6 +1,12 @@
 /**
- * One account in the list: name, badges, per-account controls, its rate-limit buckets, and a
- * footer of token facts.
+ * One account: name, badges, per-account controls, its rate-limit buckets, and a footer of
+ * token facts.
+ *
+ * Three layouts, because the two callers want opposite things. Settings manages accounts one
+ * at a time, so `list` gives each card the full width. The chat panel is for comparing them
+ * at a glance, so `strip` makes fixed-width cards that scroll sideways and `grid` fills a
+ * cell of the fullscreen view — stacked vertically, comparing two accounts meant scrolling
+ * past the one above.
  *
  * An expired account (past `expiresAt` AND no refresh token) is dimmed and loses every
  * control except delete — toggling or exporting a token the server can no longer renew only
@@ -25,10 +31,19 @@ export interface AccountCardProps {
   onViewProfile?: (profile: OAuthProfileData, accountId: string) => void;
   /** Brief highlight when this account's usage numbers just changed. */
   flash?: boolean;
+  /** `list` fills the width, `strip` is a fixed-width card in a sideways scroller, `grid`
+   *  fills a cell of the fullscreen grid. */
+  layout?: "list" | "strip" | "grid";
 }
+
+// Fixed widths so a row scrolls instead of squeezing. Two of them: a read-only card holds a
+// name and its bars, but a card that also carries view/export/toggle/delete needs room for
+// four controls beside the name, and at the read-only width that header wraps.
+const STRIP_WIDTH = { readOnly: "min-w-[220px]", withActions: "min-w-[300px]" } as const;
 
 export function AccountCard({
   entry, isActive, accountInfo, onToggle, toggling, onDelete, onExport, onViewProfile, flash,
+  layout = "list",
 }: AccountCardProps) {
   const { usage } = entry;
   const hasBuckets = usage.session || usage.weekly || usage.weeklyOpus || usage.weeklySonnet;
@@ -38,12 +53,21 @@ export function AccountCard({
     && accountInfo.expiresAt < Math.floor(Date.now() / 1000)
   );
   const ts = tokenStatus(accountInfo);
+  const hasActions = Boolean(onToggle || onDelete || onExport || onViewProfile);
+
+  const layoutClass = layout === "list"
+    ? ""
+    : layout === "grid"
+      // The cell owns the height, so the card spreads its rows into it.
+      ? "flex flex-col justify-evenly overflow-hidden min-h-0"
+      : `shrink-0 snap-start ${hasActions ? STRIP_WIDTH.withActions : STRIP_WIDTH.readOnly}`;
 
   return (
     <AccountCardShell
       active={isActive}
       flash={flash}
-      className={isExpired ? "opacity-50" : undefined}
+      dense={layout !== "list"}
+      className={[layoutClass, isExpired ? "opacity-50" : ""].filter(Boolean).join(" ") || undefined}
       data-testid="account-card"
       data-account-id={entry.accountId}
     >

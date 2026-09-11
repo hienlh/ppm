@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { Download, KeyRound, Loader2, Plus, Settings, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AccountCardShell, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
+import { AccountCardRow, AccountCardShell, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
 import { AccountUsageBar } from "./account-bucket-row";
 import { CodexAddAccountDialog } from "./codex-add-account-dialog";
 import { CodexBackupDialog } from "./codex-backup-dialog";
@@ -70,11 +70,18 @@ export function CodexAccountsSection() {
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <AccountCardRow>
             {c.accounts.map((a) => {
               const u = c.usages[a.id] ?? {};
               return (
-                <AccountCardShell key={a.id} data-testid="account-card" data-account-id={a.id}>
+                <AccountCardShell
+                  key={a.id}
+                  dense
+                  // Matches the Claude card that also carries a control beside the name.
+                  className="min-w-[300px] shrink-0 snap-start"
+                  data-testid="account-card"
+                  data-account-id={a.id}
+                >
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium truncate flex-1 min-w-0">{a.label}</span>
                     <span className="text-[10px] uppercase tracking-wide text-text-subtle border border-border rounded px-1 shrink-0">
@@ -98,7 +105,7 @@ export function CodexAccountsSection() {
                 </AccountCardShell>
               );
             })}
-          </div>
+          </AccountCardRow>
         )}
       </section>
 

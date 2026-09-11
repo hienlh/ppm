@@ -6,9 +6,14 @@
  * controls, which is what let the two drift apart. The account cards are the same component
  * the Settings pane renders — passing no action callbacks is what makes them read-only, so
  * there is one card implementation rather than a display twin.
+ *
+ * Accounts sit in a row that scrolls sideways, not a vertical stack: this panel exists to
+ * compare them, and stacked in a 350px strip that meant scrolling past one account to see
+ * the next. Fullscreen lays the same cards out as a grid when there are too many to fit.
  */
 
-import { Activity, ExternalLink, RefreshCw, X } from "lucide-react";
+import { useState } from "react";
+import { Activity, ExternalLink, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import type { UsageInfo } from "../../../types/chat";
 import { openSettings } from "@/components/settings/open-settings";
 import { AccountCard } from "@/components/settings/accounts/account-card";
@@ -61,6 +66,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   // Fetching is gated on visibility: the panel is collapsed most of the time, and its
   // usage endpoint is the expensive one.
   const { usages, accounts, activeAccountId, initialLoading, refreshing, flashIds, reload } = useAccountsData(visible);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   if (!visible) return null;
 
@@ -68,8 +74,19 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
   const hasCost = usage.queryCostUsd != null || usage.totalCostUsd != null;
   const hasPerAccountUsage = usages.length > 0;
 
+  // Roughly square, so the cards fill the viewport instead of leaving a long empty column.
+  const fsCount = usages.length || 1;
+  const fsCols = Math.ceil(Math.sqrt(fsCount));
+  const fsRows = Math.ceil(fsCount / fsCols);
+
   return (
-    <div className="relative border-b border-border bg-surface px-3 py-2.5 space-y-2.5 max-h-[350px] overflow-y-auto">
+    <div
+      className={`relative border-b border-border bg-surface px-3 py-2.5 ${
+        isFullscreen
+          ? "fixed inset-0 z-50 flex flex-col gap-2.5 overflow-hidden"
+          : "space-y-2.5 max-h-[350px] overflow-y-auto"
+      }`}
+    >
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-text-primary">Usage</span>
@@ -85,6 +102,16 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
           >
             Manage accounts <ExternalLink className="size-3" />
           </button>
+          {hasPerAccountUsage && (
+            <button
+              onClick={() => setIsFullscreen((v) => !v)}
+              className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
+              title={isFullscreen ? "Exit fullscreen" : "Fullscreen view"}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen view"}
+            >
+              {isFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+            </button>
+          )}
           {onReload && (
             <button
               onClick={() => { onReload(); void reload(); }}
@@ -97,7 +124,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
             </button>
           )}
           <button
-            onClick={onClose}
+            onClick={() => { setIsFullscreen(false); onClose(); }}
             className="text-xs text-text-subtle hover:text-text-primary px-1 cursor-pointer"
             aria-label="Close usage panel"
           >
@@ -107,7 +134,16 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
       </div>
 
       {hasPerAccountUsage || initialLoading ? (
-        <div className="space-y-1.5">
+        <div
+          className={isFullscreen
+            ? "flex-1 min-h-0 grid gap-2 overflow-hidden"
+            // Same classes as AccountCardRow, with the panel's wider padding to clear.
+            : "flex gap-2 overflow-x-auto pb-1 -mx-3 px-3 snap-x snap-mandatory scrollbar-thin"}
+          style={isFullscreen ? {
+            gridTemplateColumns: `repeat(${fsCols}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${fsRows}, minmax(0, 1fr))`,
+          } : undefined}
+        >
           {initialLoading ? (
             <p className="text-[10px] text-text-subtle">Loading...</p>
           ) : (
@@ -118,6 +154,7 @@ export function UsageDetailPanel({ usage, visible, onClose, onReload, loading, l
                 isActive={entry.accountId === (activeAccountId ?? usage.activeAccountId)}
                 accountInfo={accountMap.get(entry.accountId)}
                 flash={flashIds.has(entry.accountId)}
+                layout={isFullscreen ? "grid" : "strip"}
               />
             ))
           )}

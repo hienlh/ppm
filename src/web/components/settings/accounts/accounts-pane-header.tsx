@@ -66,22 +66,42 @@ export function AccountsPaneMessage({ message, onDismiss }: {
 }
 
 /**
+ * The row accounts are laid out in: a sideways scroller, one card per account.
+ *
+ * Horizontal everywhere — the chat panel and both settings panes — because the point of the
+ * list is comparing accounts, and stacked vertically you scroll past one to reach the next.
+ * Shared so the three callers cannot end up scrolling in different directions.
+ */
+export function AccountCardRow({ children }: { children: React.ReactNode }) {
+  return (
+    // Negative margin then padding: cards scroll edge to edge while still clearing the
+    // pane's own padding at rest. Snap so a swipe lands on a card rather than between two.
+    <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 snap-x snap-mandatory scrollbar-thin">
+      {children}
+    </div>
+  );
+}
+
+/**
  * The card one account is drawn in.
  *
  * Shared so a Claude row and a Codex row are the same object on screen even though what goes
  * inside them differs.
  */
-export function AccountCardShell({ active, flash, children, ...rest }: {
+export function AccountCardShell({ active, flash, dense, children, ...rest }: {
   active?: boolean;
   /** Brief highlight when this account's numbers just changed. */
   flash?: boolean;
+  /** Tighter padding, for a card that has to fit a fixed narrow width. */
+  dense?: boolean;
   children: React.ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       {...rest}
       className={[
-        "rounded-md border p-3 space-y-2 transition-colors duration-500",
+        "rounded-md border transition-colors duration-500",
+        dense ? "p-2.5 space-y-1.5" : "p-3 space-y-2",
         flash ? "bg-primary/10 border-primary/40" : "",
         active ? "border-primary/30 bg-primary/5" : "border-border/50",
         rest.className ?? "",

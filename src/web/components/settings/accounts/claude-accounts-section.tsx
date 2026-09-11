@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { Download, KeyRound, Loader2, Plus, Settings, Upload, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
+import { AccountCardRow, AccountsPaneHeader, AccountsPaneMessage } from "./accounts-pane-header";
 import { patchAccount, deleteAccount, type OAuthProfileData } from "../../../lib/api-settings";
 import { AccountProfilePanel } from "./account-profile-panel";
 import { AccountDeleteConfirm } from "./account-delete-confirm";
@@ -117,9 +117,10 @@ export function ClaudeAccountsSection() {
             <p className="text-xs text-muted-foreground">Add one to start using PPM.</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <AccountCardRow>
             {usages.map((entry) => (
               <AccountCard
+                layout="strip"
                 key={entry.accountId}
                 entry={entry}
                 isActive={entry.accountId === activeAccountId}
@@ -132,7 +133,7 @@ export function ClaudeAccountsSection() {
                 flash={flashIds.has(entry.accountId)}
               />
             ))}
-          </div>
+          </AccountCardRow>
         )}
       </section>
 
