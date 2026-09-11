@@ -26,7 +26,7 @@ import { SUBSCRIPTION_PROMPT_CACHE_TTL_MS, API_KEY_PROMPT_CACHE_TTL_MS } from ".
 import { buildTurnUsage, formatTurnUsageLog } from "../shared/turn-usage.ts";
 import { accountSelector } from "../services/account-selector.service.ts";
 import { accountService, type AccountWithTokens } from "../services/account.service.ts";
-import { parseSessionMessage, nestChildEventsAcrossMessages } from "../services/jsonl-transcript-parser.ts";
+import { parseSessionMessage, nestChildEventsAcrossMessages, parseJsonlTranscript } from "../services/jsonl-transcript-parser.ts";
 import { applyBackgroundAgentStatus } from "../shared/background-agent-status.ts";
 import { mergeSubagentChildren, resolveSessionDir } from "../services/subagent-transcript-merger.ts";
 import { stringifyToolResultContent } from "../shared/tool-result-content.ts";
@@ -2115,6 +2115,31 @@ export class ClaudeAgentSdkProvider implements AIProvider {
       this.activeQueries.delete(sessionId);
       console.log(`[sdk] abortQuery: closed non-streaming session=${sessionId} source=${source}`);
     }
+  }
+
+  /**
+   * Every message in the transcript, compacted-away segments included.
+   *
+   * `getSessionMessages` walks back from the newest message through
+   * `parentUuid`, and the `compact_boundary` record Claude Code writes when it
+   * compacts carries `parentUuid: null` — so the walk stops there and
+   * `getMessages` answers with the last segment only. That is right for the
+   * chat view, which shows the compact summary with a "Load previous
+   * conversation" button beside it. The search index has no such affordance:
+   * asking it the same question indexed 179 of one session's 1084 messages and
+   * left the oldest 18 hours of it unfindable by any query. Reading the file
+   * linearly ignores the `parentUuid` chain and costs less than the SDK call
+   * (40ms for a 6.9MB transcript).
+   */
+  async getFullMessages(sessionId: string): Promise<ChatMessage[]> {
+    const transcriptDir = resolveSessionDir(sessionId, getSessionProjectPath(sessionId));
+    if (transcriptDir) {
+      try {
+        const fromFile = await parseJsonlTranscript(`${transcriptDir}.jsonl`);
+        if (fromFile.length > 0) return fromFile;
+      } catch { /* unreadable or malformed — fall back to the conversation */ }
+    }
+    return this.getMessages(sessionId);
   }
 
   async getMessages(sessionId: string): Promise<ChatMessage[]> {

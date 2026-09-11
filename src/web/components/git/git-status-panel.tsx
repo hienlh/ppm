@@ -16,6 +16,7 @@ import {
   GitBranch,
   Check,
   SquareDashedMousePointer,
+  FileDiff,
 } from "@/lib/icons";
 import { SidebarHeader } from "@/components/ui/sidebar-header";
 import { api, projectUrl } from "@/lib/api-client";
@@ -505,6 +506,30 @@ export function GitStatusPanel({ metadata, tabId, onNavigate }: GitStatusPanelPr
           title={gitGraphAvailable ? "Open Git Graph (⌘G)" : "View Git Log"}
         >
           <GitBranch className="size-3.5" />
+        </Button>
+        {/*
+          Review the whole branch at once, rather than one commit at a time.
+          Core rather than the Git Graph extension's compare panel: a review is
+          the one git surface that wants Monaco, and a webview cannot have it.
+          The tab picks its own defaults — main/master against the current
+          branch — so there is nothing to pass here.
+        */}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => {
+            openTab({
+              type: "branch-review",
+              title: "Branch Review",
+              projectId: projectName ?? null,
+              closable: true,
+              metadata: { projectName },
+            });
+            onNavigate?.();
+          }}
+          title="Review this branch against another"
+        >
+          <FileDiff className="size-3.5" />
         </Button>
         <Button
           variant="ghost"

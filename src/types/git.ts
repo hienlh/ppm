@@ -59,6 +59,24 @@ export interface GitDiffFile {
   content: string;
 }
 
+/**
+ * Both sides of a single-file diff, as whole files.
+ *
+ * `binary` is decided from the bytes, and when it is true both sides come back
+ * **empty**: decoded, a PNG is megabytes of U+FFFD that no one can read and that
+ * JSON has to escape. The viewer asks again with `text=1` ("Open Anyway") when
+ * the user wants them anyway. A null size means the file does not exist on that
+ * side, which is how the binary view tells an added or deleted file from a
+ * changed one.
+ */
+export interface FileFullDiff {
+  original: string;
+  modified: string;
+  binary: boolean;
+  originalSize: number | null;
+  modifiedSize: number | null;
+}
+
 export interface GitWorktree {
   /** Absolute path to the worktree directory */
   path: string;
@@ -78,4 +96,29 @@ export interface GitWorktree {
   lockReason?: string;
   /** True if this worktree can be pruned (directory missing/stale) */
   prunable: boolean;
+}
+
+/**
+ * A whole branch's changes against a base, as one list.
+ *
+ * `mergeBase` is the commit every per-file diff has to be opened against — in
+ * three-dot mode it is where the two refs diverged, not `base` itself.
+ */
+export interface BranchDiff {
+  base: string;
+  head: string;
+  mode: "three-dot" | "two-dot";
+  mergeBase: string;
+  files: BranchDiffFile[];
+}
+
+export interface BranchDiffFile {
+  path: string;
+  oldPath?: string;
+  status: "A" | "M" | "D" | "R" | "C" | "T";
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  /** Head-side blob id; what a "reviewed" flag is remembered against. */
+  blob: string;
 }

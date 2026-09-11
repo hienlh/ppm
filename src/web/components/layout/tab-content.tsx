@@ -39,6 +39,11 @@ const TAB_COMPONENTS: Record<TabType, React.LazyExoticComponent<React.ComponentT
       default: m.DiffViewer,
     })),
   ),
+  "branch-review": lazy(() =>
+    import("@/components/branch-review/branch-review-tab").then((m) => ({
+      default: m.BranchReviewTab,
+    })),
+  ),
   settings: lazy(() =>
     import("@/components/settings/settings-tab").then((m) => ({
       default: m.SettingsTab,

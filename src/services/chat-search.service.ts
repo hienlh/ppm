@@ -188,7 +188,7 @@ export async function indexSession(
   projectPath: string,
   jsonlMtime = 0,
 ): Promise<void> {
-  const messages = await chatService.getMessages(providerId, sessionId);
+  const messages = await chatService.getFullMessages(providerId, sessionId);
   indexMessages(sessionId, projectPath, messages, jsonlMtime);
 }
 
